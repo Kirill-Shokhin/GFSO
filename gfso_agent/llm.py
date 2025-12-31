@@ -6,45 +6,49 @@ import anthropic
 class LLMInterface(Protocol):
     """Abstract interface for LLM interaction."""
     
-    def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7) -> str:
+    def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
         """Generate text response with optional images."""
         ...
 
-    def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0) -> dict:
+    def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
         """Generate structured JSON response with optional images."""
         ...
 
 class MockLLM:
     """Mock LLM for testing without API keys."""
     
-    def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7) -> str:
+    def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
         img_msg = f" [With {len(images)} images]" if images else ""
         return f"[MOCK OUTPUT] Response to: {prompt[:50]}...{img_msg}"
 
-    def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0) -> dict:
-        # Mock implementation returning dummy data based on schema
-        # If it looks like a Blueprint
-        if "nodes" in schema.get("properties", {}) and "edges" in schema.get("properties", {}):
+    def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
+        if "nodes" in schema.get("properties", {}):
+            if "root_architect" in prompt or "Web App" in prompt:
+                return {
+                    "nodes": [
+                        {"id": "db", "description": "Setup SQLite", "spec": "Schema with Users table", "is_complex": False},
+                        {"id": "api", "description": "Flask API", "spec": "CRUD endpoints for Users", "is_complex": False},
+                        {"id": "ui", "description": "React Frontend", "spec": "Dashboard with User list", "is_complex": True}
+                    ],
+                    "edges": [
+                        {"from": "db", "to": "api", "rule": "API must use the connection string from DB setup"},
+                        {"from": "api", "to": "ui", "rule": "UI must fetch data from /api/users endpoint"}
+                    ]
+                }
             return {
                 "nodes": [
-                    {"id": "foundation", "description": "Pour concrete", "spec": "Grade 500", "is_complex": False},
-                    {"id": "walls", "description": "Build walls", "spec": "Brick layout", "is_complex": False}
+                    {"id": "ui_components", "description": "Button and Table components", "spec": "Reusable UI components", "is_complex": False},
+                    {"id": "ui_logic", "description": "API Integration logic", "spec": "Fetch hook and state management", "is_complex": False}
                 ],
                 "edges": [
-                    {
-                        "from": "foundation", 
-                        "to": "walls", 
-                        "rule": "Walls must align with anchors within 5mm"
-                    }
+                    {"from": "ui_components", "to": "ui_logic", "rule": "Logic must bind data to the Table component"}
                 ]
             }
         
-        # Validation result
         return {
-            "epsilon": 0.0, 
-            "laxity": 0.0, 
-            "feedback": "Mock Success",
-            "is_passed": True
+            "object_compliance_score": 0.0, 
+            "integration_compliance_score": 0.0, 
+            "critique": "Mock Success"
         }
 
 class AnthropicLLM:
@@ -69,7 +73,7 @@ class AnthropicLLM:
         if ext == '.png': return 'image/png'
         if ext == '.gif': return 'image/gif'
         if ext == '.webp': return 'image/webp'
-        return 'image/jpeg' # Default fallback
+        return 'image/jpeg'
 
     def _prepare_content(self, prompt: str, images: Optional[List[str]]) -> List[Dict[str, Any]]:
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
@@ -92,16 +96,13 @@ class AnthropicLLM:
                     content.append({"type": "text", "text": f"[Image load failed: {img_path}]"})
         return content
 
-    def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7) -> str:
-        """
-        Generate response using Anthropic Messages API.
-        """
+    def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
         try:
             content = self._prepare_content(prompt, images)
             
             kwargs = {
                 "model": self.model,
-                "max_tokens": 4096,
+                "max_tokens": max_tokens,
                 "temperature": temperature,
                 "messages": [
                     {"role": "user", "content": content}
@@ -117,10 +118,7 @@ class AnthropicLLM:
         except anthropic.APIError as e:
             return f"Error calling Anthropic API: {str(e)}"
 
-    def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0) -> dict:
-        """
-        Generate structured response using Anthropic's tool use.
-        """
+    def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
         tool_name = "output_formatter"
         tool_definition = {
             "name": tool_name,
@@ -133,7 +131,7 @@ class AnthropicLLM:
             
             kwargs = {
                 "model": self.model,
-                "max_tokens": 4096,
+                "max_tokens": max_tokens,
                 "temperature": temperature,
                 "tools": [tool_definition],
                 "tool_choice": {"type": "tool", "name": tool_name},
@@ -147,7 +145,6 @@ class AnthropicLLM:
 
             response = self.client.messages.create(**kwargs)
             
-            # Extract tool use input
             for block in response.content:
                 if block.type == 'tool_use' and block.name == tool_name:
                     return block.input

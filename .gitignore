@@ -20,9 +20,11 @@ htmlcov/
 *.swo
 *~
 
-# Project specific
-/.claude
-
 # OS
 .DS_Store
 Thumbs.db
+
+# Project specific
+/.claude
+output
+gfso_trace.log
