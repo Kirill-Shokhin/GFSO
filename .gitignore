@@ -28,3 +28,4 @@ Thumbs.db
 /.claude
 output
 gfso_trace.log
+/gfso_agent.log

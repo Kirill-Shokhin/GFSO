@@ -46,9 +46,10 @@ class MockLLM:
             }
         
         return {
-            "object_compliance_score": 0.0, 
-            "integration_compliance_score": 0.0, 
-            "critique": "Mock Success"
+            "object_quality_score": 1.0, 
+            "integration_quality_score": 1.0, 
+            "critique": "Mock Success",
+            "is_passed": True
         }
 
 class AnthropicLLM:

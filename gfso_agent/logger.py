@@ -22,8 +22,19 @@ class GFSOLogger:
             
             # mode='w' forces overwrite
             self._file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
-            # Format: relative ms | msg. Simple.
-            self._file_handler.setFormatter(logging.Formatter('%(relativeCreated)d ms | %(message)s'))
+            # Format: relative seconds | msg. Simple.
+            self._file_handler.setFormatter(logging.Formatter('%(relativeCreated)d s | %(message)s'))
+            # We want seconds, relativeCreated is ms. 
+            # Custom formatter needed or just accept ms. 
+            # Let's keep it simple: Use asctime for absolute time or accept ms for now. 
+            # Actually user asked for seconds.
+            class SecFormatter(logging.Formatter):
+                def format(self, record):
+                    record.relativeSeconds = record.relativeCreated / 1000
+                    return super().format(record)
+            
+            fmt = SecFormatter('%(relativeSeconds).3f s | %(message)s')
+            self._file_handler.setFormatter(fmt)
             self._logger.addHandler(self._file_handler)
 
     def _indent(self, depth: int) -> str:
@@ -47,35 +58,37 @@ class GFSOLogger:
         self._logger.info(f"{self._indent(depth)}⟳ RECURSION: Spawning Sub-Agent for '{step_id}'")
 
     def log_contract(self, contract_str: str, depth: int):
-        if self._logger.isEnabledFor(logging.DEBUG):
-            ind = self._indent(depth)
-            self._logger.debug(f"{ind}┌── [CONTRACT G(x)] ──")
-            for line in contract_str.split('\n'):
-                if line.strip(): self._logger.debug(f"{ind}│ {line}")
-            self._logger.debug(f"{ind}└─────────────────────")
+        # Changed to INFO so user can see what Architect passed to Worker
+        ind = self._indent(depth)
+        self._logger.info(f"{ind}┌── [CONTRACT G(x)] ──")
+        for line in contract_str.split('\n'):
+            if line.strip(): self._logger.info(f"{ind}│ {line}")
+        self._logger.info(f"{ind}└─────────────────────")
 
     def log_artifact(self, name: str, content: str, depth: int):
-        if self._logger.isEnabledFor(logging.DEBUG):
-            ind = self._indent(depth)
-            self._logger.debug(f"{ind}┌── [ARTIFACT F(x): {name}] ──")
-            for line in content.split('\n'):
-                self._logger.debug(f"{ind}│ {line}")
-            self._logger.debug(f"{ind}└─────────────────────────────")
+        # Changed to INFO so user can see code/artifacts in the file
+        ind = self._indent(depth)
+        self._logger.info(f"{ind}┌── [ARTIFACT F(x): {name}] ──")
+        
+        # Limit preview length for console legibility, but file has full
+        lines = content.split('\n')
+        for i, line in enumerate(lines):
+            self._logger.info(f"{ind}│ {line}")
+            
+        self._logger.info(f"{ind}└─────────────────────────────")
 
     def log_validation(self, epsilon: float, laxity: float, feedback: str, passed: bool, depth: int):
         ind = self._indent(depth)
         status = "PASSED" if passed else "REJECTED"
         icon = "✔" if passed else "✖"
-        log_method = self._logger.info if not passed else self._logger.debug
+        log_method = self._logger.info 
         
         log_method(f"{ind}{icon} [VALIDATION η] {status}")
-        log_method(f"{ind}  Metric ε (Object):   {epsilon:.2f}")
-        log_method(f"{ind}  Metric λ (Morphism): {laxity:.2f}")
-        
-        if not passed:
-            self._logger.info(f"{ind}  Critique: {feedback}")
+        log_method(f"{ind}  Metric ε (Object Error):   {epsilon:.2f}")
+        log_method(f"{ind}  Metric λ (Integr. Error): {laxity:.2f}")
 
     def error(self, msg: str, depth: int = 0):
         self._logger.error(f"{self._indent(depth)}!!! ERROR: {msg}")
 
 logger = GFSOLogger()
+logger.setup(level="INFO", log_file="gfso_agent.log")
