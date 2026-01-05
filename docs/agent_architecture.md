@@ -1,12 +1,12 @@
 # GFSO Agent Architecture: Composite Swarm Unit
 
-**Version:** 3.1 ("Unified Swarm")
-**Last Updated:** January 5, 2026
+**Version:** 3.2 ("Robust & Dynamic")
+**Last Updated:** January 7, 2026
 **Role:** Primary context, architectural mandate, and historical record for the GFSO runtime.
 
 ---
 
-## 1. The Core Architecture (v3.1)
+## 1. The Core Architecture (v3.2)
 
 The GFSO Agent integrates **Category Theory** (Topological Guarantees) with **Swarm Intelligence** (Tactical Depth).
 
@@ -76,9 +76,7 @@ graph TD
 
 ---
 
-## 2. Evolution & Philosophy (DO NOT IGNORE)
-
-The GFSO Agent has evolved through painful trial and error. These lessons are **IMMUTABLE**.
+## 2. Evolution & Philosophy
 
 ### 2.1. The Lesson of Version 2.1 (Mathematical Rigor):
 Initially, we forced the LLM to "act like a mathematician" (Kleisli, Epsilon). This led to **"Bureaucratic Hallucination"**, where the Critic rejected functional code for lacking "categorical proof." 
@@ -95,14 +93,20 @@ We attempted to integrate X-Master.
 *   **Solution:** **Composite Swarm Unit**. Swarm is encapsulated inside the Functor F. It is invisible to the topology.
 *   **Recursion:** The `RECURSIVE` strategy was cut due to complexity explosion. **Do not attempt to restore it.**
 
+### 3.2. The Robustness Update (v3.1 -> v3.2):
+*   **Dynamic Data Structures:** Python classes (`NodeSpec`, `Contract`) are now agnostic containers. Schema definitions in `config.py` are the single source of truth. New fields propagate automatically.
+*   **Global Meta-Context:** All agents share a `GLOBAL_SYSTEM_PROMPT` defining them as "mathematical functors" to suppress conversational filler.
+*   **Verification Pipeline:** Standardized as `Normalize -> String Match -> LLM Judge`. We trust the LLM Judge to handle semantic equivalence (e.g. `1/2 == 0.5`).
+*   **Execution Safety:** `PYTHONIOENCODING='utf-8'` enforced to prevent Windows Unicode crashes.
+
 ---
 
 ## 3. Core Components
 
-### 3.1. Functor G (Architect)
+### 3.1. Functor G (Strategic Planner)
 *   **Role:** Decomposes tasks into a **Blueprint**.
-*   **Constraint:** Must create a *Template*. No hardcoded data (except for Perception tasks).
-*   **Swarm Strategy:** The Architect ITSELF operates as a Swarm to ensure high-quality planning.
+*   **Constraint:** "Ockham's Razor". Default to 1 Node. Split only for hard dependencies.
+*   **Output:** JSON Blueprint. No answers allowed in the plan.
 
 ### 3.2. Functor F (Implementation)
 *   **DIRECT:** Single Worker + SGR. For deterministic tasks.
@@ -111,38 +115,38 @@ We attempted to integrate X-Master.
 
 ### 3.3. Natural Transformation $\eta$ (Validator)
 *   **Role:** The Judge.
-*   **Weak Perception Audit:** When checking image tasks, the Validator trusts the Swarm's consensus. It does **NOT** enforce pixel-perfect precision if semantic meaning is preserved.
+*   **Protocol:** Strict Data Integrity check. Compares literals and formulas in Code vs Spec.
+*   **Feedback:** Provides actionable critique used in the Retry loop.
 
 ---
 
 ## 4. IMMUTABLE LAWS (CRITICAL)
 
-**1. ZERO-TOUCHING POLICY FOR PROMPTS:**
-The System Prompts (`ARCHITECT_SYSTEM`, `ROOT_CONTRACT_SPEC`, `VALIDATOR_SYSTEM`) are highly tuned.
-*   **FORBIDDEN:** Arbitrary rephrasing or "simplifying".
-*   **REASON:** Small wording changes (e.g. adding specific library names) cause catastrophic degradation (model starts hardcoding or hallucinating).
+**1. DATA DRIVEN ARCHITECTURE:**
+*   Do not hardcode field names in Python logic (except `description` and `strategy`).
+*   The Schema in `config.py` drives the Prompt and the Validation.
 
-**2. ABSTRACTION LAW:**
-The Architect must NEVER solve the problem. It must only create the *Template*.
+**2. EXECUTION ROBUSTNESS:**
+*   **Retries:** Workers see their *previous failed code* to perform diff-fixes.
+*   **Output:** Core accepts *any* STDOUT with Exit Code 0. Strict JSON enforcement is delegated to the Architect's instructions.
 
-**3. NO REINVENTING THE WHEEL:**
-Workers must use domain libraries (`python-chess`, `numpy`) and NOT write complex algorithms from scratch.
+**3. VERIFICATION INTEGRITY:**
+*   Use **LLM Judge** for ambiguous comparisons. Do not rely on fragile Regex.
 
 ---
 
 ## 5. Session Handover (Quick Start)
 
 **Current Status:**
-- **Architecture:** v3.1 (Composite Swarm Unit).
-- **Swarm Size:** `Params.SWARM_SIZE` (Default: 3. For debug: 1).
-- **Logging:** Full verbosity (no truncation).
+- **Architecture:** v3.2.
+- **Config:** `MAX_RETRIES = 2`.
+- **Logging:** `prompts_debug.log` captures full roundtrips (System/User/Response).
 
 **Verification:**
 To verify the system state, run the complex smoke test:
 ```bash
 python smoke_test.py
 ```
-*Expected Result:* A 3-node Blueprint is generated, executed, and verified.
 
 **Real Execution:**
 To run a real task with full logging:
@@ -150,10 +154,10 @@ To run a real task with full logging:
 python run_agent.py "Your task here" --verbose --log-file gfso.log
 ```
 
-**HLE Benchmark:**
-To run the Chess Logic task:
+**Benchmark:**
+To run MATH dataset tasks with robust checking:
 ```bash
-python experiments/debug_hle_task.py 0
+python experiments/run_benchmark.py --dataset math --start 0 --count 5
 ```
 
 **Common Pitfalls to Avoid:**
@@ -162,4 +166,5 @@ python experiments/debug_hle_task.py 0
 - Do NOT try to fix "Perception" by asking the Worker to write OpenCV code. It fails. Use Swarm Manual Extraction.
 
 **Artifacts:**
-All generated code is saved to `output/`. This directory is git-ignored.
+All generated code is saved to `outputs/`. This directory is git-ignored.
+`prompts_debug.log` is cleared on every session start.

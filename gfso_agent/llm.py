@@ -1,10 +1,11 @@
 import os
 import base64
+import textwrap
 from typing import Protocol, Optional, List, Dict, Any, Union
 import anthropic
 
 from gfso_agent.types import KleisliFunctor, Contract, SGROutput, Blueprint
-from gfso_agent.config import Params
+from gfso_agent.config import Params, Prompts
 
 class LLMInterface(Protocol):
     """Abstract interface for LLM interaction."""
@@ -22,28 +23,29 @@ class LLMAgent(KleisliFunctor[Any]):
     
     def __init__(self, llm: LLMInterface, prompt_tmpl: str, schema: dict, temp: float, kind: str):
         self.llm = llm
-        self.prompt_tmpl = prompt_tmpl
+        self.prompt_tmpl = textwrap.dedent(prompt_tmpl).strip()
         self.schema = schema
         self.temp = temp
         self.kind = kind # 'blueprint', 'code', 'validation'
 
     def lift(self, task_description: str, context_str: str, contract: Contract, images: Optional[List[str]] = None, temperature: Optional[float] = None) -> SGROutput:
         # 1. Prepare Prompt Args
-        fmt_args = {"task": task_description, "context": context_str}
+        contract_str = contract.to_string()
+        fmt_args = {
+            "task": task_description, 
+            "context": context_str,
+            "spec": contract_str,
+        }
         
         # Specific Logic for Validator Prompt
         if self.kind == 'validation':
             # CONVENTION: 
             # task_description = Context/Dependencies
             # context_str = Artifact to Validate
-            fmt_args["spec"] = contract.to_string()
-            fmt_args["context"] = task_description[:15000] 
+            fmt_args["context"] = task_description[:15000]
             fmt_args["output"] = context_str[:25000]
-        
-        # Specific Logic for Worker Prompt
-        elif "{requirements}" in self.prompt_tmpl:
-            fmt_args["requirements"] = contract.to_string()
             
+        # Centralized Dedent: Remove indentation from template before filling
         prompt = self.prompt_tmpl.format(**fmt_args)
         
         # 2. Call LLM
@@ -53,6 +55,7 @@ class LLMAgent(KleisliFunctor[Any]):
                 prompt, 
                 self.schema, 
                 images=images, 
+                system_prompt=Prompts.GLOBAL_SYSTEM.strip(),
                 temperature=final_temp,
                 max_tokens=Params.MAX_TOKENS
             )
@@ -87,54 +90,86 @@ class LLMAgent(KleisliFunctor[Any]):
 
         return SGROutput(thought=thought, content=content, kind=self.kind)
 
-class MockLLM:
+_LOG_CLEARED = False
+
+class BaseLLM:
+    """Shared logic for all LLM implementations."""
+    def _log_roundtrip(self, kind: str, system: str, user: str, schema: dict, response: Any, images: Optional[List[str]] = None):
+        global _LOG_CLEARED
+        mode = "a"
+        if not _LOG_CLEARED:
+            mode = "w"
+            _LOG_CLEARED = True
+            
+        with open("prompts_debug.log", mode, encoding="utf-8") as f:
+            f.write(f"\n\n{'='*30} [{kind} ROUNDTRIP] {'='*30}\n")
+            f.write(f"--- SYSTEM ---\n{system}\n")
+            
+            img_info = f" [Images: {len(images)}]" if images else ""
+            f.write(f"--- USER{img_info} ---\n{user}\n")
+            
+            f.write(f"--- SCHEMA ---\n{str(schema)}\n")
+            
+            import json
+            res_str = json.dumps(response, indent=2, ensure_ascii=False) if isinstance(response, dict) else str(response)
+            f.write(f"--- RESPONSE ---\n{res_str}\n")
+            f.write(f"{'='*78}\n")
+
+class MockLLM(BaseLLM):
     """Mock LLM for testing without API keys."""
-    
+
     def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        img_msg = f" [With {len(images)} images]" if images else ""
-        return f"[MOCK OUTPUT] Response to: {prompt[:50]}...{img_msg}"
+        res = f"[MOCK] {prompt[:50]}..."
+        self._log_roundtrip("MOCK_TEXT", system_prompt or "None", prompt, {}, res, images)
+        return res
 
     def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
-        if "nodes" in schema.get("properties", {}):
-            if "root_architect" in prompt or "Web App" in prompt:
-                return {
-                    "thought": "Decomposing web app into steps.",
-                    "nodes": [
-                        {"id": "db", "description": "Setup SQLite", "spec": "Schema with Users table", "strategy": "DIRECT", "artifact": "db_setup.py", "done_criterion": "File exists"},
-                        {"id": "api", "description": "Flask API", "spec": "CRUD endpoints for Users", "strategy": "SWARM", "artifact": "api.py", "done_criterion": "Endpoints return 200"},
-                        {"id": "ui", "description": "React Frontend", "spec": "Dashboard with User list", "strategy": "DIRECT", "artifact": "ui.js", "done_criterion": "Renders without error"}
-                    ],
-                    "edges": [
-                        {"from": "db", "to": "api", "rule": "API must use the connection string from DB setup"},
-                        {"from": "api", "to": "ui", "rule": "UI must fetch data from /api/users endpoint"}
-                    ]
-                }
-            return {
-                "thought": "Decomposing sub-task.",
+        props = schema.get("properties", {})
+
+        # Default Mock Response
+        res = {"thought": "Mock response", "final_answer": "42"}
+
+        # ARCHITECT (has nodes/edges)
+        if "nodes" in props:
+            res = {
+                "thought": "Mock plan: single compute step.",
                 "nodes": [
-                    {"id": "logic", "description": "Core Logic", "spec": "Complex algorithm", "strategy": "SWARM", "artifact": "logic.py", "done_criterion": "Passes all tests"}
+                    {"id": "step_1", "description": "Compute result", "spec": "Return answer as JSON",
+                     "strategy": "DIRECT", "artifact": "Script prints JSON", "done_criterion": "Exit 0"}
                 ],
                 "edges": []
             }
-        
-        # Worker/Synthesizer/Validator response
-        if "SYNTHESIZER" in (system_prompt or ""):
-             return {
-                "thought": "Synthesizing best candidate.",
-                "code": "print('{\"status\": \"synthesized\"}')",
-                "final_answer": "Synthesized Result"
+
+        # VALIDATOR (has is_passed)
+        elif "is_passed" in props:
+            res = {
+                "thought": "Mock validation passed.",
+                "is_passed": True,
+                "object_quality_score": 1.0,
+                "integration_quality_score": 1.0
             }
 
-        return {
-            "object_quality_score": 1.0, 
-            "integration_quality_score": 1.0, 
-            "thought": "Mock Success",
-            "is_passed": True,
-            "code": "print('{\"status\": \"success\"}')",
-            "final_answer": "Mock Answer"
-        }
+        # WORKER (has code)
+        elif "code" in props:
+            res = {
+                "thought": "Mock worker executing.",
+                "code": 'import json; print(json.dumps({"answer": "42"}))',
+                "final_answer": "42"
+            }
 
-class AnthropicLLM:
+        # HEAD FULL (has diagnosis)
+        elif "diagnosis" in props:
+            res = {
+                "thought": "Pipeline completed successfully.",
+                "final_answer": "42",
+                "confidence": 1.0,
+                "diagnosis": ""
+            }
+
+        self._log_roundtrip("MOCK_STRUCT", system_prompt or "None", prompt, schema, res, images)
+        return res
+
+class AnthropicLLM(BaseLLM):
     """Production LLM using Anthropic API."""
     
     def __init__(self, model: str = "claude-haiku-4-5-20251001", api_key: Optional[str] = None):
@@ -196,10 +231,14 @@ class AnthropicLLM:
                 kwargs["system"] = system_prompt
                 
             response = self.client.messages.create(**kwargs)
-            return response.content[0].text
+            res_text = response.content[0].text
+            self._log_roundtrip(f"ANTHROPIC_TEXT({self.model})", system_prompt or "None", prompt, {}, res_text, images)
+            return res_text
             
         except anthropic.APIError as e:
-            return f"Error calling Anthropic API: {str(e)}"
+            err = f"Error calling Anthropic API: {str(e)}"
+            self._log_roundtrip("ANTHROPIC_ERROR", system_prompt or "None", prompt, {}, err, images)
+            return err
 
     def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
         tool_name = "output_formatter"
@@ -211,7 +250,7 @@ class AnthropicLLM:
 
         try:
             content = self._prepare_content(prompt, images)
-            
+
             kwargs = {
                 "model": self.model,
                 "max_tokens": max_tokens,
@@ -222,18 +261,26 @@ class AnthropicLLM:
                     {"role": "user", "content": content}
                 ]
             }
-            
+
             if system_prompt:
                 kwargs["system"] = system_prompt
 
             response = self.client.messages.create(**kwargs)
-            
+
+            final_res = None
             for block in response.content:
                 if block.type == 'tool_use' and block.name == tool_name:
-                    return block.input
-            
-            raise ValueError("Model did not use the required tool.")
+                    final_res = block.input
+                    break
+
+            if final_res is None:
+                raise ValueError("Model did not use the required tool.")
+
+            self._log_roundtrip(f"ANTHROPIC_STRUCT({self.model})", system_prompt or "None", prompt, schema, final_res,
+                                images)
+            return final_res
 
         except Exception as e:
             print(f"[LLM Error] Structured generation failed: {e}")
+            self._log_roundtrip("ANTHROPIC_STRUCT_ERROR", system_prompt or "None", prompt, schema, str(e), images)
             raise e

@@ -91,4 +91,4 @@ class GFSOLogger:
         self._logger.error(f"{self._indent(depth)}!!! ERROR: {msg}")
 
 logger = GFSOLogger()
-logger.setup(level="INFO", log_file="gfso_agent.log")
+logger.setup(level="INFO")

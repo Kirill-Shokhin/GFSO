@@ -44,13 +44,17 @@ class PythonExecutor:
                 temp_path = f.name
             
             try:
+                env = os.environ.copy()
+                env["PYTHONIOENCODING"] = "utf-8"
+                
                 process = subprocess.Popen(
                     [sys.executable, temp_path],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     encoding='utf-8',
-                    cwd=os.getcwd() # Run in current dir to access local files
+                    cwd=os.getcwd(), # Run in current dir to access local files
+                    env=env
                 )
                 
                 try:

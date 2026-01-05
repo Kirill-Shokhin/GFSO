@@ -1,8 +1,26 @@
 from typing import Protocol, TypeVar, List, Dict, Any, Optional
 from dataclasses import dataclass, field
+from enum import Enum
 
 from gfso.core.graph import TaskDAG
 from gfso_agent.config import Params
+
+
+class HeadMode(Enum):
+    """HEAD operation modes."""
+    STRICT = "strict"  # Minimal output: answer + confidence (for benchmarks)
+    FULL = "full"      # Rich output: analysis, speculation, retry feedback (for users)
+
+
+@dataclass
+class HeadResult:
+    """Unified HEAD output."""
+    answer: str
+    status: str                            # "SUCCESS" | "PARTIAL" | "FAILED" - computed by core
+    # FULL mode only
+    confidence: Optional[float] = None     # How reliable (1.0 if computed, lower if guess)
+    thought: Optional[str] = None          # Analysis
+    diagnosis: Optional[str] = None        # What went wrong (empty if SUCCESS)
 
 T = TypeVar('T')
 
@@ -62,10 +80,8 @@ class EdgeSpec:
 @dataclass
 class NodeSpec:
     id: str
-    rule: str
-    strategy: str = "DIRECT"
-    artifact: str = "Script"
-    done_criterion: str = "Exits 0"
+    # metadata holds ALL dynamic fields from the Schema (spec, strategy, artifact, etc.)
+    metadata: Dict[str, Any]
 
 @dataclass
 class Contract:
@@ -73,15 +89,24 @@ class Contract:
     incoming_edge_specs: List[EdgeSpec]
 
     def to_string(self) -> str:
-        s = f"STRICT OBJECT SPEC (G(A)):\n{self.node_spec.rule}\n"
-        s += f"EXECUTION STRATEGY: {self.node_spec.strategy}\n"
-        s += f"ARTIFACT TO PRODUCE: {self.node_spec.artifact}\n"
-        s += f"DONE CRITERION: {self.node_spec.done_criterion}\n\n"
+        # Dynamic dump of the Schema fields
+        # This makes types.py independent of config.py changes
+        s = "REQUIREMENTS:\n"
+
+        for key, value in self.node_spec.metadata.items():
+            if key == 'id': continue # Skip ID as it's metadata
+            # Format key: 'done_criterion' -> 'Done Criterion'
+            pretty_key = key.replace('_', ' ').title()
+            s += f"- {pretty_key}: {value}\n"
+        
+        s += "\nDEPENDENCIES (INPUTS):\n"
         if self.incoming_edge_specs:
-            s += "STRICT MORPHISM SPECS (Integration Rules):\n"
             for edge in self.incoming_edge_specs:
-                s += f"- Connection from '{edge.source_id}': {edge.rule}\n"
-        return s
+                s += f"- From '{edge.source_id}': {edge.rule}\n"
+        else:
+            s += "(None)\n"
+            
+        return s.strip()
 
 class Blueprint:
     """The Artifact produced by the Architect."""
@@ -92,13 +117,11 @@ class Blueprint:
     def get_contract_for_node(self, node_id: str) -> Contract:
         node = self.dag.get_task(node_id)
         incoming = [e for e in self.edge_specs if e.target_id == node_id]
+        
         return Contract(
             node_spec=NodeSpec(
-                id=node_id, 
-                rule=node.metadata['spec'],
-                strategy=node.metadata.get('strategy', 'DIRECT'),
-                artifact=node.metadata.get('artifact', 'Script'),
-                done_criterion=node.metadata.get('done_criterion', 'Exits 0')
+                id=node_id,
+                metadata=node.metadata
             ),
             incoming_edge_specs=incoming
         )
@@ -108,7 +131,7 @@ class Blueprint:
         """Constructs a Blueprint from a raw JSON dict."""
         dag = TaskDAG(state_metric=None)
         edge_specs = []
-        
+
         raw_nodes = data.get('nodes', [])
         if not isinstance(raw_nodes, list):
             raise ValueError(f"Blueprint JSON Error: 'nodes' must be a list, got {type(raw_nodes)}")
@@ -116,22 +139,19 @@ class Blueprint:
         for node in raw_nodes:
             if not isinstance(node, dict): continue
             node_id = node.get('id', 'unknown')
+            meta = node.copy()
+            if 'id' in meta: del meta['id']
+            
             dag.add_task(
                 task_id=node_id,
                 implementation=None, specification=None, validator=None,
-                metadata={
-                    'spec': node.get('spec', 'No Spec'), 
-                    'description': node.get('description', 'No Desc'),
-                    'strategy': node.get('strategy', 'DIRECT'),
-                    'artifact': node.get('artifact', 'Python script'),
-                    'done_criterion': node.get('done_criterion', 'Script returns True')
-                }
+                metadata=meta
             )
-            
+
         raw_edges = data.get('edges', [])
         if not isinstance(raw_edges, list):
-             raise ValueError(f"Blueprint JSON Error: 'edges' must be a list, got {type(raw_edges)}")
-             
+            raise ValueError(f"Blueprint JSON Error: 'edges' must be a list, got {type(raw_edges)}")
+
         for edge in raw_edges:
             if not isinstance(edge, dict): continue
             src = edge.get('from')
@@ -139,7 +159,7 @@ class Blueprint:
             if src and dst:
                 dag.add_dependency(src, dst)
                 edge_specs.append(EdgeSpec(source_id=src, target_id=dst, rule=edge.get('rule', '')))
-                
+
         return cls(dag, edge_specs)
 
     def __str__(self) -> str:
@@ -148,17 +168,22 @@ class Blueprint:
             order = self.dag.get_topological_order()
         except:
             order = list(self.dag.tasks.keys())
+            
         for t_id in order:
              task = self.dag.get_task(t_id)
-             strat = f"[{task.metadata.get('strategy', '???')}]"
-             s += f"    • {t_id:<20} {strat:<12} : {task.metadata['description']}\n"
-             s += f"      Artifact: {task.metadata.get('artifact', 'N/A')}\n"
-             s += f"      Done:     {task.metadata.get('done_criterion', 'N/A')}\n"
-        s += "\n  [DEPENDENCIES]:\n"
+             s += f"    • NODE ID: {t_id}\n"
+             
+             for key, val in task.metadata.items():
+                 pretty_key = key.replace('_', ' ').title()
+                 val_str = str(val).replace('\n', '\n        ')
+                 s += f"      {pretty_key}: {val_str}\n"
+             s += "\n"
+                 
+        s += "  [DEPENDENCIES]:\n"
         if not self.edge_specs: s += "    (None)\n"
         for edge in self.edge_specs:
              s += f"    • {edge.source_id} → {edge.target_id} ({edge.rule})\n"
-        return s
+        return s.strip()
 
 class KleisliFunctor(Protocol[T]):
     """
