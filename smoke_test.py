@@ -7,7 +7,7 @@ def test_complex_flow():
     logger.setup(level="DEBUG")
     
     llm = MockLLM()
-    agent = GFSOAgent(llm, max_depth=2)
+    agent = GFSOAgent(llm)
     
     print("\n[STARTING COMPLEX SMOKE TEST]")
     try:

@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from gfso_agent.types import (KleisliFunctor, Contract, NodeSpec, SGROutput, ValidationResult, Blueprint, StepFailure,
-                              RuntimeContext, HeadMode, HeadResult)
+                              RuntimeContext, HeadResult)
 from gfso_agent.llm import LLMInterface, LLMAgent
 from gfso_agent.logger import logger
 from gfso_agent.config import Prompts, Params, SCHEMAS
@@ -80,10 +80,10 @@ class GFSOUnit:
         total_corrections = 0
         for internal_try in range(Params.MAX_SELF_CORRECTIONS):
             is_valid, feedback, artifact, error_log = self._verify_local_artifact(sgr, depth)
-            
+
             if is_valid:
                 return artifact, total_corrections
-            
+
             total_corrections += 1
             # Failed locally
             context += f"\n\n[SELF-CORRECTION REQUEST]:\n{feedback}\nINSTRUCTION: Fix the error and return the corrected artifact."
@@ -99,14 +99,14 @@ class GFSOUnit:
         # OPTIMIZATION: Size=1 bypass
         if Params.SWARM_SIZE == 1:
             logger._logger.info(f"{logger._indent(depth)}[SWARM]: Direct execution (Size=1)...")
-            return self._execute_lane(task, context, contract, images, depth, temp=Params.SWARM_WORKER_TEMP)
+            return self._execute_lane(task, context, contract, images, depth, temp=Params.WORKER_TEMP)
 
         candidates = []
         valid_artifacts = []
         total_corrections = 0
-        
+
         logger._logger.info(f"{logger._indent(depth)}[SWARM]: Spawning {Params.SWARM_SIZE} workers in parallel...")
-        
+
         # Parallel Execution using ThreadPool
         with ThreadPoolExecutor(max_workers=Params.SWARM_SIZE) as executor:
             # key: future, value: lane_index (1-based)
@@ -165,6 +165,25 @@ class GFSOUnit:
         
         return (golden if golden else valid_artifacts[0]), total_corrections
 
+    def _execute_search_node(self, task: str, context: str, images: Optional[List[str]], depth: int) -> str:
+        logger._logger.info(f"{logger._indent(depth)}[EXEC]: Running SEARCH (Text Mode)...")
+        # Construct a simple retrieval prompt
+        raw_prompt = f"TASK: {task}\nCONTEXT: {context}\nINSTRUCTION: Search the web for authoritative facts and provide a comprehensive summary. Do not output JSON or code, just the findings."
+        
+        try:
+            # Use generate() with search_tool=True
+            artifact_text = self.functor.llm.generate(
+                raw_prompt, 
+                images=images,
+                system_prompt=Prompts.GLOBAL_SYSTEM.strip(),
+                temperature=Params.WORKER_TEMP,
+                search_tool=True 
+            )
+            return artifact_text
+        except Exception as e:
+            logger.error(f"Search execution failed: {e}", depth)
+            raise StepFailure("SEARCH_NODE", f"Search failed: {e}")
+
     def run(self, task: str, context: str, contract: Contract, step_id: str, runtime: RuntimeContext, depth: int) -> Any:
         images = runtime.images 
         logger.log_contract(contract.to_string(), depth)
@@ -172,13 +191,30 @@ class GFSOUnit:
         last_feedback = "No feedback"
         loop_context = context
         
-        # Initialize Metrics with robust role detection
+        # Initialize Metrics
         metric_role = 'Worker'
-        if hasattr(self.functor, 'kind'):
-            if self.functor.kind == 'blueprint':
-                metric_role = 'Architect'
+        if hasattr(self.functor, 'kind') and self.functor.kind == 'blueprint':
+            metric_role = 'Architect'
             
         step_metric = runtime.get_metric(step_id, metric_role)
+        strategy = contract.node_spec.metadata.get('strategy', 'DIRECT')
+        step_metric.strategy = strategy
+
+        # --- SEARCH STRATEGY: Direct Native Search, No Validation ---
+        if strategy == 'SEARCH' and Params.ENABLE_WEB_SEARCH:
+            try:
+                # Simple prompt for the Searcher
+                prompt = f"TASK: {task}\nCONTEXT: {loop_context}\nINSTRUCTION: Research this and provide a text summary."
+                artifact = self.functor.llm.search(prompt, system_prompt=Prompts.GLOBAL_SYSTEM.strip())
+                
+                step_metric.status = "SUCCESS"
+                logger.log_artifact(step_id, artifact, depth)
+                return artifact
+            except Exception as e:
+                step_metric.status = "FAILED"
+                logger.error(f"Native search failed: {e}", depth)
+                raise StepFailure(step_id, f"Search failed: {e}")
+        # -----------------------------------------------------------
 
         for attempt in range(self.max_retries + 1):
             step_metric.validator_retries = attempt
@@ -189,10 +225,7 @@ class GFSOUnit:
             if Params.ENABLE_LAST_CHANCE_HINT and attempt == self.max_retries:
                  loop_context += "\n[SYSTEM WARNING]: This is your FINAL attempt. Ensure strict compliance with all constraints.\n"
 
-            # 1. EXECUTION (F) - Polymorphic
-            strategy = contract.node_spec.metadata.get('strategy', 'DIRECT')
-            step_metric.strategy = strategy
-            
+            # EXECUTION (F) - Standard
             if strategy == 'SWARM':
                 artifact_for_val, correction_count = self._execute_swarm(task, loop_context, contract, images, depth)
             else:
@@ -223,6 +256,12 @@ class GFSOUnit:
             logger._logger.info(f"\n{logger._indent(depth)}[VALIDATOR REFLECTION]:\n{val_sgr.thought}\n")
             
             val_data = val_sgr.content
+            if val_data is None:
+                # Handle API/Parsing errors gracefully
+                step_metric.status = "FAILED (Validator API Error)"
+                logger.error(f"Validator returned NO DATA. Cause: {val_sgr.thought}", depth)
+                raise StepFailure(step_id, f"Validator crashed or failed to parse: {val_sgr.thought}")
+
             val_result = ValidationResult(
                 epsilon=val_data.get('epsilon', 1.0),
                 laxity=val_data.get('laxity', 1.0),
@@ -253,9 +292,8 @@ class GFSOUnit:
 
 class GFSOAgent:
     """Recursive Runtime Engine."""
-    def __init__(self, llm: LLMInterface, max_depth: int = Params.MAX_RECURSION_DEPTH):
+    def __init__(self, llm: LLMInterface):
         self.llm = llm
-        self.max_depth = max_depth
         
         # Initialize generic agents
         self.architect = LLMAgent(
@@ -282,46 +320,83 @@ class GFSOAgent:
             kind='validation'
         )
 
-    def run(self, user_task: str, images: Optional[List[str]] = None, mode: HeadMode = HeadMode.FULL) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def run(self, user_task: str, images: Optional[List[str]] = None, confidence_threshold: float = Params.CONFIDENCE_THRESHOLD) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         img_msg = f" [Images: {len(images)}]" if images else ""
         logger.section(f"GFSO Agent Init: {user_task}\n{img_msg}", depth=0)
 
-        ctx = RuntimeContext(user_task, images=images)
+        enriched_task = user_task
+        final_status = "FAILED"
 
-        try:
-            # 1. BLUEPRINTING PHASE
-            logger.section("Phase 1: Architecture (G)", depth=0)
-            blueprint = self._synthesize_blueprint(user_task, ctx)
-            ctx.artifacts['ROOT_ARCHITECT'] = str(blueprint) # Save plan for Head/Debug
-            logger.end_section("Phase 1", depth=0)
+        # HEAD RETRY LOOP
+        for head_attempt in range(Params.MAX_HEAD_RETRIES + 1):
+            if head_attempt > 0:
+                logger.section(f"HEAD RETRY {head_attempt}", depth=0)
 
-            # 2. EXECUTION PHASE
-            logger.section("Phase 2: Execution (F)", depth=0)
-            self._execute_blueprint(blueprint, ctx, depth=0)
-            logger.end_section("Phase 2", depth=0)
+            ctx = RuntimeContext(enriched_task, images=images)
 
-        except StepFailure as e:
-            logger.error(f"Pipeline Halted: {e}", depth=0)
+            try:
+                # 1. BLUEPRINTING PHASE
+                logger.section("Phase 1: Architecture (G)", depth=0)
+                blueprint = self._synthesize_blueprint(enriched_task, ctx)
+                ctx.artifacts['ROOT_ARCHITECT'] = str(blueprint)
+                logger.end_section("Phase 1", depth=0)
 
-        except Exception as e:
-            logger.error(f"Unexpected Crash: {e}", depth=0)
-            import traceback
-            logger._logger.debug(traceback.format_exc())
+                # 2. EXECUTION PHASE
+                logger.section("Phase 2: Execution (F)", depth=0)
+                self._execute_blueprint(blueprint, ctx, depth=0)
+                logger.end_section("Phase 2", depth=0)
 
-        # 3. SYNTHESIS PHASE (HEAD) - always runs
-        logger.section("Phase 3: Synthesis (Head)", depth=0)
-        status = self._compute_status(ctx)
-        head_result = self._finalize(user_task, ctx, status=status, mode=mode)
-        ctx.artifacts['HEAD_RESULT'] = head_result
+            except StepFailure as e:
+                logger.error(f"Pipeline Halted: {e}", depth=0)
 
-        logger._logger.info(f"\n>>> [{status}] {head_result.answer}\n")
-        logger.end_section("Phase 3", depth=0)
+            except Exception as e:
+                logger.error(f"Unexpected Crash: {e}", depth=0)
+                import traceback
+                logger._logger.debug(traceback.format_exc())
+
+            # 3. SYNTHESIS PHASE (HEAD) - always runs
+            logger.section("Phase 3: Synthesis (Head)", depth=0)
+            status = self._compute_status(ctx)
+            head_result = self._finalize(enriched_task, ctx, status=status)
+            ctx.artifacts['HEAD_RESULT'] = head_result
+
+            logger._logger.info(f"\n>>> [{status}] Answer: {head_result.answer}")
+            logger._logger.info(f"    Confidence: {head_result.confidence:.2f}")
+            if head_result.refinement:
+                logger._logger.info(f"    Refinement: {head_result.refinement[:200]}...")
+            logger._logger.info("")
+            logger.end_section("Phase 3", depth=0)
+
+            final_status = status
+
+            # Check if retry needed
+            # SUCCESS + high confidence = done
+            if status == "SUCCESS" and head_result.confidence >= confidence_threshold:
+                break
+
+            if not Params.ENABLE_HEAD_RETRY or head_attempt >= Params.MAX_HEAD_RETRIES:
+                logger._logger.info(f"[HEAD] {status} - Max retries reached.")
+                break
+
+            # Determine retry reason
+            retry_reason = status
+            if status == "SUCCESS" and head_result.confidence < confidence_threshold:
+                logger._logger.info(f"[HEAD] SUCCESS but low confidence ({head_result.confidence:.2f} < {confidence_threshold:.2f})")
+                retry_reason = "Low confidence"
+
+            # Use refinement as hints for retry
+            if head_result.refinement:
+                logger._logger.info(f"[HEAD] Retrying ({retry_reason}): {head_result.refinement[:100]}...")
+                enriched_task = f"{user_task}\n\n[GUIDANCE FROM PREVIOUS ATTEMPT]:\n{head_result.refinement}"
+            else:
+                logger._logger.info(f"[HEAD] No refinement - stopping retry ({retry_reason}).")
+                break
 
         # METRICS REPORT
         self._print_metrics_summary(ctx)
         metrics_dict = self._export_metrics(ctx)
 
-        logger.section(f"Task Completed ({status})", depth=0)
+        logger.section(f"Task Completed ({final_status})", depth=0)
 
         return ctx.artifacts, metrics_dict
 
@@ -360,38 +435,34 @@ class GFSOAgent:
             return "PARTIAL"
         return "SUCCESS"
 
-    def _finalize(self, task: str, ctx: RuntimeContext, status: str, mode: HeadMode = HeadMode.FULL) -> HeadResult:
+    def _finalize(self, task: str, ctx: RuntimeContext, status: str) -> HeadResult:
         context_str = ""
         for k, v in ctx.artifacts.items():
             context_str += f"\n--- {k} ---\n{str(v)}\n"
 
-        mode_instruction = Prompts.HEAD_MODE_STRICT if mode == HeadMode.STRICT else Prompts.HEAD_MODE_FULL
-        schema = SCHEMAS.HEAD_STRICT if mode == HeadMode.STRICT else SCHEMAS.HEAD_FULL
-
         prompt = Prompts.HEAD.format(
             status=status,
-            mode_instruction=mode_instruction,
             task=task,
             context=context_str if context_str.strip() else "(no artifacts)"
         )
 
         try:
-            res = self.llm.generate_structured(prompt, schema,
+            res = self.llm.generate_structured(prompt, SCHEMAS.HEAD,
                 system_prompt=f"You are the GFSO HEAD Agent. Extract the final answer.",
                 temperature=Params.HEAD_TEMP
             )
 
             return HeadResult(
                 answer=res.get('final_answer', 'N/A'),
-                status=status,  # From core, not LLM
-                confidence=res.get('confidence'),
+                status=status,
+                confidence=res.get('confidence', 0.0),
                 thought=res.get('thought'),
-                diagnosis=res.get('diagnosis')
+                refinement=res.get('refinement')
             )
 
         except Exception as e:
             logger.error(f"Head Failed: {e}", 0)
-            return HeadResult(answer="N/A", status="FAILED")
+            return HeadResult(answer="N/A", status="FAILED", confidence=0.0)
 
     def _synthesize_blueprint(self, task: str, ctx: RuntimeContext) -> Blueprint:
         contract = Contract(

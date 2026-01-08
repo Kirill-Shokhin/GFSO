@@ -6,21 +6,18 @@ from gfso.core.graph import TaskDAG
 from gfso_agent.config import Params
 
 
-class HeadMode(Enum):
-    """HEAD operation modes."""
-    STRICT = "strict"  # Minimal output: answer + confidence (for benchmarks)
-    FULL = "full"      # Rich output: analysis, speculation, retry feedback (for users)
-
-
 @dataclass
 class HeadResult:
     """Unified HEAD output."""
     answer: str
     status: str                            # "SUCCESS" | "PARTIAL" | "FAILED" - computed by core
-    # FULL mode only
-    confidence: Optional[float] = None     # How reliable (1.0 if computed, lower if guess)
+    confidence: float = 0.0                # How reliable (1.0 if computed, <1.0 if guess)
     thought: Optional[str] = None          # Analysis
-    diagnosis: Optional[str] = None        # What went wrong (empty if SUCCESS)
+    refinement: Optional[str] = None        # What went wrong (empty if SUCCESS)
+
+    def get_answer(self, confidence_threshold: float = Params.CONFIDENCE_THRESHOLD) -> str:
+        """Get answer with confidence filtering."""
+        return self.answer if self.confidence >= confidence_threshold else "N/A"
 
 T = TypeVar('T')
 

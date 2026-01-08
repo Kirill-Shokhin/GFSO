@@ -1,12 +1,12 @@
 # GFSO Agent Architecture: Composite Swarm Unit
 
-**Version:** 3.3 ("Observability & Verification")
-**Last Updated:** January 8, 2026
+**Version:** 3.4 ("Recursive Refinement & Search")
+**Last Updated:** January 11, 2026
 **Role:** Primary context, architectural mandate, and historical record for the GFSO runtime.
 
 ---
 
-## 1. The Core Architecture (v3.2)
+## 1. The Core Architecture (v3.4)
 
 The GFSO Agent integrates **Category Theory** (Topological Guarantees) with **Swarm Intelligence** (Tactical Depth).
 
@@ -26,11 +26,9 @@ graph TD
         Architect -->|Blueprint DAG| Engine[Execution Engine]
         
         %% Closing the Loop
-        Engine -->|All Steps Complete| Head
-        Head -->|Final Synthesis| Output([Final Output])
-        
-        %% Error Handling
-        Feedback -.->|Max Retries Exceeded| Head
+        Engine -->|Step Artifacts| Head
+        Head -->|Success| Output([Final Output])
+        Head -.->|"Refinement (Context Missing)"| Architect
     end
 
     %% EXECUTION ROUTING
@@ -39,10 +37,10 @@ graph TD
         
         Strategy -- "RECURSIVE (Disabled)" --> SubArch["Call Architect (Sub-DAG)"]
         SubArch --> Engine
-        
+
         Strategy -- "DIRECT" --> Single["Single Worker (SGR)"]
-        
         Strategy -- "SWARM" --> Scatter[X-Master Unit]
+        Strategy -- "SEARCH" --> Web["Web Search Tool"]
     end
 
     %% TACTICAL SWARM (X-MASTER)
@@ -71,6 +69,9 @@ graph TD
         
         Commit --> Engine
         Feedback -.->|"Retry + Shared Context"| Engine
+        
+        %% Search Bypass
+        Web -.->|"Trusted Source (Skip Val)"| Commit
     end
 ```
 
@@ -99,6 +100,10 @@ We attempted to integrate X-Master.
 *   **Verification Pipeline:** Standardized as `Normalize -> String Match -> LLM Judge`. We trust the LLM Judge to handle semantic equivalence (e.g. `1/2 == 0.5`).
 *   **Execution Safety:** `PYTHONIOENCODING='utf-8'` enforced to prevent Windows Unicode crashes.
 
+### 3.3. The External Grounding (v3.4):
+*   **Search Strategy:** Added `SEARCH` as a first-class citizen. It allows the agent to fetch authoritative context (specs, facts) before coding. It bypasses the standard Validator, treating the Search Tool as a "Trusted Source".
+*   **Head Refinement:** The global retry loop was refined. Instead of a generic "Try Again", the Head now produces a **Refinement**—a conceptual insight about missing domain context—which enriches the task for the next run.
+
 ---
 
 ## 3. Core Components
@@ -112,6 +117,7 @@ We attempted to integrate X-Master.
 *   **DIRECT:** Single Worker + SGR. For deterministic tasks.
 *   **SWARM:** N Workers + Synthesizer. For Search, Logic, and Perception.
     *   *Perception Exception:* For image tasks, Workers MUST extract data manually into hardcoded structures.
+*   **SEARCH:** Native Tool Use. Retrieves authoritative external context (web search) without code execution. Used to ground the DAG in reality.
 
 ### 3.3. Natural Transformation $\eta$ (Validator)
 *   **Role:** The Judge.

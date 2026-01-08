@@ -5,6 +5,8 @@ from typing import Dict, Any, Optional, List
 class Params:
     ENABLE_REASONING = False
     ENABLE_LAST_CHANCE_HINT = True
+    ENABLE_WEB_SEARCH = True
+    ENABLE_HEAD_RETRY = True  # Re-run pipeline with hints from Head on FAILED/PARTIAL
 
     # Temperatures
     ARCHITECT_TEMP = 0.3
@@ -13,19 +15,20 @@ class Params:
     SYNTHESIZER_TEMP = 0.4   # Balanced for merging and selection
     VALIDATOR_TEMP = 0.1
     HEAD_TEMP = 0.2
-    
+
     # Swarm Settings
     SWARM_SIZE = 3          # N parallel workers
-    
+
     # Thresholds
     EPSILON_THRESHOLD = 0.15
     LAXITY_THRESHOLD = 0.15
+    CONFIDENCE_THRESHOLD = 0.9  # Minimum confidence to accept answer (for benchmarks)
 
     # Limits
     MAX_TOKENS = 4096
     MAX_RETRIES = 2
     MAX_SELF_CORRECTIONS = 5
-    MAX_RECURSION_DEPTH = 3
+    MAX_HEAD_RETRIES = 1  # Global retries with Head feedback
 
 # --- SCHEMA ENGINE ---
 
@@ -91,7 +94,7 @@ class SchemaRegistry:
         node_schema = (SchemaBuilder()
             .add_str("id", "Unique Step ID")
             .add_str("description", "The sub-problem to be solved.")
-            .add_str("strategy", "Execution strategy. Use 'SWARM' for uncertainty, perception, or complex reasoning; 'DIRECT' for deterministic algorithmic steps.", enum_values=["DIRECT", "SWARM"])
+            .add_str("strategy", "DIRECT: deterministic. SWARM: uncertainty/perception. SEARCH: web research for obscure facts.", enum_values=["DIRECT", "SWARM", "SEARCH"])
             .add_str("spec", "Mathematical/Logic requirements.")
             .add_str("recommended_libraries", "List of specialized libraries to leverage for this task. Use 'Any' to delegate the choice to the Worker.")
             .add_str("artifact", "Detailed instructions for the Worker on how to write the script.")
@@ -121,26 +124,18 @@ class SchemaRegistry:
     def VALIDATOR(self):
         return (SchemaBuilder()
             .thought("Detailed critique and error analysis. First THINK, then judge.", required=True) # Validator MUST think
-            .add_bool("is_passed", "Final Verdict: True if compliant, False if failed.")
             .add_num("object_quality_score", "Compliance with NODE REQUIREMENTS (G(A)). Did the agent solve the core task correctly? (0.0=Fail, 1.0=Perfect)")
             .add_num("integration_quality_score", "Compliance with DEPENDENCIES/EDGES (G(f)). Did the agent respect input formats and context? (0.0=Fail, 1.0=Perfect)")
             .build())
 
     @property
-    def HEAD_STRICT(self):
-        """Minimal schema for benchmarks."""
-        return (SchemaBuilder()
-            .add_str("final_answer", "Extract the answer from artifacts. 'N/A' if unavailable.")
-            .build())
-
-    @property
-    def HEAD_FULL(self):
-        """Rich schema for user-facing output."""
+    def HEAD(self):
+        """Schema for HEAD final synthesis."""
         return (SchemaBuilder()
             .thought("Analysis: what worked, what failed, why.")
-            .add_str("final_answer", "Best answer given the artifacts.")
-            .add_num("confidence", "How reliable is this answer (0.0-1.0). 1.0 if computed, lower if extrapolated.")
-            .add_str("diagnosis", "What went wrong and why (empty if SUCCESS).")
+            .add_str("final_answer", "The final answer. Provide best short answer based on artifacts.")
+            .add_num("confidence", "1.0 if pipeline SUCCESS (answer extracted from artifacts). <1.0 only if FAILED/PARTIAL (guessing from incomplete data).")
+            .add_str("refinement", "Conceptual insight derived from the execution artifacts to refine the initial problem statement. Isolates missing domain context or crucial constraints required for a successful re-run. Empty if SUCCESS.")
             .build())
 
 SCHEMAS = SchemaRegistry()
@@ -158,6 +153,7 @@ INVARIANTS:
    - Only split if inputs for Step 2 MUST come from the OUTPUT of Step 1.
    - **NO META-PLANNING**: Nodes must be executable calculations, not planning steps.
    - **PERCEPTION FIRST**: If image is present, Step 1 MUST be 'Image Analysis' to extract data.
+   - **SEARCH FIRST**: If task requires obscure theorems/facts, prepend a SEARCH node. Its output becomes context for analysis nodes.
 2. **ABSTRACTION**:
    - Blueprint is a TEMPLATE. Do NOT calculate the answer here.
    - Describe WHAT to compute, not the result.
@@ -192,7 +188,8 @@ STRICT INVARIANTS:
 - PRECISION: Do not hallucinate inputs. Use provided values exactly.
 - PURE LOGIC: Use specialized libraries to avoid manual algorithms.
 - NO VISUALIZATION: Do NOT use plotting libraries. No one sees the images. Focus on computing the numerical/textual result.
-- **OUTPUT**: The script MUST end with a `print()` statement to output the final result. Silent scripts are failures.
+- **OUTPUT**: The script MUST end with a `print()` statement to output the final result.
+- **SILENCE**: Do NOT print debug messages. STDOUT must contain ONLY the final result.
 - REFINE: If execution fails, fix the code and retry.
 
 TASK: {task}
@@ -226,8 +223,9 @@ GOAL: Strict verification of OUTPUT against SPECIFICATION.
 
 STRICT PROTOCOL:
 1. DATA INTEGRITY: Check that input data/values in Output match Specification exactly.
-2. LOGIC: Verify adherence to strategy and constraints.
-3. FORMAT: Ensure output matches the required schema.
+2. CONTEXT CONSISTENCY: Verify that the Output matches the facts provided in the CONTEXT (Dependencies). Do not accept hallucinations that contradict the Context.
+3. LOGIC: Verify adherence to strategy and constraints.
+4. FORMAT: Ensure output matches the required schema.
 
 SPECIFICATION:
 {spec}
@@ -241,18 +239,11 @@ OUTPUT:
         
     HEAD = """
 ROLE: HEAD (Final Synthesizer).
-
-ROLE: Extract the final answer from pipeline artifacts.
+GOAL: Extract the final answer from pipeline artifacts.
 
 PIPELINE STATUS: {status}
-{mode_instruction}
-
 TASK: {task}
 
 ARTIFACTS:
 {context}
 """
-
-    HEAD_MODE_STRICT = "OUTPUT: Just the answer. If artifacts incomplete, answer 'N/A'."
-
-    HEAD_MODE_FULL = "OUTPUT: Analysis + answer. If not SUCCESS, explain what went wrong and give best guess with confidence."

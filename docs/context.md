@@ -79,6 +79,12 @@ Once the system works (diagram commutes):
     *   Tests Green? -> Keep reduction (Move closer to Initial Object).
     *   Tests Red? -> Rollback (You hit the boundary).
 
+### Phase 4: Refinement (The Head Loop)
+If the DAG completes but the answer is partial/low-confidence:
+1.  **Head Synthesis:** The Supervisor analyzes all artifacts.
+2.  **Refinement:** Generates a **conceptual insight** (not technical feedback) identifying missing domain context (e.g., "Missing tax rate for 2024").
+3.  **Recursion:** The Task is enriched with this context and the Architect is re-invoked (Fibrational Descent).
+
 ---
 
 ## 5. Critical Constraints (Do not ignore)

@@ -25,7 +25,6 @@ from experiments.loaders import get_loader, Task, DATASETS
 from gfso_agent.core import GFSOAgent
 from gfso_agent.llm import AnthropicLLM, MockLLM
 from gfso_agent.logger import logger
-from gfso_agent.types import HeadMode
 
 
 def setup_output_dir(dataset: str, task_idx: int, output_root: str = "outputs") -> Path:
@@ -86,11 +85,13 @@ def run_task(task: Task, llm, dataset_name: str, loader, output_root: str = "out
         if task.choices:
             task_str += "Choices:\n" + "\n".join(f"- {c}" for c in task.choices)
 
-        # Use STRICT mode for benchmarks (minimal output)
-        artifacts, metrics = agent.run(task_str, images=image_paths if image_paths else None, mode=HeadMode.STRICT)
+        # Run pipeline
+        artifacts, metrics = agent.run(task_str, images=image_paths if image_paths else None)
 
         head = artifacts['HEAD_RESULT']
-        answer, status = head.answer.strip(), head.status
+        # Filter by confidence for benchmarks (reject low-confidence guesses)
+        answer = head.get_answer().strip()
+        status = head.status
         is_correct = loader.check_answer(answer, task.answer, question=task.question, llm=llm)
 
         result = {

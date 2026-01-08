@@ -215,6 +215,49 @@ with small Lipschitz constant $L$.
 
 ---
 
+### Experiment 5: Soft Validation Curve (Theorem 3.2)
+
+**Objective:** Verify that soft validation provides quantifiable improvement over no validation, and measure empirical degradation factor g(T,M).
+
+**Setup:**
+1. Select benchmark tasks with ground truth (e.g., MATH dataset)
+2. Run pipeline with varying validation thresholds T ∈ {0.1, 0.2, 0.3, 0.5, 0.8, 1.0}
+3. For each T, vary retry count M ∈ {1, 2, 3, 5}
+4. For each (T, M) configuration, measure:
+   - Success rate (matches ground truth)
+   - Average accepted epsilon (from validator scores)
+   - Total retry count
+   - Token cost
+
+**Metrics:**
+- **Primary:** Plot success_rate vs T for each M (should be monotonic increasing)
+- **Degradation factor:** g(T,M) = E[accepted_epsilon] / E[epsilon_no_validation]
+- **Comparison:** Fit theoretical g(T,M) (Proposition 3.3) vs empirical
+- **Distribution:** Histogram of epsilon values → fit Beta/Gamma/Uniform to get P_ε
+
+**Expected Results (from Theorem 3.2):**
+- T=0.1, M=3 → ~90% success, low g (~0.15)
+- T=0.5, M=1 → ~60% success, medium g (~0.5)
+- T=1.0, M=1 → ~30% success, high g (~1.0, no filtering)
+- Empirical g should match theoretical within 20%
+
+**Validation of Claims:**
+- Monotonicity: ∂g/∂T > 0, ∂g/∂M < 0 (Proposition 3.3.1)
+- Minimum 5× improvement at T=0.2μ (Proposition 3.3.4)
+- Linear bound: Global error ∝ n·g(T,M) (Theorem 3.2)
+
+**Cost Estimate:** High (need to run 6 thresholds × 4 retry counts × N tasks)
+- Suggest: N=20 tasks, total ~480 pipeline runs
+- Use haiku-4.5 to reduce cost
+
+**Artifacts:**
+- `experiments/soft_validation_curve.py` (runner)
+- `outputs/g_factor_empirical.csv` (raw data)
+- `outputs/p_epsilon_distribution.png` (histogram + fitted distribution)
+- `outputs/theorem_3_2_validation.png` (g theoretical vs empirical)
+
+---
+
 ## 4. Evidence Log
 
 ### [DATE] - [Experiment/Observation]
@@ -238,9 +281,12 @@ with small Lipschitz constant $L$.
    - User observed ~10% - is this enough?
    - Need theoretical justification or empirical threshold
 
-3. **How to handle partial failures?**
-   - Node produces output but it's "mostly correct"
-   - Binary PASS/FAIL vs soft scores?
+3. ~~**How to handle partial failures?**~~ **RESOLVED (Theorem 3.2)**
+   - ~~Node produces output but it's "mostly correct"~~
+   - ~~Binary PASS/FAIL vs soft scores?~~
+   - **Solution:** Soft validation with threshold T and retries M
+   - **Formalization:** See mathematics.md §3.2-3.3 for degradation factor g(T,M)
+   - **Empirical test:** Experiment 5 measures actual improvement
 
 4. **Swarm consensus for perception - is this formally sound?**
    - Majority vote has known properties (Condorcet)

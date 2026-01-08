@@ -1,17 +1,23 @@
 import os
 import base64
 import textwrap
+import time
 from typing import Protocol, Optional, List, Dict, Any, Union
 import anthropic
 
 from gfso_agent.types import KleisliFunctor, Contract, SGROutput, Blueprint
 from gfso_agent.config import Params, Prompts
+from gfso_agent.logger import logger
 
 class LLMInterface(Protocol):
     """Abstract interface for LLM interaction."""
     
     def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
         """Generate text response with optional images."""
+        ...
+
+    def search(self, prompt: str, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+        """Execute native search and return text answer."""
         ...
 
     def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
@@ -81,7 +87,6 @@ class LLMAgent(KleisliFunctor[Any]):
             q_int = data.get('integration_quality_score', 0.0)
             
             content = {
-                'is_passed': data.get('is_passed', False),
                 'epsilon': 1.0 - q_obj,
                 'laxity': 1.0 - q_int
             }
@@ -113,7 +118,7 @@ class BaseLLM:
             import json
             res_str = json.dumps(response, indent=2, ensure_ascii=False) if isinstance(response, dict) else str(response)
             f.write(f"--- RESPONSE ---\n{res_str}\n")
-            f.write(f"{'='*78}\n")
+            f.write(f"{ '='*78}\n")
 
 class MockLLM(BaseLLM):
     """Mock LLM for testing without API keys."""
@@ -121,6 +126,11 @@ class MockLLM(BaseLLM):
     def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
         res = f"[MOCK] {prompt[:50]}..."
         self._log_roundtrip("MOCK_TEXT", system_prompt or "None", prompt, {}, res, images)
+        return res
+
+    def search(self, prompt: str, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+        res = f"[MOCK SEARCH] Results for: {prompt[:50]}..."
+        self._log_roundtrip("MOCK_SEARCH", system_prompt or "None", prompt, {}, res)
         return res
 
     def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
@@ -140,11 +150,10 @@ class MockLLM(BaseLLM):
                 "edges": []
             }
 
-        # VALIDATOR (has is_passed)
-        elif "is_passed" in props:
+        # VALIDATOR (has quality scores)
+        elif "object_quality_score" in props or "integration_quality_score" in props:
             res = {
                 "thought": "Mock validation passed.",
-                "is_passed": True,
                 "object_quality_score": 1.0,
                 "integration_quality_score": 1.0
             }
@@ -157,12 +166,12 @@ class MockLLM(BaseLLM):
             }
 
         # HEAD FULL (has diagnosis)
-        elif "diagnosis" in props:
+        elif "refinement" in props:
             res = {
                 "thought": "Pipeline completed successfully.",
                 "final_answer": "42",
                 "confidence": 1.0,
-                "diagnosis": ""
+                "refinement": ""
             }
 
         self._log_roundtrip("MOCK_STRUCT", system_prompt or "None", prompt, schema, res, images)
@@ -214,72 +223,87 @@ class AnthropicLLM(BaseLLM):
         return content
 
     def generate(self, prompt: str, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        try:
-            content = self._prepare_content(prompt, images)
-            
-            kwargs = {
-                "model": self.model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": [
-                    {"role": "user", "content": content}
-                ]
-            }
-            
-            if system_prompt:
-                kwargs["system"] = system_prompt
+        for attempt in range(3):
+            try:
+                content = self._prepare_content(prompt, images)
+                kwargs = {
+                    "model": self.model, "max_tokens": max_tokens, "temperature": temperature,
+                    "messages": [{"role": "user", "content": content}]
+                }
+                if system_prompt: kwargs["system"] = system_prompt
+                    
+                response = self.client.messages.create(**kwargs)
+                res_text = response.content[0].text
+                self._log_roundtrip(f"ANTHROPIC_TEXT({self.model})", system_prompt or "None", prompt, {}, res_text, images)
+                return res_text
+            except anthropic.RateLimitError:
+                print(f"    [LLM] 429 Rate Limit. Sleep 30s...")
+                time.sleep(30)
+            except anthropic.APIError as e:
+                err = f"Error calling Anthropic API: {str(e)}"
+                self._log_roundtrip("ANTHROPIC_ERROR", system_prompt or "None", prompt, {}, err, images)
+                return err
+        return "Error: Rate limit exceeded"
+
+    def search(self, prompt: str, system_prompt: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+        for attempt in range(3):
+            try:
+                kwargs = {
+                    "model": self.model, "max_tokens": max_tokens, "temperature": temperature,
+                    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+                    "tool_choice": {"type": "tool", "name": "web_search"},
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+                if system_prompt: kwargs["system"] = system_prompt
                 
-            response = self.client.messages.create(**kwargs)
-            res_text = response.content[0].text
-            self._log_roundtrip(f"ANTHROPIC_TEXT({self.model})", system_prompt or "None", prompt, {}, res_text, images)
-            return res_text
-            
-        except anthropic.APIError as e:
-            err = f"Error calling Anthropic API: {str(e)}"
-            self._log_roundtrip("ANTHROPIC_ERROR", system_prompt or "None", prompt, {}, err, images)
-            return err
+                response = self.client.messages.create(**kwargs)
+                
+                res_text = "".join(b.text for b in response.content if b.type == 'text').strip()
+                
+                # Minimal query extraction for transparency
+                queries = [b.input.get('query') for b in response.content if hasattr(b, 'input') and isinstance(b.input, dict) and 'query' in b.input]
+                
+                if queries:
+                    q_str = ", ".join(queries)
+                    logger._logger.info(f"    [WEB SEARCH]: {q_str}")
+                    res_text += f"\n\n[SEARCH CONDUCTED]: {q_str}"
+                
+                self._log_roundtrip(f"ANTHROPIC_SEARCH", system_prompt or "None", prompt, {}, res_text)
+                return res_text
+            except anthropic.RateLimitError:
+                logger._logger.info(f"    [LLM] 429 Rate Limit. Sleep 30s...")
+                time.sleep(30)
+        return "Error: Rate limit exceeded"
 
     def generate_structured(self, prompt: str, schema: dict, images: Optional[List[str]] = None, system_prompt: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4096) -> dict:
         tool_name = "output_formatter"
-        tool_definition = {
-            "name": tool_name,
-            "description": "Output the result in the required format.",
-            "input_schema": schema
-        }
+        tool_definition = {"name": tool_name, "description": "Output in required format", "input_schema": schema}
 
-        try:
-            content = self._prepare_content(prompt, images)
+        for attempt in range(3):
+            try:
+                content = self._prepare_content(prompt, images)
+                kwargs = {
+                    "model": self.model, "max_tokens": max_tokens, "temperature": temperature,
+                    "tools": [tool_definition], "tool_choice": {"type": "tool", "name": tool_name},
+                    "messages": [{"role": "user", "content": content}]
+                }
+                if system_prompt: kwargs["system"] = system_prompt
 
-            kwargs = {
-                "model": self.model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "tools": [tool_definition],
-                "tool_choice": {"type": "tool", "name": tool_name},
-                "messages": [
-                    {"role": "user", "content": content}
-                ]
-            }
+                response = self.client.messages.create(**kwargs)
+                final_res = None
+                for block in response.content:
+                    if block.type == 'tool_use' and block.name == tool_name:
+                        final_res = block.input
+                        break
 
-            if system_prompt:
-                kwargs["system"] = system_prompt
-
-            response = self.client.messages.create(**kwargs)
-
-            final_res = None
-            for block in response.content:
-                if block.type == 'tool_use' and block.name == tool_name:
-                    final_res = block.input
-                    break
-
-            if final_res is None:
-                raise ValueError("Model did not use the required tool.")
-
-            self._log_roundtrip(f"ANTHROPIC_STRUCT({self.model})", system_prompt or "None", prompt, schema, final_res,
-                                images)
-            return final_res
-
-        except Exception as e:
-            print(f"[LLM Error] Structured generation failed: {e}")
-            self._log_roundtrip("ANTHROPIC_STRUCT_ERROR", system_prompt or "None", prompt, schema, str(e), images)
-            raise e
+                if final_res is None: raise ValueError("Model did not use the tool.")
+                self._log_roundtrip(f"ANTHROPIC_STRUCT({self.model})", system_prompt or "None", prompt, schema, final_res, images)
+                return final_res
+            except anthropic.RateLimitError:
+                print(f"    [LLM] 429 Rate Limit. Sleep 30s...")
+                time.sleep(30)
+            except Exception as e:
+                print(f"[LLM Error] Structured generation failed: {e}")
+                self._log_roundtrip("ANTHROPIC_STRUCT_ERROR", system_prompt or "None", prompt, schema, str(e), images)
+                raise e
+        raise ValueError("Rate limit exceeded")
