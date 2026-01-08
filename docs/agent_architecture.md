@@ -1,7 +1,7 @@
 # GFSO Agent Architecture: Composite Swarm Unit
 
-**Version:** 3.2 ("Robust & Dynamic")
-**Last Updated:** January 7, 2026
+**Version:** 3.3 ("Observability & Verification")
+**Last Updated:** January 8, 2026
 **Role:** Primary context, architectural mandate, and historical record for the GFSO runtime.
 
 ---

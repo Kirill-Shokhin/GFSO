@@ -31,11 +31,26 @@ class StepFailure(Exception):
         super().__init__(f"Step '{step_id}' failed: {feedback}")
 
 @dataclass
+class StepMetrics:
+    step_id: str
+    role: str          # 'Architect', 'Worker'
+    strategy: str = "DIRECT"
+    validator_retries: int = 0
+    self_corrections: int = 0
+    status: str = "PENDING"
+
+@dataclass
 class RuntimeContext:
     original_task: str
     images: Optional[List[str]] = None
     artifacts: Dict[str, str] = field(default_factory=dict)
     feedback_log: Dict[str, List[str]] = field(default_factory=dict)
+    metrics: Dict[str, StepMetrics] = field(default_factory=dict)
+
+    def get_metric(self, step_id: str, role: str) -> StepMetrics:
+        if step_id not in self.metrics:
+            self.metrics[step_id] = StepMetrics(step_id, role)
+        return self.metrics[step_id]
 
     def get_context_for_step(self, step_id: str, deps: List[str]) -> str:
         ctx = ""

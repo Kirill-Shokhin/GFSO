@@ -36,8 +36,9 @@ class GFSOUnit:
             logger._logger.info(f"{logger._indent(depth)}[EXEC]: Exit {res.exit_code}")
 
             if res.exit_code == 0:
-                # RELAXED: We trust the Validator to judge the output content.
-                # Core only cares that execution succeeded technically.
+                # Core check: A silent script is usually an error in our framework
+                if not res.stdout.strip():
+                    return False, "Code executed successfully but STDOUT is empty. You MUST print the final result.", None, "Empty STDOUT"
                 
                 # Success
                 view = f"## CODE\n```python\n{sgr.content}\n```\n\n## EXECUTION\nExit: {res.exit_code}\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
@@ -70,28 +71,30 @@ class GFSOUnit:
         # FALLBACK
         return True, "Passthrough", sgr.content, None
 
-    def _execute_lane(self, task: str, context: str, contract: Contract, images: Optional[List[str]], depth: int, temp: float, functor: Optional['KleisliFunctor'] = None) -> Optional[Any]:
-        """Runs a single SGR loop (Think->Act->Verify). Returns artifact or None if failed."""
+    def _execute_lane(self, task: str, context: str, contract: Contract, images: Optional[List[str]], depth: int, temp: float, functor: Optional['KleisliFunctor'] = None) -> Tuple[Optional[Any], int]:
+        """Runs a single SGR loop (Think->Act->Verify). Returns (artifact, self_correction_count) or (None, count)."""
         functor = functor or self.functor
         sgr = functor.lift(task, context, contract, images, temperature=temp)
         logger._logger.info(f"{logger._indent(depth)}\n[THOUGHT]: {sgr.thought}")
 
+        total_corrections = 0
         for internal_try in range(Params.MAX_SELF_CORRECTIONS):
             is_valid, feedback, artifact, error_log = self._verify_local_artifact(sgr, depth)
             
             if is_valid:
-                return artifact
+                return artifact, total_corrections
             
+            total_corrections += 1
             # Failed locally
             context += f"\n\n[SELF-CORRECTION REQUEST]:\n{feedback}\nINSTRUCTION: Fix the error and return the corrected artifact."
             if internal_try < Params.MAX_SELF_CORRECTIONS - 1:
                 logger._logger.info(f"{logger._indent(depth)}[FIXING]: Retrying internal generation...")
                 sgr = functor.lift(task, context, contract, images, temperature=temp)
         
-        return None
+        return None, total_corrections
 
-    def _execute_swarm(self, task: str, context: str, contract: Contract, images: Optional[List[str]], depth: int) -> Any:
-        """Executes N parallel lanes and synthesizes the result."""
+    def _execute_swarm(self, task: str, context: str, contract: Contract, images: Optional[List[str]], depth: int) -> Tuple[Any, int]:
+        """Executes N parallel lanes and synthesizes the result. Returns (artifact, total_corrections)."""
 
         # OPTIMIZATION: Size=1 bypass
         if Params.SWARM_SIZE == 1:
@@ -100,6 +103,7 @@ class GFSOUnit:
 
         candidates = []
         valid_artifacts = []
+        total_corrections = 0
         
         logger._logger.info(f"{logger._indent(depth)}[SWARM]: Spawning {Params.SWARM_SIZE} workers in parallel...")
         
@@ -123,7 +127,9 @@ class GFSOUnit:
             for future in as_completed(future_to_lane):
                 lane_idx = future_to_lane[future]
                 try:
-                    lane_artifact = future.result()
+                    lane_artifact, lane_corrections = future.result()
+                    total_corrections += lane_corrections
+                    
                     if lane_artifact:
                         logger._logger.info(f"{logger._indent(depth)}  > Lane {lane_idx} FINISHED (Success)")
                         # Note: Order in candidates list doesn't strictly matter for synthesis, 
@@ -141,7 +147,7 @@ class GFSOUnit:
         logger._logger.info(f"{logger._indent(depth)}[SWARM]: Synthesizing {len(valid_artifacts)} valid candidates...")
 
         if not valid_artifacts:
-            return "SWARM CRITICAL FAILURE: All parallel workers failed."
+            return "SWARM CRITICAL FAILURE: All parallel workers failed.", total_corrections
 
         syn_context = "\n".join(candidates)
 
@@ -154,8 +160,10 @@ class GFSOUnit:
             kind=self.functor.kind
         )
 
-        golden = self._execute_lane(task, syn_context, contract, images, depth, Params.SYNTHESIZER_TEMP, functor=synthesizer)
-        return golden if golden else valid_artifacts[0]
+        golden, syn_corrections = self._execute_lane(task, syn_context, contract, images, depth, Params.SYNTHESIZER_TEMP, functor=synthesizer)
+        total_corrections += syn_corrections
+        
+        return (golden if golden else valid_artifacts[0]), total_corrections
 
     def run(self, task: str, context: str, contract: Contract, step_id: str, runtime: RuntimeContext, depth: int) -> Any:
         images = runtime.images 
@@ -163,8 +171,18 @@ class GFSOUnit:
 
         last_feedback = "No feedback"
         loop_context = context
+        
+        # Initialize Metrics with robust role detection
+        metric_role = 'Worker'
+        if hasattr(self.functor, 'kind'):
+            if self.functor.kind == 'blueprint':
+                metric_role = 'Architect'
+            
+        step_metric = runtime.get_metric(step_id, metric_role)
 
         for attempt in range(self.max_retries + 1):
+            step_metric.validator_retries = attempt
+            
             if attempt > 0:
                 logger.step_start(f"{step_id} (Retry {attempt})", depth)
 
@@ -173,14 +191,18 @@ class GFSOUnit:
 
             # 1. EXECUTION (F) - Polymorphic
             strategy = contract.node_spec.metadata.get('strategy', 'DIRECT')
+            step_metric.strategy = strategy
             
             if strategy == 'SWARM':
-                artifact_for_val = self._execute_swarm(task, loop_context, contract, images, depth)
+                artifact_for_val, correction_count = self._execute_swarm(task, loop_context, contract, images, depth)
             else:
                 # DIRECT or Fallback
-                artifact_for_val = self._execute_lane(task, loop_context, contract, images, depth, temp=Params.WORKER_TEMP)
+                artifact_for_val, correction_count = self._execute_lane(task, loop_context, contract, images, depth, temp=Params.WORKER_TEMP)
+
+            step_metric.self_corrections += correction_count
 
             if artifact_for_val is None:
+                step_metric.status = "FAILED (SGR Exhausted)"
                 raise StepFailure(step_id, "Failed to generate executable code (SGR Exhausted).")
 
             # LOGGING
@@ -212,6 +234,7 @@ class GFSOUnit:
 
             # 3. CONVERGENCE CHECK
             if is_success:
+                step_metric.status = "SUCCESS"
                 return artifact_for_val
             
             # 4. RETRY CONTEXT UPDATE
@@ -224,6 +247,7 @@ class GFSOUnit:
             loop_context += f"VALIDATOR CRITIQUE:\n{val_result.feedback}\n"
             loop_context += "================================\n"
             
+        step_metric.status = "FAILED (Validator Rejection)"
         logger.error(f"Unit '{step_id}' failed to converge.", depth)
         raise StepFailure(step_id, last_feedback)
 
@@ -258,7 +282,7 @@ class GFSOAgent:
             kind='validation'
         )
 
-    def run(self, user_task: str, images: Optional[List[str]] = None, mode: HeadMode = HeadMode.FULL) -> Dict[str, Any]:
+    def run(self, user_task: str, images: Optional[List[str]] = None, mode: HeadMode = HeadMode.FULL) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         img_msg = f" [Images: {len(images)}]" if images else ""
         logger.section(f"GFSO Agent Init: {user_task}\n{img_msg}", depth=0)
 
@@ -268,6 +292,7 @@ class GFSOAgent:
             # 1. BLUEPRINTING PHASE
             logger.section("Phase 1: Architecture (G)", depth=0)
             blueprint = self._synthesize_blueprint(user_task, ctx)
+            ctx.artifacts['ROOT_ARCHITECT'] = str(blueprint) # Save plan for Head/Debug
             logger.end_section("Phase 1", depth=0)
 
             # 2. EXECUTION PHASE
@@ -292,9 +317,38 @@ class GFSOAgent:
         logger._logger.info(f"\n>>> [{status}] {head_result.answer}\n")
         logger.end_section("Phase 3", depth=0)
 
+        # METRICS REPORT
+        self._print_metrics_summary(ctx)
+        metrics_dict = self._export_metrics(ctx)
+
         logger.section(f"Task Completed ({status})", depth=0)
 
-        return ctx.artifacts
+        return ctx.artifacts, metrics_dict
+
+    def _export_metrics(self, ctx: RuntimeContext) -> Dict[str, Any]:
+        """Convert metrics to dictionary."""
+        return {
+            step_id: {
+                'role': m.role,
+                'strategy': m.strategy,
+                'validator_retries': m.validator_retries,
+                'self_corrections': m.self_corrections,
+                'status': m.status
+            }
+            for step_id, m in ctx.metrics.items()
+        }
+
+    def _print_metrics_summary(self, ctx: RuntimeContext):
+        """Print execution stats table."""
+        if not ctx.metrics: return
+        
+        logger._logger.info("\n" + "="*80)
+        logger._logger.info(f"{'STEP ID':<25} | {'ROLE':<10} | {'STRATEGY':<10} | {'RETRIES':<8} | {'CORR':<5} | {'STATUS'}")
+        logger._logger.info("-" * 95)
+        
+        for m in ctx.metrics.values():
+            logger._logger.info(f"{m.step_id:<25} | {m.role:<10} | {m.strategy:<10} | {m.validator_retries:<8} | {m.self_corrections:<5} | {m.status}")
+        logger._logger.info("="*80 + "\n")
 
     def _compute_status(self, ctx: RuntimeContext) -> str:
         """Determine pipeline status from artifacts."""
@@ -352,7 +406,7 @@ class GFSOAgent:
             incoming_edge_specs=[]
         )
         unit = GFSOUnit(self.architect, self.validator)
-        return unit.run(task, "", contract, "root_architect", ctx, depth=1)
+        return unit.run(task, "", contract, "ROOT_ARCHITECT", ctx, depth=1)
 
     def _execute_blueprint(self, blueprint: Blueprint, ctx: RuntimeContext, depth: int):
         execution_order = blueprint.dag.get_topological_order()

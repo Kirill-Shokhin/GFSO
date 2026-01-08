@@ -87,11 +87,11 @@ def run_task(task: Task, llm, dataset_name: str, loader, output_root: str = "out
             task_str += "Choices:\n" + "\n".join(f"- {c}" for c in task.choices)
 
         # Use STRICT mode for benchmarks (minimal output)
-        artifacts = agent.run(task_str, images=image_paths if image_paths else None, mode=HeadMode.STRICT)
+        artifacts, metrics = agent.run(task_str, images=image_paths if image_paths else None, mode=HeadMode.STRICT)
 
         head = artifacts['HEAD_RESULT']
         answer, status = head.answer.strip(), head.status
-        is_correct = loader.check_answer(answer, task.answer, llm=llm)
+        is_correct = loader.check_answer(answer, task.answer, question=task.question, llm=llm)
 
         result = {
             "task_id": task.id,
@@ -101,6 +101,11 @@ def run_task(task: Task, llm, dataset_name: str, loader, output_root: str = "out
             "correct": is_correct,
             "output_dir": str(task_dir)
         }
+
+        # Save detailed metrics
+        if metrics:
+            with open(task_dir / "metrics.json", 'w', encoding='utf-8') as f:
+                json.dump(metrics, f, indent=2, ensure_ascii=False)
 
     except Exception as e:
         import traceback
@@ -168,8 +173,9 @@ def run_benchmark(
         results.append(result)
 
         if result.get("status") != "ERROR":
-            print(f"Pred: {result.get('prediction', '')[:50]}...")
-            print(f"Result: {'CORRECT' if result.get('correct') else 'WRONG'} (pipeline: {result.get('status')})")
+            print(f"Result: {'CORRECT' if result.get('correct') else 'WRONG'}")
+            print(f"  > Pred: {result.get('prediction', '')[:100]}")
+            print(f"  > GT:   {result.get('ground_truth', '')[:100]}")
         else:
             print(f"Result: ERROR - {result.get('error', '')[:50]}")
 

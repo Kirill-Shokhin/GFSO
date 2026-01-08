@@ -12,12 +12,14 @@ def test_complex_flow():
     print("\n[STARTING COMPLEX SMOKE TEST]")
     try:
         # Complex task: Web App (triggers recursion in our mock)
-        results = agent.run("Build a full-stack Web App with Dashboard", images=["ui_mockup.png"])
+        results, metrics = agent.run("Build a full-stack Web App with Dashboard", images=["ui_mockup.png"])
         
         print("\n[TEST COMPLETED]")
         print(f"Total artifacts generated: {len(results)}")
         for k in results.keys():
             print(f" - {k}")
+            
+        print(f"\nMetrics captured: {list(metrics.keys())}")
             
     except Exception as e:
         print(f"\nFAILURE: {e}")

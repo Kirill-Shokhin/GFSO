@@ -15,7 +15,7 @@ class Params:
     HEAD_TEMP = 0.2
     
     # Swarm Settings
-    SWARM_SIZE = 1          # N parallel workers
+    SWARM_SIZE = 3          # N parallel workers
     
     # Thresholds
     EPSILON_THRESHOLD = 0.15
@@ -115,7 +115,6 @@ class SchemaRegistry:
         return (SchemaBuilder()
             .thought("Brief logic path.")
             .add_str("code", "Self-contained Python script.")
-            .add_str("final_answer", "Result string extracted from output.")
             .build())
 
     @property
@@ -157,6 +156,8 @@ INVARIANTS:
 1. **TOPOLOGY**:
    - DEFAULT: 1 NODE.
    - Only split if inputs for Step 2 MUST come from the OUTPUT of Step 1.
+   - **NO META-PLANNING**: Nodes must be executable calculations, not planning steps.
+   - **PERCEPTION FIRST**: If image is present, Step 1 MUST be 'Image Analysis' to extract data.
 2. **ABSTRACTION**:
    - Blueprint is a TEMPLATE. Do NOT calculate the answer here.
    - Describe WHAT to compute, not the result.
@@ -191,6 +192,7 @@ STRICT INVARIANTS:
 - PRECISION: Do not hallucinate inputs. Use provided values exactly.
 - PURE LOGIC: Use specialized libraries to avoid manual algorithms.
 - NO VISUALIZATION: Do NOT use plotting libraries. No one sees the images. Focus on computing the numerical/textual result.
+- **OUTPUT**: The script MUST end with a `print()` statement to output the final result. Silent scripts are failures.
 - REFINE: If execution fails, fix the code and retry.
 
 TASK: {task}

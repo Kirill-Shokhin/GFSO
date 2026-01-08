@@ -42,8 +42,8 @@ class LLMAgent(KleisliFunctor[Any]):
             # CONVENTION: 
             # task_description = Context/Dependencies
             # context_str = Artifact to Validate
-            fmt_args["context"] = task_description[:15000]
-            fmt_args["output"] = context_str[:25000]
+            fmt_args["context"] = task_description
+            fmt_args["output"] = context_str
             
         # Centralized Dedent: Remove indentation from template before filling
         prompt = self.prompt_tmpl.format(**fmt_args)
@@ -153,8 +153,7 @@ class MockLLM(BaseLLM):
         elif "code" in props:
             res = {
                 "thought": "Mock worker executing.",
-                "code": 'import json; print(json.dumps({"answer": "42"}))',
-                "final_answer": "42"
+                "code": 'import json; print(json.dumps({"answer": "42"}))'
             }
 
         # HEAD FULL (has diagnosis)

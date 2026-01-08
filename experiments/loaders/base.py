@@ -1,5 +1,6 @@
 """Base classes for dataset loaders."""
 
+import textwrap
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Optional, Any
@@ -37,37 +38,44 @@ class DatasetLoader(ABC):
         """
         pass
 
-    def check_answer(self, prediction: str, ground_truth: str, llm: Any = None) -> bool:
+    def check_answer(self, prediction: str, ground_truth: str, question: str = "", llm: Any = None) -> bool:
         """Check if prediction matches ground truth (Normalize -> String Match -> LLM Judge)."""
         pred_norm = self._normalize(prediction)
         truth_norm = self._normalize(ground_truth)
         
+        # 0. Fast fail for empty/invalid predictions
+        if not pred_norm or pred_norm.upper() in ['N/A', 'NONE']:
+            # Only correct if truth is also empty (edge case)
+            return not truth_norm
+
         # 1. Fast path: Direct string match
         if pred_norm == truth_norm:
             return True
             
         # 2. Robust path: LLM Judge
-        return self.judge(prediction, ground_truth, llm)
+        return self.judge(prediction, ground_truth, question, llm)
 
     def _normalize(self, s: str) -> str:
         """Default normalization: lower, strip."""
         if s is None: return ""
         return str(s).strip().lower()
 
-    def judge(self, prediction: str, ground_truth: str, llm: Any) -> bool:
+    def judge(self, prediction: str, ground_truth: str, question: str, llm: Any) -> bool:
         """Universal LLM-based verification (Fallback)."""
         if not llm:
             return False
             
         try:
-            prompt = f"""
-            You are an impartial Judge.
-            
-            Compare these two answers. Are they semantically equivalent?
-            
-            Prediction: {prediction}
-            Ground Truth: {ground_truth}
-            """
+            prompt = textwrap.dedent(f"""
+                ROLE: Impartial Judge.
+                GOAL: Compare two answers for semantic equivalence.
+
+                TASK CONTEXT:
+                Question: {question}
+
+                Prediction: {prediction}
+                Ground Truth: {ground_truth}
+            """).strip()
             
             schema = {
                 "type": "object",
