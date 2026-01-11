@@ -1,0 +1,14 @@
+
+    GFSO MANIFOLD STABILITY REPORT
+    ==============================
+    Model: State-Dependent Dynamics (The "Edge of Chaos" Hypothesis)
+    Results (N=1000, Steps=50):
+    ----------------------------------------
+    Naive Mean Error: 2054.89
+    GFSO Mean Error:  123.37
+    Improvement:      16.66x
+    
+    Failure Rate (Drift > 10.0):
+    - Naive: 85.8% collapsed.
+    - GFSO:  29.6% collapsed.
+    

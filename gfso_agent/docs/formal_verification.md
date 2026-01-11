@@ -217,7 +217,7 @@ with small Lipschitz constant $L$.
 
 ### Experiment 5: Soft Validation Curve (Theorem 3.2)
 
-**Objective:** Verify that soft validation provides quantifiable improvement over no validation, and measure empirical degradation factor g(T,M).
+**Objective:** Verify that soft validation provides quantifiable improvement over no validation, and measure empirical **Error Reduction Factor** g(T,M).
 
 **Setup:**
 1. Select benchmark tasks with ground truth (e.g., MATH dataset)
@@ -231,7 +231,7 @@ with small Lipschitz constant $L$.
 
 **Metrics:**
 - **Primary:** Plot success_rate vs T for each M (should be monotonic increasing)
-- **Degradation factor:** g(T,M) = E[accepted_epsilon] / E[epsilon_no_validation]
+- **Error Reduction Factor:** g(T,M) = E[accepted_epsilon] / E[epsilon_no_validation]
 - **Comparison:** Fit theoretical g(T,M) (Proposition 3.3) vs empirical
 - **Distribution:** Histogram of epsilon values → fit Beta/Gamma/Uniform to get P_ε
 

@@ -2,7 +2,7 @@
 
 **Purpose:** This document provides the semantic grounding and operational logic for the General Framework of Structural Optimization (GFSO).
 **Target Audience:** Architects, Developers, and AI Agents implementing GFSO.
-**Relationship:** This file explains the *Why* and *How*. The file `mathematics.md` contains the rigorous Mathematical Proof.
+**Relationship:** This file explains the *Why* and *How*. The file `gfso_theory/mathematics.md` contains the rigorous Mathematical Proof.
 
 ---
 
