@@ -84,9 +84,12 @@ We map domain concepts to categorical entities:
 | **Validator** | $\eta$ | $\epsilon$-NatTrans | **The Contract.** Check ensuring Reality $\approx$ Ideal. |
 
 ### 4.2. $\epsilon$-Natural Transformations
-**Definition 4.1:** Let $F, G: \mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ be functors. A family of morphisms $\eta_X: F(X) \to G(X)$ is an **$\epsilon$-Natural Transformation** if for every morphism $f: X \to Y$ in $\mathcal{I}$:
-$$W_1(\eta_Y \circ F(f)(x), G(f) \circ \eta_X(x)) \le \epsilon$$
-for all $x \in X$, where $W_1$ is computed in the metric space $\mathcal{D}(G(Y))$.
+**Definition 4.1 (Kleisli Commutativity):**
+Let $\mathcal{Kl}(\mathcal{D})$ denote the Kleisli category of the Wasserstein monad. Composition of morphisms $f: X \to \mathcal{D}(Y)$ and $g: Y \to \mathcal{D}(Z)$ is denoted by $g \bullet f = \mu_Z \circ \mathcal{D}(g) \circ f$.
+
+A family of morphisms $\eta_X: F(X) \to \mathcal{D}(G(X))$ is an **$\epsilon$-Natural Transformation** if for every morphism $f: X \to Y$ in $\mathcal{I}$:
+$$W_1( (\eta_Y \bullet F(f))(x), (G(f) \bullet \eta_X)(x) ) \le \epsilon$$
+for all $x \in X$. This formalizes the requirement that validating the output ($\eta_Y \circ F$) must be $\epsilon$-close to validating the input and then processing ideally ($G \circ \eta_X$).
 
 ---
 
@@ -94,17 +97,27 @@ for all $x \in X$, where $W_1$ is computed in the metric space $\mathcal{D}(G(Y)
 
 **Assumption 5.1 (Lax Composition Discrepancy):**
 We assume a bounded composition discrepancy $\delta_F$:
-$$W_1( F(g \circ f)(x), F(g) \circ F(f)(x) ) \le \delta_F$$
+$$W_1( (F(g) \bullet F(f))(x), F(g \circ f)(x) ) \le \delta_F$$
+
+**Engineering Interpretation:**
+*   **GenAI:** $F(g \circ f)$ is a **Monolithic Chain-of-Thought** (one prompt), while $F(g) \bullet F(f)$ is a **Modular System** (distinct agents). $\delta_F$ quantifies the "Context Switching Cost".
+*   **General Systems:** In organizational theory, $\delta_F$ represents **Transactional Friction**. $F(g \circ f)$ is a single expert handling a pipeline, whereas $F(g) \bullet F(f)$ is a handover between departments. The gap arises from information loss during the handover.
+
+**Remark 5.3 (The Complexity Asymmetry Principle):**
+A common critique is "Who validates the validator?". If the validator $\mathcal{V}$ is also an expansive agent ($K_{\mathcal{V}} > 1$), stability is lost.
+GFSO relies on the **Complexity Asymmetry** inherent in computational complexity classes (e.g., $\mathbf{P} \subseteq \mathbf{NP}$): *verification is strictly easier than generation*.
+For a well-designed system, the validator acts on a lower-dimensional projection of the state (e.g., checking a regex, a unit test, or a simplified logical constraint), ensuring $K_{\mathcal{V}} \ll 1$ even if the generator is chaotic.
+Reliability is achieved not by stacking smart agents, but by constraining smart agents with "dumb" (stable) checks.
 
 **Theorem 5.1 (The Chaos Bound):**
 Let $f_1, \dots, f_n$ be a chain of $K$-Lipschitz components ($K > 1$). Without topological correction, the global error diverges exponentially:
 $$W_1( F_{chain}(x), G_{chain}(x) ) \le (\epsilon + \delta_F) \frac{K^n - 1}{K - 1} \approx O(K^n)$$
 *Proof:* See Appendix A.2.
 
-**Theorem 5.2 (Topological Stabilization):**
-Let $\mathcal{V}_T$ be a validation operator with rejection threshold $T$. $\mathcal{V}_T$ acts as a **contraction map** on the error distribution with factor $\gamma(T) < 1$.
-Specifically, for uniform error distributions, $\gamma(T) \approx T / \epsilon_{max}$.
-*Proof:* See Appendix B.
+**Proposition 5.2 (Variance Contraction via Truncation):**
+Let $\mathcal{V}_T$ be a rejection-sampling validator with threshold $T$. If the error distribution $P(e)$ is unimodal and symmetric about 0 (e.g., Gaussian or Laplacian noise), then $\mathcal{V}_T$ acts as a **contraction map** on the standard deviation:
+$$ \sigma(\mathcal{V}_T(P)) < \sigma(P) $$
+The contraction factor $\gamma(T) < 1$ is strictly decreasing with $T$. For the uniform case $U[-E, E]$ with $T < E$, $\gamma(T) = T/E$.
 
 **Corollary 5.3 (The GFSO Stability Criterion):**
 A sequential system is structurally reliable if and only if the product of the agent's expansiveness and the validator's contraction is non-expansive:
@@ -114,7 +127,9 @@ Under this condition, the error bound from Theorem 5.1 collapses from $O(K^n)$ t
 
 ---
 
-## 6. Empirical Validation (Manifold Stability Analysis)
+### 6. Empirical Validation (Manifold Stability Analysis)
+
+*Remark on Dimensionality:* While real-world embeddings exist in high-dimensional spaces ($\mathbb{R}^d, d \approx 4096$), our simulation models the **dynamics of error magnitude** ($W_1 \in \mathbb{R}^+$) rather than the vector geometry. We assume the "Manifold Hypothesis": that relevant semantic errors can be projected onto a lower-dimensional manifold where stability dynamics play out.
 
 We tested the **Manifold Hypothesis**: that agents are locally stable ($K=1.0$) near the truth but become chaotic ($K=1.2$) once they drift beyond a semantic margin ("Hallucination Threshold"). We simulated $N=1000$ chains of length 50.
 
@@ -125,11 +140,21 @@ The results confirm that topological contracts act as **Mode Stabilizers**:
 
 ### 6.2. Quantitative Gains
 The impact on the final system state is dramatic:
-*   **Mean Final Error:** The naive baseline diverged to an average error of **2054.89**.
-*   **GFSO Error:** The validated system maintained an average error of **123.37**.
-*   **Impact:** A **16.6x improvement** in global reliability.
+*   **Mean Final Error:** The naive baseline diverged to an average error of **1933.84**.
+*   **GFSO Error:** The validated system maintained an average error of **0.46**.
+*   **Impact:** A **>4000x improvement** in global reliability.
 
-![GFSO Stability Gap](https://github.com/Kirill-Shokhin/GFSO/blob/main/gfso/experiments/theory_sim/artifacts/gfso_impact_v2.png?raw=true)
+![Figure 1: Scalar Dynamics](https://github.com/Kirill-Shokhin/GFSO/blob/main/gfso/experiments/theory_sim/artifacts/fig1_scalar_dynamics.png?raw=true)
+
+### 6.3. Robustness under The Curse of Dimensionality
+To address concerns about high-dimensional embedding spaces, we conducted a second experiment in $\mathbb{R}^{100}$ with a **Noisy Partial Validator** (simulating "blind spots" and measurement error).
+*   **Setup:** Agent moves in 100 dimensions. Validator observes only 10 dimensions with Gaussian measurement noise ($\sigma=0.2$).
+*   **Result:** Despite 90% of the state space being unobservable ("Blind Spot") and the validator being imperfect:
+    *   Naive Error: **23265.6** (Exponential Collapse)
+    *   Partial Noisy Validation: **78.3** (Effective Containment)
+This confirms the **Asymmetry Principle**: imperfect, low-dimensional guardrails are sufficient to prevent global collapse, reducing error by a factor of **~300x**.
+
+![Figure 2: Vector Robustness](https://github.com/Kirill-Shokhin/GFSO/blob/main/gfso/experiments/theory_sim/artifacts/fig2_vector_robustness.png?raw=true)
 
 ---
 
@@ -177,22 +202,27 @@ A supply chain is a composition of morphisms where each supplier is a stochastic
 
 ## Appendix: Detailed Proofs
 
+### A.0. Lemma (Wasserstein Lifting)
+If a kernel $k: X \to \mathcal{D}(Y)$ satisfies the metric Lipschitz condition $W_1(k(x), k(x')) \le K d_X(x, x')$, then its extension to distributions $\hat{k}: \mathcal{D}(X) \to \mathcal{D}(Y)$ is $K$-Lipschitz in $W_1$:
+$$W_1(\hat{k}(\mu), \hat{k}(\nu)) \le K W_1(\mu, \nu)$$
+*Proof:* Follows from Kantorovich-Rubinstein duality.
+
 ### A.1. Lemma: Composition Bound (Gluing)
-To bound the composition $W_1(k \circ f, k \circ g)$, we construct a coupling $\Pi$ on $C \times C$.
+To bound the composition $W_1(k \bullet f, k \bullet g)$, we construct a coupling $\Pi$ on $C \times C$.
 $$ \Pi(dc_1, dc_2) = \int_{B \times B} (k(b_1) \otimes k(b_2))(dc_1, dc_2) \, \gamma^*(db_1, db_2) $$
-**Marginal Verification:** $\pi_1(\Pi) = (k \circ f)(a)$.
-**Cost Bound:** $\int d_C \, d\Pi \le \int d_B(b_1, b_2) \, d\gamma^* = W_1(f(a), g(a))$ (due to 1-Lipschitz $k$).
+**Marginal Verification:** $\pi_1(\Pi) = (k \bullet f)(a)$.
+**Cost Bound:** $\int d_C \, d\Pi \le K \int d_B(b_1, b_2) \, d\gamma^* = K \cdot W_1(f(a), g(a))$ (using Lemma A.0).
 
 ### A.2. Proof of Theorem 5.1 (The Chaos Bound)
 We proceed by induction on chain length $n$.
-Let $h_n = f_n \circ \dots \circ f_1$. We define $E_n = W_1(F(h_n), G(h_n))$.
+Let $h_n = f_n \bullet \dots \bullet f_1$. We define $E_n = W_1(F(h_n), G(h_n))$.
 **Inductive Step:**
 Consider a path of length $n+1$: $h_{n+1} = f_{n+1} \circ h_n$.
 Using the triangle inequality and bounded discrepancy $\delta_F$:
-$$ E_{n+1} \le W_1(F(f_{n+1} \circ h_n), F(f_{n+1}) \circ F(h_n)) + W_1(F(f_{n+1}) \circ F(h_n), G(f_{n+1}) \circ G(h_n)) $$
-Term 1 is $\le \delta_F$. Term 2 splits by **Lemma A.1** and the Lipschitz property of kernels:
-$$ \le \delta_F + \epsilon_{n+1} + K \cdot W_1(F(h_n), G(h_n)) $$
-$$ E_{n+1} \le \delta_F + \epsilon + K \cdot E_n $$
+$$ E_{n+1} \le W_1(F(f_{n+1}) \bullet F(h_n), G(f_{n+1}) \bullet G(h_n)) + \delta_F $$
+Using Lemma A.0 (Lifting) and the $\epsilon$-Naturality of the validator logic (structurally similar term):
+$$ E_{n+1} \le K \cdot W_1(F(h_n), G(h_n)) + \epsilon + \delta_F $$
+$$ E_{n+1} \le K \cdot E_n + \epsilon + \delta_F $$
 This forms a linear recurrence $E_{n+1} = K E_n + C$, which solves to $E_n \sim O(K^n)$ for $K > 1$.
 
 ### B. Proof of Theorem 5.2 (Topological Stabilization)

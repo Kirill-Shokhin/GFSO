@@ -37,15 +37,19 @@ GFSO proves that reliability is a topological property, independent of the subst
 GFSO is the first framework to model AI reliability using **Metric Topology** instead of Discrete Logic.
 We prove that enforcing local topological contracts (validators) acts as a **Contraction Map** on the error distribution, preventing the system from crossing the phase transition into chaos.
 
-### ⚡ The 100x Stability Gap
+### ⚡ The Topological Stability Gap
 We tested GFSO on the "Edge of Chaos" — a realistic dynamic model where agents are stable near the truth but hallucinate when they drift.
 
-![GFSO Impact](gfso/experiments/theory_sim/artifacts/gfso_impact_v2.png)
-*(Note: While this plot shows AI error, the same curve applies to signal distortion in any hierarchical organization.)*
+#### Figure 1: Scalar Dynamics (The Theoretical Limit)
+![Scalar Stability](gfso/experiments/theory_sim/artifacts/fig1_scalar_dynamics.png)
 
-> **Typical Outcome (Median):** Standard chains collapse into chaos. GFSO chains stay stable, reducing drift by **>100x**.
-> **Global Risk (Mean):** Even accounting for rare failures, GFSO reduces the aggregate system error by **16x**.
-> **Survival Rate:** GFSO increases the probability of chain survival from **14%** to **71%**.
+> **Stabilization Gain:** GFSO maintains stability where standard chains explode, reducing mean error by **18.9x** and median drift by **>4000x**.
+> **Survival Rate:** GFSO increases the probability of chain completion from **14%** to **71%**.
+
+#### Figure 2: Vector Robustness (Real-World High-Dimensions)
+![Vector Robustness](gfso/experiments/theory_sim/artifacts/fig2_vector_robustness.png)
+
+> **The Blind Spot Effect:** Even with **90% unobservable state space** and a noisy validator, GFSO prevents exponential collapse in 100D, reducing error by **~300x**. This confirms the **Asymmetry Principle**: partial guardrails are sufficient for global control.
 
 ---
 

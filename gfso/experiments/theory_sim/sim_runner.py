@@ -1,207 +1,206 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import pandas as pd
-from scipy import stats
 from scipy.ndimage import gaussian_filter1d
 
-# --- CONFIGURATION (MANIFOLD STABILITY) ---
-SEED = 42
-N_STEPS = 50
-N_TRIALS = 1000
-NOISE_STD = 0.5       # Sigma_A
-VALIDATOR_NOISE = 0.2 # Sigma_V
-THRESHOLD = 0.3       # T (Tighter control)
-MAX_RETRIES = 10      # M
-
-# --- PHYSICS OF THE SYSTEM ---
-# The system is stable (L=1.0) as long as error is small.
-# If error exceeds SAFE_MARGIN, the system enters "Hallucination/Crisis Mode" (L > 1).
-SAFE_MARGIN = 2.0     
-K_STABLE = 1.0
-K_CHAOS = 1.2         # Exponential divergence factor
-
+# --- GLOBAL CONFIGURATION ---
 OUTPUT_DIR = "gfso/experiments/theory_sim/artifacts"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+SEED = 42
 
-class ManifoldSimulator:
+class UnifiedManifoldSimulator:
     def __init__(self, seed=SEED):
         np.random.seed(seed)
         
-    def get_dynamics(self, current_val, ideal_val):
+    def get_dynamics(self, x, safe_margin, k_stable=1.0, k_chaos=1.2):
         """
-        State-Dependent Dynamics.
-        If the agent deviates too far from 'truth' (ideal_val), it becomes chaotic.
+        Manifold Hypothesis:
+        - Inside Safe Margin (Norm < M): Stable (K=1.0)
+        - Outside Safe Margin (Norm > M): Chaos (K=1.2)
         """
-        error = np.abs(current_val - ideal_val)
-        if error < SAFE_MARGIN:
-            return K_STABLE
+        norm = np.linalg.norm(x)
+        if norm < safe_margin:
+            return k_stable
         else:
-            return K_CHAOS
+            return k_chaos
 
-    def validate_step(self, ideal_next_val, noise_std, val_noise_std, threshold, max_retries):
+    def step_agent(self, x, dynamics_k, noise_std):
         """
-        Tries to produce a value close to ideal_next_val.
+        Agent Step: x_{t+1} = K(x_t) * x_t + Noise
         """
-        for i in range(max_retries):
-            proposal = ideal_next_val + np.random.normal(0, noise_std)
-            meas_noise = np.random.normal(0, val_noise_std)
-            dist = np.abs((proposal - ideal_next_val) + meas_noise)
-            
-            if dist <= threshold:
-                return proposal, i + 1
-        
-        return proposal, max_retries
+        expanded = x * dynamics_k
+        noise = np.random.normal(0, noise_std, size=x.shape)
+        return expanded + noise
 
-    def run_chain(self, n_steps, n_trials, mode='naive'):
+    def validate_step(self, x_current, proposal, val_dims, threshold, val_noise_std):
         """
-        Runs the simulation. 
+        Validation Logic with Measurement Noise.
+        """
+        view = proposal[:val_dims]
+        meas_noise = np.random.normal(0, val_noise_std, size=view.shape)
+        perceived_view = view + meas_noise
+        limit = threshold * np.sqrt(val_dims)
+        return np.linalg.norm(perceived_view) <= limit
+
+    def run_simulation(self, n_steps, n_trials, dim, val_dim, 
+                       safe_margin, noise_std, val_noise_std, 
+                       threshold, max_retries, mode='naive'):
+        """
+        Runs the simulation.
         """
         errors = np.zeros((n_trials, n_steps))
         
         for i in range(n_trials):
-            x = 0.0 # Current state (deviation from truth) 
+            # Start with small noise (not absolute zero)
+            x = np.random.normal(0, 0.1, size=dim)
             
             for t in range(n_steps):
-                errors[i, t] = np.abs(x)
+                errors[i, t] = np.linalg.norm(x)
                 
-                # 1. Determine local expansiveness based on current error
-                k_curr = self.get_dynamics(x, 0.0)
+                k = self.get_dynamics(x, safe_margin)
+                proposal = self.step_agent(x, k, noise_std)
                 
-                # 2. Compute "Next Expected State" by the agent
-                expected_next_x = k_curr * x
-                
-                # 3. Step
                 if mode == 'naive':
-                    x = expected_next_x + np.random.normal(0, NOISE_STD)
+                    x = proposal
                 else:
-                    x, _ = self.validate_step(expected_next_x, NOISE_STD, VALIDATOR_NOISE, THRESHOLD, MAX_RETRIES)
+                    # GFSO Logic: Retry Loop
+                    accepted = False
+                    curr_attempt = proposal
+                    
+                    for _ in range(max_retries):
+                        if self.validate_step(x, curr_attempt, val_dim, threshold, val_noise_std):
+                            x = curr_attempt
+                            accepted = True
+                            break
+                        else:
+                            curr_attempt = self.step_agent(x, k, noise_std)
+                    
+                    if not accepted:
+                        # Fallback: DAMPENING (Organic Compromise)
+                        # Instead of Stall, we blend the bad proposal with the current state.
+                        # This allows drift to accumulate slowly (realistic friction).
+                        x = 0.9 * x + 0.1 * curr_attempt
 
         return errors
 
-def plot_marketing_visual(steps, err_naive, err_gfso, safe_margin):
-    """
-    Generates a 'Journal-Ready' visualization.
-    - White background, no title.
-    - High contrast for PDF printing.
-    """
+# --- PLOTTING UTILS ---
+def plot_journal_style(filename, steps, data_map, safe_margin, annotation_text=None):
     plt.rcParams['figure.facecolor'] = 'white'
     plt.figure(figsize=(10, 6))
     
-    # Calculate Statistics with Smoothing
     SIGMA = 1.5
-    naive_median = gaussian_filter1d(np.median(err_naive, axis=0), sigma=SIGMA)
-    naive_p10 = gaussian_filter1d(np.percentile(err_naive, 10, axis=0), sigma=SIGMA)
-    naive_p90 = gaussian_filter1d(np.percentile(err_naive, 90, axis=0), sigma=SIGMA)
     
-    gfso_median = gaussian_filter1d(np.median(err_gfso, axis=0), sigma=SIGMA)
-    gfso_p10 = gaussian_filter1d(np.percentile(err_gfso, 10, axis=0), sigma=SIGMA)
-    gfso_p90 = gaussian_filter1d(np.percentile(err_gfso, 90, axis=0), sigma=SIGMA)
-    
-    # Colors
-    c_naive = '#D35400' # Burnt Orange (better for print)
-    c_gfso = '#1E8449'  # Dark Green
-    c_safe = '#2E86C1'  # Steel Blue
-    
-    # Plot Naive
-    plt.plot(steps, naive_median, color=c_naive, linewidth=2.5, label='Standard Chain (Median)')
-    plt.fill_between(steps, naive_p10, naive_p90, color=c_naive, alpha=0.1, label='Naive 10-90% Range')
-    
-    # Plot GFSO
-    plt.plot(steps, gfso_median, color=c_gfso, linewidth=2.5, label='GFSO Protected (Median)')
-    plt.fill_between(steps, gfso_p10, gfso_p90, color=c_gfso, alpha=0.15, label='GFSO 10-90% Range')
-    
-    # Plot Safe Margin
+    for label, props in data_map.items():
+        data = props['data']
+        color = props['color']
+        
+        median = gaussian_filter1d(np.median(data, axis=0), sigma=SIGMA)
+        plt.plot(steps, median, color=color, linewidth=2.5, linestyle=props.get('style', '-'), label=label)
+        
+        # Fill
+        if props.get('fill', False):
+            p10 = gaussian_filter1d(np.percentile(data, 10, axis=0), sigma=SIGMA)
+            p90 = gaussian_filter1d(np.percentile(data, 90, axis=0), sigma=SIGMA)
+            plt.fill_between(steps, p10, p90, color=color, alpha=0.1)
+
+    c_safe = '#2980B9'
     plt.axhline(y=safe_margin, color=c_safe, linestyle='--', linewidth=1.5, alpha=0.7)
     plt.text(1, safe_margin*1.2, 'Stability Boundary (K=1.0)', color=c_safe, fontsize=11, fontweight='bold')
-    
-    # Annotations
-    final_ratio = naive_median[-1] / (gfso_median[-1] + 1e-9)
-    plt.annotate(f'{final_ratio:.0f}x Stability Gain', 
-                 xy=(steps[-1], gfso_median[-1]), 
-                 xytext=(steps[-1]-18, gfso_median[-1]*20),
-                 arrowprops=dict(arrowstyle="->", color='black', connectionstyle="arc3,rad=.2"),
-                 fontsize=12, fontweight='bold')
 
-    # Formatting
     plt.yscale('log')
     plt.xlabel('Composition Depth (Steps)', fontsize=13)
-    plt.ylabel('Semantic Drift ($W_1$ Error)', fontsize=13)
+    plt.ylabel('Global Error ($W_1$ / $L_2$)', fontsize=13)
     plt.legend(loc='upper left', fontsize=10, frameon=True, facecolor='white')
     
-    # Clean Grid: Only major lines, very subtle
     plt.grid(True, which="major", ls="-", alpha=0.15, color='black') 
-    plt.gca().tick_params(which='minor', left=True) # Ticks only for minor, no lines
-    
-    plt.xlim(0, steps[-1])
-    
-    # Remove top and right spines
+    plt.gca().tick_params(which='minor', left=True)
     for spine in plt.gca().spines.values():
         if spine.spine_type in ['top', 'right']:
             spine.set_visible(False)
-    
-    # Save
-    out_path = os.path.join(OUTPUT_DIR, "gfso_impact_v2.png")
-    plt.savefig(out_path, dpi=300, bbox_inches='tight', transparent=False)
-    print(f"Journal-style Plot saved to {out_path}")
+            
+    if annotation_text:
+        last_step = steps[-1]
+        vals = [np.median(d['data'], axis=0)[-1] for d in data_map.values()]
+        min_val = min(vals)
+        plt.annotate(annotation_text, 
+                 xy=(last_step, min_val), 
+                 xytext=(last_step-20, min_val*10),
+                 arrowprops=dict(arrowstyle="->", color='black', connectionstyle="arc3,rad=.2"),
+                 fontsize=11, fontweight='bold', color='#B7950B')
 
-def run_experiment():
-    sim = ManifoldSimulator()
-    print(f"Running Manifold Stability Experiment (N={N_TRIALS}, Steps={N_STEPS})...")
-    print(f"Physics: Stable inside +/-{SAFE_MARGIN}, Chaos (K={K_CHAOS}) outside.")
+    out_path = os.path.join(OUTPUT_DIR, filename)
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
+    print(f"Saved {out_path}")
+
+
+# --- RUNNERS ---
+
+def run_experiment_1_scalar():
+    print("\n--- Running Experiment 1: Scalar Dynamics (1D) ---")
+    sim = UnifiedManifoldSimulator()
     
-    # Run Naive
-    err_naive = sim.run_chain(N_STEPS, N_TRIALS, mode='naive')
+    # Params
+    N_STEPS = 50
+    N_TRIALS = 1000
+    DIM = 1
+    VAL_DIM = 1
     
-    # Run GFSO
-    err_gfso = sim.run_chain(N_STEPS, N_TRIALS, mode='gfso')
+    SAFE_MARGIN = 2.0
+    NOISE = 0.5
+    VAL_NOISE = 0.2
     
-    # Analyze Mean (for text report consistency with previous run)
-    mean_naive = np.mean(err_naive, axis=0)
-    mean_gfso = np.mean(err_gfso, axis=0)
+    # RELAXED Threshold for Organic Behavior
+    THRESHOLD = 1.0  
+    RETRIES = 10
     
-    # Count "Survival Rate" (Trials that stayed within SAFE_MARGIN * 5)
-    limit = SAFE_MARGIN * 5.0 
-    fail_naive = np.sum(err_naive[:, -1] > limit)
-    fail_gfso = np.sum(err_gfso[:, -1] > limit)
+    err_naive = sim.run_simulation(N_STEPS, N_TRIALS, DIM, VAL_DIM, SAFE_MARGIN, NOISE, VAL_NOISE, THRESHOLD, RETRIES, 'naive')
+    err_gfso = sim.run_simulation(N_STEPS, N_TRIALS, DIM, VAL_DIM, SAFE_MARGIN, NOISE, VAL_NOISE, THRESHOLD, RETRIES, 'gfso')
     
-    print(f"\nResults at Step {N_STEPS}:")
-    print(f"Naive Mean Error: {mean_naive[-1]:.2f}")
-    print(f"GFSO Mean Error:  {mean_gfso[-1]:.2f}")
+    print(f"Naive Final: {np.mean(err_naive[:,-1]):.2f}")
+    print(f"GFSO Final:  {np.mean(err_gfso[:,-1]):.2f}")
     
-    # Plot Standard (Raw)
-    steps = np.arange(N_STEPS)
-    plt.figure(figsize=(12, 6))
-    plt.plot(steps, mean_naive, 'r-', linewidth=3, label='Naive (Mean)')
-    plt.plot(steps, mean_gfso, 'g-', linewidth=3, label='GFSO (Mean)')
-    plt.axhline(y=SAFE_MARGIN, color='b', linestyle='--', label='Stability Boundary')
-    plt.title(f'Manifold Stability Analysis (Raw Means)')
-    plt.legend()
-    out_path = os.path.join(OUTPUT_DIR, "manifold_stability.png")
-    plt.savefig(out_path)
-    print(f"Standard Plot saved to {out_path}")
+    data = {
+        'Standard Chain': {'data': err_naive, 'color': '#D35400', 'fill': True},
+        'GFSO Protected': {'data': err_gfso,  'color': '#1E8449', 'fill': True}
+    }
+    gain = np.mean(err_naive[:,-1]) / (np.mean(err_gfso[:,-1]) + 1e-9)
+    plot_journal_style("fig1_scalar_dynamics.png", np.arange(N_STEPS), data, SAFE_MARGIN, f"{gain:.0f}x Stability Gain")
+
+def run_experiment_2_vector():
+    print("\n--- Running Experiment 2: Vector Robustness (100D) ---")
+    sim = UnifiedManifoldSimulator()
     
-    # --- MARKETING VISUALIZATION (High Impact) ---
-    plot_marketing_visual(steps, err_naive, err_gfso, SAFE_MARGIN)
+    # Params
+    N_STEPS = 50
+    N_TRIALS = 1000
+    DIM = 100
+    VAL_DIM = 10 
     
-    # Generate Report
-    report = f"""
-    GFSO MANIFOLD STABILITY REPORT
-    ==============================
-    Model: State-Dependent Dynamics (The "Edge of Chaos" Hypothesis)
-    Results (N={N_TRIALS}, Steps={N_STEPS}):
-    ----------------------------------------
-    Naive Mean Error: {mean_naive[-1]:.2f}
-    GFSO Mean Error:  {mean_gfso[-1]:.2f}
-    Improvement:      {mean_naive[-1] / mean_gfso[-1]:.2f}x
+    SAFE_MARGIN = 15.0 
+    NOISE = 0.5
+    VAL_NOISE = 0.2
     
-    Failure Rate (Drift > {limit}):
-    - Naive: {fail_naive/N_TRIALS*100:.1f}% collapsed.
-    - GFSO:  {fail_gfso/N_TRIALS*100:.1f}% collapsed.
-    """
+    # RELAXED Threshold for Organic Behavior
+    THRESHOLD = 1.0 
+    RETRIES = 10
     
-    with open(os.path.join(OUTPUT_DIR, "validation_report.txt"), "w") as f:
-        f.write(report)
+    err_naive = sim.run_simulation(N_STEPS, N_TRIALS, DIM, VAL_DIM, SAFE_MARGIN, NOISE, VAL_NOISE, THRESHOLD, RETRIES, 'naive')
+    err_full = sim.run_simulation(N_STEPS, N_TRIALS, DIM, DIM, SAFE_MARGIN, NOISE, VAL_NOISE, THRESHOLD, RETRIES, 'gfso')
+    err_partial = sim.run_simulation(N_STEPS, N_TRIALS, DIM, VAL_DIM, SAFE_MARGIN, NOISE, VAL_NOISE, THRESHOLD, RETRIES, 'gfso')
+    
+    print(f"Naive Final:   {np.mean(err_naive[:,-1]):.2f}")
+    print(f"Full Final:    {np.mean(err_full[:,-1]):.2f}")
+    print(f"Partial Final: {np.mean(err_partial[:,-1]):.2f}")
+    
+    # Plot
+    data = {
+        'Baseline (Unconstrained)': {'data': err_naive, 'color': '#D35400', 'fill': True},
+        'Partial (Noisy 10%)':      {'data': err_partial, 'color': '#F1C40F', 'style': '--', 'fill': True},
+        'Full Validation':          {'data': err_full, 'color': '#1E8449', 'fill': True}
+    }
+    gain = np.mean(err_naive[:,-1]) / np.mean(err_partial[:,-1])
+    plot_journal_style("fig2_vector_robustness.png", np.arange(N_STEPS), data, SAFE_MARGIN, f"{gain:.0f}x Robustness Gain")
 
 if __name__ == "__main__":
-    run_experiment()
+    run_experiment_1_scalar()
+    run_experiment_2_vector()

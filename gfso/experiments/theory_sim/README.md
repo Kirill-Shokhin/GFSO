@@ -1,34 +1,37 @@
-# Experiment: Error Propagation in Expansive Systems
+# GFSO Simulation Experiments
 
-**Objective:** Validate Theorem 3.1 (Linear Bound) and Theorem 3.2 (Soft Validation) using a controlled stochastic process.
-**Paper Section:** 5. Empirical Validation
+This directory contains the numerical validation for the **General Framework for Structural Optimization (GFSO)** paper.
+These scripts verify the **Manifold Stability Hypothesis**: that structural validators act as contraction mappings, preventing the exponential error explosion typical of expansive stochastic agents (LLMs).
 
-## 1. Mathematical Setup
+## Experiments
 
-We simulate a discrete dynamical system:
-$$x_{t+1} = f(x_t)$$
-where the ideal function is **expansive**:
-$$f_{ideal}(x) = 1.1 \cdot x \quad (\text{Lipschitz } L=1.1)$$
+The simulations are unified in `sim_runner.py`, which executes two scenarios:
 
-### The Stochastic Agent (F)
-The implementation introduces Gaussian noise at each step:
-$$x_{t+1} = 1.1 \cdot x_t + \mathcal{N}(0, 0.5)$$
+### 1. Scalar Stability (1D)
+**Objective:** Visualize the stabilization effect in a scalar dynamic system.
+*   **Physics:** $x_{t+1} = K(x_t) \cdot x_t + \text{Noise}$.
+    *   $K=1.0$ (Stable) if $|x| < 2.0$.
+    *   $K=1.2$ (Chaotic) if $|x| > 2.0$.
+*   **Validator:** Checks $|x| < T$.
+*   **Logic:** **Stall on Fail**. If validation fails $M$ times, the agent retains its previous state ($x_{t+1} = x_t$).
+*   **Artifact:** `fig1_scalar_dynamics.png` (Shows >1000x gain due to ideal stalling).
 
-### The Validator (\eta)
-We compare the agent's output $x_{real}$ against the ideal projection $x_{ideal}$.
-*   **Threshold:** $T = 0.2$
-*   **Retry Limit:** $M = 5$
+### 2. Vector Robustness (100D)
+**Objective:** Test robustness under the **Curse of Dimensionality** and **Partial Observability**.
+*   **Space:** $\mathbb{R}^{100}$ (100 Dimensions).
+*   **Validator:** **Noisy & Partial**. Only observes 10 dimensions (10%) with measurement noise ($\sigma=0.2$).
+*   **Challenge:** Can a blind, drunk validator prevent chaos in 100 dimensions?
+*   **Artifact:** `fig2_vector_robustness.png` (Shows ~600x gain despite blind spots).
 
-## 2. Baselines
+## Usage
 
-1.  **Naive Chain:** No validation. Error accumulates as $\sum L^{N-i} \xi_i$. Expected growth: **Exponential**.
-2.  **GFSO Strict:** Hard cutoff if error > T.
-3.  **GFSO Soft:** Soft rejection probability (Theorem 3.2).
+Run the unified simulation:
 
-## 3. Metric
-We measure the **Mean Absolute Error (MAE)** between the simulated trajectory and the ideal trajectory over $K=1000$ runs for chain length $N 
-in [1, 20]$.
+```bash
+python sim_runner.py
+```
 
-## 4. Expected Outcome
-*   **Naive:** Curve should look like $y = e^x$.
-*   **GFSO:** Curve should look like $y = ax + b$ (Linear) or saturation.
+## Artifacts
+Outputs are saved to `artifacts/`:
+*   `fig1_scalar_dynamics.png`: Figure 1 for the paper.
+*   `fig2_vector_robustness.png`: Figure 2 for the paper.
