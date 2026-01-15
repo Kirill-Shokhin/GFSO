@@ -36,13 +36,13 @@ We validate the stability criterion on synthetic experiments in $\mathbb{R}^{100
 
 ### Phase Transition at $L \cdot \gamma = 1$
 
-![Phase Transition](gfso/experiments/artifacts/fig1_theory_validation.png)
+![Phase Transition](experiments/artifacts/fig1_theory_validation.png)
 
 > **Sharp transition:** At $L \cdot \gamma = 0.90$ error is **bounded**; at $L \cdot \gamma = 1.08$ error grows **exponentially**.
 
 ### Partial Observation Robustness
 
-![Partial Observation](gfso/experiments/artifacts/fig2_realistic_scenario.png)
+![Partial Observation](experiments/artifacts/fig2_realistic_scenario.png)
 
 > **Empirical observation:** Observing only **10% of dimensions** achieves comparable error containment to full observation when error is isotropically distributed.
 
@@ -96,10 +96,10 @@ cd GFSO
 pip install numpy matplotlib scipy
 
 # Run experiments
-python gfso/experiments/theory_validation.py
+python experiments/theory_validation.py
 ```
 
-Figures are generated in `gfso/experiments/artifacts/`.
+Figures are generated in `experiments/artifacts/`.
 
 ---
 

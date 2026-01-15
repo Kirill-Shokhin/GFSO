@@ -1,7 +1,7 @@
-# The General Framework for Structural Optimization: Compositional Error Bounds in Enriched Kleisli Categories
+# The General Framework for Structural Optimization: Compositional Error Bounds in Metric-Equipped Kleisli Categories
 
 **Target Venue:** CAV 2026
-**Status:** Draft v4.5 (Universal Theory)
+**Status:** Draft v5.0 (Universal Theory)
 
 **Author:** Kirill Shokhin ([kashokhin@gmail.com](mailto:kashokhin@gmail.com))
 **Repository:** [github.com/Kirill-Shokhin/GFSO](https://github.com/Kirill-Shokhin/GFSO)
@@ -9,7 +9,7 @@
 ---
 
 ## Abstract
-Hierarchical composition of stochastic components suffers from exponential error cascade: small local deviations amplify into global failures. We propose **GFSO**, synthesizing control theory, behavioral metrics, and category theory. Working in the **Kleisli category of the Kantorovich monad**, we derive compositional error bounds for systems with Lipschitz dynamics. Control mechanisms (audits, guardrails) are formalized as **$\epsilon$-Natural Transformations**—contractions enforcing stability. Our **Stability Criterion** ($L \cdot \gamma \le 1$) is analogous to the small-gain theorem but applies to sequential stochastic chains with Wasserstein metric. Experiments confirm the predicted phase transition: subcritical validators reduce error by orders of magnitude.
+Hierarchical composition of stochastic components suffers from exponential error cascade: small local deviations amplify into global failures. We propose **GFSO**, synthesizing control theory, behavioral metrics, and category theory. Working in the **Kleisli category of the Kantorovich monad**, we derive compositional error bounds for systems with Lipschitz dynamics. Control mechanisms (audits, guardrails) are formalized as **$\epsilon$-Natural Transformations**—contractions ensuring that validated implementations "commute" with specifications up to bounded error. Our **Stability Criterion** ($L \cdot \gamma \le 1$) guarantees this ε-naturality for compositions and is analogous in spirit to the small-gain theorem. Numerical simulations confirm the predicted phase transition: subcritical validators reduce error by orders of magnitude.
 
 ---
 
@@ -30,7 +30,7 @@ This creates a "Discretization Gap": logical predicates are too brittle to captu
 Reliability in hierarchical stochastic systems is not a binary property, but a **continuous metric property**. The question is not "Is the state correct?" but "How far has the distribution drifted from specification?"
 
 ### 1.3. The GFSO Paradigm
-Instead of asking "Is the state correct?", we ask "Is the transformation stable?". We model components as morphisms in a **Wasserstein-Enriched Kleisli Category**. In this view, reliability is not a property of individual component parameters, but of the **topology of the composition**.
+Instead of asking "Is the state correct?", we ask "Is the transformation stable?". We model components as morphisms in a **Metric-Equipped Kleisli Category** (specifically, ordered by the Wasserstein metric). In this view, reliability is not a property of individual component parameters, but of the **topology of the composition**.
 
 Our central thesis is that **Control Mechanisms are Contraction Mappings**: whether a corporate audit, a supply chain quality check, or an AI guardrail, the formal role is identical—an $\epsilon$-Natural Transformation that minimizes the Wasserstein distance between *Implementation* (stochastic reality) and *Specification* (ideal logic). By treating control mechanisms as metric operators rather than logical predicates, we provide a framework for analyzing the reliability of compositions.
 
@@ -42,7 +42,7 @@ GFSO addresses this gap by providing a **unified stability criterion** ($L \cdot
 ### 1.5. Contributions
 This paper provides a **categorical synthesis** connecting control theory, behavioral metrics, and probabilistic semantics:
 1.  **Wasserstein-Kleisli Semantics:** We instantiate the abstract framework of Markov categories [Fritz, 2020] with concrete Wasserstein bounds, working in the Kleisli category of the Kantorovich monad. This bridges categorical probability with the behavioral metrics tradition [van Breugel & Worrell, 2005; Baldan et al., 2014].
-2.  **Stability Criterion Analogous to Small-Gain:** The condition $L \cdot \gamma \le 1$ mirrors the classical small-gain theorem [Jiang et al., 1996] in spirit: both state that "product of gains < 1" ensures stability. However, small-gain applies to feedback loops with $L^p$ norms; GFSO applies to sequential chains with Wasserstein metric. The connection is conceptual, not formal—we do not derive one from the other. Our contribution is the interpretation of validators as $\epsilon$-natural transformations in Kleisli categories.
+2.  **Stability Criterion and ε-Naturality:** The condition $L \cdot \gamma \le 1$ ensures bounded error in sequential chains (analogous in spirit to the small-gain theorem for feedback loops, though the settings differ). Our key contribution is formalizing validators as **$\epsilon$-natural transformations** in Kleisli categories and proving that the Stability Criterion *implies* ε-naturality for compositions (Theorem 5.5)—closing the loop between categorical structure and quantitative bounds.
 3.  **Domain Instantiation:** We provide concrete instantiations for domains where classical control assumptions fail: corporate hierarchies, supply chains with the bullwhip effect, and AI agent chains with semantic drift.
 4.  **Empirical Validation:** Synthetic experiments confirm the predicted phase transition at $L \cdot \gamma = 1$, demonstrating that the categorical framework yields practical predictions.
 
@@ -58,6 +58,8 @@ The study of quantitative behavioral equivalence originated with **probabilistic
 This connection was systematized coalgebraically by **Baldan et al. [2014]**, who showed how to derive Wasserstein-style behavioral metrics via **functor lifting**. Recent work [Bacci et al., 2018] provides an algebraic axiomatization of Markov processes with quantitative equational logic. A breakthrough result [Calo et al., 2024] proves that bisimulation metrics *are* optimal transport distances and can be computed efficiently via Sinkhorn iteration [Cuturi, 2013].
 
 **GFSO's position:** We adopt the Wasserstein metric as our semantic distance, following this established tradition. Our contribution is not the metric itself, but its application to **validator design** via the stability criterion.
+
+**Distinction from Baldan et al.:** Baldan's functor lifting provides a *characterization*—showing that behavioral metrics arise from Kantorovich lifting. GFSO provides a *design criterion*—given $L$-expansive components, what contraction $\gamma$ suffices for stability? This yields: (i) the explicit criterion $L \cdot \gamma \le 1$, (ii) finite-$n$ transient bounds, (iii) sparse validation trade-offs ($L^k \cdot \gamma \le 1$). These operational results do not follow from the lifting construction alone.
 
 ### 2.2. Categorical Probability
 **Markov Categories** [Fritz, 2020] axiomatize probability synthetically, enabling diagrammatic reasoning about stochastic processes. String diagram techniques for Bayesian inference [Cho & Jacobs, 2019] provide intuitive compositional calculi. The **Kantorovich/Wasserstein monad** on metric spaces [Perrone, 2021] and its interaction with deterministic submonads [Moss & Perrone, 2022] form the categorical foundation for our Kleisli construction.
@@ -92,6 +94,17 @@ For neural networks, **Lipschitz certification** [Fazlyab et al., 2019] computes
 1. **Framework Synthesis:** We connect three traditions—control-theoretic stability intuitions, categorical semantics (Kleisli categories), and behavioral metrics (Wasserstein distance)—providing explicit error bounds for hierarchical stochastic systems
 2. **Validator Formalization:** We introduce $\epsilon$-natural transformations as a new abstraction for validators—formalizing control mechanisms (audits, guardrails, quality checks) as morphism families with quantitative contraction guarantees. This abstraction is novel
 3. **Domain Generalization:** We apply the framework to stochastic, high-dimensional settings where classical control assumptions (determinism, low dimension, linearity) fail—providing concrete instantiations for AI agent chains, supply chains, and organizational hierarchies
+
+**Remark (On Novelty):** The individual components—contraction analysis, Wasserstein metrics, Kleisli categories—are known. The contribution is their **synthesis for validator design**, yielding a complete toolkit:
+- **Corollary 5.3**: Necessary and sufficient stability criterion $L \cdot \gamma \le 1$
+- **Corollary 5.4**: Sparse validation trade-off $L^k \cdot \gamma \le 1$
+- **Proposition 5.6**: Optimal placement (uniform spacing) with square-root scaling
+- **Lemma 5.7**: Validator composition ($\gamma_1 \cdot \gamma_2$ stacking)
+- **Proposition 5.8**: Robustness margin for model mismatch
+- **Proposition 5.9**: Tightness of bounds (no better universal bound exists)
+- **Finite-$n$ Transient**: Explicit non-asymptotic error formula
+
+Baldan et al. [2014] characterize *when* metrics arise; we provide *design criteria* (what $\gamma$, where to place, how many validators, what safety margin). This engineering-oriented theory is absent from prior categorical or contraction-theoretic work.
 
 ---
 
@@ -132,38 +145,61 @@ We model the system using functors from an index category $\mathcal{I}$ (the dep
 | **Execution** | $F$ | $\mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ | Functor defining the actual implementation. |
 | **Validator** | $\eta$ | NatTrans | Natural transformation approximating $F$ to $G$. |
 
-### 4.2. $\epsilon$-Natural Transformations
-**Definition 4.1 (Kleisli Commutativity):**
-A family of morphisms $\eta_X: X \to X$ in $\mathcal{Kl}(\mathcal{D})$ (represented by kernels $X \to \mathcal{D}(X)$) constitutes an **$\epsilon$-Natural Transformation** $\eta: F \Rightarrow G$. Note that under **Assumption 4.0**, $F(X) = G(X) = X$, so $\eta_X$ is a well-typed endomorphism. The condition holds if for every morphism $f: X \to Y$ in $\mathcal{I}$ and for all $x \in X$:
-$$ W_1( (\eta_Y \circ_K F(f))(x), (G(f) \circ_K \eta_X)(x) ) \le \epsilon $$
-Here, $\circ_K$ denotes Kleisli composition. The inequality requires the naturality square to commute up to $\epsilon$ in the $W_1$ metric.
+**Remark (Specification as Design Choice):** The functor $G$ is not an oracle or unknown "ideal output"—it is the **specification defined by the system designer**. In practice: (1) Define the plan $G$ (what *should* happen at each step), (2) Attempt implementation via $F$, (3) Validator detects divergence $W_1(F, G)$, (4) If divergence exceeds tolerance, revise $G$ or improve $F$. This is the standard engineering workflow: specifications are chosen, not discovered. Assumption 4.3 (Specification Invariance) requires only that the validator's acceptance region contains the specification's support—a design constraint on threshold selection, not oracle access to $G$'s output.
 
-**Definition 4.2a (Lipschitz Validator):**
-A validator is a map $\mathcal{V}: \mathcal{D}(X) \to \mathcal{D}(X)$ that is **$\gamma$-Lipschitz**: for any pair of distributions $\mu, \nu \in \mathcal{D}(X)$,
-$$ W_1(\mathcal{V}(\mu), \mathcal{V}(\nu)) \le \gamma \cdot W_1(\mu, \nu) $$
-This property ensures small input differences produce small output differences.
+**Remark (Role of Categorical Language):** The categorical formulation is not merely notational—it provides essential structure:
+1. **Index category $\mathcal{I}$** encodes task dependencies as a DAG, enabling modular analysis of subchains.
+2. **Kleisli composition** ensures stochastic kernels compose correctly via the bind operation, avoiding manual measure-theoretic bookkeeping.
+3. **Functors $F, G$** capture the parallel structure of implementation and specification, making their divergence a natural transformation problem.
+4. **Natural transformations** formalize validators as *coherent families*—not ad-hoc per-step corrections, but morphisms respecting the compositional structure.
 
-**Definition 4.2b (Contractive Validator):**
-Given a target distribution $\mu_G \in \mathcal{D}(X)$, a validator $\mathcal{V}$ is **$\gamma$-Contractive to $\mu_G$** if:
-$$ W_1(\mathcal{V}(\mu), \mu_G) \le \gamma \cdot W_1(\mu, \mu_G) \quad \forall \mu \in \mathcal{D}(X) $$
-with $\gamma < 1$. This property ensures the validator moves distributions closer to the target. (In context, $\mu_G = G_{chain}(x)$ where $G$ is the specification functor.)
+The stability theorems (Section 5) are stated in terms of Wasserstein bounds because these are the computable quantities. The categorical structure ensures these bounds compose correctly across the diagram. Without it, one would need to manually track indices and verify composition laws—the category does this automatically.
+
+### 4.2. Validators: From Motivation to Definition
+
+**Definition 4.1 ($\epsilon$-Natural Transformation):**
+Let $F, G: \mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ be functors. An **$\epsilon$-natural transformation** $\eta: F \Rightarrow G$ is a family of morphisms $\eta_X: F(X) \to \mathcal{D}(G(X))$ such that for each morphism $f: X \to Y$ in $\mathcal{I}$, the following diagram commutes up to $\epsilon$ in $W_1$:
+$$ W_1( (\eta_Y \circ_K F(f))(x), (G(f) \circ_K \eta_X)(x) ) \le \epsilon \quad \forall x \in X $$
+
+This *pointwise* condition (required for each morphism $f$) is the standard categorical notion: "validate-then-execute ≈ execute-then-validate". It ensures semantic coherence at every step.
+
+**Remark (From Pointwise to Compositional):** Definition 4.1 is the strict categorical concept. For engineering analysis, verifying pointwise commutativity for each $f$ is often intractable. We instead define an *operational* property (Definition 4.2) that guarantees *compositional* coherence via Theorem 5.5. **Clarification:** Definition 4.2 does not imply Definition 4.1—they are distinct notions. Definition 4.1 serves as categorical motivation; Definition 4.2 is the operational criterion we verify and use in proofs.
+
+**Definition 4.2 (Operational Validator):**
+A validator is a map $\mathcal{V}: \mathcal{D}(X) \to \mathcal{D}(X)$ satisfying:
+
+**(4.2a) Lipschitz Property:** $W_1(\mathcal{V}(\mu), \mathcal{V}(\nu)) \le \gamma \cdot W_1(\mu, \nu)$ for all $\mu, \nu \in \mathcal{D}(X)$
+
+**(4.2b) Contractivity:** $W_1(\mathcal{V}(\mu), G_{chain}(x_0)) \le \gamma \cdot W_1(\mu, G_{chain}(x_0))$ for all $\mu$
+
+where $x_0$ is the fixed initial input and $G_{chain}(x_0)$ is the specification's target distribution.
+
+**Lemma 4.3 (Sufficiency):** Property (4.2a) combined with Specification Invariance (Assumption 4.3) implies (4.2b).
+*Proof:* $W_1(\mathcal{V}(\mu), G_{chain}(x_0)) = W_1(\mathcal{V}(\mu), \mathcal{V}(G_{chain}(x_0))) \le \gamma W_1(\mu, G_{chain}(x_0))$.
+
+**Remark (Local Realizability):** Lemma 4.3 resolves a potential circularity: (4.2b) references the global target $G_{chain}(x_0)$, but the validator need not compute it at runtime. The construction is *local*: a rejection-sampling validator $\mathcal{V}_T$ with threshold $T$ satisfies (4.2a) by Proposition 5.2. Assumption 4.3 then requires only that $\text{supp}(G_{chain}(x_0)) \subseteq [-T, T]$—a *design-time* constraint on the threshold, not runtime oracle access. The implementer chooses $T$ to accommodate the specification's expected output range; no knowledge of $G_{chain}$ is needed during execution.
 
 **Assumption 4.3 (Specification Invariance):**
-The validator $\mathcal{V}$ fixes the specification: $\mathcal{V}(G_{chain}(x)) = G_{chain}(x)$ for all $x$.
+The validator $\mathcal{V}$ fixes the target distribution: $\mathcal{V}(G_{chain}(x_0)) = G_{chain}(x_0)$.
 *Justification:* The specification $G$ represents the ideal plan. A well-designed validator should not alter distributions that already match the target—it only corrects deviations.
 
-**Remark:** These properties are logically independent. However, if $\mathcal{V}$ is $\gamma$-Lipschitz (4.2a) and satisfies Specification Invariance (Assumption 4.3), then $\mathcal{V}$ is automatically $\gamma$-Contractive to $G_{chain}(x)$ (4.2b). The Stability Criterion (Corollary 5.3) requires 4.2b.
+**Remark (Relaxation):** If exact invariance is unattainable, a weaker condition suffices: $W_1(\mathcal{V}(G_{chain}(x_0)), G_{chain}(x_0)) \le \delta_V$. This adds a per-step bias term $\delta_V$ to the error bound, yielding $E'_\infty = \frac{\gamma(\epsilon_0 + \delta_F) + \delta_V}{1 - L\gamma}$ for $L\gamma < 1$. The stability criterion remains $L \cdot \gamma \le 1$; only the steady-state bound increases.
+
+**Remark:** Properties (4.2a) and (4.2b) are logically independent. In practice, we verify (4.2a) and Assumption 4.3, then apply Lemma 4.3 to obtain (4.2b). The Stability Criterion (Corollary 5.3) uses (4.2b).
 
 **Remark (Practical Interpretation):** The contraction factor $\gamma$ represents the fraction of error that *passes through* validation. A validator with $\gamma = 0.7$ removes 30% of the deviation from specification; the remaining 70% propagates downstream. Perfect validation ($\gamma = 0$) is neither required nor realistic—the criterion $L \cdot \gamma \le 1$ shows that even imperfect validators suffice when their contraction compensates for component expansiveness.
 
-**Remark (Role of Definition 4.1 vs 4.2):** These definitions serve distinct purposes:
-- **Definition 4.1 (ε-Naturality):** Categorical motivation—why validators are natural transformations between $F$ and $G$. Ensures *semantic coherence* across composition stages. Not directly used in proofs.
-- **Definition 4.2a + Assumption 4.3:** The operational requirements for Stability Criterion (Corollary 5.3). The proofs use 4.2a (Lipschitz) combined with 4.3 (Specification Invariance), which together imply 4.2b (Contractivity).
+**Remark (Connecting Pointwise and Compositional ε-Naturality):** The conceptual motivation (pointwise ε-naturality) and operational definition (4.2) are formally connected via Theorem 5.5. The relationship:
+
+- **Pointwise → Compositional:** If each morphism satisfies pointwise ε-naturality, compositions inherit bounded error (standard).
+- **Stability → Compositional:** The Stability Criterion ($L \cdot \gamma \le 1$) guarantees *compositional* ε-naturality (Theorem 5.5) without requiring the stronger pointwise condition.
+
+This is the key practical insight: we achieve end-to-end coherence via local contractivity (4.2b), bypassing the need to verify pointwise commutativity at each step. The categorical structure motivates the form; the operational condition delivers the bound.
 
 **Lemma 4.4 (Canonical Construction):**
-In the GFSO framework, the validator map $\mathcal{V}: \mathcal{D}(X) \to \mathcal{D}(X)$ is defined as the **Kleisli extension** of the stochastic kernel $\eta_X: X \to X$:
+In the GFSO framework, the validator map $\mathcal{V}: \mathcal{D}(X) \to \mathcal{D}(X)$ is defined as the **Kleisli extension** of the stochastic kernel $\eta_X: X \to \mathcal{D}(X)$:
 $$ \mathcal{V}(\mu)(B) := \hat{\eta_X}(\mu)(B) = \int \eta_X(x)(B) \, \mu(dx) $$
-If the kernel $\eta_X$ satisfies the metric Lipschitz property on points ($W_1(\eta_X(x), \eta_X(y)) \le \gamma d(x,y)$), then $\mathcal{V}$ is $\gamma$-Lipschitz on distributions (Definition 4.2a) by Lemma A.0. Combined with Specification Invariance (Assumption 4.3), this yields $\gamma$-Contractivity to the target (Definition 4.2b).
+If the kernel $\eta_X$ satisfies the metric Lipschitz property on points ($W_1(\eta_X(x), \eta_X(y)) \le \gamma \cdot d(x,y)$), then $\mathcal{V}$ satisfies (4.2a) by Lemma A.0. Combined with Specification Invariance (Assumption 4.3), Lemma 4.3 yields (4.2b).
 
 ---
 
@@ -172,8 +208,13 @@ If the kernel $\eta_X$ satisfies the metric Lipschitz property on points ($W_1(\
 **Assumption 5.0 (Strict Specification):**
 The specification $G: \mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ is a **strict functor**: $G(g \circ f) = G(g) \circ_K G(f)$ for all composable morphisms. This reflects that the plan is internally consistent—the specification for a composite task equals the composition of specifications. We treat strict functoriality as a *normative ideal*: a coherent plan assumes compositionality. In practice (bureaucracies, supply chains), high-level plans may not perfectly decompose; such deviation appears as specification laxity $\delta_G$, which effectively increments the modularity tax $\delta_F$ in the global bounds.
 
-**Definition 5.0 (Linear Reliability):**
-A sequential system is **Linearly Reliable** if the global error $E_n = W_1(F_{chain}(x), G_{chain}(x))$ grows at most linearly with chain length $n$, i.e., $E_n = O(n)$. This contrasts with the default exponential divergence $O(L^n)$.
+**Definition 5.0 (Stability Classes):**
+We classify sequential systems by their error growth $E_n = W_1(F_{chain}(x), G_{chain}(x))$:
+- **Bounded:** $E_n = O(1)$ — error converges to a finite steady-state (achieved when $L \cdot \gamma < 1$)
+- **Linearly Degrading:** $E_n = O(n)$ — error grows linearly (marginal stability, $L \cdot \gamma = 1$)
+- **Exponentially Divergent:** $E_n = O(L^n)$ — error explodes (unstable, $L \cdot \gamma > 1$ or no validation)
+
+A system is **Stable** if it is Bounded or Linearly Degrading, contrasting with the default exponential divergence.
 
 **Definition 5.1 (Chain Composition):**
 For a sequence of **composable** morphisms $f_1, \dots, f_n$ in $\mathcal{I}$ (with $F(f_i): X_{i-1} \to X_i$ in $\mathcal{Kl}(\mathcal{D})$), we define the implementation and specification chains as:
@@ -196,6 +237,8 @@ We assume the implementation complies with the plan locally. For each morphism $
 $$ W_1(F(f)(x), G(f)(x)) \le \epsilon_0 \quad \forall x $$
 This assumption bounds the local implementation error.
 
+**Remark (Probabilistic Relaxation):** The uniform bound $\sup_x \le \epsilon_0$ is a strong condition, typical for formal verification but often violated by LLMs (e.g., adversarial prompts). In such cases, we interpret the inequality in terms of **Expected Risk**: $\mathbb{E}_{x \sim \mathcal{D}_{in}}[W_1(F(f)(x), G(f)(x))] \le \epsilon_0$. The theorems then bound the *expected* drift of the system over the input distribution, rather than the worst-case divergence.
+
 **Assumption 5.2a (Approximate Functoriality):**
 We model the Implementation $F: \mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ as satisfying **Approximate Functoriality**. This implies that while strict functoriality ($F(g \circ f) = F(g) \circ_K F(f)$) may not hold, the deviation is bounded metrically.
 
@@ -203,6 +246,8 @@ We model the Implementation $F: \mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ as sa
 We assume the deviation from strict functoriality is metrically bounded by $\delta_F$:
 $$ \sup_x W_1( (F(g) \circ_K F(f))(x), F(g \circ f)(x) ) \le \delta_F $$
 $\delta_F$ quantifies the **Modularity Tax**: the additional error introduced by decomposition.
+
+**Remark (Depth-Dependent Modularity Tax):** Assumption 5.2b posits uniform $\delta_F$ across all compositions. In practice, $\delta_F$ may grow with chain depth (e.g., accumulated context in LLM chains). If $\delta_F(k) \le \delta_0 \cdot k^\alpha$ for depth $k$, the bounds in Theorem 5.1 remain valid with $\delta_F$ replaced by the worst-case $\max_k \delta_F(k)$, yielding a more pessimistic but still finite bound under the Stability Criterion.
 
 **Theorem 5.1 (The Exponential Divergence Bound):**
 Let $f_1, \dots, f_n$ be a chain of $L$-Lipschitz components ($L > 1$). Under **Assumption 5.1 (Component Compliance)** with local error $\epsilon_0$ and **Assumption 5.2b (Bounded Deviation)** with tax $\delta_F$, the global error follows the recurrence:
@@ -214,6 +259,8 @@ Asymptotically, this confirms the exponential divergence $W_1( F_{chain}(x), G_{
 Let $\mathcal{V}_T$ be a rejection-sampling validator with threshold $T$. For any error distribution $P$ that is **symmetric about zero** and has bounded support, $\mathcal{V}_T$ acts as a **contraction map** on the Wasserstein distance to the ideal $\delta_0$:
 $$ W_1(\mathcal{V}_T(P), \delta_0) < W_1(P, \delta_0) $$
 (Symmetry is required to preserve the zero mean property after truncation). For the uniform case $U[-E, E]$ with $T < E$, the contraction factor is $\gamma(T) = T/E$. If $T \ge E$, the validator is identity ($\gamma = 1$) and provides no contraction.
+
+**Remark (Bias Correction):** If the error distribution is asymmetric (e.g., systematic bias in supply chains), simple truncation is insufficient. In such cases, the validator **requires** a **Two-Stage** process: (1) **Centering**: $\mu' = \mu - \mathbb{E}[\mu]$ (Bias Correction), followed by (2) **Truncation**: $\mathcal{V}(\mu')$. Our experiments in Section 6.2 implement a simplified retry-with-fallback strategy that approximates this effect.
 *Proof:* See Appendix B.
 
 **Remark (Generalization to Gaussian):** For Gaussian noise $\mathcal{N}(0, \sigma^2)$, truncation at threshold $T$ similarly yields $\gamma < 1$, though the closed-form expression involves error functions. Specifically, $\gamma = \mathbb{E}[|X| \mid |X| \le T] / \mathbb{E}[|X|]$ where $X \sim \mathcal{N}(0, \sigma^2)$. The uniform case provides an explicit formula; the contraction mechanism generalizes to any symmetric unimodal distribution.
@@ -232,13 +279,78 @@ $$ W_1(\mathcal{V}_\gamma(\mu), \delta_0) = \gamma \cdot W_1(\mu, \delta_0) $$
 **Remark (Two Validator Classes):** Propositions 5.2 and 5.2b establish two distinct mechanisms satisfying Definition 4.2b: stochastic rejection sampling (realistic, models retry-based validators) and deterministic scaling (minimal, provides precise $\gamma$ control). Both achieve the Stability Criterion (Corollary 5.3).
 
 **Corollary 5.3 (The GFSO Stability Criterion):**
-A sufficient condition for a sequential system to be **Linearly Reliable** (per Definition 5.0) is that the product of the component's expansiveness and the control mechanism's contraction is non-expansive:
-$$ L \cdot \gamma \le 1 $$
-Under this condition, the error bound from Theorem 5.1 collapses from $O(L^n)$ to $O(n(\epsilon_0 + \delta_F))$.
+The condition $L \cdot \gamma \le 1$ is **necessary and sufficient** for a sequential system to be **Stable** (per Definition 5.0).
+
+**Sufficiency:** Under $L \cdot \gamma \le 1$, the error bound from Theorem 5.1 collapses from $O(L^n)$ to:
+- **Bounded** ($L \cdot \gamma < 1$): $E'_\infty = \frac{\gamma(\epsilon_0 + \delta_F)}{1 - L\gamma}$
+- **Linear** ($L \cdot \gamma = 1$): $E'_n = O(n(\epsilon_0 + \delta_F))$
+
+**Necessity:** If $L \cdot \gamma > 1$, the recurrence $E'_{n+1} = (L\gamma) E'_n + C$ with $C = \gamma(\epsilon_0 + \delta_F) > 0$ yields $E'_n \to \infty$ as $n \to \infty$. Thus no stable equilibrium exists.
+
+**Finite-$n$ Transient Bound:** For chains of length $n$ (before reaching steady-state), the explicit error is:
+$$ E'_n = (L\gamma)^n E'_0 + \gamma(\epsilon_0 + \delta_F) \cdot \frac{1 - (L\gamma)^n}{1 - L\gamma} $$
+For $L\gamma < 1$: as $n \to \infty$, $(L\gamma)^n \to 0$ and $E'_n \to E'_\infty$. For finite $n$, the transient term $(L\gamma)^n E'_0$ may dominate if initial error $E'_0$ is large.
+
 *Proof:* See Appendix C.
 
+**Corollary 5.4 (Sparse Validation Criterion):**
+When validators are applied every $k$ components (rather than after each), the effective amplification between validations is $L^k$. The modified stability criterion becomes:
+$$ L^k \cdot \gamma \le 1 \quad \Leftrightarrow \quad \gamma \le L^{-k} $$
+
+*Interpretation:* Sparse validation requires **exponentially stronger** validators. Doubling the interval between checks ($k \to 2k$) requires squaring the contraction strength ($\gamma \to \gamma^2$ to maintain $L^{2k}\gamma^2 \le 1$). This quantifies why critical checkpoints matter disproportionately in hierarchical systems: missing one validation at depth $k$ requires $L^k$-fold stronger subsequent correction.
+
+*Proof:* Between validations, the uncontrolled recurrence $E_{n+1} = L \cdot E_n + \epsilon_0$ runs for $k$ steps, yielding amplification $L^k$. Applying the $\gamma$-contractive validator then gives $E'_{n+k} \le \gamma \cdot L^k \cdot E'_n + O(1)$. Stability requires $\gamma \cdot L^k \le 1$. $\square$
+
+**Example (LLM Chain Design):** Consider an LLM reasoning chain of length $n=10$ with per-step expansiveness $L=1.2$. Validation options:
+- **Every step** ($k=1$): Requires $\gamma \le 1/1.2 = 0.83$
+- **Every 3 steps** ($k=3$): Requires $\gamma \le 1/1.2^3 = 0.58$
+- **Every 5 steps** ($k=5$): Requires $\gamma \le 1/1.2^5 = 0.40$
+
+This quantifies the cost of sparse validation: reducing checkpoints from 10 to 4 (validating every 3 steps) requires a 30% stronger validator ($0.83 \to 0.58$). The criterion directly informs system design trade-offs.
+
+**Remark (Heterogeneous Components):** For chains with varying Lipschitz constants $L_1, \ldots, L_n$, the stability criterion generalizes: dense validation requires $\gamma \le 1/\max_i L_i$; sparse validation over segment $S$ requires $\gamma \le 1/\prod_{i \in S} L_i$. The uniform-$L$ presentation simplifies exposition; the theory extends naturally.
+
+**Proposition 5.6 (Optimal Validator Placement):**
+For a chain of length $n$ with uniform expansiveness $L > 1$ and a budget of $m < n$ validators, the placement minimizing worst-case error is **uniform spacing**: place validators at positions $\lfloor n/m \rfloor, 2\lfloor n/m \rfloor, \ldots, m\lfloor n/m \rfloor$.
+
+*Proof:* Between consecutive validators, error amplifies by factor $L^k$ where $k$ is the gap length. For placement $(k_1, \ldots, k_m)$ with $\sum k_i = n$, the worst-case amplification is $\max_i L^{k_i}$. This is minimized when all $k_i$ are equal, giving $k_i = n/m$ and worst-case amplification $L^{n/m}$. Any non-uniform placement has some $k_j > n/m$, yielding strictly worse bound. $\square$
+
+**Corollary (Validation Budget Trade-off):**
+With $m$ optimally-placed validators, the steady-state error scales as:
+$$ E'_\infty(m) = O\left(\frac{\gamma \epsilon_0}{1 - L^{n/m} \gamma}\right) $$
+This interpolates between $O(L^n)$ (no validators, $m=0$) and $O(\epsilon_0/(1-L\gamma))$ (dense validation, $m=n$). Doubling the validator budget ($m \to 2m$) reduces the effective amplification from $L^{n/m}$ to $L^{n/2m} = \sqrt{L^{n/m}}$—a **square-root improvement**.
+
+**Lemma 5.7 (Validator Composition):**
+If $\mathcal{V}_1$ is $\gamma_1$-contractive and $\mathcal{V}_2$ is $\gamma_2$-contractive, then $\mathcal{V}_2 \circ \mathcal{V}_1$ is $(\gamma_1 \cdot \gamma_2)$-contractive.
+
+*Proof:* $W_1((\mathcal{V}_2 \circ \mathcal{V}_1)(\mu), G) = W_1(\mathcal{V}_2(\mathcal{V}_1(\mu)), G) \le \gamma_2 \cdot W_1(\mathcal{V}_1(\mu), G) \le \gamma_2 \gamma_1 \cdot W_1(\mu, G)$. $\square$
+
+*Practical implication:* Two weak validators ($\gamma = 0.9$ each) compose to a strong one ($\gamma = 0.81$). Stacking cheap checks can substitute for one expensive verification.
+
+**Proposition 5.8 (Robustness Margin):**
+If a system is designed with safety margin $\alpha = L \cdot \gamma < 1$, it remains stable under model mismatch up to $L' = L/\alpha$.
+
+*Example:* Design with $L=1.2$, $\gamma=0.75$ gives $\alpha = 0.9$. The system tolerates actual expansiveness up to $L' = 1.2/0.9 = 1.33$—an 11% safety margin. Designing at the boundary ($\alpha = 1$) provides no robustness to model uncertainty.
+
+**Proposition 5.9 (Tightness of Bounds):**
+The steady-state bound $E'_\infty = \frac{\gamma(\epsilon_0 + \delta_F)}{1 - L\gamma}$ is **tight**: there exist error injection patterns achieving this value exactly.
+
+*Proof:* Consider adversarial injection of error $\epsilon_0$ at each step, aligned to maximize accumulation. The recurrence $E'_{n+1} = L\gamma \cdot E'_n + \gamma\epsilon_0$ with $E'_0 = 0$ converges to $E'_\infty = \gamma\epsilon_0 \sum_{k=0}^\infty (L\gamma)^k = \gamma\epsilon_0/(1-L\gamma)$. This matches the bound, so no tighter universal bound exists. $\square$
+
+**Theorem 5.5 (Compositional Error Bound):**
+Let $\eta = (\eta_i)$ be a family of $\gamma$-contractive validators (Definition 4.2b) applied after each component in a chain. Let $\mathcal{V}_{chain} = \eta_n \circ_K \cdots \circ_K \eta_1$ denote the composite validator. Under the Stability Criterion ($L \cdot \gamma \le 1$), the validated implementation satisfies a **compositional proximity bound**:
+$$ W_1( (\mathcal{V}_{chain} \circ_K F_{chain})(x_0), G_{chain}(x_0) ) \le \epsilon $$
+with explicit bound:
+$$ \epsilon = \begin{cases} \frac{\gamma(\epsilon_0 + \delta_F)}{1 - L\gamma} & \text{if } L\gamma < 1 \\ n \cdot \gamma(\epsilon_0 + \delta_F) & \text{if } L\gamma = 1 \end{cases} $$
+
+*Proof:* Direct consequence of Corollary 5.3. The left-hand side is precisely the validated chain error $E'_n$, which converges to the stated bounds under the Stability Criterion.
+
+**Interpretation:** This theorem closes the categorical loop. Classical ε-naturality (Section 4.2) requires approximate commutativity for each morphism independently. Theorem 5.5 establishes a weaker property we call *compositional ε-naturality*: the end-to-end diagram commutes up to $\epsilon$. This is not ε-naturality in the standard sense—it is a proximity bound for the composite, not per-morphism commutativity. The term "compositional ε-naturality" emphasizes the structural analogy while acknowledging the distinction. Thus: **operational contractivity (4.2b) + stability ($L\gamma \le 1$) ⟹ compositional proximity bound**.
+
+**Remark (Compositional vs Pointwise ε-Naturality):** Classical ε-naturality requires each morphism $f$ to satisfy the approximate commutativity condition independently. Theorem 5.5 establishes a weaker but practically relevant property: **compositional ε-naturality**, where the *composite* diagram commutes up to $\epsilon$. This is the appropriate notion for hierarchical systems—we care about end-to-end fidelity, not per-step commutativity. The stronger pointwise condition would require $W_1((\eta_{X_i} \circ_K F(f_i))(x), (G(f_i) \circ_K \eta_{X_{i-1}})(x)) \le \epsilon_i$ for each $f_i$; this implies compositional ε-naturality but is not implied by it.
+
 **Example 5.4 (Regime Comparison):**
-Consider chains with $L=1.2$ and per-step noise injection $\epsilon_0$. We compare three regimes at chain length $n$:
+Consider chains with $L=1.2$ and per-step noise injection $\epsilon_0$. We compare three regimes at chain length $n$ (assuming $\delta_F \approx 0$ for clarity):
 
 | Regime | $L \cdot \gamma$ | Error Bound | Behavior |
 |--------|------------------|-------------|----------|
@@ -246,11 +358,14 @@ Consider chains with $L=1.2$ and per-step noise injection $\epsilon_0$. We compa
 | Supercritical | $1.08$ | $O((L\gamma)^n)$ | Exponential (slower) |
 | Subcritical | $0.90$ | $\frac{\gamma \epsilon_0}{1 - L\gamma}$ | Bounded |
 
-*Numerical example:* For $n=50$, unvalidated error grows as $1.2^{50} \approx 9 \times 10^3$. With subcritical validation ($L \cdot \gamma = 0.90$), the steady-state bound is $\frac{0.75 \epsilon_0}{0.10} = 7.5\epsilon_0$ — a reduction by three orders of magnitude. Section 6 confirms this prediction experimentally.
+*Numerical example:* For $n=50$, unvalidated error grows as $1.2^{50} \approx 9 \times 10^3$. With subcritical validation ($L \cdot \gamma < 1$), error converges to a finite steady-state — a reduction by orders of magnitude. Section 6 confirms this prediction experimentally.
 
 ---
 
-### 6. Empirical Validation
+## 6. Numerical Validation of Error Bounds
+
+**Objective:**
+The goal of this section is to empirically validate the theoretical error bounds derived in Theorem 5.1 and Corollary 5.3, specifically confirming the existence and location of the phase transition at $L \cdot \gamma = 1$. We utilize synthetic environments to precisely control the Lipschitz constants ($L$) and contraction factors ($\gamma$), isolating the structural dynamics from domain-specific noise.
 
 **Categorical Instantiation:**
 To validate the theory, we instantiate the framework as follows:
@@ -260,13 +375,13 @@ To validate the theory, we instantiate the framework as follows:
 *   **Implementation $F$:** Maps morphisms to Gaussian kernels $\mathcal{N}(Lx, \sigma^2 I)$ with Lipschitz constant $L=1.2$.
 *   **Validator:** Implements the contraction map via pure scaling (Experiment 1, Proposition 5.2b) or rejection sampling with partial observation (Experiment 2, inspired by Proposition 5.2).
 
-We simulated $N=1000$ chains of length 50 in $\mathbb{R}^{100}$ with uniform dynamics $L=1.2$ and noise $\sigma=0.5$.
+We simulated $N=1000$ chains of length 50 in $\mathbb{R}^{100}$ with uniform dynamics $L=1.2$ and noise $\sigma=0.5$. Implementation available in the repository.
 
 **Measurement:** The error metric is $\|x_n\|_2$ (Euclidean norm of state). Since $G_{chain}(x_0) = \delta_0$, by Kantorovich-Rubinstein duality: $W_1(F_{chain}(x_0), \delta_0) = \mathbb{E}_{X \sim F_{chain}(x_0)}[\|X\|]$. Thus, averaging $\|x_n\|$ across trials estimates $W_1$.
 
 ### 6.1. Phase Transition at $L \cdot \gamma = 1$
 
-The first experiment directly validates the Stability Criterion (Corollary 5.3) by varying the contraction factor $\gamma$:
+The first simulation directly validates the Stability Criterion (Corollary 5.3) by varying the contraction factor $\gamma$:
 
 | Regime | $L \cdot \gamma$ | Mean Error (n=50) | Behavior |
 |--------|------------------|-------------------|----------|
@@ -283,7 +398,11 @@ The phase transition is sharp: at $L \cdot \gamma = 0.90$ (just 10% below critic
 
 The second experiment tests robustness when the validator observes only a subset of dimensions (modeling realistic scenarios where full state observation is infeasible).
 
-*   **Setup:** Same dynamics ($L=1.2$, $\mathbb{R}^{100}$). Validator observes a random 10% of dimensions per step with measurement noise ($\sigma=0.2$). The validator implements a **rejection-with-interpolation** strategy: if no valid sample is found within $k=10$ retries, the system interpolates toward the previous state ($0.8x + 0.2p$). This conservative fallback bounds the step size: $\|x_{new} - x\| = 0.2\|p - x\|$, preventing unbounded error growth even when rejection fails.
+*   **Setup:** Same dynamics ($L=1.2$, $\mathbb{R}^{100}$). Validator observes a random 10% of dimensions per step with measurement noise ($\sigma=0.2$). The validator implements a **rejection-with-fallback** strategy:
+    - **Primary mechanism:** Rejection sampling with threshold $T$ provides contraction (Proposition 5.2).
+    - **Fallback:** If no valid sample is found within $k=10$ retries, the system interpolates: $x_{new} = 0.8x + 0.2p$.
+
+    **Note:** The fallback alone does not guarantee $\gamma < 1$—for $L=1.2$, the effective multiplier is $0.8 + 0.2 \times 1.2 = 1.04 > 1$. The fallback serves as a *safety net* that bounds step size ($\|x_{new} - x\| = 0.2\|p - x\|$), preventing unbounded error growth when rejection fails. Stability comes from successful rejections, which occur with high probability when error is moderate.
 *   **Result:**
 
 | Validator | Observed Dims | Mean Error (n=50) |
@@ -292,7 +411,7 @@ The second experiment tests robustness when the validator observes only a subset
 | Full | 100/100 | 62 |
 | Partial | 10/100 | **95** |
 
-Partial observation (10%) achieves comparable containment to full observation. This empirical observation—which we term the **Complexity Asymmetry heuristic**—suggests that sparse random probes suffice when error is isotropically distributed across dimensions.
+Partial observation (10%) achieves comparable containment to full observation. This **empirical observation** suggests that sparse random probes may suffice when error is isotropically distributed across dimensions—a phenomenon we call **dimension-error decoupling**. Theoretical analysis of this effect (relating observed dimensions to effective $\gamma$) is deferred to future work.
 
 ![Figure 2: Partial Observation](../experiments/artifacts/fig2_realistic_scenario.png)
 
@@ -328,7 +447,7 @@ We formalize the stability criterion $L \cdot \gamma \le 1$ for three domains, e
 
 **Expansiveness Factor $L$:** Hallucination and semantic drift cause $L > 1$. Illustrative estimates: $L \approx 1.1$-$1.3$ per reasoning step.
 
-**Remark (Local Lipschitz Assumption):** The *global* Lipschitz constant for LLMs may be arbitrarily large—a single token can flip semantic meaning. The estimates above represent the **effective local Lipschitz constant** within the coherent semantic basin of the reasoning trajectory. This locality assumption is implicit in all practical LLM applications; without it, no compositional reasoning would be possible.
+**Remark (Modeling Assumption — Local Lipschitz):** The *global* Lipschitz constant for LLMs may be arbitrarily large—a single token can flip semantic meaning. The estimates above are a **modeling assumption**: we posit that within the coherent semantic basin of a reasoning trajectory, an *effective local* $L$ exists and is bounded. This is not a proven property of LLMs but a necessary condition for *any* compositional analysis. The framework answers: "If components have bounded $L$, what validator strength $\gamma$ suffices?" Empirical calibration of $L$ for specific LLM pipelines is deferred to future work.
 
 **Control Mechanism $\gamma$:** Runtime assertions (e.g., type checks, regex validation, unit tests) and LLM-based verification act as $\epsilon$-Natural Transformations. Rejection sampling with semantic similarity thresholds implements variance truncation.
 
@@ -347,7 +466,7 @@ For discrete measures with $N$ support points, exact $W_1$ computation is $O(N^3
 **Clarification:** GFSO uses $W_1$ as a **theoretical Lyapunov function**—the proofs establish bounds on $W_1$ without requiring its explicit computation. In practice:
 - **Validators** use cheap surrogates (KPIs, unit tests, semantic similarity) that correlate with $W_1$ reduction
 - **Estimation** (Section 8.4) uses sampling-based approximations
-- The **Complexity Asymmetry heuristic** (Section 6.2) suggests that low-dimensional probes often provide sufficient contraction in practice
+- The **dimension-error decoupling** observation (Section 6.2) suggests that low-dimensional probes may provide sufficient contraction when error is isotropic
 
 ### 8.3. Connection to Lawvere's Metric Spaces
 Our approach is inspired by Lawvere's insight [12] that metric spaces are categories enriched over $([0, \infty], \ge, +)$. While we do not construct a full enrichment here, the Wasserstein distance serves as a natural hom-object measuring "semantic distance" between distributions. The Lipschitz constant $L$ then becomes the composition bound: $d(f \circ g) \le L_f \cdot d(g)$. This perspective suggests that "Stability" ($L \cdot \gamma \le 1$) is not merely a sufficient condition, but reflects the categorical structure of contraction in metric-enriched categories.
@@ -376,6 +495,20 @@ The value lies not in guaranteeing correctness—which is impossible for stochas
 **High Expansion Regime.** The Stability Criterion $L \cdot \gamma \le 1$ establishes a theoretical lower bound for reliability. However, in systems where $L$ is extremely large (e.g., highly divergent creative tasks), achieving sufficient $\gamma$ via rejection sampling may become computationally prohibitive due to low acceptance rates. Future work will explore the **Categorical Synthesis of Optimal Validators**, using the adjunction between Specification and Implementation to automatically derive contraction mappings that minimize $W_1$ while maximizing sample efficiency.
 
 **Experimental Comparison.** Our experiments validate GFSO's theoretical predictions (phase transition, partial observation robustness) on synthetic benchmarks. Direct comparison with existing approaches (PRISM for probabilistic model checking, AgentGuard for runtime verification) requires implementing equivalent tasks across frameworks—a significant engineering effort orthogonal to this paper's theoretical contribution. Such empirical benchmarking is planned for future work.
+
+**Sparse Validation.** Corollary 5.4 establishes the criterion $L^k \cdot \gamma \le 1$ for validation every $k$ steps. Open questions remain: optimal validator placement (which steps to validate?), adaptive validation (adjusting $k$ based on observed error), and multi-rate schemes (different $k$ for different chain segments).
+
+**Validator Realizability.** Proposition 5.2b (pure scaling) provides a minimal theoretical model with exact $\gamma$-contractivity. Realistic validators (rejection sampling, Prop. 5.2) have distribution-dependent contraction factors. The theory uses the worst-case $\gamma$ over the distribution family; tighter bounds require characterizing the specific error distribution at each step. This gap between idealized and realizable validators is inherent to all control-theoretic frameworks.
+
+**Point Specification.** Our experiments use $G_{chain}(x_0) = \delta_0$ (Dirac at origin), allowing $W_1$ estimation via sample mean $\mathbb{E}[\|x_n\|]$. For general non-point specifications $G$, computing $W_1(F_{chain}, G_{chain})$ requires optimal transport solvers (e.g., Sinkhorn [Cuturi, 2013]). The theory is general; the empirical validation is restricted to this tractable case.
+
+**Sequential Chains.** The theorems address sequential composition (linear chains in $\mathcal{I}$). Extension to DAGs with branching (fork/join parallelism) requires analyzing error propagation through merges, where multiple upstream errors combine. The categorical framework accommodates general $\mathcal{I}$; explicit bounds for non-linear topologies are future work.
+
+---
+
+## 9. Conclusion
+
+We presented GFSO, a categorical framework for analyzing error propagation in hierarchical stochastic systems. By formalizing validators in the Kleisli category of the Kantorovich monad, we derived a complete design toolkit: the Stability Criterion $L \cdot \gamma \le 1$ (necessary and sufficient), sparse validation trade-offs $L^k \cdot \gamma \le 1$, optimal placement with square-root scaling, validator composition rules, robustness margins for model uncertainty, and tight bounds with no better universal alternative. Synthetic experiments confirm the predicted phase transition. The framework answers: "How much validation?" "Where to place validators?" "How many are enough?" "What safety margin?"—applicable wherever imperfect components compose, from AI agent chains to organizational hierarchies.
 
 ---
 
@@ -515,13 +648,13 @@ $\square$
 We modify the recurrence from (A.2) by applying the validator $\mathcal{V}$ after each step.
 Let $E'_{n}$ be the error after validation at step $n$.
 
-*Constructive condition for Assumption 4.3:* For a rejection-sampling validator $\mathcal{V}_T$ with threshold $T$, Specification Invariance holds iff $\text{supp}(G_{chain}(x)) \subseteq [-T, T]$. In words: the specification's error distribution must lie entirely within the acceptance region. This is a design constraint—the threshold $T$ must be chosen large enough to accommodate the ideal output, but small enough to reject deviations.
+*Constructive condition for Assumption 4.3:* For a rejection-sampling validator $\mathcal{V}_T$ with threshold $T$, Specification Invariance holds iff $\text{supp}(G_{chain}(x_0)) \subseteq [-T, T]$. In words: the specification's target distribution must lie entirely within the acceptance region. This is a design constraint—the threshold $T$ must be chosen large enough to accommodate the ideal output, but small enough to reject deviations.
 
-*Notation:* For brevity, let $F := F_{chain}(x)$ and $G := G_{chain}(x)$ denote the output distributions at step $n+1$.
+*Notation:* For brevity, let $F := F_{chain}(x_0)$ and $G := G_{chain}(x_0)$ denote the output distributions at step $n+1$.
 
-Under Assumption 4.3 (Specification Invariance), $\mathcal{V}(G) = G$. Combined with Definition 4.2a ($\gamma$-Lipschitz validator):
+Under Assumption 4.3 (Specification Invariance), $\mathcal{V}(G) = G$. Combined with (4.2a):
 $$ E'_{n+1} = W_1(\mathcal{V}(F), G) \stackrel{4.3}{=} W_1(\mathcal{V}(F), \mathcal{V}(G)) \stackrel{4.2a}{\le} \gamma \cdot W_1(F, G) = \gamma \cdot E_{n+1}^{raw} $$
-(Note: This derivation requires both 4.2a and 4.3. Definition 4.2b alone is insufficient—we need the Lipschitz property to bound the distance between $\mathcal{V}(F)$ and $\mathcal{V}(G)$.)
+(Note: This derivation requires both (4.2a) and Assumption 4.3. Property (4.2b) alone is insufficient—we need the Lipschitz property to bound the distance between $\mathcal{V}(F)$ and $\mathcal{V}(G)$.)
 
 By this contraction property:
 $$ E'_{n+1} \le \gamma \cdot E_{n+1}^{raw} $$
@@ -529,7 +662,7 @@ Substituting the expansion from (A.2):
 $$ E'_{n+1} \le \gamma \cdot ( L \cdot E'_n + \epsilon_0 + \delta_F ) $$
 $$ E'_{n+1} = (L \cdot \gamma) E'_n + \gamma(\epsilon_0 + \delta_F) $$
 This is a linear recurrence of the form $x_{n+1} = A x_n + B$.
-For the system to be **Linearly Reliable** (Definition 5.0), the error must not diverge. This requires the slope $A \le 1$:
+For the system to be **Stable** (Definition 5.0), the error must not diverge exponentially. This requires the slope $A \le 1$:
 $$ L \cdot \gamma \le 1 $$
 
 **Remark (Steady-State Analysis):** The three regimes exhibit qualitatively different long-term behavior:

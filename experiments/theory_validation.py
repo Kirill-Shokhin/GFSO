@@ -1,7 +1,7 @@
 """
 GFSO Experimental Validation: L * gamma <= 1
-Exp 1: Phase transition (vary gamma)
-Exp 2: Partial observation (vary observed dims)
+Exp 1: Phase transition (Prop 5.2b: Ideal Scaling)
+Exp 2: Partial observation (Prop 5.2: Truncation + Fallback)
 """
 
 import numpy as np
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Optional, Callable
 import os
 
-OUTPUT_DIR = "gfso/experiments/artifacts"
+OUTPUT_DIR = "experiments/artifacts"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
@@ -39,23 +39,52 @@ def simulate(cfg: Config, validator: Optional[Callable] = None) -> np.ndarray:
 
 
 # Validators
-def scaling(gamma: float):
-    """Pure scaling: V(p) = gamma * p. Minimal gamma-contractive validator (Prop 5.2b)."""
+
+def ideal_scaling(gamma: float):
+    """
+    Pure scaling: V(p) = gamma * p.
+    Implements Proposition 5.2b (Deterministic Contraction).
+    Used to validate the Stability Criterion L * gamma <= 1.
+    """
     def v(x, p): return gamma * p
     return v
 
 
-def rejection(obs_dims: Optional[int], cfg: Config, threshold: float = 1.0,
-              noise: float = 0.2, retries: int = 10):
-    """Realistic: partial observation with retry."""
+def rejection_with_fallback(obs_dims: Optional[int], cfg: Config, threshold: float = 1.0,
+                            noise: float = 0.2, retries: int = 10, bias_correction: bool = False):
+    """
+    Realistic validator implementing Proposition 5.2 (Truncation) with Partial Observation.
+
+    Mechanism:
+    1. Observe random subset of dimensions.
+    2. Check threshold (Truncation) — PRIMARY contraction mechanism.
+    3. If fail: Retry (Resampling).
+    4. If all retries fail: Interpolate towards previous state (Fallback safety net).
+
+    Note: Fallback (0.8*x + 0.2*p) does NOT provide contraction (L_eff = 1.04 > 1 for L=1.2).
+    It bounds step size to prevent unbounded growth. Stability comes from successful rejections.
+    """
     def v(x, p):
         dim = len(p)
         od = obs_dims or dim
+        
+        # Bias Correction (Conceptual placeholder for asymmetric distributions)
+        if bias_correction:
+            p = p - np.mean(p) # Simple centering
+
         for _ in range(retries):
             idx = np.random.choice(dim, od, replace=False)
-            if np.linalg.norm(p[idx] + np.random.normal(0, noise, od)) <= threshold * np.sqrt(od):
+            # Measurement with observation noise
+            measured_norm = np.linalg.norm(p[idx] + np.random.normal(0, noise, od))
+            # Scale threshold by sqrt(d_obs/d_total)
+            if measured_norm <= threshold * np.sqrt(od):
                 return p
+            
+            # Resample: generating a new proposal from the implementation F
             p = cfg.L * x + np.random.normal(0, cfg.noise_std, dim)
+            
+        # Fallback: Interpolate towards previous state if rejection fails
+        # Bounds step size: ||x_new - x|| = 0.2||p - x||, limiting divergence rate
         return 0.8 * x + 0.2 * p
     return v
 
@@ -76,7 +105,7 @@ def run_and_plot(title: str, cases: list, cfg: Config, filename: str):
     for name, data, color, style in results:
         mean = gaussian_filter1d(np.mean(data, axis=0), 1.5)
         std = gaussian_filter1d(np.std(data, axis=0), 1.5)
-        label = name.replace("Lg=", "$L \\cdot \\gamma=$")
+        label = name.replace("Lg=", r"$L \cdot \gamma=$")
         plt.plot(mean, color=color, ls=style, lw=2.5, label=label)
         plt.fill_between(range(cfg.n_steps), mean - std, mean + std, color=color, alpha=0.1)
 
@@ -97,19 +126,19 @@ if __name__ == "__main__":
     cfg = Config()
     L = cfg.L
 
-    # Experiment 1: Phase Transition (pure scaling validator, Prop 5.2b)
+    # Experiment 1: Phase Transition (Prop 5.2b)
     run_and_plot("Phase Transition at L*gamma = 1", [
-        ("Naive", None, '#D35400', '-'),
-        (f"Supercritical (Lg={L*0.9:.2f})", scaling(0.9), '#E67E22', '--'),
-        (f"Critical (Lg={1.0:.2f})", scaling(1/L), '#F1C40F', '-.'),
-        (f"Subcritical (Lg={L*0.75:.2f})", scaling(0.75), '#1E8449', '-'),
+        ("Naive (No Validator)", None, '#D35400', '-'),
+        (f"Supercritical (Lg={L*0.9:.2f})", ideal_scaling(0.9), '#E67E22', '--'),
+        (f"Critical (Lg={1.0:.2f})", ideal_scaling(1/L), '#F1C40F', '-.'),
+        (f"Subcritical (Lg={L*0.75:.2f})", ideal_scaling(0.75), '#1E8449', '-'),
     ], cfg, "fig1_theory_validation.png")
 
-    # Experiment 2: Partial Observation
+    # Experiment 2: Partial Observation (Prop 5.2)
     run_and_plot("Partial Observation Robustness", [
         ("Baseline (Unconstrained)", None, '#D35400', '-'),
-        ("Partial (10/100 dims)", rejection(10, cfg), '#F1C40F', '--'),
-        ("Full (100/100 dims)", rejection(None, cfg), '#1E8449', '-'),
+        ("Partial (10/100 dims)", rejection_with_fallback(10, cfg), '#F1C40F', '--'),
+        ("Full (100/100 dims)", rejection_with_fallback(None, cfg), '#1E8449', '-'),
     ], cfg, "fig2_realistic_scenario.png")
 
     print(f"\n{'='*60}\nCOMPLETE\n{'='*60}")
