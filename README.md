@@ -14,11 +14,13 @@ When information passes through multiple imperfect nodes, errors don't just add 
 
 ---
 
-## The Solution: Lipschitz Stability Criterion
+## The Solution: ε-Natural Transformations
 
-GFSO models hierarchical systems using **Wasserstein-enriched Kleisli categories** and derives compositional error bounds for systems with Lipschitz dynamics.
+GFSO introduces **ε-natural transformations (ε-NT)** — the first categorical formalization of validators as coherent morphism families. A validator is an ε-NT if the implementation-specification diagram commutes *up to ε*.
 
-The central result is the **Lipschitz Stability Criterion** — analogous in spirit to the [small-gain theorem](https://en.wikipedia.org/wiki/Small-gain_theorem) from control theory, but for sequential stochastic chains:
+This abstraction enables **compositional reasoning**: local validator properties yield global error bounds.
+
+From this abstraction follows the **Stability Criterion** (a theorem, not the contribution):
 
 $$ L \cdot \gamma \le 1 $$
 
@@ -134,6 +136,7 @@ Figures are generated in `experiments/artifacts/`.
 - Requires **Lipschitz-continuous** dynamics (bounded $L$)
 - Assumes **Polish metric spaces** (complete, separable)
 - Specification and implementation must share state space
+- Applies to **structurally contractive validators** (rejection sampling, consensus, deterministic checks) — arbitrary LLM-based correction prompts may not satisfy contractivity
 - Domain instantiations (§7 in paper) are illustrative, not empirically calibrated
 
 See **Section 8.5** of the paper for detailed discussion.

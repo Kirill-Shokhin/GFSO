@@ -1,7 +1,7 @@
-# The General Framework for Structural Optimization: Compositional Error Bounds in Metric-Equipped Kleisli Categories
+# General Framework for Structural Optimization: ε-Natural Transformations in Metric-Equipped Kleisli Categories
 
 **Target Venue:** CAV 2026
-**Status:** Draft v5.0 (Universal Theory)
+**Status:** Draft v7.0
 
 **Author:** Kirill Shokhin ([kashokhin@gmail.com](mailto:kashokhin@gmail.com))
 **Repository:** [github.com/Kirill-Shokhin/GFSO](https://github.com/Kirill-Shokhin/GFSO)
@@ -9,7 +9,22 @@
 ---
 
 ## Abstract
-Hierarchical composition of stochastic components suffers from exponential error cascade: small local deviations amplify into global failures. We propose **GFSO**, synthesizing control theory, behavioral metrics, and category theory. Working in the **Kleisli category of the Kantorovich monad**, we derive compositional error bounds for systems with Lipschitz dynamics. Control mechanisms (audits, guardrails) are formalized as **$\epsilon$-Natural Transformations**—contractions ensuring that validated implementations "commute" with specifications up to bounded error. Our **Stability Criterion** ($L \cdot \gamma \le 1$) guarantees this ε-naturality for compositions and is analogous in spirit to the small-gain theorem. Numerical simulations confirm the predicted phase transition: subcritical validators reduce error by orders of magnitude.
+
+**Problem:** Compositional stochastic systems rely on runtime validators to control error propagation. When is validation *sufficient*? What guarantees can we derive compositionally?
+
+**Contribution:** We introduce **$\epsilon$-natural transformations ($\epsilon$-NT)**—a categorical formalization of validators as morphism families in the Kleisli category of the Kantorovich monad. A validator is an $\epsilon$-NT if the implementation-specification diagram commutes up to $\epsilon$ in Wasserstein distance:
+$$W_1(\eta \circ F(f),\; G(f) \circ \eta) \leq \epsilon$$
+
+This abstraction enables compositional analysis: local validator properties yield global error bounds.
+
+**Results:**
+- Error growth $O(L^n)$ derived from enriched Kleisli composition (Corollary 3.4)
+- Stability Criterion $L \cdot \gamma \leq 1$: necessary and sufficient for bounded errors (Corollary 5.3)
+- Extension to DAGs with explicit recursive bounds (§5.6)
+
+**Novelty:** The criterion $L \cdot \gamma \leq 1$ is classical (cf. small-gain theorem). The contribution is formalizing validators as $\epsilon$-NT—enabling compositional verification of stochastic hierarchical systems where validators were previously treated ad hoc.
+
+**Scope:** The framework applies to structurally contractive validators (rejection sampling, consensus, deterministic checks) where $\gamma < 1$ by construction.
 
 ---
 
@@ -20,7 +35,7 @@ Hierarchical composition is ubiquitous: a corporate directive flows from CEO thr
 
 Analysis reveals that without structural safeguards, fidelity loss is mathematically inevitable. This is the "Telephone Game" phenomenon, formalized in control theory as **expansive dynamics** ($L > 1$): each processing step introduces noise that amplifies downstream. In organizational hierarchies, this manifests as **bureaucratic drift**—a small policy misinterpretation compounds into catastrophic implementation failure. In supply chains, it appears as the **bullwhip effect**—minor demand fluctuations create exponential inventory swings upstream. In generative AI, it emerges as **semantic collapse**—cumulative hallucinations destroy reasoning chain coherence.
 
-The common thread is *topological*: when morphisms in a compositional structure are expansive ($d(f(x), f(y)) > d(x,y)$), error propagation is **exponential** ($\mathcal{O}(L^n)$ in chain length $n$). Traditional approaches treat each domain separately, but the mathematics reveals a unified pathology.
+The common thread is *topological*: when morphisms in a compositional structure are expansive ($d(f(x), f(y)) > d(x,y)$), error propagation follows a pattern that we will **derive** (not assume) from categorical structure. As we show in Section 3, viewing metrics through Lawvere's enriched category lens, the exponential bound $\mathcal{O}(L^n)$ emerges as a **theorem** about composition of Lipschitz degrees—not a postulate about geometric progressions. Traditional approaches treat each domain separately; our categorical formulation reveals a unified structure.
 
 ### 1.2. The Discretization Gap
 Existing verification methods—whether probabilistic model checking for software, audit protocols for bureaucracies, or quality assurance in manufacturing—share a common paradigm: **discrete logical verification**. They map continuous state spaces to binary decisions (Pass/Fail, True/False, Compliant/Non-Compliant).
@@ -29,22 +44,93 @@ This creates a "Discretization Gap": logical predicates are too brittle to captu
 
 Reliability in hierarchical stochastic systems is not a binary property, but a **continuous metric property**. The question is not "Is the state correct?" but "How far has the distribution drifted from specification?"
 
-### 1.3. The GFSO Paradigm
-Instead of asking "Is the state correct?", we ask "Is the transformation stable?". We model components as morphisms in a **Metric-Equipped Kleisli Category** (specifically, ordered by the Wasserstein metric). In this view, reliability is not a property of individual component parameters, but of the **topology of the composition**.
+### 1.3. The GFSO Paradigm: Controlling $\epsilon$ Compositionally
 
-Our central thesis is that **Control Mechanisms are Contraction Mappings**: whether a corporate audit, a supply chain quality check, or an AI guardrail, the formal role is identical—an $\epsilon$-Natural Transformation that minimizes the Wasserstein distance between *Implementation* (stochastic reality) and *Specification* (ideal logic). By treating control mechanisms as metric operators rather than logical predicates, we provide a framework for analyzing the reliability of compositions.
+The core problem is **local error $\epsilon$**: each step in a hierarchical system deviates from specification by some amount $\epsilon$ (measured in Wasserstein distance $W_1$). The question is not "Is the state correct?" but "**How do we keep $\epsilon$ bounded across the entire composition?**"
+
+**Intuitive Example.** Consider an LLM agent chain tasked with research:
+```
+Step 1: Search → Step 2: Summarize → Step 3: Conclude
+```
+Each step has a specification G ("preserve all relevant facts") and an execution F (what the LLM actually outputs). A **validator** η checks conformance—e.g., a fact-checker.
+
+The validator η is an **$\epsilon$-NT** if checking *before* vs *after* each step differs by at most $\epsilon$:
+```
+[validate then execute] ≈ε [execute then validate]
+```
+This **coherence condition** ensures the validator works consistently across the entire chain—not just locally.
+
+**The Abstraction.** Formally, an $\epsilon$-natural transformation is a morphism family where:
+$$W_1(\eta \circ F(f), G(f) \circ \eta) \leq \epsilon$$
+for every step $f$. This is the first categorical formalization of runtime conformance.
+
+**What's New.** Approximate natural transformations exist in category theory. **The novelty is applying them to validators**—audits, guardrails, quality checks. This application did not exist before GFSO. We unify these mechanisms under one abstraction with compositional guarantees.
+
+**The parameters:**
+- **$L$ (expansion degree):** How much each component amplifies incoming error
+- **$\gamma$ (contraction degree):** How much each validator reduces error
+- **$\epsilon$ (local error):** The per-step deviation we measure and control
+
+**The criterion (a consequence, not the contribution):** When $L \cdot \gamma \leq 1$, local errors $\epsilon$ remain bounded globally. This follows from the structure—it is not the insight. The insight is $\epsilon$-NT.
+
+**Practical workflow:**
+1. **Define Plans $G$:** Tasks with specifications, each with error tolerance $\epsilon_i$
+2. **Execute via $F$:** Implementations introduce local errors
+3. **Validate via $\epsilon$-NT:** Ensure each step satisfies $W_1(F, G) \leq \epsilon$
+4. **Guarantee:** If $L \cdot \gamma \leq 1$, the system remains stable despite local deviations
 
 ### 1.4. Why Now?
 Each domain has developed heuristics for controlling error propagation: audits in bureaucracies, demand smoothing in supply chains, guardrails in AI systems. These mechanisms share a common intuition ("more control helps") but lack a quantitative criterion for sufficiency.
 
 GFSO addresses this gap by providing a **unified stability criterion** ($L \cdot \gamma \le 1$) that answers a precise engineering question: given component drift $L$ and validator strength $\gamma$, will the system remain stable? The framework enables diagnosis of instability before cascading failures occur and quantifies the trade-off between control cost and system reliability.
 
-### 1.5. Contributions
-This paper provides a **categorical synthesis** connecting control theory, behavioral metrics, and probabilistic semantics:
-1.  **Wasserstein-Kleisli Semantics:** We instantiate the abstract framework of Markov categories [Fritz, 2020] with concrete Wasserstein bounds, working in the Kleisli category of the Kantorovich monad. This bridges categorical probability with the behavioral metrics tradition [van Breugel & Worrell, 2005; Baldan et al., 2014].
-2.  **Stability Criterion and ε-Naturality:** The condition $L \cdot \gamma \le 1$ ensures bounded error in sequential chains (analogous in spirit to the small-gain theorem for feedback loops, though the settings differ). Our key contribution is formalizing validators as **$\epsilon$-natural transformations** in Kleisli categories and proving that the Stability Criterion *implies* ε-naturality for compositions (Theorem 5.5)—closing the loop between categorical structure and quantitative bounds.
-3.  **Domain Instantiation:** We provide concrete instantiations for domains where classical control assumptions fail: corporate hierarchies, supply chains with the bullwhip effect, and AI agent chains with semantic drift.
-4.  **Empirical Validation:** Synthetic experiments confirm the predicted phase transition at $L \cdot \gamma = 1$, demonstrating that the categorical framework yields practical predictions.
+### 1.5. Practical Insight: Why Imperfect Validation Works
+
+Real-world validation is inherently imperfect. A senior engineer reviewing code misses bugs. A peer reviewer overlooks methodological flaws. An audit finds some violations but not all. Yet systems with validation work better than systems without—this is empirically obvious but theoretically ungrounded.
+
+**GFSO formalizes this observation.** The key insight is that validators need not be perfect ($\gamma = 0$) to be useful. A validator with $\gamma = 0.7$ (missing 70% of errors) still reduces error accumulation—provided $L \cdot \gamma < 1$.
+
+**Example: The CEO's Dilemma.** A CEO cannot personally verify every decision. They rely on senior managers who themselves rely on team leads. Each validator in this chain is imperfect ($\gamma > 0$). The question is not "Is the validator perfect?" but "Is the validation *sufficient* given the component's expansion $L$?"
+
+**Why peer review works.** Scientific peer review chains multiple imperfect validators:
+- Reviewer 1: $\gamma_1 = 0.8$ (catches only 20% of errors)
+- Reviewer 2: $\gamma_2 = 0.8$
+- Reviewer 3: $\gamma_3 = 0.8$
+
+Combined: $\gamma = 0.8^3 = 0.51$. Each validator contracts by $\gamma$; composition contracts by the product. GFSO makes this quantitative: $L \cdot \gamma_1 \cdot \gamma_2 \cdot \gamma_3 < 1$ determines whether the review process is sufficient.
+
+**The practical value.** For edge cases where no single authority knows the ground truth—complex engineering systems, novel scientific claims, organizational decisions under uncertainty—GFSO provides:
+1. A **criterion** to determine if validation is sufficient ($L \cdot \gamma < 1$)
+2. A **bound** on residual error after validation ($\epsilon_\infty \leq \epsilon_0 / (1 - L\gamma)$)
+3. A **design rule** for how many validators are needed ($n$ validators with $\gamma^n < 1/L$)
+
+This transforms the intuition "more review helps" into a quantitative framework. The goal is not to compute exact bounds, but to keep errors within acceptable norms—GFSO provides the criterion for "sufficient" validation.
+
+### 1.6. Contributions
+
+1. **$\epsilon$-NT formalization of validators** (§4) — the main contribution
+2. **$L^n$ error growth derived** from enriched Kleisli structure (Corollary 3.4)
+3. **Stability criterion $L \cdot \gamma \leq 1$** — necessary and sufficient (Corollary 5.3)
+4. **Design calculus:** strength ($\gamma \leq 1/L$), frequency ($\gamma \leq L^{-k}$), composition ($\gamma_1 \cdot \gamma_2$)
+5. **DAG generalization** with explicit recursive bounds (§5.6)
+6. **Experimental validation:** phase transition at $L \cdot \gamma = 1$ confirmed (§6)
+
+### 1.7. Addressing the Skeptic
+
+*"The criterion $L \cdot \gamma \leq 1$ is just geometric series. The category theory is decoration."*
+
+This misunderstands both the problem and the contribution.
+
+**The problem:** Stochastic maps $f: X \to \mathcal{D}(Y)$ do not compose like functions. You cannot write $g \circ f$ when $f$ outputs a distribution. The question "how do errors propagate through a stochastic chain?" is *undefined* without specifying:
+1. How stochastic maps compose
+2. What metric measures divergence between distributions
+3. How Lipschitz bounds behave under this composition
+
+**The Kleisli answer:** The Kantorovich monad provides the *unique* structure where (1) composition is the monadic bind, (2) the metric is Wasserstein $W_1$, and (3) Lipschitz bounds multiply (Lemma 3.3). This is not a choice—it is the canonical framework for compositional metric analysis of stochastic systems.
+
+**The contribution:** We apply this framework to validators. The $\epsilon$-NT formalization captures runtime conformance mechanisms—audits, guardrails, quality checks—as coherent morphism families with quantitative bounds. The criterion $L \cdot \gamma \leq 1$ is then a *theorem* about enriched composition, not a postulate about geometric series.
+
+The mathematics (Kleisli, Wasserstein, enrichment) is established. **Applying it to validators with compositional stability guarantees is new.** If this were obvious, it would already exist.
 
 ---
 
@@ -69,7 +155,22 @@ This connection was systematized coalgebraically by **Baldan et al. [2014]**, wh
 ### 2.3. Contraction Theory and Small-Gain Stability
 The study of stability via **contraction mappings** was systematized by **Lohmiller & Slotine [1998]**, who established that systems with uniformly contracting dynamics exhibit exponential convergence. The **small-gain theorem** [Jiang et al., 1996; Sontag, 2008] provides the classical stability criterion for cascaded systems: if $L_1 \cdot L_2 < 1$ for two interconnected systems with gains $L_1, L_2$, the cascade is stable. This has been extended to networks [Dashkovskiy et al., 2010] and recently connected to learning-based control [Tsukamoto et al., 2021].
 
-**GFSO's position:** Our criterion $L \cdot \gamma \le 1$ is **analogous** to the small-gain condition: both express "product of gains < 1 → stability". The settings differ—small-gain addresses feedback loops with $L^p$ norms; GFSO addresses sequential chains with Wasserstein metric. We do not claim formal equivalence. Our contribution is: (1) working in enriched Kleisli categories with $W_1$ bounds, (2) interpreting validators as $\epsilon$-natural transformations, and (3) extending to stochastic, high-dimensional settings where classical control assumptions fail.
+**GFSO's position:** While both GFSO and small-gain involve "product of gains < 1", they address **fundamentally different problems**:
+
+| Aspect | Small-Gain Theorem | GFSO |
+| :--- | :--- | :--- |
+| **Topology** | Feedback loops (closed-loop) | Sequential chains (open-loop) |
+| **Metric** | $L^p$, $L^\infty$ norms | Wasserstein $W_1$ |
+| **Systems** | Deterministic (classically) | Stochastic (Markov kernels) |
+| **Key concept** | Interconnection gains | Validators as ε-natural transformations |
+| **Goal** | Analyze stability of given system | **Design** validators for given components |
+
+The shared intuition ("contraction compensates expansion") is classical. The inequality $L \cdot \gamma \leq 1$ is not novel. **What differs is the direction:** small-gain *analyzes* whether a given system is stable; GFSO *designs* validators to make a system stable. Given $L$-expansive components, we derive the required $\gamma$—this is a design criterion, not stability analysis.
+
+GFSO's contribution is **not** a new stability theorem. Rather, we provide:
+1. A **categorical formalization** (Kleisli categories, ε-NT) enabling compositional reasoning about stochastic systems
+2. A **design framework**: given $L$-expansive components, what $\gamma$ suffices? Where to place validators? How many?
+3. **Non-obvious consequences**: sparse validation ($\gamma \leq L^{-k}$), optimal placement (uniform), validator composition ($\gamma_1 \cdot \gamma_2$)
 
 ### 2.4. Compositional Probabilistic Verification
 **Probabilistic Model Checking** (PRISM [Kwiatkowska et al., 2011]) verifies properties of finite-state MDPs. Compositional extensions via **assume-guarantee reasoning** [Kwiatkowska et al., 2010] enable modular verification but remain discrete. Recent work on **string diagrams for MDPs** [Watanabe et al., 2023] brings categorical compositionality to probabilistic model checking.
@@ -83,101 +184,195 @@ For neural networks, **Lipschitz certification** [Fazlyab et al., 2019] computes
 
 ### 2.6. Positioning Summary
 
-| Aspect | Prior Work | Limitation | GFSO Extension |
-| :--- | :--- | :--- | :--- |
-| **Stability criterion** | Small-gain: $L_1 \cdot L_2 < 1$ [Jiang et al.] | Feedback loops, $L^p$ norms | Sequential chains, $W_1$ metric |
-| **Behavioral metrics** | Kantorovich lifting [Baldan et al.] | Characterization only | Validator design criterion |
-| **Categorical probability** | Markov categories [Fritz] | Abstract, no error bounds | Concrete Wasserstein bounds |
-| **Compositional verification** | Assume-guarantee [Kwiatkowska et al.] | Discrete, logical | Continuous, metric |
+| Capability | PRISM | Assume-Guarantee | Small-Gain | AgentGuard | **GFSO** |
+|:-----------|:-----:|:----------------:|:----------:|:----------:|:--------:|
+| Stochastic + continuous | ✗ | ✗ | ✗ | ✗ | ✅ |
+| Compositional metric bounds | ✗ | ✗ | ✅ | ✗ | ✅ |
+| Validator formalization (ε-NT) | ✗ | ✗ | ✗ | ✗ | ✅ |
+| Sequential chains | ✅ | ✅ | ✗ | ✅ | ✅ |
 
-**GFSO's Contribution:** The condition $L \cdot \gamma \le 1$ is **analogous** to the small-gain theorem but applies to a different setting (sequential stochastic chains vs feedback loops). Our contributions are:
-1. **Framework Synthesis:** We connect three traditions—control-theoretic stability intuitions, categorical semantics (Kleisli categories), and behavioral metrics (Wasserstein distance)—providing explicit error bounds for hierarchical stochastic systems
-2. **Validator Formalization:** We introduce $\epsilon$-natural transformations as a new abstraction for validators—formalizing control mechanisms (audits, guardrails, quality checks) as morphism families with quantitative contraction guarantees. This abstraction is novel
-3. **Domain Generalization:** We apply the framework to stochastic, high-dimensional settings where classical control assumptions (determinism, low dimension, linearity) fail—providing concrete instantiations for AI agent chains, supply chains, and organizational hierarchies
-
-**Remark (On Novelty):** The individual components—contraction analysis, Wasserstein metrics, Kleisli categories—are known. The contribution is their **synthesis for validator design**, yielding a complete toolkit:
-- **Corollary 5.3**: Necessary and sufficient stability criterion $L \cdot \gamma \le 1$
-- **Corollary 5.4**: Sparse validation trade-off $L^k \cdot \gamma \le 1$
-- **Proposition 5.6**: Optimal placement (uniform spacing) with square-root scaling
-- **Lemma 5.7**: Validator composition ($\gamma_1 \cdot \gamma_2$ stacking)
-- **Proposition 5.8**: Robustness margin for model mismatch
-- **Proposition 5.9**: Tightness of bounds (no better universal bound exists)
-- **Finite-$n$ Transient**: Explicit non-asymptotic error formula
-
-Baldan et al. [2014] characterize *when* metrics arise; we provide *design criteria* (what $\gamma$, where to place, how many validators, what safety margin). This engineering-oriented theory is absent from prior categorical or contraction-theoretic work.
+**No existing framework formalizes validators with compositional ε-bounds.** GFSO fills this gap.
 
 ---
 
-## 3. Preliminaries: The Category $\mathbf{PolMet}$
+## 3. Preliminaries: Enriched Kleisli Categories
 
-### 3.1. The Base Category $\mathbf{PolMet}$
+### 3.1. Lawvere's Insight: Metrics as Categorical Enrichment
+
+Following Lawvere [1973], we view metric spaces as categories **enriched** over the monoidal category $\mathbf{Cost} = ([0,\infty], \geq, +, 0)$. In this perspective:
+*   **Objects** are points of the space
+*   **Hom-object** $d(x,y) \in [0,\infty]$ is the "cost" of transitioning $x \to y$
+*   **Composition** is subadditive: $d(x,z) \leq d(x,y) + d(y,z)$ (triangle inequality)
+*   **Identity** has zero cost: $d(x,x) = 0$
+
+This perspective is not merely notational—it transforms metric properties into **categorical structure**. A Lipschitz map $f: X \to Y$ with constant $L$ is precisely an **enriched functor** that scales hom-objects:
+$$d_Y(f(x), f(x')) \leq L \cdot d_X(x, x')$$
+
+The constant $L$ is not an external parameter imposed on the analysis—it is the **Lipschitz degree** of $f$, a categorical invariant measuring how much $f$ expands the metric structure. This distinction is crucial: we do not *assume* that errors grow as $L^n$; we *derive* it from the multiplicativity of enriched composition.
+
+### 3.2. The Base Category $\mathbf{PolMet}$
+
 Let $\mathbf{PolMet}$ be the category where:
-*   **Objects:** Polish metric spaces $(X, d_X)$.
-*   **Morphisms:** Lipschitz continuous maps $f: X \to Y$ (with any Lipschitz constant $L \ge 0$).
-This category acts as our deterministic base. We equip it with the **Kantorovich Monad** $\mathcal{D}$, a metric refinement of the classical Giry monad [Giry, 1982] studied by Perrone [2021], defined by:
-*   **Functor:** $\mathcal{D}(X) = \mathcal{P}_1(X)$, the space of Borel probability measures with finite first moment, metrized by $W_1$.
-*   **Unit:** $\eta_X: X \to \mathcal{D}(X)$ maps $x \mapsto \delta_x$ (Dirac measure).
-*   **Multiplication:** $\mu_X: \mathcal{D}(\mathcal{D}(X)) \to \mathcal{D}(X)$ is marginalization (integrating out the outer measure).
+*   **Objects:** Polish metric spaces $(X, d_X)$
+*   **Morphisms:** Lipschitz continuous maps $f: X \to Y$
+*   **Enriched hom:** For morphisms $f, g: X \to Y$, define $d(f,g) = \sup_{x \in X} d_Y(f(x), g(x))$
 
-The term "enriched" refers to the Lawvere perspective: $W_1$ provides hom-object structure over $([0,\infty], \ge, +)$, making Lipschitz bounds compositional (see §8.3).
+We equip $\mathbf{PolMet}$ with the **Kantorovich Monad** $\mathcal{D}$, a metric refinement of the classical Giry monad [Giry, 1982] studied by Perrone [2021]:
+*   **Functor:** $\mathcal{D}(X) = \mathcal{P}_1(X)$, the space of Borel probability measures with finite first moment, metrized by $W_1$
+*   **Unit:** $\eta_X: X \to \mathcal{D}(X)$ maps $x \mapsto \delta_x$ (Dirac measure)
+*   **Multiplication:** $\mu_X: \mathcal{D}(\mathcal{D}(X)) \to \mathcal{D}(X)$ is marginalization
 
-### 3.2. The Stochastic Category $\mathcal{Kl}(\mathcal{D})$
-Our working category is the **Kleisli Category** of the monad $\mathcal{D}$, denoted $\mathcal{Kl}(\mathcal{D})$. This structure is inspired by the synthetic approach to probability via **Markov Categories** [Fritz, 2020].
-*   **Objects:** Same as in $\mathbf{PolMet}$.
-*   **Morphisms:** A morphism $f: X \to Y$ in $\mathcal{Kl}(\mathcal{D})$ corresponds to a continuous map $f: X \to \mathcal{D}(Y)$ in $\mathbf{PolMet}$ (a Markov kernel).
-*   **Composition:** For $f: X \to Y$ and $g: Y \to Z$ in $\mathcal{Kl}(\mathcal{D})$, the Kleisli composition $g \circ_K f: X \to Z$ is defined via the bind operation:
+**Lemma 3.1 (Kantorovich Lifting Preserves Lipschitz Degree):**
+If $f: X \to Y$ has Lipschitz degree $L$, then its lifted action $\mathcal{D}(f): \mathcal{D}(X) \to \mathcal{D}(Y)$ also has Lipschitz degree $L$:
+$$W_1(\mathcal{D}(f)(\mu), \mathcal{D}(f)(\nu)) \leq L \cdot W_1(\mu, \nu)$$
+*Proof:* Follows from Kantorovich-Rubinstein duality. See Perrone [2021], Theorem 5.1. $\square$
+
+This is not accidental—it follows from the enriched structure of $\mathcal{D}$ over $\mathbf{Cost}$.
+
+### 3.3. The Stochastic Category $\mathbf{Kl}(\mathcal{D})$
+
+Our working category is the **Kleisli category** of the monad $\mathcal{D}$, denoted $\mathbf{Kl}(\mathcal{D})$. This structure is inspired by the synthetic approach to probability via **Markov Categories** [Fritz, 2020].
+*   **Objects:** Same as in $\mathbf{PolMet}$
+*   **Morphisms:** A morphism $f: X \to Y$ in $\mathbf{Kl}(\mathcal{D})$ corresponds to a Markov kernel $f: X \to \mathcal{D}(Y)$
+*   **Composition:** For $f: X \to Y$ and $g: Y \to Z$, the Kleisli composition $g \circ_K f: X \to Z$ is:
     $$ (g \circ_K f)(x)(B) = \int_Y g(y)(B) \, f(x)(dy) $$
-    where $B$ is a Borel set in $Z$.
+*   **Enriched hom:** $d(f, g) = \sup_x W_1(f(x), g(x))$
+
+### 3.4. Lipschitz Degree and Multiplicativity
+
+**Definition 3.2 (Lipschitz Degree of a Morphism):**
+A morphism $f: X \to Y$ in $\mathbf{Kl}(\mathcal{D})$ has **Lipschitz degree $L$** if:
+$$W_1(f(x), f(x')) \leq L \cdot d_X(x, x') \quad \forall x, x' \in X$$
+
+**Lemma 3.3 (Multiplicativity of Lipschitz Degree):**
+For morphisms $f: X \to Y$ with Lipschitz degree $L_f$ and $g: Y \to Z$ with Lipschitz degree $L_g$:
+$$\mathrm{Lip}(g \circ_K f) \leq L_g \cdot L_f$$
+*Proof:* By Lemma 3.1 (Kantorovich Lifting) and functoriality of $\mathcal{D}$. $\square$
+
+**Corollary 3.4 (Exponential Bound from Enriched Structure):**
+A chain of $n$ morphisms with uniform Lipschitz degree $L$ has composite Lipschitz degree $\leq L^n$.
+
+*This bound is not postulated—it is derived from the multiplicativity of enriched composition.*
+
+### 3.5. Contraction Degree
+
+**Definition 3.5 (Contraction Degree):**
+A morphism $\eta: \mathcal{D}(X) \to \mathcal{D}(X)$ has **contraction degree $\gamma$** if:
+$$W_1(\eta(\mu), \eta(\nu)) \leq \gamma \cdot W_1(\mu, \nu) \quad \forall \mu, \nu \in \mathcal{D}(X)$$
+
+When $\gamma < 1$, we say $\eta$ is **contractive**. When $\gamma > 1$, we say $\eta$ is **expansive**.
+
+**Remark (Categorical Invariants, Not External Parameters):**
+In much of the literature, $L$ and $\gamma$ appear as "given constants" whose origin is unspecified. In our enriched framework, they are **derived quantities**:
+*   $L$ measures the **expansion degree** of a functor—how much it stretches the metric structure
+*   $\gamma$ measures the **contraction degree** of a natural transformation—how much it shrinks distances
+
+The Stability Criterion $L \cdot \gamma \leq 1$ (Corollary 5.3) is then a **theorem about enriched composition**: the product of expansion and contraction degrees determines whether the composite converges or diverges. This is not a postulate about geometric progressions—it is a consequence of the multiplicative structure of enriched categories.
+
+### 3.6. Why Kleisli Structure is Necessary
+
+*"Can't this be done without category theory?"*
+
+No. Compositional analysis of stochastic systems requires three components:
+
+1. **Composition rule:** How do stochastic maps $f: X \to \mathcal{D}(Y)$ and $g: Y \to \mathcal{D}(Z)$ combine?
+2. **Compatible metric:** How do we measure distance between stochastic processes in a way that respects composition?
+3. **Multiplicativity:** How do Lipschitz bounds behave under composition?
+
+**The problem:** Stochastic maps are not functions—you cannot compose $f: X \to \mathcal{D}(Y)$ with $g: Y \to \mathcal{D}(Z)$ by ordinary function composition. The types don't match.
+
+**The Kleisli solution:** The monad structure provides canonical composition:
+$$(g \circ_K f)(x) = \int_Y g(y) \, f(x)(dy)$$
+This is the *only* composition that satisfies associativity with the monad laws. Without it, "composing stochastic maps" is undefined.
+
+**Why Kantorovich, not Giry:** The Giry monad captures measure-theoretic structure but is *metrically blind*—it says nothing about distances between distributions. The Kantorovich monad internalizes the Wasserstein metric $W_1$ into the monad structure. This is why Lemma 3.1 (Kantorovich Lifting) holds: the functor $\mathcal{D}$ preserves Lipschitz degrees *because* the monad is defined via $W_1$.
+
+With Giry + external $W_1$, you could prove the same results, but you would be manually verifying metric compatibility for each composition. The Kantorovich monad makes this *automatic*.
+
+**What you would reinvent:** Without the Kleisli framework, analyzing a stochastic chain requires:
+- Defining composition of Markov kernels (reinventing Kleisli bind)
+- Choosing a metric on $\mathcal{D}(X)$ and proving it respects composition (reinventing Kantorovich lifting)
+- Proving $\mathrm{Lip}(g \circ f) \leq \mathrm{Lip}(g) \cdot \mathrm{Lip}(f)$ for this composition (reinventing Lemma 3.3)
+
+The categorical structure is not decoration—it is the *unique* framework that makes compositional Lipschitz analysis of stochastic systems well-defined. The contribution of GFSO is applying this established machinery to a new domain: **validators as ε-natural transformations with quantitative stability guarantees**.
 
 ---
 
 ## 4. The GFSO Framework
 
-### 4.1. Ontology
-We model the system using functors from an index category $\mathcal{I}$ (the dependency DAG) to $\mathcal{Kl}(\mathcal{D})$.
+### 4.1. From Plans to Functors: The GFSO Ontology
 
-**Assumption 4.0 (Object Agreement):** We assume the functors $F$ and $G$ agree on objects, mapping each task node $i \in \mathcal{I}$ to the same state space $X_i \in \mathbf{PolMet}$. They differ only on morphisms, capturing the divergence between *Plan* and *Execution*.
+GFSO is a **practical framework** for building and monitoring hierarchical systems—whether organizational workflows, supply chains, or AI agent pipelines. The user works with **plans** and **executions**; the categorical machinery operates behind the scenes.
 
-| Concept | Symbol | Type | Description |
-| :--- | :--- | :--- | :--- |
-| **Index** | $\mathcal{I}$ | Category | Finite category representing task dependencies. |
-| **Plan** | $G$ | $\mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ | Functor defining the specification/expected behavior. |
-| **Execution** | $F$ | $\mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ | Functor defining the actual implementation. |
-| **Validator** | $\eta$ | NatTrans | Natural transformation approximating $F$ to $G$. |
+#### The User's View
 
-**Remark (Specification as Design Choice):** The functor $G$ is not an oracle or unknown "ideal output"—it is the **specification defined by the system designer**. In practice: (1) Define the plan $G$ (what *should* happen at each step), (2) Attempt implementation via $F$, (3) Validator detects divergence $W_1(F, G)$, (4) If divergence exceeds tolerance, revise $G$ or improve $F$. This is the standard engineering workflow: specifications are chosen, not discovered. Assumption 4.3 (Specification Invariance) requires only that the validator's acceptance region contains the specification's support—a design constraint on threshold selection, not oracle access to $G$'s output.
+| What the user creates | What it contains | Example |
+| :--- | :--- | :--- |
+| **Plan $G$** | Tasks with descriptions, specifications (contracts), resources, deadlines, dependencies | "Build walls (height ≥ 2m) → Build roof (coverage = 100%)" |
+| **Execution $F$** | Actual implementations attempting to satisfy $G$'s specs | Workers/LLMs performing tasks |
+| **Validators $\eta$** | Checks verifying $F$ meets $G$'s contracts | Quality inspections, unit tests, fact-checkers |
 
-**Remark (Role of Categorical Language):** The categorical formulation is not merely notational—it provides essential structure:
-1. **Index category $\mathcal{I}$** encodes task dependencies as a DAG, enabling modular analysis of subchains.
-2. **Kleisli composition** ensures stochastic kernels compose correctly via the bind operation, avoiding manual measure-theoretic bookkeeping.
-3. **Functors $F, G$** capture the parallel structure of implementation and specification, making their divergence a natural transformation problem.
-4. **Natural transformations** formalize validators as *coherent families*—not ad-hoc per-step corrections, but morphisms respecting the compositional structure.
+The user defines $G$ directly—specifying what should happen, what success looks like, and which tasks depend on which. The **dependency structure is implicit** in the plan itself: when you say "roof depends on walls", you've defined both the dependency and the tasks.
 
-The stability theorems (Section 5) are stated in terms of Wasserstein bounds because these are the computable quantities. The categorical structure ensures these bounds compose correctly across the diagram. Without it, one would need to manually track indices and verify composition laws—the category does this automatically.
+#### The Mathematical View
 
-### 4.2. Validators: From Motivation to Definition
+For theoretical analysis, we extract an **index category** $\mathcal{I}$ from the plan's structure:
 
-**Definition 4.1 ($\epsilon$-Natural Transformation):**
-Let $F, G: \mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ be functors. An **$\epsilon$-natural transformation** $\eta: F \Rightarrow G$ is a family of morphisms $\eta_X: F(X) \to \mathcal{D}(G(X))$ such that for each morphism $f: X \to Y$ in $\mathcal{I}$, the following diagram commutes up to $\epsilon$ in $W_1$:
-$$ W_1( (\eta_Y \circ_K F(f))(x), (G(f) \circ_K \eta_X)(x) ) \le \epsilon \quad \forall x \in X $$
+| Concept | Symbol | Role |
+| :--- | :--- | :--- |
+| **Index** | $\mathcal{I}$ | Abstract dependency structure (DAG). Objects are task slots; morphisms are dependencies. Contains no specs, no resources, no deadlines—just topology. |
+| **Plan** | $G: \mathcal{I} \to \mathbf{Kl}(\mathcal{D})$ | The "plan with content"—specs, contracts, expected behavior for each task |
+| **Execution** | $F: \mathcal{I} \to \mathbf{Kl}(\mathcal{D})$ | Actual stochastic implementation |
+| **Validator** | $\eta: F \Rightarrow G$ | ε-natural transformation ensuring $F$ approximates $G$ |
 
-This *pointwise* condition (required for each morphism $f$) is the standard categorical notion: "validate-then-execute ≈ execute-then-validate". It ensures semantic coherence at every step.
+**Assumption 4.0 (Object Agreement):** $F$ and $G$ share the same state spaces: $F(i) = G(i) = X_i$ for each task $i$. They differ on morphisms—capturing the gap between specification and reality.
 
-**Remark (From Pointwise to Compositional):** Definition 4.1 is the strict categorical concept. For engineering analysis, verifying pointwise commutativity for each $f$ is often intractable. We instead define an *operational* property (Definition 4.2) that guarantees *compositional* coherence via Theorem 5.5. **Clarification:** Definition 4.2 does not imply Definition 4.1—they are distinct notions. Definition 4.1 serves as categorical motivation; Definition 4.2 is the operational criterion we verify and use in proofs.
+#### The Mathematical Relationship
 
-**Definition 4.2 (Operational Validator):**
+Formally, $\mathcal{I}$ is a small category and $G: \mathcal{I} \to \mathbf{Kl}(\mathcal{D})$ is a functor. The plan $G$ is defined **on** $\mathcal{I}$, not the other way around. This separation enables:
+1. **Compositional reasoning:** Bounds on subchains lift to bounds on the whole system
+2. **Natural transformations:** Validators form coherent families, not ad-hoc checks
+3. **Stability theorems:** The enriched structure (§3) guarantees bounds compose correctly
+
+**Remark (Practical Interpretation):**
+In practice, users think of $G$ and $\mathcal{I}$ together—when you specify "Task B depends on Task A", you're simultaneously defining structure (a morphism in $\mathcal{I}$) and content (specs in $G$). The mathematical separation is conceptual: $\mathcal{I}$ captures *topology* (what depends on what), $G$ captures *semantics* (what each task means). For simple plans, $\mathcal{I}$ remains implicit; for complex systems, explicitly sketching $\mathcal{I}$ first can help organize the design.
+
+#### Practical Workflow
+
+1. **Design $G$:** Define tasks with specs/contracts (implicitly defining $\mathcal{I}$)
+2. **Execute $F$:** Implementations attempt to satisfy specs
+3. **Validate:** Check $W_1(F(f), G(f)) \leq \epsilon$ for each task $f$
+4. **Monitor:** Tasks satisfying specs → green; failing → red, trigger retry or feedback
+5. **Guarantee:** If $L \cdot \gamma \leq 1$, the system converges despite local failures
+
+This workflow applies identically to:
+- **Organizations:** Manager defines $G$ (goals), employees execute $F$, audits validate
+- **LLM Agents:** Planner defines $G$ (reasoning steps), executor runs $F$, guardrails validate
+- **Supply Chains:** Headquarters defines $G$ (orders), suppliers execute $F$, QA validates
+
+**Remark (Necessity of Categorical Structure):** The categorical formulation is not decoration—it is the *unique* framework for compositional analysis of stochastic systems (see §3.6):
+1. **Kleisli composition** is the only well-defined way to compose stochastic maps $f: X \to \mathcal{D}(Y)$
+2. **Kantorovich monad** makes Lipschitz bounds compose correctly (Lemma 3.3)—this fails for the Giry monad
+3. **Functors $F, G$** capture implementation-specification parallelism, making their divergence a natural transformation problem
+4. **Natural transformations** formalize validators as coherent families with compositional guarantees
+
+Without this structure, one must reprove metric compatibility for each system. The category provides it generically.
+
+### 4.2. Validators: Operational Definition
+
+**Definition 4.1 (Operational Validator):**
 A validator is a map $\mathcal{V}: \mathcal{D}(X) \to \mathcal{D}(X)$ satisfying:
 
-**(4.2a) Lipschitz Property:** $W_1(\mathcal{V}(\mu), \mathcal{V}(\nu)) \le \gamma \cdot W_1(\mu, \nu)$ for all $\mu, \nu \in \mathcal{D}(X)$
+**(4.1a) Lipschitz Property:** $W_1(\mathcal{V}(\mu), \mathcal{V}(\nu)) \le \gamma \cdot W_1(\mu, \nu)$ for all $\mu, \nu \in \mathcal{D}(X)$
 
-**(4.2b) Contractivity:** $W_1(\mathcal{V}(\mu), G_{chain}(x_0)) \le \gamma \cdot W_1(\mu, G_{chain}(x_0))$ for all $\mu$
+**(4.1b) Contractivity:** $W_1(\mathcal{V}(\mu), G_{chain}(x_0)) \le \gamma \cdot W_1(\mu, G_{chain}(x_0))$ for all $\mu$
 
 where $x_0$ is the fixed initial input and $G_{chain}(x_0)$ is the specification's target distribution.
 
-**Lemma 4.3 (Sufficiency):** Property (4.2a) combined with Specification Invariance (Assumption 4.3) implies (4.2b).
+**Lemma 4.3 (Sufficiency):** Property (4.1a) combined with Specification Invariance (Assumption 4.3) implies (4.1b).
 *Proof:* $W_1(\mathcal{V}(\mu), G_{chain}(x_0)) = W_1(\mathcal{V}(\mu), \mathcal{V}(G_{chain}(x_0))) \le \gamma W_1(\mu, G_{chain}(x_0))$.
 
-**Remark (Local Realizability):** Lemma 4.3 resolves a potential circularity: (4.2b) references the global target $G_{chain}(x_0)$, but the validator need not compute it at runtime. The construction is *local*: a rejection-sampling validator $\mathcal{V}_T$ with threshold $T$ satisfies (4.2a) by Proposition 5.2. Assumption 4.3 then requires only that $\text{supp}(G_{chain}(x_0)) \subseteq [-T, T]$—a *design-time* constraint on the threshold, not runtime oracle access. The implementer chooses $T$ to accommodate the specification's expected output range; no knowledge of $G_{chain}$ is needed during execution.
+**Remark (Local Realizability):** Lemma 4.3 resolves a potential circularity: (4.1b) references the global target $G_{chain}(x_0)$, but the validator need not compute it at runtime. The construction is *local*: a rejection-sampling validator $\mathcal{V}_T$ with threshold $T$ satisfies (4.1a) by Proposition 5.2. Assumption 4.3 then requires only that $\text{supp}(G_{chain}(x_0)) \subseteq [-T, T]$—a *design-time* constraint on the threshold, not runtime oracle access. The implementer chooses $T$ to accommodate the specification's expected output range; no knowledge of $G_{chain}$ is needed during execution.
 
 **Assumption 4.3 (Specification Invariance):**
 The validator $\mathcal{V}$ fixes the target distribution: $\mathcal{V}(G_{chain}(x_0)) = G_{chain}(x_0)$.
@@ -185,21 +380,49 @@ The validator $\mathcal{V}$ fixes the target distribution: $\mathcal{V}(G_{chain
 
 **Remark (Relaxation):** If exact invariance is unattainable, a weaker condition suffices: $W_1(\mathcal{V}(G_{chain}(x_0)), G_{chain}(x_0)) \le \delta_V$. This adds a per-step bias term $\delta_V$ to the error bound, yielding $E'_\infty = \frac{\gamma(\epsilon_0 + \delta_F) + \delta_V}{1 - L\gamma}$ for $L\gamma < 1$. The stability criterion remains $L \cdot \gamma \le 1$; only the steady-state bound increases.
 
-**Remark:** Properties (4.2a) and (4.2b) are logically independent. In practice, we verify (4.2a) and Assumption 4.3, then apply Lemma 4.3 to obtain (4.2b). The Stability Criterion (Corollary 5.3) uses (4.2b).
+**Remark:** Properties (4.1a) and (4.1b) are logically independent. In practice, we verify (4.1a) and Assumption 4.3, then apply Lemma 4.3 to obtain (4.1b). The Stability Criterion (Corollary 5.3) uses (4.1b).
 
 **Remark (Practical Interpretation):** The contraction factor $\gamma$ represents the fraction of error that *passes through* validation. A validator with $\gamma = 0.7$ removes 30% of the deviation from specification; the remaining 70% propagates downstream. Perfect validation ($\gamma = 0$) is neither required nor realistic—the criterion $L \cdot \gamma \le 1$ shows that even imperfect validators suffice when their contraction compensates for component expansiveness.
 
-**Remark (Connecting Pointwise and Compositional ε-Naturality):** The conceptual motivation (pointwise ε-naturality) and operational definition (4.2) are formally connected via Theorem 5.5. The relationship:
+#### Categorical Motivation: ε-Natural Transformations
 
-- **Pointwise → Compositional:** If each morphism satisfies pointwise ε-naturality, compositions inherit bounded error (standard).
-- **Stability → Compositional:** The Stability Criterion ($L \cdot \gamma \le 1$) guarantees *compositional* ε-naturality (Theorem 5.5) without requiring the stronger pointwise condition.
+The operational definition above (4.1) is what we verify and use in proofs. Its categorical origin is the following:
 
-This is the key practical insight: we achieve end-to-end coherence via local contractivity (4.2b), bypassing the need to verify pointwise commutativity at each step. The categorical structure motivates the form; the operational condition delivers the bound.
+**Definition 4.2 ($\epsilon$-Natural Transformation):**
+Let $F, G: \mathcal{I} \to \mathcal{Kl}(\mathcal{D})$ be functors. An **$\epsilon$-natural transformation** $\eta: F \Rightarrow G$ is a family of morphisms $\eta_X: F(X) \to \mathcal{D}(G(X))$ such that for each morphism $f: X \to Y$ in $\mathcal{I}$:
+$$ W_1( (\eta_Y \circ_K F(f))(x), (G(f) \circ_K \eta_X)(x) ) \le \epsilon \quad \forall x \in X $$
+
+This is the categorical notion: "validate-then-execute ≈ execute-then-validate" for each step.
+
+**Assumption 4.4 (Validator-Specification Naturality):**
+The validator $\eta$ is an **exact** natural transformation for $G$:
+$$\eta_Y \circ_K G(f) = G(f) \circ_K \eta_X \quad \text{for all } f: X \to Y$$
+*Interpretation:* Validating before vs after executing the *specification* yields identical results. This is natural for well-designed validators: if the output already matches the spec, validation should not alter it. This generalizes Assumption 4.3 (Specification Invariance) from outputs to the entire execution.
+
+**Constructive Criterion:** For rejection-sampling validator $\mathcal{V}_T$ with threshold $T$, Assumption 4.4 holds if **$G$ preserves the acceptance region:**
+$$\text{supp}(G(f)(x)) \subseteq [-T, T] \quad \forall f, x$$
+Then $\mathcal{V}_T$ acts as identity on $G$'s outputs, and commutativity is immediate. For the common case $G = \delta_0$ (specification targets zero), this holds automatically for any $T > 0$.
+
+**Lemma 4.5 (Operational ⟹ Categorical):**
+Let $\eta$ satisfy:
+1. Assumption 4.4 (exact NT for $G$)
+2. $\gamma$-Lipschitz property (4.1a)
+3. Component compliance: $W_1(F(f)(x), G(f)(x)) \leq \epsilon_0$ for all $f, x$
+
+Then $\eta$ is a $(\gamma \epsilon_0)$-natural transformation for $F$ (Definition 4.2).
+
+*Proof:*
+$$W_1(\eta_Y \circ_K F(f), G(f) \circ_K \eta_X)$$
+$$= W_1(\eta_Y \circ_K F(f), \eta_Y \circ_K G(f)) \quad \text{[by Assumption 4.4]}$$
+$$\leq \gamma \cdot W_1(F(f), G(f)) \quad \text{[by Lipschitz, Lemma A.0]}$$
+$$\leq \gamma \cdot \epsilon_0 \quad \square$$
+
+**Significance:** This lemma closes the gap between Definitions 4.1 and 4.2. The operational conditions (Lipschitz + naturality for $G$) **imply** the categorical condition (ε-NT for $F$). The Lipschitz constant $\gamma$ controls how much the implementation-specification gap $\epsilon_0$ propagates into the naturality defect.
 
 **Lemma 4.4 (Canonical Construction):**
 In the GFSO framework, the validator map $\mathcal{V}: \mathcal{D}(X) \to \mathcal{D}(X)$ is defined as the **Kleisli extension** of the stochastic kernel $\eta_X: X \to \mathcal{D}(X)$:
 $$ \mathcal{V}(\mu)(B) := \hat{\eta_X}(\mu)(B) = \int \eta_X(x)(B) \, \mu(dx) $$
-If the kernel $\eta_X$ satisfies the metric Lipschitz property on points ($W_1(\eta_X(x), \eta_X(y)) \le \gamma \cdot d(x,y)$), then $\mathcal{V}$ satisfies (4.2a) by Lemma A.0. Combined with Specification Invariance (Assumption 4.3), Lemma 4.3 yields (4.2b).
+If the kernel $\eta_X$ satisfies the metric Lipschitz property on points ($W_1(\eta_X(x), \eta_X(y)) \le \gamma \cdot d(x,y)$), then $\mathcal{V}$ satisfies (4.1a) by Lemma A.0. Combined with Specification Invariance (Assumption 4.3), Lemma 4.3 yields (4.1b).
 
 ---
 
@@ -249,10 +472,19 @@ $\delta_F$ quantifies the **Modularity Tax**: the additional error introduced by
 
 **Remark (Depth-Dependent Modularity Tax):** Assumption 5.2b posits uniform $\delta_F$ across all compositions. In practice, $\delta_F$ may grow with chain depth (e.g., accumulated context in LLM chains). If $\delta_F(k) \le \delta_0 \cdot k^\alpha$ for depth $k$, the bounds in Theorem 5.1 remain valid with $\delta_F$ replaced by the worst-case $\max_k \delta_F(k)$, yielding a more pessimistic but still finite bound under the Stability Criterion.
 
-**Theorem 5.1 (The Exponential Divergence Bound):**
-Let $f_1, \dots, f_n$ be a chain of $L$-Lipschitz components ($L > 1$). Under **Assumption 5.1 (Component Compliance)** with local error $\epsilon_0$ and **Assumption 5.2b (Bounded Deviation)** with tax $\delta_F$, the global error follows the recurrence:
-$$ E_n \le L^{n-1}\epsilon_0 + (\epsilon_0 + \delta_F) \frac{L^{n-1} - 1}{L - 1} $$
-Asymptotically, this confirms the exponential divergence $W_1( F_{chain}(x), G_{chain}(x) ) = O(L^n)$.
+**Theorem 5.1 (Exponential Divergence from Enriched Composition):**
+Let $f_1, \dots, f_n$ be a chain of morphisms with Lipschitz degree $L > 1$ (Definition 3.2). Under **Assumption 5.1 (Component Compliance)** with local error $\epsilon_0$ and **Assumption 5.2b (Bounded Deviation)** with modularity tax $\delta_F$, the global error satisfies:
+$$ E_n \le L^{n-1}\epsilon_0 + (\epsilon_0 + \delta_F) \frac{L^{n-1} - 1}{L - 1} = O(L^n) $$
+
+**Remark (Derivation, Not Postulate):**
+The exponential factor $L^n$ is not assumed—it is **derived** from Corollary 3.4 (Multiplicativity of Lipschitz Degree). The proof proceeds by:
+1. Each morphism $F(f_i)$ has Lipschitz degree $L$ (by assumption)
+2. By Lemma 3.3, the composite $F_{chain}$ has Lipschitz degree $\leq L^n$
+3. Local errors $\epsilon_0$ injected at step $i$ are amplified by factor $L^{n-i}$ downstream
+4. Summing the geometric series yields the bound
+
+The enriched categorical structure (§3) provides the foundation; this theorem is a **consequence** of that structure applied to approximate functors.
+
 *Proof:* See Appendix A.2.
 
 **Proposition 5.2 (Variance Contraction via Truncation):**
@@ -276,7 +508,7 @@ $$ W_1(\mathcal{V}_\gamma(\mu), \delta_0) = \gamma \cdot W_1(\mu, \delta_0) $$
 
 **Remark (Distribution-Dependent Contraction):** Proposition 5.2's contraction factor $\gamma = T/E$ depends on the input distribution's support $E$. This is not a universal validator property—different inputs yield different $\gamma$. For the Stability Criterion (Corollary 5.3), we require $\gamma$ to be bounded uniformly over the family of distributions encountered during system operation. In practice, this means the threshold $T$ must be chosen relative to the expected worst-case error support.
 
-**Remark (Two Validator Classes):** Propositions 5.2 and 5.2b establish two distinct mechanisms satisfying Definition 4.2b: stochastic rejection sampling (realistic, models retry-based validators) and deterministic scaling (minimal, provides precise $\gamma$ control). Both achieve the Stability Criterion (Corollary 5.3).
+**Remark (Two Validator Classes):** Propositions 5.2 and 5.2b establish two distinct mechanisms satisfying Definition 4.1b: stochastic rejection sampling (realistic, models retry-based validators) and deterministic scaling (minimal, provides precise $\gamma$ control). Both achieve the Stability Criterion (Corollary 5.3).
 
 **Corollary 5.3 (The GFSO Stability Criterion):**
 The condition $L \cdot \gamma \le 1$ is **necessary and sufficient** for a sequential system to be **Stable** (per Definition 5.0).
@@ -338,14 +570,14 @@ The steady-state bound $E'_\infty = \frac{\gamma(\epsilon_0 + \delta_F)}{1 - L\g
 *Proof:* Consider adversarial injection of error $\epsilon_0$ at each step, aligned to maximize accumulation. The recurrence $E'_{n+1} = L\gamma \cdot E'_n + \gamma\epsilon_0$ with $E'_0 = 0$ converges to $E'_\infty = \gamma\epsilon_0 \sum_{k=0}^\infty (L\gamma)^k = \gamma\epsilon_0/(1-L\gamma)$. This matches the bound, so no tighter universal bound exists. $\square$
 
 **Theorem 5.5 (Compositional Error Bound):**
-Let $\eta = (\eta_i)$ be a family of $\gamma$-contractive validators (Definition 4.2b) applied after each component in a chain. Let $\mathcal{V}_{chain} = \eta_n \circ_K \cdots \circ_K \eta_1$ denote the composite validator. Under the Stability Criterion ($L \cdot \gamma \le 1$), the validated implementation satisfies a **compositional proximity bound**:
+Let $\eta = (\eta_i)$ be a family of $\gamma$-contractive validators (Definition 4.1b) applied after each component in a chain. Let $\mathcal{V}_{chain} = \eta_n \circ_K \cdots \circ_K \eta_1$ denote the composite validator. Under the Stability Criterion ($L \cdot \gamma \le 1$), the validated implementation satisfies a **compositional proximity bound**:
 $$ W_1( (\mathcal{V}_{chain} \circ_K F_{chain})(x_0), G_{chain}(x_0) ) \le \epsilon $$
 with explicit bound:
 $$ \epsilon = \begin{cases} \frac{\gamma(\epsilon_0 + \delta_F)}{1 - L\gamma} & \text{if } L\gamma < 1 \\ n \cdot \gamma(\epsilon_0 + \delta_F) & \text{if } L\gamma = 1 \end{cases} $$
 
 *Proof:* Direct consequence of Corollary 5.3. The left-hand side is precisely the validated chain error $E'_n$, which converges to the stated bounds under the Stability Criterion.
 
-**Interpretation:** This theorem closes the categorical loop. Classical ε-naturality (Section 4.2) requires approximate commutativity for each morphism independently. Theorem 5.5 establishes a weaker property we call *compositional ε-naturality*: the end-to-end diagram commutes up to $\epsilon$. This is not ε-naturality in the standard sense—it is a proximity bound for the composite, not per-morphism commutativity. The term "compositional ε-naturality" emphasizes the structural analogy while acknowledging the distinction. Thus: **operational contractivity (4.2b) + stability ($L\gamma \le 1$) ⟹ compositional proximity bound**.
+**Interpretation:** This theorem closes the categorical loop. Classical ε-naturality (Section 4.2) requires approximate commutativity for each morphism independently. Theorem 5.5 establishes a weaker property we call *compositional ε-naturality*: the end-to-end diagram commutes up to $\epsilon$. This is not ε-naturality in the standard sense—it is a proximity bound for the composite, not per-morphism commutativity. The term "compositional ε-naturality" emphasizes the structural analogy while acknowledging the distinction. Thus: **operational contractivity (4.1b) + stability ($L\gamma \le 1$) ⟹ compositional proximity bound**.
 
 **Remark (Compositional vs Pointwise ε-Naturality):** Classical ε-naturality requires each morphism $f$ to satisfy the approximate commutativity condition independently. Theorem 5.5 establishes a weaker but practically relevant property: **compositional ε-naturality**, where the *composite* diagram commutes up to $\epsilon$. This is the appropriate notion for hierarchical systems—we care about end-to-end fidelity, not per-step commutativity. The stronger pointwise condition would require $W_1((\eta_{X_i} \circ_K F(f_i))(x), (G(f_i) \circ_K \eta_{X_{i-1}})(x)) \le \epsilon_i$ for each $f_i$; this implies compositional ε-naturality but is not implied by it.
 
@@ -359,6 +591,55 @@ Consider chains with $L=1.2$ and per-step noise injection $\epsilon_0$. We compa
 | Subcritical | $0.90$ | $\frac{\gamma \epsilon_0}{1 - L\gamma}$ | Bounded |
 
 *Numerical example:* For $n=50$, unvalidated error grows as $1.2^{50} \approx 9 \times 10^3$. With subcritical validation ($L \cdot \gamma < 1$), error converges to a finite steady-state — a reduction by orders of magnitude. Section 6 confirms this prediction experimentally.
+
+### 5.6. Extension to General DAGs
+
+The theorems above are stated for sequential chains. The framework extends to arbitrary DAGs via the product structure of $\mathbf{Kl}(\mathcal{D})$.
+
+**Proposition 5.10 (Error at Merge Points):**
+Let $D: X_B \times X_C \to X_D$ be a morphism in $\mathbf{Kl}(\mathcal{D})$ with Lipschitz constant $L_D$ (with respect to the sum metric $d_{B \times C}((b,c), (b',c')) = d_B(b,b') + d_C(c,c')$). If the errors at inputs are $E_B$ and $E_C$, then:
+$$E_D \leq L_D \cdot (E_B + E_C) + \epsilon_D$$
+where $\epsilon_D$ is the local compliance error at $D$.
+
+*Proof:* By Lipschitz property of $D$ and triangle inequality. $\square$
+
+**Corollary 5.11 (DAG Error Bound — Recursive Formula):**
+For a DAG $\mathcal{I}$, define the error $E_v$ at each node $v$ recursively:
+$$E_v = \begin{cases}
+\epsilon_v & \text{if } v \text{ is a source (input node)} \\
+L_v \cdot E_{\text{pred}(v)} + \epsilon_v & \text{if } v \text{ has one predecessor} \\
+L_v \cdot \sum_{u \in \text{pred}(v)} E_u + \epsilon_v & \text{if } v \text{ is a merge point}
+\end{cases}$$
+where $\epsilon_v$ is the local compliance error at $v$, and $L_v$ is the Lipschitz constant of the morphism entering $v$.
+
+*Key insight:* Sequential composition **multiplies** errors ($L \cdot E$); merge points **sum** errors from branches ($\sum E_u$) then amplify ($L \cdot \sum$).
+
+**Corollary 5.12 (DAG Stability Criterion):**
+A DAG system with validators is **Stable** if and only if:
+$$\max_{p \in \text{Paths}} \prod_{e \in p} (L_e \cdot \gamma_e) \leq 1$$
+where $\gamma_e = 1$ if no validator is placed on edge $e$, and $\gamma_e < 1$ otherwise.
+
+*Interpretation:* The sequential criterion $L \cdot \gamma \leq 1$ generalizes to DAGs as a **max over paths**. Each path must independently satisfy stability; the critical path (maximal $\prod L_e \cdot \gamma_e$) determines overall stability.
+
+**Remark (Practical Implication):** For DAGs, the worst-case error is dominated by the **critical path**—the path with maximal $\prod L_e$. Validators should be placed to reduce $L \cdot \gamma$ along critical paths. Parallel branches contribute additively at merge points, so independent errors combine rather than multiply.
+
+**Example (Fork-Join):**
+```
+    A (L=1.2)
+   / \
+  B   C  (each L=1.1)
+   \ /
+    D (L_merge=1.0)
+```
+With input error $\epsilon_0$:
+- After A: $E_A = 1.2 \cdot \epsilon_0$
+- After B: $E_B = 1.1 \cdot E_A = 1.32 \cdot \epsilon_0$
+- After C: $E_C = 1.1 \cdot E_A = 1.32 \cdot \epsilon_0$
+- After D (merge): $E_D = 1.0 \cdot (E_B + E_C) = 2.64 \cdot \epsilon_0$
+
+Compare to sequential A→B→C→D with same $L$ values: $E = 1.2 \cdot 1.1 \cdot 1.1 \cdot 1.0 \cdot \epsilon_0 = 1.45 \cdot \epsilon_0$
+
+**Key insight:** Parallel branches combine *additively* at merges, while sequential chains combine *multiplicatively*. Fork-join can accumulate more error than equivalent sequential depth when merge fans in multiple branches.
 
 ---
 
@@ -415,78 +696,129 @@ Partial observation (10%) achieves comparable containment to full observation. T
 
 ![Figure 2: Partial Observation](../experiments/artifacts/fig2_realistic_scenario.png)
 
+### 6.3. LLM Case Study: Measuring $L$ and $\gamma$
+
+The synthetic experiments (§6.1–6.2) validate the theory in controlled settings. We now demonstrate that $L$ and $\gamma$ are measurable on real LLM systems.
+
+**Setup:**
+*   **Model:** Claude Haiku with temperature $T=0.7$
+*   **Task:** Paraphrasing (morphism $F$: rewrite text preserving meaning)
+*   **Distance:** Cosine distance on sentence embeddings (stable, deterministic)
+*   **Methodology:**
+    - $L = d(F(x_1), F(x_2)) / d(x_1, x_2)$ — expansion on input pairs
+    - $\gamma = d(V(y_1), V(y_2)) / d(y_1, y_2)$ — contraction on output pairs (same input, two runs)
+
+**Results:**
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| $L$ (morphism) | $0.94 \pm 0.07$ | Morphism is slightly contractive |
+| $\gamma$ (no validator) | $1.00$ | Identity, as expected |
+| $\gamma$ (weak validator) | $1.02 \pm 0.25$ | Not contractive |
+| $\gamma$ (strong validator) | $1.03 \pm 0.38$ | Not contractive |
+
+**Key Finding:** All configurations yield $L \cdot \gamma < 1$ because $L < 1$, not due to validator contraction. The system is inherently stable for this task.
+
+**Important Observation: Corrector $\neq$ Contractor.**
+LLM-based validators act as *correctors* (pulling outputs toward the target) rather than *contractors* (shrinking distances between outputs). These are mathematically distinct:
+- **Corrector:** $d(V(y), G) < d(y, G)$ — attracts to target
+- **Contractor:** $d(V(y_1), V(y_2)) < d(y_1, y_2)$ — shrinks pairwise distances
+
+GFSO requires contractors. This experiment reveals that naive LLM validators do not satisfy this property—a non-obvious finding that informs validator design.
+
+**Implications:** For simple tasks with modern LLMs, $L \approx 1$ (or below), and GFSO confirms stability. The framework's utility is most apparent when $L > 1$ (complex reasoning chains, weaker models) where proper contractive validators become necessary.
+
+![Figure 3: GFSO Verification](../experiments/artifacts/gfso_predictive.png)
+
 ---
 
 ## 7. Domain Instantiations
 
-We formalize the stability criterion $L \cdot \gamma \le 1$ for three domains, establishing anchors for domain-specific analysis.
+The $\epsilon$-NT framework applies uniformly across domains. We provide illustrative (hypothetical) instantiations:
 
-### 7.1. Corporate Governance and Organizational Hierarchies
+| Domain | Component (L) | Validator (γ) | Example |
+|:-------|:--------------|:--------------|:--------|
+| **Organizations** | Layer drift $L \approx 1.2$ | Audits, KPIs | 5-layer hierarchy: need $\gamma \leq 0.83$ |
+| **Supply Chains** | Bullwhip $L \approx 1.8$ | Information sharing | 4-tier chain: need $\gamma \leq 0.55$ |
+| **LLM Agents** | Semantic drift $L \approx 1.1$ | Guardrails, fact-checks | 10-step chain: need $\gamma \leq 0.91$ |
 
-**GFSO Model:** An organization is a functor $F: \mathcal{Policy} \to \mathcal{Execution}$ mapping strategic directives (Specification) to operational outcomes (Implementation). Each hierarchical layer (executive → management → front-line) is a morphism introducing stochastic noise.
+**Organizations:** $L$ captures bureaucratic drift—misinterpretation and information loss at each hierarchical layer. $\gamma$ is achieved via audits, KPIs, and SOPs that contract deviation from policy.
 
-**Expansiveness Factor $L$:** Bureaucratic drift arises from misinterpretation, information loss during handoffs, and local optimization conflicting with global objectives. As an illustrative estimate, we model $L \approx 1.15$-$1.3$ per layer (empirical calibration is domain-specific).
+**Supply Chains:** $L$ is the bullwhip effect—demand signal amplification upstream. $\gamma$ comes from information sharing protocols (EDI, vendor-managed inventory) that reduce variance.
 
-**Control Mechanism $\gamma$:** Standard Operating Procedures (SOPs), audits, and KPI monitoring act as $\epsilon$-Natural Transformations. A quarterly audit with threshold $T$ on performance metrics implements variance truncation (Proposition 5.2), providing $\gamma < 1$ contraction.
+**LLM Agents:** $L$ reflects semantic drift and hallucination per reasoning step. $\gamma$ is provided by guardrails, fact-checkers, and type validators.
 
-**Stability Criterion:** For a 5-layer hierarchy with $L=1.2$ per layer, effective global control requires $\gamma \le 0.83$ (i.e., audits must reject deviations >17% from specification). Without such control, final implementation error scales as $L^5 \approx 2.5x$ the input uncertainty.
-
-### 7.2. Supply Chain Optimization
-
-**GFSO Model:** A supply chain is a compositional structure $\mathcal{I}$ where nodes are suppliers/manufacturers and edges are logistics/procurement contracts. The "Bullwhip Effect" [Lee et al., 1997] describes exponential demand signal amplification upstream.
-
-**Expansiveness Factor $L$:** Each supply tier amplifies demand variance due to batch ordering, lead time delays, and forecast updating. Measured bullwhip ratios in retail supply chains range $L \approx 1.5$-$2.0$ per tier.
-
-**Control Mechanism $\gamma$:** Information sharing protocols (e.g., EDI, vendor-managed inventory) and demand smoothing policies act as topological validators. Sharing point-of-sale data directly with manufacturers implements a "shortcut" natural transformation, reducing laxity $\delta_F$ by eliminating intermediate noise layers.
-
-**Stability Criterion:** For a 4-tier chain with $L=1.8$ per tier, uncontrolled error is $\mathcal{O}(1.8^4) \approx 10.5x$. Implementing information transparency to achieve $\gamma = 0.55$ yields $1.8 \cdot 0.55 = 0.99 < 1$, restoring stability. This explains observed variance reductions in collaborative forecasting systems.
-
-### 7.3. Generative AI Agent Systems
-
-**GFSO Model:** A compound AI system is a sequence of LLM calls (morphisms) implementing a reasoning plan (Index $\mathcal{I}$). Each call is a stochastic kernel $f: \text{Prompt} \to \mathcal{D}(\text{Response})$ with output distributions in high-dimensional embedding spaces.
-
-**Expansiveness Factor $L$:** Hallucination and semantic drift cause $L > 1$. Illustrative estimates: $L \approx 1.1$-$1.3$ per reasoning step.
-
-**Remark (Modeling Assumption — Local Lipschitz):** The *global* Lipschitz constant for LLMs may be arbitrarily large—a single token can flip semantic meaning. The estimates above are a **modeling assumption**: we posit that within the coherent semantic basin of a reasoning trajectory, an *effective local* $L$ exists and is bounded. This is not a proven property of LLMs but a necessary condition for *any* compositional analysis. The framework answers: "If components have bounded $L$, what validator strength $\gamma$ suffices?" Empirical calibration of $L$ for specific LLM pipelines is deferred to future work.
-
-**Control Mechanism $\gamma$:** Runtime assertions (e.g., type checks, regex validation, unit tests) and LLM-based verification act as $\epsilon$-Natural Transformations. Rejection sampling with semantic similarity thresholds implements variance truncation.
-
-**Stability Criterion:** For a 10-step reasoning chain with $L=1.2$, unvalidated error is $\mathcal{O}(1.2^{10}) \approx 6.2x$. Guardrails achieving $\gamma = 0.83$ yield $1.2 \cdot 0.83 = 0.996 < 1$, preventing exponential collapse. This formalizes the empirical success of frameworks like DSPy and LangChain.
+**Remark (Illustrative Values):** The $L$ and $\gamma$ values above are hypothetical anchors for domain-specific analysis. Empirical calibration requires measurement in specific systems. The framework answers: "If $L$ is bounded, what $\gamma$ suffices?"
 
 ---
 
-## 8. Discussion: Implementation and Categorical Choices
+## 8. Discussion
 
 ### 8.1. Why the Wasserstein Monad?
-A common question is the choice between the **Giry monad** and the **Wasserstein monad**. While the Giry monad captures measure-theoretic properties, it is "topologically blind"—it doesn't naturally handle the metric proximity required for error propagation. The Wasserstein monad $\mathcal{D}$ on **PolMet** explicitly internalizes the metric $W_1$, allowing us to treat reliability as a Lipschitz property, which is crucial for our Stability Criterion ($L \cdot \gamma \le 1$).
+The Giry monad is "topologically blind"—it captures measure-theoretic properties but not metric proximity. The Wasserstein monad internalizes $W_1$, enabling Lipschitz analysis essential for $\epsilon$-control.
 
-### 8.2. Computational Complexity of $W_1$
-For discrete measures with $N$ support points, exact $W_1$ computation is $O(N^3 \log N)$ via optimal transport solvers. For continuous distributions (as in our theoretical framework), $W_1$ is typically intractable to compute exactly.
+### 8.2. Computational Aspects
+Exact $W_1$ computation is $O(N^3 \log N)$. In practice, GFSO uses $W_1$ as a theoretical bound—validators employ cheap surrogates (KPIs, semantic similarity) that correlate with $W_1$ reduction.
 
-**Clarification:** GFSO uses $W_1$ as a **theoretical Lyapunov function**—the proofs establish bounds on $W_1$ without requiring its explicit computation. In practice:
-- **Validators** use cheap surrogates (KPIs, unit tests, semantic similarity) that correlate with $W_1$ reduction
-- **Estimation** (Section 8.4) uses sampling-based approximations
-- The **dimension-error decoupling** observation (Section 6.2) suggests that low-dimensional probes may provide sufficient contraction when error is isotropic
-
-### 8.3. Connection to Lawvere's Metric Spaces
-Our approach is inspired by Lawvere's insight [12] that metric spaces are categories enriched over $([0, \infty], \ge, +)$. While we do not construct a full enrichment here, the Wasserstein distance serves as a natural hom-object measuring "semantic distance" between distributions. The Lipschitz constant $L$ then becomes the composition bound: $d(f \circ g) \le L_f \cdot d(g)$. This perspective suggests that "Stability" ($L \cdot \gamma \le 1$) is not merely a sufficient condition, but reflects the categorical structure of contraction in metric-enriched categories.
-
-### 8.4. GFSO as Diagnostic Framework
-A common misconception is that formal methods *eliminate* errors. GFSO makes no such claim. Instead, it provides a **diagnostic framework** that makes errors *measurable and predictable*.
-
-By quantifying $L$ (component drift) and $\gamma$ (control effectiveness) at each hierarchical layer, practitioners can:
-1. **Identify bottlenecks:** Layers where $L \cdot \gamma > 1$ are flagged as unstable before cascading failures occur.
-2. **Predict degradation:** Given current $L$, $\gamma$, and chain length $n$, the framework bounds worst-case error accumulation.
-3. **Optimize interventions:** Resources can be allocated to reduce $L$ (better training, clearer specifications) or reduce $\gamma$ (stronger validation) where the product $L \cdot \gamma$ is largest.
+### 8.3. GFSO as Diagnostic Framework
+GFSO does not eliminate errors—it makes them *measurable*. By quantifying $L$ and $\gamma$, practitioners can identify unstable layers ($L \cdot \gamma > 1$), predict degradation, and optimize interventions.
 
 The value lies not in guaranteeing correctness—which is impossible for stochastic systems—but in providing **early warning** and **quantitative trade-off analysis**. Engineers have always known that "more testing helps"; GFSO provides the mathematics to answer "how much testing is enough?"
 
 **Practical Estimation of $L$ and $\gamma$:**
-- **Estimating $L$:** Measure output variance under input perturbation. For a component $f$, sample inputs $x, x'$ with $d(x,x') = \epsilon$, compute $L \approx \mathbb{E}[W_1(f(x), f(x'))] / \epsilon$. For LLMs, this corresponds to prompt perturbation studies.
-- **Estimating $\gamma$:** Measure error reduction after validation. Given samples $\{e_i\}$ of pre-validation error and $\{e'_i\}$ post-validation, estimate $\gamma \approx \mathbb{E}[e'_i] / \mathbb{E}[e_i]$. For rejection sampling, $\gamma$ depends on threshold $T$ and error distribution (Proposition 5.2).
-- **Surrogate metrics:** When $W_1$ is intractable, use domain-specific proxies: KPIs for business processes, semantic similarity for LLMs, defect rates for supply chains.
+
+*Estimating $L$ (expansion degree):*
+| Domain | Method | Metric |
+|:-------|:-------|:-------|
+| **LLM chains** | Prompt perturbation: vary input slightly, measure output divergence | Semantic similarity, fact retention |
+| **Organizations** | Policy transmission: compare directive at layer $n$ vs $n+1$ | KPI deviation, interpretation surveys |
+| **Supply chains** | Demand signal analysis: measure variance amplification upstream | Coefficient of variation ratio |
+
+*Concrete procedure for LLMs:* Given chain step $f$, sample $N$ input pairs $(x_i, x'_i)$ with small perturbations. Compute $\hat{L} = \frac{1}{N}\sum_i \frac{d(f(x_i), f(x'_i))}{d(x_i, x'_i)}$ where $d$ is semantic distance (e.g., embedding cosine distance).
+
+*Estimating $\gamma$ (contraction degree):*
+1. For the same input $x$, generate two outputs $y_1, y_2 = F(x)$ with stochastic variation
+2. Apply validator: $v_1 = V(y_1), v_2 = V(y_2)$
+3. Estimate $\hat{\gamma} = d(v_1, v_2) / d(y_1, y_2)$ — the ratio of distances after/before validation
+4. For rejection sampling with threshold $T$: $\gamma \approx T / E$ where $E$ is error support (Proposition 5.2)
+
+**Important:** This measures *contraction* (do outputs get closer?), not *correction* (do outputs get closer to target?). See §8.4.
+
+*Surrogate metrics:* When $W_1$ is intractable, use domain proxies that correlate with distributional distance. **Critical:** validate that surrogate reduction correlates with stability—if proxy doesn't track $W_1$, the criterion $L \cdot \gamma \leq 1$ loses meaning.
+
+### 8.4. Correctors vs Contractors
+
+A subtle but critical distinction emerged from our LLM experiments (§6.3):
+
+**Corrector:** A mapping that pulls outputs toward a target.
+$$d(V(y), G(x)) < d(y, G(x))$$
+
+**Contractor:** A mapping that shrinks distances between any two outputs.
+$$d(V(y_1), V(y_2)) < d(y_1, y_2)$$
+
+These are *mathematically distinct* properties. GFSO's stability criterion $L \cdot \gamma \leq 1$ requires contractors, not correctors.
+
+**Finding:** Naive LLM validators (prompt-based correction) act as correctors but not contractors. They pull each output toward the source/target, but may actually *increase* the distance between different outputs (§6.3: $\gamma > 1$ for "strong" validator).
+
+**Implication for validator design:** To satisfy GFSO's criterion, validators should be designed with contraction in mind:
+- **Rejection sampling:** Accept only outputs within threshold → contracts by filtering outliers
+- **Majority voting:** Multiple runs → consensus reduces variance
+- **Deterministic post-processing:** Fixed transformations (formatting, truncation) have $\gamma \leq 1$
+
+This finding clarifies when GFSO applies: systems with inherently contractive validation mechanisms, not arbitrary LLM-based "correction" prompts.
 
 ### 8.5. Limitations and Future Work
+
+**Robustness to Assumption Violations (Summary):**
+The framework degrades gracefully when assumptions are violated:
+
+| Assumption | Violation | Impact on Bound |
+|:-----------|:----------|:----------------|
+| 4.3 (Spec Invariance) | $W_1(\mathcal{V}(G), G) \leq \delta_V$ | $E'_\infty = \frac{\gamma(\epsilon_0 + \delta_F) + \delta_V}{1 - L\gamma}$ |
+| 5.0 (Strict Functor) | $G$ lax by $\delta_G$ | Add $\delta_G$ to $\delta_F$ in all bounds |
+| 4.4 (Validator-Spec NT) | Naturality defect $\delta_{NT}$ | $\epsilon$-NT holds with $\epsilon = \gamma\epsilon_0 + \delta_{NT}$ |
+
+The stability criterion $L \cdot \gamma \leq 1$ remains unchanged; only steady-state bounds increase.
 
 **Assumption 4.0 (Same State Spaces).** Our framework assumes $F$ and $G$ agree on objects, meaning implementation and specification operate on identical state spaces. This holds when both are stochastic programs over the same domain. However, practical implementations may operate on discretized or approximated spaces (floating point vs reals, quantized actions, finite precision). Extending GFSO to handle $F(X) \ne G(X)$ requires introducing a projection morphism $\rho: F(X) \to G(X)$ with bounded distortion, adding a term $W_1(\rho(F(f)(x)), G(f)(x))$ to the error bound. This generalization is straightforward but omitted for clarity.
 
@@ -502,13 +834,26 @@ The value lies not in guaranteeing correctness—which is impossible for stochas
 
 **Point Specification.** Our experiments use $G_{chain}(x_0) = \delta_0$ (Dirac at origin), allowing $W_1$ estimation via sample mean $\mathbb{E}[\|x_n\|]$. For general non-point specifications $G$, computing $W_1(F_{chain}, G_{chain})$ requires optimal transport solvers (e.g., Sinkhorn [Cuturi, 2013]). The theory is general; the empirical validation is restricted to this tractable case.
 
-**Sequential Chains.** The theorems address sequential composition (linear chains in $\mathcal{I}$). Extension to DAGs with branching (fork/join parallelism) requires analyzing error propagation through merges, where multiple upstream errors combine. The categorical framework accommodates general $\mathcal{I}$; explicit bounds for non-linear topologies are future work.
+**General Topologies.** The index category $\mathcal{I}$ can be any DAG—this is the real-world task structure. Our theorems apply to *paths* in $\mathcal{I}$: for a DAG, analyze each path from input to output. Parallel branches are independent until they merge; merge points are morphisms with their own Lipschitz constants. The framework is already general; we present sequential chains for clarity, not as a limitation.
 
 ---
 
 ## 9. Conclusion
 
-We presented GFSO, a categorical framework for analyzing error propagation in hierarchical stochastic systems. By formalizing validators in the Kleisli category of the Kantorovich monad, we derived a complete design toolkit: the Stability Criterion $L \cdot \gamma \le 1$ (necessary and sufficient), sparse validation trade-offs $L^k \cdot \gamma \le 1$, optimal placement with square-root scaling, validator composition rules, robustness margins for model uncertainty, and tight bounds with no better universal alternative. Synthetic experiments confirm the predicted phase transition. The framework answers: "How much validation?" "Where to place validators?" "How many are enough?" "What safety margin?"—applicable wherever imperfect components compose, from AI agent chains to organizational hierarchies.
+**The problem:** Validators (audits, guardrails, quality checks) are ubiquitous in hierarchical systems, yet lack formal treatment. When is validation *sufficient*? How do guarantees compose?
+
+**The solution:** We introduced **$\epsilon$-natural transformations ($\epsilon$-NT)**—validators as coherent morphism families where implementation-specification diagrams commute up to $\epsilon$. This is the first categorical formalization enabling compositional reasoning about error control.
+
+**What follows:** From the abstraction, we derive (not assume):
+- Error growth $O(L^n)$ from enriched Kleisli structure
+- Stability criterion $L \cdot \gamma \leq 1$ as a theorem
+- Design rules: strength, frequency, composition
+
+**Key empirical finding:** LLM-based validators act as *correctors* (pulling toward target) but not *contractors* (shrinking distances). GFSO requires contractors—rejection sampling, consensus, deterministic checks—where $\gamma < 1$ by construction.
+
+**The contribution is the abstraction.** The criterion $L \cdot \gamma \leq 1$ is elementary; identifying $\epsilon$-NT as the right formalization for compositional error control is new.
+
+**Future work:** Systems with $L > 1$ requiring active stabilization; GFSO-based verification tools; tighter bounds for specific validator classes.
 
 ---
 
@@ -652,9 +997,9 @@ Let $E'_{n}$ be the error after validation at step $n$.
 
 *Notation:* For brevity, let $F := F_{chain}(x_0)$ and $G := G_{chain}(x_0)$ denote the output distributions at step $n+1$.
 
-Under Assumption 4.3 (Specification Invariance), $\mathcal{V}(G) = G$. Combined with (4.2a):
+Under Assumption 4.3 (Specification Invariance), $\mathcal{V}(G) = G$. Combined with (4.1a):
 $$ E'_{n+1} = W_1(\mathcal{V}(F), G) \stackrel{4.3}{=} W_1(\mathcal{V}(F), \mathcal{V}(G)) \stackrel{4.2a}{\le} \gamma \cdot W_1(F, G) = \gamma \cdot E_{n+1}^{raw} $$
-(Note: This derivation requires both (4.2a) and Assumption 4.3. Property (4.2b) alone is insufficient—we need the Lipschitz property to bound the distance between $\mathcal{V}(F)$ and $\mathcal{V}(G)$.)
+(Note: This derivation requires both (4.1a) and Assumption 4.3. Property (4.1b) alone is insufficient—we need the Lipschitz property to bound the distance between $\mathcal{V}(F)$ and $\mathcal{V}(G)$.)
 
 By this contraction property:
 $$ E'_{n+1} \le \gamma \cdot E_{n+1}^{raw} $$

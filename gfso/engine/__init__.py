@@ -1,8 +1,12 @@
 """
-Execution engine enforcing Theorem 3.1 linear error bounds.
+Execution engine with stability-aware validation (v1.0).
 
 Modules:
-    executor - GFSOEngine with compositional validation
+    executor - GFSOEngine with validator application
+    stability - Stability analysis (L·γ ≤ 1 criterion)
+    bounds - Error bound computations
 """
 
 from .executor import *
+from .stability import *
+from .bounds import *

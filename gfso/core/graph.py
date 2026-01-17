@@ -1,21 +1,22 @@
 """
-Task Dependency Graph - Category I (Section 2.1)
+Task Dependency Graph - Category I (Paper v7.0)
 
 Represents workflow as a directed acyclic graph (DAG) with:
-- Objects: Tasks
+- Objects: Tasks (with LipschitzMorphism implementations)
 - Morphisms: Dependencies (edges)
 - Functors: F (implementation), G (specification)
-- Natural transformation: η (validators)
+- Natural transformation: η (validators as γ-contractive maps)
 
 Uses NetworkX for efficient graph operations.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 import networkx as nx
 
 from gfso.core.kleisli import KleisliMorphism, State
-from gfso.core.metric import StateMetric, verify_non_expansive
+from gfso.core.metric import StateMetric, verify_non_expansive, estimate_lipschitz
+from gfso.core.morphism import LipschitzMorphism
 from gfso.contract.validator import Validator
 
 __all__ = ['Task', 'TaskDAG']
@@ -27,22 +28,26 @@ class Task:
     Object in Category I with functor images and natural transformation.
 
     Represents a single task/agent in the workflow with:
-    - F(task): Implementation (real/stochastic behavior)
+    - F(task): Implementation (real/stochastic behavior) - now LipschitzMorphism
     - G(task): Specification (ideal/deterministic behavior)
-    - η_task: Validator (natural transformation component)
+    - η_task: Validator (γ-contractive map)
+
+    Paper v7.0 changes:
+    - implementation can be LipschitzMorphism with known L
+    - validator is γ-contractive, not ε-bounded
     """
 
     task_id: str
     """Unique identifier for this task"""
 
-    implementation: KleisliMorphism
-    """F(task): Real execution morphism (possibly stochastic)"""
+    implementation: Union[KleisliMorphism, LipschitzMorphism]
+    """F(task): Real execution morphism with Lipschitz degree L"""
 
     specification: KleisliMorphism
     """G(task): Ideal execution morphism (typically deterministic)"""
 
     validator: Validator
-    """η_task: Natural transformation component F → D(G)"""
+    """η_task: γ-contractive validator"""
 
     dependencies: list[str] = field(default_factory=list)
     """Incoming edges (tasks that must execute before this one)"""
@@ -57,6 +62,27 @@ class Task:
         if not isinstance(other, Task):
             return False
         return self.task_id == other.task_id
+
+    @property
+    def lipschitz_degree(self) -> float:
+        """Get Lipschitz degree L of implementation."""
+        if isinstance(self.implementation, LipschitzMorphism):
+            return self.implementation.lipschitz_degree
+        return 1.0  # Assume non-expansive for legacy morphisms
+
+    @property
+    def contraction_degree(self) -> float:
+        """Get contraction degree γ of validator."""
+        return self.validator.contraction_degree()
+
+    @property
+    def stability_product(self) -> float:
+        """Compute L·γ for this task."""
+        return self.lipschitz_degree * self.contraction_degree
+
+    def is_stable(self) -> bool:
+        """Check if task satisfies L·γ ≤ 1."""
+        return self.stability_product <= 1.0 + 1e-9
 
 
 class TaskDAG:
@@ -99,10 +125,12 @@ class TaskDAG:
     def add_task(
         self,
         task_id: str,
-        implementation: KleisliMorphism,
+        implementation: Union[KleisliMorphism, LipschitzMorphism],
         specification: KleisliMorphism,
         validator: Validator,
         *,
+        lipschitz_degree: Optional[float] = None,
+        estimate_lipschitz_from_states: bool = False,
         verify_non_expansive_impl: bool = False,
         verify_non_expansive_spec: bool = False,
         test_states: Optional[list[State]] = None,
@@ -111,14 +139,18 @@ class TaskDAG:
         """
         Add task (object) to category I.
 
+        Paper v7.0: Supports LipschitzMorphism with known L > 1.
+
         Args:
             task_id: Unique task identifier
-            implementation: F(task) functor image
+            implementation: F(task) functor image (KleisliMorphism or LipschitzMorphism)
             specification: G(task) functor image
-            validator: η_task natural transformation component
-            verify_non_expansive_impl: Verify Assumption 1.5 for implementation
+            validator: η_task (γ-contractive validator)
+            lipschitz_degree: Manual L for KleisliMorphism (ignored if LipschitzMorphism)
+            estimate_lipschitz_from_states: Estimate L from test_states
+            verify_non_expansive_impl: Verify Assumption 1.5 for implementation (legacy)
             verify_non_expansive_spec: Verify Assumption 1.5 for specification
-            test_states: States to verify non-expansiveness on
+            test_states: States for Lipschitz estimation or verification
             metadata: Optional task metadata
 
         Raises:
@@ -127,20 +159,42 @@ class TaskDAG:
         if task_id in self.tasks:
             raise ValueError(f"Task '{task_id}' already exists")
 
-        # Verify non-expansive property if requested
+        # Handle Lipschitz estimation/wrapping
+        final_impl = implementation
+
+        if not isinstance(implementation, LipschitzMorphism):
+            # Wrap KleisliMorphism in LipschitzMorphism
+
+            if estimate_lipschitz_from_states:
+                if self.state_metric is None:
+                    raise ValueError("state_metric required for Lipschitz estimation")
+                if not test_states:
+                    raise ValueError("test_states required for Lipschitz estimation")
+
+                estimated_L = estimate_lipschitz(
+                    implementation, test_states, self.state_metric
+                )
+                final_impl = LipschitzMorphism(implementation, estimated_L, task_id)
+
+            elif lipschitz_degree is not None:
+                final_impl = LipschitzMorphism(implementation, lipschitz_degree, task_id)
+
+            # else: keep as KleisliMorphism (L=1 assumed)
+
+        # Legacy: Verify non-expansive property if requested
         if verify_non_expansive_impl or verify_non_expansive_spec:
             if self.state_metric is None:
-                raise ValueError(
-                    "state_metric required for non-expansive verification"
-                )
+                raise ValueError("state_metric required for non-expansive verification")
             if not test_states:
-                raise ValueError(
-                    "test_states required for non-expansive verification"
-                )
+                raise ValueError("test_states required for non-expansive verification")
 
         if verify_non_expansive_impl:
+            morphism_to_verify = (
+                implementation.morphism if isinstance(implementation, LipschitzMorphism)
+                else implementation
+            )
             is_valid, ratio = verify_non_expansive(
-                implementation, test_states, self.state_metric
+                morphism_to_verify, test_states, self.state_metric
             )
             if not is_valid:
                 raise ValueError(
@@ -161,7 +215,7 @@ class TaskDAG:
         # Create task
         task = Task(
             task_id=task_id,
-            implementation=implementation,
+            implementation=final_impl,
             specification=specification,
             validator=validator,
             dependencies=[],

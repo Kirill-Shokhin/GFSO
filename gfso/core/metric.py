@@ -15,8 +15,10 @@ from .kleisli import State, Distribution, KleisliMorphism
 __all__ = [
     'StateMetric',
     'wasserstein_1_discrete',
+    'wasserstein_1_continuous',
     'kleisli_metric',
     'verify_non_expansive',
+    'estimate_lipschitz',
 ]
 
 
@@ -225,3 +227,103 @@ def verify_non_expansive(
                 return False, ratio
 
     return True, max_ratio
+
+
+def wasserstein_1_continuous(
+    samples_mu: list[State],
+    samples_nu: list[State],
+    state_metric: StateMetric,
+) -> float:
+    """
+    Wasserstein-1 distance for continuous distributions via samples.
+
+    Uses scipy/POT for optimal transport when available, falls back to
+    discrete approximation otherwise.
+
+    Args:
+        samples_mu: Samples from first distribution
+        samples_nu: Samples from second distribution
+        state_metric: Distance function on state space
+
+    Returns:
+        Wasserstein-1 distance estimate
+    """
+    if not samples_mu or not samples_nu:
+        return 0.0
+
+    # Try to use POT for exact computation
+    try:
+        import numpy as np
+        import ot
+
+        n, m = len(samples_mu), len(samples_nu)
+
+        # Build cost matrix
+        C = np.zeros((n, m))
+        for i, s1 in enumerate(samples_mu):
+            for j, s2 in enumerate(samples_nu):
+                C[i, j] = state_metric(s1, s2)
+
+        # Uniform weights (empirical distributions)
+        a = np.ones(n) / n
+        b = np.ones(m) / m
+
+        return ot.emd2(a, b, C)
+
+    except ImportError:
+        # Fallback: convert samples to discrete distribution and use greedy
+        from collections import Counter
+
+        def samples_to_dist(samples):
+            counts = Counter(samples)
+            total = len(samples)
+            return {s: c / total for s, c in counts.items()}
+
+        mu = samples_to_dist(samples_mu)
+        nu = samples_to_dist(samples_nu)
+
+        return wasserstein_1_discrete(mu, nu, state_metric)
+
+
+def estimate_lipschitz(
+    f: KleisliMorphism,
+    test_states: list[State],
+    state_metric: StateMetric,
+) -> float:
+    """
+    Estimate Lipschitz constant L for a Kleisli morphism.
+
+    L = sup_{x≠y} W₁(f(x), f(y)) / d(x, y)
+
+    Paper v7.0: Morphisms are L-Lipschitz (L > 1 OK), not necessarily
+    non-expansive (L ≤ 1).
+
+    Args:
+        f: Kleisli morphism to analyze
+        test_states: Sample states to estimate over
+        state_metric: Metric on state space
+
+    Returns:
+        Estimated Lipschitz constant (≥ 0)
+
+    Note:
+        Returns max ratio over test states (lower bound on true L).
+        For LLMs, typical values are L ≈ 1.1-1.3.
+    """
+    if len(test_states) < 2:
+        return 1.0  # Default assumption
+
+    max_ratio = 0.0
+
+    for i, s1 in enumerate(test_states):
+        for s2 in test_states[i + 1:]:
+            d_input = state_metric(s1, s2)
+
+            if d_input < 1e-10:
+                continue
+
+            d_output = wasserstein_1_discrete(f(s1), f(s2), state_metric)
+            ratio = d_output / d_input
+            max_ratio = max(max_ratio, ratio)
+
+    return max_ratio if max_ratio > 0 else 1.0
