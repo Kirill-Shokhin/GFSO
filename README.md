@@ -1,146 +1,97 @@
-# General Framework for Structural Optimization (GFSO)
+# GFSO (General Framework for Structured Operations)
 
-**Compositional Error Bounds for Hierarchical Stochastic Systems**
-
-![Python](https://img.shields.io/badge/python-3.10+-blue.svg) ![License](https://img.shields.io/badge/license-MIT-green.svg) ![Status](https://img.shields.io/badge/status-Research%20Preprint-orange.svg)
+**A protocol standard for hierarchical task management, derived from first principles.**
 
 ---
 
-## The Problem: Error Cascades in Hierarchical Systems
+## What is GFSO?
 
-Whether it's a Chain-of-Thought in an LLM, a command chain in an organization, or a global supply chain, hierarchical systems face **signal degradation**.
+Task management in hierarchical organizations has no formal standard: assignments, decomposition, acceptance — all ad hoc. GFSO is a formally derived protocol: 6 original theorems (including impossibility results) + 8 propositions/corollaries supported by classical theory.
 
-When information passes through multiple imperfect nodes, errors don't just add — they **compound exponentially**. A small misunderstanding at the top becomes a catastrophe at the bottom. This is the **"Telephone Game" effect**, formalized as **expansive dynamics** ($L > 1$).
-
----
-
-## The Solution: ε-Natural Transformations
-
-GFSO introduces **ε-natural transformations (ε-NT)** — the first categorical formalization of validators as coherent morphism families. A validator is an ε-NT if the implementation-specification diagram commutes *up to ε*.
-
-This abstraction enables **compositional reasoning**: local validator properties yield global error bounds.
-
-From this abstraction follows the **Stability Criterion** (a theorem, not the contribution):
-
-$$ L \cdot \gamma \le 1 $$
-
-where:
-- **$L > 1$**: Component expansiveness (bureaucratic drift, bullwhip effect, hallucination)
-- **$\gamma < 1$**: Validator contraction (audits, quality checks, guardrails)
-
-Even with expansive components ($L=1.2$), a sufficiently strong validator ($\gamma=0.83$) stabilizes the system: $1.2 \times 0.83 = 0.996 < 1$.
+**The core insight:** from two axioms (verifiability of goals, decomposability of complex tasks), an entire protocol follows — with proofs that key constructions (binary validation, AND aggregation, 7 failure modes) admit no alternatives.
 
 ---
 
-## Empirical Validation
+## Key Results
 
-We validate the stability criterion on synthetic experiments in $\mathbb{R}^{100}$ with Lipschitz dynamics ($L=1.2$).
+**Original theorems:**
 
-### Phase Transition at $L \cdot \gamma = 1$
+| # | Result | Claim | Proof type |
+|---|--------|-------|------------|
+| T1 | Compositionality | V(parent) = AND(V(children)) under correct D | Constructive |
+| T2 | AND uniqueness | AND is the only non-trivial aggregation | Exhaustive enumeration |
+| — | \|L\|=2 impossibility | Binary validation is the only option | Pigeonhole |
+| — | 7 FM completeness | Failure modes are exhaustive | Exhaustive case split |
+| T10 | Self-measuring | Q computable from execution trace | Constructive |
+| T11 | Structural transparency | Every decision has a record | From invariants |
 
-![Phase Transition](experiments/artifacts/fig1_theory_validation.png)
+**Propositions (supported by classical theory):**
 
-> **Sharp transition:** At $L \cdot \gamma = 0.90$ error is **bounded**; at $L \cdot \gamma = 1.08$ error grows **exponentially**.
-
-### Partial Observation Robustness
-
-![Partial Observation](experiments/artifacts/fig2_realistic_scenario.png)
-
-> **Empirical observation:** Observing only **10% of dimensions** achieves comparable error containment to full observation when error is isotropically distributed.
-
----
-
-## Theoretical Foundations
-
-GFSO is a **categorical synthesis** of three research traditions:
-
-| Tradition | Key Prior Work | What GFSO Uses |
-| :--- | :--- | :--- |
-| **Control Theory** | Small-gain theorem [Jiang et al., 1996] | Analogous criterion $L \cdot \gamma \le 1$ for chains |
-| **Concurrency Theory** | Behavioral metrics [van Breugel & Worrell, 2005] | Wasserstein distance $W_1$ |
-| **Category Theory** | Markov categories [Fritz, 2020] | Kleisli composition of stochastic kernels |
-
-**What's new in GFSO:**
-- **ε-Natural Transformations** — formalizing validators as approximate morphism families
-- **Unified framework** — connecting control stability with categorical semantics
-- **Domain instantiations** — applying to AI agents, supply chains, corporate hierarchies
+| # | Result | Claim | Foundation |
+|---|--------|-------|------------|
+| P3 | Blackwell dominance | GFSO informationally dominates status quo | Blackwell 1953 |
+| P4 | Constraint improvement | Constraints improve payoff when Δ > c | Simon 1955 |
+| C5 | α-monotonicity | Quality ↑ with adherence | Corollary of P3 |
+| P6 | Temporal monotonicity | Quality ↑ over time | Blackwell |
+| P7 | Scale bounds | Cascade: errors ≤ (L·γ)ⁿ | Operator composition |
+| P8 | Bayesian IC | Honesty optimal when cost(defect) > cost(signal) | Hurwicz 1960 |
+| P9 | Decomposition quality | 4 independent improvement mechanisms | P3 + P7 |
+| — | Minimality | Basis {T, D, Dep, Del} is minimal | Constructive |
 
 ---
 
-## Related Work & Comparison
+## Logical Chain
 
-| Feature | **GFSO** | PRISM | Assume-Guarantee | AgentGuard | DSPy |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Paradigm** | Metric Topology | Discrete MDPs | Interface Contracts | Runtime Verification | Empirical Search |
-| **State Space** | Continuous ($W_1$) | Discrete (Finite) | Abstract | Discrete Predicates | Unstructured |
-| **Error Metric** | Wasserstein Distance | Probability Bounds | Boolean | Pass/Fail | Empirical |
-| **Guarantee** | $L \cdot \gamma \le 1$ | PCTL | Compositional | Runtime Monitors | None |
-| **Scope** | Polish metric spaces | Software/Hardware | Cyber-Physical | GenAI Agents | GenAI Prompts |
-
-**References:**
-- **PRISM** — Probabilistic model checking [Kwiatkowska et al., 2011]
-- **Assume-Guarantee** — Contract-based design [Benveniste et al., 2018]
-- **AgentGuard** — Runtime verification of AI agents [Koohestani, 2025]
-- **DSPy** — LLM pipeline optimization [Khattab et al., 2024]
-
----
-
-## Quick Start
-
-Reproduce the experiments:
-
-```bash
-# Clone
-git clone https://github.com/Kirill-Shokhin/GFSO.git
-cd GFSO
-
-# Install dependencies
-pip install numpy matplotlib scipy
-
-# Run experiments
-python experiments/theory_validation.py
+```
+A1, A2 (axioms)
+  → {T, D, Del, Dep, V} (minimal basis)
+  → |L|=2 (impossibility), AND (uniqueness)
+  → 7 failure modes (completeness proven)
+  → Standards + 3 verification levels (CHECK-1–8)
+  → Protocol: 12 signals, 10 states (minimal)
+  → Graph G + 5 metrics Q (minimal, self-measuring)
+  → AI layer: Solver + LLM (necessity from P6 + Simon)
 ```
 
-Figures are generated in `experiments/artifacts/`.
+Every step is motivated by the previous. Design decisions are explicit.
 
 ---
 
-## Key Concepts
+## Documents
 
-| GFSO Term | Symbol | Corporate | Supply Chain | Generative AI |
-| :--- | :--- | :--- | :--- | :--- |
-| Morphism | $f: A \to B$ | Department | Supplier | LLM Call |
-| Expansiveness | $L > 1$ | Bureaucratic Drift | Bullwhip Effect | Hallucination |
-| Validator | $\gamma$-contractive | Audit / KPI | Quality Control | Guardrail |
-| Composition | $\circ_K$ | Chain of Command | Logistics Pipeline | Reasoning Chain |
-| Failure | $W_1 \to \infty$ | Policy Collapse | Stockout / Waste | Semantic Collapse |
+| File | Purpose |
+|------|---------|
+| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (Russian draft; EN forthcoming) |
+| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision: case studies, FAQ, per-metric analysis, adoption arguments |
+
+---
+
+## Status
+
+- [x] Formal framework: 6 theorems + 8 propositions/corollaries
+- [x] Impossibility results on foundations (|L|=2, AND, 7 FM)
+- [x] AI layer formalized (Solver + LLM, Chollet Level ≥ 2)
+- [x] Vision document with practical illustrations
+- [ ] English translation
+- [ ] Implementation (protocol engine, graph, metrics)
+- [ ] Empirical validation (deployment ≥ 6 months)
 
 ---
 
 ## Citation
 
 ```bibtex
-@article{gfso2026,
-  title={The General Framework for Structural Optimization:
-         Compositional Error Bounds in Enriched Kleisli Categories},
-  author={Shokhin Kirill},
+@article{shokhin2026gfso,
+  title={GFSO: Formal Guarantees for Compositional Task Validation
+         in Hierarchical Organizations},
+  author={Shokhin, Kirill},
   year={2026},
-  journal={arXiv preprint}
+  note={Preprint}
 }
 ```
 
 ---
 
-## Limitations
+## License
 
-- Requires **Lipschitz-continuous** dynamics (bounded $L$)
-- Assumes **Polish metric spaces** (complete, separable)
-- Specification and implementation must share state space
-- Applies to **structurally contractive validators** (rejection sampling, consensus, deterministic checks) — arbitrary LLM-based correction prompts may not satisfy contractivity
-- Domain instantiations (§7 in paper) are illustrative, not empirically calibrated
-
-See **Section 8.5** of the paper for detailed discussion.
-
----
-
-*GFSO: From exponential divergence to linear stability.*
+MIT
