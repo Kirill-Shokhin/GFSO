@@ -48,7 +48,7 @@ A1, A2 (axioms)
   → |L|=2 (impossibility), AND (uniqueness)
   → 7 failure modes (completeness proven)
   → Standards + 3 verification levels (CHECK-1–8)
-  → Protocol: 12 signals, 10 states (minimal)
+  → Protocol: 12 P2P signals + timeout, 10 states (minimal)
   → Graph G + 5 metrics Q (minimal, self-measuring)
   → AI layer: Solver + LLM (necessity from P6 + Simon)
 ```
@@ -63,6 +63,24 @@ Every step is motivated by the previous. Design decisions are explicit.
 |------|---------|
 | [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (Russian draft; EN forthcoming) |
 | [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision: case studies, FAQ, per-metric analysis, adoption arguments |
+| [`docs/architecture.md`](docs/architecture.md) | Code architecture: FSM invariant, module structure, L1/L2/L3 |
+
+---
+
+## Implementation
+
+```
+gfso/
+  core/       ← Level 1: protocol standard (pure library)
+    types/      State(10), Signal(13), FM(7), effects, ports
+    protocol/   FSM transition table, invariants, role validation
+    handlers/   CHECK-1-8, System LLM recommend
+    graph/      G model, mutations, 5 metrics Q
+  engine/     ← Level 2: framework (Engine facade, event loop, audit, events)
+  adapters/   ← Level 3: pluggable (MemoryStorage, StubLLM, agents)
+```
+
+100 tests. Dependency: `core/ ← engine/ ← adapters/`
 
 ---
 
@@ -72,8 +90,9 @@ Every step is motivated by the previous. Design decisions are explicit.
 - [x] Impossibility results on foundations (|L|=2, AND, 7 FM)
 - [x] AI layer formalized (Solver + LLM, Chollet Level ≥ 2)
 - [x] Vision document with practical illustrations
+- [x] Protocol engine: Level 1 (core) + Level 2 (engine)
 - [ ] English translation
-- [ ] Implementation (protocol engine, graph, metrics)
+- [ ] Level 3: production adapters (SQLite, Claude API, HTTP server)
 - [ ] Empirical validation (deployment ≥ 6 months)
 
 ---

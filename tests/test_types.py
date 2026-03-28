@@ -1,0 +1,72 @@
+"""Tests for types/ module."""
+from gfso.core.types import (
+    State, Signal, DoneReason, Verdict, FM, AutonomyLevel, MutationType,
+    TERMINAL_STATES, NON_TERMINAL_STATES,
+    TaskId, AgentId, Criteria, Spec, Task, GuardContext,
+    CheckResult, Recommendation, GraphContext, SignalData,
+    MutateGraph, RunChecks, Recommend, Dispatch, EmitSignal,
+)
+
+
+def test_state_count():
+    assert len(State) == 10
+
+
+def test_signal_count():
+    assert len(Signal) == 13
+
+
+def test_fm_count():
+    assert len(FM) == 7
+
+
+def test_terminal_states():
+    assert State.DONE in TERMINAL_STATES
+    assert State.ESCALATED in TERMINAL_STATES
+    assert len(TERMINAL_STATES) == 2
+
+
+def test_non_terminal_states():
+    assert len(NON_TERMINAL_STATES) == 8
+    assert State.DONE not in NON_TERMINAL_STATES
+
+
+def test_task_defaults():
+    spec = Spec("test", (Criteria("c1", "desc"),))
+    t = Task(id=TaskId("t1"), spec=spec)
+    assert t.state == State.IDLE
+    assert t.iteration == 0
+    assert t.max_iterations == 3
+    assert t.done_reason is None
+
+
+def test_spec_frozen():
+    spec = Spec("test", (Criteria("c1", "desc"),), ("risk1",))
+    # frozen dataclass — should not be mutable
+    try:
+        spec.description = "changed"
+        assert False, "should be frozen"
+    except AttributeError:
+        pass
+
+
+def test_effects_frozen():
+    mg = MutateGraph(TaskId("t1"), MutationType.SET_STATE, new_state=State.REVIEW)
+    try:
+        mg.task_id = TaskId("t2")
+        assert False, "should be frozen"
+    except AttributeError:
+        pass
+
+
+def test_guard_context():
+    ctx = GuardContext(iteration=2, max_iterations=3)
+    assert ctx.iteration == 2
+    assert ctx.max_iterations == 3
+
+
+def test_signal_data():
+    sd = SignalData(signal=Signal.ASSIGN, task_id=TaskId("t1"))
+    assert sd.signal == Signal.ASSIGN
+    assert sd.spec is None
+    assert sd.failed_criteria == ()

@@ -1,0 +1,51 @@
+"""Event/callback system for engine observers."""
+from __future__ import annotations
+
+import logging
+from typing import Callable
+
+from gfso.core.types import State, Signal, TaskId
+
+log = logging.getLogger(__name__)
+
+# Callback signatures
+TransitionCallback = Callable[[TaskId, State, State, Signal], None]
+ErrorCallback = Callable[[TaskId, Signal, Exception], None]
+RejectCallback = Callable[[TaskId, Signal, State], None]
+
+
+class EventBus:
+    def __init__(self):
+        self._on_transition: list[TransitionCallback] = []
+        self._on_error: list[ErrorCallback] = []
+        self._on_reject: list[RejectCallback] = []
+
+    def on_transition(self, callback: TransitionCallback) -> None:
+        self._on_transition.append(callback)
+
+    def on_error(self, callback: ErrorCallback) -> None:
+        self._on_error.append(callback)
+
+    def on_reject(self, callback: RejectCallback) -> None:
+        self._on_reject.append(callback)
+
+    def emit_transition(self, task_id: TaskId, old_state: State, new_state: State, signal: Signal) -> None:
+        for cb in self._on_transition:
+            try:
+                cb(task_id, old_state, new_state, signal)
+            except Exception:
+                log.exception(f"callback error in on_transition for {task_id}")
+
+    def emit_error(self, task_id: TaskId, signal: Signal, error: Exception) -> None:
+        for cb in self._on_error:
+            try:
+                cb(task_id, signal, error)
+            except Exception:
+                log.exception(f"callback error in on_error for {task_id}")
+
+    def emit_reject(self, task_id: TaskId, signal: Signal, state: State) -> None:
+        for cb in self._on_reject:
+            try:
+                cb(task_id, signal, state)
+            except Exception:
+                log.exception(f"callback error in on_reject for {task_id}")
