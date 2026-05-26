@@ -5,7 +5,7 @@ from typing import Optional
 
 from .primitives import (
     TaskId, AgentId, Task, CheckResult, Recommendation,
-    DispatchPayload, SignalData, DepEdge,
+    DispatchPayload, SignalData, DepEdge, Spec,
 )
 from .enums import State
 
@@ -70,4 +70,16 @@ class LLMProviderPort(ABC):
 class AgentPort(ABC):
     @abstractmethod
     def dispatch(self, agent_id: AgentId, payload: DispatchPayload) -> Optional[SignalData]:
+        ...
+
+
+class VerifierPort(ABC):
+    """Runs deterministic verification of a deliverable against a Spec's criteria.
+
+    Implementations are domain-specific (subprocess+stdin, pytest, schema-check, etc).
+    Returns one CheckResult per criterion in spec.criteria, in the same order.
+    """
+
+    @abstractmethod
+    def verify(self, task_id: TaskId, deliverable: str, spec: Spec) -> list[CheckResult]:
         ...

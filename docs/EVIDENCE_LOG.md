@@ -1,0 +1,694 @@
+# GFSO — Experimental Evidence Log
+
+> Working journal of empirical work on GFSO. Every test, what it measured, what was
+> learned, what remained open. Lives in-repo so it survives sessions/compacts/agents.
+>
+> Source of truth for "what we've actually shown" vs "what is still hypothesis".
+> Updated as work progresses.
+
+---
+
+> **First read `docs/CORE.md`** if you need the GFSO definition. This file
+> assumes you already know what GFSO is and need experimental context.
+
+## 0. Why this document exists
+
+GFSO theory (`docs/applied_gfso_v3.md`) is comprehensive but the *vision of why it matters*
+still floats — even for the author. Individual pieces look like "just composition",
+"just good criteria", "just decomposition", and critics regularly latch onto one of
+those and dismiss the integration as nothing new. This log keeps:
+
+1. What we **actually** tested (versions, bugs, fixes, results) so future agents and
+   future-author don't repeat lost work.
+2. What each test **really proved vs didn't** — separating mechanical pipeline
+   correctness from theoretical-claim validation.
+3. The **vision context** — why GFSO is being built, what it is and isn't, what it
+   should give that other frameworks don't. Captured under multiple angles of critique.
+4. The **plan ahead** with rationale, so the next concrete step is obvious.
+
+This is the cross-session memory the author asked for. Memory files in
+`~/.claude/.../memory/` hold session-style hints; this file holds substantive history.
+
+---
+
+## 1. Vision context (what GFSO is, restated)
+
+### What GFSO is NOT
+- Not a productivity tool — "what metric does it boost" is a category-mismatched question
+- Not a project-management methodology
+- Not "yet another standard" at ISO 9001 / Scrum / Kanban level
+- Not an algorithm or ML technique
+- Not "agentic framework v2"
+
+### What GFSO IS
+- A **formal language for the minimum a verifiable task-handoff transaction must carry**
+- An **infrastructural layer** for hierarchical work systems — analog to TCP/IP for
+  networks or Codd's relational algebra for databases. Tractable math; the framing
+  enables a domain.
+- A **discipline shift**: responsibility for articulating criteria moves from Executor
+  (who currently has to guess) to Issuer (who must specify before delegation).
+- Derivable from two axioms (A1 verifiability, A2 decomposability), with all primitives
+  shown minimal and several uniqueness theorems (|L|=2, AND-aggregation, 7 FM
+  exhaustiveness).
+
+### What GFSO uniquely provides over its parts
+Decomposition exists. Tests exist. Contracts exist (DBC, Meyer 1986). Audit trails
+exist. What none of them give together:
+
+1. **Compositional validation theorem** — V(parent) = AND(V(children)) derived, not
+   postulated, under explicit correctness conditions (joint sufficiency + non-redundancy).
+2. **Failure-mode taxonomy with completeness proof** — any breakdown of compositional
+   validation falls into one of 7 FM. Falsifiable.
+3. **Forced binary V as forcing function** — criteria that can't decide pass/fail are
+   bad criteria; binary V pushes spec defects out instead of hiding them in "warning".
+4. **Standardized protocol vocabulary** (12 signals, 10 states) across role boundaries.
+5. **Self-measuring metrics** computed from the audit graph itself.
+6. **Adaptive stratification by horizons** (§17.1, derived) — top layers stable, bottom
+   layers fast-changing CHALLENGE-cycles. Not a separate principle of agile/lean —
+   a consequence of Dep coherence + A1.
+
+### Domain the author actually targets
+The under-optimized space of **human work coordination at scale**. Algorithms and
+neural nets are heavily optimized; the protocol of "how two parties agree on what
+counts as done" remains ad hoc 2026. The optimization opportunity here is plausibly
+larger than another percentage point on a ML benchmark — but uncoordinated, uneven,
+slow to converge because there's no formal substrate. GFSO is an attempt at that
+substrate.
+
+### Critic-resistant framing
+| Critic move | Answer |
+|---|---|
+| "What metric does it boost?" | Category-mismatched. Asks GFSO to be productivity tool. Analog: "what metric does TCP/IP boost?" |
+| "Just another standard like ISO" | ISO is chosen convention. GFSO is derived from axioms + proven minimal. |
+| "1990s contracts/TDD already did this" | DBC describes atom (predicate on function). GFSO describes molecule (transaction structure in hierarchy). Different abstraction levels. |
+| "Half-solving to specify" | Category error. API spec ≠ implementation. Drawing ≠ building. |
+| "Scrum works without all this" | Scrum is a special case (§17.2) under constraints: depth(D)≤2, NEGLECTED=∅, CHECK-7/8 unused, audit informal. Works where those relaxations are cheap; breaks where they're not. |
+| "Abstract math divorced from reality" | Currently partly fair. Two empirical anchors (formal correctness; +34pp E0 result). Open work: E1 postmortem mapping, E2 LLM Issuer, E3 multi-agent. |
+
+### Status (2026-05-23)
+- Theory document: formally complete (v3), latest additions §17.1 + §17.2
+- Code framework: `gfso/` (core+adapters) + `bench/` (harness) — clean separation,
+  tested via two providers (LiveCodeBench, BigCodeBench-Hard)
+- Empirical anchors: **one strong** (E0 below), several mechanical-pipeline validations
+- Gaps: E1, E2, E3 not yet executed; semantic completeness of criteria (Level 2 in §5.4)
+  remains open as §18.1
+
+---
+
+## 2. Theory history (for context)
+
+### Pre-v3: category-theoretic version
+There existed an earlier theory formulation based on category theory (Kleisli arrows,
+Wasserstein-style monads). Mathematically strong but **disconnected from applicability**.
+The author confirmed this themselves while building a previous agent system
+(the older `gfso-agent` repo) — abstractions didn't reduce
+to actionable engineering choices, agent system was "smeared across the formalism",
+hard to debug.
+
+### v3 (applied_gfso_v3.md, current)
+Reformulated **from operational concerns**: what does a task-handoff require
+formally, derived from A1 + A2. Math became tractable (basic logic, finite
+enumeration, Dirichlet). Doesn't depend on the category-theoretic GFSO Theory at
+all — uses classical references (Blackwell, Simon, Hurwicz) directly. The reason
+this iteration is what we keep building on.
+
+Lesson learned: **math depth ≠ usefulness**. A formalism is useful when its
+primitives map directly to operational decisions. v3 has that property; the
+category-theoretic version did not.
+
+### Older agent experiments (gfso-agent repo, pre-v3 era)
+Author ran HLE-based experiments with the old theory: decomposer + validator +
+workers in a swarm format, tested on the first 10 HLE problems with multiple
+configurations per task. Results were mixed; the system was hard to control
+because the theory didn't reduce to debuggable choices. Repo exists at
+the older `gfso-agent` repo — needs review and lessons distilled into
+this log (see §6 plan).
+
+---
+
+## 3. Experiments completed
+
+### E0a: LiveCodeBench run 1 (initial — with methodology bugs)
+- **Setup**: 168 medium problems; Haiku 4.5 with GFSO loop (max_iter=3) vs Haiku
+  one-shot best-of-k where k = GFSO LLM calls. Criteria generated by regex from
+  public examples + constraint extraction. LeetCode tasks treated as stdin/stdout.
+- **Result**: A=72/168 (42.9%), B=101/168 (60.1%), Δ=+29
+- **What this tested**: GFSO loop's value when criteria are weak
+- **Bugs found and fixed**: Windows subprocess pipe deadlock, `eval(input())`
+  instruction broke AtCoder, LeetCode starter_code ignored, JSON corruption from
+  concurrent writes, test suite consumption bug
+- **Verdict**: Initial +29 was **inflated by methodology bugs**, not GFSO value
+- **Lesson**: weak criteria measurements give misleading numbers; methodology bugs
+  inflate apparent uplift
+
+### E0b: LiveCodeBench run 2 (after fixes)
+- **Setup**: same as E0a, all bugs fixed
+- **Result**: A=102/168 (60.7%), B=108/168 (64.3%), Δ=+6
+- **Per platform**: LeetCode +7.8pp, AtCoder -2.6pp, Codeforces +1 (n=2)
+- **Coverage analysis**: precision (real PASS | criteria PASS) = 76.3%; recall
+  (criteria FAIL | real FAIL) = 45%. LeetCode 88%/72%, AtCoder 64%/19%.
+- **Stochasticity**: 25-27% of tasks flipped solved/unsolved between runs
+- **What this tested**: GFSO loop with regex-derived weak criteria, fair compute
+- **Verdict**: loop gives marginal +3.6pp at ×1.38 compute; correlation with
+  criteria quality (LeetCode richer → +7.8pp, AtCoder bare examples → −2.6pp)
+- **Lesson**: GFSO effect scales with criteria quality. Loop alone doesn't help
+  when criteria are poor.
+
+### E0c: Bench perfect (criteria = hidden tests)
+- **Setup**: proxy upper-bound experiment. Criteria built from hidden test pairs.
+  LLM doesn't see test inputs until they fail.
+- **Result on probe tasks**: GFSO loop converged in 1-2 iterations on many; some
+  AtCoder regressions because subprocess output mojibake on Windows
+- **Bugs found and fixed**: Verifier-storage isolation (verifier had own storage,
+  engine had own — failed criteria didn't reach REWORK feedback);
+  per-failure truncation cut off expected/got; docstring duplicated in rework prompt
+- **What this tested**: GFSO loop ceiling with strong criteria, and feedback quality
+- **Verdict**: loop works with good criteria; criteria-as-raw-I/O is a proxy, not
+  real GFSO criteria; we identified format issues blocking effective rework
+- **Lesson**: feedback format matters. Raw traceback noise hurts. Anti-regression
+  hints in system prompt help (added).
+
+### E0d: BCB-Hard with explicit criteria + GFSO loop
+- **Setup**: BCB-Hard, test code shown as explicit acceptance criteria in initial
+  prompt. GFSO loop with rework. Both A (one-shot best-of-k) and B (loop) see same
+  spec. Probe set: BCB/89, 92, 93, 100, 108, 120, 124, 129, 139, 161, 162, 184,
+  199, 208, plus retries.
+- **Result on probe set (~14 tasks)**: most are solved by both A and B on first
+  try (iter=0). Loop is **dormant**.
+- **Notable case**: BCB/93 stuck at 4/5 across all 3 iterations — model can't
+  deduce the missing logic even with tests visible.
+- **What this tested**: GFSO loop's role when criteria are explicit
+- **Verdict**: with explicit criteria, competent model (Haiku 4.5) solves first
+  try; loop has nothing to fix
+- **Lesson**: **loop is fallback, not core**. Criteria quality dominates.
+
+### E0e: BCB-Hard zero-shot A vs B — explicit vs implicit criteria *(strongest result)*
+- **Setup**: 148 tasks, Haiku 4.5, no loop, single attempt each. Two modes:
+  - NO_SPEC: docstring only (standard prompt)
+  - WITH_SPEC: docstring + test code as explicit acceptance criteria
+- **Result**: NO_SPEC=43/148 (29.1%), WITH_SPEC=94/148 (63.5%), Δ=+51 (+34.4pp)
+- **better/same/worse**: 52 / 95 / 1
+- **Tokens**: 166K / 307K (×1.85)
+- **Verified clean on smoke**: BCB/120 — same code in both modes except one
+  expression. NO_SPEC: `num_days = (end - start).days + 1` (literal docstring
+  interpretation of "inclusive"). WITH_SPEC: `num_days = (end - start).days`
+  (matches `assertEqual(len(dates), (end-start).days)` in tests). No hardcoded
+  answers — pure spec-driven correction of an ambiguous docstring.
+- **What this tested**: price of unarticulated criteria at the Issuer side
+- **Verdict**: same model, same compute, same tasks — explicit criteria DOUBLE
+  solve rate. This is **measurement of the cost of having implicit specs**, on
+  148 problems, Haiku 4.5. Cleanest empirical result we have.
+- **Lesson**: criteria-articulation discipline at Issuer side is the dominant
+  factor on this class of tasks. Not the loop. Not decomposition. Just spec
+  precision. (DBC/TDD made the same claim qualitatively since 1986; we
+  measured it on a strong frontier-adjacent model on a current benchmark.)
+
+### Files / artifacts
+| Artifact | Path | Purpose |
+|---|---|---|
+| Theory v3 | `docs/applied_gfso_v3.md` | Source of truth for theory |
+| LCB results r1 | `bench_results_1.json` | First run (with bugs) |
+| LCB results r2 | `bench_results.json` | After fixes |
+| Perfect results | `bench_results_perfect.json` | criteria=hidden_tests proxy |
+| BCB explicit+loop | `bench_results_bcb.json` | E0d |
+| BCB zero-shot | `bench_results_zeroshot.json` | **E0e — main result** |
+| Per-task logs | `bench_logs*/` | Full LLM traces for every task |
+| LCB provider | `bench/providers/livecodebench.py` | |
+| BCB provider | `bench/providers/bigcodebench.py` | |
+| Subprocess verifier | `gfso/adapters/verifiers/subprocess_verifier.py` | LCB-style |
+| Unittest verifier | `gfso/adapters/verifiers/unittest_verifier.py` | BCB-style |
+| Runner | `bench/runner.py` | A-vs-B orchestration |
+| Zero-shot script | `scripts/run_bcb_zeroshot.py` | E0e |
+| LCB script | `scripts/run_livecodebench.py` | E0a/E0b |
+| BCB script | `scripts/run_bcb.py` | E0d |
+
+---
+
+## 4. What our tests actually proved vs didn't
+
+### Proven mechanically
+- GFSO engine works (FSM transitions correct, dispatch flows, audit trail forms)
+- BenchAgent (single-agent FSM-driven loop) is implementable cleanly
+- VerifierPort abstraction works across two domain adapters (subprocess + unittest)
+- Bench harness (BenchProvider, BenchRunner, A-vs-B logic) is clean and reusable
+
+### Proven empirically
+1. **Criteria quality dominates loop value** (E0a/b/d combined): when criteria are
+   weak, loop helps marginally; when explicit, loop is dormant. The loop is NOT
+   where GFSO's value sits for single-agent tasks.
+2. **Explicit-criteria articulation has measurable, large effect** (E0e): +34pp
+   on Haiku 4.5 BCB-Hard 148 tasks. Strong empirical anchor for §3.2 (forced
+   binary V) and the Issuer-side discipline thesis.
+
+### NOT proven yet
+- 7 FM taxonomy completeness on real-world incidents (planned: E1)
+- LLM-Issuer with vs without GFSO discipline (planned: E2)
+- Compositional validation theorem in multi-agent decomposition (planned: E3)
+- CHECK-1..8 effectiveness — no decomposition tested
+- q_T, q_D, q_E metrics predictive of real-world outcomes — no long deployment
+- Causal correctness / Level 2 semantic completeness (§5.4, open per §18.1)
+
+### Conceptually clarified along the way
+- **Scrum ⊂ GFSO formally** (§17.2): every Scrum primitive maps as direct
+  equivalent, implementation-choice, or restriction. No Scrum primitive escapes
+  GFSO. This kills the "Scrum is alternative" argument.
+- **Adaptive stratification is derived, not an axiom** (§17.1): top stable / bottom
+  fast is a corollary of Dep coherence + A1, not a separate "agile principle".
+- **GFSO loop ≠ value of GFSO**: this was the most important course-correction. We
+  spent weeks treating the loop as the test target. It's a fallback. The value
+  is at Issuer-side articulation + composition + 7 FM diagnostics + audit.
+
+### Bugs and lessons (anti-patterns to avoid)
+- Don't run Windows subprocess with `capture_output=True` on infinite-output
+  child — pipe deadlock. Fix: file I/O for stdin/stdout/stderr.
+- Don't use `eval(input())` instruction in prompts — breaks AtCoder/Codeforces.
+- Don't make verifier instantiate its own MemoryStorage when engine has another —
+  results stored in wrong storage; build_dispatch_payload misses them. Fix:
+  BenchTask.make_verifier(storage) factory called by runner with engine's storage.
+- Don't iterate `unittest.TestSuite` after `runner.run()` — default `_cleanup=True`
+  replaces tests with None. Capture ids before run.
+- Don't duplicate problem description in rework prompt (it's already in prev_code's
+  docstring). Drop the PROBLEM section in rework.
+- Don't show raw Traceback noise in failure feedback — strip the header and File
+  lines, keep the assertion call + error message.
+- Don't hide test code as criteria for BCB-style benchmarks — tests ARE the
+  contract, not the answer. Hiding them tests "guess the spec from docstring",
+  not GFSO's spec-driven regime.
+- Force matplotlib `Agg` backend in test subprocess on Windows or it spawns
+  dozens of GUI windows during bench runs.
+
+---
+
+## 5. Open empirical roadmap
+
+### E0 (done) — articulation-discipline effect
++34pp on BCB-Hard. Strongest current anchor. Should be written up as standalone
+artifact (paper/blog).
+
+### E1 (next) — 7 FM taxonomy validation on real postmortems
+**Goal**: validate or falsify the claim that 7 FM are exhaustive for failures of
+compositional validation in real software systems.
+
+**Method**: collect ~100 publicly-documented incident reports (Cloudflare, AWS,
+GitHub, GitLab, Stripe, Slack, BBC, postmortems repo). For each, classify the
+root cause into exactly one of 7 FM. Track confidence (high/medium/low).
+Cross-check ambiguous cases with manual review.
+
+**Sources**:
+- `github.com/danluu/post-mortems` (curated 100+ links)
+- Cloudflare blog, AWS Post-Event Summary
+- GitHub status page archives
+- Stripe / Slack / GitLab incident reports
+- Hacker News by tag `outage`
+
+**Pass criterion**: ≥95% of incidents fit one FM unambiguously → taxonomy
+validated empirically. <80% → theory needs revision (new FM or restructure).
+
+**Status**: Protocol document being prepared. One agent per company per call.
+Each agent reads protocol + prior session results before classifying.
+
+### E2 — LLM-Issuer with vs without GFSO discipline
+**Goal**: measure value of mandatory NEGLECTED + CHECK-1..8 + explicit criteria
+formation when decomposing tasks.
+
+**Method**: twin experiment. One LLM agent decomposes ad hoc (current SOTA agent
+behavior). Another decomposes with mandatory GFSO templates. Run on a set of
+multi-step tasks. Measure: coverage of real requirements, defect rate downstream,
+escalation count during execution.
+
+**Status**: Not started. Infrastructure already in place (`gfso/`, `bench/`).
+Needs Issuer-agent prompt design and a multi-step task set.
+
+### E3 — Compositional validation in multi-agent decomposition
+**Goal**: test Theorem 1 (V(parent) = AND(V(children))) in practice. Show that
+agents working under joint sufficiency + non-redundancy + CHECK-7 give compositional
+guarantees the ad-hoc alternative doesn't.
+
+**Method**: pick a domain with natural decomposition (multi-file refactor, system
+design with subcomponents, data pipelines). Two team configurations: GFSO-protocol
+agents vs ad-hoc agents. Same task budget. Measure: defect-leak rate at parent
+acceptance, integration coherence, time-to-detect.
+
+**Caveat**: hardest to set up. Likely needs custom benchmark — no public dataset
+provides reference decomposition + per-subtask criteria. Either manually
+annotate ~50 tasks or use SWE-bench trajectories as proxy.
+
+**Status**: Not started. Blocked on benchmark availability + LLM-Issuer (E2) being
+demonstrated first.
+
+### E4+ — Long-horizon validation
+- Real team deployment over months
+- q-metric calibration ("q_D = 0.7 in IT vs construction")
+- Adversarial agents threat model
+- Causal correctness via domain ontologies + LLM review (§18.1)
+
+These are §18 open problems. Out of scope until E1-E3 give the empirical baseline.
+
+---
+
+## 6. E-1: Old `gfso-agent` repo — pre-v3 attempts
+
+Located in the author's working directory (the older `gfso-agent` repo).
+Built on the **category-theoretic version of GFSO** (Kleisli arrows, Wasserstein
+contractions) — the theory the author abandoned in favor of v3 because it didn't
+reduce to debuggable engineering.
+
+### Architecture (what was attempted)
+A full multi-agent swarm:
+
+```
+User Task → Architect (Functor G) → Blueprint DAG → Workers (Functor F)
+                ↑                                            ↓
+                └────── Head refinement ←── Validators (η) ──┘
+```
+
+Roles:
+- **Architect**: decomposes task into DAG (Functor G in category-theory terms)
+- **Worker**: executes step (code generation; Functor F)
+- **Validator**: checks output vs spec (natural transformation η)
+- **Head**: global refinement loop on pipeline failure
+
+**Three nested contraction loops**:
+1. **SGR** (Self-Generative Refinement) — self-correction on code failure
+2. **Validation** — retry with feedback on Validator reject
+3. **Head** — global refinement on pipeline failure
+
+**Stability criterion** (explicit in code): `L · γ ≤ 1`, where L = task expansiveness,
+γ = validator contraction. Implemented via Wasserstein-style epsilon/laxity scores
+from LLM judges.
+
+### Code structure
+```
+gfso_agent/
+  core.py        — GFSOUnit (atomic Monad (F, η) with SGR loop), GFSOHead
+  llm.py         — LLMInterface, LLMAgent (KleisliFunctor[Any])
+  types.py       — KleisliFunctor, Contract, NodeSpec, Blueprint, RuntimeContext, ...
+  config.py      — Prompts, Params, SCHEMAS
+  tools/         — PythonExecutor (sandboxed code runner)
+experiments/
+  loaders/       — MATH, HLE, BBH dataset loaders
+  run_benchmark.py
+```
+
+### Repo state (per systematic survey)
+
+- Single commit `f579872 "context update"` dated 2026-01-14. No branches, no diffs.
+  Snapshot of stable pre-v3 prototype.
+- ~2,800 SLOC across 18 files:
+  - `gfso_agent/core.py` (508): GFSOUnit + GFSOAgent + 3 phases
+  - `gfso_agent/llm.py` (308): LLMInterface, LLMAgent, AnthropicLLM, MockLLM
+  - `gfso_agent/config.py` (248): Params, Prompts, SchemaBuilder, SCHEMAS
+  - `gfso_agent/types.py` (203): KleisliFunctor, Blueprint, ValidationResult, Contract
+  - `gfso_agent/docs/verification.md` (269): theory plan
+  - `gfso_agent/docs/architecture.md` (183): mermaid + ontology
+  - `experiments/run_benchmark.py` (260): MATH/BBH/HLE runner
+  - `experiments/loaders/*.py` (377): dataset loaders
+  - Other (logger, executor, smoke_test): 315
+- **No `outputs/`, `logs/`, `results/` directories**. All gitignored. Repo has
+  zero saved empirical artifacts. Smoke test (29 lines) is the only test
+  infrastructure.
+
+### Three-layer architecture (verified)
+
+```
+LAYER 1 (Control): GFSOAgent.run() — Head + 3 phases
+  ├─ Phase 1: Architect → Blueprint DAG
+  ├─ Phase 2: Execution engine (topological DAG walk)
+  └─ Phase 3: Head synthesis + retry decision
+     MAX_HEAD_RETRIES = 1 (hard-coded)
+
+LAYER 2 (Worker SGR loop): GFSOUnit._execute_lane()
+  for try in range(MAX_SELF_CORRECTIONS):
+      sgr = functor.lift(task, context, contract)
+      ok, feedback = _verify_local_artifact(sgr)
+      if ok: return artifact
+      context += f"[SELF-CORRECTION]: {feedback}"
+
+LAYER 3 (Swarm X-Master): GFSOUnit._execute_swarm()
+  ThreadPoolExecutor with SWARM_SIZE=3 lanes (parallel SGR)
+  Synthesizer picks "golden" from valid_artifacts
+```
+
+Validation is **separate LLM** (validator_agent) checking artifact:
+```python
+val_result = ValidationResult(epsilon=..., laxity=...)
+if val_result.is_success:  # epsilon <= THRESHOLD & laxity <= THRESHOLD
+    commit
+else:
+    raise StepFailure → retry
+```
+
+### What was actually executed (vs planned)
+
+Honest distinction from the verification doc `gfso_agent/docs/verification.md`
+(dated 2026-01-14):
+
+**Implemented in code:**
+- ✅ Architect/Worker/Validator/Head split
+- ✅ Blueprint DAG generation
+- ✅ Three-loop refinement (SGR, Validation, Head)
+- ✅ Fail-fast on first error (Claim 3 — only one marked implemented)
+- ✅ Sandboxed PythonExecutor
+- ✅ Dataset loaders for MATH, HLE, BBH
+
+**Planned but NOT executed** (5 of 6 verification claims marked "Not Started"):
+- ❌ Claim 1: Error Localization Rate measurement on HLE
+- ❌ Claim 2: Bounded Error Accumulation curve (linear vs exponential)
+- ❌ Claim 4: Validator Consistency (variance < 10%)
+- ❌ Claim 5: Validator Calibration (correlation with ground truth)
+- ❌ Experiment 5: Soft Validation Curve (T × M grid)
+- ❌ Experiment 6: Phase Transition at L·γ = 1
+
+**Empirical runs that did happen** (preserved outputs recovered from
+an author-local outputs directory, 2026-01-05 run, ~5MB):
+
+Pipeline run 2026-01-05, ~90 minutes total wall clock:
+- 11 HLE tasks (task_0000..task_0010) — multi-domain PhD-level: Chess, Philosophy,
+  Trivia, Math, Physics, Cryptanalysis, Algebraic topology, Moduli spaces
+- ~20 MATH tasks (separate batch in `math/` subfolder)
+- 3 HLE summary records (in `hle/summary_0000_0002.json`)
+
+**Score on HLE 11 tasks: 0/11 correct.** Pipeline completed without crashing
+on all 11 (`success: true` in batch summary), but no final answer matched
+ground truth. Several tasks self-reported "N/A" / "cannot determine"
+explicitly with low confidence (0.05-0.15); others produced confident but
+wrong answers (task_0010: confidence 0.85, wrong concept).
+
+Architecture behavior at runtime (extracted from `gfso_log.txt` per task):
+- **Architect**: 11/11 produced valid Blueprints (5-7 nodes avg, SWARM strategy)
+- **Worker SGR retries**: visible heavily (task_0000: 13 [FIXING] cycles on one
+  node). Retries did NOT improve artifact quality — Lane 1 & 3 marked Failed,
+  only Lane 2 Success, but Lane 2's output also broken.
+- **Validator**: explicit "[FAILED]" / "[FATAL]" critiques on ≥2 tasks, but
+  Head proceeded to FINAL_ANSWER synthesis anyway (false PASS)
+- **Head global retry loop**: NOT observed firing on any task. Third
+  contraction loop was dormant in practice despite being designed.
+- **Per-task time**: 5-89 minutes wall clock. Task_0007: 61 min on a single
+  step before SGR exhaustion.
+
+### Mini-E1: classifying 11 HLE failures into v3 7 FM
+
+This is an early test of the taxonomy on our own historical data.
+Classifications use v3 §4 definitions strictly:
+
+| Task | Domain | Failure | v3 FM | Confidence |
+|---|---|---|---|---|
+| 0000 | Chess | Worker artifact GENERATE_CANDIDATES produced wrong output (1 move vs 2-3); Validator flagged "[CRITICAL FAILURE]" but Head synthesized anyway | **FM-3** Verifiability (false PASS) + **FM-4** Propagation (Validator FAIL didn't halt Head) | medium |
+| 0001 | Philosophy | Architect minimal blueprint, no artifacts, "N/A" answer | **FM-1** Correspondence (insufficiency — no child addresses criteria) | high |
+| 0002 | Trivia | Same as 0001 | **FM-1** | high |
+| 0003 | Algebraic topology | Worker hardcoded heuristics instead of computing Smith Normal Form; Adams spectral sequence not implemented | **FM-6** Feasibility (computation infeasible at attempted depth — info wasn't available to decompose correctly) | medium |
+| 0004 | Math | "N/A" no artifacts | **FM-1** | high |
+| 0005 | Lie algebra cohomology | Wrong Poincaré polynomial; Worker couldn't compute Chevalley-Eilenberg complex | **FM-6** Feasibility (Worker can't execute the math at depth attempted) | high |
+| 0006 | Math | "N/A" | **FM-1** | high |
+| 0007 | Kaluza-Klein physics | Worker SGR exhausted on step_1_parse_warp_factor, never produced parser | **FM-6** Feasibility (couldn't decompose into executable code at all) | high |
+| 0008 | Cryptanalysis | Worker used artificial test string instead of actual problem ciphertext; Validator flagged FATAL but Head synthesized anyway | **FM-3** Verifiability (false PASS on broken input data) + **FM-4** Propagation | high |
+| 0009 | Math | "N/A" | **FM-1** | high |
+| 0010 | Moduli spaces | Confidence 0.85, plausible derivation (Hurewicz → ℤ/12ℤ), but ground truth ℤ — misinterpreted "reduced" in problem statement | Tricky: **NOT a v3 FM**. This is **conceptual error at problem parsing**, before decomposition. Pre-A1: criteria as stated by Issuer ≠ what Issuer meant. Maps to §5.4 Level 2 (semantic), §18.1 open problem. | medium |
+
+**Mini-E1 distribution**:
+- FM-1: 5 tasks (45%)
+- FM-3 + FM-4 combo: 2 tasks (18%) — false PASS plus failed propagation
+- FM-6: 3 tasks (27%)
+- Not in 7 FM (Level 2 semantic): 1 task (9%) — task_0010
+
+**What this is and isn't**:
+
+- **Is**: an exercise of applying the v3 7-FM definitions to 11 known
+  failure traces from an internal multi-agent system, recorded for
+  reference. 10/11 mapped to one of the 7 FM under strict §4 reading;
+  1/11 (task_0010) was a Level-2 semantic case that §5.4/§18.1 already
+  marks as out of scope.
+- **Is not**: validation of the 7-FM taxonomy. Sample size is 11, all
+  from one source, one dataset (HLE), one implementation, one day's run.
+  Cannot falsify and cannot confirm the exhaustiveness claim.
+- **Is not**: validation of v3 implementation. The old system used a
+  category-theoretic base and prompt-engineered Architect/Worker/Validator
+  pipeline. Current `gfso/` code is a separate v3 implementation. These
+  experiments do not exercise it.
+- **Is not**: a result for E0 (criteria explicitness), E2 (LLM-Issuer
+  discipline), or E3 (multi-agent composition theorem). Those need their
+  own targeted experiments.
+
+The recovery is useful for one specific thing: future agents and future
+sessions can see that the 7-FM definitions, when applied strictly to real
+multi-agent failure traces, don't immediately collapse. That is a small
+operational signal, not evidence. Real E1 with ~100 public postmortems
+across diverse sources is what produces falsifiable/confirmable data.
+
+**Do not treat this section as a finding that lets us skip E1 proper or
+move ahead on theory validation.** Treat it as a worked example of how
+classification should look when E1 runs.
+
+### Honest positioning in current framework
+
+Pre-v3 attempt was **architectural prototype + experimental plan**, **not
+empirical validation**. It produced:
+1. A working multi-agent pipeline that could be run on HLE (artifact value)
+2. A detailed experiment design (6 numbered experiments with metrics + cost
+   estimates) — most of which we can now adapt for E1-E3
+3. A concrete demonstration of *why* category-theoretic primitives don't
+   reduce to debuggable engineering (anti-pattern value)
+4. **No empirical evidence for or against the GFSO claims** — the experiments
+   that would have provided it were planned but not run
+
+In current framework's terms:
+- This was an attempt at **E2 + E3 simultaneously** (LLM-Issuer with discipline
+  + multi-agent decomposition), on a domain (HLE) where validation is **judge-based**
+  rather than deterministic — making it the hardest possible test substrate.
+- The attempt was **correct in ambition, premature in execution**: trying to
+  prove composition + validator quality + soft-validation curves at once,
+  with non-deterministic validators, with intractable theory, on HLE.
+- Lesson: build empirical pyramid bottom-up. Don't test "multi-agent composition
+  with soft validators" before validating "explicit criteria boost solve rate"
+  (E0e) and "7 FM taxonomy holds on real failures" (E1).
+
+### What we keep from this attempt
+- **Role split**: Architect / Worker / Validator / Head — the right
+  decomposition of agent responsibilities. Current `gfso/` framework merged
+  these into BenchAgent (executor + verifier) for simplicity. To test E2/E3,
+  we'll need to re-introduce them, but now with v3's primitives instead of
+  Kleisli functors.
+- **DAG blueprint as decomposition output** — Architect returns a structured
+  DAG, not free text. Maps to GFSO `D: T → P(T)` directly.
+- **Three-loop refinement structure** — SGR/Validation/Head loops were designed
+  to address different failure surfaces. Maps onto v3 protocol:
+  - SGR ≈ Executor-internal retry before DELIVER
+  - Validation ≈ Issuer's V → FAIL → REWORK cycle
+  - Head ≈ Issuer-level meta-refinement when REWORK budget exhausted
+- **`L · γ ≤ 1` as stability invariant** — present in v3 as Утверждение 7 (small
+  gain criterion), Section 9. The old implementation made it operational; v3
+  formalized it.
+- **Sandboxed PythonExecutor with structured output** — directly reusable. Our
+  current `SubprocessVerifier` is simpler; for E2/E3 we'd want this back.
+
+### Why this attempt didn't reach clean results
+1. **Theoretical primitives didn't map to debuggable code**: Kleisli functors,
+   Wasserstein metrics, natural transformations — beautiful math, but when the
+   Architect produces a wrong DAG, "the functor G has a coherence issue" is not
+   a fixable bug. v3's primitives (T, D, criteria, V, signals) map to concrete
+   code decisions.
+2. **No formal correctness conditions for decomposition**: the old theory had
+   composition (G ∘ F) but not joint sufficiency / non-redundancy as explicit
+   checks. Old Architect could produce mathematically-coherent-but-wrong DAGs
+   without anything catching it. v3's CHECK-1..8 are the missing piece.
+3. **Validators were probabilistic LLM judges**: η as "natural transformation"
+   meant an LLM saying "looks ok"/"not ok". Non-deterministic, biased, drifty.
+   v3 keeps Verifier deterministic when possible (subprocess test running, etc.).
+4. **No audit trail by construction**: old system logged extensively but the
+   logs weren't structured around a finite signal set, so post-hoc diagnosis
+   was a slog. v3's 12 signals × 10 states give a finite event vocabulary.
+5. **Tested on HLE/BBH/MATH**: domains where criteria are inherently judge-based
+   (HLE expects free-form answers compared by LLM-judge), making it impossible
+   to separate "agent failure" from "validator failure". BCB-style benches with
+   deterministic unittest validation are a strictly better test substrate.
+
+### Lessons that drove v3
+- Build the theory from operational concerns, not from category-theoretic
+  beauty. v3 starts with "what does a handoff transaction need?" not "what
+  does a Kleisli arrow give us?"
+- Make primitives concrete enough that wrong implementations show up as
+  CHECK failures, not as "coherence issues"
+- Keep validation deterministic where possible; reserve LLM-judges for
+  Level 2 (semantic/pragmatic) where there's no alternative
+- Pick benchmarks where ground truth is unambiguous (unittest > LLM-judge)
+
+### Code patterns worth keeping for E2/E3
+
+**Adopt:**
+- **SchemaBuilder fluent API** (`config.py`) — centralizes prompt structure;
+  decouples LLM prompt template from configuration. Useful when E2 builds
+  Issuer prompt templates with mandatory NEGLECTED / CHECK-* sections.
+- **Contract abstraction** — passes metadata dict dynamically; scales to new
+  schema fields without code changes. Maps directly to v3's `Spec`.
+- **Three-loop hierarchy** (SGR ⊂ Validation ⊂ Head) — clean separation of
+  contraction levels. SGR is local retry inside Executor; Validation is
+  Issuer's FAIL→REWORK; Head is meta-refinement when REWORK budget gone.
+  All three already supported by v3 protocol.
+- **Artifact kind system** (`kind='blueprint'|'code'|'validation'`) — polymorphic
+  verification dispatch. Could be a generalization layer above VerifierPort.
+- **Structured logging with depth** — indentation aids trace readability when
+  multiple agents nest.
+- **PythonExecutor sandbox** — directly reusable for E2/E3 when models generate
+  executable code. Better than our current naive subprocess.
+
+**Avoid:**
+- **RECURSIVE strategy** (was disabled in old repo per architecture.md) — caused
+  "complexity explosion"; deep recursive decomposition without convergence
+  guarantees is unstable.
+- **Implicit L and γ measurement** — they were "implicit in behavior" but never
+  measured. v3 should be designed so L, γ are computable proxy metrics from
+  the audit graph, not parameters in a formula.
+- **Single validator instance** for both spec generation and validation — keep
+  Validator orthogonal to Architect/Worker.
+- **Heavy hard-coded field names** — old code had string-coupled metadata; use
+  schema registry pattern.
+
+### Action items
+- [ ] Plan E2 architecture by re-using Architect/Worker/Validator/Head split
+      but with v3 primitives (criteria, CHECK-7, signals)
+- [ ] Reuse PythonExecutor sandbox design when E2 starts
+- [ ] Consider porting SchemaBuilder + Contract abstractions into `gfso/`
+
+This becomes "E−1" in the experimental sequence: the attempt whose **partial
+execution and intractable debugging** produced the v3 reformulation.
+
+---
+
+## 7. Plan ahead (concrete next steps)
+
+In order of priority:
+
+1. **Integrate gfso-agent lessons into this log** — read the old repo, write up
+   what was tried, what failed, why. Should explain why v3 looks the way it does.
+
+2. **E1 protocol document + first run** — `docs/e1_postmortem_protocol.md`
+   describing exact procedure for an agent: which company, which incident reports,
+   how to classify, what output format. Run on one company (Cloudflare is best
+   first because they publish detailed RCAs and root causes are
+   well-articulated). Build the dataset incrementally, one company per session,
+   each agent reads prior outputs first.
+
+3. **Write up E0 as standalone artifact** — the +34pp result is presentable now.
+   Should not be buried in this log; either blog post or short paper.
+
+4. **E2 design** — when E1 is done, design the LLM-Issuer twin experiment.
+   Requires: prompt templates for ad-hoc vs disciplined decomposition; a multi-step
+   task set; measurement protocol. Build on existing `bench/` harness.
+
+5. **Theory polish** — minor §17.1/§17.2 review, possibly extract §17.2 (Scrum)
+   into its own short paper since it's a self-contained formal-mapping result.
+
+---
+
+## 8. How to use this document
+
+- **New agent picking up work**: read §0-2 for vision, §3 for what's tested,
+  §5 for what's next. Don't restart from scratch.
+- **Author returning after break**: §1 for vision restated, §5.E_X for next step.
+- **Critic dialogue**: §1 (vision) + §4 (proven/not) + memory file
+  `feedback_critic_rebuttals.md` for prepared answers.
+- **Compact in progress**: the substance of conversations should distill INTO this
+  document before compact, not be lost in the compact summary.
+
+When the conversation produces a non-trivial finding, **update this file**, not
+just memory. Memory is hints; this is record.

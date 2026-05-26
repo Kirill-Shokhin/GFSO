@@ -1,14 +1,20 @@
 # GFSO (General Framework for Structured Operations)
 
-**A protocol standard for hierarchical task management, derived from first principles.**
+**A formal language for the minimum a verifiable task-handoff transaction must carry — derived from two axioms and proven minimal.**
 
 ---
 
 ## What is GFSO?
 
-Task management in hierarchical organizations has no formal standard: assignments, decomposition, acceptance — all ad hoc. GFSO is a formally derived protocol: 6 original theorems (including impossibility results) + 8 propositions/corollaries supported by classical theory.
+GFSO is a **mathematically defined** structure (primitives, operations, laws), the **smallest possible** (nothing can be removed without losing expressiveness), describing **what must be present** in one handoff of a task from an issuer to an executor so that the handoff can be verified and composed. It is **not chosen** — it is **derived** from two simple statements: that goals are verifiable and that complex work decomposes. If those two statements hold for a domain, GFSO necessarily describes its handoffs. If they don't, GFSO doesn't apply, and that boundary is explicit.
 
-**The core insight:** from two axioms (verifiability of goals, decomposability of complex tasks), an entire protocol follows — with proofs that key constructions (binary validation, AND aggregation, 7 failure modes) admit no alternatives.
+The unit of analysis is **one handoff transaction**, not a project, process, or team. Hierarchy, multi-agent, organization — all are compositions of such transactions.
+
+What a transaction must carry: a Spec, a finite set of decidable Criteria, a Deadline, an explicit NEGLECTED section, a Delegation, and (when decomposed) Dependencies plus a composition function. Drop any of these and a specific failure mode (of the seven proven exhaustive) becomes unavoidable.
+
+**Analog:** TCP/IP for hierarchical work coordination, or Codd 1970 for relational databases — tractable math whose framing enables a domain, not a productivity tool.
+
+**Foundations:** two axioms (A1 verifiability of goals, A2 decomposability of complex tasks), from which the entire protocol follows — including impossibility results that key constructions (binary validation, AND aggregation, 7 failure modes) admit no alternatives. 6 original theorems + 8 propositions/corollaries supported by classical theory.
 
 ---
 
@@ -61,8 +67,8 @@ Every step is motivated by the previous. Design decisions are explicit.
 
 | File | Purpose |
 |------|---------|
-| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (Russian draft; EN forthcoming) |
-| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision: case studies, FAQ, per-metric analysis, adoption arguments |
+| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (Russian draft; EN forthcoming). Includes §17.1 adaptive stratification + §17.2 Scrum ⊂ GFSO |
+| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: case studies, FAQ, per-metric analysis, adoption arguments |
 | [`docs/architecture.md`](docs/architecture.md) | Code architecture: FSM invariant, module structure, L1/L2/L3 |
 
 ---
@@ -71,16 +77,35 @@ Every step is motivated by the previous. Design decisions are explicit.
 
 ```
 gfso/
-  core/       ← Level 1: protocol standard (pure library)
-    types/      State(10), Signal(13), FM(7), effects, ports
-    protocol/   FSM transition table, invariants, role validation
-    handlers/   CHECK-1-8, System LLM recommend
-    graph/      G model, mutations, 5 metrics Q
-  engine/     ← Level 2: framework (Engine facade, event loop, audit, events)
-  adapters/   ← Level 3: pluggable (MemoryStorage, StubLLM, agents)
+  core/         ← Level 1: protocol standard (pure library)
+    types/        State(10), Signal(13), FM(7), effects, ports
+    protocol/     FSM transition table, invariants, role validation
+    handlers/     CHECK-1-8, System LLM recommend
+    graph/        G model, mutations, 5 metrics Q
+  engine/       ← Level 2: framework (Engine facade, event loop, audit, events)
+  adapters/     ← Level 3: pluggable
+    storage/      memory, sqlite
+    llm/          claude, stub
+    agents/       bench_agent
+    verifiers/    subprocess (LCB-style I/O), unittest (BCB-style pytest)
+  api/          ← FastAPI app: REST + WebSocket
+  web/          ← UI surface (index.html, gfso.css, tokens.css)
+  cli.py        ← `python -m gfso.cli serve --reload`
+
+bench/          ← benchmark harness (dataset-agnostic)
+  provider.py, task.py, runner.py, oneshot.py, gfso_runner.py, scorer.py
+  providers/    livecodebench, bigcodebench
+
+scripts/        ← entry points: run_livecodebench.py, run_bcb.py,
+                  run_bcb_zeroshot.py + legacy bench_single/perfect
+data/           ← input data (bench_inputs.json)
+runs/           ← bench outputs (gitignored except runs/e1_results/)
+docs/           ← theory, architecture, evidence log, protocols
+tests/          ← unit + integration tests
 ```
 
-100 tests. Dependency: `core/ ← engine/ ← adapters/`
+Dependency: `core/ ← engine/ ← adapters/`. `bench/` depends on `gfso/core/`
+and `gfso/adapters/` but not vice versa.
 
 ---
 
@@ -103,14 +128,31 @@ all visible and operable.
 
 ## Status
 
+Theory:
 - [x] Formal framework: 6 theorems + 8 propositions/corollaries
 - [x] Impossibility results on foundations (|L|=2, AND, 7 FM)
 - [x] AI layer formalized (Solver + LLM, Chollet Level ≥ 2)
 - [x] Vision document with practical illustrations
-- [x] Protocol engine: Level 1 (core) + Level 2 (engine)
+- [x] §17.1 adaptive stratification by horizons (derived from Dep coherence + A1)
+- [x] §17.2 Scrum as special case of GFSO (full primitive mapping)
 - [ ] English translation
-- [ ] Level 3: production adapters (SQLite, Claude API, HTTP server)
-- [ ] Empirical validation (deployment ≥ 6 months)
+
+Implementation:
+- [x] Protocol engine: Level 1 (core) + Level 2 (engine)
+- [x] Level 3: production adapters (SQLite, Claude API, FastAPI HTTP+WS server)
+- [x] Web UI surfacing the protocol (V(t), NEGLECTED, AND-composition, FM-grouped checks)
+- [x] Bench harness separated from core (`bench/` with provider abstraction)
+- [x] Domain adapters: SubprocessVerifier (LCB) + UnittestVerifier (BCB)
+
+Empirical:
+- [x] E0 — measurement on BCB-Hard 148: explicit unit-test criteria
+      (Issuer-side spec discipline) raises Haiku 4.5 solve rate from 29.1% to
+      63.5% zero-shot, same compute. Illustrates §3.2 forced binary V on a
+      current frontier-adjacent model.
+- [ ] E1 — 7 FM taxonomy validation on ~100 public software postmortems
+- [ ] E2 — LLM-Issuer with vs without GFSO discipline (twin experiment)
+- [ ] E3 — Compositional validation theorem in multi-agent decomposition
+- [ ] Long-horizon deployment validation (≥ 6 months)
 
 ---
 

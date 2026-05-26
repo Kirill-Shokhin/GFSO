@@ -1102,6 +1102,93 @@ GFSO ортогонален: формализует единицу, котору
 
 **Вклад.** Не в отдельных компонентах, а в интеграции: из A1+A2 → примитивы → failure modes → стандарты → протокол → граф → метрики. Единый фреймворк с формальным обоснованием каждого шага.
 
+### 17.1. Адаптивная стратификация по горизонтам (производное)
+
+**Утверждение (адаптивная стратификация).** В GFSO-системе глубины `h` с Dep coherence на сроках частота CHALLENGE-сигналов строго возрастает с глубиной уровня. Формально: для уровней `k < k+1` с горизонтами `H_k > H_{k+1}` справедливо `E[freq_challenge(k)] < E[freq_challenge(k+1)]`.
+
+*Аргумент.*
+1. Из Dep coherence (§2.2): `deadline(parent) > deadline(child)` ⟹ горизонт строго убывает с глубиной.
+2. Из A1 (verifiability): criteria должны быть проверяемы в пределах горизонта. На коротком горизонте criteria необходимо конкретнее (нет времени на абстрактные предикаты).
+3. Чем конкретнее criteria, тем сильнее они зависят от точного состояния среды.
+4. Среда меняется с независимой от уровня частотой. Доля задачи затронутая изменением среды растёт обратно горизонту: `share = Δt / H_k`.
+5. CHALLENGE-сигнал генерируется когда среда расходится с criteria. Частота расхождения ~ `1/H_k`.
+6. Следовательно `freq_challenge` обратно горизонту ⟹ возрастает с глубиной. ∎
+
+**Следствие.** Верхние уровни декомпозиции (vision, strategy) формально требуют **стабильных абстрактных criteria** и **редких CHALLENGE-циклов**. Нижние уровни (sprint task, daily work) формально требуют **конкретных criteria** и **частых CHALLENGE-циклов**. Это не методологическое решение, а математическое следствие Dep coherence + A1.
+
+**Импликация.** Эмпирически наблюдаемая практика «долгосрочные планы стабильны, операционные меняются ежедневно» — не отдельный принцип agile/lean, а **прямое следствие** GFSO. Любая система удовлетворяющая A1 ∧ A2 ∧ Dep-coherence обязана демонстрировать эту стратификацию.
+
+### 17.2. Scrum как специальный случай GFSO
+
+**Утверждение.** Scrum-методология (Scrum Guide 2020) семантически вкладывается в GFSO как частный случай при следующих ограничениях:
+
+- depth(D) ≤ 2 (vision → sprint task; нет дальнейшей формальной декомпозиции)
+- NEGLECTED = ∅ (риски обсуждаются устно на Daily Scrum, не фиксируются формально)
+- CHECK-7, CHECK-8 not enforced (нет формальной проверки sufficiency/consistency декомпозиции)
+- Audit trail informal (sprint notes вместо обязательной фиксации каждого решения)
+- T.deadline pattern restricted to uniform sprint length
+
+*Маппинг примитивов.*
+
+| Scrum | GFSO equivalent |
+|---|---|
+| Product Owner | Issuer at top-level T |
+| Scrum Master | Executor с T = «обеспечить compliance протокола» |
+| Developers | Executors at task level |
+| Product Goal | Spec at top T |
+| Sprint Goal | Aggregated Spec at sprint-level T |
+| Sprint (event) | T с deadline = sprint length |
+| Product Backlog | Множество pending children под top T |
+| Sprint Backlog | Batch выбранных T на текущий sprint |
+| Sprint Planning | ASSIGN signal батчем |
+| Daily Scrum | Operational cadence для continuous V re-check (24h) |
+| Sprint Review | DELIVER + V evaluation |
+| Sprint Retrospective | Qualitative q-metrics review |
+| Increment | Output DELIVER signal |
+| Definition of Done | Criteria (typically weak) |
+| User Story | Spec template для weak-A1 регима |
+| Story points | Specific estimation scheme |
+| Velocity | Empirical q_E |
+| Burndown chart | Visualization audit trail |
+| Empiricism (3 pillars) | Audit trail + continuous V + CHALLENGE-cycle |
+| Self-organizing team | Execution-time decomposition by Executor |
+| No mid-sprint changes | Spec immutability between ASSIGN и DELIVER |
+
+Не найдено Scrum-примитива выходящего за GFSO. Каждый компонент Scrum — либо прямой маппинг, либо specific implementation choice, либо restriction на общую GFSO структуру.
+
+**Регим применимости Scrum'а.** Ограничения 1-5 оправданы когда:
+- A2 marginal (декомпозиция не требуется глубокая)
+- A1 weak (criteria трудно артикулировать заранее, exploratory product development)
+- Малая команда (3-9 человек, internal coordination cheap)
+- Низкая стоимость ошибки (быстро поправимо)
+- Низкие compliance требования
+
+В этих условиях полный GFSO-аппарат избыточен; Scrum-ограничения дают ту же семантику дешевле.
+
+**Регим где Scrum-ограничения ломаются.** Когда нарушено хотя бы одно из:
+- A2 strong (системы требующие глубокой декомпозиции: компиляторы, OS kernels, payment systems)
+- A1 strong (требования известны и важны)
+- Multi-team координация (необходимы формальные интерфейсы между параллельными ветвями)
+- Compliance-heavy domains (audit trail юридически обязателен)
+- High stakes (ошибка дорогая, нужна формальная превентивная проверка декомпозиции)
+
+В этих регимах именно те части GFSO которые Scrum опускает (CHECK-7/8, NEGLECTED, depth>2 декомпозиция, формальный audit) становятся критичными. Scrum failure modes здесь — это GFSO failure modes которые не были адресованы из-за опущенных проверок.
+
+**Импликация.** Scrum не альтернативная методология. **Частный случай GFSO с расслабленными аксиомами**. Аналог: ньютоновская механика — частный случай ОТО при низких скоростях. Применима где работает, но не описывает всё пространство.
+
+### 17.3. Дополнение к таблице сравнения
+
+| | Kanban | Scrum | CMMI | Six Sigma | ISO 9001 | GFSO |
+|---|---|---|---|---|---|---|
+| Единица | Тикет | User story | Maturity level | Defect rate | Документ. процедура | Акт декомпозиции |
+| Приёмка | "Done" | DoD (weak) | Assessment | σ-bound | Аудит | Binary V на criteria |
+| Decomposition depth | flat | ≤ 2 | org-level | n/a | n/a | unbounded (DAG) |
+| Composition theorem | — | — | — | — | — | V(p)=AND(V(c)) |
+| Failure taxonomy | — | — | — | — | — | 7 FM (proven exhaustive) |
+| Quality | Не измеряется | Velocity | Maturity score | Statistical | Conformance | Q = (q_T, q_D, q_V, q_Dep, q_Del) |
+| Scope | Команда | Команда | Организация | Repeating processes | Процедуры | Каждое решение |
+| Formal foundation | none | none | none | statistical | conformance | A1 ∧ A2 + minimality |
+
 ---
 
 ## 18. Открытые задачи

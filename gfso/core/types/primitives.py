@@ -14,7 +14,11 @@ AgentId = NewType("AgentId", str)
 @dataclass(frozen=True)
 class Criteria:
     name: str
-    description: str
+    description: str = ""
+    input: Optional[str] = None
+    expected: Optional[str] = None
+    n: Optional[int] = None
+    timeout: Optional[int] = None
 
 
 @dataclass(frozen=True)

@@ -29,3 +29,18 @@ Thumbs.db
 outputs/
 *.log
 nul
+
+# Bench runs (regenerable outputs)
+/runs/*
+# but keep E1 postmortem classifications — accumulating empirical data
+!/runs/e1_results/
+!/runs/e1_results/**
+
+# Bench inputs (regenerable via scripts/generate_bench_inputs.py)
+/data/*
+!/data/.gitkeep
+
+# Local SQLite DB used by the API server (per-instance state, not tracked)
+gfso.db
+gfso.db-shm
+gfso.db-wal
