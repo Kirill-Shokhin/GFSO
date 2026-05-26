@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GFSO</title>
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="gfso.css">
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+</head>
+<body>
+<div class="header">
+    <h1><span>GFSO</span></h1>
+    <div class="stats-bar" id="stats-bar"></div>
+    <div class="metrics" id="metrics"></div>
+</div>
+<div class="toolbar">
+    <div class="toolbar-row">
+        <input id="new-desc" placeholder="Describe the task…" style="width:240px" oninput="onDescInput()">
+        <input id="new-assignee" placeholder="Assignee" style="width:100px">
+        <button class="btn btn-primary" onclick="createTask()">Create</button>
+        <button class="btn btn-sm btn-purple" id="btn-suggest" onclick="suggestCriteria()" style="display:none">AI Suggest</button>
+        <button class="btn-toggle-more" id="btn-more" onclick="toggleMore()">More</button>
+    </div>
+    <button class="queue-toggle" id="queue-toggle" onclick="toggleMineOnly()">Mine only</button>
+    <div class="role-select">
+        <label for="current-role">You are</label>
+        <input id="current-role" value="pm" placeholder="your agent id" oninput="onRoleChange()">
+    </div>
+</div>
+<div class="criteria-panel hidden" id="criteria-panel">
+    <div class="criteria-header">
+        <span class="section-title">Criteria</span>
+        <button class="btn btn-sm btn-muted" onclick="addCriterionRow()">+</button>
+        <span class="hint" style="margin-left:8px;color:var(--ui-on-chrome);opacity:.45;font-size:10px;font-style:italic">use resolvable predicates — pass/fail in finite time</span>
+    </div>
+    <div id="criteria-rows"></div>
+</div>
+<div class="expand-form hidden" id="more-form">
+    <div class="field-group">
+        <span class="label">NEGLECTED (STD-1)</span>
+        <div class="list-editor" id="neglected-list"></div>
+        <button class="list-add" onclick="addListItem('neglected-list','neglected')">+ factor</button>
+        <span class="hint">explicit ε-assumptions; required for valid decomposition</span>
+    </div>
+    <div class="field-group">
+        <span class="label">Risk components (STD-3)</span>
+        <div class="list-editor" id="risk-list"></div>
+        <button class="list-add" onclick="addListItem('risk-list','risk')">+ component</button>
+        <span class="hint">grouped correlated factors; each requires a risk-node child</span>
+    </div>
+    <div class="field-group">
+        <span class="label">Deadline</span>
+        <input type="datetime-local" id="new-deadline">
+        <span class="hint">T = (spec, criteria, <strong>deadline</strong>); without it activity is indistinguishable from inactivity</span>
+    </div>
+</div>
+<div class="main">
+    <div id="cy"></div>
+    <div class="sidebar hidden" id="sidebar"></div>
+</div>
+<div class="tooltip" id="tooltip"></div>
+
+<div class="modal-bg" id="decompose-modal">
+<div class="modal">
+    <h2>Decompose Task</h2>
+    <div id="decompose-children"></div>
+    <button class="btn btn-sm btn-muted" onclick="addChildForm()" style="margin-top:6px">+ Subtask</button>
+    <div id="decompose-mappings"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn btn-purple" onclick="submitDecompose()">Decompose</button>
+        <button class="btn btn-muted" onclick="closeModal()">Cancel</button>
+    </div>
+</div>
+</div>
+
+<script>
+// All colours read from canonical brand tokens (tokens.css) via CSS custom
+// properties. Single source of truth: changing tokens.css recolours the UI.
+const cs = getComputedStyle(document.documentElement);
+const tok = (n) => cs.getPropertyValue(n).trim();
+
+// Read leaf brand tokens (hex literals). getComputedStyle returns the specified
+// value for unregistered custom properties, so we read brand leaves directly.
+const T_INK       = tok('--ink');
+const T_INK_SOFT  = tok('--ink-soft');
+const T_INK_FAINT = tok('--ink-faint');
+const T_PAPER     = tok('--paper');
+const T_BG        = tok('--bg');
+const T_ACC       = tok('--acc');
+const T_FONT_BODY = tok('--font-body');
+
+// Five buckets — direct translation of Applied-v3 §3.2 + §4. See gfso.css.
+const BUCKET = {
+    DONE: 'done',
+    IDLE: 'quiet', EXECUTING: 'quiet',
+    REVIEW: 'attend', VALIDATING: 'attend',
+    REWORK: 'fail', CHALLENGED: 'fail',
+    BLOCKED: 'pathology', TIMEOUT: 'pathology', ESCALATED: 'pathology',
+};
+const bucketOf = (s) => BUCKET[s] || 'quiet';
+
+// Bucket → cytoscape node style props. CSS classes (.b-*) carry the same map
+// for badges/chips; cy needs concrete values per node.
+const NODE_STYLE = {
+    done:      { bg: T_INK,    fg: T_BG,        bw: 0,   bc: T_INK,       bs: 'solid',  bo: 1 },
+    quiet:     { bg: T_BG,     fg: T_INK_FAINT, bw: 1,   bc: T_INK_FAINT, bs: 'solid',  bo: 0 },
+    attend:    { bg: T_INK_SOFT, fg: T_BG, bw: 0,   bc: T_INK_SOFT, bs: 'solid',  bo: 1 },
+    fail:      { bg: T_ACC,      fg: T_BG, bw: 0,   bc: T_ACC,      bs: 'solid',  bo: 1 },
+    pathology: { bg: T_INK_SOFT, fg: T_BG, bw: 1.5, bc: T_INK,      bs: 'dashed', bo: 1 },
+};
+const styleOf = (s) => NODE_STYLE[bucketOf(s)];
+
+// Stats-bar dot lives on dark chrome — done needs cream override since ink-on-ink disappears.
+const DOT_ON_CHROME = {
+    done: T_BG, quiet: T_INK_FAINT, attend: T_PAPER, fail: T_ACC, pathology: T_PAPER,
+};
+
+const STATE_LABEL = {
+    IDLE:'Waiting', REVIEW:'In Review', CHALLENGED:'Challenged', EXECUTING:'In Progress',
+    BLOCKED:'Blocked', VALIDATING:'Validating', REWORK:'Rework', DONE:'Done',
+    TIMEOUT:'Timeout', ESCALATED:'Escalated'
+};
+const ACTIONS = {
+    REVIEW:     [{s:'ACCEPT',cls:'btn-green',label:'Accept'},{s:'CHALLENGE',cls:'btn-orange',label:'Challenge',prompt:'reason'}],
+    CHALLENGED: [{s:'ACCEPT_CHALLENGE',cls:'btn-green',label:'Accept Challenge'},{s:'REJECT_CHALLENGE',cls:'btn-muted',label:'Reject Challenge',prompt:'justification'}],
+    EXECUTING:  [{s:'DELIVER',cls:'btn-blue',label:'Deliver',prompt:'result'},{s:'BLOCK',cls:'btn-red',label:'Block',prompt:'reason'}],
+    BLOCKED:    [{s:'RESOLVE_BLOCK',cls:'btn-blue',label:'Resolve Block',prompt:'action'}],
+    VALIDATING: [{s:'PASS',cls:'btn-green',label:'Pass'},{s:'FAIL',cls:'btn-red',label:'Fail',needsCriteria:true}],
+    REWORK:     [{s:'DELIVER',cls:'btn-blue',label:'Re-deliver',prompt:'result'},{s:'BLOCK',cls:'btn-red',label:'Block',prompt:'reason'}],
+};
+
+let cy, selectedTaskId = null, decomposeTaskId = null, allTasksCache = [];
+let mineOnly = false;
+// Cache parent task's criteria for decompose modal (drives mapping UI).
+let decomposeParentCriteria = [];
+
+// ---- Theory derivations ----
+// V(t) derivation per §3.2: pass = DONE, fail = REWORK/CHALLENGED, ⊥ otherwise.
+// V is the central concept of the protocol; FSM state is the process layer.
+const V_OF = { DONE: 'pass', REWORK: 'fail', CHALLENGED: 'fail' };
+const vOf = (state) => V_OF[state] || 'undef';
+const V_SYMBOL = { pass: '✓', fail: '✗', undef: '⊥' };
+
+// FM grouping per §4. Each CHECK addresses one or more FMs.
+// CHECK-1 coverage, -4 neglected, -5 risk_nodes, -6 delegation → FM-1 Correspondence
+// CHECK-2 dag → FM-4 Propagation (AND semantics depends on DAG)
+// CHECK-3 deadlines → FM-5 Currency
+const FM_LABEL = {
+    'FM-1': 'Correspondence',
+    'FM-2': 'Consistency',
+    'FM-3': 'Verifiability',
+    'FM-4': 'Propagation',
+    'FM-5': 'Currency',
+    'FM-6': 'Feasibility',
+    'FM-7': 'Feedback',
+};
+const CHECK_TO_FM = {
+    'CHECK-1:coverage':    'FM-1',
+    'CHECK-2:dag':         'FM-4',
+    'CHECK-3:deadlines':   'FM-5',
+    'CHECK-4:neglected':   'FM-1',
+    'CHECK-5:risk_nodes':  'FM-1',
+    'CHECK-6:delegation':  'FM-1',
+};
+const fmOf = (checkName) => CHECK_TO_FM[checkName] || 'FM-?';
+
+// Q metric labels per §7. Short name + tooltip for full meaning.
+const Q_META = {
+    q_T:   { short: 'task',  full: 'q_T — task quality: criteria resolvability + completeness' },
+    q_D:   { short: 'decomp',full: 'q_D — decomposition quality: joint sufficiency + non-redundancy' },
+    q_V:   { short: 'valid', full: 'q_V — validation quality: false-positive rate (pass-then-wrong)' },
+    q_Dep: { short: 'dep',   full: 'q_Dep — dependency quality: declared vs discovered Dep edges' },
+    q_Del: { short: 'del',   full: 'q_Del — delegation quality: reassignment / iteration overflow' },
+};
+
+// Deadline formatting + overdue check
+function fmtDeadline(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    const now = new Date();
+    const overdue = d < now;
+    const opts = { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' };
+    return { text: d.toLocaleString(undefined, opts), overdue };
+}
+
+function inkAlpha(a) { /* cytoscape needs concrete rgba, not color-mix */
+    const h = T_INK.replace('#','');
+    const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+    return `rgba(${r},${g},${b},${a})`;
+}
+
+async function init() {
+    cy = cytoscape({
+        container: document.getElementById('cy'),
+        style: [
+            { selector: 'node', style: {
+                'label': 'data(label)',
+                'background-color': 'data(bg)',
+                'background-opacity': 'data(bo)',
+                'color': 'data(fg)',
+                'border-width': 'data(bw)',
+                'border-color': 'data(bc)',
+                'border-style': 'data(bs)',
+                'font-family': T_FONT_BODY,
+                'text-valign': 'center', 'text-halign': 'center',
+                'font-size': '11px', 'font-weight': '500',
+                'width': 'label', 'height': 30, 'padding': '8px',
+                'shape': 'round-rectangle', 'text-wrap': 'wrap', 'text-max-width': '140px',
+            }},
+            { selector: 'node:selected', style: {
+                'border-width': 2, 'border-color': T_INK, 'border-style': 'solid',
+                'shadow-blur': 0, 'shadow-opacity': 0,
+            }},
+            { selector: 'edge', style: {
+                'width': 1, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
+                'line-color': inkAlpha(0.30), 'target-arrow-color': inkAlpha(0.30), 'arrow-scale': 0.7,
+            }},
+            { selector: 'edge[type="dependency"]', style: {
+                'line-style': 'dashed', 'line-color': T_ACC, 'target-arrow-color': T_ACC,
+            }},
+            { selector: 'node.dimmed', style: { 'opacity': 0.22 }},
+            { selector: 'edge.dimmed', style: { 'opacity': 0.15 }},
+        ],
+        layout: { name: 'dagre', rankDir: 'TB', spacingFactor: 1.4, nodeSep: 35, rankSep: 55 },
+        minZoom: 0.3, maxZoom: 3,
+    });
+
+    cy.on('tap', 'node', function(evt) { selectTask(evt.target.id()); });
+    cy.on('tap', function(evt) { if (evt.target === cy) closeSidebar(); });
+
+    // Hover tooltip
+    const tt = document.getElementById('tooltip');
+    cy.on('mouseover', 'node', function(evt) {
+        const id = evt.target.id();
+        const t = allTasksCache.find(t => t.id === id);
+        if (!t) return;
+        let h = `<div class="tt-name">${t.description}</div>`;
+        h += `<span class="tt-status state-badge b-${bucketOf(t.state)}">${STATE_LABEL[t.state]||t.state}</span>`;
+        if (t.assignee) h += `<div class="tt-row">Assignee: ${t.assignee}</div>`;
+        h += `<div class="tt-row">Iteration: ${t.iteration}/${t.max_iterations}</div>`;
+        if (t.criteria?.length) h += `<div class="tt-row">${t.criteria.length} criteria</div>`;
+        tt.innerHTML = h;
+        tt.classList.add('visible');
+    });
+    cy.on('mousemove', 'node', function(evt) {
+        const e = evt.originalEvent;
+        tt.style.left = (e.clientX + 12) + 'px';
+        tt.style.top = (e.clientY + 12) + 'px';
+    });
+    cy.on('mouseout', 'node', function() { tt.classList.remove('visible'); });
+
+    await refreshAll();
+    connectWS();
+}
+
+async function refreshAll() { await refreshGraph(); await refreshMetrics(); await refreshStats(); }
+
+async function refreshGraph() {
+    try {
+        const [gr, tr] = await Promise.all([fetch('/api/graph'), fetch('/api/tasks')]);
+        const g = await gr.json();
+        allTasksCache = await tr.json();
+        cy.elements().remove();
+        for (const n of g.nodes) {
+            const st = styleOf(n.state);
+            cy.add({ data: { id: n.id, label: n.label, state: n.state, bucket: bucketOf(n.state),
+                             bg: st.bg, fg: st.fg, bw: st.bw, bc: st.bc, bs: st.bs, bo: st.bo }});
+        }
+        for (const e of g.edges) cy.add({ data: { source: e.source, target: e.target, type: e.type }});
+        if (cy.nodes().length) cy.layout({ name:'dagre', rankDir:'TB', spacingFactor:1.4, nodeSep:35, rankSep:55, animate:true, animationDuration:200 }).run();
+        applyMineDim();
+    } catch(e) { console.error('refreshGraph:', e); }
+}
+
+async function refreshStats() {
+    const el = document.getElementById('stats-bar');
+    if (!allTasksCache.length) { el.innerHTML = ''; return; }
+    const counts = {};
+    allTasksCache.forEach(t => { counts[t.state] = (counts[t.state]||0) + 1; });
+    const order = ['DONE','EXECUTING','REVIEW','BLOCKED','REWORK','CHALLENGED','VALIDATING','IDLE','TIMEOUT','ESCALATED'];
+    el.innerHTML = order.filter(s => counts[s]).map(s =>
+        `<span class="stat"><span class="stat-dot" style="background:${DOT_ON_CHROME[bucketOf(s)]}"></span>${counts[s]} ${STATE_LABEL[s]||s}</span>`
+    ).join('');
+}
+
+async function refreshMetrics() {
+    try {
+        const m = await (await fetch('/api/metrics')).json();
+        document.getElementById('metrics').innerHTML = Object.entries(m).map(([k,v]) => {
+            const pct = (v*100).toFixed(0);
+            const color = v >= 0.8 ? 'var(--ui-on-chrome)' : v >= 0.5 ? 'var(--paper)' : 'var(--acc)';
+            const meta = Q_META[k] || { short: k, full: k };
+            return `<div class="metric" title="${meta.full}"><div class="metric-val" style="color:${color}">${pct}%</div><div class="metric-label">${meta.short}</div></div>`;
+        }).join('');
+    } catch(e) {}
+}
+
+function myRole() { return document.getElementById('current-role').value.trim(); }
+
+async function selectTask(taskId) {
+    selectedTaskId = taskId;
+    try {
+        const d = await (await fetch(`/api/tasks/${encodeURIComponent(taskId)}`)).json();
+        const sb = document.getElementById('sidebar');
+        sb.classList.remove('hidden');
+        const role = myRole();
+
+        const v = vOf(d.state);
+        const dl = fmtDeadline(d.deadline);
+
+        let h = `<div class="sidebar-header"><h2>${d.description}</h2><button class="sidebar-close" onclick="closeSidebar()">&times;</button></div>`;
+        h += `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">`;
+        h += `<span class="v-badge v-${v}" title="V(t) — validation outcome §3.2"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`;
+        h += `<span class="state-badge b-${bucketOf(d.state)}">${STATE_LABEL[d.state]||d.state}</span>`;
+        if (dl) h += `<span class="deadline-chip${dl.overdue ? ' overdue':''}" title="deadline">⏱ ${dl.text}</span>`;
+        h += `</div>`;
+        h += `<div class="meta">ID: ${d.id} · Assignee: ${d.assignee||'—'} · Iter: ${d.iteration}/${d.max_iterations}</div>`;
+
+        if (d.criteria.length) {
+            h += `<div class="section"><div class="section-title">Criteria</div><ul class="item-list">`;
+            d.criteria.forEach(c => h += `<li><strong>${c.name}</strong> — ${c.description}</li>`);
+            h += `</ul></div>`;
+        }
+
+        if (d.neglected && d.neglected.length) {
+            h += `<div class="section"><div class="section-title">Neglected (STD-1)</div><ul class="facet-list">`;
+            d.neglected.forEach(n => h += `<li>${n}</li>`);
+            h += `</ul></div>`;
+        }
+        if (d.risk_components && d.risk_components.length) {
+            h += `<div class="section"><div class="section-title">Risk components (STD-3)</div><ul class="facet-list">`;
+            d.risk_components.forEach(r => h += `<li>${r}</li>`);
+            h += `</ul></div>`;
+        }
+
+        // AND-composition panel (Theorem 1) — surface when task has children
+        if (d.children && d.children.length) {
+            const vChildren = d.children.map(c => ({ id:c.id, desc:c.description, v:vOf(c.state), state:c.state }));
+            const anyFail = vChildren.some(c => c.v === 'fail');
+            const allPass = vChildren.every(c => c.v === 'pass');
+            const formula = `V(parent) = ${anyFail ? '<span class="acc">fail</span>' : allPass ? 'pass' : '⊥'} ` +
+                            `= AND(${vChildren.map(c => V_SYMBOL[c.v]).join(', ')})`;
+            h += `<div class="section"><div class="section-title">Composition (Th.1)</div><div class="composition-panel">`;
+            h += `<div class="composition-formula">${formula}</div>`;
+            vChildren.forEach(c => {
+                h += `<div class="composition-row v-${c.v}"><span class="v-sym">${V_SYMBOL[c.v]}</span><span class="child-name" onclick="selectTask('${c.id}')">${c.desc.slice(0,40)}</span></div>`;
+            });
+            h += `</div></div>`;
+        }
+
+        // Checks grouped by FM (§4 failure modes)
+        const realChecks = d.checks.filter(c => !c.skipped);
+        if (realChecks.length) {
+            const byFm = {};
+            realChecks.forEach(c => { const fm = fmOf(c.check_name); (byFm[fm] = byFm[fm] || []).push(c); });
+            h += `<div class="section"><div class="section-title">Checks by failure mode</div>`;
+            Object.keys(byFm).sort().forEach(fm => {
+                h += `<div class="fm-group"><div class="fm-label"><span class="fm-code">${fm}</span>${FM_LABEL[fm] || ''}</div><ul class="item-list">`;
+                byFm[fm].forEach(c => {
+                    const cls = c.passed?'check-pass':'check-fail';
+                    const icon = c.passed?'✓':'✗';
+                    const shortName = c.check_name.split(':')[1] || c.check_name;
+                    h += `<li class="${cls}"><span class="check-icon">${icon}</span>${shortName}${c.details?' — '+c.details:''}</li>`;
+                });
+                h += `</ul></div>`;
+            });
+            h += `</div>`;
+        }
+
+        if (d.recommendation && d.recommendation.suggestions.length) {
+            h += `<div class="section"><div class="section-title">AI Recommendations</div><div class="recs"><ul>`;
+            d.recommendation.suggestions.forEach(s => {
+                const rendered = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                h += `<li>${rendered}</li>`;
+            });
+            h += `</ul></div></div>`;
+        }
+
+        const acts = ACTIONS[d.state] || [];
+        if (acts.length || !['DONE','ESCALATED'].includes(d.state)) {
+            h += `<div class="section"><div class="section-title">Actions</div><div class="actions">`;
+            acts.forEach(a => {
+                h += `<button class="btn btn-sm ${a.cls}" onclick="sendAction('${d.id}','${a.s}','${a.prompt||''}',${!!a.needsCriteria})">${a.label}</button>`;
+            });
+            if (!['DONE','ESCALATED'].includes(d.state))
+                h += `<button class="btn btn-sm btn-muted" onclick="sendAction('${d.id}','CANCEL','reason',false)">Cancel</button>`;
+            if (['EXECUTING','REVIEW'].includes(d.state))
+                h += `<button class="btn btn-sm btn-purple" onclick="openDecompose('${d.id}')">Decompose</button>`;
+            h += `</div></div>`;
+        }
+
+        if (d.audit.length) {
+            h += `<div class="section"><div class="section-title">History</div><ul class="item-list audit-list">`;
+            d.audit.slice(-10).forEach(a => {
+                const color = a.rejected ? 'var(--acc)' : 'var(--ui-text-faint)';
+                h += `<li style="color:${color}">${a.timestamp.slice(11,19)} ${a.signal} ${a.old_state||''}→${a.new_state||'rej'}</li>`;
+            });
+            h += `</ul></div>`;
+        }
+
+        sb.innerHTML = h;
+    } catch(e) { console.error('selectTask:', e); }
+}
+
+function closeSidebar() { selectedTaskId=null; document.getElementById('sidebar').classList.add('hidden'); }
+
+async function sendAction(taskId, signal, promptField, needsCriteria) {
+    const source = myRole();
+    const body = { signal, source };
+    if (promptField) { const v = prompt(`${promptField}:`); if (v===null) return; body[promptField] = v; }
+    if (needsCriteria) { const v = prompt('Failed criteria (comma-separated):'); if (!v) return; body.failed_criteria = v.split(',').map(s=>s.trim()); }
+    try {
+        const r = await fetch(`/api/tasks/${taskId}/signal`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+        await refreshAll();
+        if (selectedTaskId) await selectTask(selectedTaskId);
+    } catch(e) { console.error('sendAction:', e); }
+}
+
+function onDescInput() {
+    const desc = document.getElementById('new-desc').value.trim();
+    document.getElementById('btn-suggest').style.display = desc.length > 5 ? '' : 'none';
+}
+
+async function suggestCriteria() {
+    const desc = document.getElementById('new-desc').value.trim();
+    if (!desc) return;
+    const btn = document.getElementById('btn-suggest');
+    btn.textContent = '…'; btn.disabled = true;
+    try {
+        const r = await fetch('/api/suggest-criteria', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({description:desc})});
+        const data = await r.json();
+        const panel = document.getElementById('criteria-panel');
+        panel.classList.remove('hidden');
+        document.getElementById('criteria-rows').innerHTML = '';
+        data.criteria.forEach(c => addCriterionRow(c.name, c.description, true));
+    } catch(e) { console.error('suggest:', e); }
+    btn.textContent = 'AI Suggest'; btn.disabled = false;
+}
+
+function addCriterionRow(name='', desc='', aiSuggested=false) {
+    const panel = document.getElementById('criteria-panel');
+    panel.classList.remove('hidden');
+    const row = document.createElement('div');
+    row.className = 'criterion-row' + (aiSuggested ? ' ai-suggested' : '');
+    row.innerHTML = `<input class="cr-name" placeholder="name" value="${name}"><input class="cr-desc" placeholder="description" value="${desc}"><button class="cr-del" onclick="this.parentElement.remove()">&times;</button>`;
+    document.getElementById('criteria-rows').appendChild(row);
+}
+
+function getCriteria() {
+    return Array.from(document.querySelectorAll('.criterion-row')).map(row => ({
+        name: row.querySelector('.cr-name').value.trim(),
+        description: row.querySelector('.cr-desc').value.trim(),
+    })).filter(c => c.name && c.description);
+}
+
+function getListItems(containerId) {
+    return Array.from(document.querySelectorAll(`#${containerId} .list-item input`))
+        .map(i => i.value.trim()).filter(Boolean);
+}
+function addListItem(containerId, prefix, value='') {
+    const c = document.getElementById(containerId);
+    const row = document.createElement('div');
+    row.className = 'list-item';
+    row.innerHTML = `<input placeholder="${prefix === 'neglected' ? 'factor + justification…' : 'risk component…'}" value="${value}"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
+    c.appendChild(row);
+}
+function toggleMore() {
+    const f = document.getElementById('more-form');
+    const b = document.getElementById('btn-more');
+    f.classList.toggle('hidden');
+    b.classList.toggle('active');
+}
+function toggleMineOnly() {
+    mineOnly = !mineOnly;
+    document.getElementById('queue-toggle').classList.toggle('active', mineOnly);
+    applyMineDim();
+}
+function onRoleChange() { if (mineOnly) applyMineDim(); }
+function applyMineDim() {
+    if (!cy) return;
+    const me = myRole();
+    cy.elements().removeClass('dimmed');
+    if (!mineOnly || !me) return;
+    const mineIds = new Set(allTasksCache.filter(t => t.assignee === me).map(t => t.id));
+    cy.nodes().forEach(n => { if (!mineIds.has(n.id())) n.addClass('dimmed'); });
+    cy.edges().forEach(e => {
+        if (!mineIds.has(e.source().id()) || !mineIds.has(e.target().id())) e.addClass('dimmed');
+    });
+}
+
+async function createTask() {
+    const desc = document.getElementById('new-desc').value.trim();
+    const assignee = document.getElementById('new-assignee').value.trim();
+    if (!desc || !assignee) return;
+    const criteria = getCriteria();
+    const neglected = getListItems('neglected-list');
+    const risk_components = getListItems('risk-list');
+    const dlRaw = document.getElementById('new-deadline').value;
+    const deadline = dlRaw ? new Date(dlRaw).toISOString() : null;
+    await fetch('/api/tasks', {method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({spec:{description:desc,criteria,neglected,risk_components},assignee,deadline})});
+    document.getElementById('new-desc').value = '';
+    document.getElementById('new-assignee').value = '';
+    document.getElementById('new-deadline').value = '';
+    document.getElementById('neglected-list').innerHTML = '';
+    document.getElementById('risk-list').innerHTML = '';
+    document.getElementById('criteria-rows').innerHTML = '';
+    document.getElementById('criteria-panel').classList.add('hidden');
+    document.getElementById('more-form').classList.add('hidden');
+    document.getElementById('btn-more').classList.remove('active');
+    document.getElementById('btn-suggest').style.display = 'none';
+    await refreshAll();
+}
+
+async function openDecompose(id) {
+    decomposeTaskId = id;
+    try {
+        const d = await (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json();
+        decomposeParentCriteria = d.criteria || [];
+    } catch(e) { decomposeParentCriteria = []; }
+    document.getElementById('decompose-children').innerHTML = '';
+    addChildForm();
+    renderMappings();
+    document.getElementById('decompose-modal').classList.add('active');
+}
+function closeModal() { document.getElementById('decompose-modal').classList.remove('active'); }
+function addChildForm() {
+    const idx = document.querySelectorAll('.child-form').length;
+    const d = document.createElement('div'); d.className = 'child-form'; d.dataset.idx = idx;
+    d.innerHTML = `
+        <input placeholder="Subtask description" class="dc-desc" oninput="renderMappings()">
+        <input placeholder="Assignee" class="dc-assignee" style="width:120px">
+        <input type="datetime-local" class="dc-deadline" style="width:180px" title="deadline">
+        <button class="btn btn-sm btn-purple" onclick="suggestChildCriteria(this)" style="margin-left:4px">AI</button>
+        <div class="dc-criteria-rows" style="margin-top:4px"></div>
+        <button class="btn btn-sm btn-muted" onclick="addChildCriterion(this)" style="font-size:10px">+ criterion</button>
+        <div class="dc-neglected-rows" style="margin-top:6px"></div>
+        <button class="btn btn-sm btn-muted" onclick="addChildNeglected(this)" style="font-size:10px">+ neglected</button>
+    `;
+    document.getElementById('decompose-children').appendChild(d);
+    renderMappings();
+}
+function addChildNeglected(btn, value='') {
+    const c = btn.parentElement.querySelector('.dc-neglected-rows');
+    const row = document.createElement('div');
+    row.className = 'list-item';
+    row.innerHTML = `<input placeholder="neglected factor…" value="${value}" style="flex:1"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
+    c.appendChild(row);
+}
+function renderMappings() {
+    const box = document.getElementById('decompose-mappings');
+    if (!box) return;
+    if (!decomposeParentCriteria.length) { box.innerHTML = ''; return; }
+    const childForms = Array.from(document.querySelectorAll('.child-form'));
+    const opts = ['<option value="">— unmapped —</option>',
+                  ...childForms.map((f, i) => {
+                      const desc = (f.querySelector('.dc-desc').value || `Child ${i+1}`).slice(0, 30);
+                      return `<option value="${i}">${desc}</option>`;
+                  })].join('');
+    let h = `<div class="section-title" style="border-color:var(--hair);padding-bottom:4px;margin:14px 0 8px">Criterion mappings (CHECK-1, joint sufficiency)</div>`;
+    decomposeParentCriteria.forEach(c => {
+        const sel = box.querySelector(`select[data-crit="${c.name}"]`);
+        const cur = sel ? sel.value : '';
+        h += `<div class="crit-mapping"><span class="crit-name">${c.name}</span><select data-crit="${c.name}">${opts.replace(`value="${cur}"`, `value="${cur}" selected`)}</select></div>`;
+    });
+    box.innerHTML = h;
+}
+function addChildCriterion(btn, name='', desc='') {
+    const container = btn.parentElement.querySelector('.dc-criteria-rows');
+    const row = document.createElement('div');
+    row.className = 'criterion-row';
+    row.innerHTML = `<input class="cr-name" placeholder="name" value="${name}" style="width:100px"><input class="cr-desc" placeholder="description" value="${desc}" style="flex:1"><button class="cr-del" onclick="this.parentElement.remove()">&times;</button>`;
+    container.appendChild(row);
+}
+async function suggestChildCriteria(btn) {
+    const form = btn.closest('.child-form');
+    const desc = form.querySelector('.dc-desc').value.trim();
+    if (!desc) return;
+    btn.textContent = '…'; btn.disabled = true;
+    try {
+        const r = await fetch('/api/suggest-criteria', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({description:desc})});
+        const data = await r.json();
+        const addBtn = form.querySelector('.btn-muted');
+        data.criteria.forEach(c => addChildCriterion(addBtn, c.name, c.description));
+    } catch(e) { console.error('suggest child:', e); }
+    btn.textContent = 'AI'; btn.disabled = false;
+}
+async function submitDecompose() {
+    const childForms = Array.from(document.querySelectorAll('.child-form'));
+    const children = childForms.map(f => {
+        const desc = f.querySelector('.dc-desc').value.trim();
+        const assignee = f.querySelector('.dc-assignee').value.trim();
+        const dlRaw = f.querySelector('.dc-deadline').value;
+        const deadline = dlRaw ? new Date(dlRaw).toISOString() : null;
+        const criteria = Array.from(f.querySelectorAll('.criterion-row')).map(row => ({
+            name: row.querySelector('.cr-name').value.trim(),
+            description: row.querySelector('.cr-desc').value.trim(),
+        })).filter(c => c.name && c.description);
+        const neglected = Array.from(f.querySelectorAll('.dc-neglected-rows .list-item input'))
+            .map(i => i.value.trim()).filter(Boolean);
+        return { spec: { description: desc, criteria, neglected }, assignee, deadline };
+    }).filter(c => c.spec.description && c.assignee);
+    if (!children.length) return;
+
+    // Resolve criterion mappings: select.value is child idx; we need child task_id,
+    // but the children are about to be created server-side. The API expects
+    // criterion_mappings referencing existing child_ids. Workaround: pre-generate
+    // task_ids client-side and pass them as task_id in the create request.
+    children.forEach((c, i) => { c.task_id = `c${Date.now().toString(36)}-${i}`; });
+    const criterion_mappings = Array.from(document.querySelectorAll('#decompose-mappings select'))
+        .map(sel => ({ criterion_name: sel.dataset.crit, idx: sel.value }))
+        .filter(m => m.idx !== '')
+        .map(m => ({ criterion_name: m.criterion_name, child_id: children[+m.idx].task_id }));
+
+    await fetch(`/api/tasks/${decomposeTaskId}/decompose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ children, criterion_mappings }),
+    });
+    closeModal(); await refreshAll();
+}
+
+function connectWS() {
+    const ws = new WebSocket(`ws://${location.host}/ws/events`);
+    ws.onmessage = async e => {
+        const d = JSON.parse(e.data);
+        if (d.type==='transition') {
+            const node = cy.getElementById(d.task_id);
+            if (node.length) {
+                const st = styleOf(d.new_state);
+                node.data('state', d.new_state);
+                node.data('bucket', bucketOf(d.new_state));
+                node.data('bg', st.bg); node.data('fg', st.fg);
+                node.data('bw', st.bw); node.data('bc', st.bc);
+                node.data('bs', st.bs); node.data('bo', st.bo);
+            } else await refreshGraph();
+            await refreshMetrics(); await refreshStats();
+            if (selectedTaskId===d.task_id) await selectTask(d.task_id);
+        }
+    };
+    ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+init();
+</script>
+</body>
+</html>

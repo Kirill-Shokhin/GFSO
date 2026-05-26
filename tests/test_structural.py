@@ -54,9 +54,10 @@ def test_coverage_fail_invalid_child():
     assert not result.passed
     assert "not found" in result.details
 
-def test_coverage_no_children():
+def test_coverage_leaf_skipped():
     parent = _task("p", criteria=["perf"])
-    assert not check_coverage(parent, []).passed
+    result = check_coverage(parent, [])
+    assert result.skipped  # leaf tasks don't need children coverage
 
 def test_coverage_no_criteria():
     parent = _task("p")

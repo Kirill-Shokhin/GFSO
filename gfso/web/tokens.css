@@ -1,0 +1,52 @@
+/* ============================================================
+   K·S brand tokens · v2.0 · 2026.05
+   ------------------------------------------------------------
+   Single source of truth. Same values exported to tokens.json
+   for non-web surfaces (Figma, native, slide tools).
+
+   Palette: Cellar (single, frozen).
+   Typography: Bricolage / Hanken / JetBrains Mono.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Hanken+Grotesk:wght@100..900&family=JetBrains+Mono:wght@300..600&display=swap');
+
+:root {
+  /* ---- Typography families ---- */
+  --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --font-body:    'Hanken Grotesk',      ui-sans-serif, sans-serif;
+  --font-mono:    'JetBrains Mono',      ui-monospace, monospace;
+
+  /* ---- Type scale (canonical names — see spec §1) ---- */
+  --t-display: 88px;
+  --t-h1:      56px;
+  --t-h2:      36px;
+  --t-h3:      22px;
+  --t-body:    16px;
+  --t-small:   14px;
+  --t-mono:    13px;
+
+  /* ---- Tracking ---- */
+  --tr-display: -0.020em;
+  --tr-heading: -0.018em;
+  --tr-mono:     0.12em;
+
+  /* ---- Weight (signature) ---- */
+  --fw-sig:     650;      /* canonical K·S signature weight */
+
+  /* ---- Brand-dot tokens (em-relative) ---- */
+  --dot-ratio:  0.333em;  /* trailing brand-dot in headings */
+  --dot-sig:    0.25em;   /* K·S signature dot — inline, avatar, social, banner */
+  --dot-shadow: 0 0.04em 0.04em rgba(0,0,0,0.15);
+}
+
+[data-palette="cellar"], :root {
+  /* Cellar — single frozen palette. */
+  --bg:        #F4EAD5;  /* book-cover cream — primary surface */
+  --canvas:    #FAF4E5;  /* page-paper — long body copy, diagrams, code */
+  --paper:     #DCD3C0;  /* card / inset surface */
+  --ink-faint: #93866B;  /* DECORATIVE-ONLY — captions, mono labels ≥14px */
+  --ink-soft:  #564C37;  /* secondary text */
+  --ink:       #080503;  /* primary text */
+  --acc:       #64000A;  /* point — single accent, bordeaux */
+  --acc-shine: var(--acc); /* flat — point is act, not figure */
+}

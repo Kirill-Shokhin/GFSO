@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 def event_loop(
     graph: Graph,
     agents: AgentPort,
-    llm: Optional[LLMProviderPort],
+    get_llm,  # Callable[[], Optional[LLMProviderPort]] — mutable reference
     signal_queue: queue.Queue[SignalData],
     audit: AuditLog,
     events: EventBus,
@@ -102,7 +102,7 @@ def event_loop(
             continue
 
         # Execute effects (invariants already validated)
-        _execute_effects(effects, graph, agents, llm, signal_queue)
+        _execute_effects(effects, graph, agents, get_llm(), signal_queue)
 
         # Success
         log.info(f"{task_id}: {state.name} + {signal_data.signal.name} -> {new_state.name}")

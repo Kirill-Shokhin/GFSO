@@ -84,6 +84,23 @@ gfso/
 
 ---
 
+## Interface
+
+GFSO ships a web interface — the protocol rendered as a workable surface, not
+only an API. The task graph, FSM states, validation outcomes `V(t)`,
+failure-mode checks and the AND-composition `V(parent) = AND(V(children))` are
+all visible and operable.
+
+![GFSO web interface](docs/ui-baseline.png)
+
+> **Baseline interface.** A working reference UI for exercising the protocol —
+> not a finished product. It translates the theory directly: status is rendered
+> along the `{intervene, ¬intervene} × {pass, fail, ⊥}` axes, checks are grouped
+> by failure mode, decomposition surfaces joint sufficiency. Visual design and
+> role workflows are out of scope at this stage.
+
+---
+
 ## Status
 
 - [x] Formal framework: 6 theorems + 8 propositions/corollaries

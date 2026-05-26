@@ -62,7 +62,7 @@ class Engine:
 
         threading.Thread(
             target=event_loop,
-            args=(self._graph, self._agents, self._llm, self._queue,
+            args=(self._graph, self._agents, lambda: self._llm, self._queue,
                   self._audit, self._events, self._validate),
             daemon=True,
         ).start()
@@ -99,7 +99,10 @@ class Engine:
             parent_id=parent_id, max_iterations=max_iterations,
         )
         self._graph.save_task(task)
-        self.send_signal(SignalData(signal=Signal.ASSIGN, task_id=task_id, spec=spec))
+        # ASSIGN is an issuer signal — source = parent's assignee or self
+        parent = self._graph.get_task(parent_id) if parent_id else None
+        source = parent.assignee if parent and parent.assignee else assignee
+        self.send_signal(SignalData(signal=Signal.ASSIGN, task_id=task_id, spec=spec, source=source))
         return task
 
     # === Query API ===

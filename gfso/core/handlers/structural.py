@@ -15,7 +15,7 @@ def check_coverage(task: Task, children: list[Task]) -> CheckResult:
         return CheckResult("CHECK-1:coverage", True, "no criteria defined")
 
     if not children:
-        return CheckResult("CHECK-1:coverage", False, "no children to cover criteria")
+        return CheckResult("CHECK-1:coverage", True, "leaf task", skipped=True)
 
     if not task.criterion_mappings:
         return CheckResult("CHECK-1:coverage", False, "no criterion mappings declared")
