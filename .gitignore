@@ -30,15 +30,14 @@ outputs/
 *.log
 nul
 
-# Bench runs (regenerable outputs)
-/runs/*
-# but keep E1 postmortem classifications — accumulating empirical data
-!/runs/e1_results/
-!/runs/e1_results/**
+# Experiment outputs — local (runs/e0_bench bench results+logs, future runs/).
+# Nothing pushed yet; regenerable.
+/runs/
 
-# Bench inputs (regenerable via scripts/generate_bench_inputs.py)
-/data/*
-!/data/.gitkeep
+# E1 postmortem corpus (data/postmortems/) — local for now, nothing pushed yet.
+# Structure: data/postmortems/{corpus.json,index.json,schema.*} + sources/ raw/ manual/ meta/
+# raw/ and manual/ are large/regenerable/copyright (book PDF) — never push.
+/data/
 
 # Local SQLite DB used by the API server (per-instance state, not tracked)
 gfso.db

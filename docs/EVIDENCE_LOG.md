@@ -692,3 +692,110 @@ In order of priority:
 
 When the conversation produces a non-trivial finding, **update this file**, not
 just memory. Memory is hints; this is record.
+
+---
+
+## 9. E1 EXECUTED — corpus build (Phase A) + classification (Phase B), 2026-05-28
+
+The plan in §5/§7 (E1 = 7-FM taxonomy validation on ~100 postmortems) was executed
+at larger scale than planned. Full pipeline + data are LOCAL (gitignored under
+`data/postmortems/` and `runs/phaseB/`); only tooling + this log are tracked.
+
+### Phase A — corpus (data/postmortems/)
+- **230 records / 49 sources / 1980–2026.** 216 incident postmortems + 14 Scrum
+  `process_case` narratives (from Sutherland's book).
+- Domains: ops_incident 199, project_delivery 7, safety_critical 7, security 3,
+  process_narrative 14.
+- Pipeline (experiments/e1_corpus/): walk_archive + fetch_postmortem (trafilatura
+  verbatim, NOT WebFetch — WebFetch paraphrases, that was the first big bug),
+  writeup agents, build_corpus (md→schema-v1.1.0 JSON), verify_verbatim.
+- **Verbatim verified: 91.4% string-match** vs raw sources; misses spot-checked =
+  formatting artifacts (PDF hyphenation, Wikipedia citation decoration, en-dash,
+  table reflow), NOT paraphrase. Lower bound; real fidelity higher. 10+ sources 100%.
+- Universe denominator: 193 orgs from danluu+howtheysre+k8s.af (Tier A=7, B=26, C=160).
+  Shortlist = all Tier A + selective B + famous Tier C + Scrum/safety/historical we added.
+- Schema v1.1.0: verbatim-first (Quote objects), taxonomy-agnostic, multi-annotator
+  (`annotations[]` open), entry_type/domain/methodology tags. Built for a public artifact.
+
+### Phase B — classification (runs/phaseB/)
+Protocol: docs/phaseB_protocol.md (v2). Annotator: **Opus** (consistency — do NOT
+mix models across the corpus, it confounds the distribution). Two tracks.
+
+**Track A (216 incidents → 7 FM):**
+- fit 94.4% (204/216), NONE=12. FM-1=137 (63%), FM-3=37, FM-7=10, FM-2=7, FM-5=7,
+  FM-4=3, FM-6=3. 117/216 needed a secondary FM.
+- By domain: ops FM-1 heavy; project_delivery → FM-1/FM-6/FM-7 multi-causal;
+  safety → FM-1/FM-2/FM-5/FM-7; security → FM-3 (crowdstrike bad-update) / NONE (okta).
+
+**Track B (14 Scrum → §17.2 embedding):** 4 full, 8 partial, 2 out_of_scope,
+**0 unmapped Scrum elements** = no §17.2 counterexample. Scrum ⊂ GFSO held on 14
+real cases. Medco = cleanest "Definition of Done = Criteria"; Valve = degenerate
+Issuer=Executor (still inside); NUMMI/Zappos correctly out-of-scope (not handoffs).
+
+### FINDINGS (what we actually learned)
+
+1. **7 FM are complete IN SCOPE, but FM-1 is too broad (63%).** Taxonomy doesn't
+   collapse, but FM-1 absorbs "any missing safeguard/criterion". Under-discriminating,
+   not incomplete. **Action: sub-taxonomy of FM-1** (missing-test / missing-guard /
+   missing-capacity / missing-approval / missing-graceful-degradation). GitHub worst
+   (FM-1 79%) partly a writeup-style artifact (availability reports phrase fixes as
+   "added the missing check").
+
+2. **FM-3 covers only false-PASS, not false-FAIL.** github-081, buildkite-001,
+   queensland (live-judged-dead / shipped-despite-expected-fail) don't fit FM-3's
+   strict false-positive definition. **Action: FM-3 should cover both error directions.**
+
+3. **The 12 NONE are NOT a GFSO gap — they are the STD-2 / §2.1 axis, and most are
+   mis-classified FM-1.** (Author correction to the orchestrator's first framing.)
+   NEGLECTED (STD-1) is conscious abdication (shifts responsibility, doesn't solve) —
+   the WRONG lens here. Predictable external-dependency failures (power, BGP, upstream
+   DNS) are STD-2 *ordinary/statistical* risks that MUST be decomposed into mitigation
+   children (redundancy/failover) → absence = **FM-1 insufficiency** at the resilience
+   layer. The classifier marked NONE because it scoped the incident to "external trigger"
+   not "we failed to decompose redundancy against a foreseeable failure." Re-framed with
+   the right parent goal, most NONE collapse to FM-1. True residual (§2.1 boundary):
+   only genuinely-extraordinary (no precedent AND not derivable) + adversarial (okta,
+   §16.2). **Action: re-analyze NONE via STD-2 predictability triage**
+   (ordinary→FM-1 / statistical→FM-1-or-justified-NEGLECTED / extraordinary→§2.1).
+
+4. **Postmortems support only the FM label (± secondary), not full GFSO molecule
+   decomposition.** A postmortem describes the FAILURE POINT, not the whole transaction
+   (full criteria set, decomposition tree, per-child V). So the corpus is right-scoped
+   for E1 (failure-taxonomy) but CANNOT test the compositional theorem T1 — that needs
+   E3 (multi-agent decomposition with per-subtask V). Not a flaw; a scope fact.
+
+5. **Scrum cases are under-analyzed and the richest untapped material.** Track B only
+   did primitive-presence. Each rich case (FBI Sentinel, Medco, eduScrum, House) has a
+   built-in **before/after A/B**: a BEFORE failure (waterfall, FM-classifiable) and an
+   AFTER Scrum success (embedding). The DELTA = which GFSO primitive the before lacked
+   that the after supplied → a causal "primitive X fixes FM Y" claim. Richer than either
+   track alone. **Action: dedicated Scrum analysis (the `scrum_gfso_worked_examples.md`
+   that was proposed but never written).**
+
+6. **Diffusion/planning-horizon intuition = §17.1 + §10.3 + §18.1.** Coarse-to-fine
+   decomposition across receding horizons: §17.1 is the skeleton; §10.3 cascade
+   (‖eₙ‖≤(L·γ)ⁿ‖e₀‖) already formalizes "crooked top → unrealistic result". The hard
+   part — "every level follows the domain's true structure" — IS causal correctness
+   §18.1 (open). Diffusion learns the manifold from data; GFSO has no analog (LLM-layer
+   §7.3 + q_D are the workaround). **Scrum junction:** when the domain model isn't known
+   upfront (weak-A1), Scrum DISCOVERS the coarse structure through iterations (each
+   sprint = a denoising step that adds detail + corrects via CHALLENGE). This is the
+   direct GFSO↔Scrum connection and is NOT yet experimentally nailed.
+
+### "Leaderboard" reframe
+There are no "leaders" — incidents are failures, not a ranking; Scrum cases are
+mostly successes. The right object is a **failure-mode atlas**: distribution of how
+real systems fail, mapped to the formal taxonomy, sliced by domain. Term "leaderboard"
+doesn't fit.
+
+### Artifacts (local, gitignored)
+- `data/postmortems/corpus.json` (230, schema-valid) + index.json + schema.{md,json}
+  + sources/ raw/ manual/ meta/
+- `runs/phaseB/leaderboard.md` (the atlas) + annotations.json (230) + part_*.json
+- `runs/e0_bench/` = the prior BCB/LCB criteria-gate bench (E0, +34pp)
+
+### Next (clean-context candidates, in rough priority)
+1. Re-analyze the 12 NONE via STD-2 triage (most → FM-1; isolate true §2.1 residual).
+2. FM-1 sub-taxonomy + FM-3 false-FAIL extension → re-run Track A (theory change → re-run).
+3. Dedicated Scrum before/after analysis (the missing doc).
+4. (Later) E3 for the compositional theorem — needs a different data source.
