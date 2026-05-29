@@ -15,7 +15,10 @@ from gfso.core.types import (
 
 
 class SqliteStorage(StoragePort):
-    def __init__(self, db_path: str = "gfso.db"):
+    def __init__(self, db_path: str = "data/gfso.db"):
+        if db_path != ":memory:":
+            from pathlib import Path
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")

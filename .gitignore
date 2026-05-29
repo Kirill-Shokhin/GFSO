@@ -39,7 +39,4 @@ nul
 # raw/ and manual/ are large/regenerable/copyright (book PDF) — never push.
 /data/
 
-# Local SQLite DB used by the API server (per-instance state, not tracked)
-gfso.db
-gfso.db-shm
-gfso.db-wal
+# API server SQLite DB lives at data/gfso.db (+ WAL/shm) — covered by /data/ above

@@ -1,14 +1,18 @@
-# Phase B — Classification Protocol (v2)
+# E1 — Classification Protocol (v3.1)
+
+> v3.1 (2026-05-29): aligned to canon v3.3 — FM-3 two-directional (false-PASS ∧ false-FAIL),
+> FM-1 sub-taxonomy (a–e), STD-2 predictability router + root-cause GATE for external triggers.
+> Annotator: Opus only (consistency). "Track A/B" = classification tracks (not project phases).
 
 Input: `data/postmortems/corpus.json` (230 records, schema v1.1.0).
-Output: `runs/phaseB/annotations.json` (one annotation object per record).
+Output: `runs/e1_results/annotations.json` (one annotation object per record).
 Do NOT mutate corpus.json — annotations live in a separate layer (multi-annotator design).
 
 Two tracks, dispatched by `entry_type`:
 - **Track A** — `incident` (216 records): classify root cause into the 7 Failure Modes.
 - **Track B** — `process_case` (14 Scrum records): map the process narrative onto GFSO primitives (§17.2 embedding). NO failure mode.
 
-This protocol incorporates fixes surfaced by the 13-record trial (runs/phaseB_trial/).
+This protocol incorporates fixes surfaced by the initial 13-record trial.
 
 ---
 
@@ -27,9 +31,9 @@ This protocol incorporates fixes surfaced by the 13-record trial (runs/phaseB_tr
 
 | FM | Name | Definition |
 |---|---|---|
-| FM-1 | Correspondence | Children of D don't correctly correspond to parent's criteria. *Insufficiency* (a parent criterion has no responsible child) or *redundancy* (a child addresses no parent criterion). |
+| FM-1 | Correspondence | Children of D don't correctly correspond to parent's criteria. *Insufficiency* (a parent criterion has no responsible child) or *redundancy* (a child addresses no parent criterion). **Tag a sub-type** (see below). |
 | FM-2 | Consistency | Two+ children's criteria conflict; joint satisfaction impossible. |
-| FM-3 | Verifiability | A node validated PASS but the validation didn't reflect reality — false PASS. |
+| FM-3 | Verifiability | A validation value didn't reflect reality — **either direction**. *false-PASS*: PASS where reality is fail. *false-FAIL*: FAIL where reality is pass (over-rejection, e.g. a healthy node judged dead → needless failover). The defect is at the *value*; if a wrong verdict also mis-propagates, that is additionally FM-4. |
 | FM-4 | Propagation | A child's FAIL didn't propagate up; parent shows PASS while a child is FAIL. |
 | FM-5 | Currency | Spec changed but D wasn't updated; children compute on stale assumptions. |
 | FM-6 | Feasibility | D attempted before the information needed to decompose correctly existed. |
@@ -60,6 +64,43 @@ The trial found three recurring blurry boundaries. Apply these tie-breaks:
    - The info *did not yet exist* when D was fixed → **FM-6**.
 
 4. **Emergent / capacity cascades** (e.g. handshake-timeout under mass load): §4.6 maps emergent properties to FM-1, but flag these explicitly as low-confidence "applied by rule, not by fit" — they are the taxonomy's stress points and we want them visible.
+
+5. **External-trigger incidents — run the STD-2 predictability router (NEW v3).** When the trigger is outside the actor (upstream BGP/DNS/power/transit, a vendor outage), do NOT default to NONE. First set the parent goal correctly ("stay available *despite* foreseeable external faults"), then triage by STD-2 predictability:
+   - **ordinary** (recurs in this domain, P estimable from data — route leaks, power loss, transit degradation): a mitigation child was REQUIRED → its absence = **FM-1.b** (missing-resilience). If a mitigation child existed and *worked* (resilience absorbed the fault, little/no impact) → there is **no FM** (correct NONE — log as "resilience-worked", not a gap).
+   - **statistical** (estimable but rare): FM-1.b *or* a justified NEGLECTED omission.
+   - **extraordinary** (no precedent AND not derivable): genuine **§2.1 boundary** — out of scope, mark NONE with reason "boundary".
+   - **adversarial** (attacker, compromise, social-engineering): **§16.2** — out of non-adversarial scope, mark NONE with reason "adversarial".
+   So most "external" NONE collapse to FM-1.b; true residual NONE = adversarial + extraordinary + resilience-worked only.
+
+   **GATE (v3.1, critical — classify on ROOT CAUSE, not trigger).** An attacker, a vendor
+   outage, a fire, a hijack is a **trigger**, not a root cause. Before assigning §16.2
+   (adversarial) or §2.1 (boundary), ask: *was a standard domain mitigation missing?* Domains
+   routinely defend against these — patching known CVEs, RPKI/route monitoring, rate-limiting,
+   dependency isolation, multi-provider/geo-redundancy, fire-suppression, 2FA/session hardening.
+   If such a foreseeable mitigation was **absent**, the root cause is **FM-1.b** (missing
+   resilience) *regardless of the trigger being external/adversarial*. Reserve the out-of-scope
+   buckets strictly:
+   - **§16.2 (adversarial)** ONLY when the attack was genuinely novel with no foreseeable
+     mitigation, OR the missing mitigation belonged to a **third party** the actor doesn't
+     control (e.g. a vendor's compromised endpoint, a customer's hijacked registrar).
+   - **§2.1 (boundary/extraordinary)** ONLY when no precedent exists AND it's not derivable from
+     known models AND no standard domain mitigation exists. (A datacenter fire does NOT qualify —
+     fire-suppression + geo-redundancy are standard → FM-1.b.)
+   - **resilience-worked** = a real mitigation existed and absorbed the fault → no FM (evidence
+     *for* the framework, a distinct bucket, not a gap).
+   Most "adversarial/boundary" NONE fail this gate and are FM-1.b. Expected true residual ≈ 2-3.
+
+### FM-1 sub-types (NEW v3 — set `failure_mode_subtype` when primary = FM-1)
+
+| Sub-type | When |
+|---|---|
+| FM-1.a missing-criterion | a parent criterion has no responsible child at all (CHECK-1, topological) |
+| FM-1.b missing-resilience | a foreseeable external risk (STD-2 ordinary/statistical) had no mitigation child |
+| FM-1.c missing-risk-grouping | correlated risks not grouped/systematized (STD-3) |
+| FM-1.d insufficient-entailment | children all present but their criteria don't quantitatively *entail* the parent criterion (CHECK-7, e.g. budgets that don't add up) |
+| FM-1.e redundancy | a child addresses no parent criterion (non-redundancy) |
+
+Sub-type is a *secondary* tag; primary stays FM-1. Don't collapse FM-1.d into FM-1.a — "present but doesn't entail" ≠ "no child".
 
 ### Primary + secondary FM (NEW — from trial)
 
@@ -110,7 +151,7 @@ This is the §17.2 "Scrum ⊂ GFSO" embedding demonstration. For each case:
 
 ## Output schema
 
-`runs/phaseB/annotations.json`:
+`runs/e1_results/annotations.json`:
 
 ```json
 {
@@ -126,7 +167,10 @@ This is the §17.2 "Scrum ⊂ GFSO" embedding demonstration. For each case:
       "classification": {
         "failure_mode": "FM-3",
         "name": "Verifiability",
-        "secondary_failure_modes": ["FM-1"]
+        "failure_mode_subtype": null,
+        "fm3_direction": "false-PASS | false-FAIL | null",
+        "secondary_failure_modes": ["FM-1"],
+        "none_reason": "adversarial | boundary | resilience-worked | null"
       },
       "confidence": "high",
       "rationale": "...",
@@ -156,7 +200,7 @@ Each annotation is mergeable into the corresponding corpus record's `annotations
 
 ## Aggregation (after all records annotated)
 
-Produce `runs/phaseB/leaderboard.md`:
+Produce `runs/e1_results/leaderboard.md`:
 - FM distribution overall + sliced by `domain`, `company`, `methodology`
 - Count of NONE / unclassifiable (the falsification signal — pass criterion: ≥95% fit one FM)
 - FM-3/7/1 disagreement rate (the boundary the tie-breaks address)

@@ -215,7 +215,7 @@ def _create_engine_from_env() -> Engine:
     storage_type = os.environ.get("GFSO_STORAGE", "memory")
     if storage_type == "sqlite":
         from gfso.adapters.storage.sqlite import SqliteStorage
-        storage = SqliteStorage(os.environ.get("GFSO_DB_PATH", "gfso.db"))
+        storage = SqliteStorage(os.environ.get("GFSO_DB_PATH", "data/gfso.db"))
     else:
         from gfso.adapters.storage.memory import MemoryStorage
         storage = MemoryStorage()

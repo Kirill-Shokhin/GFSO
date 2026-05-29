@@ -97,7 +97,7 @@ a BEFORE (failed approach: FBI VCF+Lockheed waterfall ~$575M) and AFTER (Scrum s
 - **DELTA = the primitive the before lacked that the after supplied → a causal
   "primitive X fixes failure-mode Y" claim.** This is richer than either incident-FM or
   Scrum-embedding alone, and it's the closest the corpus gets to a causal result. The
-  doc `scrum_gfso_worked_examples.md` was proposed but NEVER written — write it here.
+  doc — now WRITTEN at `docs/e1/scrum_worked_examples.md`.
 
 ---
 
@@ -154,6 +154,38 @@ complete" rhetorical trick. Guard against it: the claim is only strong if the di
 (a) is genuinely exhaustive and (b) the regress argument is rigorous. If those wobble,
 it's just a restatement of "we use an LLM."
 
+### 4b. The three lemmas + model-of-the-agent + the falsifier (next-session scaffold)
+
+The candidate closure, sharpened into lemmas to make rigorous in the theory-model session:
+- **Lemma 1 (K\*-independence — extra-axiomatic).** Two domains with identical task-graph
+  structure but different causal laws (K*₁≠K*₂) satisfy A1,A2 identically; no sentence of
+  L{A1,A2} distinguishes them ⟹ K* not definable from A1+A2. (Model-theoretic
+  indistinguishability — close to genuinely formal.)
+- **Lemma 2 (source dichotomy declared∨learned, exhaustive).** Any estimate K̂ of K* is either
+  *declared* (more GFSO structure) or *learned* (fit to experience). Exhaustive via a-priori/
+  a-posteriori split; K* is contingent empirical content. *(Seam: leans on analytic/synthetic
+  dichotomy — weakest joint.)*
+- **Lemma 3 (declarative regress has no ground — Münchhausen).** A declared K̂ is itself a GFSO
+  decomposition whose own correctness is a fresh L1 instance → infinite regress / circle /
+  termination at a non-declared (learned) ground. Only termination supplies correctness ⟹ the
+  learned half is structurally necessary.
+
+**Model of the agent (the load-bearing reframe).** The learned-half slot (forced by L1-3) is
+occupied by an agent in one of two **inverse epistemic modes**: *implicit/generative* (K̂ latent
+in weights/experience — can generate, can't certify: LLM, **human intuition/expertise**) vs
+*explicit/structural* (K̂ declared — can certify, can't generate domain content: GFSO apparatus,
+Solver). **A human agent = generative half (experience) + partial structural half.** This is what
+makes GFSO a **theory-model, not a standard**: it explains *why pre-theoretic work worked* (people
+ran the generative half + partial structural conformance; "it worked" = the implicit process
+happened to satisfy the CVC conditions) and *why it failed* (OOD: K̂ fit to past domains; or the
+structural half too thin → the 7 FM uncaught). Human and LLM are **substitutable in the generative
+slot** and compose (γ_struct·γ_gen).
+
+**Required falsifier (to be a theory-model, not "explains everything").** A work process that is
+**robustly successful out-of-distribution with NEITHER an explicit structural half NOR a learned
+domain estimator** would refute the structural claim. If impossible in principle, that impossibility
+IS the core result; if exhibited, the model is wrong. **Name and hunt this in the session.**
+
 ---
 
 ## 5. Horizon → challenge (the derived chain; keep the metaphor separate)
@@ -193,18 +225,45 @@ fail, mapped to the formal taxonomy, sliced by domain. Drop "leaderboard."
 
 ## 7. Open theory questions / next moves (priority order)
 
-1. **Re-analyze the 12 NONE via STD-2 triage** (§1 above). Expect most → FM-1; isolate
-   the true §2.1/§16.2 residual. This sharpens the completeness claim honestly.
-2. **FM-1 sub-taxonomy + FM-3 false-FAIL** (§2), then re-run Track A. Theory change → re-run
-   (the corpus + annotations layer is built for exactly this; annotations re-generate,
-   corpus untouched).
-3. **Scrum before/after A/B analysis** (§3) — write `scrum_gfso_worked_examples.md`. The
-   causal "primitive X fixes FM Y" payload.
-4. **Develop the §18.1 structural closure** (§4) — the highest-value pure-theory move.
-   Try to make (a)/(b)/(c) rigorous. If it holds, it's a real contribution; if it
-   wobbles at the seam, drop it honestly.
+> **UPDATE 2026-05-29: deltas A–D are MERGED into canon `applied_gfso_v3.md` v3.3-wip**
+> (after 2 critic rounds incl. a neutral ontology-derived one; record in canon Changelog +
+> EVIDENCE_LOG §9). Track A was RE-RUN then CORRECTED via the
+> v3.1 root-cause gate (`runs/e1_results/rerun_leaderboard_corrected.md`): **fit 97.2%
+> (210/216), passes ≥95%** (v2 was 94.4%). FM-1=142 (a71/b53/d13/c5), FM-3 incl. 10 false-FAIL,
+> **NONE=6 (3 §16.2 third-party + 3 resilience-worked, 0 uncovered FM)** — true residual = 3,
+> matching the ~2-3 prediction (3 independent reads converged). §4.8's operational-axis residue
+> was also CLOSED (derived from A1, via a critic round; EVIDENCE_LOG §9.1). **E1 is complete.**
+> **Delta E (§18.1 / theory-model) is NOT merged — the next move, to develop WITH the author.**
+> Items below remain the live thinking.
+
+1. **Re-analyze the 12 NONE via STD-2 triage** — ✅ DONE (session 2026-05-29). Not the
+   binary "most → FM-1" I expected; the cluster splits **three** ways:
+   - **6 → FM-1** (resilience-insufficiency, mostly STD-2 missing-mitigation-child): 033
+     (high, self-admitted capacity gap), 009 (medium), 022/039 (low; **022≡039 semantic
+     duplicate**), 017, 027 (low — prevention is genuinely §2.1, only detect/respond is FM-1).
+   - **2 → no FM at all because resilience WORKED** (029 power, netflix-001 AZ-evac) — these
+     are *positive* evidence, a third bucket the binary framing missed.
+   - **4 → true residual outside non-adversarial scope**: §16.2 adversarial (okta-001,
+     cloudflare-019, cloudflare-031) + §2.1 boundary (cloudflare-035, customer-chosen 2-hop dep).
+   Net: claim "NONE ≠ a GFSO gap" **holds** (0 cases need an 8th FM), but via three routes,
+   not "all FM-1." Key refinement: "external trigger" classifies nothing by itself — the
+   **choice of parent goal** + STD-2 predictability is the router. Feeds Delta C (FM-1.b).
+2. **FM-1 sub-taxonomy + FM-3 false-FAIL** — ✅ MERGED in canon §4.2; Track A re-run done
+   (corrected leaderboard). 
+3. **Scrum before/after A/B analysis** — ✅ DONE: `docs/e1/scrum_worked_examples.md` (causal
+   primitive→FM, before/after, house natural-experiment). **Track B is CLOSED for E1.** A fuller
+   per-case primitive embedding = full-decomposition work → revisit at E3/decomposition only, NOT
+   an E1 item; don't stretch it now.
+4. **§18.1 structural closure** → ✅ scaffold in **§4b above** (3 lemmas + model-of-the-agent +
+   named falsifier). Reframes §18.1 to "characterized forced-coupling boundary" → the
+   standard→**theory-model** transition. NOT merged to canon — the next session, WITH the author.
 5. **(Later) E3** for the compositional theorem T1 — needs a different data source
-   (multi-agent decomposition with per-subtask V); postmortems can't test it.
+   (multi-agent decomposition with per-subtask V); postmortems can't test it. **E2 first.**
+
+Also ✅ MERGED: 7-FM completeness as theorem-modulo-axioms (canon §4.8); STD-1/2/3→FM-1 (§5.5).
+**Theory-model session agenda:** develop §4b lemmas rigorously + a systematic **falsifiability
+pass over the whole canon** (each claim → what falsifies it — only spot instances exist now) +
+the residues (principled FM-1.b↔§2.1 criterion; Axiom-2 single-clock scope).
 
 ---
 

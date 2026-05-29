@@ -661,7 +661,7 @@ In order of priority:
 1. **Integrate gfso-agent lessons into this log** — read the old repo, write up
    what was tried, what failed, why. Should explain why v3 looks the way it does.
 
-2. **E1 protocol document + first run** — `docs/e1_postmortem_protocol.md`
+2. **E1 protocol document + first run** — `docs/e1/collection_protocol.md`
    describing exact procedure for an agent: which company, which incident reports,
    how to classify, what output format. Run on one company (Cloudflare is best
    first because they publish detailed RCAs and root causes are
@@ -695,11 +695,11 @@ just memory. Memory is hints; this is record.
 
 ---
 
-## 9. E1 EXECUTED — corpus build (Phase A) + classification (Phase B), 2026-05-28
+## 9. E1 EXECUTED — corpus build + classification, 2026-05-28
 
 The plan in §5/§7 (E1 = 7-FM taxonomy validation on ~100 postmortems) was executed
 at larger scale than planned. Full pipeline + data are LOCAL (gitignored under
-`data/postmortems/` and `runs/phaseB/`); only tooling + this log are tracked.
+`data/postmortems/` and `runs/e1_results/`); only tooling + this log are tracked.
 
 ### Phase A — corpus (data/postmortems/)
 - **230 records / 49 sources / 1980–2026.** 216 incident postmortems + 14 Scrum
@@ -717,8 +717,8 @@ at larger scale than planned. Full pipeline + data are LOCAL (gitignored under
 - Schema v1.1.0: verbatim-first (Quote objects), taxonomy-agnostic, multi-annotator
   (`annotations[]` open), entry_type/domain/methodology tags. Built for a public artifact.
 
-### Phase B — classification (runs/phaseB/)
-Protocol: docs/phaseB_protocol.md (v2). Annotator: **Opus** (consistency — do NOT
+### Classification (runs/e1_results/)
+Protocol: docs/e1/classification_protocol.md (v3.1). Annotator: **Opus** (consistency — do NOT
 mix models across the corpus, it confounds the distribution). Two tracks.
 
 **Track A (216 incidents → 7 FM):**
@@ -769,7 +769,7 @@ Issuer=Executor (still inside); NUMMI/Zappos correctly out-of-scope (not handoff
    built-in **before/after A/B**: a BEFORE failure (waterfall, FM-classifiable) and an
    AFTER Scrum success (embedding). The DELTA = which GFSO primitive the before lacked
    that the after supplied → a causal "primitive X fixes FM Y" claim. Richer than either
-   track alone. **Action: dedicated Scrum analysis (the `scrum_gfso_worked_examples.md`
+   track alone. **Action (DONE): dedicated Scrum analysis (`docs/e1/scrum_worked_examples.md`
    that was proposed but never written).**
 
 6. **Diffusion/planning-horizon intuition = §17.1 + §10.3 + §18.1.** Coarse-to-fine
@@ -791,11 +791,105 @@ doesn't fit.
 ### Artifacts (local, gitignored)
 - `data/postmortems/corpus.json` (230, schema-valid) + index.json + schema.{md,json}
   + sources/ raw/ manual/ meta/
-- `runs/phaseB/leaderboard.md` (the atlas) + annotations.json (230) + part_*.json
+- `runs/e1_results/leaderboard.md` (the atlas) + annotations.json (230) + part_*.json
 - `runs/e0_bench/` = the prior BCB/LCB criteria-gate bench (E0, +34pp)
 
+### 9.1 — v3.3 theory update + Track A re-run (2026-05-29)
+
+The §9 findings were worked into canon **v3.3-wip** through 2 critic rounds (one neutral,
+ontology-derived). Provenance now lives here + in the canon Changelog (the working delta drafts
+were consolidated away after merge). Merged:
+- **FM-3 two-directional** (false-PASS ∧ false-FAIL) — §4.2/§4.6.
+- **FM-1 sub-taxonomy** a–e (secondary tag, no new top-level FM) — §4.2.
+- **Completeness reframed partition → basis** ("≥1 FM, conjunctions allowed", not "exactly
+  one") — §4.4 + new **§4.8** (formal: CVC≡⋀Cᵢ, Axiom-1 covering, Axiom-2 atomicity; intra-
+  component properties DERIVED — values←A1+§3.2, rule←§3.3, args←§2.2; **operational axis also
+  DERIVED** — trichotomy of linearly-ordered local time, grounded directly in A1's finite-time
+  clause (closed via a neutral critic round; only residual cost = Axiom-2
+  single-clock scope). Driver: internal overclaim + E1's 117/216 secondary-FM rate.
+- **STD-2 = admissibility (not coverage); STD-1/3 operationalize joint-sufficiency** — §5.5.
+- Changelog added to canon.
+
+**Track A RE-RUN (protocol v3, all-Opus, 216 incidents)** — `runs/e1_results/rerun_*` +
+`rerun_leaderboard.md`. Empirical verification of the deltas:
+- **Completeness-as-basis HOLDS: 0/216 need an 8th FM.** All 17 NONE are router-sanctioned
+  out-of-scope: adversarial §16.2 ×10, resilience-worked ×3, boundary §2.1 ×3, extraordinary ×1.
+  Single genuine stress-point = **ovh-001** (physical datacenter fire — extraordinary, neither
+  software-mitigable nor a decomposition defect). Not an uncovered FM.
+- **FM-1 63%→60.6% and now DISCRIMINATED:** a(missing-criterion)=70, **b(missing-resilience)=43**
+  (the STD-2 router pulling former external-NONE into FM-1, as predicted), d(insufficient-
+  entailment, a Level-1 class invisible in v2)=13, c(risk-grouping)=5.
+- **FM-3 37→43, with 10 false-FAIL** (over-rejection: healthy-judged-dead, fail-closed) + 35
+  false-PASS — the false-FAIL class was uncatchable under v2. Delta B validated on data.
+- **NONE corrected via the v3.1 root-cause gate (the key fix).** The first v3 pass over-assigned
+  NONE (17) by keying on *trigger* (an attacker/fire/vendor existed) instead of *root cause*. The
+  gate (protocol rule-5 GATE): an external/adversarial trigger is NOT out-of-scope if a standard
+  domain mitigation was missing (patch, RPKI, rate-limit, isolation, geo-redundancy,
+  **fire-suppression**, 2FA). Re-triage of the 17 (Opus, `rerun_none_retriage.json`):
+  **11 → real FM** (10 FM-1.b missing-resilience + 1 FM-1.a Cloudbleed), **3 → genuine §16.2**
+  (all third-party: cloudflare-019 customer's registrar, cloudflare-042 vendor breach, okta-001
+  Sitel endpoint), **3 → resilience-worked** (evidence-FOR: cloudflare-017/029, netflix-001).
+  **§2.1 boundary = 0** — ovh-001 (datacenter fire) → FM-1.b (fire-suppression + geo-redundancy
+  are standard mitigations; the author's point). So **true out-of-scope residual = 3, matching
+  the synthesis prediction of ~2-3** (three independent reads — prediction, author-intuition,
+  root-cause re-triage — converged).
+- **CORRECTED distribution** (`rerun_leaderboard_corrected.md`): FM-1=142 (a:71, b:53, d:13, c:5),
+  FM-3=43 (incl. 10 false-FAIL), FM-5=7, FM-7=7, FM-2=6, FM-4=3, FM-6=2, + 6 non-FM (below).
+
+#### E1 — final result, correctly positioned
+
+**Do NOT lead with a "fit %".** "97% fit" conflates three different things (real failures,
+delegated responsibility, resilience successes) and is useless for presenting GFSO. The honest
+headline:
+
+> **100% basis coverage of in-scope failures: 0/216 incidents need an 8th failure mode.**
+> That is the falsification result for the 7-FM completeness (as a basis, §4.8).
+
+The 6 non-FM cases are NOT coverage gaps. They must be stated explicitly because at first glance
+they look like basis-escapes (apparent falsifiers) — they are not:
+
+- **Group 1 — resilience-worked (3: cloudflare-017, -029, netflix-001).** An external fault hit,
+  but a pre-built mitigation absorbed it; nothing in the company's decomposition broke. NONE
+  because there is no failure to classify — the decomposition did exactly what GFSO prescribes
+  against a foreseeable risk. **Evidence FOR the framework** (a company correctly applying GFSO),
+  not a gap.
+- **Group 2 — delegated responsibility (3: cloudflare-019, -042, okta-001).** The missing
+  mitigation belonged to a third party (customer's registrar / vendor's systems / subprocessor's
+  endpoint). Correct GFSO home = **NEGLECTED (STD-1)**: a justified non-coverage under
+  separation-of-responsibilities — NOT "§16.2 out-of-scope" (that label keyed on the
+  attacker-trigger). If the delegation was *declared* → legitimate NEGLECTED, no FM; if
+  *undeclared* → FM-1 (missing NEGLECTED entry). **Either way IN-framework**, not a falsifier.
+
+**The boundary to the genuinely-extraordinary — explicit, and (for now) subjective.** A real,
+direct boundary exists: safety measures don't protect against *any* fire/incident; a genuine
+no-precedent-AND-not-derivable event is §2.1. But the bar is high, and — the load-bearing point —
+**this boundary is reached ONLY from the FM-1.b question ("was a foreseeable mitigation missing?").
+No other extraordinariness axis hangs off FM-2..7.** Consequence: **"we couldn't foresee it" is no
+longer a free excuse** — an incident is either genuinely-extraordinary (rare, must be justified) or
+FM-1.b (you didn't decompose the foreseeable mitigation = a decomposition/management failure).
+~5-7 records sit on the FM-1.b↔extraordinary borderline (browserstack, circleci, cloudflare-031,
+github-026/045/063, ovh-001 — they "look unforeseeable" to many but have a standard missing
+mitigation: patch, redundancy, fire-suppression). They are classified **FM-1.b, and this does NOT
+change the FM breakdown** (all stay FM-1, sub-type b). The boundary is internal to GFSO, currently
+drawn subjectively, breaks nothing — and is precisely the place GFSO asserts there is no
+unforeseeability *outside* the FM-1.b mitigation question. (Open: a principled, less-subjective
+criterion for the FM-1.b↔§2.1 line — a later refinement, does not block E1 closure.)
+
+*(The old "≥95% fit" pass-criterion is retired as a crude proxy; the sharper statement is "100%
+basis coverage + a clean accounting of the non-FM cases as success / delegation / extraordinary".)*
+
 ### Next (clean-context candidates, in rough priority)
-1. Re-analyze the 12 NONE via STD-2 triage (most → FM-1; isolate true §2.1 residual).
-2. FM-1 sub-taxonomy + FM-3 false-FAIL extension → re-run Track A (theory change → re-run).
-3. Dedicated Scrum before/after analysis (the missing doc).
-4. (Later) E3 for the compositional theorem — needs a different data source.
+1. **THEORY-MODEL SESSION (E / §18.1)** — the next big move, WITH the author (nontrivial vector).
+   Scaffold in `theory_synthesis.md` §4/§4b (3 lemmas: K*-independence / declared∨learned /
+   Münchhausen + model-of-the-agent: human=generative+partial-structural, LLM same slot + named
+   falsifier). Reframes §18.1 open-problem → characterized forced-coupling = the standard→
+   theory-model transition. **Session agenda also includes:** (a) a **systematic falsifiability
+   pass over the whole canon** — each claim → what observation falsifies it (only spot instances
+   exist now, never done wholesale); (b) the residues below.
+2. **Residues to fold into that session:** principled (less-subjective) FM-1.b↔§2.1 boundary
+   criterion; Axiom-2 single-clock scope (distributed validation). Neither blocks E1.
+3. **Track B is CLOSED for E1** (§17.2 held: 0 unmapped on 14 cases — the falsifiable claim is
+   answered). Do NOT stretch it now. A *fuller* primitive embedding (full molecule per rich case)
+   = full-decomposition territory → revisit only when tackling decomposition (E3 / a Scrum-paper),
+   not as an E1 item. Negative-ending cases (Iraq, Iceland) → keep as theory-model falsifier fodder.
+4. (Later) E2 (LLM-Issuer), then E3 (compositional theorem T1 — needs a different data source).
