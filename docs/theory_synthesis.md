@@ -101,93 +101,6 @@ a BEFORE (failed approach: FBI VCF+Lockheed waterfall ~$575M) and AFTER (Scrum s
 
 ---
 
-## 4. The implicit/explicit duality, and a candidate STRUCTURAL closure of §18.1
-
-This is the most promising theory move and the answer to "can we close causal
-correctness now, through the fundamental?"
-
-**The duality (strong, and I think correct):**
-- **LLM / diffusion**: the domain's causal manifold is **learned from data** — latent,
-  in weights, not inspectable, probabilistic. Produces the right answer without being
-  able to state *why*.
-- **GFSO causal correctness (§18.1)**: the domain structure must be **explicitly
-  declared** in the decomposition — inspectable, binary-verifiable. Cannot proceed
-  correctly without stating *why* (the decomposition IS the explicit structure).
-
-These are **inverse epistemics**: implicit/learned vs explicit/declared. §7.3 already
-puts the LLM as a Level-2 workaround; the duality says *why* that's necessary, not a hack.
-
-**Candidate closure (this is the new bit — mark it CANDIDATE, not proven):**
-
-§18.1 ("how to know a decomposition is causally *correct*, not just formally complete")
-may not be an incompleteness of GFSO to be *fixed*, but a **forced coupling-point**,
-characterizable structurally:
-
-1. A1 (verifiability) + A2 (decomposability) contain **no domain causal structure**.
-   Verifiability says predicates exist; decomposability says tasks split. Neither tells
-   you whether a given split *mirrors the domain*. So causal correctness is
-   **extra-axiomatic** — not derivable from A1+A2 by construction.
-2. Extra-axiomatic domain structure has only two sources: **declared** (which is just
-   more GFSO decomposition — recurses, doesn't bottom out at a ground truth) or
-   **learned** (empirical/statistical — the LLM paradigm). The declarative regress
-   terminates only at empirical knowledge.
-3. Therefore causal correctness is **fundamentally empirical**, and GFSO — the explicit/
-   declarative half — *structurally cannot* supply it from its own axioms. The implicit/
-   learned paradigm is the necessary complement.
-
-If steps 1-3 hold, §18.1 flips from "open problem (find the algorithm)" to
-**"characterized boundary: the precise point where GFSO must couple to the inverse
-(learned) paradigm; the coupling is forced because the axioms don't contain domain
-structure."** That is a *recharacterization*, not a solution — but it might be the
-correct one, and it upgrades §7.3.3's cross-impossibility (Solver can't reason about
-domain; LLM can't guarantee P=0) into a general statement about the two paradigms.
-
-**What's needed to make it real (not yet done):**
-- (a) argue the declare-or-learn dichotomy is exhaustive (like the FM case-split style);
-- (b) show the declarative regress provably doesn't bottom out without empirical input;
-- (c) connect formally to §7.3.3 and to §10.3 (two fallible structure-estimates compose:
-  γ_declared · γ_learned — agreement reduces error but correlated error survives, so
-  even the coupling doesn't give P(error)=0 — which is itself the honest limit).
-
-**Seam to watch:** this could become a circular "GFSO is incomplete by design, therefore
-complete" rhetorical trick. Guard against it: the claim is only strong if the dichotomy
-(a) is genuinely exhaustive and (b) the regress argument is rigorous. If those wobble,
-it's just a restatement of "we use an LLM."
-
-### 4b. The three lemmas + model-of-the-agent + the falsifier (next-session scaffold)
-
-The candidate closure, sharpened into lemmas to make rigorous in the theory-model session:
-- **Lemma 1 (K\*-independence — extra-axiomatic).** Two domains with identical task-graph
-  structure but different causal laws (K*₁≠K*₂) satisfy A1,A2 identically; no sentence of
-  L{A1,A2} distinguishes them ⟹ K* not definable from A1+A2. (Model-theoretic
-  indistinguishability — close to genuinely formal.)
-- **Lemma 2 (source dichotomy declared∨learned, exhaustive).** Any estimate K̂ of K* is either
-  *declared* (more GFSO structure) or *learned* (fit to experience). Exhaustive via a-priori/
-  a-posteriori split; K* is contingent empirical content. *(Seam: leans on analytic/synthetic
-  dichotomy — weakest joint.)*
-- **Lemma 3 (declarative regress has no ground — Münchhausen).** A declared K̂ is itself a GFSO
-  decomposition whose own correctness is a fresh L1 instance → infinite regress / circle /
-  termination at a non-declared (learned) ground. Only termination supplies correctness ⟹ the
-  learned half is structurally necessary.
-
-**Model of the agent (the load-bearing reframe).** The learned-half slot (forced by L1-3) is
-occupied by an agent in one of two **inverse epistemic modes**: *implicit/generative* (K̂ latent
-in weights/experience — can generate, can't certify: LLM, **human intuition/expertise**) vs
-*explicit/structural* (K̂ declared — can certify, can't generate domain content: GFSO apparatus,
-Solver). **A human agent = generative half (experience) + partial structural half.** This is what
-makes GFSO a **theory-model, not a standard**: it explains *why pre-theoretic work worked* (people
-ran the generative half + partial structural conformance; "it worked" = the implicit process
-happened to satisfy the CVC conditions) and *why it failed* (OOD: K̂ fit to past domains; or the
-structural half too thin → the 7 FM uncaught). Human and LLM are **substitutable in the generative
-slot** and compose (γ_struct·γ_gen).
-
-**Required falsifier (to be a theory-model, not "explains everything").** A work process that is
-**robustly successful out-of-distribution with NEITHER an explicit structural half NOR a learned
-domain estimator** would refute the structural claim. If impossible in principle, that impossibility
-IS the core result; if exhibited, the model is wrong. **Name and hunt this in the session.**
-
----
-
 ## 5. Horizon → challenge (the derived chain; keep the metaphor separate)
 
 Horizon comes from decomposition (your point, correct): parent → sequence of children,
@@ -233,8 +146,9 @@ fail, mapped to the formal taxonomy, sliced by domain. Drop "leaderboard."
 > **NONE=6 (3 §16.2 third-party + 3 resilience-worked, 0 uncovered FM)** — true residual = 3,
 > matching the ~2-3 prediction (3 independent reads converged). §4.8's operational-axis residue
 > was also CLOSED (derived from A1, via a critic round; EVIDENCE_LOG §9.1). **E1 is complete.**
-> **Delta E (§18.1 / theory-model) is NOT merged — the next move, to develop WITH the author.**
-> Items below remain the live thinking.
+> **Delta E (§18.1 / theory-model) ✅ MERGED 2026-06-01 → canon §18.10 (v3.4)** via
+> delta→3-fresh-neutral-critics; record EVIDENCE_LOG §10. (The §4/§4b scaffold was removed —
+> dozrelo, ushlo.) Items below remain the live thinking.
 
 1. **Re-analyze the 12 NONE via STD-2 triage** — ✅ DONE (session 2026-05-29). Not the
    binary "most → FM-1" I expected; the cluster splits **three** ways:
@@ -254,16 +168,17 @@ fail, mapped to the formal taxonomy, sliced by domain. Drop "leaderboard."
    primitive→FM, before/after, house natural-experiment). **Track B is CLOSED for E1.** A fuller
    per-case primitive embedding = full-decomposition work → revisit at E3/decomposition only, NOT
    an E1 item; don't stretch it now.
-4. **§18.1 structural closure** → ✅ scaffold in **§4b above** (3 lemmas + model-of-the-agent +
-   named falsifier). Reframes §18.1 to "characterized forced-coupling boundary" → the
-   standard→**theory-model** transition. NOT merged to canon — the next session, WITH the author.
+4. **§18.1 / theory-model transition** — ✅ **DONE & MERGED 2026-06-01 → canon §18.10** (agent
+   derived necessary; Lemma 1+3; distributed falsifiability; bidirectional attribution; explains
+   pre-theoretic success/7 FM/§18.1; predicts substitutability/scope/global-falsifier). Cycle +
+   residues in EVIDENCE_LOG §10. Metaphysics route kept out of docs (agent memory only).
 5. **(Later) E3** for the compositional theorem T1 — needs a different data source
    (multi-agent decomposition with per-subtask V); postmortems can't test it. **E2 first.**
 
 Also ✅ MERGED: 7-FM completeness as theorem-modulo-axioms (canon §4.8); STD-1/2/3→FM-1 (§5.5).
-**Theory-model session agenda:** develop §4b lemmas rigorously + a systematic **falsifiability
-pass over the whole canon** (each claim → what falsifies it — only spot instances exist now) +
-the residues (principled FM-1.b↔§2.1 criterion; Axiom-2 single-clock scope).
+**Live next (post-theory-model, separate streams):** systematic **falsifiability pass over the
+whole canon** (each claim → what falsifies it — only spot instances exist now); principled
+FM-1.b↔§2.1 boundary criterion; Axiom-2 single-clock scope. Then E2, E3.
 
 ---
 

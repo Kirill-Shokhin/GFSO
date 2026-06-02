@@ -16,6 +16,8 @@ What a transaction must carry: a Spec, a finite set of decidable Criteria, a Dea
 
 **Foundations:** two axioms (A1 verifiability of goals, A2 decomposability of complex tasks), from which the entire protocol follows — including impossibility results that key constructions (binary validation, AND aggregation, 7 failure modes) admit no alternatives. 6 original theorems + 8 propositions/corollaries supported by classical theory.
 
+**Theory-model layer (§18.10):** beyond a standard, GFSO *derives the agent* (human or LLM) as a necessary structural link rather than presuming it — the formal half cannot supply a decomposition's domain-correctness by itself (Lemma 1), nor can pure declaration ground it (Lemma 3), so an empirical-contact carrier is necessary. This lets GFSO *explain* pre-theoretic success (and the 7 FM) and *predict*, falsifiably, agent substitutability and the applicability boundary.
+
 ---
 
 ## Key Results
@@ -26,8 +28,8 @@ What a transaction must carry: a Spec, a finite set of decidable Criteria, a Dea
 |---|--------|-------|------------|
 | T1 | Compositionality | V(parent) = AND(V(children)) under correct D | Constructive |
 | T2 | AND uniqueness | AND is the only non-trivial aggregation | Exhaustive enumeration |
-| — | \|L\|=2 impossibility | Binary validation is the only option | Pigeonhole |
-| — | 7 FM completeness | Failure modes are exhaustive | Exhaustive case split |
+| — | \|L\|=2 | Binary validation forced (injectivity from decision-relevance; \|A\|=2 architectural) | Pigeonhole |
+| — | 7 FM completeness | Failure modes are exhaustive — proven as an independent basis (residue: single-clock) | Exhaustive case split |
 | T10 | Self-measuring | Q computable from execution trace | Constructive |
 | T11 | Structural transparency | Every decision has a record | From invariants |
 
@@ -42,7 +44,7 @@ What a transaction must carry: a Spec, a finite set of decidable Criteria, a Dea
 | P7 | Scale bounds | Cascade: errors ≤ (L·γ)ⁿ | Operator composition |
 | P8 | Bayesian IC | Honesty optimal when cost(defect) > cost(signal) | Hurwicz 1960 |
 | P9 | Decomposition quality | 4 independent improvement mechanisms | P3 + P7 |
-| — | Minimality | Basis {T, D, Dep, Del} is minimal | Constructive |
+| — | Minimality | Basis {T, D, Dep, Del} is minimal — each element necessary (uniqueness open, §18.9) | Constructive |
 
 ---
 
@@ -56,7 +58,9 @@ A1, A2 (axioms)
   → Standards + 3 verification levels (CHECK-1–8)
   → Protocol: 12 P2P signals + timeout, 10 states (minimal)
   → Graph G + 5 metrics Q (minimal, self-measuring)
-  → AI layer: Solver + LLM (necessity from P6 + Simon)
+  → AI layer: Solver + LLM (capacity-necessity: Simon + info-volume)
+  → Theory-model (§18.10): agent derived necessary, not presumed
+                           (GFSO = standard + theory-model)
 ```
 
 Every step is motivated by the previous. Design decisions are explicit.
@@ -67,7 +71,9 @@ Every step is motivated by the previous. Design decisions are explicit.
 
 | File | Purpose |
 |------|---------|
-| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (Russian draft; EN forthcoming). Includes §17.1 adaptive stratification + §17.2 Scrum ⊂ GFSO |
+| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (canon, v3.4; Russian draft, EN forthcoming). Incl. §17.1 adaptive stratification, §17.2 Scrum ⊂ GFSO, **§18.10 theory-model (agent derived)** |
+| [`docs/CORE.md`](docs/CORE.md) | One-page definition of what GFSO is (read first) |
+| [`docs/EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) | Dry empirical/derivation record (E1 §9/§9.1, theory-model §10/§10.1) |
 | [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: case studies, FAQ, per-metric analysis, adoption arguments |
 | [`docs/architecture.md`](docs/architecture.md) | Code architecture: FSM invariant, module structure, L1/L2/L3 |
 
@@ -133,8 +139,9 @@ Theory:
 - [x] Impossibility results on foundations (|L|=2, AND, 7 FM)
 - [x] AI layer formalized (Solver + LLM, Chollet Level ≥ 2)
 - [x] Vision document with practical illustrations
-- [x] §17.1 adaptive stratification by horizons (derived from Dep coherence + A1)
-- [x] §17.2 Scrum as special case of GFSO (full primitive mapping)
+- [x] §17.1 adaptive stratification by horizons (derived from Dep coherence + A1 + stationarity)
+- [x] §17.2 Scrum ⊂ GFSO — structural containment shown (behavioral derivation open)
+- [x] §18.10 theory-model: agent derived as a necessary structural link (not presumed); claims calibrated + full-canon falsifiability pass
 - [ ] English translation
 
 Implementation:
@@ -149,7 +156,10 @@ Empirical:
       (Issuer-side spec discipline) raises Haiku 4.5 solve rate from 29.1% to
       63.5% zero-shot, same compute. Illustrates §3.2 forced binary V on a
       current frontier-adjacent model.
-- [ ] E1 — 7 FM taxonomy validation on ~100 public software postmortems
+- [x] E1 — 7 FM taxonomy validated on 216 public software postmortems:
+      **0/216 need an 8th FM** (completeness-as-basis holds). FM-1 sub-typed
+      (a/b/c/d), FM-3 shown two-sided; the 6 non-FM cases are in-framework
+      (resilience-worked / delegated). Record: EVIDENCE_LOG §9/§9.1.
 - [ ] E2 — LLM-Issuer with vs without GFSO discipline (twin experiment)
 - [ ] E3 — Compositional validation theorem in multi-agent decomposition
 - [ ] Long-horizon deployment validation (≥ 6 months)
