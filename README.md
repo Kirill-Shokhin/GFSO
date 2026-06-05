@@ -71,9 +71,8 @@ Every step is motivated by the previous. Design decisions are explicit.
 
 | File | Purpose |
 |------|---------|
-| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (canon, v3.4; Russian draft, EN forthcoming). Incl. §17.1 adaptive stratification, §17.2 Scrum ⊂ GFSO, **§18.10 theory-model (agent derived)** |
-| [`docs/CORE.md`](docs/CORE.md) | One-page definition of what GFSO is (read first) |
-| [`docs/EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) | Dry empirical/derivation record (E1 §9/§9.1, theory-model §10/§10.1) |
+| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (canon, v3.5; Russian draft, EN forthcoming). Incl. §17.1 adaptive stratification, §17.2 Scrum ⊂ GFSO, **§18.10 theory-model (agent derived)** |
+| [`docs/falsifiability.md`](docs/falsifiability.md) | Falsifiability register: each canonical claim → what would falsify it (E/M/C typed) |
 | [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: case studies, FAQ, per-metric analysis, adoption arguments |
 | [`docs/architecture.md`](docs/architecture.md) | Code architecture: FSM invariant, module structure, L1/L2/L3 |
 
@@ -141,7 +140,8 @@ Theory:
 - [x] Vision document with practical illustrations
 - [x] §17.1 adaptive stratification by horizons (derived from Dep coherence + A1 + stationarity)
 - [x] §17.2 Scrum ⊂ GFSO — structural containment shown (behavioral derivation open)
-- [x] §18.10 theory-model: agent derived as a necessary structural link (not presumed); claims calibrated + full-canon falsifiability pass
+- [x] §18.10 theory-model: agent derived as a necessary structural link (not presumed); claims calibrated
+- [x] Falsifiability register ([`docs/falsifiability.md`](docs/falsifiability.md)): every load-bearing claim typed by what would falsify it (empirical / mathematical / conditional-on-a-named-premise). 7-FM completeness is analytic — a derived case split over a derived covering axiom (§4.8); E1 (0/216 incidents need an 8th mode) corroborates that the derived categories are adequate to real failures rather than testing an empirical posit. The irreducibly empirical surface is two distinct loci sharing one root (where the world enters): domain membership (does A1∧A2 hold here) and faithfulness of the decomposition to the domain's real structure.
 - [ ] English translation
 
 Implementation:

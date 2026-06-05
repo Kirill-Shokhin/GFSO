@@ -878,100 +878,14 @@ criterion for the FM-1.b↔§2.1 line — a later refinement, does not block E1 
 *(The old "≥95% fit" pass-criterion is retired as a crude proxy; the sharper statement is "100%
 basis coverage + a clean accounting of the non-FM cases as success / delegation / extraordinary".)*
 
-### Next (clean-context candidates, in rough priority)
-1. **THEORY-MODEL SESSION (E / §18.1) — ✅ DONE 2026-06-01, merged to canon §18.10 (v3.4). See §10 below.**
-   (Superseded scaffold note kept for provenance: was in `theory_synthesis.md` §4/§4b — 3 lemmas
-   + model-of-the-agent. The "declared∨learned" lemma was dropped; the human-vs-LLM split was
-   corrected to one agent slot.) The **systematic falsifiability pass over the whole canon** was
-   NOT done — it remains the live next item (see §10 residues).
-2. **Residues to fold into that session:** principled (less-subjective) FM-1.b↔§2.1 boundary
-   criterion; Axiom-2 single-clock scope (distributed validation). Neither blocks E1.
-3. **Track B is CLOSED for E1** (§17.2 held: 0 unmapped on 14 cases — the falsifiable claim is
-   answered). Do NOT stretch it now. A *fuller* primitive embedding (full molecule per rich case)
-   = full-decomposition territory → revisit only when tackling decomposition (E3 / a Scrum-paper),
-   not as an E1 item. Negative-ending cases (Iraq, Iceland) → keep as theory-model falsifier fodder.
-4. (Later) E2 (LLM-Issuer), then E3 (compositional theorem T1 — needs a different data source).
-
 ---
 
-## 10. THEORY-MODEL CLOSED — agent derived, merged to canon §18.10 (2026-06-01)
+## 10. Theory-model — see canon §18.10
 
-The standard→theory-model transition is **complete** and merged (canon v3.4, §18.10). Status of
-the agent changes from *presumed* to *derived*; no formal result changed.
+The standard→theory-model derivation (agent derived as a necessary structural link) lives **in the
+canon, §18.10** (with the calibrated claims); provenance is in the canon Changelog + git history.
 
-**What was derived (survives 3 independent critics):**
-- A1 splits into (i) decidability (structural; composition = Theorem 1) and (ii) domain-
-  correctness ("which predicate is the correct one"). A1 asserts (ii) exists, not which — the
-  agent was hidden in "correct".
-- **Lemma 1** (S extra-axiomatic, model-theoretic, under the clause-(i)/structural reading) +
-  **Lemma 3** (declaration regress, Münchhausen). The old "declared∨learned" lemma (Lemma 2) was
-  dropped; its content survives as P3 (consulted-reality-or-not, incl. *mediated* contact).
-- P1–P5 ⟹ empirical contact is necessary. Apparatus cannot generate K̂ (Lemma 1) ⟹ **agent
-  necessary as sole source of domain content K̂** + interpreter. Contact is a **joint event**
-  (form ← binary criterion; verdict ← world; propose/interpret ← agent) — NOT "agent = sole
-  source of contact" (a naive earlier claim, corrected).
-- Binarity (§3.2) gives probes their falsifiable **form** but NOT **sensitivity** to S-divergence
-  (a binary-but-insensitive criterion is exactly FM-3 false-PASS); discrimination is the open
-  part of (ii). [This corrected a mid-cycle overclaim — see critic trajectory.]
-- Distributed falsifiability (leaf criterion / per-node composition claim; planner lives in
-  composition claims; failure = FM-1.d/1.b, attributable to the decomposition). Bidirectional
-  attribution: forward = §10.3 cascade; backward = falsification attributable by §2.2 composition
-  to *a* (not provably "lowest") broken node, carried by CHALLENGE/BLOCK (§17.1); channel
-  stability = small-gain (§10.3/§7.3.5). Locality is derived from composition, NOT from §10.3.
-- Explains: pre-theoretic success/failure, 7 FM = structural-half thinness spectrum (E1 0/216),
-  §18.1 = the (ii) half (open-from-inside, convergent with §18.1/§16.3). Predicts (falsifiable):
-  substitutability (only vs an outcome-independent faithfulness proxy, else = §6.5 check), scope
-  boundary (sharpens §2.1), global falsifier.
-
-**Critic cycle (delta `delta_theory_model.md` → neutral critic → merge; consolidated away after).**
-Three FRESH independent critics (each blind to the others and to the dialogue — honest peer
-review): R1 found ~5 substantive issues + an underclaim (induction); R2 caught that R1's P6 fix
-was itself an overclaim (binarity ≠ discrimination), + Lemma-1 scoping, P3 mediated contact,
-forgotten-glue = FM-1 not FM-3, and the E1 non-FM count (§2.1 residual = 0, not ~3 — settled
-against §9.1); R3 found only wording-level issues and confirmed the prior fixes sound. Severity
-substantive→wording = convergence. The metaphysics framing (structural realism) was deliberately
-kept OUT (recorded only in agent memory); the derivation rests only on A1's two clauses + Lemmas
-1 & 3.
-
-**Honest residues (the model's boundary, NOT closed — closing (ii) would be over-closing):**
-single-agent inductive inference (aggregate weakly supported §10.2/§7.3.5/§18.6); decomposition
-depth agent-relative; which carving is faithful = non-derivable (Lemma 1, = §18.1); probe
-discrimination = open part of (ii). These are explained/localized, not gaps.
-
-**Live next (theory tails — to close/logically-resolve BEFORE any E2; author's gate 2026-06-02:
-"no point validating an inconsistent model"):**
-(a) **Falsifiability + consistency pass over the whole canon** (never done wholesale) — each claim
-→ its falsifier; flag unfalsifiable claims AND internal inconsistencies, incl. new §18.10 vs
-§1–§17 (e.g. agent-necessity-from-Lemma-1 vs §7.3 AI-necessity-from-Simon — complementary or
-competing?). This is the consistency spine and the completeness-checker for the tail list.
-(b) **FM-1.b↔§2.1 boundary criterion** — candidate: faithful-K̂/domain-precedent test (FM-1.b iff
-a faithful domain estimate would carry the mitigation; §2.1 iff no structural regularity to be
-faithful to). NEW, not yet critic-vetted → own delta→critics.
-(c) **Axiom-2 single-clock — logically resolved as an E3 boundary** (asynchronous multi-agent
-validation without a global clock): NOT a theory-model defect, a scope extension. The theory-model
-(composition/attribution/Dep + deadline-coherence) assumes orderable time; concurrency is E3.
-
-Empirical open problems (E2+'s job, NOT pre-E2 blockers — uncloseable without data): §18.2
-calibration, §18.5 deployment, §18.6 cold-start threshold, §18.8 proxy-metrics, §18.3 adversarial.
-E2 only AFTER block (a)/(b) are closed and a fresh full-canon critic pass is run.
-
-### 10.1 — Falsifiability + consistency pass, round 1 (2026-06-02, canon v3.4)
-
-Ran 4 fresh independent neutral auditors over the whole canon (§1–4 / §5–7 / §8–14 / §15–19),
-each: every claim → falsifier; flag unfalsifiable (DEFINITIONAL-ok vs PROBLEM) + inconsistencies
-incl. new §18.10 vs §1–§17. **No hard logical contradiction with A1/A2 or the formal results.**
-Real seams found and FIXED in v3.4 (see canon Changelog): §7.3.6 every-error-caught (contradicted
-§18.10/§5.4-L2); §7.3.1 mis-cited Утв.6 for a capacity necessity; §4.4 "импортирована" vs §4.8
-"выведена"; §7.3.5 Q=const; §7.3↔§18.10 entity-identity seam (new §7.3.7); §18.10 P3 unnamed +
-global-falsifier circularity; §8–§14 hidden (ii)-faithfulness assumptions (Утв.6/7, §12) now tagged;
-front-matter "полнота доказана" overclaim. The biggest systemic finding: **several formal results
-silently assume clause-(ii) faithfulness** (signals-not-noise, γ<1, faithful history) — now flagged
-conditional, same modulo-status as Theorem 1.
-
-**Deferred (minor overclaim-softening, low priority):** §6.2 "12=минимум" vs §18.9 uniqueness-open;
-§7.2 "5↔5 биекция минимальна" inherits §2.4's open-minimality hedge; §12 "доказуемо"→"conditionally";
-§5.1 NEGLECTED-aggregation independence assumption; §3.4 decision-relevance circularity. None
-block; fold into the author's planned final critic pass (one version: v3.4).
-
-NOTE: per author 2026-06-02 — even when I call it done, a fresh full-canon critic pass will be run
-before E2. Round 1 above is not that final pass; expect ≥1 more.
+**Policy (set 2026-06-05):** this log is **empirical evidence only**. Agent-process material —
+critic-round narratives, session state, next-steps/plans, my own error-corrections, "what's done /
+what remains" — does **NOT** belong here; it lives in agent memory. The E1 empirical study is
+§9/§9.1 above. Keep this log a public empirical artifact, not a working log.
