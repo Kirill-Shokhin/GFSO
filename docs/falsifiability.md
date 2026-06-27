@@ -541,8 +541,9 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
 - **Tested?** ◻ — **falsifier well-formed but DORMANT.** The canon (§18.10, §7.3.7, §5.2) gives
   no operational outcome-independent faithfulness proxy yet (nearest candidate = §5.2
   domain-precedent, itself judgement-drawn — Flag 4). Non-circular in form, non-operational in
-  fact — same status as Flag 1's missing counter. The E2 probe is a target, not readiness:
-  it is blocked until a proxy instrument is built.
+  fact — same status as Flag 1's missing counter. E2 ran, but measured **convergence to a
+  (bare-built) reference**, not faithfulness to the real domain — it did **not** build a
+  faithfulness proxy; this locus stays blocked (the value / faithfulness test routes to E3 / execution).
 
 ### §18.10 — prediction Pred-2: applicability boundary
 - **Claim.** Structural success-content present ⟺ GFSO applicable (sharpens §2.1).
@@ -642,8 +643,9 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   a **contextual value**, not the forced structure (same status as a wrong Δ or L,γ estimate). The
   *free residue* (speed, route among faithful D, front-load granularity above the "executable
   segment" floor) is **forced-free** — orthogonal, so unfalsifiable-by-design and correctly so.
-- **Tested?** — (forcing) analytic; (magnitudes) ◻ routed to E2/E3 + the §18.8 L,γ measurement, the
-  same empirical hooks as the C-claims (Flag 5). No methodology run end-to-end yet.
+- **Tested?** — (forcing) analytic; (magnitudes) ◻ routed to E3 + the §18.8 L,γ measurement (E2 was
+  decomposition-convergence, not these magnitudes), the same empirical hooks as the C-claims (Flag 5). No
+  methodology run end-to-end yet.
 
 ### §18.11 — verify-vs-explore structure (how far to run the FORM mechanism)
 - **Claim.** "How far to discharge FORM" is itself a **structured tradeoff** (verify-vs-explore,
@@ -659,7 +661,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   measured `c_check`/risk regime where the predicted crossover sits elsewhere → a wrong value, not a
   broken structure. (As with §3.4, a merely *informational* surplus that never moves the verify
   decision is **not** a falsifier.)
-- **Tested?** ◻ — analytic structure; crossover never measured (E2/E3, §18.8).
+- **Tested?** ◻ — analytic structure; crossover never measured (E3, §18.8).
 
 ### §17.4 — honest [STD]/[GFSO] ratio (narrow-delta accounting)
 - **Claim.** Standard planning is **absorbed** as one rewritten sub-step (search over Ŝ = link Ⅲ;
@@ -687,7 +689,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   private, unchecked, idiosyncratic intuition into one axiom-derived, consistency-checked,
   faithfulness-graded system), rather than method-novelty (the new-mechanics delta is narrow, §17.4).
 - **Type.** **E — a contingent claim about how real organizations actually plan,** explicitly
-  **routed to E2** (canon §17.5: "несущая эмпирическая посылка → E2"). It is **not** M: nothing in
+  **routed to E3** (canon §17.5; E2 gave the convergence *method*, not the discipline's *value*). It is **not** M: nothing in
   A1∧A2 forces that real methodologies are unchecked; that is an observation about the world, and is
   correctly typed E (unlike the §17.4 *ratio*, which is an analytic accounting of mechanic-novelty).
 - **Falsifier.** A representative sample of real working methodologies that **do** routinely carry an
@@ -695,18 +697,20 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   and the "objectification is the primary value" positioning loses its empirical base. (A single
   counterexample methodology is not enough — the claim is about the *typical* case, so the falsifier
   is distributional, like the Simon-t\* capacity-necessity entry.)
-- **Tested?** ◻ — **E2 is the designated probe** (objectified-checked discipline vs private-unchecked
-  assembly on a typical task); not yet run. This is a genuine fresh empirical hook, *not* dormant
-  like the (ii)-faithfulness locus — it is outcome-independent (you can audit a methodology for a
-  consistency check without running it to success), so it is adjudicable once E2 runs.
+- **Tested?** ◻ — **E2 ran but did NOT adjudicate this.** E2 measured LLM decomposition *convergence to
+  a (bare-built) reference*; by the bare-reference confound, coverage cannot read the *value* of
+  objectified discipline over unchecked assembly (bare ≈ method on coverage — that comparison needs
+  **execution = E3**). E2 did establish the convergence *method* (`decompose()` = bare-SEARCH ⊕ gfso-AUDIT).
+  The premise stays a genuine, outcome-independent hook (you can audit a methodology for a consistency
+  check without running it to success) — routed to E3, plus a survey of real methodologies would bear on it.
 
 ### §18.10.2 — the named boundaries (the faithfulness residue is the irreducible (ii) locus)
 - **Claim.** v3.6 names four boundaries, **declared honestly, NOT closed** (canon §18.10.2): the
   **faithfulness residue** (domain-silent FM-3 false-PASS — a present-but-insensitive integration
   edge, a-priori uncatchable by *any* discipline, Lemma 1); the representation-leg sub-§4.8 gap
   (§18.10.1, above); the Axiom-1 / single-clock residue (§4.8); and **decomposition-method quality**
-  ("how to invent a *faithful* seam" — EMIT formats/grades but does not guarantee faithfulness; the
-  real E2/E3 + engineering blocker).
+  ("how to invent a *faithful* seam" — EMIT formats/grades but does not guarantee faithfulness; **E2
+  closed the generation method (`decompose()`); seam-faithfulness remains the E3 + engineering blocker**).
 - **Type / routing (consistency-critical).** Each boundary **reduces to an already-registered
   entry** — v3.6 introduces no new boundary type:
   - **faithfulness residue → the irreducible empirical (ii) locus.** Identical to FM-3 / §18.1-(ii)
@@ -726,7 +730,8 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   (and outside A1∧A2-membership) — which would mean the ontology has an unregistered contact-with-
   world locus. None found; the inventory closes onto the two pre-existing loci (anchor β).
 - **Tested?** ◻ — same as the entries each routes to; the faithfulness-residue locus is dormant
-  (no proxy), the method-quality locus is the open E2/E3 frontier.
+  (no proxy); the method-quality locus = **E2 closed the generation method (`decompose()`); seam-faithfulness
+  is the open E3 frontier.**
 
 ---
 
@@ -793,12 +798,15 @@ to be strengthened (named premise / built instrument), never softened.
    (does not block E1; logged).
 5. **C-claims awaiting deployment (Утв.3,4,6,7,8; §17.1).** Every conditional guarantee above
    is currently corroborated only mechanically/adjacently; none has a direct deployment test.
-   The premises are all named; the empirical hooks are real but unrun (E2/E3/§18.5).
+   The premises are all named; the empirical hooks are real but unrun (E3/§18.5; E2 ran — decomposition
+   convergence only, see §11 of the evidence log).
 6. **Decomposition-method quality — the real blocker (§18.10.2, §18.11).** EMIT *formats and
    grades* a seam but does **not** guarantee its faithfulness (Lemma 1); "how to invent a
-   *faithful* seam" is the omitted method-quality layer. This is the canon's named **real
-   E2/E3 + engineering blocker**, not a finalization residue. It is the located manifestation
-   of the (ii)-faithfulness locus on the *production* side; same dormancy until a proxy exists.
+   *faithful* seam" is the omitted method-quality layer. **E2 closed the generation method**
+   (bare-SEARCH ⊕ gfso-AUDIT → `decompose()`, convergence to a completeness-audited reference); **seam-
+   faithfulness to the real domain remains the named E3 + engineering blocker**, not a finalization residue.
+   It is the located manifestation of the (ii)-faithfulness locus on the *production* side; same dormancy
+   until a proxy exists.
 7. **START-fold residue (§18.10.1).** The 5-link count holds modulo folding REACHES's source-
    relatum (START) into the execution-anchored present by a *stated model choice*. Reject the
    fold ⟹ the representation leg has 4 roles and the 3⊕2=5 count breaks. Honest sub-§4.8 residue

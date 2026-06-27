@@ -177,9 +177,12 @@ Before adding more theory, more code, more experiments — ask:
 - Does this validate or falsify a specific claim? Or just illustrate one?
 
 Empirically, **E1 (postmortem taxonomy validation) is closed** (0/216
-cases need an 8th failure mode). The next moves are **E2 (LLM-Issuer twin
-experiment)** and **E3 (multi-agent compositional validation)** — falsifiable,
-and the biggest signal-per-effort available right now.
+cases need an 8th failure mode). **E2 (decomposition convergence) ran**:
+it established the convergence *method* — bare SEARCH ⊕ gfso
+AUDIT, iterated, productized as `decompose()` — but **not** the method's value
+over bare (coverage-to-a-bare-built reference can't read it; that is **E3**).
+The next move is **E3 (multi-agent compositional validation, under execution)** —
+falsifiable, the biggest signal-per-effort available now.
 
 ---
 

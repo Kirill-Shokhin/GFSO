@@ -165,7 +165,17 @@ Empirical:
       **0/216 need an 8th FM** (completeness-as-basis holds). FM-1 sub-typed
       (a/b/c/d), FM-3 shown two-sided; the 6 non-FM cases are in-framework
       (resilience-worked / delegated). Record: EVIDENCE_LOG §9/§9.1.
-- [ ] E2 — LLM-Issuer with vs without GFSO discipline (twin experiment)
+- [x] E2 — **how to converge a decomposition to a verified plan reliably and cheaply** (an
+      optimality question, not "does a critic help"). Against a frozen, completeness-audited
+      reference (a *target*, not "100%" — not a-priori derivable, Lemma 1): the **search ↔ audit**
+      cycle works (78%→96% Opus, 74%→81% Sonnet), and — more decisively — **how the pass is framed
+      matters more than how many passes you run**. The clean result is an architecture: **"bare vs
+      GFSO" is a false dichotomy → bare SEARCH (recall) ⊕ gfso AUDIT (cast into the canonical basis),
+      iterated** — and that `search+audit` pair *is* the reference-building method, so only it
+      reproduces the reference (ansatz-and-verify, not circular). Productized as `gfso/decompose/` —
+      an agent **calls** a full decomposition rather than building the graph by hand. (Coverage to a
+      bare-built reference ranks *convergence strategies*; the method's execution-value is E3.)
+      Record: EVIDENCE_LOG §11 / `experiments/e2_agent/CONVERGENCE.md`.
 - [ ] E3 — Compositional validation theorem in multi-agent decomposition
 - [ ] Long-horizon deployment validation (≥ 6 months)
 

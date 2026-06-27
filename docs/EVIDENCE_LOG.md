@@ -243,7 +243,7 @@ this log (see §6 plan).
 
 ### NOT proven yet
 - 7 FM taxonomy completeness on real-world incidents (planned: E1)
-- LLM-Issuer with vs without GFSO discipline (planned: E2)
+- ~~LLM-Issuer with vs without GFSO discipline~~ → **E2 EXECUTED (§11)**, reframed as a convergence/optimality study (the twin A/B framing was retired)
 - Compositional validation theorem in multi-agent decomposition (planned: E3)
 - CHECK-1..8 effectiveness — no decomposition tested
 - q_T, q_D, q_V (and the rest of Q) metrics predictive of real-world outcomes — no long deployment
@@ -309,6 +309,11 @@ validated empirically. <80% → theory needs revision (new FM or restructure).
 Each agent reads protocol + prior session results before classifying.
 
 ### E2 — LLM-Issuer with vs without GFSO discipline
+> **[SUPERSEDED — E2 was EXECUTED; see §11.](#11-e2-executed--decomposition-convergence-2026-06-30)** The
+> "twin / with-vs-without GFSO" design below is the **RETIRED A/B framing** (coverage = content = the model's,
+> so bare A ≈ GFSO B structurally). The executed E2 is a **convergence / optimality** study: what practice
+> converges to a verified plan reliably and cheaply. The text below is kept as the original plan of record.
+
 **Goal**: measure value of mandatory NEGLECTED + CHECK-1..8 + explicit criteria
 formation when decomposing tasks.
 
@@ -672,9 +677,9 @@ In order of priority:
 3. **Write up E0 as standalone artifact** — the +34pp result is presentable now.
    Should not be buried in this log; either blog post or short paper.
 
-4. **E2 design** — when E1 is done, design the LLM-Issuer twin experiment.
-   Requires: prompt templates for ad-hoc vs disciplined decomposition; a multi-step
-   task set; measurement protocol. Build on existing `bench/` harness.
+4. ~~**E2 design** — when E1 is done, design the LLM-Issuer twin experiment.~~
+   **DONE / SUPERSEDED — see §11.** E2 was reframed (the twin A/B framing is retired) and run as a
+   decomposition-convergence study; the result + apparatus are in §11 and `experiments/e2_agent/CONVERGENCE.md`.
 
 5. **Theory polish** — minor §17.1/§17.2 review, possibly extract §17.2 (Scrum)
    into its own short paper since it's a self-contained formal-mapping result.
@@ -884,6 +889,57 @@ basis coverage + a clean accounting of the non-FM cases as success / delegation 
 
 The standard→theory-model derivation (agent derived as a necessary structural link) lives **in the
 canon, §18.10** (with the calibrated claims); provenance is in the canon Changelog + git history.
+
+## 11. E2 EXECUTED — decomposition convergence, 2026-06-30
+
+**Question (optimality, not "does X help").** What practice **reliably and cheaply** (fewest tokens/cycles)
+converges an agent's decomposition to a verified plan? That a critic/iteration helps is industry-standard; the
+open question is whether a given loop is the *optimal* token→convergence regime (the kind of claim GFSO is built
+from). Yardstick = a frozen **reference** (a well-worked, completeness-audited decomposition) — **not an ideal,
+not "100%"** (content-completeness is not a-priori derivable, §4 / §18.10 Lemma 1, so "100%" is not a concept).
+The reference's true ancestor is the method that **builds** it: blind exhaustive enumeration + completeness
+audit.
+
+**Apparatus.** 10 diverse "complex" tasks, one frozen reference each, built uniformly by: one exhaustive
+over-inclusive enumeration from domain expertise (GFSO-free, no solution consulted) → cast into the canonical
+basis → **audit** (find holes by truth-maker/meaning) → patch → **reaudit** (a fresh verifier that re-derives
+requirements *blind* before reading the reference, then confirms closure) → canon re-expression. Frozen
+domain-generic prompts `prompt_search.md` / `prompt_audit.md`; blind meaning-match judge `prompt_judge.md`. **Two
+runs: Opus = depth** (T01 regime screen + reference-method, verifies the mechanism); **Sonnet = breadth** (all
+10 × 3 iters **+ two Opus judges per candidate**, the public artifact + a cross-model check). **Conclusions are
+model-invariant; only the numbers differ.** Protocol/framing in `CONVERGENCE.md`.
+
+**Proved.**
+1. **The cycle works.** Iterating SEARCH (exhaustive recall, GFSO-free) + AUDIT (reduce to the canonical
+   D/Dep/V/N basis, preserve distinct falsifiers) raises reference-coverage and decelerates — 78%→96% (Opus),
+   74%→81% (Sonnet). One pass = a draft; iteration = the re-audit that closes it.
+2. **Framing the pass beats iterating it.** The continuation prompt is a first-class variable: an open
+   "what's missing" content hunt ≫ a plain redo ≫ a methodology-policing critic (drives the agent over *form*
+   not *content*; **strictly dominated**). Unlike the climb, **here the effect is in the numbers** (regime gap
+   on one task, same seed).
+3. **The architecture — bare SEARCH ⊕ gfso AUDIT (a false dichotomy resolved by role-split).** Recall is
+   *content* (the model's domain knowledge; GFSO adds nothing and *taxes* it); the basis-cast is something only
+   GFSO does (a bare hunt yields a flat redundant list). Neither monolith is optimal → split the roles. The
+   audit helps the next search with **no explicit handoff**: it re-sorts the verbose enumeration into a minimal
+   canonical basis on which the remaining holes become *visible* as absent seams/slots.
+4. **Not circular — ansatz-and-verify.** The reference was itself built by this method; of many candidate
+   methods tested, **only search+audit reproduces it** (a critic, a redo, self-review cannot) — so the
+   reference's provenance is irrelevant to the discrimination. *Honest caveat:* the reference's completeness is
+   cycle-internal, partially offset by the reaudit's blind re-derivation and the cross-model run.
+
+**Confounds (kept separate).** (a) The reference's *content* came from a bare enumeration, so
+coverage-to-reference rewards content-similarity to a bare artifact → E2 is the **wrong** instrument for the
+*value of the GFSO method* (needs execution = **E3**) but the **right** instrument for *ranking convergence
+strategies*. (b) The same-agent confound is *reduced* by the cross-model run; confound (a) is not.
+
+**Architectural payoff.** SEARCH+AUDIT *is* the reference-building method → productized as `gfso/decompose/`:
+an agent **calls** a full decomposition from a short request rather than building the graph node-by-node
+(under-covering machinery). GFSO's irreducible role = the audit-into-basis.
+
+**Corroborating numbers (secondary — NOT the headline):** covered/reference-total, draft → converged (3 iters)
+avg **74% → 81%**, climb 9/10 (T04 financial-close non-climb; T08 compiler best 95→98). Model-dependent quality
+(Sonnet ~81% / Opus ~96%) is a measured **boundary**, not a defect. **Did NOT prove** absolute completeness (no
+such target — §4) nor the method's execution-value (= E3). Full table in `CONVERGENCE.md`.
 
 **Policy (set 2026-06-05):** this log is **empirical evidence only**. Agent-process material —
 critic-round narratives, session state, next-steps/plans, my own error-corrections, "what's done /
