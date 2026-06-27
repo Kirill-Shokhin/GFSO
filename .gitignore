@@ -40,3 +40,10 @@ nul
 /data/
 
 # API server SQLite DB lives at data/gfso.db (+ WAL/shm) — covered by /data/ above
+
+# E2 build-trail / provenance — local only, regenerable, NOT the deliverable.
+# Repo carries only: inputs (design/tasks, build/specs), gold (design/references, build/tests),
+# apparatus (prompts, PLAN, SCORING, README). Everything below is provenance.
+experiments/e2_agent/complex/_provenance/
+experiments/e2_agent/simple/_provenance/
+docs/_depmap_critique.md

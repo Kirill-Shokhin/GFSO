@@ -55,6 +55,13 @@ about scope, not about the math.
 4. A **compositional law**: `V(parent) = AND(V(children))` under
    explicit correctness conditions (joint sufficiency + non-redundancy).
    Derived, not postulated.
+5. A **theory-model**, not only a standard: planning is absorbed as one
+   rewritten sub-step (planning ⊂ GFSO), the agent's necessity as
+   source of domain content is *derived* (not assumed), and the primary
+   value is **objectification** — moving decomposition discipline out of
+   private, unchecked intuition into one axiom-derived, consistency- and
+   faithfulness-checkable system. The new *mechanic* is narrow; the
+   value is the universalized checkable discipline (§17.4–§17.5, §18.10).
 
 ---
 
@@ -74,7 +81,7 @@ about scope, not about the math.
 
 ## What GFSO uniquely provides over its parts
 
-Decomposition exists. Tests exist. Contracts exist (DBC, Meyer 1986).
+Decomposition exists. Tests exist. Contracts exist (DBC, Meyer 1992).
 Audit trails exist. What none of them give together:
 
 | Piece | Where GFSO uniquely formalizes it |
@@ -169,9 +176,10 @@ Before adding more theory, more code, more experiments — ask:
 - If not, am I just polishing? Polishing isn't progress.
 - Does this validate or falsify a specific claim? Or just illustrate one?
 
-Empirically, GFSO is one of four needed anchors in. The next move is
-**E1 (postmortem taxonomy validation)** — falsifiable, cheap, and the
-biggest signal-per-effort available right now.
+Empirically, **E1 (postmortem taxonomy validation) is closed** (0/216
+cases need an 8th failure mode). The next moves are **E2 (LLM-Issuer twin
+experiment)** and **E3 (multi-agent compositional validation)** — falsifiable,
+and the biggest signal-per-effort available right now.
 
 ---
 

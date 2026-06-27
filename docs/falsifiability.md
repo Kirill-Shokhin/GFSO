@@ -47,7 +47,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   (would falsify the "necessarily describes" claim of CORE/§2.1). Conversely, a domain
   asserted in-scope that in fact has no decidable criteria even in principle (¬A1) belongs
   *outside* — misclassifying it is a boundary error, not a falsifier of the axioms.
-- **Boundary claim (§2.1).** GFSO applies **⟺** A1∧A2 hold (the iff that P-2 below sharpens).
+- **Boundary claim (§2.1).** GFSO applies **⟺** A1∧A2 hold (the iff that Pred-2 below sharpens).
   Falsifier: a domain governed successfully by GFSO handoffs where A1 or A2 demonstrably fails,
   or an A1∧A2 domain GFSO cannot describe.
 - **Tested?** ◻ partially — E1's 216 incidents are all A1∧A2 domains and all map (§4.8
@@ -294,6 +294,29 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   conditional "if |I| exceeds capacity then AI needed", which is near-analytic.)
 - **Tested?** ◻ — no measurement of |I| growth vs human capacity on a real deployment.
 
+### §7.3.2 — Chollet Level ≥ 2: capability-class requirement on the LLM
+- **Claim.** The LLM component must reach **Chollet Level ≥ 2** (broad-to-extreme generalization;
+  Morris et al. General-Emerging+) to adapt to D_org ∉ D_train from context G. This is a **different
+  capability class**, **not** buyable by enlarging D_train (developer-aware generalization, Chollet 2019).
+- **Type.** E — an empirical requirement on the deployed model class.
+- **Falsifier.** Either (a) a model demonstrably **below** Level 2 that nonetheless discharges the
+  §7.3.2 role (reliable adaptation to a real org's D_org ∉ D_train) → the requirement is not
+  load-bearing; or (b) evidence that scaling D_train **alone** lifts a model into the role → refutes
+  "different class, not different volume".
+- **Tested?** ◻ — not run as a GFSO deployment test; adjudicable against frontier models on
+  out-of-distribution org task distributions. (Realization mechanism for the requirement = Xie et al.
+  ICL-as-Bayesian, §7.3.2 — a *how*, not the falsifier of the *requirement*.)
+
+### §7.3.3 — AI-layer two-components + cross-impossibility (minimality)
+- **Claim.** The AI layer has **exactly two** components (Solver + LLM), not three: a Solver supplies
+  no domain induction; the LLM guarantees no P(formal-error)=0; neither subsumes the other
+  (cross-impossibility); induction-in-isolation collapses to counting.
+- **Type.** M — minimality/exhaustiveness, same family as protocol-minimality (§6) and Q-minimality (§7.2).
+- **Falsifier.** A single component discharging **both** roles (formal-soundness guarantee AND domain
+  generalization), or a necessary **third** component irreducible to the two → the 2-component
+  enumeration erred.
+- **Tested?** — analytic.
+
 ### §7.3.6 — safety-net incompleteness (irreducible domain-silent false-PASS)
 - **Claim.** The apparatus catches LLM errors with a **formal signature** (bad D → q_D; bad
   semantic check → CHALLENGE), but a domain-incorrect yet formally-clean D (FM-3 false-PASS) is
@@ -312,10 +335,10 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
 > **Shared caveat — the (ii)-faithfulness proxy is dormant (applies to every claim tagged
 > ⟨ii-dormant⟩ below).** Several results below are guaranteed *under (ii)-faithfulness
 > discipline* (criteria track reality — canon §18.10, §16.3). That discipline has **no
-> operational outcome-independent proxy yet** (same gap as §18.10 P-1/P-3 and Flag 4). So a
+> operational outcome-independent proxy yet** (same gap as §18.10 Pred-1/Pred-3 and Flag 4). So a
 > decline can always be re-attributed to a faithfulness break (FM-3, in-framework), and the
 > claim's empirical falsifier **cannot currently fire** — it is non-adjudicable until a proxy
-> instrument exists, *identically* to P-1/P-3. This caveat is propagated uniformly: a
+> instrument exists, *identically* to Pred-1/Pred-3. This caveat is propagated uniformly: a
 > (ii)-conditioned §8–§14 claim is no more testable than the §18.10 predictions.
 
 ### Утв.3 — Blackwell information dominance (§8.2)
@@ -361,7 +384,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   faithfulness break, that is FM-3 / §18.1 (in-framework), not a falsifier of Утв.6.
 - **Tested?** ◻ — long-horizon (§18.5), **and non-adjudicable until the (ii)-proxy exists**
   (shared caveat above): without an outcome-independent faithfulness measure, any decline is
-  re-attributable to FM-3, so this falsifier shares P-1/P-3's dormancy, not a plain "awaiting
+  re-attributable to FM-3, so this falsifier shares Pred-1/Pred-3's dormancy, not a plain "awaiting
   deployment".
 
 ### Утв.7 — scale bounds, ‖eₙ‖ ≤ (L·γ)ⁿ‖e₀‖ (§10.3)
@@ -499,7 +522,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
 - **Claim.** The agent (carrier of empirically-learned domain content K̂) is a **necessary**
   structural link — the apparatus cannot supply domain-correctness (Lemma 1), declaration
   cannot ground it (Lemma 3), luck is unstable, so empirical contact is necessary.
-- **Type.** M — a derivation (excluded-middle P3 + Lemmas 1,3 + luck-elimination). The thin
+- **Type.** M — a derivation (excluded-middle D3 + Lemmas 1,3 + luck-elimination). The thin
   local residue is the "luck is unstable" step, argued from S's contingency.
 - **Falsifier (mathematical).** Exhibit reliable domain-correct decomposition with **no**
   empirical contact — pure formal derivation of S (contradicts Lemma 1) or grounded
@@ -507,7 +530,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   breaks the derivation.
 - **Tested?** — analytic; corroborated by pre-theoretic success being explained, not assumed.
 
-### §18.10 — prediction P-1: agent substitutability
+### §18.10 — prediction Pred-1: agent substitutability
 - **Claim.** Two agents are interchangeable **relative to an outcome-independent faithfulness
   proxy** (equal faithfulness ⟹ equal validated results).
 - **Type.** E.
@@ -521,20 +544,20 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   fact — same status as Flag 1's missing counter. The E2 probe is a target, not readiness:
   it is blocked until a proxy instrument is built.
 
-### §18.10 — prediction P-2: applicability boundary
+### §18.10 — prediction Pred-2: applicability boundary
 - **Claim.** Structural success-content present ⟺ GFSO applicable (sharpens §2.1).
 - **Type.** E.
 - **Falsifier.** A domain with no structural success-content where GFSO nevertheless governs
   handoffs successfully, or vice versa.
-- **Tested?** ◻ — **partially dormant, same proxy as P-1/P-3.** "Structural success-content
+- **Tested?** ◻ — **partially dormant, same proxy as Pred-1/Pred-3.** "Structural success-content
   present" is judged by the §18.10 structural-half apparatus; insofar as that detection leans on
-  faithfulness, P-2 inherits the same non-adjudicability. The *one* half that is plausibly
+  faithfulness, Pred-2 inherits the same non-adjudicability. The *one* half that is plausibly
   outcome-independent — "does a structural validation half exist at all?" (an architectural fact,
   observable like Simon-t\* capacity) — is testable; the "success-content" half is not, until the
-  proxy exists. So P-2 is split: structural-presence side ◻-adjudicable, success-content side
-  ⟨ii-dormant⟩. The asymmetry with P-1/P-3 is thus only partial and is now stated, not assumed.
+  proxy exists. So Pred-2 is split: structural-presence side ◻-adjudicable, success-content side
+  ⟨ii-dormant⟩. The asymmetry with Pred-1/Pred-3 is thus only partial and is now stated, not assumed.
 
-### §18.10 — prediction P-3: global falsifier (the model's own neck)
+### §18.10 — prediction Pred-3: global falsifier (the model's own neck)
 - **Claim.** Sustained out-of-distribution success with **neither** a structural half **nor**
   learned faithfulness is **impossible**.
 - **Type.** E — the deliberately-stated global falsifier.
@@ -544,8 +567,209 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   any counterexample is re-explained post-hoc, and the claim would be circular (canon §18.10
   fixes this explicitly).
 - **Tested?** ◻ — no such system observed; the claim is an open standing bet. Note the same
-  dormancy as P-1: refuting it requires faithfulness "measured independently of success", and
+  dormancy as Pred-1: refuting it requires faithfulness "measured independently of success", and
   no such instrument exists yet — so the bet is well-posed but not currently adjudicable.
+
+---
+
+## Part III.6 — v3.6 agent-free ontology + methodology (§17.4–§17.5, §18.10.1, §18.11)
+
+> The v3.6 layer adds **no new formal results** (canon: T1/7-FM/minimality/Утв.3–9 untouched);
+> it unfolds §18.10 into an agent-free ontology + a forced methodology + an honest reducibility
+> audit. The register treats it on the **same E/M/C discipline** as everything above. Two
+> consistency anchors govern these entries and are checked at the bottom: **(α)** structural-
+> completeness claims are **M / analytic-modulo-a-named-residue** — the 5-link completeness is
+> the *direct sibling* of the 7-FM completeness entry (§4.4) and the §4.8 / §5.4 covering claims,
+> not a new empirical posit; **(β)** the **only** irreducible empirical hooks remain the two
+> contact-with-world loci already registered — A1∧A2 membership (§2.1) and **K̂-faithfulness to S**
+> (§18.10, the ⟨ii-dormant⟩ locus / §7.3.6) — and v3.6 relocates nothing into or out of those.
+
+### §18.10.1 — 5-link completeness of directed action (covering axiom)
+- **Claim.** Directed action *is* a chain of exactly five constitutive links {Ⅰ goal, Ⅱ build-Ŝ,
+  Ⅲ plan-D-over-Ŝ, Ⅳ execution, Ⅴ contact} (numbered Ⅰ–Ⅴ to avoid collision with the L0/L1/L2
+  verification levels, §5.4); none removable; **no independent 6th** structural
+  feature. Derived by a covering axiom (REACHES-ternarity ⊕ realization-pair = REPRESENTATION
+  {Ⅰ,Ⅱ,Ⅲ} ⊕ REALIZATION {Ⅳ,Ⅴ}), the modal axis being the model's own Ŝ-vs-S axis.
+- **Type.** **M — analytic modulo a named covering axiom, *exactly the 7-FM-completeness grade*
+  (§4.4) and the §4.8/§5.4 family.** Same structure as those entries: a covering principle does
+  the work, and there is a **thin, located residue** rather than a clean theorem on every leg. Per
+  canon §18.10.1: the **modal** leg (2 relata ⟹ 2 modal sides) and the **realization** leg
+  (in/out, no third direction) reach full §4.8-strength (excluded-middle); the **representation**
+  leg is **sub-§4.8** — the {goal, Ŝ, D} triple holds only *modulo* the (poorer) REACHES-ternarity
+  axiom, which carries a **loaded residue: START** (the source-relatum) is a genuine 4th relatum of
+  REACHES, *folded* (not eliminated) into the execution-anchored present by a **stated model
+  choice**. Reject the fold ⟹ 4 representation roles ⟹ the 3⊕2=5 count breaks. So this is *weaker*
+  than the 7-FM split (whose residue — value/time-trace + single-clock — is local and does **not**
+  touch the count); registered as M-with-a-residue, not as a closed theorem, and not as empirical.
+- **Falsifier (M).** A **real directed-yet-real action** that (a) is missing one of the five links
+  while still being directed-and-real, or (b) exhibits a genuinely **independent 6th structural
+  feature** — a third modality, a 4th REACHES role *not* foldable into START, or a 3rd realization
+  direction. Any one means the covering axiom (or the START-fold) has a hole — an analytic defect,
+  exposed by a counterexample, **open-from-inside** like §18.1 (canon's own framing). This mirrors
+  the 7-FM falsifier ("a failure the case split routes to no Cᵢ") and the §2.4 minimality falsifier
+  ("an HBP expressible after deleting a primitive") — same shape, not a new kind of test.
+- **Tested?** — analytic; minimality is at full parity with §2.4 / §4.5 (per-element counterexample).
+  Adequacy-to-phenomena would be corroborated by the *same* E1-style evidence as Axiom 1 / §5.4 (a
+  missing-link or 6th-feature action would surface as an uncovered action); not separately run. The
+  START-fold residue is the located weak point — the analogue of Axiom 1's value/time residue.
+
+### §18.11 — methodology forced-corollaries (front-load FORM, stop-replan optimum)
+- **Claim.** From the ontology a discipline is **forced** (not best-practice): the failure-point
+  coarse-cut is **derived** (FORM ⊕ FAITHFULNESS = the validity⊥faithfulness axis of §18.10), and
+  it forces **exactly two** mechanisms — (1) front-load FORM on the executable segment; (2) at a
+  contact-wall `e∈Ŝ\S`: STOP → mark locally → re-derive (re-run FORM-check on updated Ŝ) → only then
+  proceed. The stop-replan + front-load discipline is shown a **[FORCED] instance** of the optimum
+  that minimizes total realized cost-over-the-knowable `c_check + E_FORM + E_FAITH`.
+- **Type.** **M — forced from the ontology** (the coarse-cut is derived via excluded-middle on
+  "does the edge violate Ŝ's *own* well-formedness", so exactly two classes ⟹ exactly two
+  mechanisms). **The cost/probability VALUES are E / contextual** — `c_check`, the FORM-risk, the
+  S-fixed wall-set are domain data, exactly as **S itself** is contingent (Lemma 1) and as the
+  Утв.3/4/7 *premises* (Δ, c, L, γ) are E. This split — **structure forced (M), magnitudes
+  empirical (E)** — is the *same* shape already used for Утв.4 (Δ>c named, inequality M) and the
+  §10.3 corollaries (algebra M, L·γ measured). The optimum is stated **precisely**, matching the
+  canon's hedges: it is **not** "always E_FORM=0" (only in the cheap-check limit `c_check→0`),
+  **not** "never fail" (Lemma 1), **not** a global optimum over all plans, **not** uniqueness among
+  faithful D (§18.10 multiplicity). Cost composes as **edge-decoration**, **not a 6th link** —
+  consistent with the §18.10.1 entry (the 5-count is closed; methodology adds no relatum).
+- **Falsifier (M, on the forcing).** A directed-action failure that is **neither** FORM nor
+  FAITHFULNESS (a third epistemic-access class) → the coarse-cut derivation has a hole (this is the
+  *same* falsifier as the §18.11 "FORM ⊕ FAITHFULNESS" cut and reduces to the §4.1 / 7-FM split —
+  it does **not** introduce a new test). Or: a setting where front-load+stop-replan is **dominated**
+  by proceeding on an un-updated plan **with `c_check` and the cascade-compounding (§10.3) premises
+  holding** → the optimality derivation (not the value estimates) is wrong.
+- **Falsifier (E, on the magnitudes).** A domain whose measured `c_check / E_FORM / E_FAITH` make
+  the front-load *granularity* or the verify-depth come out elsewhere than predicted — this falsifies
+  a **contextual value**, not the forced structure (same status as a wrong Δ or L,γ estimate). The
+  *free residue* (speed, route among faithful D, front-load granularity above the "executable
+  segment" floor) is **forced-free** — orthogonal, so unfalsifiable-by-design and correctly so.
+- **Tested?** — (forcing) analytic; (magnitudes) ◻ routed to E2/E3 + the §18.8 L,γ measurement, the
+  same empirical hooks as the C-claims (Flag 5). No methodology run end-to-end yet.
+
+### §18.11 — verify-vs-explore structure (how far to run the FORM mechanism)
+- **Claim.** "How far to discharge FORM" is itself a **structured tradeoff** (verify-vs-explore,
+  §5.4-bis): strict domination of front-loading holds **only** in the cheap-check limit
+  `c_check→0`; above it the marginal `c_check` is weighed against the marginal prevented FORM-risk.
+- **Type.** **M-forced structure, E values** — same split as the entry above and same family as the
+  §3.4 informativeness / Blackwell-surplus reasoning (the *structure* of "decision-relevant vs not"
+  is analytic; what is decision-relevant on a real task is E). The existence and *shape* of the
+  tradeoff are forced; the **crossover point is the empirical / contextual datum** (`c_check` vs
+  prevented risk), not a hedge on the structure.
+- **Falsifier.** (M side) a FORM-discharge decision that is neither "verify more" nor "explore /
+  proceed" and cannot be located on the §5.4-bis axis → the tradeoff is mis-structured. (E side) a
+  measured `c_check`/risk regime where the predicted crossover sits elsewhere → a wrong value, not a
+  broken structure. (As with §3.4, a merely *informational* surplus that never moves the verify
+  decision is **not** a falsifier.)
+- **Tested?** ◻ — analytic structure; crossover never measured (E2/E3, §18.8).
+
+### §17.4 — honest [STD]/[GFSO] ratio (narrow-delta accounting)
+- **Claim.** Standard planning is **absorbed** as one rewritten sub-step (search over Ŝ = link Ⅲ;
+  **planning ⊂ GFSO**), and the irreducible [GFSO] new-mechanics delta is **exactly five** items
+  (joint-suff AND-soundness `(t,{tⱼ})∈S` / failure root `Ŝ\S` + composition law / constitutivity of
+  the S/Ŝ split / agent-free recursion / EMIT-form). Standard abstraction/method-learning (ABSTRIPS
+  [32], HTN-MAKER [33], goal-regression [34], HRL-discovery, LLM-decomposition) does **not** subsume
+  the core: bare seam-generation is [STD]-heuristic; the only [GFSO] generative residue is
+  EMIT-form + faithfulness-grade.
+- **Type.** **M** — an analytic accounting / per-candidate reducibility claim, **distinct** from §17.5's
+  E premise (this is about *mechanic-novelty*, not about how organizations actually plan).
+- **Falsifier.** Exhibit a standard technique that subsumes one of the five delta items **as a
+  guaranteed primitive** (not a heuristic): e.g. a method-learner that *guarantees* (not corpus-
+  heuristically posits) a faithful new seam, or an option/HTN formalism that **obligates + attributes**
+  the set-level integration implication `(⋀ children)⟹Capt(parent)` → the "narrow delta" enumeration
+  is wrong (delta narrower, or an item misattributed to [GFSO]).
+- **Tested?** — analytic; corroborated by the §17.4 per-candidate reduction (each candidate isolated,
+  none subsumes EMIT). Lemma 1 yields only *non-derivability-by-apparatus*, **not** a [GFSO] tag for
+  bare seam-generation — so the accounting does not inflate the delta.
+
+### §17.5 — value=objectification empirical premise
+- **Claim (the load-bearing empirical premise of the positioning).** "Most real working
+  methodologies are **assemblies of prior plans, typically run without an internal-consistency
+  check**" — this is what makes GFSO's primary value *objectification* (lifting decomposition out of
+  private, unchecked, idiosyncratic intuition into one axiom-derived, consistency-checked,
+  faithfulness-graded system), rather than method-novelty (the new-mechanics delta is narrow, §17.4).
+- **Type.** **E — a contingent claim about how real organizations actually plan,** explicitly
+  **routed to E2** (canon §17.5: "несущая эмпирическая посылка → E2"). It is **not** M: nothing in
+  A1∧A2 forces that real methodologies are unchecked; that is an observation about the world, and is
+  correctly typed E (unlike the §17.4 *ratio*, which is an analytic accounting of mechanic-novelty).
+- **Falsifier.** A representative sample of real working methodologies that **do** routinely carry an
+  internal-consistency check (CHECK-7/8-equivalent) on their assembled plans → the premise is false
+  and the "objectification is the primary value" positioning loses its empirical base. (A single
+  counterexample methodology is not enough — the claim is about the *typical* case, so the falsifier
+  is distributional, like the Simon-t\* capacity-necessity entry.)
+- **Tested?** ◻ — **E2 is the designated probe** (objectified-checked discipline vs private-unchecked
+  assembly on a typical task); not yet run. This is a genuine fresh empirical hook, *not* dormant
+  like the (ii)-faithfulness locus — it is outcome-independent (you can audit a methodology for a
+  consistency check without running it to success), so it is adjudicable once E2 runs.
+
+### §18.10.2 — the named boundaries (the faithfulness residue is the irreducible (ii) locus)
+- **Claim.** v3.6 names four boundaries, **declared honestly, NOT closed** (canon §18.10.2): the
+  **faithfulness residue** (domain-silent FM-3 false-PASS — a present-but-insensitive integration
+  edge, a-priori uncatchable by *any* discipline, Lemma 1); the representation-leg sub-§4.8 gap
+  (§18.10.1, above); the Axiom-1 / single-clock residue (§4.8); and **decomposition-method quality**
+  ("how to invent a *faithful* seam" — EMIT formats/grades but does not guarantee faithfulness; the
+  real E2/E3 + engineering blocker).
+- **Type / routing (consistency-critical).** Each boundary **reduces to an already-registered
+  entry** — v3.6 introduces no new boundary type:
+  - **faithfulness residue → the irreducible empirical (ii) locus.** Identical to FM-3 / §18.1-(ii)
+    / §7.3.6 — registered above as ⟨ii-dormant⟩ and as the "(ii)-faithfulness proxy is dormant"
+    shared caveat (Part II). Type **C/E, DORMANT**: falsifier = a domain-silent false-PASS detected
+    by a purely-formal apparatus (breaks §18.10 Lemma 1), but **non-adjudicable** until an
+    outcome-independent faithfulness proxy exists (Flag 4 / Pred-1). This entry asserts **no new test**;
+    it confirms the v3.6 ontology terminates its empirical irreducibility at *exactly* the
+    pre-existing (ii) locus — anchor (β).
+  - **representation-leg sub-§4.8 → §18.10.1 entry above** (M, START-fold residue).
+  - **Axiom-1 / single-clock → §4.8 Axiom-1/Axiom-2 entries + Flag 3** (M-residue / C scope-boundary).
+  - **decomposition-method quality → §18.1 / §7.3.6** (the L2-correctness boundary; M for
+    non-reducibility, E-on-execution for the located manifestation). Canon flags it the *real
+    blocker*, not a finalization residue.
+- **Falsifier.** Per boundary, as in the referenced entry. The **only** way to falsify the v3.6
+  *boundary inventory itself* is to exhibit an irreducible empirical hook **outside** these four
+  (and outside A1∧A2-membership) — which would mean the ontology has an unregistered contact-with-
+  world locus. None found; the inventory closes onto the two pre-existing loci (anchor β).
+- **Tested?** ◻ — same as the entries each routes to; the faithfulness-residue locus is dormant
+  (no proxy), the method-quality locus is the open E2/E3 frontier.
+
+---
+
+## Part III.7 — continuous-substrate re-grounding + 3-axis faithfulness (§18.10.0)
+
+> The continuous-substrate layer (§18.10.0: controlled flow `ẋ=f(x,u)` + capture basins; discrete `(t,{tⱼ})∈S`
+> = derived shadow; `∼_G` functional scale; separators; A1/A2 as conditions of contact T; SOLITUDE/`𝒜`; 3-axis
+> faithfulness; tree/cycle goal topology) adds **no new formal results** (canon: T1/7-FM/minimality/Утв untouched)
+> and **no new empirical hook**. It re-grounds existing claims over a borrowed [STD] control/viability substrate;
+> its empirical irreducibility terminates at *exactly* the two pre-existing loci (anchor β: A1∧A2-membership §2.1
+> + K̂-faithfulness §18.10). Each item routes to a registered entry:
+
+- **Continuous substrate (flow / capture basins / viability).** [STD] (Sontag control, Aubin viability) —
+  borrowed, not a GFSO-delta (§17.4). Falsifier (M-on-the-borrowed-theory): the domain is not a controlled
+  dynamical system — a physics-grade claim outside the GFSO delta. No new GFSO hook.
+- **`(t,{tⱼ})∈S` = derived shadow of basin-chaining.** Re-expresses the **Theorem 1 / §3.1** composition edge
+  over the continuous ground; operative truth-condition and its M-falsifier unchanged. The [GFSO]-core
+  (AND-soundness / integration-implication) is the same narrow delta already registered under Theorem 1.
+- **Separators `x₀∉Capt_{S∖B}(G)` = continuous ground of non-redundancy.** Routes to **§2.2 non-redundancy /
+  Theorem-1-correctness**; "correct decomposition cuts at joints" is the continuous reading of non-redundancy
+  (M; ontic joint = non-removable subgoal).
+- **`∼_G` functional-scale coarsening = continuous ground of NEGLECTED / the scale faithfulness axis.** Routes to
+  **STD-1** (and the scale axis below); falsifier = a declared coarsening that is NOT a bisimulation yet leaks no
+  G-relevant future (or the converse) — the operationalized §5.1.
+- **A1/A2 as derived conditions of contact T (status-change, postulate→condition).** Adds no hook: the honest
+  residue is **≈ the axioms themselves** (A1.ii = FM-3; A2-residue ≈ κ-cost + decomposability), both already
+  registered (A1.ii ↔ the (ii)-faithfulness/FM-3 locus; A2 κ-**cost** ↔ §5.4-bis; A2 **decomposability**-residue ↔ the A1∧A2-membership entry, since it ≈ A2 itself — **not** §5.4-bis). The status-change is analytic (M);
+  it relocates nothing into/out of the two empirical loci.
+- **SOLITUDE / apparatus operator `𝒜:Ŝᵏ→Ŝ`.** Naming of **§18.10 Lemma 1** (apparatus never reads S); M, same
+  falsifier as the Lemma-1 / agent-derivation entry (a purely-formal operation that reads S breaks it).
+- **3-axis faithfulness (edge / node / scale).** Re-expression, no new locus: **edge** `Ŝ_used⊆S` = the
+  registered ⟨ii-dormant⟩ faithfulness locus; **node** (`Ĝ≠G` / imaginary waypoint) = **FM-1.b / STD-2** (node-gap
+  at the posing level); **scale** (`∼_G` leak) = **STD-1**. Node+scale generate edge, so the irreducible (ii)-hook
+  stays the single edge/faithfulness locus.
+- **Tree/cycle goal topology.** [STD] control distinction (reachability vs viability/invariance, Aubin/Blanchini);
+  falsifier (M-on-borrowed): a directed action that is neither achievement (reachability-tree) nor maintenance
+  (viability-cycle). Survival = degenerate maintenance. No GFSO-specific hook; the graph-cycle prohibition in `D`
+  (¬A1 via CHECK-2) is untouched.
+
+**Consistency (anchors α, β).** (α) The new structural-completeness content (separators, 3-axis, tree/cycle) is
+**M / analytic-modulo-borrowed-[STD]**, the same grade as the §4.8/§5.4/§18.10.1 covering claims — no new
+empirical posit. (β) The only irreducible empirical hooks remain A1∧A2-membership (§2.1) and K̂-faithfulness to S
+(§18.10); the continuous layer relocates nothing into or out of them. No new flag.
 
 ---
 
@@ -570,12 +794,23 @@ to be strengthened (named premise / built instrument), never softened.
 5. **C-claims awaiting deployment (Утв.3,4,6,7,8; §17.1).** Every conditional guarantee above
    is currently corroborated only mechanically/adjacently; none has a direct deployment test.
    The premises are all named; the empirical hooks are real but unrun (E2/E3/§18.5).
+6. **Decomposition-method quality — the real blocker (§18.10.2, §18.11).** EMIT *formats and
+   grades* a seam but does **not** guarantee its faithfulness (Lemma 1); "how to invent a
+   *faithful* seam" is the omitted method-quality layer. This is the canon's named **real
+   E2/E3 + engineering blocker**, not a finalization residue. It is the located manifestation
+   of the (ii)-faithfulness locus on the *production* side; same dormancy until a proxy exists.
+7. **START-fold residue (§18.10.1).** The 5-link count holds modulo folding REACHES's source-
+   relatum (START) into the execution-anchored present by a *stated model choice*. Reject the
+   fold ⟹ the representation leg has 4 roles and the 3⊕2=5 count breaks. Honest sub-§4.8 residue
+   (the analogue of Axiom-1's value/time residue), named not dissolved; does not block, logged.
 
 **Scope of this register.** It covers the load-bearing claims of §2–§5 (axioms, basis
 minimality+completeness, |L|=2, Theorems 1–2, 7-FM completeness + independence, §4.8 Axioms 1–2,
-§5.4 level-exhaustiveness), §6–§7 (protocol minimality, Q minimality, Simon capacity-necessity),
+§5.4 level-exhaustiveness), §6–§7 (protocol minimality, Q minimality, Simon capacity-necessity, Chollet Level≥2 §7.3.2, AI two-components/cross-impossibility §7.3.3),
 §8–§14 (Утв.3–9, §10.3 corollaries + small-gain, Theorems 10–11, §15 indispensability), §17
-(stratification, Scrum embedding), and §18.10 (agent derivation + predictions P-1/P-2/P-3). Of the
+(stratification, Scrum embedding, **v3.6 §17.4–§17.5 ratio/value=objectification**), and §18.10
+(agent derivation + predictions Pred-1/Pred-2/Pred-3, **+ v3.6 §18.10.1 5-link completeness, §18.10.2 named
+boundaries, §18.11 methodology forced-corollaries / verify-vs-explore**). Of the
 claims **enumerated here**, none has zero falsifier of any type — every entry is E, M, or C, and
 the flags above are thin empirical hooks, not vacuous claims.
 
@@ -593,5 +828,12 @@ this set, the register is *incomplete*, not *wrong* — add it.
 
 ## Provenance
 
-The systematic falsifiability pass referenced by canon §18; ships with canon v3.5. On any
-canon ↔ register disagreement, the canon is authoritative and this file is corrected.
+The systematic falsifiability pass referenced by canon §18; tracks canon v3.6 (originally v3.5,
+extended for the v3.6 agent-free-ontology + methodology layer (§17.4–§17.5, §18.10.1, §18.10.2,
+§18.11) in Part III.6, and for the continuous-substrate + 3-axis-faithfulness layer (§18.10.0) in Part III.7).
+
+> *Label note (v3.6).* The §18.10 **predictions** are tagged **Pred-1/Pred-2/Pred-3** (substitutability /
+> applicability boundary / global falsifier) to keep them disjoint from canon's reserved **P3** (Blackwell,
+> Утв.3 §8.2) and from the agent-necessity **derivation steps D1–D6** (§18.10). Three distinct series, no
+> token collision.
+On any canon ↔ register disagreement, the canon is authoritative and this file is corrected.

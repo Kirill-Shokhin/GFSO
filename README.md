@@ -14,9 +14,11 @@ What a transaction must carry: a Spec, a finite set of decidable Criteria, a Dea
 
 **Analog:** TCP/IP for hierarchical work coordination, or Codd 1970 for relational databases — tractable math whose framing enables a domain, not a productivity tool.
 
-**Foundations:** two axioms (A1 verifiability of goals, A2 decomposability of complex tasks), from which the entire protocol follows — including impossibility results that key constructions (binary validation, AND aggregation, 7 failure modes) admit no alternatives. 6 original theorems + 8 propositions/corollaries supported by classical theory.
+**Foundations:** two axioms (A1 verifiability of goals, A2 decomposability of complex tasks), from which the entire protocol follows — including impossibility results that key constructions (binary validation, AND aggregation, 7 failure modes) admit no alternatives. 6 original theorems + 8 further results (propositions backed by classical theory, a corollary, and basis minimality).
 
 **Theory-model layer (§18.10):** beyond a standard, GFSO *derives the agent* (human or LLM) as a necessary structural link rather than presuming it — the formal half cannot supply a decomposition's domain-correctness by itself (Lemma 1), nor can pure declaration ground it (Lemma 3), so an empirical-contact carrier is necessary. This lets GFSO *explain* pre-theoretic success (and the 7 FM) and *predict*, falsifiably, agent substitutability and the applicability boundary.
+
+The theory-model has an **agent-free** core: an ontology of decomposition built on five structural links (the Ŝ/S correspondence axis), plus a methodology — the decomposition method, under which **stop-and-replan is the forced optimum**, not a heuristic. Positioning is honest about boundaries: standard planning [STD] (HTN/MDP/MPC) is taken as a genuinely formal substrate and is **absorbed as a sub-step** of GFSO [GFSO] — planning ⊂ GFSO, not a narrow layer bolted on top of planning. The value GFSO adds is **objectification**: making the otherwise-implicit correctness conditions of a handoff explicit, checkable, and composable.
 
 ---
 
@@ -29,7 +31,7 @@ What a transaction must carry: a Spec, a finite set of decidable Criteria, a Dea
 | T1 | Compositionality | V(parent) = AND(V(children)) under correct D | Constructive |
 | T2 | AND uniqueness | AND is the only non-trivial aggregation | Exhaustive enumeration |
 | — | \|L\|=2 | Binary validation forced (injectivity from decision-relevance; \|A\|=2 architectural) | Pigeonhole |
-| — | 7 FM completeness | Failure modes are exhaustive — proven as an independent basis (residue: single-clock) | Exhaustive case split |
+| — | 7 FM completeness | Failure modes are exhaustive — proven as a basis, modulo a covering Axiom 1 (residue: single-clock) | Exhaustive case split |
 | T10 | Self-measuring | Q computable from execution trace | Constructive |
 | T11 | Structural transparency | Every decision has a record | From invariants |
 
@@ -43,7 +45,7 @@ What a transaction must carry: a Spec, a finite set of decidable Criteria, a Dea
 | P6 | Temporal monotonicity | Quality ↑ over time | Blackwell |
 | P7 | Scale bounds | Cascade: errors ≤ (L·γ)ⁿ | Operator composition |
 | P8 | Bayesian IC | Honesty optimal when cost(defect) > cost(signal) | Hurwicz 1960 |
-| P9 | Decomposition quality | 4 independent improvement mechanisms | P3 + P7 |
+| P9 | Decomposition quality | 4 independent improvement mechanisms | P3 + P7 + P4 + P6 |
 | — | Minimality | Basis {T, D, Dep, Del} is minimal — each element necessary (uniqueness open, §18.9) | Constructive |
 
 ---
@@ -71,10 +73,12 @@ Every step is motivated by the previous. Design decisions are explicit.
 
 | File | Purpose |
 |------|---------|
-| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (canon, v3.5; Russian draft, EN forthcoming). Incl. §17.1 adaptive stratification, §17.2 Scrum ⊂ GFSO, **§18.10 theory-model (agent derived)** |
+| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (canon, v3.6; Russian draft, EN forthcoming). Incl. §17.1 adaptive stratification, §17.2 Scrum ⊂ GFSO, **§18.10 theory-model (agent derived)**. v3.6 adds the agent-free theory-model layer: an ontology of decomposition (5 structural links) plus its methodology (decomposition method) |
 | [`docs/falsifiability.md`](docs/falsifiability.md) | Falsifiability register: each canonical claim → what would falsify it (E/M/C typed) |
-| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: case studies, FAQ, per-metric analysis, adoption arguments |
+| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: full FSM spec, per-metric epistemic analysis, audit/GAAP roadmap, theory-model intuition (labyrinth), open directions |
 | [`docs/architecture.md`](docs/architecture.md) | Code architecture: FSM invariant, module structure, L1/L2/L3 |
+| [`docs/CORE.md`](docs/CORE.md) | One-page definition: what GFSO is, what it uniquely provides, common-objection answers (read first) |
+| [`docs/EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) | Evidence journal: empirical anchors, E0/E1 results, what is proven vs open (internal record) |
 
 ---
 
@@ -83,7 +87,7 @@ Every step is motivated by the previous. Design decisions are explicit.
 ```
 gfso/
   core/         ← Level 1: protocol standard (pure library)
-    types/        State(10), Signal(13), FM(7), effects, ports
+    types/        State(10), Signal(13: 12 P2P + timeout), FM(7), effects, ports
     protocol/     FSM transition table, invariants, role validation
     handlers/     CHECK-1-8, System LLM recommend
     graph/        G model, mutations, 5 metrics Q
@@ -134,13 +138,14 @@ all visible and operable.
 ## Status
 
 Theory:
-- [x] Formal framework: 6 theorems + 8 propositions/corollaries
+- [x] Formal framework: 6 theorems + 8 further results (propositions + corollary + basis minimality)
 - [x] Impossibility results on foundations (|L|=2, AND, 7 FM)
 - [x] AI layer formalized (Solver + LLM, Chollet Level ≥ 2)
 - [x] Vision document with practical illustrations
 - [x] §17.1 adaptive stratification by horizons (derived from Dep coherence + A1 + stationarity)
 - [x] §17.2 Scrum ⊂ GFSO — structural containment shown (behavioral derivation open)
 - [x] §18.10 theory-model: agent derived as a necessary structural link (not presumed); claims calibrated
+- [x] v3.6 agent-free theory-model: ontology of decomposition (5 links / Ŝ/S axis) + methodology (decomposition method, stop-and-replan = forced optimum); honest [STD]/[GFSO] positioning (planning ⊂ GFSO as an absorbed sub-step); value = objectification of handoff correctness conditions
 - [x] Falsifiability register ([`docs/falsifiability.md`](docs/falsifiability.md)): every load-bearing claim typed by what would falsify it (empirical / mathematical / conditional-on-a-named-premise). 7-FM completeness is analytic — a derived case split over a derived covering axiom (§4.8); E1 (0/216 incidents need an 8th mode) corroborates that the derived categories are adequate to real failures rather than testing an empirical posit. The irreducibly empirical surface is two distinct loci sharing one root (where the world enters): domain membership (does A1∧A2 hold here) and faithfulness of the decomposition to the domain's real structure.
 - [ ] English translation
 

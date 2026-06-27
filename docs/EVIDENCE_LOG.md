@@ -52,7 +52,7 @@ This is the cross-session memory the author asked for. Memory files in
   exhaustiveness).
 
 ### What GFSO uniquely provides over its parts
-Decomposition exists. Tests exist. Contracts exist (DBC, Meyer 1986). Audit trails
+Decomposition exists. Tests exist. Contracts exist (DBC, Meyer 1992). Audit trails
 exist. What none of them give together:
 
 1. **Compositional validation theorem** — V(parent) = AND(V(children)) derived, not
@@ -85,13 +85,14 @@ substrate.
 | "Scrum works without all this" | Scrum is a special case (§17.2) under constraints: depth(D)≤2, NEGLECTED=∅, CHECK-7/8 unused, audit informal. Works where those relaxations are cheap; breaks where they're not. |
 | "Abstract math divorced from reality" | Currently partly fair. Two empirical anchors (formal correctness; +34pp E0 result). Open work: E1 postmortem mapping, E2 LLM Issuer, E3 multi-agent. |
 
-### Status (2026-05-23)
+### Status (2026-05-23) — historical snapshot, superseded by §9 (E1 executed/closed)
 - Theory document: formally complete (v3), latest additions §17.1 + §17.2
 - Code framework: `gfso/` (core+adapters) + `bench/` (harness) — clean separation,
   tested via two providers (LiveCodeBench, BigCodeBench-Hard)
 - Empirical anchors: **one strong** (E0 below), several mechanical-pipeline validations
-- Gaps: E1, E2, E3 not yet executed; semantic completeness of criteria (Level 2 in §5.4)
-  remains open as §18.1
+- Gaps (as of this snapshot): E1, E2, E3 not yet executed; semantic completeness of
+  criteria (Level 2 in §5.4) remains open as §18.1. **Superseded:** E1 since executed and
+  closed (0/216) — see §9/§9.1.
 
 ---
 
@@ -245,7 +246,7 @@ this log (see §6 plan).
 - LLM-Issuer with vs without GFSO discipline (planned: E2)
 - Compositional validation theorem in multi-agent decomposition (planned: E3)
 - CHECK-1..8 effectiveness — no decomposition tested
-- q_T, q_D, q_E metrics predictive of real-world outcomes — no long deployment
+- q_T, q_D, q_V (and the rest of Q) metrics predictive of real-world outcomes — no long deployment
 - Causal correctness / Level 2 semantic completeness (§5.4, open per §18.1)
 
 ### Conceptually clarified along the way
@@ -769,8 +770,7 @@ Issuer=Executor (still inside); NUMMI/Zappos correctly out-of-scope (not handoff
    built-in **before/after A/B**: a BEFORE failure (waterfall, FM-classifiable) and an
    AFTER Scrum success (embedding). The DELTA = which GFSO primitive the before lacked
    that the after supplied → a causal "primitive X fixes FM Y" claim. Richer than either
-   track alone. **Action (DONE): dedicated Scrum analysis (`docs/e1/scrum_worked_examples.md`
-   that was proposed but never written).**
+   track alone. **Action (DONE): dedicated Scrum analysis (`docs/e1/scrum_worked_examples.md`).**
 
 6. **Diffusion/planning-horizon intuition = §17.1 + §10.3 + §18.1.** Coarse-to-fine
    decomposition across receding horizons: §17.1 is the skeleton; §10.3 cascade
