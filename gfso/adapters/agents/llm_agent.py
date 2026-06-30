@@ -6,7 +6,7 @@ from typing import Optional
 
 from gfso.core.types import (
     AgentId, Signal, DispatchPayload, SignalData, AgentPort,
-    LLMProviderPort, TaskId,
+    LLMProviderPort,
 )
 
 log = logging.getLogger(__name__)

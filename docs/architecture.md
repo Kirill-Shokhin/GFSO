@@ -13,13 +13,13 @@ Guards are simple predicates on graph state (only where needed — currently one
 ```
 (State, Signal, Guard)           → NewState      Effects
 ───────────────────────────────────────────────────────────────────
-(IDLE, ASSIGN)                   → REVIEW        [MutateGraph, RunChecks, Recommend, Dispatch]
+(IDLE, ASSIGN)                   → REVIEW        [MutateGraph, RunChecks, Dispatch]   # Recommend removed (§v3.6)
 (REVIEW, ACCEPT)                 → EXECUTING     [MutateGraph, Dispatch]
 (REVIEW, CHALLENGE)              → CHALLENGED    [MutateGraph, Dispatch]
 (REVIEW, timeout)                → TIMEOUT       [MutateGraph]
 (CHALLENGED, ACCEPT_CHALLENGE)   → REVIEW        [MutateGraph, RunChecks, Dispatch]
 (CHALLENGED, REJECT_CHALLENGE)   → EXECUTING     [MutateGraph, Dispatch]
-(CHALLENGED, timeout)            → REVIEW        [MutateGraph]          # auto-accept, see below
+(CHALLENGED, timeout)            → TIMEOUT       [MutateGraph]          # escalates §6.3 (§v3.6: no auto-accept)
 (EXECUTING, DELIVER)             → VALIDATING    [MutateGraph, Dispatch]
 (EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch]
 (EXECUTING, timeout)             → TIMEOUT       [MutateGraph]
@@ -245,3 +245,84 @@ Both use LLMProviderPort (in core/types/ports.py). Different roles, different lo
 | adapters/llm/ | System + Agent LLM degraded to stubs. Everything else works |
 | adapters/agents/llm_agent.py | No AI workers. Human agents still work |
 | engine/ | Use core/ as pure library. Call protocol.transition() + mutations.apply() directly |
+
+---
+
+# v3.6 — mutation surface, closure & interfaces
+
+> This section extends the CORE-FSM architecture above with the track-b work (the upper authoring layer, the
+> single-chokepoint closure, decompose, and the one-action-surface/three-transport interface model). A few of
+> the earlier v4-era FSM details above predate track-b and are pending a fuller doc-reconciliation pass; where
+> they conflict, THIS section is current (e.g. Recommend is no longer auto-emitted on ASSIGN; CHALLENGED-timeout
+> escalates rather than auto-accepting; revise does not cascade — see below).
+
+## Two layers — every mutation is a logged signal
+Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME closed FSM — there is no exit from it.
+
+```
+   UI / MCP / CLI            — thin transports; send upper-layer calls
+        │
+   UPPER API (convenience compositions — read-modify-write):
+     decompose · revise · reneglect · edit_criteria · reassign · add/remove_dependency · map_criterion
+        │  desugars to ↓ (never bypasses)
+   LOWER API = THE CANON FSM — send_signal() + reads
+     CLOSED alphabet: 12 P2P signals + TIMEOUT (frozen by test):
+     ASSIGN ACCEPT CHALLENGE BLOCK DELIVER CANCEL_ACK ACCEPT_CHALLENGE REJECT_CHALLENGE PASS FAIL CANCEL RESOLVE_BLOCK
+     every signal → audited mutation (loop → audit). No 13th.
+        │
+   graph / storage
+```
+
+### Authoring ops are NOT new signals — they desugar to existing ones
+| Upper op | Desugars to (lower) | Notes |
+|---|---|---|
+| create | `ASSIGN` (IDLE → CREATE_TASK effect) | node creation IS the ASSIGN effect (logged) |
+| decompose | one `ASSIGN` per child (+ `covers` → parent mapping effect) | mappings = the child's declaration, logged |
+| **revise** | `CANCEL`(reassigning) + re-`ASSIGN` (SAME id) | spec change per Inv-1 §6.4; old contract a logged tombstone, id persists; **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1; issuer-gated |
+| reneglect / edit_criteria | revise (RMW) | change one field, carry the rest |
+| add_dependency (declared) | `CANCEL` + re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§2.2); edge derived |
+| map_criterion | re-`ASSIGN` of the child carrying `covers` | binds an existing child to a parent criterion (logged) |
+| reassign | `CANCEL` + re-`ASSIGN` with a new executor | Del change per Inv-1 |
+| **abandon** | `CANCEL` only | tombstone; **cascades to subtree**; never deleted (§7.3.1) |
+
+**Surface-don't-destroy.** abandon = raw `CANCEL` → cascades the subtree (its sub-work served a contract that no
+longer exists, §7.1). revise = `CANCEL`(reassigning) + re-`ASSIGN` same id → the node continues under a new
+contract, so its **subtree is RETAINED, no cascade**; coverage staleness (uncovered new criterion / dangling
+mapping) is SURFACED by CHECK-1 for the agent to resolve ∨ declare, not destroyed. The only IN-PLACE spec change
+is `ACCEPT_CHALLENGE`. *(Pending /formalize → canon v3.7: §6.4+§7.1 read literally cascade every CANCEL; this
+splits abandon-CANCEL from revise-CANCEL.)*
+
+## Closure invariant (proven)
+- **Static:** every authored-state write lives in `core/graph/mutations.py::apply`, called ONLY by
+  `engine/loop.py::_execute_effects` (the event loop), which records an audit entry per signal.
+- **Build:** `decompose` builds THROUGH the FSM (`build_graph_live`); the old offline `build_graph` (direct
+  `save_task`) was DELETED — one build path, no offline authored-state write.
+- **Single residual (dormant, off-surface):** `add_dependency(discovered=True)` writes a stored edge without a
+  signal (declared-vs-discovered is a canon concept §7.2/FM-4, but no signal emits the discovered edge today and
+  it is off every HTTP/MCP/CLI surface). Canonical home = a BLOCK effect (v2/E3, BLOCK-provenance). TODO in code.
+- **Derived caches** (check results, `verified`, critique, recommendation) persist but carry NO authored-contract
+  state — recomputable projections of signal-driven state, not mutations.
+
+⟹ A hole in mutability appears ONLY if code writes graph state outside `apply` (grep `save_task`); a duplicate of
+a verb appears ONLY if logic is put in a transport instead of the Engine. Both are single, greppable invariants.
+
+## Interfaces — one Engine, one action surface (`tools.py`), three transports
+The **Engine is the single source of all logic**; `gfso/tools.py` is the SINGLE action surface over it; the three
+transports (MCP · CLI · HTTP) are GENERATED from that one `TOOLS` registry. Adding an authoring verb = ONE Engine
+method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-adapter edits.
+
+```
+   Engine (CORE)  ── the one place all logic lives; every verb is an Engine method
+     │
+   gfso/tools.py  ── the SINGLE action surface: (engine,*args) → JSON dict, one fn per verb (TOOLS registry)
+     ├─ gfso/mcp     MCP server — binds each TOOLS fn as an MCP tool (stdio)          ← the agent
+     ├─ gfso/driver  `gfso run` — binds each TOOLS fn to argv                          ← scripts / CI / subagents
+     └─ gfso/api     HTTP `POST /api/run/{tool}` — dispatches to TOOLS                 ← the UI (browser client)
+                     (+ bespoke typed GET reads: task detail / graph / metrics / …)
+```
+
+- `runtime.build_engine_from_env` = the shared CORE constructor (one Engine from `GFSO_DB_PATH`).
+- HTTP **reads** stay bespoke typed routes (view-specific shapes for the UI — reads aren't a mutation surface).
+- **Live mirroring:** one process (`gfso mcp` / `gfso serve --mcp`) hosts MCP + HTTP + UI over ONE Engine, so the
+  UI's `/ws/events` reflects the agent's writes live. Separate processes share only SQLite (poll, no live WS).
+- **Versioning:** the transports + the UI are DERIVED mirrors of the Engine's verb surface (via `tools.py`).

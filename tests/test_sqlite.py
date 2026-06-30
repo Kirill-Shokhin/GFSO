@@ -38,7 +38,7 @@ def test_complex_spec_roundtrip():
     got = s.get_task(TaskId("t1"))
     assert len(got.spec.criteria) == 2
     assert got.spec.criteria[0].name == "perf"
-    assert got.spec.neglected == ("risk1",)
+    assert got.spec.neglected[0].item == "risk1"
     assert got.spec.risk_components == ("drought",)
 
 

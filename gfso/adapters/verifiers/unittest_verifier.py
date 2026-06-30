@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-from gfso.core.types import TaskId, Spec, Criteria, CheckResult, StoragePort, VerifierPort
+from gfso.core.types import TaskId, Spec, CheckResult, StoragePort, VerifierPort
 
 log = logging.getLogger(__name__)
 

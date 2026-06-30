@@ -1,9 +1,13 @@
 """Tests for handlers/structural.py — CHECK-1 through CHECK-6."""
 from datetime import datetime, timedelta
-from gfso.core.types import Task, TaskId, AgentId, Spec, Criteria, CriterionMapping
+from gfso.core.types import (
+    Task, TaskId, AgentId, Spec, Criteria, CriterionMapping,
+    NeglectedItem, Predictability,
+)
 from gfso.core.handlers.structural import (
     check_coverage, check_dag, check_deadlines,
     check_neglected, check_risk_nodes, check_delegation,
+    check_non_redundancy, check_predictability,
     run_structural,
 )
 
@@ -148,15 +152,62 @@ def test_delegation_missing():
     assert "c2" in result.details
 
 
+# === CHECK-1b: Non-redundancy (second side of FM-1) ===
+
+def test_non_redundancy_pass():
+    parent = _task("p", criteria=["perf"], mappings=[CriterionMapping("perf", TaskId("c1"))])
+    c1 = _task("c1", desc="perf work")
+    assert check_non_redundancy(parent, [c1]).passed
+
+def test_non_redundancy_fail_superfluous_child():
+    parent = _task("p", criteria=["perf"], mappings=[CriterionMapping("perf", TaskId("c1"))])
+    c1 = _task("c1", desc="perf work")
+    c2 = _task("c2", desc="unrelated extra")  # mapped to nothing
+    result = check_non_redundancy(parent, [c1, c2])
+    assert not result.passed
+    assert "c2" in result.details
+
+def test_non_redundancy_leaf_skipped():
+    assert check_non_redundancy(_task("p", criteria=["x"]), []).skipped
+
+
+# === CHECK-STD2: Predictability (§5.2) ===
+
+def _task_neg(neglected):
+    return Task(id=TaskId("t"), spec=Spec("t", (), tuple(neglected)))
+
+def test_predictability_unclassified_skipped():
+    assert check_predictability(_task_neg([NeglectedItem("x")])).skipped
+
+def test_predictability_ordinary_fails():
+    t = _task_neg([NeglectedItem("drought", Predictability.ORDINARY)])
+    r = check_predictability(t)
+    assert not r.passed and "ORDINARY" in r.details
+
+def test_predictability_statistical_needs_justification():
+    bad = _task_neg([NeglectedItem("rare outage", Predictability.STATISTICAL)])
+    assert not check_predictability(bad).passed
+    ok = _task_neg([NeglectedItem("rare outage", Predictability.STATISTICAL, "P<1%, out of budget")])
+    assert check_predictability(ok).passed
+
+def test_predictability_extraordinary_ok():
+    t = _task_neg([NeglectedItem("meteorite", Predictability.EXTRAORDINARY)])
+    assert check_predictability(t).passed
+
+
 # === Full run ===
 
-def test_run_structural_returns_all_6():
+def test_run_structural_returns_all_checks():
     parent = _task("p", criteria=["perf"], neglected=["risks"], mappings=[
         CriterionMapping("perf", TaskId("c1")),
     ])
     child = _task("c1", desc="perf work", assignee="a1")
     results = run_structural(parent, [child])
-    assert len(results) == 6
     names = [r.check_name for r in results]
-    assert "CHECK-1:coverage" in names
-    assert "CHECK-6:delegation" in names
+    assert len(results) == 8
+    for expected in (
+        "CHECK-1:coverage", "CHECK-1b:non_redundancy", "CHECK-2:dag",
+        "CHECK-3:deadlines", "CHECK-4:neglected", "CHECK-STD2:predictability",
+        "CHECK-5:risk_nodes", "CHECK-6:delegation",
+    ):
+        assert expected in names

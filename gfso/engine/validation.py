@@ -1,9 +1,8 @@
 """Signal validation enforcement — L2 wrapper around L1 role rules."""
 from __future__ import annotations
 
-from typing import Optional
 
-from gfso.core.types import Signal, SignalData, TaskId, AgentId, Task
+from gfso.core.types import Signal, SignalData, State, DoneReason
 from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import validate_fail_has_criteria
 from gfso.core.graph import Graph
@@ -23,6 +22,18 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
         raise ValidationError(
             f"FAIL signal for {signal_data.task_id} must specify failed_criteria"
         )
+
+    # Theorem 1 at runtime (§7.1): a DECOMPOSED node PASSes only if every active child has PASSed —
+    # V(parent) = AND(V(children)). The per-node FSM stays graph-blind (proven closed over single nodes); this
+    # cross-node composition invariant is enforced here (the validation layer sees the graph), not just advised
+    # by next_step's ordering. A leaf (no children) is unaffected.
+    if signal_data.signal == Signal.PASS:
+        unpassed = [c.id for c in graph.get_active_children(signal_data.task_id)
+                    if not (c.state == State.DONE and c.done_reason == DoneReason.PASS)]
+        if unpassed:
+            raise ValidationError(
+                f"cannot PASS {signal_data.task_id}: not all children have PASSed (V=AND of children): {unpassed}"
+            )
 
     role = required_role(signal_data.signal)
 

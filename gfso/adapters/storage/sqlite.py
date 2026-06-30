@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Optional
 
 from gfso.core.types import (
-    TaskId, AgentId, Task, State, DoneReason, AutonomyLevel,
-    Spec, Criteria, CriterionMapping,
+    TaskId, AgentId, Task, State, DoneReason, AutonomyLevel, Predictability,
+    Spec, Criteria, CriterionMapping, NeglectedItem,
     CheckResult, Recommendation, DepEdge,
     StoragePort, TERMINAL_STATES,
 )
@@ -42,7 +42,8 @@ class SqliteStorage(StoragePort):
                 was_challenged INTEGER DEFAULT 0,
                 was_reassigned INTEGER DEFAULT 0,
                 false_positive INTEGER DEFAULT 0,
-                criterion_mappings_json TEXT DEFAULT '[]'
+                criterion_mappings_json TEXT DEFAULT '[]',
+                verified INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS check_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,18 +61,57 @@ class SqliteStorage(StoragePort):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 from_id TEXT NOT NULL,
                 to_id TEXT NOT NULL,
-                discovered INTEGER DEFAULT 0
+                discovered INTEGER DEFAULT 0,
+                glue TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS critiques (
+                task_id TEXT PRIMARY KEY,
+                critique_json TEXT NOT NULL
             );
         """)
+        # Defensive migrations for DBs created before these columns existed.
+        dep_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(dep_edges)")}
+        if "glue" not in dep_cols:
+            self._conn.execute("ALTER TABLE dep_edges ADD COLUMN glue TEXT DEFAULT ''")
+        task_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
+        if "verified" not in task_cols:
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN verified INTEGER DEFAULT 0")
 
     # === Serialization ===
+
+    @staticmethod
+    def _neglected_to_json(items: tuple[NeglectedItem, ...]) -> list[dict]:
+        return [{
+            "item": n.item,
+            "predictability": n.predictability.name if n.predictability else None,
+            "justification": n.justification,
+            "invalidation_condition": n.invalidation_condition,
+        } for n in items]
+
+    @staticmethod
+    def _neglected_from_json(raw) -> tuple[NeglectedItem, ...]:
+        out = []
+        for n in raw or ():
+            if isinstance(n, str):  # legacy plain-string format
+                out.append(NeglectedItem(n))
+            else:
+                p = n.get("predictability")
+                out.append(NeglectedItem(
+                    n["item"],
+                    Predictability[p] if p else None,
+                    n.get("justification", ""),
+                    n.get("invalidation_condition", ""),
+                ))
+        return tuple(out)
 
     @staticmethod
     def _spec_to_json(spec: Spec) -> str:
         return json.dumps({
             "description": spec.description,
-            "criteria": [{"name": c.name, "description": c.description} for c in spec.criteria],
-            "neglected": list(spec.neglected),
+            "name": spec.name,
+            "criteria": [{"name": c.name, "description": c.description, "depends_on": c.depends_on}
+                         for c in spec.criteria],
+            "neglected": SqliteStorage._neglected_to_json(spec.neglected),
             "risk_components": list(spec.risk_components),
         })
 
@@ -80,9 +120,11 @@ class SqliteStorage(StoragePort):
         d = json.loads(raw)
         return Spec(
             description=d["description"],
-            criteria=tuple(Criteria(c["name"], c["description"]) for c in d["criteria"]),
-            neglected=tuple(d.get("neglected", ())),
+            criteria=tuple(Criteria(c["name"], c["description"], depends_on=c.get("depends_on"))
+                           for c in d["criteria"]),
+            neglected=SqliteStorage._neglected_from_json(d.get("neglected", ())),
             risk_components=tuple(d.get("risk_components", ())),
+            name=d.get("name", ""),
         )
 
     @staticmethod
@@ -111,6 +153,7 @@ class SqliteStorage(StoragePort):
         t.was_reassigned = bool(row["was_reassigned"])
         t.false_positive = bool(row["false_positive"])
         t.criterion_mappings = self._mappings_from_json(row["criterion_mappings_json"])
+        t.verified = bool(row["verified"])
         return t
 
     # === StoragePort ===
@@ -124,8 +167,8 @@ class SqliteStorage(StoragePort):
             """INSERT OR REPLACE INTO tasks
                (id, spec_json, state, parent_id, assignee, iteration, max_iterations,
                 deadline, created_at, done_reason, autonomy,
-                was_challenged, was_reassigned, false_positive, criterion_mappings_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                was_challenged, was_reassigned, false_positive, criterion_mappings_json, verified)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.id,
                 self._spec_to_json(task.spec),
@@ -142,6 +185,7 @@ class SqliteStorage(StoragePort):
                 int(task.was_reassigned),
                 int(task.false_positive),
                 self._mappings_to_json(task.criterion_mappings),
+                int(task.verified),
             ),
         )
         self._conn.commit()
@@ -197,11 +241,28 @@ class SqliteStorage(StoragePort):
 
     def add_dep_edge(self, edge: DepEdge) -> None:
         self._conn.execute(
-            "INSERT INTO dep_edges (from_id, to_id, discovered) VALUES (?, ?, ?)",
-            (edge.from_id, edge.to_id, int(edge.discovered)),
+            "INSERT INTO dep_edges (from_id, to_id, discovered, glue) VALUES (?, ?, ?, ?)",
+            (edge.from_id, edge.to_id, int(edge.discovered), edge.glue),
+        )
+        self._conn.commit()
+
+    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
+        self._conn.execute(
+            "DELETE FROM dep_edges WHERE from_id = ? AND to_id = ?", (from_id, to_id)
         )
         self._conn.commit()
 
     def get_dep_edges(self) -> list[DepEdge]:
         rows = self._conn.execute("SELECT * FROM dep_edges").fetchall()
-        return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"])) for r in rows]
+        return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]), r["glue"] or "") for r in rows]
+
+    def store_critique(self, task_id: TaskId, critique_json: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO critiques (task_id, critique_json) VALUES (?, ?)",
+            (task_id, critique_json),
+        )
+        self._conn.commit()
+
+    def get_critique(self, task_id: TaskId) -> Optional[str]:
+        row = self._conn.execute("SELECT critique_json FROM critiques WHERE task_id = ?", (task_id,)).fetchone()
+        return row["critique_json"] if row else None

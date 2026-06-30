@@ -3,7 +3,7 @@
 Formulas from paper §7.2:
   q_T   = 1 − |{n : challenged}| / |{n : DONE}|
   q_D   = |{n : all children pass ∧ n pass}| / |{n : all children pass, |children|>0, DONE}|
-  q_V   = 1 − |{n : done_reason=AUTO}| / |{n : DONE(pass) ∨ DONE(auto)}|
+  q_V   = 1 − |{n : false_positive}| / |{n : DONE(pass) ∨ DONE(auto)}|   (a PASS later found wrong, §16.5)
   q_Dep = |declared| / |declared ∪ discovered|
   q_Del = 1 − |{n : was reassigned}| / |{n : DONE}|
 """
@@ -36,7 +36,7 @@ def q_D(graph: Graph) -> float:
     for t in all_tasks:
         if t.state != State.DONE:
             continue
-        children = graph._storage.get_children(t.id)
+        children = graph.get_active_children(t.id)  # cancelled tombstones not part of the decomposition
         if not children:
             continue  # atomic task, skip
         all_children_pass = all(
@@ -73,7 +73,7 @@ def q_Dep(graph: Graph) -> float:
 
     High q_Dep = deps were known upfront. Low = surprise blocks from hidden deps.
     """
-    edges = graph._storage.get_dep_edges()
+    edges = graph.dep_edges()
     if not edges:
         return 1.0
     declared = sum(1 for e in edges if not e.discovered)

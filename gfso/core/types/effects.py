@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Union
 
 from .enums import MutationType, Signal, DoneReason, State
@@ -15,6 +16,10 @@ class MutateGraph:
     done_reason: DoneReason | None = None
     spec: Spec | None = None
     assignee: AgentId | None = None
+    parent_id: TaskId | None = None      # CREATE_TASK: parent link
+    deadline: datetime | None = None     # CREATE_TASK: T deadline
+    max_iterations: int = 3              # CREATE_TASK: rework bound
+    covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§2.2)
 
 
 @dataclass(frozen=True)

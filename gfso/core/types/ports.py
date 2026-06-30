@@ -7,7 +7,6 @@ from .primitives import (
     TaskId, AgentId, Task, CheckResult, Recommendation,
     DispatchPayload, SignalData, DepEdge, Spec,
 )
-from .enums import State
 
 
 class StoragePort(ABC):
@@ -57,14 +56,31 @@ class StoragePort(ABC):
         ...
 
     @abstractmethod
+    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
+        ...
+
+    @abstractmethod
     def get_dep_edges(self) -> list[DepEdge]:
         ...
+
+    def store_critique(self, task_id: TaskId, critique_json: str) -> None:
+        """Persist a node's L2 critique (the validation record). Default no-op so
+        existing storages stay valid; memory/sqlite override."""
+        ...
+
+    def get_critique(self, task_id: TaskId) -> Optional[str]:
+        return None
 
 
 class LLMProviderPort(ABC):
     @abstractmethod
     def complete(self, prompt: str, context: str = "") -> str:
         ...
+
+    def complete_structured(self, system: str, user: str, schema: dict) -> dict:
+        """Native structured output: model fills `schema` (fields defined upfront).
+        Default = degraded empty (no client); real provider overrides. Returns {} on failure."""
+        return {}
 
 
 class AgentPort(ABC):

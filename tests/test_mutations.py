@@ -68,6 +68,28 @@ def test_cancel_cascade():
     assert TaskId("c2") not in affected
 
 
+def test_active_children_excludes_cancelled_tombstone():
+    """B1 realization: CANCELLED nodes persist (provenance, §7.3.1) but leave the ACTIVE decomposition.
+    get_children = all (provenance); get_active_children = excludes only DONE(CANCELLED); DONE(PASS/FAIL)
+    stay active (delivered work)."""
+    g = _graph()
+    parent = _task("parent", state=State.EXECUTING)
+    active = _task("a1c", state=State.EXECUTING, parent_id="parent")
+    done_pass = _task("a2c", state=State.DONE, parent_id="parent")
+    done_pass.done_reason = DoneReason.PASS
+    cancelled = _task("a3c", state=State.DONE, parent_id="parent")
+    cancelled.done_reason = DoneReason.CANCELLED
+    for t in (parent, active, done_pass, cancelled):
+        g.save_task(t)
+
+    all_ids = {c.id for c in g.get_children(TaskId("parent"))}
+    active_ids = {c.id for c in g.get_active_children(TaskId("parent"))}
+
+    assert all_ids == {TaskId("a1c"), TaskId("a2c"), TaskId("a3c")}   # provenance keeps the tombstone
+    assert active_ids == {TaskId("a1c"), TaskId("a2c")}                # cancelled excluded from active
+    assert TaskId("a2c") in active_ids                                 # DONE(PASS) is active, not filtered
+
+
 def test_increment_iteration():
     g = _graph()
     t = _task()

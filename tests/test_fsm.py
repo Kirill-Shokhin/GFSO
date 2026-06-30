@@ -26,6 +26,20 @@ def test_table_has_19_explicit_rows():
     assert len(_LOOKUP) == 19  # + CANCEL catch-all = 20 transitions
 
 
+def test_signal_alphabet_frozen_at_12_p2p_plus_timeout():
+    """The protocol alphabet is CLOSED: 12 canonical P2P signals (§6.2) + the system TIMEOUT. Authoring
+    operations (create / revise / abandon) are NOT signals — they desugar to these. This lock makes a 13th
+    signal impossible by construction, so neither a new agent nor a reader can mistake an authoring op for
+    a protocol primitive."""
+    p2p = {
+        Signal.ASSIGN, Signal.ACCEPT, Signal.CHALLENGE, Signal.BLOCK, Signal.DELIVER,
+        Signal.CANCEL_ACK, Signal.ACCEPT_CHALLENGE, Signal.REJECT_CHALLENGE, Signal.PASS,
+        Signal.FAIL, Signal.CANCEL, Signal.RESOLVE_BLOCK,
+    }
+    assert len(p2p) == 12
+    assert set(Signal) == p2p | {Signal.TIMEOUT}
+
+
 # === IDLE ===
 
 def test_idle_assign():
@@ -33,7 +47,7 @@ def test_idle_assign():
     assert new_state == State.REVIEW
     assert any(isinstance(e, MutateGraph) for e in effects)
     assert any(isinstance(e, RunChecks) for e in effects)
-    assert any(isinstance(e, Recommend) for e in effects)
+    assert not any(isinstance(e, Recommend) for e in effects)  # deferred human-L2 convenience, off the agentic path
     assert any(isinstance(e, Dispatch) for e in effects)
 
 
@@ -59,13 +73,23 @@ def test_challenged_accept_challenge():
     assert new_state == State.REVIEW
     assert any(isinstance(e, RunChecks) for e in effects)
 
+def test_challenged_accept_challenge_with_new_spec_applies():
+    """The sanctioned spec-revision channel (§6.2/§6.6): ACCEPT_CHALLENGE(new_spec) must APPLY the
+    renegotiated spec (may change criteria) — emits an APPLY_SPEC mutation, not a guarded SET_STATE."""
+    from gfso.core.types import MutationType, Spec, Criteria
+    new = Spec("revised", (Criteria("c2", "tighter"),))
+    new_state, effects = _transition(State.CHALLENGED, Signal.ACCEPT_CHALLENGE, new_spec=new)
+    assert new_state == State.REVIEW
+    applied = [e for e in effects if isinstance(e, MutateGraph) and e.mutation == MutationType.APPLY_SPEC]
+    assert len(applied) == 1 and applied[0].spec is new
+
 def test_challenged_reject_challenge():
     new_state, effects = _transition(State.CHALLENGED, Signal.REJECT_CHALLENGE)
     assert new_state == State.EXECUTING
 
 def test_challenged_timeout():
     new_state, effects = _transition(State.CHALLENGED, Signal.TIMEOUT)
-    assert new_state == State.REVIEW  # auto-accept
+    assert new_state == State.TIMEOUT  # canon §6.3: escalate, do NOT auto-accept the challenge
 
 
 # === EXECUTING ===

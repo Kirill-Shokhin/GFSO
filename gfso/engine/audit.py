@@ -1,11 +1,11 @@
 """Audit trail — signal log for Th.11 (structural transparency)."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from gfso.core.types import State, Signal, TaskId
+from gfso.core.types import State, Signal, TaskId, AgentId
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,13 @@ class AuditEntry:
     effects: tuple[str, ...]  # effect type names
     rejected: bool = False
     error: Optional[str] = None
+    # SignalData payload — who decided and why (Th.11, §11 structural transparency)
+    source: Optional[AgentId] = None
+    reason: Optional[str] = None
+    justification: Optional[str] = None
+    result: Optional[str] = None
+    failed_criteria: tuple[str, ...] = ()
+    action: Optional[str] = None
 
 
 class AuditLog:

@@ -35,3 +35,25 @@ class ClaudeLLM(LLMProviderPort):
         except Exception as e:
             log.warning(f"LLM call failed: {e}")
             return ""
+
+    def complete_structured(self, system: str, user: str, schema: dict) -> dict:
+        """Forced structured output via a single tool the model must call (default temp)."""
+        if self._client is None:
+            return {}
+        try:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=16000,  # judge emits one verbose record per analyst finding — avoid truncation→{}
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                tools=[{"name": "emit", "description": "Return the result in this structure.",
+                        "input_schema": schema}],
+                tool_choice={"type": "tool", "name": "emit"},
+            )
+            for block in response.content:
+                if block.type == "tool_use":
+                    return dict(block.input)
+            return {}
+        except Exception as e:
+            log.warning(f"structured LLM call failed: {e}")
+            return {}

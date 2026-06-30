@@ -36,6 +36,141 @@ def _engine(agent=None, validate=False) -> Engine:
     )
 
 
+def test_revise_is_cancel_reassign_same_id_no_cascade():
+    """Canon Inv-1 (§6.4): REVISE = CANCEL + re-ASSIGN under the SAME id — the cancelled contract is a logged
+    tombstone (§7.3.1), the id-slot persists so graph references stay valid. The subtree is RETAINED (revise ≠
+    abandon — the node continues under a new contract): re-authoring does NOT cascade-cancel children. Coverage
+    staleness from a criteria change SURFACES via CHECK-1 (surface-don't-destroy). The gate is the FSM's:
+    CANCEL & ASSIGN need the issuer role."""
+    from gfso.adapters.agents.human import HumanAgent
+    from gfso.core.types import NeglectedItem
+    import pytest
+    A, B = AgentId("alice"), AgentId("bob")
+    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng.start()
+
+    def sp(d, *c, neg=()):
+        return Spec(d, tuple(Criteria(n, t) for n, t in c), neglected=neg)
+
+    # Leaf revise (the planning case): SAME id, spec applied, logged as CANCEL + re-ASSIGN, no cascade.
+    eng.assign_task(TaskId("leaf"), sp("leaf", ("a", "a")), A); eng.wait_idle()
+    eng.revise(TaskId("leaf"), sp("leaf", ("a", "a2"), neg=(NeglectedItem("ext"),)), A); eng.wait_idle()
+    lf = eng.get_task(TaskId("leaf"))
+    assert lf.id == TaskId("leaf")                                    # SAME id — references survive
+    assert lf.spec.criteria[0].description == "a2" and [n.item for n in lf.spec.neglected] == ["ext"]
+    sigs = [a.signal for a in eng.audit_log(TaskId("leaf")) if not a.rejected]
+    assert Signal.CANCEL in sigs and sigs.count(Signal.ASSIGN) >= 2   # CANCEL + re-ASSIGN, both logged
+
+    # Parent revise: the subtree is RETAINED (revise ≠ abandon). Changing only NEGLECTED here leaves coverage
+    # intact → the child survives, no cascade.
+    eng.assign_task(TaskId("p"), sp("p", ("g", "g")), A); eng.wait_idle()
+    eng.decompose_task(TaskId("p"), [(TaskId("k"), sp("k", ("x", "x")), B)],
+                       [CriterionMapping("g", TaskId("k"))]); eng.wait_idle()
+    eng.revise(TaskId("p"), sp("p", ("g", "g"), neg=(NeglectedItem("re"),)), A); eng.wait_idle()
+    assert eng.get_task(TaskId("p")).id == TaskId("p")                          # same id
+    assert [c.id for c in eng.get_active_children(TaskId("p"))] == [TaskId("k")]  # subtree RETAINED (no cascade)
+    assert [n.item for n in eng.get_task(TaskId("p")).spec.neglected] == ["re"]  # field re-authored
+
+    # A criteria re-author that strands coverage does NOT destroy the child — the staleness SURFACES via CHECK-1
+    # (the g->k mapping now dangles), which the agent must resolve (surface-don't-destroy).
+    eng.revise(TaskId("p"), sp("p", ("g2", "renamed")), A); eng.wait_idle()
+    assert [c.id for c in eng.get_active_children(TaskId("p"))] == [TaskId("k")]        # still there
+    assert not {c.check_name: c for c in eng.get_checks(TaskId("p"))}["CHECK-1:coverage"].passed
+
+    # Gate: the ISSUER may re-author a delegated REVIEW leaf; the EXECUTOR may not.
+    eng.assign_task(TaskId("q"), sp("q", ("g", "g")), A); eng.wait_idle()
+    eng.decompose_task(TaskId("q"), [(TaskId("d"), sp("d", ("z", "z")), B)],
+                       [CriterionMapping("g", TaskId("d"))]); eng.wait_idle()
+    eng.revise(TaskId("d"), sp("d", ("z2", "tight")), A); eng.wait_idle()   # issuer alice ✓
+    assert eng.get_task(TaskId("d")).spec.criteria[0].description == "tight"
+    with pytest.raises(ValueError):
+        eng.revise(TaskId("d"), sp("d", ("z3", "no")), B)                  # executor bob ✗
+    eng.stop()
+
+
+def test_rmw_preserves_name_clears_done_reason_and_map_criterion():
+    """RMW re-author must carry `name` (BUG: dropped) and clear the CANCELLED tombstone flag; map_criterion
+    binds an existing child to repair coverage that a decompose/re-author left dangling (the covers blocker)."""
+    from gfso.adapters.agents.human import HumanAgent
+    from gfso.core.types import NeglectedItem, State, DoneReason
+    A = AgentId("alice")
+    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng.start()
+    eng.assign_task(TaskId("n"), Spec("desc", (Criteria("k", "keep"),), name="Human Label"), A); eng.wait_idle()
+    eng.reneglect(TaskId("n"), (NeglectedItem("x"),), A); eng.wait_idle()
+    t = eng.get_task(TaskId("n"))
+    assert t.spec.name == "Human Label"                             # name carried through RMW
+    assert t.done_reason is None and t.state == State.REVIEW        # tombstone flag cleared on re-author
+
+    eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g"),)), A); eng.wait_idle()
+    eng.decompose_task(TaskId("p"), [(TaskId("c"), Spec("c", (Criteria("z", "z"),)), A)], None); eng.wait_idle()
+    checks = lambda: {c.check_name: c for c in eng.get_checks(TaskId("p"))}
+    assert not checks()["CHECK-1:coverage"].passed                  # g uncovered (child unmapped)
+    eng.map_criterion(TaskId("p"), TaskId("c"), "g"); eng.wait_idle()
+    assert checks()["CHECK-1:coverage"].passed                      # bound → coverage repaired
+    # the mapping went through the LOGGED FSM (child re-authored with covers), not a silent direct write
+    assert any(a.signal == Signal.ASSIGN and not a.rejected for a in eng.audit_log(TaskId("c")))
+    eng.stop()
+
+
+def test_pass_requires_all_children_passed_theorem1():
+    """Theorem 1 at runtime (§7.1): a decomposed parent cannot PASS until every active child has PASSed —
+    enforced at the validation layer, not just advised by next_step."""
+    from gfso.adapters.agents.human import HumanAgent
+    from gfso.core.types import State
+    A = AgentId("alice")
+    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng.start()
+    eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g"),)), A); eng.wait_idle()
+    eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("p"), source=A)); eng.wait_idle()
+    eng.decompose_task(TaskId("p"), [(TaskId("c"), Spec("c", (Criteria("z", "z"),)), A)],
+                       [CriterionMapping("g", TaskId("c"))]); eng.wait_idle()
+    eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("p"), source=A, result="x")); eng.wait_idle()
+    e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
+    assert e is None or e.rejected                                # child not PASSed → parent PASS refused
+    assert eng.get_state(TaskId("p")) == State.VALIDATING
+
+    # PASS the child, then the parent PASS is allowed
+    eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("c"), source=A)); eng.wait_idle()
+    eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("c"), source=A, result="ok")); eng.wait_idle()
+    eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
+    eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
+    assert eng.get_state(TaskId("p")) == State.DONE and eng.get_task(TaskId("p")).done_reason.name == "PASS"
+    eng.stop()
+
+
+def test_upper_convenience_reneglect_and_edit_criteria():
+    """UPPER layer = RMW over REVISE: reneglect / edit_criteria change one field, carry the rest, and
+    desugar to the logged signal path (no bypass)."""
+    from gfso.adapters.agents.human import HumanAgent
+    from gfso.core.types import NeglectedItem
+    A = AgentId("alice")
+    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng.start()
+    eng.assign_task(TaskId("n"), Spec("node", (Criteria("k", "keep"),), neglected=(NeglectedItem("old"),)), A)
+    eng.wait_idle()
+
+    eng.reneglect(TaskId("n"), (NeglectedItem("new1"), NeglectedItem("new2")), A)
+    t = eng.get_task(TaskId("n"))
+    assert [x.item for x in t.spec.neglected] == ["new1", "new2"]      # field changed
+    assert [c.name for c in t.spec.criteria] == ["k"]                   # rest carried
+
+    eng.edit_criteria(TaskId("n"), (Criteria("k2", "tighter"),), A)
+    t = eng.get_task(TaskId("n"))
+    assert [c.name for c in t.spec.criteria] == ["k2"]
+    assert [x.item for x in t.spec.neglected] == ["new1", "new2"]       # rest carried
+    # logged via signals (RMW → revise → ASSIGN-from-REVIEW by the issuer; no bypass)
+    sigs = [a.signal for a in eng.audit_log(TaskId("n")) if not a.rejected]
+    assert sigs.count(Signal.ASSIGN) >= 3              # initial ASSIGN + reneglect + edit_criteria
+
+    # reassign (Del change) on a not-yet-committed node → issuer re-ASSIGNs to a new executor (logged)
+    eng.reassign(TaskId("n"), AgentId("bob"))
+    t = eng.get_task(TaskId("n"))
+    assert t.assignee == AgentId("bob") and t.was_reassigned is True
+    assert t.state == State.REVIEW  # no cascade, still authorable
+    eng.stop()
+
+
 def test_full_happy_path():
     """ASSIGN → REVIEW → ACCEPT → EXECUTING → DELIVER → VALIDATING → PASS → DONE."""
     engine = _engine()
@@ -220,23 +355,30 @@ def test_decompose_task():
 
 
 def test_add_dependency():
-    """add_dependency tracks edges, affects q_Dep."""
-    engine = _engine()
+    """Declared dep = criteria-content on the consumer (derived edge); discovered = stored edge; q_Dep counts both."""
+    class NoopAgent(AgentPort):
+        def dispatch(self, agent_id, payload):
+            return None
+    engine = _engine(NoopAgent())  # tasks stay in REVIEW (re-authorable), not auto-completed
     engine.start()
 
     engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("d"))
     engine.assign_task(TaskId("t2"), Spec("b", (), ("r",)), AgentId("d"))
+    engine.wait_idle()
 
-    engine.add_dependency(TaskId("t1"), TaskId("t2"), discovered=False)
-    engine.add_dependency(TaskId("t2"), TaskId("t1"), discovered=True)
+    engine.add_dependency(TaskId("t1"), TaskId("t2"), discovered=False)  # t2 depends on t1 (declared → t2's criterion)
+    engine.add_dependency(TaskId("t2"), TaskId("t1"), discovered=True)   # surfaced via BLOCK (stored)
 
     deps = engine.get_dependencies()
     assert len(deps) == 2
-    assert deps[0].discovered is False
-    assert deps[1].discovered is True
+    declared = [d for d in deps if not d.discovered]
+    discovered = [d for d in deps if d.discovered]
+    assert len(declared) == 1 and declared[0].from_id == TaskId("t1") and declared[0].to_id == TaskId("t2")
+    assert len(discovered) == 1
+    # the declared edge is derived from t2's criteria, not stored
+    assert any(c.depends_on == TaskId("t1") for c in engine.get_task(TaskId("t2")).spec.criteria)
 
-    m = engine.metrics()
-    assert m["q_Dep"] == 0.5  # 1 declared / 2 total
+    assert engine.metrics()["q_Dep"] == 0.5  # 1 declared / 2 total
     engine.stop()
 
 

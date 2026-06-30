@@ -5,8 +5,8 @@ import logging
 from typing import Optional
 
 from gfso.core.types import (
-    TaskId, Task, State, Signal, MutationType, DoneReason,
-    MutateGraph, TERMINAL_STATES,
+    TaskId, Task, State, MutationType, DoneReason,
+    MutateGraph, CriterionMapping, TERMINAL_STATES,
 )
 from .model import Graph
 
@@ -28,6 +28,8 @@ def apply(graph: Graph, effect: MutateGraph) -> list[TaskId]:
             return _increment_iteration(graph, task)
         case MutationType.CREATE_TASK:
             return _create_task(graph, effect)
+        case MutationType.APPLY_SPEC:
+            return _apply_spec(graph, task, effect)
         case MutationType.STORE_CHECK_RESULTS:
             return []
         case MutationType.STORE_RECOMMENDATION:
@@ -77,6 +79,42 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
     return []
 
 
+def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[TaskId]:
+    """Apply a renegotiated spec via the sanctioned CHALLENGE channel (ACCEPT_CHALLENGE, §6.2/§6.6).
+
+    The ONLY in-place spec change permitted to alter criteria — it is the *pre-acceptance* negotiation
+    (state CHALLENGED, executor has not yet ACCEPTed), distinct from the Inv-1-guarded default path
+    where a post-acceptance criteria change requires CANCEL + re-ASSIGN. §6.6 shows ACCEPT_CHALLENGE
+    removing criterion c_B2 — so this channel legitimately rewrites criteria/NEGLECTED.
+    """
+    if task is None or effect.spec is None:
+        log.error(f"APPLY_SPEC without task/spec for {effect.task_id}")
+        return []
+    task.spec = effect.spec
+    task.done_reason = None  # re-authored → a fresh contract, no longer a CANCELLED tombstone (clears stale flag)
+    # a criteria change strands this node's own mappings that point at a now-removed criterion → prune them here
+    # (logged, part of APPLY_SPEC) so no stale mapping persists; the now-unmapped child surfaces via CHECK-1b.
+    _valid = {c.name for c in task.spec.criteria}
+    if any(m.criterion_name not in _valid for m in task.criterion_mappings):
+        task.criterion_mappings = tuple(m for m in task.criterion_mappings if m.criterion_name in _valid)
+    if effect.assignee is not None:  # reassign (Del change) via the same pre-acceptance channel
+        if effect.assignee != task.assignee:
+            task.was_reassigned = True  # q_Del
+        task.assignee = effect.assignee
+    graph.save_task(task)
+    # covers on a re-author: the child (re)declares which parent criteria it covers (§2.2), appended (dedup) —
+    # so a mapping can be set/preserved through re-ASSIGN, not only at CREATE_TASK.
+    if effect.covers and task.parent_id:
+        parent = graph.get_task(task.parent_id)
+        if parent is not None:
+            seen = {(m.criterion_name, m.child_id) for m in parent.criterion_mappings}
+            new = tuple(CriterionMapping(c, task.id) for c in effect.covers if (c, task.id) not in seen)
+            if new:
+                parent.criterion_mappings = parent.criterion_mappings + new
+                graph.save_task(parent)
+    return []
+
+
 def _increment_iteration(graph: Graph, task: Optional[Task]) -> list[TaskId]:
     if task is None:
         return []
@@ -93,6 +131,20 @@ def _create_task(graph: Graph, effect: MutateGraph) -> list[TaskId]:
         id=effect.task_id,
         spec=effect.spec,
         assignee=effect.assignee,
+        parent_id=effect.parent_id,
+        deadline=effect.deadline,
+        max_iterations=effect.max_iterations,
     )
     graph.save_task(task)
+    # Mapping = the child declares which parent criteria it covers (§2.2 non-redundancy). Recorded as a
+    # logged effect of THIS child's ASSIGN, not a direct write to the parent. Appends (incremental-safe).
+    if effect.covers and effect.parent_id:
+        parent = graph.get_task(effect.parent_id)
+        if parent is not None:
+            seen = {(m.criterion_name, m.child_id) for m in parent.criterion_mappings}
+            new = tuple(CriterionMapping(c, effect.task_id) for c in effect.covers
+                        if (c, effect.task_id) not in seen)
+            if new:
+                parent.criterion_mappings = parent.criterion_mappings + new
+                graph.save_task(parent)
     return []

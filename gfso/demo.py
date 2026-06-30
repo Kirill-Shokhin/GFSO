@@ -58,6 +58,9 @@ def seed_demo(engine: Engine) -> None:
                 criteria=(
                     Criteria("responsive", "Works on mobile and desktop"),
                     Criteria("accessible", "WCAG 2.1 AA compliant"),
+                    # Dep is criteria-content (§2.2): the UI depends on the backend API's contract.
+                    Criteria("uses_backend_api", "UI calls the backend API; breaks if the API contract differs",
+                             depends_on=TaskId("backend-api")),
                 ),
                 neglected=("IE11 support",),
             ), AgentId("dev-bob")),
@@ -131,9 +134,7 @@ def seed_demo(engine: Engine) -> None:
 
     # Docs: stays in REVIEW (dave hasn't accepted yet)
     # (already in REVIEW from decompose_task → ASSIGN)
-
-    # Add a dependency: frontend depends on backend API
-    engine.add_dependency(TaskId("frontend-ui"), TaskId("backend-api"))
+    # Frontend→backend dependency is declared as criteria-content in frontend-ui's spec (above).
 
     log.info("Demo project seeded.")
     log.info("  You are: PM (top-level issuer for release-v2)")

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NewType, Optional
 
-from .enums import State, Signal, DoneReason, Verdict, AutonomyLevel
+from .enums import State, Signal, DoneReason, Verdict, AutonomyLevel, Predictability
 
 
 TaskId = NewType("TaskId", str)
@@ -19,14 +19,37 @@ class Criteria:
     expected: Optional[str] = None
     n: Optional[int] = None
     timeout: Optional[int] = None
+    depends_on: Optional[TaskId] = None  # §2.2: this criterion references a sibling's output (the glue)
+                                         # → induces a Dep edge (from=depends_on, to=this task)
+
+
+@dataclass(frozen=True)
+class NeglectedItem:
+    """A declared scope-exclusion (STD-1) with its STD-2 predictability verdict.
+
+    predictability=None → unclassified (legacy/plain text); CHECK-STD2 stays silent.
+    Set it to enforce STD-2 admissibility (§5.2).
+    """
+    item: str
+    predictability: Optional[Predictability] = None
+    justification: str = ""
+    invalidation_condition: str = ""  # STD-1: when this exclusion flips back in-scope
 
 
 @dataclass(frozen=True)
 class Spec:
     description: str
     criteria: tuple[Criteria, ...]
-    neglected: tuple[str, ...] = ()
+    neglected: tuple[NeglectedItem, ...] = ()
     risk_components: tuple[str, ...] = ()  # STD-3: grouped correlated risk factors
+    name: str = ""                         # short node label (UI title); description = the full text
+
+    def __post_init__(self):
+        # Coerce bare strings → NeglectedItem so existing call-sites keep working.
+        if self.neglected and any(isinstance(n, str) for n in self.neglected):
+            object.__setattr__(self, "neglected", tuple(
+                NeglectedItem(n) if isinstance(n, str) else n for n in self.neglected
+            ))
 
 
 @dataclass(frozen=True)
@@ -38,10 +61,18 @@ class CriterionMapping:
 
 @dataclass(frozen=True)
 class DepEdge:
-    """Dependency edge. discovered=True if found via BLOCK, not declared upfront."""
+    """Dependency edge (a cross-subtask seam).
+
+    glue = the anti-mock truth-maker (canon §2.2 / §18.10): what of `to_id`'s output
+    `from_id`'s criterion references, and what breaks if the edge is mishandled. A seam
+    without glue is the FM-1 forgotten-glue hole — so glue is first-class on the edge,
+    not folded into a node-local criterion (which would be mock-satisfiable).
+    discovered=True if found via BLOCK, not declared upfront.
+    """
     from_id: TaskId
     to_id: TaskId
     discovered: bool = False
+    glue: str = ""
 
 
 @dataclass
@@ -61,12 +92,14 @@ class Task:
     was_reassigned: bool = False
     false_positive: bool = False  # V=pass but later found wrong (q_V)
     criterion_mappings: tuple[CriterionMapping, ...] = ()
+    verified: bool = False  # L2 dirty flag: stored critique is fresh for current decomposition
 
 
 @dataclass(frozen=True)
 class GuardContext:
     iteration: int
     max_iterations: int
+    done_reason: Optional[DoneReason] = None  # lets transition() see WHY a DONE node is done (re-ASSIGN only a CANCELLED one)
 
 
 @dataclass(frozen=True)
@@ -98,7 +131,13 @@ class SignalData:
     task_id: TaskId
     source: Optional[AgentId] = None
     # Signal-specific payloads
-    spec: Optional[Spec] = None                    # ASSIGN
+    spec: Optional[Spec] = None                    # ASSIGN (the packet)
+    assignee: Optional[AgentId] = None             # ASSIGN: who executes (Del)
+    parent_id: Optional[TaskId] = None             # ASSIGN: parent for a child node
+    deadline: Optional[datetime] = None            # ASSIGN: T=(spec,criteria,deadline)
+    max_iterations: int = 3                        # ASSIGN: rework bound
+    covers: tuple[str, ...] = ()                   # ASSIGN: parent criteria this child is mapped to (§2.2)
+    reassigning: bool = False                      # CANCEL: part of a revise (re-ASSIGN follows) → no subtree cascade
     reason: Optional[str] = None                   # CHALLENGE, BLOCK, CANCEL
     result: Optional[str] = None                   # DELIVER
     self_validation: Optional[Verdict] = None      # DELIVER

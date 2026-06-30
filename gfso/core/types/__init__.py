@@ -1,11 +1,11 @@
 from .enums import (
     State, Signal, DoneReason, Verdict, FM,
-    AutonomyLevel, MutationType,
+    AutonomyLevel, MutationType, Predictability,
     TERMINAL_STATES, NON_TERMINAL_STATES,
 )
 from .primitives import (
     TaskId, AgentId,
-    Criteria, Spec, Task,
+    Criteria, Spec, Task, NeglectedItem,
     CriterionMapping, DepEdge,
     GuardContext, CheckResult, Recommendation,
     GraphContext, SignalData, DispatchPayload,

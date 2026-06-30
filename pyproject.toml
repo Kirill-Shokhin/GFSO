@@ -16,8 +16,9 @@ dependencies = [
 [project.optional-dependencies]
 llm = ["anthropic>=0.39.0"]
 solver = ["z3-solver"]
+mcp = ["mcp>=1.0.0"]
 dev = ["pytest>=7.0", "httpx>=0.25.0"]
-all = ["gfso[llm,solver]"]
+all = ["gfso[llm,solver,mcp]"]
 
 [project.scripts]
 gfso = "gfso.cli:main"

@@ -65,9 +65,22 @@ class AutonomyLevel(Enum):
     AUTONOMOUS = auto()
 
 
+class Predictability(Enum):
+    """STD-2 (§5.2): predictability class of a neglected factor.
+
+    ORDINARY      — regular in domain, P estimable → MUST be in decomposition (not neglectable).
+    STATISTICAL   — P estimable but rare → neglectable only WITH justification.
+    EXTRAORDINARY — no precedent AND not derivable from known models → neglectable.
+    """
+    ORDINARY = auto()
+    STATISTICAL = auto()
+    EXTRAORDINARY = auto()
+
+
 class MutationType(Enum):
     CREATE_TASK = auto()
     SET_STATE = auto()
+    APPLY_SPEC = auto()       # sanctioned spec revision via ACCEPT_CHALLENGE (§6.2/§6.6) — may change criteria
     INCREMENT_ITERATION = auto()
     STORE_CHECK_RESULTS = auto()
     STORE_RECOMMENDATION = auto()

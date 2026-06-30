@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from gfso.core.types import Task, CheckResult, CriterionMapping
+from gfso.core.types import Task, CheckResult
 
 try:
     import z3

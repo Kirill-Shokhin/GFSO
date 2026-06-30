@@ -15,7 +15,7 @@ from typing import Optional
 
 from gfso.core.types import (
     AgentId, Signal, SignalData, DispatchPayload, AgentPort,
-    TaskId, StoragePort,
+    TaskId,
 )
 from gfso.core.types import VerifierPort
 

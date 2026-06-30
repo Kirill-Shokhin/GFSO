@@ -4,6 +4,25 @@ from __future__ import annotations
 from gfso.core.types import GraphContext, Recommendation, LLMProviderPort
 
 
+# §7.3: Solver (deduction) is deterministic — its findings are the failed CHECKs,
+# NOT free-form LLM suggestions. Kept separate so the UI can render solver findings
+# as hard warnings and LLM items as soft suggestions.
+
+# CHECK → FM severity (a failed deductive check is always a hard finding).
+def solver_findings(ctx: GraphContext) -> list[dict]:
+    """Deterministic Solver output: the failed (non-skipped) CHECK results (§7.3)."""
+    findings = []
+    for r in ctx.check_results:
+        if not r.passed and not r.skipped:
+            findings.append({
+                "kind": "solver",
+                "check": r.check_name,
+                "text": f"{r.check_name}: {r.details}" if r.details else r.check_name,
+                "severity": "high",
+            })
+    return findings
+
+
 RECOMMEND_SYSTEM = (
     "You are a concise project oversight assistant. "
     "Output EXACTLY 2-3 short actionable items (one line each). "
@@ -21,7 +40,7 @@ def recommend(ctx: GraphContext, llm: LLMProviderPort | None = None) -> Recommen
     if ctx.task.spec.criteria:
         parts.append("Criteria: " + ", ".join(c.name for c in ctx.task.spec.criteria))
     if ctx.task.spec.neglected:
-        parts.append("Explicitly neglected: " + ", ".join(ctx.task.spec.neglected))
+        parts.append("Explicitly neglected: " + ", ".join(n.item for n in ctx.task.spec.neglected))
 
     if ctx.children:
         child_summary = ", ".join(

@@ -17,6 +17,7 @@ class MemoryStorage(StoragePort):
         self._check_results: dict[TaskId, list[CheckResult]] = {}
         self._recommendations: dict[TaskId, Recommendation] = {}
         self._dep_edges: list[DepEdge] = []
+        self._critiques: dict[TaskId, str] = {}
 
     def get_task(self, task_id: TaskId) -> Optional[Task]:
         return self._tasks.get(task_id)
@@ -57,8 +58,19 @@ class MemoryStorage(StoragePort):
     def store_recommendation(self, task_id: TaskId, rec: Recommendation) -> None:
         self._recommendations[task_id] = rec
 
+    def store_critique(self, task_id: TaskId, critique_json: str) -> None:
+        self._critiques[task_id] = critique_json
+
+    def get_critique(self, task_id: TaskId) -> Optional[str]:
+        return self._critiques.get(task_id)
+
     def add_dep_edge(self, edge: DepEdge) -> None:
         self._dep_edges.append(edge)
+
+    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
+        self._dep_edges = [
+            e for e in self._dep_edges if not (e.from_id == from_id and e.to_id == to_id)
+        ]
 
     def get_dep_edges(self) -> list[DepEdge]:
         return list(self._dep_edges)

@@ -1,61 +1,26 @@
 """Pydantic request/response models for GFSO API."""
 from __future__ import annotations
 
-from typing import Optional
 from pydantic import BaseModel
 
-from gfso.core.types import (
-    Task, State, Signal, Spec, Criteria, CriterionMapping,
-    CheckResult, Recommendation, SignalData, Verdict,
-    TaskId, AgentId,
-)
+from gfso.core.types import Task
 from gfso.engine.audit import AuditEntry
 
 
 # === Request models ===
+# The authoring/mutation surface is the generic `POST /api/run/<tool>` (body = the tool's kwargs) — the same
+# `gfso.tools.TOOLS` that MCP + CLI bind — so there are NO per-verb request models here; only reads are typed.
 
 class CriteriaIn(BaseModel):
     name: str
     description: str
-
-class SpecIn(BaseModel):
-    description: str
-    criteria: list[CriteriaIn] = []
-    neglected: list[str] = []
-    risk_components: list[str] = []
-
-class CreateTaskRequest(BaseModel):
-    task_id: str = ""
-    spec: SpecIn
-    assignee: str
-    parent_id: str | None = None
-    max_iterations: int = 3
-    deadline: str | None = None  # ISO 8601; UI ready, engine.assign_task ignores until extended
-
-class SendSignalRequest(BaseModel):
-    signal: str
-    source: str = ""
-    reason: str | None = None
-    result: str | None = None
-    self_validation: str | None = None
-    new_spec: SpecIn | None = None
-    justification: str | None = None
-    failed_criteria: list[str] = []
-    action: str | None = None
-
-class CriterionMappingIn(BaseModel):
-    criterion_name: str
-    child_id: str
-
-class DecomposeRequest(BaseModel):
-    children: list[CreateTaskRequest]
-    criterion_mappings: list[CriterionMappingIn] = []
 
 
 # === Response models ===
 
 class TaskOut(BaseModel):
     id: str
+    name: str = ""
     description: str
     state: str
     parent_id: str | None
@@ -64,7 +29,8 @@ class TaskOut(BaseModel):
     max_iterations: int
     done_reason: str | None
     criteria: list[CriteriaIn]
-    neglected: list[str]
+    neglected: list[str]  # item texts (back-compat)
+    neglected_detail: list[dict] = []  # [{item, predictability, justification}]
     risk_components: list[str]
     created_at: str
     deadline: str | None
@@ -89,6 +55,12 @@ class AuditEntryOut(BaseModel):
     effects: list[str]
     rejected: bool
     error: str | None
+    source: str | None = None
+    reason: str | None = None
+    justification: str | None = None
+    result: str | None = None
+    failed_criteria: list[str] = []
+    action: str | None = None
 
 class TaskDetailOut(TaskOut):
     checks: list[CheckResultOut]
@@ -103,6 +75,7 @@ class GraphNode(BaseModel):
     assignee: str | None
     parent_id: str | None
     has_children: bool
+    done_reason: str | None = None   # CANCELLED = a tombstone (UI greys it, not an active node)
 
 class GraphEdge(BaseModel):
     source: str
@@ -127,25 +100,39 @@ class SuggestCriteriaRequest(BaseModel):
 class SuggestCriteriaResponse(BaseModel):
     criteria: list[CriteriaIn]
 
+class ActionOut(BaseModel):
+    signal: str
+    role: str
 
-# === Converters ===
+class SolverItem(BaseModel):
+    kind: str
+    check: str | None = None
+    text: str
+    severity: str
 
-def spec_in_to_spec(s: SpecIn) -> Spec:
-    return Spec(
-        description=s.description,
-        criteria=tuple(Criteria(c.name, c.description) for c in s.criteria),
-        neglected=tuple(s.neglected),
-        risk_components=tuple(s.risk_components),
-    )
+class SolverOut(BaseModel):
+    recommendations: list[SolverItem]
+
+class ProjectionOut(BaseModel):
+    node_id: str
+    projection: str  # readable markdown — the critic's input contract
+
+
+# === Converters (read-side: domain → typed response) ===
 
 def task_to_out(t: Task) -> TaskOut:
     return TaskOut(
-        id=t.id, description=t.spec.description, state=t.state.name,
+        id=t.id, name=t.spec.name, description=t.spec.description, state=t.state.name,
         parent_id=t.parent_id, assignee=t.assignee,
         iteration=t.iteration, max_iterations=t.max_iterations,
         done_reason=t.done_reason.name if t.done_reason else None,
         criteria=[CriteriaIn(name=c.name, description=c.description) for c in t.spec.criteria],
-        neglected=list(t.spec.neglected),
+        neglected=[n.item for n in t.spec.neglected],
+        neglected_detail=[{
+            "item": n.item,
+            "predictability": n.predictability.name if n.predictability else None,
+            "justification": n.justification,
+        } for n in t.spec.neglected],
         risk_components=list(t.spec.risk_components),
         created_at=t.created_at.isoformat(),
         deadline=t.deadline.isoformat() if t.deadline else None,
@@ -160,22 +147,6 @@ def audit_to_out(e: AuditEntry) -> AuditEntryOut:
         old_state=e.old_state.name if e.old_state else None,
         new_state=e.new_state.name if e.new_state else None,
         effects=list(e.effects), rejected=e.rejected, error=e.error,
-    )
-
-def signal_request_to_data(task_id: str, req: SendSignalRequest) -> SignalData:
-    sv = None
-    if req.self_validation:
-        sv = Verdict[req.self_validation]
-    new_spec = None
-    if req.new_spec:
-        new_spec = spec_in_to_spec(req.new_spec)
-    return SignalData(
-        signal=Signal[req.signal],
-        task_id=TaskId(task_id),
-        source=AgentId(req.source) if req.source else None,
-        reason=req.reason, result=req.result,
-        self_validation=sv, new_spec=new_spec,
-        justification=req.justification,
-        failed_criteria=tuple(req.failed_criteria),
-        action=req.action,
+        source=e.source, reason=e.reason, justification=e.justification,
+        result=e.result, failed_criteria=list(e.failed_criteria), action=e.action,
     )

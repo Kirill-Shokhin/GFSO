@@ -6,7 +6,7 @@ from typing import Callable, Optional
 from gfso.core.types import (
     State, Signal, DoneReason, MutationType,
     GuardContext, Effect, SignalData,
-    MutateGraph, RunChecks, Recommend, Dispatch,
+    MutateGraph, RunChecks, Dispatch,
     NON_TERMINAL_STATES, TaskId,
 )
 
@@ -39,10 +39,11 @@ def _row(state: State, signal: Signal):
 
 @_row(State.IDLE, Signal.ASSIGN)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
+    # No Recommend effect: the AI-recommendation panel is a deferred human-L2/UI convenience, not part of
+    # the agentic path — it must not fire a System-LLM call per ASSIGN. Recompute on-demand when built.
     return (State.REVIEW, [
         _mg(tid, State.REVIEW),
         RunChecks(tid),
-        Recommend(tid),
         Dispatch(tid, Signal.ASSIGN),
     ])
 
@@ -93,9 +94,10 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 
 @_row(State.CHALLENGED, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # Auto-accept challenge → return to REVIEW
-    return (State.REVIEW, [
-        _mg(tid, State.REVIEW),
+    # Canon §6.3: a first timeout in any non-terminal (except BLOCKED) → TIMEOUT. A challenge is NOT
+    # auto-accepted in the executor's favour — that would silently resolve a disputed spec; it escalates.
+    return (State.TIMEOUT, [
+        _mg(tid, State.TIMEOUT),
     ])
 
 
@@ -218,6 +220,17 @@ _LOOKUP: dict[tuple[State, Signal], Callable] = {
 }
 
 
+def available_signals(state: State) -> list[Signal]:
+    """Signals that have a transition row from this state (+ CANCEL for non-terminals).
+
+    Pure on State. Used to expose valid actions per (state, role) to UIs/agents (§6.2).
+    """
+    sigs = [signal for (st, signal) in _LOOKUP if st == state]
+    if state in NON_TERMINAL_STATES and Signal.CANCEL not in sigs:
+        sigs.append(Signal.CANCEL)
+    return sigs
+
+
 def transition(
     state: State,
     signal_data: SignalData,
@@ -232,6 +245,48 @@ def transition(
         return (State.DONE, [
             _mg(task_id, State.DONE, DoneReason.CANCELLED),
             Dispatch(task_id, Signal.CANCEL),
+        ])
+
+    # ACCEPT_CHALLENGE carrying a renegotiated spec — APPLY it (sanctioned pre-acceptance revision,
+    # §6.2/§6.6; the only in-place spec change allowed to alter criteria). Needs signal_data, so it is
+    # handled here; the no-spec case falls through to the table row (which also registers the affordance).
+    if signal == Signal.ACCEPT_CHALLENGE and state == State.CHALLENGED and signal_data.new_spec is not None:
+        return (State.REVIEW, [
+            MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.new_spec),
+            _mg(task_id, State.REVIEW),
+            RunChecks(task_id),
+            Dispatch(task_id, Signal.ACCEPT_CHALLENGE),
+        ])
+
+    # ASSIGN carries the packet and CREATES the node as a logged effect (§7.1 "ASSIGN adds a node").
+    # Needs signal_data, so handled here; the no-spec case falls through to the table row (legacy /
+    # affordance). This is what closes the unlogged pre-save: creation is now the ASSIGN transition.
+    if signal == Signal.ASSIGN and state == State.IDLE and signal_data.spec is not None:
+        return (State.REVIEW, [
+            MutateGraph(task_id, MutationType.CREATE_TASK, spec=signal_data.spec,
+                        assignee=signal_data.assignee, parent_id=signal_data.parent_id,
+                        deadline=signal_data.deadline, max_iterations=signal_data.max_iterations,
+                        covers=signal_data.covers),
+            _mg(task_id, State.REVIEW),
+            RunChecks(task_id),
+            Dispatch(task_id, Signal.ASSIGN),
+        ])
+
+    # re-ASSIGN after CANCEL — canon §6.4 Inv-1: a spec/Del is IMMUTABLE after ASSIGN, so a change is
+    # CANCEL + re-ASSIGN, NOT an in-place edit. The id-slot is reused (the cancelled contract stays a logged
+    # tombstone, §7.3.1; refs to this node remain valid — re-id would break deps/mappings). Only a CANCELLED
+    # DONE is re-assignable (PASS/FAIL are real completions). The single in-place spec change is
+    # ACCEPT_CHALLENGE (above) — executor-initiated (FM-7→FM-5), never a self/issuer edit (self-CHALLENGE
+    # violates IC, §6.6). There is deliberately no REVIEW→ASSIGN: editing always goes through CANCEL first.
+    if (signal == Signal.ASSIGN and state == State.DONE
+            and ctx.done_reason == DoneReason.CANCELLED and signal_data.spec is not None):
+        return (State.REVIEW, [
+            MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.spec,
+                        assignee=signal_data.assignee,   # carries a new executor for reassign; None = keep
+                        covers=signal_data.covers),      # (re)declared coverage of parent criteria (§2.2)
+            _mg(task_id, State.REVIEW),
+            RunChecks(task_id),
+            Dispatch(task_id, Signal.ASSIGN),
         ])
 
     fn = _LOOKUP.get((state, signal))
