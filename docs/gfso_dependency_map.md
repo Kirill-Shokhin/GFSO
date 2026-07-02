@@ -218,7 +218,7 @@ flowchart LR
 
   %% протокол §6
   SIG["SIG — 12 сигналов §6.2"]
-  FSM["FSM — 10 состояний §6.3"]
+  FSM["FSM — 12 состояний §6.3"]
   INV["INV — инварианты §6.4"]
   AGN["AGN — агент-агностичность §6.5"]
   class SIG,FSM,INV,AGN guard
@@ -414,7 +414,7 @@ flowchart LR
   %% зеркала
   CONST["CONST — method_gfso.md"]
   CORE["CORE.md"]
-  CODE["CODE — gfso/ лаг v3.3"]
+  CODE["CODE — gfso/ синхр. v3.6; v3.7 = долг синка"]
   class CONST,CORE,CODE mirror
 
   %% light-якоря
@@ -488,7 +488,7 @@ flowchart LR
   STD-4 + verify-vs-explore; value=objectification объясняет, зачем базис обязателен на каждом
   уровне). Она **не** выводит T1/7-FM/минимальность — это явная дисциплина канона (§18.10
   преамбула).
-- **Зеркала** (Ракурс 4) — проекции канона (`mirror`): Constitution, CORE, код `gfso/` (лаг на v3.3). Не
+- **Зеркала** (Ракурс 4) — проекции канона (`mirror`): Constitution, CORE, код `gfso/` (синхр. по v3.6; v3.7 = долг синка: двухшаговая отмена, discovered-Dep, рамка ревизии). Не
   новые примитивы, рендеринги.
 - **E2** (Ракурс 3) наследует полноту отсюда: эталон = декомпозиция, исключающая все 7 FM; «полнота
   корзин» доказана §4.4, «полнота внутри корзины» = faithfulness, добирается циклом (§18.10). **E2 показал
@@ -558,7 +558,7 @@ flowchart LR
 | METH -.explain.-> STD4, COST | §18.11 | стоп-реплан + front-load FORM = вынужденный оптимум; verify-vs-explore |
 | VAL -.explain.-> BASIS | §17.4–§17.5 | value=objectification: базис обязателен на каждом уровне; план фальсифицируем |
 | SSHAT -.explain ii.-> BCAUS | §18.10 / §18.1 | половина (ii) A1 = каузальная правильность, аппаратно несертифицируема |
-| CONST/CORE/CODE -.mirror.-> канон | MEMORY mirrors | проекции канона; код gfso/ лаг на v3.3 |
+| CONST/CORE/CODE -.mirror.-> канон | MEMORY mirrors | проекции канона; код gfso/ синхр. v3.6, v3.7 = долг синка |
 
 <details>
 <summary>Полный граф (для зума)</summary>
@@ -640,8 +640,8 @@ flowchart TD
 
   subgraph PROTO["Протокол §6 — транзакция Issuer/Executor"]
     SIG["12 сигналов (§6.2)<br/>ASSIGN ACCEPT DELIVER PASS<br/>CHALLENGE BLOCK FAIL CANCEL<br/>ACCEPT_CHALLENGE REJECT_CHALLENGE<br/>RESOLVE_BLOCK CANCEL_ACK"]
-    FSM["10-state FSM (§6.3)<br/>IDLE REVIEW CHALLENGED EXECUTING<br/>BLOCKED VALIDATING REWORK DONE<br/>TIMEOUT ESCALATED + system timeout"]
-    INV["Инварианты протокола (§6.4)<br/>immutability · бинарность · прозрачность отказа<br/>симметрия · конечность · детерминизм"]
+    FSM["12-state FSM (§6.3)<br/>IDLE REVIEW CHALLENGED EXECUTING<br/>BLOCKED VALIDATING REWORK CANCELLING<br/>DONE CANCELLED TIMEOUT ESCALATED + system timeout"]
+    INV["Инварианты протокола (§6.4)<br/>immutability(ревизия≠отказ) · бинарность · прозрачность отказа<br/>симметрия · конечность · детерминизм · устойчивость id узла"]
     AGN["Агент-агностичность (§6.5)<br/>любой агент за интерфейсом;<br/>самопроверка нарушает IC"]
   end
   class SIG,FSM,INV,AGN guard
@@ -709,7 +709,7 @@ flowchart TD
   subgraph MIR["Зеркала канона (проекции, не примитивы)"]
     CONST["Constitution method_gfso.md"]
     CORE["CORE.md (одностраничник)"]
-    CODE["код gfso/ (лаг на v3.3)"]
+    CODE["код gfso/ (синхр. v3.6; v3.7 долг)"]
   end
   class CONST,CORE,CODE mirror
 

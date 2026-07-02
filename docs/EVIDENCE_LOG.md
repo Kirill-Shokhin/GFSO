@@ -61,7 +61,7 @@ exist. What none of them give together:
    validation falls into one of 7 FM. Falsifiable.
 3. **Forced binary V as forcing function** — criteria that can't decide pass/fail are
    bad criteria; binary V pushes spec defects out instead of hiding them in "warning".
-4. **Standardized protocol vocabulary** (12 signals, 10 states) across role boundaries.
+4. **Standardized protocol vocabulary** (12 signals, 12 states) across role boundaries.
 5. **Self-measuring metrics** computed from the audit graph itself.
 6. **Adaptive stratification by horizons** (§17.1, derived) — top layers stable, bottom
    layers fast-changing CHALLENGE-cycles. Not a separate principle of agile/lean —
@@ -602,7 +602,7 @@ In current framework's terms:
    v3 keeps Verifier deterministic when possible (subprocess test running, etc.).
 4. **No audit trail by construction**: old system logged extensively but the
    logs weren't structured around a finite signal set, so post-hoc diagnosis
-   was a slog. v3's 12 signals × 10 states give a finite event vocabulary.
+   was a slog. v3's 12 signals × 12 states give a finite event vocabulary.
 5. **Tested on HLE/BBH/MATH**: domains where criteria are inherently judge-based
    (HLE expects free-form answers compared by LLM-judge), making it impossible
    to separate "agent failure" from "validator failure". BCB-style benches with

@@ -259,7 +259,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
 
 ## Part I.5 — Protocol, graph, AI-layer (§6–§7)
 
-### Protocol minimality — 12 signals, 10 states, 6 invariants (§6.2, §6.4)
+### Protocol minimality — 12 signals, 12 states, 7 invariants (§6.2, §6.4)
 - **Claim.** Removing any one P2P signal produces a defect (FM, FSM-deadlock, IC, or
   operational); the §6.2 table assigns each deletion a unique consequence. 12 is the minimum.
 - **Type.** M (constructive — the deletion table).
@@ -834,11 +834,50 @@ this set, the register is *incomplete*, not *wrong* — add it.
 
 ---
 
+## Part III.8 — v3.7 protocol rigor (§6.2–§6.4, §7.1–§7.2, §14)
+
+> Five edits closing protocol↔FSM/metric conflicts. No new formal result; the falsifiers are **M —
+> analytic on the protocol structure** (like the §2.4 minimality / §6.2 signal-minimality entries),
+> except the discovered-Dep metric, which inherits the **E** hook of q_Dep.
+
+- **Cancellation completeness (two-step handshake).** *Claim.* Cancellation is total and minimal as
+  `CANCEL→CANCELLING→CANCEL_ACK→CANCELLED` (+`CANCELLING→timeout→CANCELLED`); CANCEL_ACK is minimal by
+  FSM-deadlock (sole CANCELLING-exit); 12 states are complete-and-minimal. *Type.* M (analytic, sibling
+  of the §6.2 12-signal minimality entry). *Falsifier.* A cancellation run reaching a well-defined
+  terminal **without** CANCEL_ACK and **without** the timeout fallback (⟹ CANCEL_ACK non-minimal, drop
+  to 11), OR a state reachable in cancellation that neither CANCELLING nor CANCELLED covers (⟹ 12
+  incomplete). Same shape as the §2.4 "HBP expressible after deleting a primitive" falsifier.
+- **Revision ≠ abandonment (no-cascade + guard set).** *Claim.* A revision (re-ASSIGN, same id — not the CANCEL signal)
+  need not cascade: CHECK-1 + non-redundancy + CHECK-3 catch every staleness a cascade would have
+  prevented. *Type.* M/C (conditional on the guard set). *Falsifier.* A staleness introduced by a
+  revision — an orphaned `covers`, an uncovered new criterion, or a stale Dep-consumer — that **passes
+  all three guards** yet corrupts V(parent). One such case ⟹ the guard set is incomplete and cascade (or
+  a further guard) is required.
+- **Node-identity invariant (Inv-7).** *Claim.* Stable id across revision (re-ASSIGN) is entailed (edges
+  N×N orphan under re-id; the LOG, not the node, is the immutable record — T11). *Type.* M. *Falsifier.*
+  A re-identifying revision that preserves all graph edges (E_D/E_Dep/mappings) intact ⟹ stability not
+  entailed; OR a T11 provenance query answerable only from immutable *node* criteria (not the log) ⟹ the
+  §14 relocation is wrong.
+- **Discovered-Dep provenance (BLOCK→q_Dep).** *Claim.* BLOCK records a provisional discovered-Dep edge
+  (RESOLVE_BLOCK adjudicates), making q_Dep non-vacuous. *Type.* E (inherits q_Dep's empirical hook).
+  *Falsifier.* A deployment where surprise inter-task dependencies occur (BLOCKs on undeclared
+  prerequisites) yet q_Dep stays ≡1 ⟹ the effect isn't recording them; OR discovered edges systematically
+  admit misattributed (adjudicated-false) blockers into the denominator ⟹ the two-phase confirm fails.
+- **Risk-ledger ≠ scope-boundary.** *Claim.* NEGLECTED holds risk-*events* (P-bearing); a goal-scope
+  boundary is a CHECK-1/criteria matter, not a NEGLECTED item. *Type.* M (analytic on §3.2 + CHECK-1).
+  *Falsifier.* A goal-scope boundary that (a) carries a well-defined materialization probability P
+  feeding the §5.1 aggregate fold (⟹ it *is* a risk, category not needed), or (b) is admissible/
+  inadmissible by a test **not** reducible to CHECK-1 over the goal's criteria (⟹ a genuinely separate
+  mechanism is missing, not a routing clause).
+
+---
+
 ## Provenance
 
-The systematic falsifiability pass referenced by canon §18; tracks canon v3.6 (originally v3.5,
+The systematic falsifiability pass referenced by canon §18; tracks canon v3.7 (originally v3.5,
 extended for the v3.6 agent-free-ontology + methodology layer (§17.4–§17.5, §18.10.1, §18.10.2,
-§18.11) in Part III.6, and for the continuous-substrate + 3-axis-faithfulness layer (§18.10.0) in Part III.7).
+§18.11) in Part III.6, the continuous-substrate + 3-axis-faithfulness layer (§18.10.0) in Part III.7,
+and the v3.7 protocol-rigor edits (§6.2–§6.4, §7.1–§7.2, §14) in Part III.8).
 
 > *Label note (v3.6).* The §18.10 **predictions** are tagged **Pred-1/Pred-2/Pred-3** (substitutability /
 > applicability boundary / global falsifier) to keep them disjoint from canon's reserved **P3** (Blackwell,

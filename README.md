@@ -58,7 +58,7 @@ A1, A2 (axioms)
   → |L|=2 (impossibility), AND (uniqueness)
   → 7 failure modes (completeness proven)
   → Standards + 3 verification levels (CHECK-1–8)
-  → Protocol: 12 P2P signals + timeout, 10 states (minimal)
+  → Protocol: 12 P2P signals + timeout, 12 states (minimal)
   → Graph G + 5 metrics Q (minimal, self-measuring)
   → AI layer: Solver + LLM (capacity-necessity: Simon + info-volume)
   → Theory-model (§18.10): agent derived necessary, not presumed
@@ -71,59 +71,43 @@ Every step is motivated by the previous. Design decisions are explicit.
 
 ## Documents
 
+**Canon layer** — the framework itself.
 | File | Purpose |
 |------|---------|
-| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | Formal paper (canon, v3.6; Russian draft, EN forthcoming). Incl. §17.1 adaptive stratification, §17.2 Scrum ⊂ GFSO, **§18.10 theory-model (agent derived)**. v3.6 adds the agent-free theory-model layer: an ontology of decomposition (5 structural links) plus its methodology (decomposition method) |
-| [`docs/falsifiability.md`](docs/falsifiability.md) | Falsifiability register: each canonical claim → what would falsify it (E/M/C typed) |
-| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: full FSM spec, per-metric epistemic analysis, audit/GAAP roadmap, theory-model intuition (labyrinth), open directions |
-| [`docs/architecture.md`](docs/architecture.md) | Code architecture: FSM invariant, module structure, L1/L2/L3 |
-| [`docs/CORE.md`](docs/CORE.md) | One-page definition: what GFSO is, what it uniquely provides, common-objection answers (read first) |
-| [`docs/EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) | Evidence journal: empirical anchors, E0/E1 results, what is proven vs open (internal record) |
+| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | The canon (v3.7): axioms → primitives → theorems → protocol → metrics → theory-model. The single source of truth; everything else mirrors it. |
+| [`docs/method_gfso.md`](docs/method_gfso.md) | The Constitution: the canon distilled into strict entities (definitions) + laws (rules) — the layer an agent/auditor operates on. |
+| [`docs/falsifiability.md`](docs/falsifiability.md) | Falsifiability register: each canonical claim → what would falsify it (empirical / mathematical / conditional). |
 
----
+**Companion layer** — onboarding & intuition.
+| File | Purpose |
+|------|---------|
+| [`docs/CORE.md`](docs/CORE.md) | One-page primer: what GFSO is, what it uniquely provides, common-objection answers (read first). |
+| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: applied FSM spec, per-metric epistemic analysis, audit/GAAP roadmap, theory-model intuition. |
 
-## Implementation
+**Internal layer** — derivation & evidence.
+| File | Purpose |
+|------|---------|
+| [`docs/gfso_dependency_map.md`](docs/gfso_dependency_map.md) | Derivation DAG: how each canonical result depends on the axioms and on prior results. |
+| [`docs/EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) | Evidence journal: empirical anchors (E0/E1/E2), what is proven vs open. |
 
-```
-gfso/
-  core/         ← Level 1: protocol standard (pure library)
-    types/        State(10), Signal(13: 12 P2P + timeout), FM(7), effects, ports
-    protocol/     FSM transition table, invariants, role validation
-    handlers/     CHECK-1-8, System LLM recommend
-    graph/        G model, mutations, 5 metrics Q
-  engine/       ← Level 2: framework (Engine facade, event loop, audit, events)
-  adapters/     ← Level 3: pluggable
-    storage/      memory, sqlite
-    llm/          claude, stub
-    agents/       bench_agent
-    verifiers/    subprocess (LCB-style I/O), unittest (BCB-style pytest)
-  api/          ← FastAPI app: REST + WebSocket
-  web/          ← UI surface (index.html, gfso.css, tokens.css)
-  cli.py        ← `python -m gfso.cli serve --reload`
-
-bench/          ← benchmark harness (dataset-agnostic)
-  provider.py, task.py, runner.py, oneshot.py, gfso_runner.py, scorer.py
-  providers/    livecodebench, bigcodebench
-
-scripts/        ← entry points: run_livecodebench.py, run_bcb.py,
-                  run_bcb_zeroshot.py + legacy bench_single/perfect
-data/           ← input data (bench_inputs.json)
-runs/           ← bench outputs (gitignored except runs/e1_results/)
-docs/           ← theory, architecture, evidence log, protocols
-tests/          ← unit + integration tests
-```
-
-Dependency: `core/ ← engine/ ← adapters/`. `bench/` depends on `gfso/core/`
-and `gfso/adapters/` but not vice versa.
+**Code layer.**
+| File | Purpose |
+|------|---------|
+| [`docs/architecture.md`](docs/architecture.md) | Code architecture (mirror of the engine): FSM table, module structure, code↔canon sync notes. |
 
 ---
 
 ## Interface
 
-GFSO ships a web interface — the protocol rendered as a workable surface, not
-only an API. The task graph, FSM states, validation outcomes `V(t)`,
-failure-mode checks and the AND-composition `V(parent) = AND(V(children))` are
-all visible and operable.
+One Engine (the single logic source), one action surface (`gfso/tools.py`), and
+**four equivalent front-ends generated from it** — a **web UI**, an **HTTP API**
+(`POST /api/run/{tool}` + WebSocket), a **CLI** (`gfso run`), and an **MCP server**
+(`gfso mcp`, the agent surface) — so a new authoring verb is one edit, visible on
+all four. An agent (via MCP) and a human (via the UI) operate the *same* graph; the
+UI mirrors the agent's writes live. `gfso/decompose/` turns the E2 search↔audit method
+into a callable — an agent requests a full decomposition rather than hand-building the
+graph. The task graph, FSM states, validation outcomes `V(t)`, failure-mode checks and
+the AND-composition `V(parent) = AND(V(children))` are all visible and operable.
 
 ![GFSO web interface](docs/ui-baseline.png)
 

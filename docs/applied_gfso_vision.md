@@ -6,104 +6,11 @@
 
 ---
 
-## 1. Полная спецификация конечного автомата (FSM)
+## 1. FSM — прикладной ракурс
 
-P2P-протокол задача-приёмка формализован как конечный автомат с 10 состояниями и 12 сигналами. Ниже — полная таблица переходов и таймауты по умолчанию.
+**Нормативная спецификация FSM — в каноне §6.3** (12 состояний, 12 сигналов, полная таблица переходов, sub-FSM таймаутов с тремя спец-таргетами BLOCKED→ESCALATED / CANCELLING→CANCELLED / VALIDATING→DONE(auto_pass), двухшаговый хендшейк отмены CANCEL→CANCELLING→CANCEL_ACK→CANCELLED). Дубль таблицы здесь намеренно не держим — единственный источник истины по FSM — §6.3.
 
-### 1.1. Таблица переходов
-
-```
-Состояния:
-  IDLE, REVIEW, CHALLENGED, EXECUTING, BLOCKED,
-  VALIDATING, REWORK, DONE, TIMEOUT, ESCALATED
-
-Переходы:
-
-  IDLE → REVIEW
-    Триггер: ASSIGN(packet)
-    Таймаут: T_review
-
-  REVIEW → EXECUTING
-    Триггер: ACCEPT
-    Таймаут: deadline
-
-  REVIEW → CHALLENGED
-    Триггер: CHALLENGE(reason)
-    Таймаут: T_challenge
-
-  REVIEW → TIMEOUT
-    Триггер: T_review истёк без ACCEPT/CHALLENGE
-
-  CHALLENGED → REVIEW
-    Триггер: ACCEPT_CHALLENGE(new_spec)
-
-  CHALLENGED → EXECUTING
-    Триггер: REJECT_CHALLENGE(justification)
-
-  CHALLENGED → REVIEW
-    Триггер: T_challenge истёк (авто-ACCEPT_CHALLENGE)
-
-  EXECUTING → VALIDATING
-    Триггер: DELIVER(result, self_validation)
-    Таймаут: T_validate
-
-  EXECUTING → BLOCKED
-    Триггер: BLOCK(reason)
-    Таймаут: T_block
-
-  EXECUTING → TIMEOUT
-    Триггер: deadline истёк без DELIVER
-
-  BLOCKED → EXECUTING
-    Триггер: RESOLVE_BLOCK(action)
-
-  BLOCKED → DONE(cancelled)
-    Триггер: CANCEL(reason)
-
-  BLOCKED → ESCALATED
-    Триггер: T_block истёк без RESOLVE_BLOCK
-
-  VALIDATING → DONE(pass)
-    Триггер: PASS
-
-  VALIDATING → REWORK
-    Триггер: FAIL(criteria[])
-    Условие: iteration < max_iterations
-    Таймаут: T_rework
-
-  VALIDATING → DONE(fail)
-    Триггер: FAIL(criteria[])
-    Условие: iteration ≥ max_iterations
-
-  VALIDATING → DONE(auto_pass)
-    Триггер: T_validate истёк (авто-PASS)
-    Примечание: записывается как auto_pass для q_V
-
-  REWORK → VALIDATING
-    Триггер: DELIVER(result, self_validation)
-
-  REWORK → BLOCKED
-    Триггер: BLOCK(reason)
-    Таймаут: T_block
-
-  REWORK → TIMEOUT
-    Триггер: T_rework истёк без DELIVER
-
-  TIMEOUT → ESCALATED
-    Триггер: автоматический
-
-  ESCALATED → DONE(escalated)
-    Триггер: разрешение вышестоящим агентом
-    (мета-операция, не P2P-сигнал; конкретный механизм
-    определяется организацией)
-
-  ESCALATED → REVIEW (новая задача)
-    Триггер: CANCEL текущей + ASSIGN новой
-    (переназначение; составная операция из двух P2P-сигналов)
-
-  Любое кроме DONE → DONE(cancelled)
-    Триггер: CANCEL(reason) + CANCEL_ACK
-```
+Прикладной слой vision добавляет к нормативной FSM лишь то, чего в каноне нет: **дефолтные таймауты** для типичного проектного контекста (§1.2 ниже) и то, как состояния читаются менеджером/на доске.
 
 ### 1.2. Таймауты по умолчанию
 
@@ -117,6 +24,7 @@ P2P-протокол задача-приёмка формализован как
 | BLOCKED | T_block = 3 рабочих дня | Issuer должен разрешить блокировку |
 | VALIDATING | T_validate = 1 рабочий день | Issuer должен принять или вернуть |
 | REWORK | T_rework (задаётся при FAIL) | Срок исправления |
+| CANCELLING | T_cancel = 1 рабочий день | Executor должен подтвердить отмену (CANCEL_ACK); иначе авто-завершение |
 | max_iterations | 3 (по умолчанию) | Лимит циклов DELIVER→FAIL |
 
 Таймауты — не штрафы. Они обеспечивают конечность каждого состояния (инвариант 5) и гарантируют, что блокировка не превращается в замалчивание. Истечение таймаута = системное событие, которое автоматически эскалирует ситуацию вверх по иерархии.

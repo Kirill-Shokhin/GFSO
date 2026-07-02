@@ -50,7 +50,7 @@ about scope, not about the math.
 2. A **discipline shift**: criteria-articulation responsibility moves
    from Executor (who currently has to guess) to Issuer (who must
    specify before delegation)
-3. A **standardized vocabulary** (12 signals, 10 FSM states, 7 failure
+3. A **standardized vocabulary** (12 signals, 12 FSM states, 7 failure
    modes) usable across any hierarchical work system
 4. A **compositional law**: `V(parent) = AND(V(children))` under
    explicit correctness conditions (joint sufficiency + non-redundancy).
@@ -89,7 +89,7 @@ Audit trails exist. What none of them give together:
 | Compositional validation | Theorem 1 with explicit correctness conditions |
 | Failure taxonomy | 7 FM, provably exhaustive (falsifiable claim) |
 | Spec quality forcing function | Forced binary V — defects pushed out, no "warning" |
-| Protocol vocabulary | 12 signals × 10 states minimal set |
+| Protocol vocabulary | 12 signals × 12 states minimal set |
 | Self-measurement | Q metrics computed from audit graph alone |
 | Adaptive stratification | §17.1, derived from Dep coherence + A1 |
 

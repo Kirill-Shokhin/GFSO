@@ -38,9 +38,19 @@ Guards are simple predicates on graph state (only where needed — currently one
 
 Terminal states: DONE (with reason: pass/fail/auto/cancelled), ESCALATED.
 
-DONE is one state. Completion reason is metadata in MutateGraph mutation, not a separate FSM state. 10 states in enum: IDLE, REVIEW, CHALLENGED, EXECUTING, BLOCKED, VALIDATING, REWORK, DONE, TIMEOUT, ESCALATED.
+DONE is one state. Completion reason is metadata in MutateGraph mutation, not a separate FSM state. 10 states in enum (CODE): IDLE, REVIEW, CHALLENGED, EXECUTING, BLOCKED, VALIDATING, REWORK, DONE, TIMEOUT, ESCALATED.
 
 ESCALATED resolution is outside FSM — admin action (re-assign or close). Escalation crosses hierarchy levels which the per-task FSM cannot model.
+
+> **Canon v3.7 divergence (code-sync debt).** The canon (§6.3) now specifies the cancellation FSM the
+> code folds into DONE. When synced, the table gains: `(ANY_NON_TERMINAL, CANCEL) → CANCELLING`,
+> `(CANCELLING, CANCEL_ACK) → CANCELLED`, `(CANCELLING, timeout) → CANCELLED`; enum grows to **12
+> states** (+CANCELLING non-terminal, +CANCELLED terminal, V=⊥), replacing the `CANCEL → DONE(cancelled)`
+> row. Also canon-v3.7, impl pending in the verifier layer: **BLOCK records a provisional discovered-Dep
+> edge** (RESOLVE_BLOCK confirms) to feed q_Dep (§7.2). Already in code (no debt, behaviour):
+> **no cascade** on revise + stable node id (Inv-7). Code-sync item (framing): canon v3.7 models revision as
+> **re-ASSIGN (NOT the CANCEL signal) → REVIEW** (executor re-ACCEPTs/CHALLENGEs); the code realizes the same
+> no-cascade behaviour via `CANCEL(reassigning)`+re-ASSIGN — align the signal framing on sync.
 
 ## Design Decisions
 
@@ -50,13 +60,13 @@ ESCALATED resolution is outside FSM — admin action (re-assign or close). Escal
 
 **BLOCKED timeout → ESCALATED directly.** Other timeouts go through TIMEOUT state first. BLOCKED skips this: the block itself IS the escalation signal. The team already knows there's a problem. Adding a TIMEOUT intermediate is unnecessary indirection.
 
-**CHALLENGED timeout = auto-accept.** Goes directly to REVIEW without emitting ACCEPT_CHALLENGE. This is NOT a silent mutation — the timeout signal arrives through the queue like any other signal. The FSM processes it and transitions. The MutateGraph effect records the auto-accept. No signal emission needed because auto-accept is benign (return to REVIEW), not an escalation.
+**CHALLENGED timeout → TIMEOUT (escalates, §6.3).** A pending challenge that times out is an unresolved spec dispute, not a benign event — it escalates via the standard timeout sub-FSM (→ TIMEOUT → ESCALATED), never auto-accepts. (Earlier drafts auto-accepted → REVIEW; that silently resolved a dispute in the issuer's favour and was removed — matches table row and canon §6.3.)
 
 **VALIDATING timeout now includes Dispatch.** Executor must be notified that their delivery was auto-accepted. Symmetry with all other terminal transitions.
 
 **TIMEOUT is transient.** TIMEOUT state exists between first and second timeout. If CANCEL arrives before the next timeout monitor tick, task goes to DONE instead of ESCALATED. This is a natural intervention window (one tick), not a designed guarantee.
 
-**CANCEL_ACK is not a protocol signal.** CANCEL → DONE is immediate. CANCEL_ACK is a notification from dispatcher to agent ("your task was cancelled"). Handled by adapters, no state change, no FSM row.
+**CANCEL_ACK — CODE is single-step; canon v3.7 is two-step (code-sync debt).** *Current code:* CANCEL → DONE(cancelled) immediate; CANCEL_ACK is an adapter notification, no FSM row. *Canon v3.7 (§6.3):* cancellation is a two-step handshake `CANCEL(issuer)→CANCELLING→CANCEL_ACK(executor)→CANCELLED`, mirroring ASSIGN→ACCEPT; CANCEL_ACK is an FSM-deadlock signal (sole exit from CANCELLING, carrying in-flight state for T11), `CANCELLING--timeout-->CANCELLED`. The code has NOT yet been synced to this — a v3.7 code-sync debt (see the v3.7 divergence note below).
 
 **REWORK has no CHALLENGE.** REWORK criteria = same criteria as original ASSIGN (immutable per protocol invariant). Challenging criteria you already executed against is incoherent. REWORK only accepts DELIVER or BLOCK.
 
@@ -285,12 +295,14 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 | reassign | `CANCEL` + re-`ASSIGN` with a new executor | Del change per Inv-1 |
 | **abandon** | `CANCEL` only | tombstone; **cascades to subtree**; never deleted (§7.3.1) |
 
-**Surface-don't-destroy.** abandon = raw `CANCEL` → cascades the subtree (its sub-work served a contract that no
-longer exists, §7.1). revise = `CANCEL`(reassigning) + re-`ASSIGN` same id → the node continues under a new
-contract, so its **subtree is RETAINED, no cascade**; coverage staleness (uncovered new criterion / dangling
-mapping) is SURFACED by CHECK-1 for the agent to resolve ∨ declare, not destroyed. The only IN-PLACE spec change
-is `ACCEPT_CHALLENGE`. *(Pending /formalize → canon v3.7: §6.4+§7.1 read literally cascade every CANCEL; this
-splits abandon-CANCEL from revise-CANCEL.)*
+**Surface-don't-destroy** (CODE behaviour; canonical framing = the v3.7 divergence note above). abandon = raw
+`CANCEL` → cascades the subtree (its sub-work served a contract that no longer exists, §7.1). revise (code:
+`CANCEL`(reassigning) + re-`ASSIGN` same id) → the node continues under a new contract, so its **subtree is
+RETAINED, no cascade**; coverage staleness (uncovered new criterion / dangling mapping) is SURFACED by CHECK-1 /
+non-redundancy for the agent to resolve ∨ declare, not destroyed. The only IN-PLACE spec change is
+`ACCEPT_CHALLENGE`. Canon v3.7 formalizes this same no-cascade behaviour but frames revision as **re-ASSIGN (not
+a CANCEL) → REVIEW** and abandon as the two-step `CANCEL→CANCELLING→CANCEL_ACK→CANCELLED` handshake — a
+code-sync framing item (see the divergence note above).
 
 ## Closure invariant (proven)
 - **Static:** every authored-state write lives in `core/graph/mutations.py::apply`, called ONLY by
