@@ -1,0 +1,402 @@
+"""Delegation — the registry-driven autostart machinery (designs §3.1-7 + §7, author-confirmed).
+
+The issuer's ONLY act is setting Del: a node whose assignee is a REGISTERED llm-executor is picked up
+from the frontier by the DISPATCHER, which spawns a headless executor (work tools, scoped cwd), wraps
+its single structured report into the canonical FSM signals (ACCEPT/DELIVER/BLOCK/CHALLENGE,
+source = the executor's id — the executor itself never touches the graph), then AUTO-VALIDATES on
+DELIVER→VALIDATING with the registered llm-validator instrument and AUTO-SIGNALS the verdict
+(PASS → DONE; FAIL(failed_criteria) → the FSM's own REWORK loop, bounded by max_iterations).
+An unparsed validator report NEVER auto-signals — it escalates to the issuer (the one manual point).
+Unregistered ids = human = the system stays passive (the safe default); registered NON-executor kinds
+never spawn (kind-guard). Identity/authority stays canon-exact: Del binds at delegation, the
+executor's own report IS its Inv-1 consent, no second timeout clock (the FSM monitor owns time)."""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import threading
+import time
+from pathlib import Path
+
+from gfso.core.types import TaskId, AgentId, Signal, SignalData
+
+log = logging.getLogger(__name__)
+
+_PROMPTS = Path(__file__).parent / "mcp" / "prompts"
+EXECUTOR_TOOLS = ("Read", "Write", "Edit", "Bash", "Glob", "Grep")
+
+EXECUTOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["delivered", "blocked", "challenge"]},
+        "summary": {"type": "string"},
+        "self_validation": {"type": "string"},
+        "reason": {"type": "string"},
+        "blocker_task_id": {"type": "string"},
+    },
+    "required": ["status", "summary"],
+}
+
+
+class AgentRegistry:
+    """{agent_id → {kind, model?, workdir?}} — the server-wide roster of NON-human participants.
+    kind ∈ llm-executor | llm-validator | external. Persisted as one json file (GFSO_AGENTS_PATH,
+    default data/agents.json): survives restarts, editable by hand, no schema migration."""
+
+    def __init__(self, path: str | None = None):
+        self._path = Path(path or os.environ.get("GFSO_AGENTS_PATH", "data/agents.json"))
+        self._agents: dict[str, dict] = {}
+        self._lock = threading.Lock()
+        try:
+            self._agents = json.loads(self._path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    def register(self, agent_id: str, kind: str, model: str = "sonnet",
+                 workdir: str | None = None, validator: str | None = None) -> dict:
+        if kind not in ("llm-executor", "llm-validator", "external"):
+            raise ValueError(f"unknown kind {kind!r} (llm-executor | llm-validator | external; "
+                             f"a human needs no registration — unregistered = human)")
+        with self._lock:
+            self._agents[agent_id] = {"kind": kind, "model": model, "workdir": workdir,
+                                      "validator": validator}
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps(self._agents, ensure_ascii=False, indent=1),
+                                  encoding="utf-8")
+        return {"registered": agent_id, **self._agents[agent_id]}
+
+    def validator_for(self, executor_id: str | None) -> str | None:
+        """The validation instrument for work done by `executor_id`: the executor's own configured
+        `validator` override, else the FIRST registered llm-validator (the default instrument)."""
+        cfg = self.get(executor_id or "") or {}
+        return cfg.get("validator") or self.default_validator()
+
+    def get(self, agent_id: str) -> dict | None:
+        return self._agents.get(str(agent_id))
+
+    def list(self) -> dict:
+        return dict(self._agents)
+
+    def default_validator(self) -> str | None:
+        """The auto-validation instrument: the FIRST registered llm-validator (per-node override =
+        a later dial; with none registered, validation stays the issuer's manual act)."""
+        for aid, a in self._agents.items():
+            if a.get("kind") == "llm-validator":
+                return aid
+        return None
+
+
+def _executor_packet(engine, task, workdir: str | None) -> str:
+    """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
+    inputs (the REAL delivered outputs it consumes) + NEGLECTED + rework feedback if any."""
+    from gfso.tools import _last_deliver_result
+    tid = str(task.id)
+    crits = "\n".join(f"- **{c.name}**: {c.description}" for c in task.spec.criteria) or "- (none)"
+    ups = []
+    for e in engine.get_dependencies():
+        if str(e.to_id) == tid:
+            prod = engine.get_task(TaskId(e.from_id))
+            delivered = _last_deliver_result(engine, TaskId(e.from_id)) or "(not delivered yet)"
+            name = (prod.spec.name or prod.spec.description[:40]) if prod else "?"
+            ups.append(f"- input from `{e.from_id}` ({name})"
+                       + (f" — glue: {e.glue}" if e.glue else "") + f"\n  its DELIVER: {delivered}")
+    negl = "\n".join(f"- {n.item}" for n in task.spec.neglected)
+    rework = ""
+    if task.state.name == "REWORK":
+        failed = next((list(a.failed_criteria) for a in reversed(engine.audit_log(task.id))
+                       if a.signal == Signal.FAIL and not a.rejected and a.failed_criteria), [])
+        rework = (f"\n## REWORK (iteration {task.iteration}) — the validator FAILED these criteria; "
+                  f"fix exactly them:\n" + "\n".join(f"- {f}" for f in failed) + "\n")
+    return (f"# Your node: {tid} — {task.spec.name}\n\n{task.spec.description}\n\n"
+            f"## Criteria (your ENTIRE obligation; each must really hold)\n{crits}\n\n"
+            f"## Inputs (upstream deliveries you consume — use the REAL outputs, no stubs)\n"
+            f"{chr(10).join(ups) or '- none'}\n\n"
+            f"## NEGLECTED (declared plan assumptions — do not gold-plate against these)\n"
+            f"{negl or '- none'}\n{rework}\n"
+            f"Working directory: {workdir or os.getcwd()}\n")
+
+
+def _signal(engine, task_id: TaskId, sig: Signal, source: str, **kw) -> bool:
+    entry = engine.send_signal_sync(SignalData(signal=sig, task_id=task_id,
+                                               source=AgentId(source), **kw))
+    ok = bool(entry and not entry.rejected)
+    if not ok:
+        log.warning(f"delegate: {sig.name} on {task_id} rejected: {entry.error if entry else '?'}")
+    return ok
+
+
+def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistry,
+                 _llm=None) -> dict:
+    """ONE delegated execution round: spawn the headless executor with the packet, translate its report
+    into FSM signals (its consent = its own report, Inv-1), then auto-validate + auto-verdict if a
+    validator instrument is registered. Returns a summary dict (also emitted to the observation field)."""
+    from gfso.runtime import llm_factory
+    from gfso.adapters.llm.structured import schema_instruction, parse_structured
+    from gfso.decompose.loop import _stat_line
+
+    cfg = agents.get(executor_id) or {}
+    task = engine.get_task(task_id)
+    if task is None:
+        return {"error": f"unknown task {task_id}"}
+
+    def _cb(msg: str) -> None:
+        try:
+            engine.emit_info("delegate", msg)
+        except Exception:
+            pass
+
+    llm = _llm or llm_factory(cfg.get("model", "sonnet"))
+    llm.on_tick = _cb
+    llm.stage_hint = f"{task_id} executor({executor_id})"
+    # Process cap = the node's deadline when set (§3.5: no second clock — on expiry the process is
+    # killed, NO signal forged, the FSM timeout monitor escalates), else the adapter default (15 min).
+    cap = None
+    if getattr(task, "deadline", None):
+        from datetime import datetime
+        cap = max(60, int((task.deadline - datetime.now()).total_seconds()))
+    _cb(f"{task_id}: executor {executor_id} spawned (workdir={cfg.get('workdir') or 'cwd'}"
+        + (f", cap {cap}s" if cap else "") + ")…")
+    system = (_PROMPTS / "executor.md").read_text(encoding="utf-8")
+    packet = _executor_packet(engine, task, cfg.get("workdir"))
+    try:
+        text = llm.run_agent(system, packet + schema_instruction(EXECUTOR_SCHEMA),
+                             allowed_tools=EXECUTOR_TOOLS, cwd=cfg.get("workdir"), timeout=cap)
+    except TypeError:  # a runner without the timeout param (fakes)
+        text = llm.run_agent(system, packet + schema_instruction(EXECUTOR_SCHEMA),
+                             allowed_tools=EXECUTOR_TOOLS, cwd=cfg.get("workdir"))
+    if hasattr(llm, "tag_last"):
+        llm.tag_last("executor")
+    report = parse_structured(text, EXECUTOR_SCHEMA)
+    if report is None:
+        # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
+        # monitor escalates a stuck node (no second clock). Visible in the observation field.
+        _cb(f"{task_id}: executor report DID NOT PARSE — no signals sent; issuer attention needed "
+            f"· executor {_stat_line(llm)}")
+        return {"task_id": str(task_id), "status": "unparsed", "report_text": text,
+                "stats": list(getattr(llm, "calls", []))}
+
+    status = report["status"]
+    if status == "challenge":
+        _signal(engine, task_id, Signal.CHALLENGE, executor_id, reason=report.get("reason", ""))
+        _cb(f"{task_id}: executor CHALLENGED the spec — issuer resolves · {_stat_line(llm)}")
+    elif status == "blocked":
+        if task.state.name == "REVIEW":  # consent happened (it worked far enough to find the block)
+            _signal(engine, task_id, Signal.ACCEPT, executor_id)
+        blocker = report.get("blocker_task_id")
+        _signal(engine, task_id, Signal.BLOCK, executor_id, reason=report.get("reason", ""),
+                blocker_task_id=TaskId(blocker) if blocker else None)
+        _cb(f"{task_id}: executor BLOCKED ({report.get('reason', '')[:80]}) · {_stat_line(llm)}")
+    else:  # delivered — the DISPATCHER picks the VALIDATING node up and auto-validates (one path
+        # for every delivery, delegated or self-executed; natural node×iteration dedup)
+        if task.state.name == "REVIEW":
+            _signal(engine, task_id, Signal.ACCEPT, executor_id)
+        _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"])
+        _cb(f"{task_id}: executor DELIVERED · {_stat_line(llm)}")
+    return {"task_id": str(task_id), "status": status,
+            "stats": list(getattr(llm, "calls", []))}
+
+
+def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) -> None:
+    """DELIVER→VALIDATING auto-fires the registered validator instrument; the verdict AUTO-SIGNALS
+    (PASS → DONE; FAIL(failed_criteria) → REWORK — the rework loop lives in the FSM, max_iterations
+    bounds it). verdict:null NEVER auto-signals — the one escalation to the issuer."""
+    from gfso import tools as T
+
+    task = engine.get_task(task_id)
+    validator_id = agents.validator_for(task.assignee if task else None)
+    if validator_id is None:
+        engine.emit_info("delegate", f"{task_id}: no llm-validator registered — validation stays manual")
+        return
+    vcfg = agents.get(validator_id) or {}
+    ecfg = agents.get(task.assignee) if task else None   # validate WHERE the executor worked
+    out = T.validate_node(engine, str(task_id), model=vcfg.get("model", "sonnet"),
+                          workdir=(ecfg or {}).get("workdir") or vcfg.get("workdir"),
+                          _llm=_llm)
+    verdict = out.get("verdict")
+    if verdict == "PASS":
+        _signal(engine, task_id, Signal.PASS, validator_id)
+    elif verdict == "FAIL":
+        _signal(engine, task_id, Signal.FAIL, validator_id,
+                failed_criteria=tuple(out.get("failed_criteria") or ()))
+    else:  # null/error — never auto-signal an unparsed verdict
+        engine.emit_info("delegate",
+                         f"{task_id}: validator verdict UNPARSED/error — issuer must decide "
+                         f"(report kept in the validate_node output)")
+
+
+class Dispatcher:
+    """The autostart engine: EVENT-DRIVEN — every graph transition (the same bus the UI/WS listens on)
+    wakes a frontier re-evaluation, so an executor-actionable step whose Del is a REGISTERED llm-executor
+    is picked up within milliseconds (dedup per node×iteration; small concurrency cap). The periodic wait
+    is only a safety net for an event missed while a run was in flight — dispatch_once is idempotent, so an
+    extra pass is free."""
+
+    def __init__(self, engine, agents: AgentRegistry, poll: float = 15.0, max_concurrent: int = 4,
+                 runner=run_executor, validator_runner=None):
+        self._engine, self._agents, self._poll = engine, agents, poll   # poll = safety-net interval
+        self._cap = threading.Semaphore(max_concurrent)
+        self._runner = runner
+        self._validate = validator_runner or _auto_validate
+        self._seen: set[str] = set()      # "{task}#{iter}" / "v:{task}#{iter}" — one run per round
+        self._retried: set[str] = set()   # validator no-verdict retries (one per node×iteration)
+        self._stop = threading.Event()
+        self._dirty = threading.Event()   # set by every transition → the loop re-evaluates the frontier
+
+    def _deps_ready(self, task_id: TaskId) -> bool:
+        """An executor spawn is useless before the node's Dep PRODUCERS deliver — it hits a missing
+        input and BLOCKs (observed live). Gate accept-step spawns on producer DONE."""
+        tid = str(task_id)
+        for e in self._engine.get_dependencies():
+            if str(e.to_id) == tid:
+                prod = self._engine.get_task(TaskId(e.from_id))
+                if prod is not None and prod.state.name != "DONE":
+                    return False
+        return True
+
+    def _resolve_ready_blocks(self) -> None:
+        """Auto BLOCK resolution: BLOCKED-on-nodes resolves (confirm) once every EXISTING producer is
+        DONE; a mis-named PHANTOM blocker (the executor named a nonexistent node — observed live) must
+        not deadlock: resolves external=True (retracts the bogus edge). External blocks stay for a
+        human. The unblocked node's spawn-dedup key is dropped so a FRESH executor run picks it up."""
+        from gfso.core.types import State
+        for t in self._engine.tasks_by_state(State.BLOCKED):
+            if not self._issuer_is_automated(t.id):
+                continue
+            producers = [e.from_id for e in self._engine.get_dependencies()
+                         if str(e.to_id) == str(t.id)]
+            if not producers:
+                continue
+            existing = [x for x in producers if self._engine.get_task(TaskId(x)) is not None]
+            phantom = len(existing) < len(producers)
+            if all(self._engine.get_task(TaskId(x)).state.name == "DONE" for x in existing):
+                key = f"rb:{t.id}#{getattr(t, 'iteration', 0)}"
+                if key in self._seen:
+                    continue
+                self._seen.add(key)
+                issuer = str(self._engine._issuer_of(t.id))
+                if phantom:
+                    _signal(self._engine, t.id, Signal.RESOLVE_BLOCK, issuer, external=True)
+                else:
+                    _signal(self._engine, t.id, Signal.RESOLVE_BLOCK, issuer, action="confirm")
+                self._seen.discard(f"{t.id}#{getattr(t, 'iteration', 0)}")
+                self._engine.emit_info("delegate",
+                                       f"{t.id}: producers DONE — RESOLVE_BLOCK (auto), executor re-queued")
+
+    def _issuer_is_automated(self, task_id: TaskId) -> bool:
+        """Auto-validation fires ONLY for nodes whose ISSUER is automated — the standing agent or a
+        registered participant. A HUMAN issuer (any unregistered name) validates their node THEMSELVES:
+        the system never takes a human's verdict away (the author's per-node discrimination rule)."""
+        from gfso.tools import _agent_id
+        issuer = str(self._engine._issuer_of(task_id))
+        return issuer == _agent_id() or self._agents.get(issuer) is not None
+
+    def dispatch_once(self) -> list[str]:
+        """One poll round (the testable unit): spawn executor runs for executor-ready steps AND the
+        auto-validation for EVERY freshly delivered node (delegated or self-executed — one path;
+        fires only when an llm-validator is registered AND the node's issuer is automated, else
+        validation stays the issuer's act)."""
+        # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§6.5)
+        self._engine._graph._authorized_validators = {
+            aid for aid, cfg in self._agents.list().items() if cfg.get("kind") == "llm-validator"}
+        self._resolve_ready_blocks()
+        started = []
+        out = self._engine.next_steps()
+        for s in out.get("steps", []):
+            task = self._engine.get_task(TaskId(s["task_id"]))
+            it = getattr(task, "iteration", 0)
+            if s.get("action") == "validate" and self._agents.validator_for(s.get("assignee")) is not None:
+                if not self._issuer_is_automated(TaskId(s["task_id"])):
+                    continue                              # a human issuer keeps their verdict
+                key = f"v:{s['task_id']}#{it}"
+                if key not in self._seen:
+                    self._seen.add(key)
+                    started.append(f"validate:{s['task_id']}")
+                    threading.Thread(target=self._validate_guarded,
+                                     args=(TaskId(s["task_id"]),), daemon=True).start()
+                continue
+            if s.get("action") not in ("accept", "execute", "rework", "deliver"):
+                continue
+            if s.get("action") == "accept" and not self._deps_ready(TaskId(s["task_id"])):
+                continue                   # spawning before the producers deliver ⇒ instant BLOCK
+            cfg = self._agents.get(s.get("assignee") or "")
+            if cfg is None:
+                continue                   # unregistered = human = passive
+            if cfg.get("kind") != "llm-executor":
+                self._engine.emit_info("delegate",
+                                       f"{s['task_id']}: Del={s['assignee']} is a registered "
+                                       f"{cfg.get('kind')} — not an executor kind, nothing to start")
+                continue
+            key = f"{s['task_id']}#{it}"
+            if key in self._seen:
+                continue
+            self._seen.add(key)
+            started.append(s["task_id"])
+            threading.Thread(target=self._run_guarded,
+                             args=(TaskId(s["task_id"]), s["assignee"]), daemon=True).start()
+        return started
+
+    def _run_guarded(self, task_id: TaskId, executor_id: str) -> None:
+        with self._cap:
+            try:
+                self._runner(self._engine, task_id, executor_id, self._agents)
+            except Exception as e:
+                log.warning(f"delegate run failed on {task_id}: {e}")
+
+    def _validate_guarded(self, task_id: TaskId) -> None:
+        with self._cap:
+            try:
+                self._validate(self._engine, task_id, self._agents)
+            except Exception as e:
+                log.warning(f"auto-validate failed on {task_id}: {e}")
+            # a validator run that died/unparsed leaves VALIDATING with no verdict — ONE retry
+            t = self._engine.get_task(task_id)
+            if t is not None and t.state.name == "VALIDATING":
+                key = f"v:{task_id}#{getattr(t, 'iteration', 0)}"
+                if key not in self._retried:
+                    self._retried.add(key)
+                    self._seen.discard(key)
+                    self._engine.emit_info("delegate",
+                                           f"{task_id}: validator returned no verdict — one retry queued")
+
+    def start(self) -> None:
+        # Wake the loop on every graph transition (same event bus as the UI/WS). The callback is trivial
+        # (set a flag) — it never blocks the signal path nor re-enters dispatch (the loop thread runs it).
+        self._engine.on_transition(lambda *a: self._dirty.set())
+
+        def _loop():
+            while not self._stop.is_set():
+                self._dirty.clear()                    # clear BEFORE the pass: a transition during it re-arms
+                try:
+                    self.dispatch_once()
+                except Exception as e:
+                    log.warning(f"dispatcher run failed: {e}")
+                self._dirty.wait(self._poll)           # woken instantly by a transition, else safety-net poll
+        threading.Thread(target=_loop, daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._dirty.set()                              # wake the loop so it exits promptly
+
+
+_DISPATCHERS: dict[int, Dispatcher] = {}
+_DEFAULT_AGENTS: AgentRegistry | None = None
+
+
+def default_agents() -> AgentRegistry:
+    """The server-wide roster singleton (one json file, shared by every project engine)."""
+    global _DEFAULT_AGENTS
+    if _DEFAULT_AGENTS is None:
+        _DEFAULT_AGENTS = AgentRegistry()
+    return _DEFAULT_AGENTS
+
+
+def ensure_dispatcher(engine, agents: AgentRegistry | None = None) -> Dispatcher:
+    """One dispatcher per engine (lazy, idempotent). Attached at ENGINE creation (runtime), so
+    delegation works identically under every entry point (stdio MCP, unified serve, tests)."""
+    key = id(engine)
+    if key not in _DISPATCHERS:
+        d = Dispatcher(engine, agents or default_agents())
+        d.start()
+        _DISPATCHERS[key] = d
+    return _DISPATCHERS[key]

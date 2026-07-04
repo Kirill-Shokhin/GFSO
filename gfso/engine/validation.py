@@ -34,6 +34,26 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
             raise ValidationError(
                 f"cannot PASS {signal_data.task_id}: not all children have PASSed (V=AND of children): {unpassed}"
             )
+        # Verifier ≠ executor (§6.5: self-checking violates IC). When the signer IS the node's
+        # executor (collapsed ids — the self-execution regime), the FSM cannot tell an
+        # evidence-based issuer PASS from a self-stamp, so the evidence must come from OUTSIDE
+        # the id: a recorded independent verdict for the CURRENT delivery (a rework stales it).
+        # Distinct ids (source ≠ Del) keep the canon default — the separation already exists.
+        task = graph.get_task(signal_data.task_id)
+        if task is not None and signal_data.source and signal_data.source == task.assignee:
+            import json
+            raw = graph._storage.get_exec_verdict(signal_data.task_id)
+            rec = json.loads(raw) if raw else None
+            it = getattr(task, "iteration", 0)
+            if not rec or rec.get("iteration") != it or rec.get("verdict") != "PASS":
+                why = ("no independent verdict is recorded" if not rec
+                       else "the recorded verdict is STALE — this delivery was reworked, re-validate"
+                       if rec.get("iteration") != it
+                       else f"the recorded verdict is {rec.get('verdict')}, not PASS")
+                raise ValidationError(
+                    f"PASS on {signal_data.task_id} by its own executor ({signal_data.source}) needs "
+                    f"an independent validator verdict for the current delivery ({why}) — run "
+                    f"validate_node first, or delegate validation; verifier ≠ executor (§6.5)")
 
     role = required_role(signal_data.signal)
 
@@ -51,12 +71,20 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
         )
 
     if role == Role.ISSUER:
-        # Issuer = whoever created/owns the task (parent's assignee, or task creator)
+        # Issuer = the parent's assignee, or — for a ROOT (no parent) — the task's own assignee
+        # (matches Engine._issuer_of). A root has no parent, so it must fall back to task.assignee;
+        # without it the check was skipped entirely and ANY source could sign an issuer signal on a root.
+        # Exception (canon §6.5 — autonomy is per-task per-ROLE): a registered llm-validator is the
+        # issuer's AUTHORIZED INSTRUMENT for role V — its PASS/FAIL verdicts are accepted on any node
+        # (T11 still records the true actor: source = the validator id, never forged as the issuer).
         parent = graph.get_parent(signal_data.task_id)
-        if parent and parent.assignee and signal_data.source != parent.assignee:
+        issuer = parent.assignee if (parent and parent.assignee) else task.assignee
+        if issuer and signal_data.source != issuer:
+            if (signal_data.signal in (Signal.PASS, Signal.FAIL)
+                    and signal_data.source in getattr(graph, "_authorized_validators", ())):
+                return
             raise ValidationError(
-                f"{signal_data.source} is not issuer for {signal_data.task_id} "
-                f"(issuer={parent.assignee})"
+                f"{signal_data.source} is not issuer for {signal_data.task_id} (issuer={issuer})"
             )
 
     elif role == Role.EXECUTOR:

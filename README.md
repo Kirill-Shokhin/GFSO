@@ -1,167 +1,130 @@
-# GFSO (General Framework for Structured Operations)
+<div align="center">
 
-**A formal language for the minimum a verifiable task-handoff transaction must carry — derived from two axioms and proven minimal.**
+# GFSO
 
----
+**Make a plan falsifiable — so when it fails, you know exactly which part was wrong.**
 
-## What is GFSO?
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![Status](https://img.shields.io/badge/status-preliminary-orange)
 
-GFSO is a **mathematically defined** structure (primitives, operations, laws), the **smallest possible** (nothing can be removed without losing expressiveness), describing **what must be present** in one handoff of a task from an issuer to an executor so that the handoff can be verified and composed. It is **not chosen** — it is **derived** from two simple statements: that goals are verifiable and that complex work decomposes. If those two statements hold for a domain, GFSO necessarily describes its handoffs. If they don't, GFSO doesn't apply, and that boundary is explicit.
+<img src="docs/hero.gif" alt="A task graph building itself, each node stepping through review → in-progress → validating → done, live" width="860">
+<br>
+<sub>A goal becomes a live graph; each node is driven through its states to <code>DONE</code> — the protocol as agents and humans operate the same graph. <em>(temporary capture; a full walkthrough is coming)</em></sub>
 
-The unit of analysis is **one handoff transaction**, not a project, process, or team. Hierarchy, multi-agent, organization — all are compositions of such transactions.
-
-What a transaction must carry: a Spec, a finite set of decidable Criteria, a Deadline, an explicit NEGLECTED section, a Delegation, and (when decomposed) Dependencies plus a composition function. Drop any of these and a specific failure mode (of the seven proven exhaustive) becomes unavoidable.
-
-**Analog:** TCP/IP for hierarchical work coordination, or Codd 1970 for relational databases — tractable math whose framing enables a domain, not a productivity tool.
-
-**Foundations:** two axioms (A1 verifiability of goals, A2 decomposability of complex tasks), from which the entire protocol follows — including impossibility results that key constructions (binary validation, AND aggregation, 7 failure modes) admit no alternatives. 6 original theorems + 8 further results (propositions backed by classical theory, a corollary, and basis minimality).
-
-**Theory-model layer (§18.10):** beyond a standard, GFSO *derives the agent* (human or LLM) as a necessary structural link rather than presuming it — the formal half cannot supply a decomposition's domain-correctness by itself (Lemma 1), nor can pure declaration ground it (Lemma 3), so an empirical-contact carrier is necessary. This lets GFSO *explain* pre-theoretic success (and the 7 FM) and *predict*, falsifiably, agent substitutability and the applicability boundary.
-
-The theory-model has an **agent-free** core: an ontology of decomposition built on five structural links (the Ŝ/S correspondence axis), plus a methodology — the decomposition method, under which **stop-and-replan is the forced optimum**, not a heuristic. Positioning is honest about boundaries: standard planning [STD] (HTN/MDP/MPC) is taken as a genuinely formal substrate and is **absorbed as a sub-step** of GFSO [GFSO] — planning ⊂ GFSO, not a narrow layer bolted on top of planning. The value GFSO adds is **objectification**: making the otherwise-implicit correctness conditions of a handoff explicit, checkable, and composable.
+</div>
 
 ---
 
-## Key Results
+**A plan is usually an unfalsifiable story.** It fails, and no one can say which part was wrong — the estimate, the interface, a missed dependency, or the one subtask everyone assumed was trivial. The post-mortem argues. The plan offered nothing to check against.
 
-**Original theorems:**
+GFSO turns a decomposition into **pre-registered, separately refutable claims** — every subtask a decidable pass/fail criterion with a named owner, every join between subtasks an explicit claim that *these children, together, make the parent*. Something breaks, and the structure points at the exact false claim and who made it — not at "the project."
 
-| # | Result | Claim | Proof type |
-|---|--------|-------|------------|
-| T1 | Compositionality | V(parent) = AND(V(children)) under correct D | Constructive |
-| T2 | AND uniqueness | AND is the only non-trivial aggregation | Exhaustive enumeration |
-| — | \|L\|=2 | Binary validation forced (injectivity from decision-relevance; \|A\|=2 architectural) | Pigeonhole |
-| — | 7 FM completeness | Failure modes are exhaustive — proven as a basis, modulo a covering Axiom 1 (residue: single-clock) | Exhaustive case split |
-| T10 | Self-measuring | Q computable from execution trace | Constructive |
-| T11 | Structural transparency | Every decision has a record | From invariants |
+Two properties carry that promise, and neither is a design choice you could tune away.
 
-**Propositions (supported by classical theory):**
+**Failure localizes.** A parent passes only when every child passes: `V(parent) = AND(V(children))`. One false leaf cannot hide behind a green parent; the failure pins to the node whose claim broke, at any depth.
 
-| # | Result | Claim | Foundation |
-|---|--------|-------|------------|
-| P3 | Blackwell dominance | GFSO informationally dominates status quo | Blackwell 1953 |
-| P4 | Constraint improvement | Constraints improve payoff when Δ > c | Simon 1955 |
-| C5 | α-monotonicity | Quality ↑ with adherence | Corollary of P3 |
-| P6 | Temporal monotonicity | Quality ↑ over time | Blackwell |
-| P7 | Scale bounds | Cascade: errors ≤ (L·γ)ⁿ | Operator composition |
-| P8 | Bayesian IC | Honesty optimal when cost(defect) > cost(signal) | Hurwicz 1960 |
-| P9 | Decomposition quality | 4 independent improvement mechanisms | P3 + P7 + P4 + P6 |
-| — | Minimality | Basis {T, D, Dep, Del} is minimal — each element necessary (uniqueness open, §18.9) | Constructive |
+**A claim cannot pass on its author's word.** Your agent reports its task done; the engine does not take its word. A `PASS` from a node's own executor is rejected until a separate validator has run every criterion against the real deliverable — here, live:
+
+<p align="center"><img src="docs/gate.png" alt="The engine rejecting a self-signed PASS — verifier ≠ executor (§6.5)" width="820"></p>
+
+Self-approval is not discouraged. It is structurally impossible.
+
+*New here? The one-page primer is [`CORE.md`](docs/CORE.md).*
 
 ---
 
-## Logical Chain
+## Why those two properties hold
 
+GFSO is not a good design. It is **derived** — from two axioms: that goals are verifiable (A1), and that complex tasks decompose (A2). Fix those, and almost none of the protocol is a choice.
+
+**Why `AND`, and not a weighted score?** Enumerate the sixteen binary aggregations. Require commutativity, associativity, and that one failed necessary child fails the parent. `AND` is the sole survivor (§3.3). Localization is not a feature bolted on — it is the only aggregation the axioms allow: a passing parent cannot cover a failing leaf, and the failure has exactly one address.
+
+**Why binary acceptance, and not a percentage?** A verdict that maps to no distinct action is not a verdict. Keep only the values that change what you do, and the scale collapses to pass/fail by the pigeonhole principle (§3.2). There is no "80% done" to shelter in; "in progress" lives in the state machine, not the scale.
+
+**Why trust that you've listed every way it can break?** A decomposition's failures are not collected from experience — they are a proven basis. Compositional validation is a computation, characterized on two orthogonal axes: the function it evaluates, and the process in time that evaluates it. Split each, and you get **seven failure modes with no room for an eighth** (§4.2–4.8). A study of 216 public post-mortems found 0 that needed one.
+
+**Why can't the agent just game the protocol?** Because the protocol is minimal and incentive-compatible. One handoff runs as a peer-to-peer transaction over 12 signals and 12 states; remove any signal and a specific defect returns. Drop any incentive-critical rule and dishonesty becomes a dominant strategy for one party (§6, §11). Honesty is made rational by the rules — not asked of people.
+
+Two things then come for free. Quality is a five-vector read straight from the execution trace, so gaming a metric costs as much as gaming the work (§13). And every decision leaves a record by construction: the way double-entry bookkeeping structurally forbids an unbalanced ledger, GFSO forbids an unrecorded decision (§14).
+
+---
+
+## Where the guarantee stops
+
+None of this proves your decomposition is *correct*. It proves only that the plan is checkable, and that failure localizes.
+
+Whether these children truly compose into that parent in the real world, the framework cannot decide — by construction. Two domains with the same formal graph can obey different real laws (Lemma 1), so the axioms do not fix which decomposition is faithful, and no amount of declaring it so grounds it (Lemma 3). That knowledge comes only from contact with the domain.
+
+That gap is where your agent — human or LLM — carries the weight. GFSO **derives** its necessity rather than assuming it: reliable domain knowledge cannot come from the apparatus, so an agent must supply it, and the exact thing it must supply is named (§18.10). A standard would stop at prescribing. This one also *explains* why competent work already succeeded — the agent carried enough tacit structure — and *predicts*, falsifiably, when an agent can be swapped and where the framework stops applying.
+
+The framework names exactly what it guarantees and exactly what it hands to the agent. Nothing in between is waved away.
+
+---
+
+## What it is, and is not
+
+**Planning ⊂ GFSO.** Classical planning and control — STRIPS, MDPs, HTN, A\*, MPC, RL — enter as a single sub-step, rewritten in GFSO's own terms: search over the estimated structure is one link in a longer chain (§17.4). The new mechanics are a narrow delta.
+
+The value is not novelty of mechanism. It is **objectification** — moving decomposition out of private intuition into one axiom-derived, checkable, faithfulness-graded discipline that holds at every level. That is what makes planning falsifiable (§17.5). Scrum, in turn, is a special case under relaxed axioms (§17.2).
+
+It is not a task tracker — Jira tracks tasks; GFSO tracks *decisions*: who split what, on what criteria, why. Not an ERP, not a chatbot, not an autopilot.
+
+---
+
+## The reference implementation
+
+The two properties above are not a paper. They run.
+
+A reference implementation exercises the protocol end-to-end — a way to run the theory, not a finished product. One engine holds the logic; four front-ends are generated from it — a web UI, an HTTP+WS API, a CLI, and an MCP surface for agents — so humans and agents drive the *same* graphs and every write is mirrored live.
+
+```bash
+pip install -e ".[mcp]"
+
+# register the MCP server — starts a shared engine + live UI at http://localhost:8000
+claude mcp add gfso -- python -m gfso.mcp.connect
 ```
-A1, A2 (axioms)
-  → {T, D, Del, Dep, V} (minimal basis)
-  → |L|=2 (impossibility), AND (uniqueness)
-  → 7 failure modes (completeness proven)
-  → Standards + 3 verification levels (CHECK-1–8)
-  → Protocol: 12 P2P signals + timeout, 12 states (minimal)
-  → Graph G + 5 metrics Q (minimal, self-measuring)
-  → AI layer: Solver + LLM (capacity-necessity: Simon + info-volume)
-  → Theory-model (§18.10): agent derived necessary, not presumed
-                           (GFSO = standard + theory-model)
+
+Or, without an agent, run just the web UI:
+
+```bash
+gfso serve
 ```
 
-Every step is motivated by the previous. Design decisions are explicit.
+The verifier ≠ executor gate from the opening runs in both of the system's regimes:
+
+- **Sequential** — one agent session structures a goal (`auto_decompose` runs the search↔audit method in one call), executes the frontier itself, and after each delivery gets a verdict from a fresh read-only validator that *runs* the criteria. Its own `PASS` is not enough; the gate demands the independent verdict.
+- **Delegated** — register executor and validator roles once, and assignment *is* delegation: a node assigned to a registered executor is picked up automatically, its report wrapped into the canonical signals, the validator auto-runs on delivery, and a failed criterion re-enters a bounded rework loop with the failure as feedback. Humans are never registered — a node assigned to a person simply waits for *their* signals. Mixed human/agent graphs are the normal case.
+
+The UI (shown at the top) surfaces every write live. It is a working reference for exercising the protocol, not a finished product — visual design and role workflows are out of scope at this stage.
+
+---
+
+## Status — preliminary
+
+This is a preliminary release. The theory is close to complete; the two things that will make it fuller and stronger — the empirical base and the English canon — are both in progress.
+
+**Theory.** Formal framework (6 theorems + 8 further results), impossibility results (binary scale, `AND`, the 7-mode basis), the agent-free theory-model (§18.10), and a falsifiability register are in place. The canon is a Russian working draft; the English translation is pending.
+
+**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, under 248 tests.
+
+**Empirical.**
+- **E0** — on 148 BCB-Hard tasks, explicit unit-test criteria raise Haiku 4.5's zero-shot solve rate from 29.1% to 63.5% at the same compute.
+- **E1** — the 7-mode taxonomy against 216 public post-mortems: **0 / 216** need an eighth mode.
+- **E2** — coverage of a completeness-audited reference decomposition rises 74 → 81% and 78 → 96% across runs of the search↔audit cycle, productized as `decompose()`.
+- **E3** *(open)* — whether compositional validation holds on real multi-agent engineering, where a decomposition's *faithfulness* to its domain is exercised, not just its structure. Long-horizon deployment validation follows.
+
+The permanent boundaries are stated, not buried: a domain-silent false-`pass` cannot be caught a priori by any discipline (Lemma 1); the causal correctness of a decomposition is a characterized boundary, not an open algorithm; uniqueness of the basis is open (§18.9).
 
 ---
 
 ## Documents
 
-**Canon layer** — the framework itself.
-| File | Purpose |
-|------|---------|
-| [`docs/applied_gfso_v3.md`](docs/applied_gfso_v3.md) | The canon (v3.7): axioms → primitives → theorems → protocol → metrics → theory-model. The single source of truth; everything else mirrors it. |
-| [`docs/method_gfso.md`](docs/method_gfso.md) | The Constitution: the canon distilled into strict entities (definitions) + laws (rules) — the layer an agent/auditor operates on. |
-| [`docs/falsifiability.md`](docs/falsifiability.md) | Falsifiability register: each canonical claim → what would falsify it (empirical / mathematical / conditional). |
+**Canon** — [`applied_gfso_v3.md`](docs/applied_gfso_v3.md): the framework itself (axioms → theorems → protocol → metrics → theory-model), the single source of truth. Distilled for an operator in [`method_gfso.md`](docs/method_gfso.md); each load-bearing claim typed by what would refute it in [`falsifiability.md`](docs/falsifiability.md).
 
-**Companion layer** — onboarding & intuition.
-| File | Purpose |
-|------|---------|
-| [`docs/CORE.md`](docs/CORE.md) | One-page primer: what GFSO is, what it uniquely provides, common-objection answers (read first). |
-| [`docs/applied_gfso_vision.md`](docs/applied_gfso_vision.md) | Vision companion: applied FSM spec, per-metric epistemic analysis, audit/GAAP roadmap, theory-model intuition. |
+**Onboarding** — [`CORE.md`](docs/CORE.md): one-page primer and common-objection answers (read first). [`applied_gfso_vision.md`](docs/applied_gfso_vision.md): applied FSM, per-metric analysis, intuition.
 
-**Internal layer** — derivation & evidence.
-| File | Purpose |
-|------|---------|
-| [`docs/gfso_dependency_map.md`](docs/gfso_dependency_map.md) | Derivation DAG: how each canonical result depends on the axioms and on prior results. |
-| [`docs/EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) | Evidence journal: empirical anchors (E0/E1/E2), what is proven vs open. |
-
-**Code layer.**
-| File | Purpose |
-|------|---------|
-| [`docs/architecture.md`](docs/architecture.md) | Code architecture (mirror of the engine): FSM table, module structure, code↔canon sync notes. |
-
----
-
-## Interface
-
-One Engine (the single logic source), one action surface (`gfso/tools.py`), and
-**four equivalent front-ends generated from it** — a **web UI**, an **HTTP API**
-(`POST /api/run/{tool}` + WebSocket), a **CLI** (`gfso run`), and an **MCP server**
-(`gfso mcp`, the agent surface) — so a new authoring verb is one edit, visible on
-all four. An agent (via MCP) and a human (via the UI) operate the *same* graph; the
-UI mirrors the agent's writes live. `gfso/decompose/` turns the E2 search↔audit method
-into a callable — an agent requests a full decomposition rather than hand-building the
-graph. The task graph, FSM states, validation outcomes `V(t)`, failure-mode checks and
-the AND-composition `V(parent) = AND(V(children))` are all visible and operable.
-
-![GFSO web interface](docs/ui-baseline.png)
-
-> **Baseline interface.** A working reference UI for exercising the protocol —
-> not a finished product. It translates the theory directly: status is rendered
-> along the `{intervene, ¬intervene} × {pass, fail, ⊥}` axes, checks are grouped
-> by failure mode, decomposition surfaces joint sufficiency. Visual design and
-> role workflows are out of scope at this stage.
-
----
-
-## Status
-
-Theory:
-- [x] Formal framework: 6 theorems + 8 further results (propositions + corollary + basis minimality)
-- [x] Impossibility results on foundations (|L|=2, AND, 7 FM)
-- [x] AI layer formalized (Solver + LLM, Chollet Level ≥ 2)
-- [x] Vision document with practical illustrations
-- [x] §17.1 adaptive stratification by horizons (derived from Dep coherence + A1 + stationarity)
-- [x] §17.2 Scrum ⊂ GFSO — structural containment shown (behavioral derivation open)
-- [x] §18.10 theory-model: agent derived as a necessary structural link (not presumed); claims calibrated
-- [x] v3.6 agent-free theory-model: ontology of decomposition (5 links / Ŝ/S axis) + methodology (decomposition method, stop-and-replan = forced optimum); honest [STD]/[GFSO] positioning (planning ⊂ GFSO as an absorbed sub-step); value = objectification of handoff correctness conditions
-- [x] Falsifiability register ([`docs/falsifiability.md`](docs/falsifiability.md)): every load-bearing claim typed by what would falsify it (empirical / mathematical / conditional-on-a-named-premise). 7-FM completeness is analytic — a derived case split over a derived covering axiom (§4.8); E1 (0/216 incidents need an 8th mode) corroborates that the derived categories are adequate to real failures rather than testing an empirical posit. The irreducibly empirical surface is two distinct loci sharing one root (where the world enters): domain membership (does A1∧A2 hold here) and faithfulness of the decomposition to the domain's real structure.
-- [ ] English translation
-
-Implementation:
-- [x] Protocol engine: Level 1 (core) + Level 2 (engine)
-- [x] Level 3: production adapters (SQLite, Claude API, FastAPI HTTP+WS server)
-- [x] Web UI surfacing the protocol (V(t), NEGLECTED, AND-composition, FM-grouped checks)
-- [x] Bench harness separated from core (`bench/` with provider abstraction)
-- [x] Domain adapters: SubprocessVerifier (LCB) + UnittestVerifier (BCB)
-
-Empirical:
-- [x] E0 — measurement on BCB-Hard 148: explicit unit-test criteria
-      (Issuer-side spec discipline) raises Haiku 4.5 solve rate from 29.1% to
-      63.5% zero-shot, same compute. Illustrates §3.2 forced binary V on a
-      current frontier-adjacent model.
-- [x] E1 — 7 FM taxonomy validated on 216 public software postmortems:
-      **0/216 need an 8th FM** (completeness-as-basis holds). FM-1 sub-typed
-      (a/b/c/d), FM-3 shown two-sided; the 6 non-FM cases are in-framework
-      (resilience-worked / delegated). Record: EVIDENCE_LOG §9/§9.1.
-- [x] E2 — **how to converge a decomposition to a verified plan reliably and cheaply** (an
-      optimality question, not "does a critic help"). Against a frozen, completeness-audited
-      reference (a *target*, not "100%" — not a-priori derivable, Lemma 1): the **search ↔ audit**
-      cycle works (78%→96% Opus, 74%→81% Sonnet), and — more decisively — **how the pass is framed
-      matters more than how many passes you run**. The clean result is an architecture: **"bare vs
-      GFSO" is a false dichotomy → bare SEARCH (recall) ⊕ gfso AUDIT (cast into the canonical basis),
-      iterated** — and that `search+audit` pair *is* the reference-building method, so only it
-      reproduces the reference (ansatz-and-verify, not circular). Productized as `gfso/decompose/` —
-      an agent **calls** a full decomposition rather than building the graph by hand. (Coverage to a
-      bare-built reference ranks *convergence strategies*; the method's execution-value is E3.)
-      Record: EVIDENCE_LOG §11 / `experiments/e2_agent/CONVERGENCE.md`.
-- [ ] E3 — Compositional validation theorem in multi-agent decomposition
-- [ ] Long-horizon deployment validation (≥ 6 months)
+**Derivation & evidence** — [`gfso_dependency_map.md`](docs/gfso_dependency_map.md) · [`EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) · [`architecture.md`](docs/architecture.md).
 
 ---
 
@@ -169,15 +132,13 @@ Empirical:
 
 ```bibtex
 @article{shokhin2026gfso,
-  title={GFSO: Formal Guarantees for Compositional Task Validation
-         in Hierarchical Organizations},
-  author={Shokhin, Kirill},
-  year={2026},
-  note={Preprint}
+  title  = {GFSO: Formal Guarantees for Compositional Task Validation
+            in Hierarchical Organizations},
+  author = {Shokhin, Kirill},
+  year   = {2026},
+  note   = {Preprint in preparation}
 }
 ```
-
----
 
 ## License
 

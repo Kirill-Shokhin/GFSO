@@ -130,10 +130,15 @@ def test_pass_requires_all_children_passed_theorem1():
     assert e is None or e.rejected                                # child not PASSed → parent PASS refused
     assert eng.get_state(TaskId("p")) == State.VALIDATING
 
-    # PASS the child, then the parent PASS is allowed
+    # PASS the child, then the parent PASS is allowed. Both nodes are SELF-executed (source == Del),
+    # so each PASS needs a recorded independent verdict first (verifier ≠ executor gate, §6.5).
     eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("c"), source=A)); eng.wait_idle()
     eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("c"), source=A, result="ok")); eng.wait_idle()
+    e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
+    assert e is None or e.rejected                                # self-pass without a verdict → refused
+    eng.record_exec_verdict(TaskId("c"), "PASS", [], "validate_node")
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
+    eng.record_exec_verdict(TaskId("p"), "PASS", [], "validate_node")
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
     assert eng.get_state(TaskId("p")) == State.DONE and eng.get_task(TaskId("p")).done_reason.name == "PASS"
     eng.stop()

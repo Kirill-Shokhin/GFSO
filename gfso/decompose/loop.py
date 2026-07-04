@@ -48,7 +48,8 @@ def _stat_line(llm) -> str:
     total = sum((x.get("output_tokens") or 0) for x in dicts)
     retries = sum(1 for x in dicts if x.get("parse_failed"))
     secs = (c.get("duration_ms") or 0) / 1000
-    line = f"done in {secs:.0f}s · {(c.get('output_tokens') or 0) / 1000:.1f}k out · Σ {total / 1000:.1f}k out"
+    line = (f"done in {secs:.0f}s · {(c.get('output_tokens') or 0) / 1000:.1f}k tokens "
+            f"· Σ {total / 1000:.1f}k tokens")
     return line + (f" · ⚠ {retries} parse-retry" if retries else "")
 
 
@@ -147,8 +148,23 @@ AUDIT_SCHEMA_PATCH = {**AUDIT_SCHEMA_LEAN, "required": []}
 
 _COVERED = "ALREADY-COVERED"
 
+# `fast` pace-suffixes — USER-content additions (frozen prompt CORES untouched; same sanctioned class
+# as the ALREADY-COVERED sentinel). Measured on the wordfreq simple task (runs/v2_speed/suffix_*.json):
+# baseline 106s/9.8k out → both suffixes 63-77s/5.6-7.4k out, holes==[], 0 repairs, shape parity
+# (the audit suffix MUST carry the keep-NEGLECTED clause — without it the register got dropped → repair).
+# ⚠ SIMPLE TASKS ONLY — measured on the complex T01 reference (2026-07-04): 2× cheaper (325s/32k →
+# 167s/17k) but coverage −9/45 on the basis (35→26; V-criteria content is what compresses away).
+SEARCH_FAST = ("Pace note: this is a SIMPLE task — keep the enumeration TIGHT: one short line per "
+               "hole/component (its falsifier in a few words), no derivations, no re-verification "
+               "prose, no closing narration. Completeness of ITEMS matters; wordiness does not.")
+AUDIT_FAST = ("Pace note: this is a SIMPLE task — write the basis TIGHTLY: short prose lines, no "
+              "coverage narration or self-check text (the structure carries the checks). Names "
+              "EXACT and lossless between prose and structure — drop nothing; the NEGLECTED risk "
+              "register stays COMPLETE (each risk with its predictability verdict, justification, "
+              "invalidation).")
 
-def _search(llm: LLMProviderPort, request: str, prev_md: str) -> str:
+
+def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False) -> str:
     if prev_md:
         # The sentinel is an I/O-FORMAT convention only: the frozen prompt already mandates "say so
         # explicitly rather than manufacturing holes" — this fixes the wording so the loop can detect it.
@@ -158,6 +174,8 @@ def _search(llm: LLMProviderPort, request: str, prev_md: str) -> str:
                 f"requirement space is already covered, begin your reply with the single line {_COVERED}.")
     else:
         user = f"# TASK\n{request}\n\nFirst pass: no decomposition is provided — produce the exhaustive enumeration."
+    if fast:
+        user += "\n\n" + SEARCH_FAST
     return llm.complete(user, SEARCH_PROMPT)
 
 
@@ -174,7 +192,8 @@ def _audit_text(llm: LLMProviderPort, request: str, prev_md: str, holes: str) ->
     return llm.complete(user, AUDIT_PROMPT)
 
 
-def _audit(llm: LLMProviderPort, request: str, prev_md: str, holes: str, emit_basis: bool = False) -> dict:
+def _audit(llm: LLMProviderPort, request: str, prev_md: str, holes: str, emit_basis: bool = False,
+           fast: bool = False) -> dict:
     prose = ("as `basis_markdown` (prose) AND the structured fields (its lossless transcription)"
              if emit_basis else
              "as the structured fields ONLY — a faithful, LOSSLESS transcription into the schema "
@@ -185,6 +204,8 @@ def _audit(llm: LLMProviderPort, request: str, prev_md: str, holes: str, emit_ba
     else:
         user = (f"# TASK\n{request}\n\n# EXHAUSTIVE ENUMERATION TO REDUCE\n{holes}\n\n"
                 f"Reduce this to the canonical basis — emit it {prose}.")
+    if fast:
+        user += "\n\n" + AUDIT_FAST
     return llm.complete_structured(AUDIT_PROMPT, user, AUDIT_SCHEMA if emit_basis else AUDIT_SCHEMA_LEAN)
 
 
@@ -205,7 +226,8 @@ def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[st
 
 
 def decompose_spec(request: str, depth: int = 1, model: str = "sonnet",
-                   llm: LLMProviderPort | None = None, progress=None, emit_basis: bool | None = None) -> dict:
+                   llm: LLMProviderPort | None = None, progress=None, emit_basis: bool | None = None,
+                   fast: bool = False) -> dict:
     """Run search↔audit up to `depth` times (the quality dial, exactly as calibrated in E2: trivial task →
     depth 1 = one search + one audit); the STRUCTURED spec is emitted only on the FINAL round —
     intermediate rounds carry the basis as prose (.md). Early exit: if a pass-2+ searcher reports the
@@ -217,7 +239,12 @@ def decompose_spec(request: str, depth: int = 1, model: str = "sonnet",
     were clean — the auditor copies names from the prose it just wrote), so depth=1 defaults to True; at
     depth≥2 the final defaults to LEAN (structure only — re-emitting the grown basis is the cost center,
     and the carried intermediate prose is returned as `basis_markdown`, one search behind the structure).
-    Pass an explicit bool to override either way."""
+    Pass an explicit bool to override either way.
+
+    `fast` appends the measured pace-suffixes (SEARCH_FAST/AUDIT_FAST — user content, cores untouched):
+    wordfreq simple task 106s/9.8k → 63-77s/5.6-7.4k out with holes==[], 0 repairs, shape parity
+    (runs/v2_speed/). Content quality vs the frozen judge is UNMEASURED — the author's Pareto call;
+    default stays False."""
     if emit_basis is None:
         emit_basis = depth <= 1
     if llm is None:
@@ -232,7 +259,7 @@ def decompose_spec(request: str, depth: int = 1, model: str = "sonnet",
         # inside it (1/2 searcher → 1/2 auditor → 2/2 searcher → …).
         _progress(f"{i + 1}/{depth} searcher…", progress)
         _hint(llm, f"{i + 1}/{depth} searcher")
-        holes = _search(llm, request, prev_md)
+        holes = _search(llm, request, prev_md, fast=fast)
         _tag(llm, f"search-{i + 1}")
         _progress(f"{i + 1}/{depth} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings",
                   progress)
@@ -244,7 +271,7 @@ def decompose_spec(request: str, depth: int = 1, model: str = "sonnet",
             _progress(f"{i + 1}/{depth} auditor (final: "
                       f"{'basis + spec' if emit_basis else 'spec, lean'})…", progress)
             _hint(llm, f"{i + 1}/{depth} auditor")
-            spec = _audit(llm, request, prev_md, holes, emit_basis=emit_basis) or {}
+            spec = _audit(llm, request, prev_md, holes, emit_basis=emit_basis, fast=fast) or {}
             _tag(llm, f"audit-final-{i + 1}")
             _progress(f"{i + 1}/{depth} auditor {_stat_line(llm)}", progress)
             if spec:

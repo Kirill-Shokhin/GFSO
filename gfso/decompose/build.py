@@ -43,6 +43,10 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
         for n in d.get("neglected", [])
     )
     existing = engine.get_task(rid)
+    # `assignee` (A) delegates the CHILDREN. The issuer-acts on the ROOT (re-author + ACCEPT) are performed by
+    # the root's OWN owner — for a root, issuer == executor == its own assignee; using A here would be a foreign
+    # actor re-authoring/accepting someone else's root (correctly rejected by the issuer/executor guards).
+    root_actor = A if existing is None else AgentId(existing.assignee)
     if existing is None:
         engine.assign_task(rid, Spec(request, root_crit, neg, name=d.get("name", "")), A); engine.wait_idle()
     else:
@@ -53,12 +57,12 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
         # absent). Re-author is safe: revise retains the subtree (no cascade).
         new_spec = Spec(existing.spec.description or request, root_crit, neg,
                         name=existing.spec.name or d.get("name", ""))
-        engine.revise(rid, new_spec, A); engine.wait_idle()
+        engine.revise(rid, new_spec, root_actor); engine.wait_idle()
 
     # a decomposed root is being worked on → ACCEPT it so it is EXECUTING (with children), not REVIEW: a
     # parent that still shows 'accept' interleaved with its children confuses the executor's next_step order.
     if engine.get_state(rid) == State.REVIEW:
-        engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=rid, source=A)); engine.wait_idle()
+        engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=rid, source=root_actor)); engine.wait_idle()
 
     # Child ids are NAMESPACED under the root: spec ids are LLM-chosen domain words (proration_engine, ...)
     # in a flat global TaskId namespace — two decompositions of similar domains WILL collide, and a colliding

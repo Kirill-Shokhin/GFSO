@@ -119,3 +119,37 @@ def test_lean_final_carries_intermediate_basis():
     # lean is asked of the auditor explicitly (structured-fields-only instruction in user content)
     final_user = [u for k, u in fake.calls if k == "structured"][0]
     assert "structured fields ONLY" in final_user
+
+
+def test_fast_appends_pace_suffixes_to_user_content_only():
+    """fast=True rides the USER content of search + final audit (frozen cores untouched — the system
+    prompts are byte-identical); fast=False leaves everything as before; the PATCH repair is never
+    suffixed (it must stay minimal)."""
+    from gfso.decompose.loop import SEARCH_FAST, AUDIT_FAST
+    fake = FakeLLM(texts=["holes1"], specs=[_spec()])
+    decompose_spec("task", depth=1, llm=fake, fast=True)
+    search_user = [u for k, u in fake.calls if k == "search"][0]
+    audit_user = [u for k, u in fake.calls if k == "structured"][0]
+    assert search_user.endswith(SEARCH_FAST) and audit_user.endswith(AUDIT_FAST)
+
+    fake2 = FakeLLM(texts=["holes1"], specs=[_spec()])
+    decompose_spec("task", depth=1, llm=fake2)
+    assert not any("Pace note" in u for _, u in fake2.calls)
+
+
+def test_prose_to_spec_count_check_conservative():
+    """The count-check flags STRONG basis→spec transcription loss (deficit ≥2 in an explicit D/Dep
+    section) and stays silent otherwise (free prose — a misfire would trigger repairs on clean runs)."""
+    from gfso.decompose import _count_problems
+    md = ("# Basis\n## D — Components\n" + "\n".join(f"{i}. comp_{i} — text" for i in range(1, 8))
+          + "\n\n## Dep — Seams\n- a → b: glue\n- b → c: glue\n- c → d: glue\n- d → e: glue\n\n## V\n")
+    lossy = {"basis_markdown": md,
+             "subtasks": [{"id": f"s{i}"} for i in range(4)],       # 7 enumerated vs 4 carried
+             "deps": [{"from": "a", "to": "b"}]}                     # 4 vs 1
+    probs = _count_problems(lossy)
+    assert len(probs) == 2 and "7 components" in probs[0] and "4 seams" in probs[1]
+    clean = {"basis_markdown": md, "subtasks": [{"id": f"s{i}"} for i in range(6)],  # deficit 1 → silent
+             "deps": [{"from": "a", "to": "b"}, {}, {}]}
+    assert _count_problems(clean) == []
+    assert _count_problems({"basis_markdown": "", "subtasks": []}) == []             # no basis → silent
+    assert _count_problems({"basis_markdown": "prose without sections", "subtasks": []}) == []

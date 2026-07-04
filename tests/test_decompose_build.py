@@ -85,6 +85,24 @@ def test_build_graph_live_into_existing_root_reauthors_it():
     assert {c.check_name: c for c in e.get_checks(TaskId("root"))}["CHECK-1:coverage"].passed
 
 
+def test_build_graph_live_reauthors_a_root_owned_by_another_agent():
+    """Regression: `assignee` delegates the CHILDREN; the ROOT stays owned by whoever created it. Re-authoring
+    and ACCEPTing the root must be done by the root's OWN owner (its issuer), not by the children's assignee —
+    else the issuer/executor guards (correctly) reject a foreign actor acting on someone else's root."""
+    e = _eng()
+    from gfso.core.types import Spec, Criteria, AgentId
+    e.assign_task(TaskId("root"), Spec("build the thing",
+                  (Criteria("issuer_made_up", "not the real criteria"),)), AgentId("owner"))
+    e.wait_idle()
+    build_graph_live(SPEC, "build the thing", e, root_id="root", assignee="worker")   # children ≠ root owner
+    e.wait_idle()
+    root = e.get_task(TaskId("root"))
+    assert {c.name for c in root.spec.criteria} == {"rc1", "rc2"}          # re-authored despite a distinct owner
+    assert root.assignee == AgentId("owner")                              # root ownership unchanged
+    assert e.get_state(TaskId("root")).name == "EXECUTING"               # ACCEPTed by its owner, not "worker"
+    assert {c.assignee for c in e.get_active_children(TaskId("root"))} == {AgentId("worker")}  # children → assignee
+
+
 def test_build_graph_live_surfaces_dropped_items():
     """Nothing is filtered silently: a self-dep, an unknown dep endpoint, and a mapping onto a nonexistent
     root criterion are all RETURNED with reasons (the repair loop's input), not swallowed."""

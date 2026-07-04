@@ -42,7 +42,8 @@ def run(argv: list[str]) -> None:
     if not argv or argv[0] in ("-h", "--help", "help"):
         print("gfso run — headless graph commands (the SAME surface as the MCP tools):")
         for name, fn in T.TOOLS.items():
-            ps = list(inspect.signature(fn).parameters)[1:]  # drop the leading `engine`
+            ps = [p for p in list(inspect.signature(fn).parameters)[1:]  # drop the leading `engine`
+                  if not p.startswith("_")]                  # underscore params are transport-internal
             print(f"  {name} {' '.join('<' + p + '>' for p in ps)}")
         return
 

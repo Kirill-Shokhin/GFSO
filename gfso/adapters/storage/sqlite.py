@@ -69,6 +69,20 @@ class SqliteStorage(StoragePort):
                 task_id TEXT PRIMARY KEY,
                 critique_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS exec_verdicts (
+                task_id TEXT PRIMARY KEY,
+                verdict_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS deliver_results (
+                task_id TEXT PRIMARY KEY,
+                result TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS pipeline_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                source TEXT NOT NULL,
+                message TEXT NOT NULL
+            );
         """)
         # Defensive migrations for DBs created before these columns existed.
         dep_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(dep_edges)")}
@@ -276,3 +290,39 @@ class SqliteStorage(StoragePort):
     def get_critique(self, task_id: TaskId) -> Optional[str]:
         row = self._conn.execute("SELECT critique_json FROM critiques WHERE task_id = ?", (task_id,)).fetchone()
         return row["critique_json"] if row else None
+
+    def store_deliver_result(self, task_id: TaskId, result: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO deliver_results (task_id, result) VALUES (?, ?)",
+            (task_id, result))
+        self._conn.commit()
+
+    def get_deliver_result(self, task_id: TaskId) -> Optional[str]:
+        row = self._conn.execute(
+            "SELECT result FROM deliver_results WHERE task_id = ?", (task_id,)).fetchone()
+        return row["result"] if row else None
+
+    def store_exec_verdict(self, task_id: TaskId, verdict_json: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO exec_verdicts (task_id, verdict_json) VALUES (?, ?)",
+            (task_id, verdict_json))
+        self._conn.commit()
+
+    def get_exec_verdict(self, task_id: TaskId) -> Optional[str]:
+        row = self._conn.execute(
+            "SELECT verdict_json FROM exec_verdicts WHERE task_id = ?", (task_id,)).fetchone()
+        return row["verdict_json"] if row else None
+
+    def log_pipeline(self, ts: str, source: str, message: str) -> None:
+        self._conn.execute(
+            "INSERT INTO pipeline_log (ts, source, message) VALUES (?, ?, ?)", (ts, source, message))
+        # pragmatic cap (designs §6): keep the last 10k rows — one indexed delete, cheap per insert
+        self._conn.execute(
+            "DELETE FROM pipeline_log WHERE id <= (SELECT MAX(id) FROM pipeline_log) - 10000")
+        self._conn.commit()
+
+    def get_pipeline(self, limit: int = 500) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT ts, source, message FROM "
+            "(SELECT * FROM pipeline_log ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
+        return [{"ts": r["ts"], "source": r["source"], "message": r["message"]} for r in rows]

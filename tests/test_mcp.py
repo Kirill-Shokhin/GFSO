@@ -136,3 +136,23 @@ def test_unified_mcp_transport_mounts_and_handshakes():
         assert r.status_code == 200
         assert any(k.lower() == "mcp-session-id" for k in r.headers)
         assert c.get("/api/tasks/shared").json()["id"] == "shared"  # one CORE: UI sees the agent's write
+
+
+def test_default_assignee_is_the_calling_agent(monkeypatch):
+    """Identity is TRANSPORT-derived, zero config: this tool surface is the AGENT's door, so an omitted
+    assignee = `agent` out of the box (create_task / decompose children); GFSO_AGENT_ID only RENAMES;
+    an explicit assignee = a real delegation and always wins."""
+    e = _eng()
+    monkeypatch.delenv("GFSO_AGENT_ID", raising=False)
+    t = T.create_task(e, "self1", {"description": "x", "criteria": [{"name": "a", "description": "A"}]})
+    assert t["assignee"] == "agent"                      # works with NO env at all
+    kids = T.decompose(e, "self1", [{"task_id": "k1", "spec": {"description": "k"}}],
+                       [{"criterion_name": "a", "child_id": "k1"}])
+    assert kids[0]["assignee"] == "agent"
+    t2 = T.create_task(e, "other", {"description": "y", "criteria": [{"name": "b", "description": "B"}]},
+                       assignee="bob")
+    assert t2["assignee"] == "bob"                       # explicit = real delegation, wins
+    monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")   # optional RENAME, not a requirement
+    t3 = T.create_task(e, "named", {"description": "z", "criteria": [{"name": "c", "description": "C"}]})
+    assert t3["assignee"] == "claude-main"
+    e.stop()

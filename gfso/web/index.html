@@ -27,6 +27,10 @@
     </div>
     <button class="queue-toggle" id="queue-toggle" onclick="toggleMineOnly()">Mine only</button>
     <div class="role-select">
+        <label for="project-select">Project</label>
+        <select id="project-select" onchange="switchProject(this.value)" style="max-width:140px"></select>
+    </div>
+    <div class="role-select">
         <label for="current-role">You are</label>
         <input id="current-role" value="pm" placeholder="your agent id" oninput="onRoleChange()">
     </div>
@@ -284,6 +288,36 @@ async function init() {
 
     await refreshAll();
     connectWS();
+    plEnsure();     // the observation window is always present (history visible even when idle)
+    refreshProjects();
+}
+
+// ── projects — the TAB owns its project (?project= in the URL): two tabs = two projects at once;
+//    every /api call and the WS carry it, so each tab's graph/observation is its own engine's.
+const TAB_PROJECT = new URLSearchParams(location.search).get('project') || '';
+const _rawFetch = window.fetch.bind(window);
+window.fetch = (url, opts) => {                      // tab scope rides every same-origin API call
+    if (TAB_PROJECT && typeof url === 'string' && url.startsWith('/api')) {
+        url += (url.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(TAB_PROJECT);
+    }
+    return _rawFetch(url, opts);
+};
+async function refreshProjects() {
+    try {
+        const d = await (await fetch('/api/projects')).json();
+        const cur = TAB_PROJECT || d.active;
+        const sel = document.getElementById('project-select');
+        sel.innerHTML = d.projects.map(p =>
+            `<option value="${p}"${p === cur ? ' selected' : ''}>${p}</option>`).join('')
+            + '<option value="__new__">+ new…</option>';
+    } catch (e) { /* single-project server */ }
+}
+async function switchProject(name) {
+    if (name === '__new__') {
+        name = prompt('New project name ([A-Za-z0-9_-]):');
+        if (!name) { await refreshProjects(); return; }
+    }
+    location.search = '?project=' + encodeURIComponent(name);   // TAB-local switch (open more tabs freely)
 }
 
 async function refreshAll() { await refreshGraph(); await refreshMetrics(); await refreshStats(); }
@@ -705,49 +739,110 @@ async function submitDecompose() {
     closeModal(); await refreshAll();
 }
 
+// ── OBSERVATION WINDOW — every LLM process (decompose sub-calls, validate, validate_node, …) live
+//    + the persisted per-run history (GET /api/pipeline; survives refresh/restart). Collapsed = one
+//    line per ACTIVE process; expanded = actives on top + run-grouped history with totals.
+let plS = null;                                       // {active:Map, groups:{}, dayTok, runs, manual}
+const plIsTick   = m => / tokens · \d+s$/.test(m);    // live ticks: update in place, never persisted
+const plIsCloser = m => m.startsWith('total:')
+    || /verdict |ALREADY-COVERED|advisory findings|gate FAILED|did not parse/.test(m);
+function plTokens(m) {                                 // our own stable stat-suffix ("Σ 0.4k tokens"; legacy "k out")
+    const ms = [...m.matchAll(/(\d+(?:\.\d+)?)k (?:tokens|out)/g)];
+    return ms.length ? parseFloat(ms[ms.length - 1][1]) : 0;
+}
+function plLocalDate() {                               // LOCAL date — toISOString() is UTC and lies after midnight
+    const x = new Date();
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+function plShow(open) {
+    document.getElementById('pl-body').style.display = open ? 'block' : 'none';
+    document.getElementById('pl-arrow').textContent = open ? '▾' : '▸';
+}
+function plHeader() {
+    const n = plS.active.size;
+    document.getElementById('pl-count').textContent =
+        (n ? `${n} active · ` : '') + `${plS.runs} runs · Σ today ${plS.dayTok.toFixed(1)}k tokens`;
+}
+function plRenderActive() {
+    const el = document.getElementById('pl-active');
+    el.innerHTML = '';
+    for (const {source, msg} of plS.active.values()) {
+        const line = document.createElement('div');
+        line.textContent = `⟳ [${source}] ${msg}`;
+        el.appendChild(line);
+    }
+    el.style.display = plS.active.size ? 'block' : 'none';
+    plHeader();
+}
+function plLine(source, msg, tsShow, isToday) {        // one persisted (non-tick) line → its source's open run-group
+    const body = document.getElementById('pl-body');
+    let g = plS.groups[source];
+    if (!g || !g.isConnected) {
+        g = document.createElement('div');
+        g.className = 'pl-group';
+        plS.groups[source] = g;
+    }
+    body.insertBefore(g, body.firstChild);              // NEWEST ON TOP — no scrolling to find now
+    const line = document.createElement('div');
+    line.textContent = `${tsShow} [${source}] ${msg}`;
+    g.insertBefore(line, g.firstChild);
+    if (plIsCloser(msg)) {                             // run finished → totals line closes the group
+        line.className = 'pl-close';
+        plS.groups[source] = null;
+        plS.runs++;
+        if (isToday) plS.dayTok += plTokens(msg);
+        for (const k of [...plS.active.keys()]) if (k.startsWith(source + '|')) plS.active.delete(k);
+        plRenderActive();
+    }
+    while (body.childElementCount > 250) body.removeChild(body.lastElementChild);
+    plHeader();
+}
+async function plEnsure() {
+    if (plS) return;
+    plS = {active: new Map(), groups: {}, dayTok: 0, runs: 0, manual: false};
+    const panel = document.createElement('div');
+    panel.id = 'pipeline-log';                          // styled in gfso.css (brand tokens)
+    panel.innerHTML =
+        '<div id="pl-head"><span id="pl-arrow">▸</span> observation <span id="pl-count"></span></div>'
+        + '<div id="pl-active"></div>'
+        + '<div id="pl-body"></div>';
+    document.body.appendChild(panel);
+    document.getElementById('pl-head').onclick = () => {
+        plS.manual = true;
+        plShow(document.getElementById('pl-body').style.display === 'none');
+    };
+    setInterval(() => {                                // a process that stopped ticking (>12s) is not active
+        const cut = Date.now() - 12000;
+        let dropped = false;
+        for (const [k, v] of plS.active) if (v.t < cut) { plS.active.delete(k); dropped = true; }
+        if (dropped) plRenderActive();
+    }, 5000);
+    try {                                              // seed the history — previous runs survive refresh/restart
+        const hist = await (await fetch('/api/pipeline?limit=500')).json();
+        const today = plLocalDate();                   // server stamps LOCAL time — compare local, not UTC
+        hist.forEach(r => plLine(r.source, r.message, (r.ts || '').slice(11), (r.ts || '').slice(0, 10) === today));
+    } catch (e) { /* history is presentation */ }
+    plHeader();
+}
+
 function connectWS() {
-    const ws = new WebSocket(`ws://${location.host}/ws/events`);
+    const ws = new WebSocket(`ws://${location.host}/ws/events`
+        + (TAB_PROJECT ? `?project=${encodeURIComponent(TAB_PROJECT)}` : ''));
     ws.onmessage = async e => {
         const d = JSON.parse(e.data);
-        if (d.type==='pipeline') {           // live pipeline LOG (decompose stages etc.) — expandable, persistent
-            let panel = document.getElementById('pipeline-log');
-            if (!panel) {
-                panel = document.createElement('div');
-                panel.id = 'pipeline-log';
-                panel.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:60;width:460px;max-width:70vw;'
-                    + 'font:12px/1.5 ui-monospace,monospace;border-radius:8px;overflow:hidden;'
-                    + 'background:rgba(20,24,32,.92);color:#c9d4e0;border:1px solid rgba(127,127,127,.35);';
-                panel.innerHTML =
-                    '<div id="pl-head" style="padding:5px 10px;cursor:pointer;user-select:none;'
-                    + 'background:rgba(255,255,255,.06);color:#9fd0a8;">'
-                    + '<span id="pl-arrow">▾</span> pipeline <span id="pl-count"></span></div>'
-                    + '<div id="pl-body" style="max-height:38vh;overflow-y:auto;padding:4px 10px 8px;"></div>';
-                document.body.appendChild(panel);
-                document.getElementById('pl-head').onclick = () => {
-                    const b = document.getElementById('pl-body');
-                    const open = b.style.display !== 'none';
-                    b.style.display = open ? 'none' : 'block';
-                    document.getElementById('pl-arrow').textContent = open ? '▸' : '▾';
-                };
-            }
-            const body = document.getElementById('pl-body');
-            const ts = new Date().toLocaleTimeString();
-            const isTick = / tokens · \d+s$/.test(d.msg);        // live generation ticks UPDATE their line
-            const tickKey = isTick ? d.msg.split(':')[0] : '';
-            const last = body.lastElementChild;
-            if (isTick && last && last.dataset.tick === tickKey) {
-                last.textContent = `${ts} [${d.source}] ${d.msg}`;
+        if (d.type==='pipeline') {
+            await plEnsure();
+            if (plIsTick(d.msg)) {
+                plS.active.set(`${d.source}|${d.msg.split(':')[0]}`,
+                               {source: d.source, msg: d.msg, t: Date.now()});
+                plRenderActive();
             } else {
-                const line = document.createElement('div');
-                line.textContent = `${ts} [${d.source}] ${d.msg}`;
-                if (isTick) line.dataset.tick = tickKey;
-                body.appendChild(line);
-                while (body.childElementCount > 200) body.removeChild(body.firstElementChild);
+                plLine(d.source, d.msg, new Date().toLocaleTimeString(), true);
+                if (!plS.manual) plShow(true);         // default: expanded while a process is active
             }
-            document.getElementById('pl-count').textContent = `(${body.childElementCount})`;
-            body.scrollTop = body.scrollHeight;
             return;
         }
+        if (d.type==='projects') { await refreshProjects(); return; }   // a project appeared → refresh the list live
         if (d.type==='transition') {
             const ct = allTasksCache.find(x => x.id === d.task_id);  // keep the tooltip cache live (was stale → hover showed old state)
             if (ct) ct.state = d.new_state;

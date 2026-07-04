@@ -47,3 +47,6 @@ nul
 experiments/e2_agent/complex/_provenance/
 experiments/e2_agent/simple/_provenance/
 docs/_depmap_critique.md
+
+# generated diagram sources (not shipped)
+docs/assets/

@@ -25,6 +25,10 @@ from .loop import event_loop, timeout_monitor
 
 log = logging.getLogger(__name__)
 
+# live token ticks ("<stage>: N tokens · Ss") update in place — WS-only, never persisted
+import re as _re
+_TICK_RE = _re.compile(r"tokens · \d+s$")
+
 
 class Engine:
     """GFSO Engine — single entry point for building systems on the protocol.
@@ -274,8 +278,38 @@ class Engine:
         self._events.on_info(callback)
 
     def emit_info(self, source: str, message: str) -> None:
-        """Broadcast a pipeline-progress line to live observers (UI status strip via /ws/events)."""
+        """Broadcast a pipeline-progress line to live observers (UI window via /ws/events) AND persist it
+        (SQLite pipeline_log) so the observation history survives refresh/restart. Live token TICKS are
+        broadcast-only: they update in place and would be stored-every-2s noise."""
         self._events.emit_info(source, message)
+        if not _TICK_RE.search(message):
+            try:
+                self._graph._storage.log_pipeline(
+                    datetime.now().isoformat(sep=" ", timespec="seconds"), source, message)
+            except Exception:
+                pass  # observation is presentation — never break the pipeline
+
+    def pipeline_log(self, limit: int = 500) -> list[dict]:
+        """The persisted observation history, oldest-first: [{ts, source, message}]."""
+        return self._graph._storage.get_pipeline(limit)
+
+    # === Execution-validation record (the validate_node verdict; feeds the self-pass gate) ===
+
+    def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
+                            validator_id: str) -> None:
+        """Store the independent validator's verdict for the node's CURRENT delivery (stamped with the
+        node's iteration — a rework invalidates it: the next delivery needs a fresh verdict)."""
+        import json as _json
+        task = self.get_task(task_id)
+        self._graph._storage.store_exec_verdict(task_id, _json.dumps({
+            "verdict": verdict, "failed_criteria": list(failed_criteria or ()),
+            "validator": validator_id, "iteration": getattr(task, "iteration", 0),
+            "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
+
+    def get_exec_verdict(self, task_id: TaskId) -> Optional[dict]:
+        import json as _json
+        raw = self._graph._storage.get_exec_verdict(task_id)
+        return _json.loads(raw) if raw else None
 
     # === Audit API ===
 
@@ -567,7 +601,7 @@ class Engine:
         if unmet:
             directive += f" | UNMET structural checks (resolve before PASS): {unmet}"
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
-                "state": t.state.name, "action": action, "unmet_checks": unmet,
+                "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
                 "criteria": [c.name for c in t.spec.criteria if not c.depends_on], "directive": directive}
 
     def next_step(self, root_id: Optional[TaskId] = None) -> dict:

@@ -49,11 +49,26 @@ class HeadlessClaudeLLM(LLMProviderPort):
         if self.calls:
             self.calls[-1]["stage"] = stage
 
-    def _call(self, system: str, user: str) -> str:
+    def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...],
+                  cwd: str | None = None, timeout: int | None = None) -> str:
+        """Port B — the AGENT-RUNNER: one fresh headless run WITH work tools (multi-step inside one
+        process), returning its final report text. Headless-by-necessity: an agent run needs a harness
+        (tools/permissions/cwd), which a bare completion API can't provide — GenericLLM never covers this.
+        `--dangerously-skip-permissions` is REQUIRED for non-interactivity (headless can't answer
+        prompts); the safety envelope = the tool allowlist + scoped cwd (probed live 2026-07-03).
+        `timeout` = a per-run process cap (e.g. deadline-derived); on expiry the process is killed and
+        NO signal is forged — the FSM's timeout monitor owns escalation (one clock)."""
+        return self._call(system, user, cwd=cwd, timeout=timeout,
+                          tools_args=["--allowedTools", " ".join(allowed_tools),
+                                      "--dangerously-skip-permissions"])
+
+    def _call(self, system: str, user: str, tools_args: list[str] | None = None,
+              cwd: str | None = None, timeout: int | None = None) -> str:
         """One fresh `claude -p` subprocess, STREAMED (stream-json + partial messages): while the model
         generates, cumulative output tokens tick to `on_tick` — real progress, never an estimate. The
         final `result` event carries the same envelope the aggregate json format did (usage,
-        duration_ms, is_error, result); if it is missing, the accumulated delta text is the fallback."""
+        duration_ms, is_error, result); if it is missing, the accumulated delta text is the fallback.
+        Default = a zero-tool one-shot (Port A); `tools_args`/`cwd` = an agent run (Port B)."""
         if self._cmd is None:
             return ""
         env = dict(os.environ) if self._keep_key else \
@@ -62,12 +77,14 @@ class HeadlessClaudeLLM(LLMProviderPort):
             env["MAX_THINKING_TOKENS"] = str(self._max_thinking)
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-                "--disallowedTools", "*"]
+                *(tools_args if tools_args is not None else ["--disallowedTools", "*"])]
         t0 = time.monotonic()
+        cap = timeout or self._timeout
         self._est_chars = 0  # per-call char-estimate (fallback token counter while usage is absent)
         try:
             proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env)
+                                    stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env,
+                                    cwd=cwd)
 
             def _feed():  # a writer thread — a large prompt would deadlock a same-thread pipe write
                 try:
@@ -79,7 +96,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
 
             envelope, text_acc, out_tokens, last_tick = None, [], 0, t0
             for line in proc.stdout:
-                if time.monotonic() - t0 > self._timeout:
+                if time.monotonic() - t0 > cap:
                     proc.kill()
                     log.warning("headless claude call timed out mid-stream")
                     break

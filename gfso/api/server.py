@@ -15,7 +15,6 @@ from gfso.core.types import TaskId, AgentId, State
 from gfso.core.protocol.validation import required_role
 from gfso.engine import Engine
 from gfso import tools as _tools   # the shared action surface — the HTTP mutation surface is generated from it
-from gfso.runtime import build_engine_from_env   # the ONE Engine factory (shared with MCP + CLI)
 
 from .models import (
     TaskOut, TaskDetailOut, CheckResultOut, RecommendationOut,
@@ -42,8 +41,31 @@ def _build_mcp(engine: Engine):
     return mcp, mcp.streamable_http_app()
 
 
-def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
-    mcp, mcp_asgi = _build_mcp(engine) if with_mcp else (None, None)
+def _start_reaper(app, grace: float = 12.0, interval: float = 3.0) -> None:
+    """Self-shutdown loop: once ANY lease has existed, zero live leases for `grace` seconds ⟹ the
+    last Claude session is gone → exit (the next session's connect.py respawns a fresh server)."""
+    import threading, time
+
+    def _loop():
+        had_any = False
+        while True:
+            time.sleep(interval)
+            now = time.monotonic()
+            live = [k for k, ts in list(app.state.leases.items()) if now - ts <= grace]
+            for k in list(app.state.leases):
+                if k not in live:
+                    app.state.leases.pop(k, None)
+            if live:
+                had_any = True
+            elif had_any:
+                print("[gfso] last session gone — shutting down", flush=True)
+                app.state.exit_fn()
+                return
+    threading.Thread(target=_loop, daemon=True).start()
+
+
+def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI:
+    mcp, mcp_asgi = _build_mcp(registry or engine) if with_mcp else (None, None)
 
     lifespan = None
     if mcp is not None:
@@ -54,6 +76,39 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
 
     app = FastAPI(title="GFSO", version="0.2.0", lifespan=lifespan)
     app.state.engine = engine
+    app.state.registry = registry
+    app.state.ws_clients = set()      # one asyncio.Queue per live WS — for GLOBAL broadcasts (project list)
+    app.state.loop = None
+    if registry is not None:
+        # A new project is a REGISTRY event, not a per-project transition — so it rides no single WS. Push it
+        # to EVERY connected client (event-driven, no poll): each refreshes its project list on receipt.
+        def _broadcast_projects(_name=None):
+            loop = app.state.loop
+            if loop is None:
+                return
+            for q in list(app.state.ws_clients):
+                loop.call_soon_threadsafe(q.put_nowait, {"type": "projects"})
+        registry._on_create = _broadcast_projects
+
+    # Per-TAB project view: every request may carry ?project=<name> (the UI appends its tab's project
+    # to all /api calls and the WS url) — two browser tabs can watch two projects simultaneously.
+    import contextvars
+    _req_project: contextvars.ContextVar = contextvars.ContextVar("gfso_project", default=None)
+
+    @app.middleware("http")
+    async def _project_scope(request, call_next):
+        token = _req_project.set(request.query_params.get("project") or None)
+        try:
+            return await call_next(request)
+        finally:
+            _req_project.reset(token)
+
+    def _e() -> Engine:
+        """The request-time engine: the ?project= tab scope → the registry's ACTIVE project → the
+        single bound engine."""
+        if app.state.registry:
+            return app.state.registry.engine(_req_project.get())
+        return app.state.engine
 
     app.add_middleware(
         CORSMiddleware,
@@ -82,7 +137,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
 
     @app.get("/api/tasks", response_model=list[TaskOut])
     def list_tasks(state: Optional[str] = None, assignee: Optional[str] = None):
-        e: Engine = app.state.engine
+        e: Engine = _e()
         if state:
             tasks = e.tasks_by_state(State[state])
         elif assignee:
@@ -93,7 +148,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
 
     @app.get("/api/tasks/{task_id}", response_model=TaskDetailOut)
     def get_task(task_id: str):
-        e: Engine = app.state.engine
+        e: Engine = _e()
         t = e.get_task(TaskId(task_id))
         if t is None:
             raise HTTPException(404, f"task {task_id} not found")
@@ -116,7 +171,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
     # above; only the action/mutation surface is generated. body = the tool's kwargs as JSON.
     @app.post("/api/run/{tool}")
     def run_tool(tool: str, body: dict = Body(default={})):
-        e: Engine = app.state.engine
+        e: Engine = _e()
         fn = _tools.TOOLS.get(tool)
         if fn is None:
             raise HTTPException(404, f"unknown tool '{tool}'")
@@ -129,7 +184,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
 
     @app.get("/api/tasks/{task_id}/actions", response_model=list[ActionOut])
     def get_actions(task_id: str, role: Optional[str] = None):
-        e: Engine = app.state.engine
+        e: Engine = _e()
         if e.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
         sigs = e.available_actions(TaskId(task_id), AgentId(role) if role else None)
@@ -139,7 +194,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
 
     @app.get("/api/tasks/{task_id}/projection", response_model=ProjectionOut)
     def get_projection(task_id: str):
-        e: Engine = app.state.engine
+        e: Engine = _e()
         if e.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
         return ProjectionOut(node_id=task_id, projection=e.project(TaskId(task_id)))
@@ -148,7 +203,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
 
     @app.get("/api/tasks/{task_id}/critique")
     def get_critique(task_id: str):
-        e: Engine = app.state.engine
+        e: Engine = _e()
         t = e.get_task(TaskId(task_id))
         if t is None:
             raise HTTPException(404, f"task {task_id} not found")
@@ -159,7 +214,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
     @app.get("/api/tasks/{task_id}/solver", response_model=SolverOut)
     def get_solver(task_id: str):
         from gfso.core.handlers import solver_findings
-        e: Engine = app.state.engine
+        e: Engine = _e()
         if e.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
         ctx = e.graph.build_context(TaskId(task_id))
@@ -168,14 +223,14 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
     @app.get("/api/holes")
     def get_holes(root_id: Optional[str] = None):
         """Every unmet structural check across the graph (or a subtree) — the whole-graph gap list."""
-        e: Engine = app.state.engine
+        e: Engine = _e()
         return e.graph_holes(TaskId(root_id) if root_id else None)
 
     # === Graph ===
 
     @app.get("/api/graph", response_model=GraphOut)
     def get_graph():
-        e: Engine = app.state.engine
+        e: Engine = _e()
         all_tasks = e.all_tasks()
         nodes = []
         edges = []
@@ -202,7 +257,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
     @app.post("/api/suggest-criteria", response_model=SuggestCriteriaResponse)
     def suggest_criteria_endpoint(req: SuggestCriteriaRequest):
         from gfso.core.handlers.recommend import suggest_criteria
-        e: Engine = app.state.engine
+        e: Engine = _e()
         results = suggest_criteria(req.description, e._llm)
         return SuggestCriteriaResponse(
             criteria=[CriteriaIn(name=n, description=d) for n, d in results]
@@ -212,25 +267,88 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
 
     @app.get("/api/metrics", response_model=MetricsOut)
     def get_metrics():
-        m = app.state.engine.metrics()
+        m = _e().metrics()
         return MetricsOut(**m)
 
     # === Audit ===
 
     @app.get("/api/audit", response_model=list[AuditEntryOut])
     def get_audit(task_id: Optional[str] = None):
-        e: Engine = app.state.engine
+        e: Engine = _e()
         tid = TaskId(task_id) if task_id else None
         return [audit_to_out(a) for a in e.audit_log(tid)]
+
+    # === Pipeline observation history (persisted; ticks excluded at the writer) ===
+
+    @app.get("/api/pipeline")
+    def get_pipeline(limit: int = 500):
+        return _e().pipeline_log(limit)
+
+    # === Lifecycle: session leases + self-shutdown (the shared-server automation) ===
+    # Every connect.py bridge (one per Claude session) heartbeats a lease; when the LAST lease
+    # expires the server exits itself (only under GFSO_AUTOEXIT=1 — how connect.py spawns it;
+    # a manually run `gfso serve` never self-terminates). `gfso down` → POST /api/shutdown for
+    # code updates: the next session reconnect auto-spawns a fresh server.
+    app.state.leases = {}
+    app.state.exit_fn = (lambda: os._exit(0))
+
+    @app.post("/api/lease")
+    def renew_lease(body: dict = Body(...)):
+        import time as _t
+        app.state.leases[str(body.get("id", "?"))] = _t.monotonic()
+        return {"ok": True, "sessions": len(app.state.leases)}
+
+    @app.delete("/api/lease/{lease_id}")
+    def drop_lease(lease_id: str):
+        app.state.leases.pop(lease_id, None)
+        return {"ok": True, "sessions": len(app.state.leases)}
+
+    @app.post("/api/shutdown")
+    def shutdown():
+        import threading as _th
+        _th.Timer(0.3, app.state.exit_fn).start()   # answer first, then exit
+        return {"ok": True, "bye": True}
+
+    if os.environ.get("GFSO_AUTOEXIT") == "1":
+        _start_reaper(app)
+
+    # === Delegation roster (read view; registration = the MCP verb) ===
+
+    @app.get("/api/agents")
+    def get_agents():
+        from gfso.delegate import AgentRegistry
+        return AgentRegistry().list()
+
+    # === Projects (multi-project registry; single-project servers report just "default") ===
+
+    @app.get("/api/projects")
+    def get_projects():
+        reg = app.state.registry
+        return reg.list() if reg else {"active": "default", "projects": ["default"]}
+
+    @app.post("/api/projects/use")
+    def use_project(body: dict = Body(...)):
+        reg = app.state.registry
+        if reg is None:
+            raise HTTPException(400, "single-project server (no registry)")
+        try:
+            reg.use(body["name"])
+        except (KeyError, ValueError) as ex:
+            raise HTTPException(422, str(ex))
+        return reg.list()
 
     # === WebSocket ===
 
     @app.websocket("/ws/events")
     async def websocket_events(websocket: WebSocket):
         await websocket.accept()
-        eng: Engine = app.state.engine
+        # the tab's project rides the WS url too (middleware covers HTTP only)
+        proj = websocket.query_params.get("project") or None
+        eng: Engine = app.state.registry.engine(proj) if app.state.registry else app.state.engine
         loop = asyncio.get_event_loop()
+        app.state.loop = loop
         q: asyncio.Queue = asyncio.Queue()
+        app.state.ws_clients.add(q)          # join the global broadcast set (project-list events)
 
         def on_transition(tid, old, new, sig):
             loop.call_soon_threadsafe(q.put_nowait, {
@@ -259,6 +377,7 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
         except WebSocketDisconnect:
             pass
         finally:
+            app.state.ws_clients.discard(q)
             if on_transition in eng._events._on_transition:
                 eng._events._on_transition.remove(on_transition)
             if on_reject in eng._events._on_reject:
@@ -272,11 +391,14 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
     return app
 
 
-# Module-level app for uvicorn reload mode: `uvicorn gfso.api.server:app --reload`.
-# Uses the ONE shared Engine factory with the `serve` profile (memory-default, stub LLM, demo seed). The agent
-# (MCP) and the human (UI) share this one Engine — neither may bypass the protocol (validate_signals=True).
-# GFSO_WITH_MCP=1 also mounts the MCP agent surface at /mcp over the SAME Engine (one process, one CORE).
-app = create_app(
-    build_engine_from_env(default_storage="memory", default_llm="stub", seed=not os.environ.get("GFSO_NO_SEED")),
-    with_mcp=os.environ.get("GFSO_WITH_MCP") == "1",
-)
+# Module-level app for `gfso serve` / uvicorn: the SHARED-SERVER entry point — ONE process owns the
+# CORE; the human's UI, the WebSocket, and (GFSO_WITH_MCP=1) the MCP agent surface at /mcp all observe
+# the SAME engines, so live events (token ticks, active processes) reach every client. This is the
+# recommended shape when several agent sessions work in parallel: point their MCP config at
+# http://127.0.0.1:8000/mcp instead of spawning a stdio server per session (a second stdio process
+# shares the DB file but NOT the event bus — its live ticks are invisible to the UI).
+from gfso.runtime import ProjectRegistry as _PR
+_registry = _PR(default_storage="memory", default_llm="stub",
+                seed=not os.environ.get("GFSO_NO_SEED"))
+app = create_app(_registry.engine(), with_mcp=os.environ.get("GFSO_WITH_MCP") == "1",
+                 registry=_registry)

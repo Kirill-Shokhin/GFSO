@@ -171,3 +171,32 @@ def test_next_steps_orders_issuer_actions_before_executes():
     actions = [(s["action"], s["task_id"]) for s in steps]
     assert actions.index(("validate", "a")) < actions.index(("execute", "b"))
     assert not steps[0]["parallel_ok"]                       # validate is issuer-side, not a parallel leaf
+
+
+def test_frontier_is_del_aware(monkeypatch):
+    """Del is REAL on the frontier: with GFSO_AGENT_ID set, my nodes carry mine=true; a node assigned to
+    someone else is VISIBLE but its executor-step directive is hands-off — and the FSM would reject my
+    executor signal on it anyway (source ≠ Del)."""
+    from gfso import tools as T
+    from gfso.engine import Engine
+    from gfso.adapters.storage.memory import MemoryStorage
+    from gfso.adapters.agents.human import HumanAgent
+    from gfso.adapters.llm.stub import StubLLM
+
+    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e.start()
+    monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")
+    T.create_task(e, "mine1", {"description": "agent node",
+                               "criteria": [{"name": "a", "description": "A"}]})          # Del=claude-main
+    T.create_task(e, "his1", {"description": "human node",
+                              "criteria": [{"name": "b", "description": "B"}]}, assignee="kirill")
+    steps = T.next_steps(e)["steps"]
+    by_id = {s["task_id"]: s for s in steps}
+    assert by_id["mine1"]["mine"] is True and by_id["mine1"]["assignee"] == "claude-main"
+    assert by_id["his1"]["mine"] is False and "NOT YOURS" in by_id["his1"]["directive"]
+    # the FSM enforces it, not just the directive: my ACCEPT on his node is REJECTED
+    r = T.signal(e, "his1", "ACCEPT", "claude-main")
+    assert r["accepted"] is False and "not executor" in r["error"]
+    # and the rightful executor passes
+    assert T.signal(e, "his1", "ACCEPT", "kirill")["state"] == "EXECUTING"
+    e.stop()

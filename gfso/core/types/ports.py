@@ -71,6 +71,31 @@ class StoragePort(ABC):
     def get_critique(self, task_id: TaskId) -> Optional[str]:
         return None
 
+    def store_deliver_result(self, task_id: TaskId, result: str) -> None:
+        """Persist the node's LAST DELIVER result (the deliverable pointer — the validator's input;
+        must survive a server restart). Default no-op."""
+        ...
+
+    def get_deliver_result(self, task_id: TaskId) -> Optional[str]:
+        return None
+
+    def store_exec_verdict(self, task_id: TaskId, verdict_json: str) -> None:
+        """Persist a node's EXECUTION-validation verdict (the validate_node record; ≠ critique = the
+        PLAN's L2). One record per node — the current delivery's verdict. Default no-op."""
+        ...
+
+    def get_exec_verdict(self, task_id: TaskId) -> Optional[str]:
+        return None
+
+    def log_pipeline(self, ts: str, source: str, message: str) -> None:
+        """Persist one pipeline observation line (live token TICKS are excluded by the caller —
+        they update in place and are WS-only noise). Default no-op so existing storages stay valid."""
+        ...
+
+    def get_pipeline(self, limit: int = 500) -> list[dict]:
+        """The most recent pipeline lines, oldest-first: [{ts, source, message}]."""
+        return []
+
 
 class LLMProviderPort(ABC):
     @abstractmethod

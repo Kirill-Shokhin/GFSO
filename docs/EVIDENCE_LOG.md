@@ -956,6 +956,13 @@ N section predates the v3.7 risk-vs-scope split, so GRAPH artifacts structurally
 (v3.7 deliberately keeps scope boundaries out of the graph's risk register — an instrument-convention
 mismatch, not a content loss).
 
+**Depth-1 re-measure (2026-07-04, post-productization code: prose-first policy + count-check +
+reliability fixes).** Fresh T01 depth-1 (325s, holes==[], 32.1k out): basis **35/45**, graph 27/45.
+The suspected depth-1 quality dip (28–29 vs the old 33 basis baseline) is GONE on the prose
+artifact — 35 exceeds the old baseline by more than judge variance; the graph stays ~27–28, and the
+gap to the basis is mostly the structural N-forfeit (6 unreachable N items; non-N: basis 32/39 vs
+graph 27/39). Reading: the dip was instrument/assembly, not a property of depth=1.
+
 **Reliability (found live, closed in code).** (1) Cross-tree id collision: two decompositions of
 similar domains share LLM-chosen child ids, and a colliding ASSIGN is a same-id REVISION of the OTHER
 tree's node — observed corrupting both graphs; closed by namespacing children under their root
@@ -975,6 +982,53 @@ real).
 **Semantic graph-validation** (the decompose SEARCH prompt in diff mode over ONE decomposition level =
 node + all children, gated on clean L0/L1): live on the wordfreq graph — 11 substantive advisory
 findings (42s / 3.5k out).
+
+**Pace-suffixes (2026-07-03 late; same task, n=1–2 per variant).** User-content additions on the
+search / final-audit messages (frozen prompt cores untouched). In-session baseline 106s / 9.8k out.
+Search-suffix alone 97s; audit-suffix alone 76s but the graph SHRANK (4 subtasks vs 5, 3 seams vs 5 —
+content compression, rejected); both suffixes 74s with baseline shape but the NEGLECTED register
+dropped once into a (cheap) repair. Amended audit-suffix (explicit keep-NEGLECTED clause), two runs:
+**63–77s / 5.6–7.4k out, holes==[], 0 repairs, shape parity**. Productized as the `fast` flag
+(default off — content quality vs the frozen judge is unmeasured; structural shape is preserved).
+The known failure mode of "faster" (name drift / register loss) is exactly what the amended suffix
+pins, and patch-repairs keep residual failures cheap.
+
+**Execution validation instrument (`validate_node`, 2026-07-03 late).** One read-only headless agent
+(Read/Bash/Glob/Grep) validating a delivered node against its criteria + the DELIVER report; executed
+evidence required per criterion. Live two-sided probe (trivial CLI node): correct work → PASS with
+executed evidence (ran the script, matched output) in 13s / 0.4k out; sabotaged work (hardcoded
+output) → FAIL naming exactly the broken criterion, evidence includes running it AND spotting the
+hardcode (anti-mock) in 14s / 0.5k out. The instrument never signals — the issuer reads the report
+and signals PASS/FAIL (§6.5 verifier=issuer).
+
+**Delegated execution, end-to-end (2026-07-04).** Registry-driven autostart: the issuer's ONLY act
+is assigning a node to a registered llm-executor id; the dispatcher picks it off the frontier,
+spawns a headless executor (work tools, scoped cwd), wraps its single structured report into the
+canonical signals, auto-fires the registered validator on delivery, and the verdict auto-signals.
+Live one-node probe (simple script task, Sonnet): **34s wall** ASSIGN→DONE, audit trail
+`ASSIGN:exec → ACCEPT:exec → DELIVER:exec → PASS:validator` (~1.2k out total; consent = the
+executor's own report, verdict = the validator's own signal — no step faked by the system).
+Concurrency pre-check: two headless agents in parallel, 6.9s total, no subscription contention.
+The FAIL→REWORK loop (auto-FAIL with the validator's failed_criteria → executor re-spawned with
+them as feedback → re-deliver → PASS) is locked by deterministic tests; an unparsed executor or
+validator report never signals (the node stays put; the FSM timeout monitor owns escalation).
+
+**Acceptance run finding → the verifier≠executor gate (2026-07-04).** A fresh agent session ran a
+real 8-leaf task end-to-end in the SEQUENTIAL regime (auto_decompose → executed the graph itself →
+root DONE). Observed: it obtained independent `validate_node` verdicts on only 3 of 8 leaves and
+SELF-PASSED the other 5+root aggregate on its own bash checks — the FSM accepted, because with
+collapsed ids (executor == issuer == `agent`) a self-stamp and an evidence-based issuer PASS carry
+the same signature. Self-report survived — the exact failure the protocol exists to prevent, and
+empirical confirmation that visibility (persisted verdict lines) without enforcement does not hold
+against a well-meaning agent under time pressure. Closed structurally: PASS whose source == the
+node's Del now requires a RECORDED independent verdict for the CURRENT delivery (none → rejected;
+recorded FAIL → rejected — the override is the falsification; a rework stales the record); distinct
+ids keep the canon default. Auto-validation additionally fires on EVERY delivery (self-executed
+included) whenever a validator role is registered.
+
+**`fast` on the COMPLEX reference (2026-07-04).** T01 depth-1 with the pace-suffixes: 167s/17.0k (vs 325s/32.1k default — 2× cheaper), holes==[] — but basis coverage 26/45 (−9; V-criteria 9/20 vs 17/20 — verification content is what compresses), graph 25/45 (D 9/9, Dep 9/10 — structure even improves). Confirms the scoping: `fast` = SIMPLE tasks only. INSTRUMENT CAVEAT for this and the depth-1 re-measure above: these 2026-07-04 judgments used a different judge model than the historical baselines (the frozen protocol is identical, the judge instance is not) — treat cross-day comparisons as indicative; re-judge with the original instrument before leaning on a single number.
+
+**Dual acceptance run (2026-07-04, same invented log-statistics-CLI task, both regimes end-to-end).** SEQUENTIAL (agent executes): decompose 98s/9.1k → 6 leaves + root delivered, EVERY delivery auto-validated (7/7 PASS first-pass, 24–54s / ~0.5–2k each), root DONE; the deliverable's own test suite green. DELEGATED (pure orchestration): one auto_decompose with assignee=<registered executor> → executors spawned per dep-ready leaf (63–123s / 5–10k each), auto-validated (16–36s), one validator-forced REWORK driven with failed-criteria feedback, discovered-dependency BLOCKs auto-resolved, root DONE; test suite green. The run EXPOSED and closed four dispatcher gaps live: spawns must be dep-gated; a resolved BLOCK must re-queue the executor; a PHANTOM (mis-named) blocker must not deadlock (resolved external=true); root-aggregate deliver steps are executor work too.
 
 Artifacts (local, gitignored): `runs/v2_t01/` (candidates + judge verdicts), `runs/v2_speed/`.
 

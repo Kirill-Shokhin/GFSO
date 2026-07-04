@@ -18,6 +18,9 @@ class MemoryStorage(StoragePort):
         self._recommendations: dict[TaskId, Recommendation] = {}
         self._dep_edges: list[DepEdge] = []
         self._critiques: dict[TaskId, str] = {}
+        self._exec_verdicts: dict[TaskId, str] = {}
+        self._deliver_results: dict[TaskId, str] = {}
+        self._pipeline: list[dict] = []
 
     def get_task(self, task_id: TaskId) -> Optional[Task]:
         return self._tasks.get(task_id)
@@ -63,6 +66,25 @@ class MemoryStorage(StoragePort):
 
     def get_critique(self, task_id: TaskId) -> Optional[str]:
         return self._critiques.get(task_id)
+
+    def store_exec_verdict(self, task_id: TaskId, verdict_json: str) -> None:
+        self._exec_verdicts[task_id] = verdict_json
+
+    def get_exec_verdict(self, task_id: TaskId):
+        return self._exec_verdicts.get(task_id)
+
+    def store_deliver_result(self, task_id: TaskId, result: str) -> None:
+        self._deliver_results[task_id] = result
+
+    def get_deliver_result(self, task_id: TaskId):
+        return self._deliver_results.get(task_id)
+
+    def log_pipeline(self, ts: str, source: str, message: str) -> None:
+        self._pipeline.append({"ts": ts, "source": source, "message": message})
+        del self._pipeline[:-10000]  # same pragmatic cap as sqlite
+
+    def get_pipeline(self, limit: int = 500) -> list[dict]:
+        return list(self._pipeline[-limit:])
 
     def add_dep_edge(self, edge: DepEdge) -> None:
         self._dep_edges.append(edge)

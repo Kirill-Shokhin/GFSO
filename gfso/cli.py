@@ -16,7 +16,7 @@ def main():
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--storage", choices=["sqlite", "memory"], default="sqlite")
-    serve.add_argument("--db-path", default="gfso.db")
+    serve.add_argument("--db-path", default="data/gfso.db")
     serve.add_argument("--llm", choices=["claude", "stub"], default="claude")
     serve.add_argument("--api-key", default=None)
     serve.add_argument("--model", default="claude-haiku-4-5-20251001")
@@ -37,6 +37,15 @@ def main():
     runp = sub.add_parser("run", help="Drive/inspect a graph headless (same commands as the MCP tools)")
     runp.add_argument("args", nargs=argparse.REMAINDER, help="<tool> [args…]  (run `gfso run` alone to list)")
 
+    sub.add_parser("down", help="Stop the shared server (code update: the next session reconnect "
+                                "auto-spawns a fresh one)")
+
+    logp = sub.add_parser("log", help="The observation field in the terminal — same persisted lines "
+                                      "the UI panel shows (per project)")
+    logp.add_argument("--project", default=None, help="project name (default: the active one)")
+    logp.add_argument("-n", type=int, default=40, help="lines to show (default 40)")
+    logp.add_argument("-f", "--follow", action="store_true", help="keep polling for new lines")
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
@@ -49,6 +58,58 @@ def main():
     elif args.command == "run":
         from gfso.driver import run
         run(args.args)
+    elif args.command == "down":
+        _down()
+    elif args.command == "log":
+        _log(args)
+
+
+def _log(args):
+    """Terminal mirror of the UI observation panel: the persisted pipeline lines of one project."""
+    import json as _json
+    import os
+    import time
+    import urllib.parse
+    import urllib.request
+    from urllib.parse import urlparse
+    u = urlparse(os.environ.get("GFSO_SHARED_URL", "http://127.0.0.1:8000/mcp"))
+    base = f"http://{u.hostname}:{u.port or 8000}/api/pipeline?limit={max(args.n, 1)}"
+    if args.project:
+        base += "&project=" + urllib.parse.quote(args.project)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    last: list = []
+    while True:
+        try:
+            rows = _json.loads(urllib.request.urlopen(base, timeout=5).read())
+        except Exception as e:
+            print(f"no server answering ({type(e).__name__})")
+            return
+        printed = {(x["ts"], x["message"]) for x in last}
+        for r in rows:
+            if not args.follow or (r["ts"], r["message"]) not in printed:
+                print(f"{r['ts']} [{r['source']}] {r['message']}")
+        if not args.follow:
+            return
+        last = rows
+        time.sleep(2)
+
+
+def _down():
+    import json as _json
+    import os
+    import urllib.request
+    from urllib.parse import urlparse
+    u = urlparse(os.environ.get("GFSO_SHARED_URL", "http://127.0.0.1:8000/mcp"))
+    api = f"http://{u.hostname}:{u.port or 8000}/api/shutdown"
+    try:
+        out = urllib.request.urlopen(urllib.request.Request(api, data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"}), timeout=3).read()
+        print(f"server stopping: {_json.loads(out)}")
+    except Exception as e:
+        print(f"no server answering at {api} ({type(e).__name__}) — nothing to stop")
 
 
 def _mcp(args):

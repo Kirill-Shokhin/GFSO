@@ -125,6 +125,11 @@ def event_loop(
             new_state=new_state, effects=effect_names,
             **_payload_fields(signal_data),
         ))
+        if signal_data.signal == Signal.DELIVER and signal_data.result:
+            try:  # the deliverable pointer must survive a server restart (it is the validator's input)
+                graph._storage.store_deliver_result(task_id, signal_data.result)
+            except Exception:
+                pass
         events.emit_transition(task_id, state, new_state, signal_data.signal)
         signal_queue.task_done()
 
