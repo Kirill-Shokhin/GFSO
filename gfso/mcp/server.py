@@ -29,6 +29,7 @@ def _bind(engine: Engine, fn):
     params = [
         (p.replace(annotation=hints[p.name]) if p.name in hints else p)
         for p in list(sig.parameters.values())[1:]  # drop the leading `engine`
+        if not p.name.startswith("_")               # underscore params are transport-internal (e.g. _progress)
     ]
 
     @functools.wraps(fn)
@@ -41,6 +42,40 @@ def _bind(engine: Engine, fn):
     return wrapper
 
 
+def _bind_auto_decompose(engine: Engine):  # pragma: no cover — exercised live over MCP
+    """auto_decompose runs for minutes (several headless one-shots) — bind it ASYNC with an MCP Context so
+    each pipeline stage streams to the client as a progress notification instead of a silent multi-minute
+    wait. Presentation plumbing only: the logic stays in tools.auto_decompose (`_progress` is its
+    transport-internal callback; stderr keeps logging regardless)."""
+    import asyncio
+    from mcp.server.fastmcp import Context
+
+    async def auto_decompose(request: str, root_id: str = "root", assignee: str = "human",
+                             depth: int = 1, model: str = "sonnet", ctx: Context = None) -> dict:
+        loop = asyncio.get_running_loop()
+        step = {"n": 0}
+
+        def prog(msg: str) -> None:  # called from the executor thread
+            step["n"] += 1
+            if ctx is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        ctx.report_progress(step["n"], None, f"[decompose] {msg}"), loop)
+                except Exception:
+                    pass  # progress is presentation — never break the pipeline
+
+        return await loop.run_in_executor(None, functools.partial(
+            T.auto_decompose, engine, request, root_id=root_id, assignee=assignee,
+            depth=depth, model=model, _progress=prog))
+
+    auto_decompose.__doc__ = T.auto_decompose.__doc__
+    # `from __future__ import annotations` stringifies hints and Context is imported locally — hand the
+    # SDK real types so its schema introspection can evaluate the signature.
+    auto_decompose.__annotations__ = {"request": str, "root_id": str, "assignee": str,
+                                      "depth": int, "model": str, "ctx": Context, "return": dict}
+    return auto_decompose
+
+
 def create_server(engine: Engine):
     """Register every tools.py function on a FastMCP server. Raises if the MCP SDK is absent."""
     try:
@@ -49,6 +84,10 @@ def create_server(engine: Engine):
         raise RuntimeError("MCP SDK not installed — run `pip install gfso[mcp]`") from e
     server = FastMCP("gfso")
     for name, fn in T.TOOLS.items():
+        if name == "auto_decompose":  # long-running: async + MCP progress notifications
+            server.add_tool(_bind_auto_decompose(engine), name=name,
+                            description=(fn.__doc__ or "").strip())
+            continue
         server.add_tool(_bind(engine, fn), name=name, description=(fn.__doc__ or "").strip())
     return server
 

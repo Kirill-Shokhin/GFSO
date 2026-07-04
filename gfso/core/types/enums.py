@@ -9,13 +9,22 @@ class State(Enum):
     BLOCKED = auto()
     VALIDATING = auto()
     REWORK = auto()
+    CANCELLING = auto()   # cancellation handshake in flight (§6.3): CANCEL received, CANCEL_ACK pending
     DONE = auto()
+    CANCELLED = auto()    # terminal, V=⊥ — task abandoned (§6.3), distinct from DONE(pass/fail)
     TIMEOUT = auto()
     ESCALATED = auto()
 
 
-TERMINAL_STATES = frozenset({State.DONE, State.ESCALATED})
+TERMINAL_STATES = frozenset({State.DONE, State.ESCALATED, State.CANCELLED})
 NON_TERMINAL_STATES = frozenset(s for s in State if s not in TERMINAL_STATES)
+
+# States a live node can be re-ASSIGNed (revised) from — §6.4 Inv-1: revision = re-ASSIGN same id → REVIEW.
+# TIMEOUT accepts no progress signals (§6.3); CANCELLING's sole staffed exit is CANCEL_ACK (§6.3).
+REASSIGNABLE_STATES = frozenset({
+    State.REVIEW, State.CHALLENGED, State.EXECUTING,
+    State.BLOCKED, State.VALIDATING, State.REWORK,
+})
 
 
 class Signal(Enum):
@@ -41,7 +50,7 @@ class DoneReason(Enum):
     PASS = auto()
     FAIL = auto()
     AUTO = auto()
-    CANCELLED = auto()
+    CANCELLED = auto()  # legacy only (pre-v3.7 DBs stored cancellation as DONE(cancelled)); new cancellations end in State.CANCELLED
 
 
 class Verdict(Enum):
@@ -84,3 +93,5 @@ class MutationType(Enum):
     INCREMENT_ITERATION = auto()
     STORE_CHECK_RESULTS = auto()
     STORE_RECOMMENDATION = auto()
+    RECORD_DEP = auto()       # BLOCK named a prerequisite node → provisional discovered-Dep edge (§6.2/§7.2)
+    ADJUDICATE_DEP = auto()   # RESOLVE_BLOCK adjudicates the provisional: confirm / re-attribute / retract (§6.2)

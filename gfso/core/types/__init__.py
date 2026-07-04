@@ -1,7 +1,7 @@
 from .enums import (
     State, Signal, DoneReason, Verdict, FM,
     AutonomyLevel, MutationType, Predictability,
-    TERMINAL_STATES, NON_TERMINAL_STATES,
+    TERMINAL_STATES, NON_TERMINAL_STATES, REASSIGNABLE_STATES,
 )
 from .primitives import (
     TaskId, AgentId,

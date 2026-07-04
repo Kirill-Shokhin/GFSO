@@ -7,7 +7,7 @@ from gfso.core.types import (
     State, Signal, DoneReason, MutationType,
     GuardContext, Effect, SignalData,
     MutateGraph, RunChecks, Dispatch,
-    NON_TERMINAL_STATES, TaskId,
+    NON_TERMINAL_STATES, REASSIGNABLE_STATES, TaskId,
 )
 
 
@@ -130,7 +130,10 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 
 @_row(State.BLOCKED, Signal.RESOLVE_BLOCK)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
+    # ADJUDICATE_DEP with no payload = CONFIRM any provisional discovered-Dep this task's BLOCK recorded
+    # (§6.2: RESOLVE_BLOCK adjudicates truth; the re-attribute/retract variants carry payload → transition()).
     return (State.EXECUTING, [
+        MutateGraph(tid, MutationType.ADJUDICATE_DEP),
         _mg(tid, State.EXECUTING),
         Dispatch(tid, Signal.RESOLVE_BLOCK),
     ])
@@ -213,6 +216,26 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     ])
 
 
+# === CANCELLING (§6.3: cancellation is a two-step handshake, mirror of ASSIGN→ACCEPT) ===
+
+@_row(State.CANCELLING, Signal.CANCEL_ACK)
+def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
+    # Sole staffed exit from CANCELLING (CANCEL_ACK's defect type = FSM-deadlock, §6.2). The in-flight
+    # report rides on SignalData.in_flight → audit log (T11); no done_reason — CANCELLED is its own state, V=⊥.
+    return (State.CANCELLED, [
+        _mg(tid, State.CANCELLED),
+        Dispatch(tid, Signal.CANCEL_ACK),
+    ])
+
+
+@_row(State.CANCELLING, Signal.TIMEOUT)
+def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
+    # Cancellation is authoritative (§6.3): executor silence still completes it, just without the in-flight report.
+    return (State.CANCELLED, [
+        _mg(tid, State.CANCELLED),
+    ])
+
+
 # === Build lookup ===
 
 _LOOKUP: dict[tuple[State, Signal], Callable] = {
@@ -221,13 +244,17 @@ _LOOKUP: dict[tuple[State, Signal], Callable] = {
 
 
 def available_signals(state: State) -> list[Signal]:
-    """Signals that have a transition row from this state (+ CANCEL for non-terminals).
+    """Signals that have a transition row from this state (+ the catch-alls: universal CANCEL for
+    non-terminals except CANCELLING (§6.3: its sole staffed exit is CANCEL_ACK), and re-ASSIGN for
+    revisable states (§6.4 Inv-1)).
 
     Pure on State. Used to expose valid actions per (state, role) to UIs/agents (§6.2).
     """
     sigs = [signal for (st, signal) in _LOOKUP if st == state]
-    if state in NON_TERMINAL_STATES and Signal.CANCEL not in sigs:
+    if state in NON_TERMINAL_STATES and state != State.CANCELLING and Signal.CANCEL not in sigs:
         sigs.append(Signal.CANCEL)
+    if state in REASSIGNABLE_STATES and Signal.ASSIGN not in sigs:
+        sigs.append(Signal.ASSIGN)
     return sigs
 
 
@@ -240,11 +267,37 @@ def transition(
     signal = signal_data.signal
     task_id = signal_data.task_id
 
-    # ANY_NON_TERMINAL + CANCEL catch-all
-    if signal == Signal.CANCEL and state in NON_TERMINAL_STATES:
-        return (State.DONE, [
-            _mg(task_id, State.DONE, DoneReason.CANCELLED),
+    # ANY_NON_TERMINAL + CANCEL catch-all → CANCELLING (§6.3: two-step handshake, mirror of ASSIGN→ACCEPT).
+    # CANCELLING itself is excluded: its sole staffed exit is CANCEL_ACK (re-CANCEL is a no-op, not a row).
+    # The subtree cascade (§6.2: the protocol sends CANCEL to every descendant) fires HERE, on CANCEL —
+    # mutations.apply returns the affected children for the loop to CANCEL, each running its own handshake.
+    if signal == Signal.CANCEL and state in NON_TERMINAL_STATES and state != State.CANCELLING:
+        return (State.CANCELLING, [
+            _mg(task_id, State.CANCELLING),
             Dispatch(task_id, Signal.CANCEL),
+        ])
+
+    # BLOCK naming an undeclared prerequisite NODE — record a provisional discovered-Dep edge (§6.2/§7.2:
+    # a real S\Ŝ edge falsifying the plan's implicit independence claim; provenance = this BLOCK, T11).
+    # Payload-dependent → handled here; the bare-BLOCK case falls through to the table row (no edge).
+    if signal == Signal.BLOCK and state in (State.EXECUTING, State.REWORK) and signal_data.blocker_task_id:
+        return (State.BLOCKED, [
+            MutateGraph(task_id, MutationType.RECORD_DEP, dep_from=signal_data.blocker_task_id,
+                        glue=signal_data.reason or ""),
+            _mg(task_id, State.BLOCKED),
+            Dispatch(task_id, Signal.BLOCK),
+        ])
+
+    # RESOLVE_BLOCK adjudicating the provisional discovered-Dep (§6.2): re-attribute (corrected source) or
+    # retract (external / non-producible blocker → the FM-5 currency line, not a Dep edge). The plain confirm
+    # is the table row's payload-free ADJUDICATE_DEP.
+    if (signal == Signal.RESOLVE_BLOCK and state == State.BLOCKED
+            and (signal_data.blocker_task_id or signal_data.external)):
+        return (State.EXECUTING, [
+            MutateGraph(task_id, MutationType.ADJUDICATE_DEP, dep_from=signal_data.blocker_task_id,
+                        dep_external=signal_data.external),
+            _mg(task_id, State.EXECUTING),
+            Dispatch(task_id, Signal.RESOLVE_BLOCK),
         ])
 
     # ACCEPT_CHALLENGE carrying a renegotiated spec — APPLY it (sanctioned pre-acceptance revision,
@@ -272,17 +325,18 @@ def transition(
             Dispatch(task_id, Signal.ASSIGN),
         ])
 
-    # re-ASSIGN after CANCEL — canon §6.4 Inv-1: a spec/Del is IMMUTABLE after ASSIGN, so a change is
-    # CANCEL + re-ASSIGN, NOT an in-place edit. The id-slot is reused (the cancelled contract stays a logged
-    # tombstone, §7.3.1; refs to this node remain valid — re-id would break deps/mappings). Only a CANCELLED
-    # DONE is re-assignable (PASS/FAIL are real completions). The single in-place spec change is
-    # ACCEPT_CHALLENGE (above) — executor-initiated (FM-7→FM-5), never a self/issuer edit (self-CHALLENGE
-    # violates IC, §6.6). There is deliberately no REVIEW→ASSIGN: editing always goes through CANCEL first.
-    if (signal == Signal.ASSIGN and state == State.DONE
-            and ctx.done_reason == DoneReason.CANCELLED and signal_data.spec is not None):
+    # REVISION — canon v3.7 §6.4 Inv-1: a packet change on a LIVE node = re-ASSIGN under the SAME id →
+    # REVIEW (the executor re-ACCEPTs/CHALLENGEs — the same IC protection as the first ASSIGN, §6.3).
+    # NOT the CANCEL signal, no pass through CANCELLING, and NO cascade — the subtree is retained; staleness
+    # surfaces via CHECK-1 + non-redundancy/CHECK-1b (dangling covers) + CHECK-3 (Dep consumers). Each
+    # version is appended to the log (Inv-7: the immutable record is the LOG, not the node). Excluded:
+    # TIMEOUT (no progress signals, §6.3), CANCELLING (sole exit CANCEL_ACK), terminals (no rows).
+    # The single in-place spec change remains ACCEPT_CHALLENGE (above) — executor-initiated (FM-7→FM-5).
+    if (signal == Signal.ASSIGN and state in REASSIGNABLE_STATES
+            and signal_data.spec is not None):
         return (State.REVIEW, [
             MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.spec,
-                        assignee=signal_data.assignee,   # carries a new executor for reassign; None = keep
+                        assignee=signal_data.assignee,   # carries a new executor for reassign (Del change); None = keep
                         covers=signal_data.covers),      # (re)declared coverage of parent criteria (§2.2)
             _mg(task_id, State.REVIEW),
             RunChecks(task_id),

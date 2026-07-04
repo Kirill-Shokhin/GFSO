@@ -9,7 +9,7 @@ from gfso.core.types import (
 
 
 def test_state_count():
-    assert len(State) == 10
+    assert len(State) == 12  # canon v3.7 §6.3: +CANCELLING (non-terminal), +CANCELLED (terminal, V=⊥)
 
 
 def test_signal_count():
@@ -23,11 +23,13 @@ def test_fm_count():
 def test_terminal_states():
     assert State.DONE in TERMINAL_STATES
     assert State.ESCALATED in TERMINAL_STATES
-    assert len(TERMINAL_STATES) == 2
+    assert State.CANCELLED in TERMINAL_STATES  # v3.7 §6.3: terminal, V=⊥
+    assert len(TERMINAL_STATES) == 3
 
 
 def test_non_terminal_states():
-    assert len(NON_TERMINAL_STATES) == 8
+    assert len(NON_TERMINAL_STATES) == 9
+    assert State.CANCELLING in NON_TERMINAL_STATES  # v3.7 §6.3: handshake in flight
     assert State.DONE not in NON_TERMINAL_STATES
 
 

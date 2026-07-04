@@ -113,11 +113,11 @@ const T_FONT_BODY = tok('--font-body');
 
 // Five buckets — direct translation of Applied-v3 §3.2 + §4. See gfso.css.
 const BUCKET = {
-    DONE: 'done',
+    DONE: 'done', CANCELLED: 'quiet',
     IDLE: 'quiet', EXECUTING: 'quiet',
     REVIEW: 'attend', VALIDATING: 'attend',
     REWORK: 'fail', CHALLENGED: 'fail',
-    BLOCKED: 'pathology', TIMEOUT: 'pathology', ESCALATED: 'pathology',
+    BLOCKED: 'pathology', TIMEOUT: 'pathology', ESCALATED: 'pathology', CANCELLING: 'pathology',
 };
 const bucketOf = (s) => BUCKET[s] || 'quiet';
 
@@ -140,9 +140,10 @@ const DOT_ON_CHROME = {
 const STATE_LABEL = {
     IDLE:'Waiting', REVIEW:'In Review', CHALLENGED:'Challenged', EXECUTING:'In Progress',
     BLOCKED:'Blocked', VALIDATING:'Validating', REWORK:'Rework', DONE:'Done',
+    CANCELLING:'Cancelling', CANCELLED:'Cancelled',
     TIMEOUT:'Timeout', ESCALATED:'Escalated'
 };
-// A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO/CANCELLED — canon §6): show it directly.
+// A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO — canon §6): show it directly.
 const statusLabel = (state, done_reason) =>
     (state === 'DONE' && done_reason) ? done_reason : (STATE_LABEL[state] || state);
 const ACTIONS = {
@@ -152,6 +153,8 @@ const ACTIONS = {
     BLOCKED:    [{s:'RESOLVE_BLOCK',cls:'btn-blue',label:'Resolve Block',prompt:'action'}],
     VALIDATING: [{s:'PASS',cls:'btn-green',label:'Pass'},{s:'FAIL',cls:'btn-red',label:'Fail',needsCriteria:true}],
     REWORK:     [{s:'DELIVER',cls:'btn-blue',label:'Re-deliver',prompt:'result'},{s:'BLOCK',cls:'btn-red',label:'Block',prompt:'reason'}],
+    // §6.3 handshake settlement: the executor confirms the cancellation, reporting in-flight state (T11).
+    CANCELLING: [{s:'CANCEL_ACK',cls:'btn-muted',label:'Confirm Cancel',prompt:'in_flight'}],
 };
 
 let cy, selectedTaskId = null, decomposeTaskId = null, allTasksCache = [];
@@ -294,7 +297,7 @@ async function refreshGraph() {
         const cancelled = new Set();
         for (const n of g.nodes) {
             const st = styleOf(n.state);
-            const isCancelled = n.done_reason === 'CANCELLED';
+            const isCancelled = n.state === 'CANCELLED' || n.done_reason === 'CANCELLED';  // v3.7 state (+legacy reason)
             if (isCancelled) cancelled.add(n.id);
             cy.add({ data: { id: n.id, label: n.label, state: n.state, bucket: bucketOf(n.state),
                              bg: st.bg, fg: st.fg, bw: st.bw, bc: st.bc, bs: st.bs, bo: st.bo },
@@ -312,7 +315,7 @@ async function refreshStats() {
     if (!allTasksCache.length) { el.innerHTML = ''; return; }
     const counts = {};
     allTasksCache.forEach(t => { counts[t.state] = (counts[t.state]||0) + 1; });
-    const order = ['DONE','EXECUTING','REVIEW','BLOCKED','REWORK','CHALLENGED','VALIDATING','IDLE','TIMEOUT','ESCALATED'];
+    const order = ['DONE','EXECUTING','REVIEW','BLOCKED','REWORK','CHALLENGED','VALIDATING','IDLE','CANCELLING','CANCELLED','TIMEOUT','ESCALATED'];
     el.innerHTML = order.filter(s => counts[s]).map(s =>
         `<span class="stat"><span class="stat-dot" style="background:${DOT_ON_CHROME[bucketOf(s)]}"></span>${counts[s]} ${STATE_LABEL[s]||s}</span>`
     ).join('');
@@ -413,12 +416,13 @@ async function selectTask(taskId) {
         }
 
         const acts = ACTIONS[d.state] || [];
-        if (acts.length || !['DONE','ESCALATED'].includes(d.state)) {
+        const noCancel = ['DONE','ESCALATED','CANCELLED','CANCELLING'];  // §6.3: no re-CANCEL from CANCELLING; terminals reject all
+        if (acts.length || !noCancel.includes(d.state)) {
             h += `<div class="section"><div class="section-title">Actions</div><div class="actions">`;
             acts.forEach(a => {
                 h += `<button class="btn btn-sm ${a.cls}" onclick="sendAction('${d.id}','${a.s}','${a.prompt||''}',${!!a.needsCriteria})">${a.label}</button>`;
             });
-            if (!['DONE','ESCALATED'].includes(d.state))
+            if (!noCancel.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="sendAction('${d.id}','CANCEL','reason',false)">Cancel</button>`;
             if (['EXECUTING','REVIEW'].includes(d.state))
                 h += `<button class="btn btn-sm btn-purple" onclick="openDecompose('${d.id}')">Decompose</button>`;
@@ -705,6 +709,45 @@ function connectWS() {
     const ws = new WebSocket(`ws://${location.host}/ws/events`);
     ws.onmessage = async e => {
         const d = JSON.parse(e.data);
+        if (d.type==='pipeline') {           // live pipeline LOG (decompose stages etc.) — expandable, persistent
+            let panel = document.getElementById('pipeline-log');
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = 'pipeline-log';
+                panel.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:60;width:460px;max-width:70vw;'
+                    + 'font:12px/1.5 ui-monospace,monospace;border-radius:8px;overflow:hidden;'
+                    + 'background:rgba(20,24,32,.92);color:#c9d4e0;border:1px solid rgba(127,127,127,.35);';
+                panel.innerHTML =
+                    '<div id="pl-head" style="padding:5px 10px;cursor:pointer;user-select:none;'
+                    + 'background:rgba(255,255,255,.06);color:#9fd0a8;">'
+                    + '<span id="pl-arrow">▾</span> pipeline <span id="pl-count"></span></div>'
+                    + '<div id="pl-body" style="max-height:38vh;overflow-y:auto;padding:4px 10px 8px;"></div>';
+                document.body.appendChild(panel);
+                document.getElementById('pl-head').onclick = () => {
+                    const b = document.getElementById('pl-body');
+                    const open = b.style.display !== 'none';
+                    b.style.display = open ? 'none' : 'block';
+                    document.getElementById('pl-arrow').textContent = open ? '▸' : '▾';
+                };
+            }
+            const body = document.getElementById('pl-body');
+            const ts = new Date().toLocaleTimeString();
+            const isTick = / tokens · \d+s$/.test(d.msg);        // live generation ticks UPDATE their line
+            const tickKey = isTick ? d.msg.split(':')[0] : '';
+            const last = body.lastElementChild;
+            if (isTick && last && last.dataset.tick === tickKey) {
+                last.textContent = `${ts} [${d.source}] ${d.msg}`;
+            } else {
+                const line = document.createElement('div');
+                line.textContent = `${ts} [${d.source}] ${d.msg}`;
+                if (isTick) line.dataset.tick = tickKey;
+                body.appendChild(line);
+                while (body.childElementCount > 200) body.removeChild(body.firstElementChild);
+            }
+            document.getElementById('pl-count').textContent = `(${body.childElementCount})`;
+            body.scrollTop = body.scrollHeight;
+            return;
+        }
         if (d.type==='transition') {
             const ct = allTasksCache.find(x => x.id === d.task_id);  // keep the tooltip cache live (was stale → hover showed old state)
             if (ct) ct.state = d.new_state;

@@ -58,10 +58,13 @@ def test_signal_rejection_reports_reason():
     """A rejected signal returns WHY + the structural gate, not a silent accepted:false (BUG-3)."""
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    # decompose it (CHECK-4 gates decomposed nodes only, v3.7 §5.1) — root has no NEGLECTED → open hole
+    T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
+                [{"criterion_name": "a", "child_id": "k"}])
     res = T.signal(e, "r", "PASS", "alice")            # PASS is invalid in REVIEW
     assert res["accepted"] is False
     assert "error" in res and "PASS" in res["error"]   # names the offending signal / valid set
-    assert res.get("failing_checks")                   # surfaces CHECK-4 (empty NEGLECTED) etc.
+    assert res.get("failing_checks")                   # surfaces CHECK-4 (empty NEGLECTED on a decomposed node)
     e.stop()
 
 
@@ -70,7 +73,11 @@ def test_list_holes_surfaces_graph_gaps():
     BEFORE driving signals (a decomposed graph can come back with holes)."""
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
-    holes = T.list_holes(e)                 # root has no NEGLECTED → CHECK-4 is an open hole
+    holes = T.list_holes(e)
+    assert not any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)  # leaf: not gated (§5.1)
+    T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
+                [{"criterion_name": "a", "child_id": "k"}])
+    holes = T.list_holes(e)                 # decomposed root with no NEGLECTED → CHECK-4 is an open hole
     assert any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)
     e.stop()
 

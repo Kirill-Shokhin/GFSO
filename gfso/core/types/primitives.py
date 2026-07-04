@@ -27,8 +27,8 @@ class Criteria:
 class NeglectedItem:
     """A declared scope-exclusion (STD-1) with its STD-2 predictability verdict.
 
-    predictability=None → unclassified (legacy/plain text); CHECK-STD2 stays silent.
-    Set it to enforce STD-2 admissibility (§5.2).
+    predictability=None → unclassified (legacy/plain text); on a decomposed node CHECK-4 flags the
+    record as incomplete (the verdict is mandatory per factor, §5.1/Ст. I.10).
     """
     item: str
     predictability: Optional[Predictability] = None
@@ -63,16 +63,22 @@ class CriterionMapping:
 class DepEdge:
     """Dependency edge (a cross-subtask seam).
 
-    glue = the anti-mock truth-maker (canon §2.2 / §18.10): what of `to_id`'s output
-    `from_id`'s criterion references, and what breaks if the edge is mishandled. A seam
+    Direction: `from_id` = PRODUCER, `to_id` = CONSUMER (to_id depends on from_id's
+    output — the consumer carries the `depends_on=from_id` criterion, §2.2).
+    glue = the anti-mock truth-maker (canon §2.2 / §18.10): what of `from_id`'s output
+    `to_id`'s criterion references, and what breaks if the edge is mishandled. A seam
     without glue is the FM-1 forgotten-glue hole — so glue is first-class on the edge,
     not folded into a node-local criterion (which would be mock-satisfiable).
     discovered=True if found via BLOCK, not declared upfront.
+    provisional=True while the two-phase record (§6.2/§7.2) awaits adjudication: BLOCK
+    registers provisional, RESOLVE_BLOCK confirms/re-attributes/retracts; an escalated-
+    unresolved provisional still counts toward q_Dep (the hole was real).
     """
     from_id: TaskId
     to_id: TaskId
     discovered: bool = False
     glue: str = ""
+    provisional: bool = False
 
 
 @dataclass
@@ -99,7 +105,6 @@ class Task:
 class GuardContext:
     iteration: int
     max_iterations: int
-    done_reason: Optional[DoneReason] = None  # lets transition() see WHY a DONE node is done (re-ASSIGN only a CANCELLED one)
 
 
 @dataclass(frozen=True)
@@ -137,8 +142,12 @@ class SignalData:
     deadline: Optional[datetime] = None            # ASSIGN: T=(spec,criteria,deadline)
     max_iterations: int = 3                        # ASSIGN: rework bound
     covers: tuple[str, ...] = ()                   # ASSIGN: parent criteria this child is mapped to (§2.2)
-    reassigning: bool = False                      # CANCEL: part of a revise (re-ASSIGN follows) → no subtree cascade
     reason: Optional[str] = None                   # CHALLENGE, BLOCK, CANCEL
+    in_flight: Optional[str] = None                # CANCEL_ACK: executor's in-flight state at cancellation (T11, §6.3)
+    blocker_task_id: Optional[TaskId] = None       # BLOCK: the undeclared prerequisite NODE (→ provisional discovered-Dep,
+                                                   # §6.2); RESOLVE_BLOCK: the corrected source on mis-attribution
+    external: bool = False                         # RESOLVE_BLOCK: blocker was non-producible (no producer node) →
+                                                   # retract the provisional edge; the FM-5 currency line, not a Dep (§6.2)
     result: Optional[str] = None                   # DELIVER
     self_validation: Optional[Verdict] = None      # DELIVER
     new_spec: Optional[Spec] = None                # ACCEPT_CHALLENGE

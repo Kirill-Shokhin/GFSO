@@ -48,46 +48,47 @@ def test_set_state_done_with_reason():
     assert task.done_reason == DoneReason.PASS
 
 
-def test_cancel_cascade():
+def test_cancel_cascade_fires_on_entering_cancelling():
+    """v3.7 §6.2: the cascade fires on CANCEL (= entering CANCELLING) — non-terminal, not-yet-cancelling
+    children are returned for the loop to CANCEL (each runs its own handshake)."""
     g = _graph()
     parent = _task("parent", state=State.EXECUTING)
     child1 = _task("c1", state=State.EXECUTING, parent_id="parent")
     child2 = _task("c2", state=State.DONE, parent_id="parent")
-    g.save_task(parent)
-    g.save_task(child1)
-    g.save_task(child2)
+    child3 = _task("c3", state=State.CANCELLING, parent_id="parent")
+    for t in (parent, child1, child2, child3):
+        g.save_task(t)
 
-    effect = MutateGraph(
-        TaskId("parent"), MutationType.SET_STATE,
-        new_state=State.DONE, done_reason=DoneReason.CANCELLED,
-    )
-    affected = apply(g, effect)
+    affected = apply(g, MutateGraph(TaskId("parent"), MutationType.SET_STATE, new_state=State.CANCELLING))
 
-    # Only non-terminal children returned for cascade
-    assert TaskId("c1") in affected
-    assert TaskId("c2") not in affected
+    assert TaskId("c1") in affected      # live child → cascade CANCEL
+    assert TaskId("c2") not in affected  # terminal untouched
+    assert TaskId("c3") not in affected  # already settling its own handshake
+
+    # settling the handshake (CANCEL_ACK → CANCELLED) does NOT re-cascade
+    affected2 = apply(g, MutateGraph(TaskId("parent"), MutationType.SET_STATE, new_state=State.CANCELLED))
+    assert affected2 == []
 
 
-def test_active_children_excludes_cancelled_tombstone():
-    """B1 realization: CANCELLED nodes persist (provenance, §7.3.1) but leave the ACTIVE decomposition.
-    get_children = all (provenance); get_active_children = excludes only DONE(CANCELLED); DONE(PASS/FAIL)
+def test_active_children_excludes_cancellation():
+    """CANCELLED nodes persist (provenance, §7.3.1) but leave the ACTIVE decomposition — at CANCEL
+    already (cancellation is authoritative, §6.3), so CANCELLING is excluded too. DONE(PASS/FAIL)
     stay active (delivered work)."""
     g = _graph()
     parent = _task("parent", state=State.EXECUTING)
     active = _task("a1c", state=State.EXECUTING, parent_id="parent")
     done_pass = _task("a2c", state=State.DONE, parent_id="parent")
     done_pass.done_reason = DoneReason.PASS
-    cancelled = _task("a3c", state=State.DONE, parent_id="parent")
-    cancelled.done_reason = DoneReason.CANCELLED
-    for t in (parent, active, done_pass, cancelled):
+    cancelled = _task("a3c", state=State.CANCELLED, parent_id="parent")
+    cancelling = _task("a4c", state=State.CANCELLING, parent_id="parent")
+    for t in (parent, active, done_pass, cancelled, cancelling):
         g.save_task(t)
 
     all_ids = {c.id for c in g.get_children(TaskId("parent"))}
     active_ids = {c.id for c in g.get_active_children(TaskId("parent"))}
 
-    assert all_ids == {TaskId("a1c"), TaskId("a2c"), TaskId("a3c")}   # provenance keeps the tombstone
-    assert active_ids == {TaskId("a1c"), TaskId("a2c")}                # cancelled excluded from active
-    assert TaskId("a2c") in active_ids                                 # DONE(PASS) is active, not filtered
+    assert all_ids == {TaskId("a1c"), TaskId("a2c"), TaskId("a3c"), TaskId("a4c")}  # provenance keeps all
+    assert active_ids == {TaskId("a1c"), TaskId("a2c")}   # cancellation (both phases) excluded from active
 
 
 def test_increment_iteration():

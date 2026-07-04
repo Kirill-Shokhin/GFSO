@@ -414,7 +414,7 @@ flowchart LR
   %% зеркала
   CONST["CONST — method_gfso.md"]
   CORE["CORE.md"]
-  CODE["CODE — gfso/ синхр. v3.6; v3.7 = долг синка"]
+  CODE["CODE — gfso/ синхр. v3.7"]
   class CONST,CORE,CODE mirror
 
   %% light-якоря
@@ -488,7 +488,7 @@ flowchart LR
   STD-4 + verify-vs-explore; value=objectification объясняет, зачем базис обязателен на каждом
   уровне). Она **не** выводит T1/7-FM/минимальность — это явная дисциплина канона (§18.10
   преамбула).
-- **Зеркала** (Ракурс 4) — проекции канона (`mirror`): Constitution, CORE, код `gfso/` (синхр. по v3.6; v3.7 = долг синка: двухшаговая отмена, discovered-Dep, рамка ревизии). Не
+- **Зеркала** (Ракурс 4) — проекции канона (`mirror`): Constitution, CORE, код `gfso/` (синхр. по v3.7: двухшаговая отмена, discovered-Dep, ревизия = re-ASSIGN, CHECK-4 per-decomposition). Не
   новые примитивы, рендеринги.
 - **E2** (Ракурс 3) наследует полноту отсюда: эталон = декомпозиция, исключающая все 7 FM; «полнота
   корзин» доказана §4.4, «полнота внутри корзины» = faithfulness, добирается циклом (§18.10). **E2 показал
@@ -558,7 +558,7 @@ flowchart LR
 | METH -.explain.-> STD4, COST | §18.11 | стоп-реплан + front-load FORM = вынужденный оптимум; verify-vs-explore |
 | VAL -.explain.-> BASIS | §17.4–§17.5 | value=objectification: базис обязателен на каждом уровне; план фальсифицируем |
 | SSHAT -.explain ii.-> BCAUS | §18.10 / §18.1 | половина (ii) A1 = каузальная правильность, аппаратно несертифицируема |
-| CONST/CORE/CODE -.mirror.-> канон | MEMORY mirrors | проекции канона; код gfso/ синхр. v3.6, v3.7 = долг синка |
+| CONST/CORE/CODE -.mirror.-> канон | MEMORY mirrors | проекции канона; код gfso/ синхр. v3.7 |
 
 <details>
 <summary>Полный граф (для зума)</summary>
@@ -709,7 +709,7 @@ flowchart TD
   subgraph MIR["Зеркала канона (проекции, не примитивы)"]
     CONST["Constitution method_gfso.md"]
     CORE["CORE.md (одностраничник)"]
-    CODE["код gfso/ (синхр. v3.6; v3.7 долг)"]
+    CODE["код gfso/ (синхр. v3.7)"]
   end
   class CONST,CORE,CODE mirror
 

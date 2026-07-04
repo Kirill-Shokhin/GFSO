@@ -61,6 +61,7 @@ class AuditEntryOut(BaseModel):
     result: str | None = None
     failed_criteria: list[str] = []
     action: str | None = None
+    in_flight: str | None = None  # CANCEL_ACK: executor's in-flight state at cancellation (T11)
 
 class TaskDetailOut(TaskOut):
     checks: list[CheckResultOut]
@@ -149,4 +150,5 @@ def audit_to_out(e: AuditEntry) -> AuditEntryOut:
         effects=list(e.effects), rejected=e.rejected, error=e.error,
         source=e.source, reason=e.reason, justification=e.justification,
         result=e.result, failed_criteria=list(e.failed_criteria), action=e.action,
+        in_flight=e.in_flight,
     )

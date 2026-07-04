@@ -7,7 +7,7 @@ from gfso.core.types import (
 from gfso.core.handlers.structural import (
     check_coverage, check_dag, check_deadlines,
     check_neglected, check_risk_nodes, check_delegation,
-    check_non_redundancy, check_predictability,
+    check_non_redundancy,
     run_structural,
 )
 
@@ -104,15 +104,19 @@ def test_deadlines_violated():
     assert not result.passed
 
 
-# === CHECK-4: NEGLECTED ===
+# === CHECK-4: NEGLECTED (v3.7 §5.1: gates DECOMPOSED nodes only — per-decomposition) ===
 
 def test_neglected_present():
-    t = _task("t", neglected=["edge cases"])
-    assert check_neglected(t).passed
+    t = _task("t", neglected=[NeglectedItem("api rate limit", Predictability.EXTRAORDINARY)])
+    assert check_neglected(t, [_task("c1")]).passed
 
-def test_neglected_empty():
+def test_neglected_empty_on_decomposed_fails():
     t = _task("t")
-    assert not check_neglected(t).passed
+    assert not check_neglected(t, [_task("c1")]).passed
+
+def test_neglected_leaf_skipped():
+    """A leaf (D=∅) has no decomposition → NEGLECTED vacuous, CHECK-4 does not gate it (§5.1)."""
+    assert check_neglected(_task("t"), []).skipped
 
 
 # === CHECK-5: Risk nodes (STD-3) ===
@@ -171,43 +175,49 @@ def test_non_redundancy_leaf_skipped():
     assert check_non_redundancy(_task("p", criteria=["x"]), []).skipped
 
 
-# === CHECK-STD2: Predictability (§5.2) ===
+# === CHECK-4 record form (§5.1/Ст. I.10: an incomplete record is not a NEGLECTED record) ===
 
 def _task_neg(neglected):
     return Task(id=TaskId("t"), spec=Spec("t", (), tuple(neglected)))
 
-def test_predictability_unclassified_skipped():
-    assert check_predictability(_task_neg([NeglectedItem("x")])).skipped
+_KID = [Task(id=TaskId("k"), spec=Spec("k", ()))]  # decomposed → CHECK-4 gates
 
-def test_predictability_ordinary_fails():
-    t = _task_neg([NeglectedItem("drought", Predictability.ORDINARY)])
-    r = check_predictability(t)
+def test_neglected_record_unclassified_fails_on_decomposed():
+    """The predictability verdict is mandatory per factor (§5.1) — it doubles as the risk-vs-scope
+    discriminator: no materialization P → scope boundary (goal criteria/CHECK-1), not NEGLECTED."""
+    r = check_neglected(_task_neg([NeglectedItem("x")]), _KID)
+    assert not r.passed and "predictability" in r.details
+
+def test_neglected_record_ordinary_contradiction_fails():
+    """A self-declared ORDINARY factor in NEGLECTED is an internal contradiction of the record (§5.2)."""
+    r = check_neglected(_task_neg([NeglectedItem("drought", Predictability.ORDINARY)]), _KID)
     assert not r.passed and "ORDINARY" in r.details
 
-def test_predictability_statistical_needs_justification():
+def test_neglected_record_statistical_needs_justification():
     bad = _task_neg([NeglectedItem("rare outage", Predictability.STATISTICAL)])
-    assert not check_predictability(bad).passed
+    assert not check_neglected(bad, _KID).passed
     ok = _task_neg([NeglectedItem("rare outage", Predictability.STATISTICAL, "P<1%, out of budget")])
-    assert check_predictability(ok).passed
+    assert check_neglected(ok, _KID).passed
 
-def test_predictability_extraordinary_ok():
+def test_neglected_record_extraordinary_ok():
     t = _task_neg([NeglectedItem("meteorite", Predictability.EXTRAORDINARY)])
-    assert check_predictability(t).passed
+    assert check_neglected(t, _KID).passed
 
 
 # === Full run ===
 
 def test_run_structural_returns_all_checks():
+    # The check set is the CANON's L0 list (§5.4): CHECK-1, 1b, 2–6 — no invented check names.
     parent = _task("p", criteria=["perf"], neglected=["risks"], mappings=[
         CriterionMapping("perf", TaskId("c1")),
     ])
     child = _task("c1", desc="perf work", assignee="a1")
     results = run_structural(parent, [child])
     names = [r.check_name for r in results]
-    assert len(results) == 8
+    assert len(results) == 7
     for expected in (
         "CHECK-1:coverage", "CHECK-1b:non_redundancy", "CHECK-2:dag",
-        "CHECK-3:deadlines", "CHECK-4:neglected", "CHECK-STD2:predictability",
+        "CHECK-3:deadlines", "CHECK-4:neglected",
         "CHECK-5:risk_nodes", "CHECK-6:delegation",
     ):
         assert expected in names

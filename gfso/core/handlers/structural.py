@@ -92,31 +92,6 @@ def check_non_redundancy(task: Task, children: list[Task]) -> CheckResult:
     return CheckResult("CHECK-1b:non_redundancy", True)
 
 
-def check_predictability(task: Task) -> CheckResult:
-    """CHECK-STD2: predictability admissibility of NEGLECTED items (§5.2) → FM-1.b.
-
-    Enforced only on classified items (predictability set). Burden of proof:
-    - ORDINARY      → may NOT be neglected (must be in the decomposition).
-    - STATISTICAL   → neglectable only WITH a justification.
-    - EXTRAORDINARY → admissibly neglected.
-    Unclassified items (predictability=None) leave STD-2 silent.
-    """
-    classified = [n for n in task.spec.neglected if n.predictability is not None]
-    if not classified:
-        return CheckResult("CHECK-STD2:predictability", True, "no classified NEGLECTED items", skipped=True)
-
-    violations = []
-    for n in classified:
-        if n.predictability == Predictability.ORDINARY:
-            violations.append(f"'{n.item}' is ORDINARY — must be in the decomposition, not neglected")
-        elif n.predictability == Predictability.STATISTICAL and not n.justification.strip():
-            violations.append(f"'{n.item}' is STATISTICAL — neglect requires a justification")
-
-    if violations:
-        return CheckResult("CHECK-STD2:predictability", False, "; ".join(violations))
-    return CheckResult("CHECK-STD2:predictability", True)
-
-
 def check_dag(children: list[Task], dep_edges: list[tuple[str, str]]) -> CheckResult:
     """CHECK-2: decomposition graph is a DAG (no cycles)."""
     if not dep_edges:
@@ -174,10 +149,39 @@ def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str,
     return CheckResult("CHECK-3:deadlines", True)
 
 
-def check_neglected(task: Task) -> CheckResult:
-    """CHECK-4: NEGLECTED section exists and is non-empty."""
+def check_neglected(task: Task, children: list[Task]) -> CheckResult:
+    """CHECK-4: for a DECOMPOSED node (D≠∅), the NEGLECTED section exists, is non-empty, and its records
+    are well-formed (v3.7 §5.1; record schema §5.1/Ст. I.10).
+
+    NEGLECTED is authored per-decomposition by the node's own decomposer — a leaf (D=∅) has no
+    decomposition, so its NEGLECTED is vacuous and CHECK-4 does not gate it (nor a freshly created child;
+    it is authored lazily when/if the child decomposes).
+
+    Record FORM is what L0 can check mechanically (an incomplete record is not a NEGLECTED record, Ст. I.10):
+    - a predictability verdict is present per factor (it doubles as the risk-vs-scope discriminator, §5.1:
+      an entry with no estimable materialization P is a goal SCOPE boundary → goal criteria/CHECK-1);
+    - a self-declared ORDINARY factor cannot sit in NEGLECTED (internal contradiction of the record, §5.2);
+    - a STATISTICAL factor carries its justification (§5.2).
+    Whether the factor is REALLY that predictability class in the domain (S-regularity, FM-1.b vs §2.1)
+    is a domain question — L2/validator territory, not decidable here."""
+    if not children:
+        return CheckResult("CHECK-4:neglected", True,
+                           "leaf (D=∅): NEGLECTED is per-decomposition (§5.1)", skipped=True)
     if not task.spec.neglected:
         return CheckResult("CHECK-4:neglected", False, "NEGLECTED section is empty")
+
+    malformed = []
+    for n in task.spec.neglected:
+        if n.predictability is None:
+            malformed.append(
+                f"'{n.item}' has no predictability verdict (record incomplete, §5.1; "
+                f"no materialization P → it is a scope boundary, not a risk — move to goal criteria/CHECK-1)")
+        elif n.predictability == Predictability.ORDINARY:
+            malformed.append(f"'{n.item}' is declared ORDINARY — must be in the decomposition, not neglected")
+        elif n.predictability == Predictability.STATISTICAL and not n.justification.strip():
+            malformed.append(f"'{n.item}' is STATISTICAL — neglect requires a justification")
+    if malformed:
+        return CheckResult("CHECK-4:neglected", False, "; ".join(malformed))
     return CheckResult("CHECK-4:neglected", True)
 
 
@@ -226,8 +230,7 @@ def run_structural(task: Task, children: list[Task], dep_edges: list[tuple[str, 
         check_non_redundancy(task, children),
         check_dag(children, edges),
         check_deadlines(task, children, edges),
-        check_neglected(task),
-        check_predictability(task),
+        check_neglected(task, children),
         check_risk_nodes(task, children),
         check_delegation(children),
     ]

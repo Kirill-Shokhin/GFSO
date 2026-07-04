@@ -1,8 +1,8 @@
-"""L2 critic — currently the STRUCTURAL gate only (`runner.critique_node`); the semantic pass is deferred.
+"""L2 critic — the STRUCTURAL gate + the semantic hole-hunt (`runner.critique_node`).
 
-The semantic L2 (find what a decomposition is MISSING) is the SAME search↔audit machinery as
-`gfso.decompose`, run in DIFF mode — NOT a monolithic FM/methodology critic (E2 proved that is strictly
-dominated: form-policing, can't move content). The earlier analyst⊥judge prompts + two-LLM runner were
-REMOVED so the crooked version is never pushed. Wire search(diff)⊕audit here when L2 is exercised (mode-A
-manual graphs / post-edit validation). See project memory: project-gfso-agent "E3-PREREQ" backlog.
+The semantic L2 (find what a decomposition is MISSING) is the SAME SEARCH machinery as `gfso.decompose`,
+run in DIFF mode over the node's projection — NOT a monolithic FM/methodology critic (E2 proved that is
+strictly dominated: form-policing, can't move content). The earlier analyst⊥judge prompts + two-LLM
+runner were REMOVED so the crooked version is never pushed. The gate BLOCKS the semantic pass (L2
+presupposes a structurally-complete graph); the semantic verdict is ADVISORY (never an acceptance gate).
 """

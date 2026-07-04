@@ -117,3 +117,57 @@ def test_next_step_no_graph_and_complete():
     e.assign_task(TaskId("solo"), _sp("solo", ("c", "c")), A); e.wait_idle()
     _drive(e, TaskId("solo"), A)                                       # a single leaf node drives to done
     assert e.next_step(TaskId("solo"))["complete"]
+
+
+def test_next_steps_parallel_frontier():
+    """v2: next_steps returns the FULL frontier; independent execute-leaves are marked parallel_ok, a
+    dep-gated consumer is NOT offered, and the frontier shrinks/unblocks as producers PASS."""
+    A = AgentId("exec")
+    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e.start()
+    e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b"), ("rc", "c")), A); e.wait_idle()
+    e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
+    # a and b are independent leaves; c consumes a's output (dep-gated until a PASSES)
+    c_spec = Spec("c", (Criteria("z", "z"), Criteria("dep__a", "needs a", depends_on=TaskId("a"))))
+    e.decompose_task(TaskId("root"),
+                     [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), _sp("b", ("y", "y")), A),
+                      (TaskId("c"), c_spec, A)],
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b")),
+                      CriterionMapping("rc", TaskId("c"))]); e.wait_idle()
+    for cid in ("a", "b", "c"):
+        e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
+
+    fr = e.next_steps(TaskId("root"))
+    assert not fr["complete"]
+    by_id = {s["task_id"]: s for s in fr["steps"]}
+    # a and b: independent execute-leaves, offered together, parallel-safe
+    assert by_id["a"]["action"] == "execute" and by_id["a"]["parallel_ok"]
+    assert by_id["b"]["action"] == "execute" and by_id["b"]["parallel_ok"]
+    assert "c" not in by_id                                   # dep-gated: producer a has not PASSED
+
+    # finish a → c joins the frontier; b still there
+    e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("a"), source=A, result="ok")); e.wait_idle()
+    e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"), source=A)); e.wait_idle()
+    by_id = {s["task_id"]: s for s in e.next_steps(TaskId("root"))["steps"]}
+    assert by_id["c"]["action"] == "execute" and by_id["c"]["parallel_ok"]
+    assert by_id["b"]["action"] == "execute"
+
+
+def test_next_steps_orders_issuer_actions_before_executes():
+    """Non-execute steps (validate) come ahead of execute-leaves in the frontier ordering (priority)."""
+    A = AgentId("exec")
+    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e.start()
+    e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b")), A); e.wait_idle()
+    e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
+    e.decompose_task(TaskId("root"),
+                     [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), _sp("b", ("y", "y")), A)],
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))]); e.wait_idle()
+    for cid in ("a", "b"):
+        e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
+    # a delivers → VALIDATING; frontier = validate(a) BEFORE execute(b)
+    e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("a"), source=A, result="ok")); e.wait_idle()
+    steps = e.next_steps(TaskId("root"))["steps"]
+    actions = [(s["action"], s["task_id"]) for s in steps]
+    assert actions.index(("validate", "a")) < actions.index(("execute", "b"))
+    assert not steps[0]["parallel_ok"]                       # validate is issuer-side, not a parallel leaf

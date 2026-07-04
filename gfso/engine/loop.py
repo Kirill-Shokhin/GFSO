@@ -31,6 +31,7 @@ def _payload_fields(sd: SignalData) -> dict:
     return dict(
         source=sd.source, reason=sd.reason, justification=sd.justification,
         result=sd.result, failed_criteria=sd.failed_criteria, action=sd.action,
+        in_flight=sd.in_flight,
     )
 
 
@@ -112,12 +113,9 @@ def event_loop(
             signal_queue.task_done()
             continue
 
-        # Execute effects (invariants already validated). A revise-CANCEL (reassigning) does NOT cascade the
-        # subtree: the node continues under a new contract (same id), so its children are not orphaned — any
-        # coverage staleness surfaces via the recomputed CHECKs (surface-don't-destroy). Only a genuine
-        # abandon (raw CANCEL) cascades (canon §7.1).
-        _execute_effects(effects, graph, agents, get_llm(), signal_queue,
-                         cascade=not signal_data.reassigning)
+        # Execute effects (invariants already validated). Revision (re-ASSIGN, §6.4 Inv-1) never returns
+        # cascade children — only entering CANCELLING does (§6.2: CANCEL cascades the subtree).
+        _execute_effects(effects, graph, agents, get_llm(), signal_queue)
 
         # Success
         log.info(f"{task_id}: {state.name} + {signal_data.signal.name} -> {new_state.name}")
@@ -152,16 +150,16 @@ def _execute_effects(
     agents: AgentPort,
     llm: Optional[LLMProviderPort],
     signal_queue: queue.Queue[SignalData],
-    cascade: bool = True,
 ) -> None:
     for effect in effects:
         match effect:
             case MutateGraph() as mg:
                 affected = apply_mutation(graph, mg)
-                if affected and cascade:
-                    # The subtree cascade (canon §7.1: CANCEL cascades the subtree) is an issuer action:
-                    # each child's issuer is the cancelled parent's assignee. Carry it as source so the
-                    # cascade is a VALID issuer-CANCEL (else it is rejected under validate_signals).
+                if affected:
+                    # The subtree cascade (canon §6.2/§7.1: CANCEL cascades — the protocol sends CANCEL to
+                    # every descendant; each runs its own handshake). An issuer action: each child's issuer
+                    # is the cancelling parent's assignee — carried as source so the cascade is a VALID
+                    # issuer-CANCEL (else it is rejected under validate_signals).
                     parent = graph.get_task(mg.task_id)
                     src = parent.assignee if parent else None
                     for child_id in affected:

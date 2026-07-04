@@ -21,36 +21,41 @@ Guards are simple predicates on graph state (only where needed — currently one
 (CHALLENGED, REJECT_CHALLENGE)   → EXECUTING     [MutateGraph, Dispatch]
 (CHALLENGED, timeout)            → TIMEOUT       [MutateGraph]          # escalates §6.3 (§v3.6: no auto-accept)
 (EXECUTING, DELIVER)             → VALIDATING    [MutateGraph, Dispatch]
-(EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch]
+(EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP when blocker_task_id named (§6.2)
 (EXECUTING, timeout)             → TIMEOUT       [MutateGraph]
-(BLOCKED, RESOLVE_BLOCK)         → EXECUTING     [MutateGraph, Dispatch]
+(BLOCKED, RESOLVE_BLOCK)         → EXECUTING     [MutateGraph(ADJUDICATE_DEP), MutateGraph, Dispatch] # confirm/re-attribute/retract (§6.2)
 (BLOCKED, timeout)               → ESCALATED     [MutateGraph]          # direct, see below
 (VALIDATING, PASS)               → DONE          [MutateGraph, Dispatch]
 (VALIDATING, FAIL, iter < max)   → REWORK        [MutateGraph, Dispatch]
 (VALIDATING, FAIL, iter >= max)  → DONE          [MutateGraph, Dispatch] # reason=fail in mutation
 (VALIDATING, timeout)            → DONE          [MutateGraph, Dispatch] # reason=auto in mutation
 (REWORK, DELIVER)                → VALIDATING    [MutateGraph, Dispatch]
-(REWORK, BLOCK)                  → BLOCKED       [MutateGraph, Dispatch]
+(REWORK, BLOCK)                  → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP as above
 (REWORK, timeout)                → TIMEOUT       [MutateGraph]
 (TIMEOUT, timeout)               → ESCALATED     [MutateGraph]          # repeated timeout
-(ANY_NON_TERMINAL, CANCEL)       → DONE          [MutateGraph, Dispatch] # reason=cancelled
+(CANCELLING, CANCEL_ACK)         → CANCELLED     [MutateGraph, Dispatch] # in_flight logged (T11)
+(CANCELLING, timeout)            → CANCELLED     [MutateGraph]          # cancellation is authoritative (§6.3)
+(ANY_NON_TERM \ CANCELLING, CANCEL) → CANCELLING [MutateGraph, Dispatch] # opens the handshake; cascades CANCEL to subtree (§6.2)
+(REASSIGNABLE, ASSIGN+spec)      → REVIEW        [MutateGraph(APPLY_SPEC), MutateGraph, RunChecks, Dispatch]
+                                                 # REVISION (§6.4 Inv-1): re-ASSIGN same id, no cascade; excluded: TIMEOUT, CANCELLING, terminals
 ```
 
-Terminal states: DONE (with reason: pass/fail/auto/cancelled), ESCALATED.
+Terminal states: DONE (with reason: pass/fail/auto), ESCALATED, CANCELLED (V=⊥).
 
-DONE is one state. Completion reason is metadata in MutateGraph mutation, not a separate FSM state. 10 states in enum (CODE): IDLE, REVIEW, CHALLENGED, EXECUTING, BLOCKED, VALIDATING, REWORK, DONE, TIMEOUT, ESCALATED.
+DONE is one state; completion reason is metadata in the MutateGraph mutation. Cancellation is NOT a DONE
+reason — canon v3.7 §6.3 gives it its own two-step handshake `CANCEL→CANCELLING→CANCEL_ACK→CANCELLED`
+(mirror of ASSIGN→ACCEPT; CANCEL_ACK = the sole staffed exit from CANCELLING, an FSM-deadlock signal
+carrying the executor's in-flight report). **12 states in enum**: IDLE, REVIEW, CHALLENGED, EXECUTING,
+BLOCKED, VALIDATING, REWORK, CANCELLING, DONE, CANCELLED, TIMEOUT, ESCALATED. Pre-v3.7 DBs stored
+cancellation as DONE(reason=CANCELLED) — migrated on read in the SQLite adapter.
 
 ESCALATED resolution is outside FSM — admin action (re-assign or close). Escalation crosses hierarchy levels which the per-task FSM cannot model.
 
-> **Canon v3.7 divergence (code-sync debt).** The canon (§6.3) now specifies the cancellation FSM the
-> code folds into DONE. When synced, the table gains: `(ANY_NON_TERMINAL, CANCEL) → CANCELLING`,
-> `(CANCELLING, CANCEL_ACK) → CANCELLED`, `(CANCELLING, timeout) → CANCELLED`; enum grows to **12
-> states** (+CANCELLING non-terminal, +CANCELLED terminal, V=⊥), replacing the `CANCEL → DONE(cancelled)`
-> row. Also canon-v3.7, impl pending in the verifier layer: **BLOCK records a provisional discovered-Dep
-> edge** (RESOLVE_BLOCK confirms) to feed q_Dep (§7.2). Already in code (no debt, behaviour):
-> **no cascade** on revise + stable node id (Inv-7). Code-sync item (framing): canon v3.7 models revision as
-> **re-ASSIGN (NOT the CANCEL signal) → REVIEW** (executor re-ACCEPTs/CHALLENGEs); the code realizes the same
-> no-cascade behaviour via `CANCEL(reassigning)`+re-ASSIGN — align the signal framing on sync.
+**Discovered-Dep (§6.2/§7.2, two-phase):** a BLOCK naming an undeclared prerequisite NODE
+(`blocker_task_id`) emits RECORD_DEP — a provisional discovered edge (provenance = the BLOCK, T11);
+RESOLVE_BLOCK adjudicates it: payload-free = confirm, `blocker_task_id` = re-attribute, `external` =
+retract (non-producible blocker → the FM-5 currency line). An escalated-unresolved provisional stays
+counted — this is what feeds q_Dep's denominator.
 
 ## Design Decisions
 
@@ -64,9 +69,11 @@ ESCALATED resolution is outside FSM — admin action (re-assign or close). Escal
 
 **VALIDATING timeout now includes Dispatch.** Executor must be notified that their delivery was auto-accepted. Symmetry with all other terminal transitions.
 
-**TIMEOUT is transient.** TIMEOUT state exists between first and second timeout. If CANCEL arrives before the next timeout monitor tick, task goes to DONE instead of ESCALATED. This is a natural intervention window (one tick), not a designed guarantee.
+**TIMEOUT is transient.** TIMEOUT state exists between first and second timeout. If CANCEL arrives before the next timeout monitor tick, task goes to CANCELLING instead of ESCALATED. This is a natural intervention window (one tick), not a designed guarantee. TIMEOUT accepts no progress signals (§6.3) — only repeated timeout or the universal CANCEL.
 
-**CANCEL_ACK — CODE is single-step; canon v3.7 is two-step (code-sync debt).** *Current code:* CANCEL → DONE(cancelled) immediate; CANCEL_ACK is an adapter notification, no FSM row. *Canon v3.7 (§6.3):* cancellation is a two-step handshake `CANCEL(issuer)→CANCELLING→CANCEL_ACK(executor)→CANCELLED`, mirroring ASSIGN→ACCEPT; CANCEL_ACK is an FSM-deadlock signal (sole exit from CANCELLING, carrying in-flight state for T11), `CANCELLING--timeout-->CANCELLED`. The code has NOT yet been synced to this — a v3.7 code-sync debt (see the v3.7 divergence note below).
+**CANCEL_ACK — two-step handshake (canon v3.7 §6.3, SYNCED).** Cancellation is `CANCEL(issuer)→CANCELLING→CANCEL_ACK(executor)→CANCELLED`, mirroring ASSIGN→ACCEPT. CANCEL_ACK is an FSM-deadlock signal: the sole staffed exit from CANCELLING, carrying the executor's in-flight state (`SignalData.in_flight`) onto the audit log (T11). `CANCELLING--timeout-->CANCELLED` — cancellation is authoritative, executor silence still completes it (without the in-flight report). The cascade fires on CANCEL (entering CANCELLING): every live descendant gets its own CANCEL and runs its own handshake.
+
+**Revision = re-ASSIGN, same id (canon v3.7 §6.4 Inv-1, SYNCED).** A packet change on a live node is ONE re-ASSIGN under the same id → REVIEW (the executor re-ACCEPTs/CHALLENGEs); the APPLY_SPEC mutation re-authors in place and the superseded version lives in the append-only log (Inv-7). No CANCEL signal, no CANCELLING pass, no cascade — subtree retained; staleness surfaces via CHECK-1/CHECK-1b/CHECK-3. Not accepted from TIMEOUT (no progress signals), CANCELLING, or terminals.
 
 **REWORK has no CHALLENGE.** REWORK criteria = same criteria as original ASSIGN (immutable per protocol invariant). Challenging criteria you already executed against is incoherent. REWORK only accepts DELIVER or BLOCK.
 
@@ -288,30 +295,29 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 |---|---|---|
 | create | `ASSIGN` (IDLE → CREATE_TASK effect) | node creation IS the ASSIGN effect (logged) |
 | decompose | one `ASSIGN` per child (+ `covers` → parent mapping effect) | mappings = the child's declaration, logged |
-| **revise** | `CANCEL`(reassigning) + re-`ASSIGN` (SAME id) | spec change per Inv-1 §6.4; old contract a logged tombstone, id persists; **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1; issuer-gated |
+| **revise** | re-`ASSIGN` (SAME id) → REVIEW | revision per Inv-1 §6.4 (v3.7): NOT a CANCEL; version appended to the log (Inv-7); **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1/1b/3; issuer-gated |
 | reneglect / edit_criteria | revise (RMW) | change one field, carry the rest |
-| add_dependency (declared) | `CANCEL` + re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§2.2); edge derived |
+| add_dependency (declared) | re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§2.2); edge derived |
 | map_criterion | re-`ASSIGN` of the child carrying `covers` | binds an existing child to a parent criterion (logged) |
-| reassign | `CANCEL` + re-`ASSIGN` with a new executor | Del change per Inv-1 |
-| **abandon** | `CANCEL` only | tombstone; **cascades to subtree**; never deleted (§7.3.1) |
+| reassign | re-`ASSIGN` with a new executor | Del change per Inv-1 (q_Del) |
+| **abandon** | `CANCEL` → CANCELLING → `CANCEL_ACK` → CANCELLED | two-step handshake (§6.3); **cascades CANCEL to subtree**; never deleted (§7.3.1) |
 
-**Surface-don't-destroy** (CODE behaviour; canonical framing = the v3.7 divergence note above). abandon = raw
-`CANCEL` → cascades the subtree (its sub-work served a contract that no longer exists, §7.1). revise (code:
-`CANCEL`(reassigning) + re-`ASSIGN` same id) → the node continues under a new contract, so its **subtree is
-RETAINED, no cascade**; coverage staleness (uncovered new criterion / dangling mapping) is SURFACED by CHECK-1 /
-non-redundancy for the agent to resolve ∨ declare, not destroyed. The only IN-PLACE spec change is
-`ACCEPT_CHALLENGE`. Canon v3.7 formalizes this same no-cascade behaviour but frames revision as **re-ASSIGN (not
-a CANCEL) → REVIEW** and abandon as the two-step `CANCEL→CANCELLING→CANCEL_ACK→CANCELLED` handshake — a
-code-sync framing item (see the divergence note above).
+**Surface-don't-destroy** (canon v3.7, SYNCED). abandon = `CANCEL` → opens the handshake and cascades the
+subtree (its sub-work served a contract that no longer exists, §7.1); each node settles CANCELLING→CANCELLED
+on its executor's CANCEL_ACK (or timeout — cancellation is authoritative). revise = re-`ASSIGN` (same id) →
+the node continues under a new contract in REVIEW: its **subtree is RETAINED, no cascade**; coverage staleness
+(uncovered new criterion / dangling mapping) is SURFACED by CHECK-1 / non-redundancy for the agent to resolve
+∨ declare, not destroyed. The only IN-PLACE spec change is `ACCEPT_CHALLENGE`.
 
 ## Closure invariant (proven)
 - **Static:** every authored-state write lives in `core/graph/mutations.py::apply`, called ONLY by
   `engine/loop.py::_execute_effects` (the event loop), which records an audit entry per signal.
 - **Build:** `decompose` builds THROUGH the FSM (`build_graph_live`); the old offline `build_graph` (direct
   `save_task`) was DELETED — one build path, no offline authored-state write.
-- **Single residual (dormant, off-surface):** `add_dependency(discovered=True)` writes a stored edge without a
-  signal (declared-vs-discovered is a canon concept §7.2/FM-4, but no signal emits the discovered edge today and
-  it is off every HTTP/MCP/CLI surface). Canonical home = a BLOCK effect (v2/E3, BLOCK-provenance). TODO in code.
+- **Discovered-Dep is signal-driven (v3.7, closed):** BLOCK carrying `blocker_task_id` emits RECORD_DEP
+  (provisional edge), RESOLVE_BLOCK emits ADJUDICATE_DEP (confirm/re-attribute/retract) — both through
+  `mutations.apply` (§6.2/§7.2). `add_dependency(discovered=True)` remains as a test/offline convenience
+  only, off every HTTP/MCP/CLI surface.
 - **Derived caches** (check results, `verified`, critique, recommendation) persist but carry NO authored-contract
   state — recomputable projections of signal-driven state, not mutations.
 

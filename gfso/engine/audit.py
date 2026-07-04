@@ -25,6 +25,7 @@ class AuditEntry:
     result: Optional[str] = None
     failed_criteria: tuple[str, ...] = ()
     action: Optional[str] = None
+    in_flight: Optional[str] = None  # CANCEL_ACK: executor's in-flight state at cancellation (T11, §6.3)
 
 
 class AuditLog:

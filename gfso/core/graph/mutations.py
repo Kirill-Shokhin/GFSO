@@ -6,7 +6,7 @@ from typing import Optional
 
 from gfso.core.types import (
     TaskId, Task, State, MutationType, DoneReason,
-    MutateGraph, CriterionMapping, TERMINAL_STATES,
+    MutateGraph, CriterionMapping, DepEdge, TERMINAL_STATES,
 )
 from .model import Graph
 
@@ -34,6 +34,10 @@ def apply(graph: Graph, effect: MutateGraph) -> list[TaskId]:
             return []
         case MutationType.STORE_RECOMMENDATION:
             return []
+        case MutationType.RECORD_DEP:
+            return _record_dep(graph, effect)
+        case MutationType.ADJUDICATE_DEP:
+            return _adjudicate_dep(graph, effect)
         case _:
             log.warning(f"unhandled mutation type: {effect.mutation}")
             return []
@@ -54,7 +58,7 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
     if effect.spec is not None and task.spec.criteria != effect.spec.criteria:
         raise InvariantViolation(
             f"criteria immutability violated for {effect.task_id}: "
-            f"criteria change requires CANCEL + re-ASSIGN"
+            f"criteria change requires revision (re-ASSIGN, §6.4 Inv-1) or the CHALLENGE channel"
         )
 
     # Track challenge for q_T metric
@@ -68,12 +72,14 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
 
     graph.save_task(task)
 
-    # Cascade: if task moved to DONE with CANCELLED reason, return children for cascade
-    if new_state == State.DONE and effect.done_reason == DoneReason.CANCELLED:
+    # Cascade fires on CANCEL, i.e. on ENTERING CANCELLING (§6.2: the protocol sends CANCEL to every
+    # descendant — each child then runs its own CANCEL→CANCELLING→CANCELLED handshake). Children already
+    # settling (CANCELLING) or terminal are skipped.
+    if new_state == State.CANCELLING:
         children = graph.get_children(effect.task_id)
         return [
             c.id for c in children
-            if c.state not in TERMINAL_STATES
+            if c.state not in TERMINAL_STATES and c.state != State.CANCELLING
         ]
 
     return []
@@ -112,6 +118,55 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
             if new:
                 parent.criterion_mappings = parent.criterion_mappings + new
                 graph.save_task(parent)
+    return []
+
+
+def _record_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
+    """BLOCK named an undeclared prerequisite node → provisional discovered-Dep edge (§6.2/§7.2).
+
+    Two-phase record: this registers provisional (provenance = the BLOCK event, T11); RESOLVE_BLOCK
+    adjudicates. A cyclic discovered edge is RECORDED (the cycle is the FM-4 finding to surface, not
+    reject). Idempotent per (from, to)."""
+    if effect.dep_from is None:
+        log.error(f"RECORD_DEP without dep_from for {effect.task_id}")
+        return []
+    if graph.get_task(effect.dep_from) is None:
+        # §6.2: only a producible in-scope artifact (an existing candidate producer node) promotes to a Dep
+        # edge; a non-node blocker is the FM-5 currency line — nothing to record.
+        log.warning(f"RECORD_DEP: blocker {effect.dep_from} is not a node — no edge (FM-5 line)")
+        return []
+    if any(e.from_id == effect.dep_from and e.to_id == effect.task_id
+           for e in graph._storage.get_dep_edges()):
+        return []
+    graph._storage.add_dep_edge(DepEdge(effect.dep_from, effect.task_id,
+                                        discovered=True, glue=effect.glue, provisional=True))
+    return []
+
+
+def _adjudicate_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
+    """RESOLVE_BLOCK adjudicates the provisional discovered-Dep(s) targeting this task (§6.2):
+    no payload → CONFIRM (provisional=False); dep_external → RETRACT (blocker non-producible — the FM-5
+    line, not a Dep); dep_from → RE-ATTRIBUTE (retract the mis-attributed provisional, write the real
+    source, confirmed). An escalated-unresolved provisional is simply never adjudicated — it stays
+    counted (the hole was real)."""
+    provisional = [e for e in graph._storage.get_dep_edges()
+                   if e.to_id == effect.task_id and e.provisional]
+    if effect.dep_external:
+        for e in provisional:
+            graph._storage.remove_dep_edge(e.from_id, e.to_id)
+        return []
+    if effect.dep_from is not None:
+        glue = provisional[0].glue if provisional else ""
+        for e in provisional:
+            graph._storage.remove_dep_edge(e.from_id, e.to_id)
+        if graph.get_task(effect.dep_from) is not None:
+            graph._storage.add_dep_edge(DepEdge(effect.dep_from, effect.task_id,
+                                                discovered=True, glue=glue, provisional=False))
+        return []
+    for e in provisional:  # confirm
+        graph._storage.remove_dep_edge(e.from_id, e.to_id)
+        graph._storage.add_dep_edge(DepEdge(e.from_id, e.to_id, discovered=True,
+                                            glue=e.glue, provisional=False))
     return []
 
 

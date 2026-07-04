@@ -941,6 +941,45 @@ avg **74% → 81%**, climb 9/10 (T04 financial-close non-climb; T08 compiler bes
 (Sonnet ~81% / Opus ~96%) is a measured **boundary**, not a defect. **Did NOT prove** absolute completeness (no
 such target — §4) nor the method's execution-value (= E3). Full table in `CONVERGENCE.md`.
 
+## 12. decompose() productization measurements — 2026-07-03
+
+**Setup.** `auto_decompose` (the frozen E2 prompts, headless Sonnet one-shots, deterministic
+wholesale build + bounded repair). Quality instrument = the frozen blind-judge protocol
+(`experiments/e2_agent/prompt_judge.md`) against the frozen T01 reference (45 items). Speed probes on
+one simple task (a wordfreq CLI), n=1 per variant — engineering telemetry, not statistics.
+
+**Quality (coverage /45, blind judge).** depth=1: graph 28, prose basis 29. depth=2: graph 35,
+basis **41 (91%)** — the depth dial moves both artifact classes (+7 graph, +12 basis), and the
+depth-2 basis exceeds E2's 3-iteration converged Sonnet arm (36/45). Ballast (near-duplicate points)
+falls with iteration (33→14 on graphs). Caveats: judge-instance variance ≈ ±2–3 items; the reference's
+N section predates the v3.7 risk-vs-scope split, so GRAPH artifacts structurally forfeit most N items
+(v3.7 deliberately keeps scope boundaries out of the graph's risk register — an instrument-convention
+mismatch, not a content loss).
+
+**Reliability (found live, closed in code).** (1) Cross-tree id collision: two decompositions of
+similar domains share LLM-chosen child ids, and a colliding ASSIGN is a same-id REVISION of the OTHER
+tree's node — observed corrupting both graphs; closed by namespacing children under their root
+(`{root}.{id}`), regression-tested. (2) LLM-JSON parse failures (literal control chars in long string
+fields) cost a full repair call each; closed by tolerant parsing (0 retries after the fix). (3) Repair
+calls became field-level PATCHES: 0.9–3.5k output tokens vs 33.7k full-spec re-emission; observed
+live repairing a real Dep-cycle the DAG check caught.
+
+**Speed (simple task, depth=1).** Floor ≈ **115s** = search 42s (3.5k out) + final audit 60–80s
+(6.6–8.5k out) + deterministic build ~2s; CLI overhead ~3s/call. Measured NEGATIVE results:
+thinking=0 breaks mapping-name discipline (drift → repair, net slower); a thinking cap ≥ the calls'
+natural usage is a no-op; a lean (structure-only) final at depth=1 saves nothing (thinking dominates
+the saved emission) and drifted names in 3/3 probes while the prose-first final ran clean in 2/2 —
+hence the adopted emission policy: depth=1 prose-first, depth≥2 lean (there the saved re-emission is
+real).
+
+**Semantic graph-validation** (the decompose SEARCH prompt in diff mode over ONE decomposition level =
+node + all children, gated on clean L0/L1): live on the wordfreq graph — 11 substantive advisory
+findings (42s / 3.5k out).
+
+Artifacts (local, gitignored): `runs/v2_t01/` (candidates + judge verdicts), `runs/v2_speed/`.
+
+---
+
 **Policy (set 2026-06-05):** this log is **empirical evidence only**. Agent-process material —
 critic-round narratives, session state, next-steps/plans, my own error-corrections, "what's done /
 what remains" — does **NOT** belong here; it lives in agent memory. The E1 empirical study is

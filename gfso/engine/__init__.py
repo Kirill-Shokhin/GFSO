@@ -123,18 +123,17 @@ class Engine:
     # === Authoring operations (UPPER layer — desugar to the 12 signals, NOT new signals) ===
 
     def revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId) -> Task:
-        """Re-author a node's spec — canon §6.4 Inv-1: a spec is IMMUTABLE after ASSIGN, so a change is
-        **CANCEL + re-ASSIGN**, never an in-place edit. The old node becomes a tombstone (§7.3.1, its id
-        spent); a fresh node (new id) carries `new_spec`, the same parent/Del, and re-declares the parent
-        criteria it covered. Returns the NEW node (its id differs from `task_id`).
+        """Revise a node's spec — canon v3.7 §6.4 Inv-1: a packet change on a live node = **re-ASSIGN under
+        the SAME id → REVIEW** (NOT the CANCEL signal). The executor re-ACCEPTs/CHALLENGEs the new contract;
+        each version is appended to the log (Inv-7: the immutable record is the LOG, not the node).
 
-        `agent` must be the issuer (CANCEL and ASSIGN are issuer signals — the FSM validates). The subtree is
-        RETAINED (revise ≠ abandon — the node continues under a new contract, same id): re-authoring does NOT
-        cascade-cancel children. If a criteria change stales a child's coverage, that surfaces as a CHECK-1
-        failure the agent must resolve (surface-don't-destroy). Only a genuine abandon (raw CANCEL) cascades.
-        The only IN-PLACE spec change is ACCEPT_CHALLENGE (executor-initiated negotiation, FM-7→FM-5).
+        `agent` must be the issuer (ASSIGN is an issuer signal — validated). The subtree is RETAINED
+        (revision ≠ abandonment): no cascade; coverage staleness surfaces via CHECK-1 + non-redundancy/
+        CHECK-1b (dangling covers) + CHECK-3 (Dep consumers) for the agent to resolve (surface-don't-destroy).
+        Only a genuine abandon (CANCEL → CANCELLING → CANCELLED) cascades. The only IN-PLACE spec change is
+        ACCEPT_CHALLENGE (executor-initiated negotiation, FM-7→FM-5).
         """
-        return self._cancel_and_reassign(task_id, new_spec, agent)
+        return self._revise(task_id, new_spec, agent)
 
     def reneglect(self, task_id: TaskId, neglected: tuple, agent: AgentId) -> Task:
         """UPPER convenience = read-modify-write over REVISE: replace a node's NEGLECTED, keep the rest.
@@ -158,14 +157,14 @@ class Engine:
         return self.revise(task_id, new_spec, agent)
 
     def reassign(self, task_id: TaskId, new_assignee: AgentId) -> Task:
-        """UPPER: change a node's executor (Del). Canon Inv-1 fixes Del(t) at ASSIGN too → a change is
-        CANCEL + re-ASSIGN with the new executor (the issuer acts; q_Del↑). Returns the NEW node."""
+        """UPPER: change a node's executor (Del). Canon Inv-1 fixes Del(t) at ASSIGN too → a change is a
+        revision: re-ASSIGN (same id) carrying the new executor (the issuer acts; q_Del↑). Same node returned."""
         t = self._graph.get_task(task_id)
         if t is None:
             raise ValueError(f"task {task_id} not found")
         parent = self._graph.get_parent(task_id)
         issuer = parent.assignee if parent and parent.assignee else t.assignee
-        return self._cancel_and_reassign(task_id, t.spec, issuer, new_assignee=new_assignee)
+        return self._revise(task_id, t.spec, issuer, new_assignee=new_assignee)
 
     # === Query API ===
 
@@ -209,8 +208,8 @@ class Engine:
     # === L2 critic / validation API ===
 
     def validate_decomposition(self, node_id: TaskId, llm: Optional[LLMProviderPort] = None):
-        """L2 validate — currently the STRUCTURAL gate only (cached L0/L1, eager-fresh). The semantic
-        hole-hunt (search(diff)⊕audit, the same machinery as decompose) is deferred — see gfso/critic.
+        """L2 validate — the STRUCTURAL gate (cached L0/L1, eager-fresh) + the semantic hole-hunt
+        (SEARCH in diff mode over the projection — same machinery as decompose; gated on a clean L0/L1).
         Stores the critique as the validation record + sets verified=True (advisory). Returns a NodeCritique."""
         import json
         from dataclasses import asdict
@@ -240,9 +239,8 @@ class Engine:
             "node": critique.node_id,
             "gate_passed": critique.gate_passed,
             "l0l1_failures": list(critique.l0l1_failures),
-            "n_holes": len(critique.holes),
-            "n_confirmed": len(critique.confirmed),
-            "n_dismissed": len(critique.holes) - len(critique.confirmed) if critique.gate_passed else 0,
+            "semantic_covered": critique.semantic_covered,
+            "findings_chars": len(critique.semantic_findings),
         }
         with open(self._critique_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
@@ -271,6 +269,13 @@ class Engine:
 
     def on_reject(self, callback: RejectCallback) -> None:
         self._events.on_reject(callback)
+
+    def on_info(self, callback) -> None:
+        self._events.on_info(callback)
+
+    def emit_info(self, source: str, message: str) -> None:
+        """Broadcast a pipeline-progress line to live observers (UI status strip via /ws/events)."""
+        self._events.emit_info(source, message)
 
     # === Audit API ===
 
@@ -329,10 +334,10 @@ class Engine:
         cyclic (the cycle IS the FM-4 finding to surface, not hide). Affects q_Dep.
         """
         if discovered:
-            # OPEN ENDPOINT (v2/E3, BLOCK-provenance): this is the ONE remaining graph-relation write that does
-            # NOT go through a signal (a direct storage edge). Today it is DORMANT — no signal emits it (BLOCK
-            # records no edge) and it is off every interface surface (tools/api/mcp/cli pass discovered=False).
-            # TODO: route discovered deps through a logged BLOCK effect so this too is a signal-driven mutation.
+            # Test/offline convenience ONLY. The canonical runtime path for a discovered Dep is the BLOCK
+            # signal carrying `blocker_task_id` (→ RECORD_DEP effect, provisional; RESOLVE_BLOCK adjudicates —
+            # §6.2/§7.2, v3.7). This direct write stays off every transport surface (tools/api/mcp/cli pass
+            # discovered=False).
             self._graph._storage.add_dep_edge(DepEdge(from_id, to_id, True, glue))
             self._recompute_seam_parents(from_id, to_id)
             return
@@ -347,7 +352,7 @@ class Engine:
             dep_crit = Criteria(name=f"dep__{from_id}", description=glue, depends_on=from_id)
             new_spec = Spec(to.spec.description, to.spec.criteria + (dep_crit,),
                             to.spec.neglected, to.spec.risk_components, name=to.spec.name)
-            self._cancel_and_reassign(to_id, new_spec, self._issuer_of(to_id))
+            self._revise(to_id, new_spec, self._issuer_of(to_id))
         self._recompute_seam_parents(from_id, to_id)
 
     def remove_dependency(self, from_id: TaskId, to_id: TaskId) -> None:
@@ -358,7 +363,7 @@ class Engine:
             new_crits = tuple(c for c in to.spec.criteria if c.depends_on != from_id)
             new_spec = Spec(to.spec.description, new_crits, to.spec.neglected, to.spec.risk_components,
                             name=to.spec.name)
-            self._cancel_and_reassign(to_id, new_spec, self._issuer_of(to_id))
+            self._revise(to_id, new_spec, self._issuer_of(to_id))
         self._graph._storage.remove_dep_edge(from_id, to_id)
         self._recompute_seam_parents(from_id, to_id)
 
@@ -382,34 +387,27 @@ class Engine:
             raise ValueError(f"child {child_id} not found")
         if criterion_name not in {c.name for c in parent.spec.criteria}:
             raise ValueError(f"no criterion '{criterion_name}' on parent {parent_id}")
-        self._cancel_and_reassign(child_id, child.spec, self._issuer_of(child_id), covers=(criterion_name,))
+        self._revise(child_id, child.spec, self._issuer_of(child_id), covers=(criterion_name,))
         return self._graph.get_task(parent_id)
 
-    def _cancel_and_reassign(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
-                             new_assignee: Optional[AgentId] = None, covers: tuple = ()) -> Task:
-        """Canon Inv-1 (§6.4): a spec/Del change = CANCEL + re-ASSIGN under the SAME id, never an in-place
-        mutation. CANCELs the node (its old contract a logged tombstone, §7.3.1; cascades the subtree —
-        empty for a leaf in planning) then re-ASSIGNs the same id with `new_spec` + the (possibly new)
-        executor → REVIEW. The id-slot persists so references (the parent's mapping, dependents' depends_on)
-        stay valid — re-id would break the graph. `agent` must be the issuer (CANCEL & ASSIGN are issuer
-        signals → FSM-validated). Returns the re-authored node."""
+    def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
+                new_assignee: Optional[AgentId] = None, covers: tuple = ()) -> Task:
+        """Canon v3.7 Inv-1 (§6.4): a spec/Del change = REVISION — ONE re-ASSIGN under the SAME id → REVIEW,
+        never an in-place mutation and never the CANCEL signal (revision ≠ abandonment; no CANCELLING pass,
+        no cascade). The id persists (Inv-7) so references (the parent's mapping, dependents' depends_on)
+        stay valid; the superseded contract lives in the append-only log. `agent` must be the issuer
+        (ASSIGN is an issuer signal → FSM-validated). Returns the revised node (back in REVIEW —
+        the executor must re-ACCEPT)."""
         old = self._graph.get_task(task_id)
         if old is None:
             raise ValueError(f"task {task_id} not found")
-        # reassigning=True → this CANCEL is a revise, not an abandon: the subtree is NOT cascaded (the node
-        # continues under a new contract). Any coverage staleness from a criteria change surfaces via the
-        # recomputed CHECKs, not by destroying valid sub-work (surface-don't-destroy).
-        c = self.send_signal_sync(SignalData(signal=Signal.CANCEL, task_id=task_id, source=agent,
-                                             reassigning=True))
-        if c is None or c.rejected:
-            raise ValueError(
-                f"revise rejected at CANCEL (state={self.get_state(task_id)}): the node is terminal, or "
-                f"the agent is not its issuer.")
         a = self.send_signal_sync(SignalData(
             signal=Signal.ASSIGN, task_id=task_id, spec=new_spec, source=agent,
             assignee=new_assignee or old.assignee, covers=tuple(covers)))
         if a is None or a.rejected:
-            raise ValueError(f"revise rejected at re-ASSIGN (state={self.get_state(task_id)}).")
+            raise ValueError(
+                f"revise rejected at re-ASSIGN (state={self.get_state(task_id)}): the node is terminal, "
+                f"in TIMEOUT/CANCELLING (no revision there, §6.3), or the agent is not its issuer.")
         self._recompute_checks(task_id)          # the node kept its subtree → refresh its own coverage/checks
         if old.parent_id:
             self._recompute_checks(old.parent_id)
@@ -489,15 +487,11 @@ class Engine:
 
     # === Execution forcing-point ===
 
-    def next_step(self, root_id: Optional[TaskId] = None) -> dict:
-        """The execution forcing-point. From the graph's CURRENT state, return the ONE next required action
-        for the executor agent — or `complete=True`. Children before parents (a parent only DELIVERs once its
-        children PASS); completion is GATED on the root being DONE/PASS, so the agent cannot stop early. The
-        agent loops this and does exactly what `directive` says: the graph drives, the agent executes.
-
-        Returns a dict: {complete, [task_id, name, state, action, criteria], directive}. `action` ∈
-        {accept, execute, deliver, validate, resolve, rework}. Single-agent / self-report (v1): no external
-        verification yet — it only forces the agent THROUGH every node, not that the work is real."""
+    def _frontier(self, root_id: Optional[TaskId] = None):
+        """Collect ALL currently actionable candidates, priority-ordered (children before parents,
+        dep order respected). Returns either a terminal dict ({complete}/{stuck}/empty-graph) or a list of
+        (priority, task, action, directive) tuples. Shared by next_step (v1 single directive) and
+        next_steps (v2 parallel frontier)."""
         def _passed(t: Task) -> bool:
             return t.state == State.DONE and t.done_reason == DoneReason.PASS
 
@@ -516,7 +510,7 @@ class Engine:
             """A consumer is executable only once every producer it depends on has PASSED (dep order)."""
             return all(_passed(self._graph.get_task(e.from_id)) for e in deps if e.to_id == tid)
 
-        best = None  # (priority, task, action, directive); lower priority acts first (children before parents)
+        cands = []  # (priority, task, action, directive); lower priority acts first
         for t in tasks:
             kids = self.get_active_children(t.id)
             crits = [c.name for c in t.spec.criteria if not c.depends_on]
@@ -551,15 +545,22 @@ class Engine:
                 cand = (6, t, "deliver",
                         f"AGGREGATE '{t.id}' ({nm}): all its children PASSED — integrate them and signal "
                         f"DELIVER (the parent's criteria {crits} must hold over the REAL aggregate, not mocks).")
+            elif t.state == State.CANCELLING:
+                # settlement of the cancellation handshake (§6.3) — never preempts real work (lowest priority)
+                cand = (7, t, "cancel_ack",
+                        f"CONFIRM cancellation of '{t.id}' ({nm}): signal CANCEL_ACK, reporting the in-flight "
+                        f"state at cancellation (what was done/undone) via `in_flight`.")
             else:
                 continue  # EXECUTING with unfinished children, terminal, or IDLE → its frontier is elsewhere
-            if best is None or cand[0] < best[0]:
-                best = cand
+            cands.append(cand)
 
-        if best is None:
+        if not cands:
             return {"complete": False, "stuck": True,
                     "directive": "Stuck: no actionable node, but the root is not DONE/PASS — inspect node states."}
-        _, t, action, directive = best
+        cands.sort(key=lambda c: (c[0], str(c[1].id)))
+        return cands
+
+    def _step_out(self, t: Task, action: str, directive: str) -> dict:
         # Surface the structural gate the executor can't otherwise see: a node cannot legitimately PASS while
         # L0/L1 checks fail (e.g. CHECK-4 empty NEGLECTED, CHECK-1 coverage) — hand them over with the directive.
         unmet = [f"{c.check_name}: {c.details}" for c in self.get_checks(t.id) if not c.passed and not c.skipped]
@@ -568,6 +569,40 @@ class Engine:
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
                 "state": t.state.name, "action": action, "unmet_checks": unmet,
                 "criteria": [c.name for c in t.spec.criteria if not c.depends_on], "directive": directive}
+
+    def next_step(self, root_id: Optional[TaskId] = None) -> dict:
+        """The execution forcing-point (v1, single-agent form). From the graph's CURRENT state, return the
+        ONE next required action — or `complete=True`. Children before parents (a parent only DELIVERs once
+        its children PASS); completion is GATED on the root being DONE/PASS, so the agent cannot stop early.
+
+        Returns a dict: {complete, [task_id, name, state, action, criteria], directive}. `action` ∈
+        {accept, execute, deliver, validate, resolve, rework, cancel_ack}. For parallel delegation use
+        next_steps (the full frontier)."""
+        result = self._frontier(root_id)
+        if isinstance(result, dict):
+            return result
+        _, t, action, directive = result[0]
+        return self._step_out(t, action, directive)
+
+    def next_steps(self, root_id: Optional[TaskId] = None) -> dict:
+        """The PARALLEL frontier (v2): every currently actionable node, priority-ordered, with a
+        `parallel_ok` marker on the execute-class steps.
+
+        All returned `execute` steps are pairwise independent by construction: each is a leaf whose Dep
+        producers have PASSED (§2.2 dep order), and distinct ready leaves share no unresolved edge — so the
+        orchestrator may delegate them to executors CONCURRENTLY. Non-execute steps (accept / validate /
+        rework / resolve / deliver / cancel_ack) are issuer-side and cheap — do them in the returned order
+        before/between delegations. Returns {complete, steps: [step...]} (each step shaped like next_step's
+        output + `parallel_ok`)."""
+        result = self._frontier(root_id)
+        if isinstance(result, dict):
+            return result if result.get("complete") or "steps" in result else {**result, "steps": []}
+        steps = []
+        for _, t, action, directive in result:
+            step = self._step_out(t, action, directive)
+            step["parallel_ok"] = action == "execute"
+            steps.append(step)
+        return {"complete": False, "steps": steps}
 
     def graph_holes(self, root_id: Optional[TaskId] = None) -> list[dict]:
         """Every UNMET structural check across the whole graph (or the subtree under root_id) — the full gap

@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 TransitionCallback = Callable[[TaskId, State, State, Signal], None]
 ErrorCallback = Callable[[TaskId, Signal, Exception], None]
 RejectCallback = Callable[[TaskId, Signal, State], None]
+InfoCallback = Callable[[str, str], None]  # (source, message) — pipeline progress, not graph state
 
 
 class EventBus:
@@ -19,6 +20,7 @@ class EventBus:
         self._on_transition: list[TransitionCallback] = []
         self._on_error: list[ErrorCallback] = []
         self._on_reject: list[RejectCallback] = []
+        self._on_info: list[InfoCallback] = []
 
     def on_transition(self, callback: TransitionCallback) -> None:
         self._on_transition.append(callback)
@@ -28,6 +30,9 @@ class EventBus:
 
     def on_reject(self, callback: RejectCallback) -> None:
         self._on_reject.append(callback)
+
+    def on_info(self, callback: InfoCallback) -> None:
+        self._on_info.append(callback)
 
     def emit_transition(self, task_id: TaskId, old_state: State, new_state: State, signal: Signal) -> None:
         for cb in self._on_transition:
@@ -49,3 +54,12 @@ class EventBus:
                 cb(task_id, signal, state)
             except Exception:
                 log.exception(f"callback error in on_reject for {task_id}")
+
+    def emit_info(self, source: str, message: str) -> None:
+        """Pipeline progress (e.g. the decompose stages) — presentation events for live observers
+        (the UI status strip), NOT graph mutations."""
+        for cb in self._on_info:
+            try:
+                cb(source, message)
+            except Exception:
+                log.exception(f"callback error in on_info from {source}")

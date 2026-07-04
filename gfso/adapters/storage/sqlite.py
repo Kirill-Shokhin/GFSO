@@ -62,7 +62,8 @@ class SqliteStorage(StoragePort):
                 from_id TEXT NOT NULL,
                 to_id TEXT NOT NULL,
                 discovered INTEGER DEFAULT 0,
-                glue TEXT DEFAULT ''
+                glue TEXT DEFAULT '',
+                provisional INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS critiques (
                 task_id TEXT PRIMARY KEY,
@@ -73,6 +74,8 @@ class SqliteStorage(StoragePort):
         dep_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(dep_edges)")}
         if "glue" not in dep_cols:
             self._conn.execute("ALTER TABLE dep_edges ADD COLUMN glue TEXT DEFAULT ''")
+        if "provisional" not in dep_cols:
+            self._conn.execute("ALTER TABLE dep_edges ADD COLUMN provisional INTEGER DEFAULT 0")
         task_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
         if "verified" not in task_cols:
             self._conn.execute("ALTER TABLE tasks ADD COLUMN verified INTEGER DEFAULT 0")
@@ -136,17 +139,23 @@ class SqliteStorage(StoragePort):
         return tuple(CriterionMapping(m["criterion_name"], TaskId(m["child_id"])) for m in json.loads(raw))
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:
+        # Read-side migration: pre-v3.7 DBs stored cancellation as DONE(reason=CANCELLED); canon v3.7
+        # gives it its own terminal state (§6.3). Map on read — no new writes produce the legacy form.
+        state = State[row["state"]]
+        done_reason = DoneReason[row["done_reason"]] if row["done_reason"] else None
+        if state == State.DONE and done_reason == DoneReason.CANCELLED:
+            state, done_reason = State.CANCELLED, None
         t = Task(
             id=TaskId(row["id"]),
             spec=self._spec_from_json(row["spec_json"]),
-            state=State[row["state"]],
+            state=state,
             parent_id=TaskId(row["parent_id"]) if row["parent_id"] else None,
             assignee=AgentId(row["assignee"]) if row["assignee"] else None,
             iteration=row["iteration"],
             max_iterations=row["max_iterations"],
             deadline=datetime.fromisoformat(row["deadline"]) if row["deadline"] else None,
             created_at=datetime.fromisoformat(row["created_at"]),
-            done_reason=DoneReason[row["done_reason"]] if row["done_reason"] else None,
+            done_reason=done_reason,
             autonomy=AutonomyLevel[row["autonomy"]],
         )
         t.was_challenged = bool(row["was_challenged"])
@@ -241,8 +250,8 @@ class SqliteStorage(StoragePort):
 
     def add_dep_edge(self, edge: DepEdge) -> None:
         self._conn.execute(
-            "INSERT INTO dep_edges (from_id, to_id, discovered, glue) VALUES (?, ?, ?, ?)",
-            (edge.from_id, edge.to_id, int(edge.discovered), edge.glue),
+            "INSERT INTO dep_edges (from_id, to_id, discovered, glue, provisional) VALUES (?, ?, ?, ?, ?)",
+            (edge.from_id, edge.to_id, int(edge.discovered), edge.glue, int(edge.provisional)),
         )
         self._conn.commit()
 
@@ -254,7 +263,8 @@ class SqliteStorage(StoragePort):
 
     def get_dep_edges(self) -> list[DepEdge]:
         rows = self._conn.execute("SELECT * FROM dep_edges").fetchall()
-        return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]), r["glue"] or "") for r in rows]
+        return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]),
+                        r["glue"] or "", bool(r["provisional"])) for r in rows]
 
     def store_critique(self, task_id: TaskId, critique_json: str) -> None:
         self._conn.execute(

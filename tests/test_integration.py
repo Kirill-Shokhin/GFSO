@@ -36,12 +36,11 @@ def _engine(agent=None, validate=False) -> Engine:
     )
 
 
-def test_revise_is_cancel_reassign_same_id_no_cascade():
-    """Canon Inv-1 (§6.4): REVISE = CANCEL + re-ASSIGN under the SAME id — the cancelled contract is a logged
-    tombstone (§7.3.1), the id-slot persists so graph references stay valid. The subtree is RETAINED (revise ≠
-    abandon — the node continues under a new contract): re-authoring does NOT cascade-cancel children. Coverage
-    staleness from a criteria change SURFACES via CHECK-1 (surface-don't-destroy). The gate is the FSM's:
-    CANCEL & ASSIGN need the issuer role."""
+def test_revise_is_reassign_same_id_no_cascade():
+    """Canon v3.7 Inv-1 (§6.4): REVISION = re-ASSIGN under the SAME id → REVIEW (NOT the CANCEL signal —
+    no CANCELLING pass), each version appended to the log (Inv-7). The subtree is RETAINED (revision ≠
+    abandonment): no cascade. Coverage staleness from a criteria change SURFACES via CHECK-1
+    (surface-don't-destroy). The gate is the FSM's: ASSIGN needs the issuer role."""
     from gfso.adapters.agents.human import HumanAgent
     from gfso.core.types import NeglectedItem
     import pytest
@@ -52,14 +51,15 @@ def test_revise_is_cancel_reassign_same_id_no_cascade():
     def sp(d, *c, neg=()):
         return Spec(d, tuple(Criteria(n, t) for n, t in c), neglected=neg)
 
-    # Leaf revise (the planning case): SAME id, spec applied, logged as CANCEL + re-ASSIGN, no cascade.
+    # Leaf revise (the planning case): SAME id, spec applied, logged as a second ASSIGN — NO CANCEL involved.
     eng.assign_task(TaskId("leaf"), sp("leaf", ("a", "a")), A); eng.wait_idle()
     eng.revise(TaskId("leaf"), sp("leaf", ("a", "a2"), neg=(NeglectedItem("ext"),)), A); eng.wait_idle()
     lf = eng.get_task(TaskId("leaf"))
     assert lf.id == TaskId("leaf")                                    # SAME id — references survive
+    assert lf.state == State.REVIEW                                   # revision → REVIEW (executor re-ACCEPTs)
     assert lf.spec.criteria[0].description == "a2" and [n.item for n in lf.spec.neglected] == ["ext"]
     sigs = [a.signal for a in eng.audit_log(TaskId("leaf")) if not a.rejected]
-    assert Signal.CANCEL in sigs and sigs.count(Signal.ASSIGN) >= 2   # CANCEL + re-ASSIGN, both logged
+    assert Signal.CANCEL not in sigs and sigs.count(Signal.ASSIGN) >= 2  # re-ASSIGN logged, no CANCEL
 
     # Parent revise: the subtree is RETAINED (revise ≠ abandon). Changing only NEGLECTED here leaves coverage
     # intact → the child survives, no cascade.
@@ -225,8 +225,9 @@ def test_challenge_flow():
     engine.stop()
 
 
-def test_cancel_cascade():
-    """Parent CANCEL cascades to children."""
+def test_cancel_cascade_two_step_handshake():
+    """v3.7 §6.2/§6.3: CANCEL opens the handshake (→ CANCELLING) and cascades CANCEL to the subtree;
+    each node settles to CANCELLED on its executor's CANCEL_ACK (in_flight logged, T11)."""
 
     class NoopAgent(AgentPort):
         def dispatch(self, agent_id, payload):
@@ -242,10 +243,76 @@ def test_cancel_cascade():
 
     engine.start()
     engine.send_signal(SignalData(signal=Signal.CANCEL, task_id=TaskId("p"), reason="cancelled"))
-
     engine.wait_idle()
-    assert engine.get_state(TaskId("p")) == State.DONE
-    assert engine.get_state(TaskId("c1")) == State.DONE
+
+    # Handshake open on parent AND (via cascade CANCEL) on the child
+    assert engine.get_state(TaskId("p")) == State.CANCELLING
+    assert engine.get_state(TaskId("c1")) == State.CANCELLING
+
+    # Executor settles both with CANCEL_ACK → CANCELLED (terminal, V=⊥, no done_reason)
+    for tid in ("p", "c1"):
+        engine.send_signal(SignalData(signal=Signal.CANCEL_ACK, task_id=TaskId(tid),
+                                      source=AgentId("a"), in_flight="stopped mid-work"))
+    engine.wait_idle()
+    for tid in ("p", "c1"):
+        t = engine.get_task(TaskId(tid))
+        assert t.state == State.CANCELLED and t.done_reason is None
+    acked = [e for e in engine.audit_log(TaskId("p")) if e.signal == Signal.CANCEL_ACK and not e.rejected]
+    assert acked and acked[0].in_flight == "stopped mid-work"   # in-flight report logged (T11)
+    engine.stop()
+
+
+def test_block_records_provisional_discovered_dep_and_resolve_adjudicates():
+    """v3.7 §6.2/§7.2 two-phase discovered-Dep: BLOCK naming a prerequisite NODE records a provisional
+    discovered edge (provenance = the BLOCK); RESOLVE_BLOCK adjudicates — confirm (default), re-attribute
+    (corrected blocker_task_id), or retract (external=True, non-producible → FM-5 line). Feeds q_Dep."""
+
+    class NoopAgent(AgentPort):
+        def dispatch(self, agent_id, payload):
+            return None
+
+    engine = _engine(NoopAgent())
+    A = AgentId("a")
+    producer = Task(id=TaskId("prod"), spec=Spec("producer", ()), assignee=A, state=State.EXECUTING)
+    other = Task(id=TaskId("other"), spec=Spec("other producer", ()), assignee=A, state=State.EXECUTING)
+    consumer = Task(id=TaskId("cons"), spec=Spec("consumer", ()), assignee=A, state=State.EXECUTING)
+    for t in (producer, other, consumer):
+        engine.graph.save_task(t)
+    engine.start()
+
+    def _edges():
+        return [(e.from_id, e.to_id, e.provisional) for e in engine.get_dependencies() if e.discovered]
+
+    # BLOCK naming the prerequisite → provisional edge; q_Dep denominator becomes non-vacuous
+    engine.send_signal(SignalData(signal=Signal.BLOCK, task_id=TaskId("cons"), source=A,
+                                  reason="needs prod's schema", blocker_task_id=TaskId("prod")))
+    engine.wait_idle()
+    assert _edges() == [(TaskId("prod"), TaskId("cons"), True)]
+    assert engine.metrics()["q_Dep"] == 0.0  # 0 declared / 1 discovered
+
+    # Plain RESOLVE_BLOCK → confirms (provisional=False, still counted)
+    engine.send_signal(SignalData(signal=Signal.RESOLVE_BLOCK, task_id=TaskId("cons"), source=A,
+                                  action="prod delivered the schema"))
+    engine.wait_idle()
+    assert _edges() == [(TaskId("prod"), TaskId("cons"), False)]
+
+    # Mis-attribution → re-attribute to the real source on resolve
+    engine.send_signal(SignalData(signal=Signal.BLOCK, task_id=TaskId("cons"), source=A,
+                                  reason="thought it was other", blocker_task_id=TaskId("other")))
+    engine.wait_idle()
+    engine.send_signal(SignalData(signal=Signal.RESOLVE_BLOCK, task_id=TaskId("cons"), source=A,
+                                  blocker_task_id=TaskId("prod")))
+    engine.wait_idle()
+    assert (TaskId("other"), TaskId("cons"), True) not in _edges()      # provisional retracted
+
+    # External (non-producible) blocker → retract on resolve; and a bare BLOCK records nothing
+    engine.send_signal(SignalData(signal=Signal.BLOCK, task_id=TaskId("other"), source=A,
+                                  reason="vendor API down"))            # no blocker_task_id → no edge
+    engine.wait_idle()
+    engine.send_signal(SignalData(signal=Signal.RESOLVE_BLOCK, task_id=TaskId("other"), source=A,
+                                  external=True))
+    engine.wait_idle()
+    assert all(to != TaskId("other") for _, to, _p in _edges())
     engine.stop()
 
 

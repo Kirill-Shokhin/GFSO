@@ -20,6 +20,9 @@ class MutateGraph:
     deadline: datetime | None = None     # CREATE_TASK: T deadline
     max_iterations: int = 3              # CREATE_TASK: rework bound
     covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§2.2)
+    dep_from: TaskId | None = None       # RECORD_DEP: prerequisite node; ADJUDICATE_DEP: corrected source (§6.2)
+    dep_external: bool = False           # ADJUDICATE_DEP: retract — blocker non-producible (FM-5 line, §6.2)
+    glue: str = ""                       # RECORD_DEP: provenance text (the BLOCK reason)
 
 
 @dataclass(frozen=True)

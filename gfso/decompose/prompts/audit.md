@@ -18,7 +18,8 @@ Reduce everything to a canonical, non-redundant **BASIS**:
 - Re-emit the **FULL** canonical decomposition (not a diff), classified into the basis:
   - **D** — subtasks / components (each a separable piece of work).
   - **Dep** — cross-component dependency seams (an ordered pair, source → target, plus the concrete thing
-    that breaks if the edge is absent).
+    that breaks if the edge is absent). A seam connects TWO DIFFERENT subtasks — never emit a
+    self-dependency (X → X); an internal ordering within one subtask is not a Dep.
   - **V** — criteria: spanning invariants, boundary-state criteria, and failure-mode-as-criterion — each a
     **decidable predicate over the produced result** (not an action description, not a self-report).
   - **N** — declared scope exclusions (each with why it is safely out).

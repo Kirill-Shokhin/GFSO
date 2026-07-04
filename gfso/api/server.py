@@ -244,8 +244,14 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
                 "signal": sig.name, "state": state.name,
             })
 
+        def on_info(source, message):
+            loop.call_soon_threadsafe(q.put_nowait, {
+                "type": "pipeline", "source": source, "msg": message,
+            })
+
         eng.on_transition(on_transition)
         eng.on_reject(on_reject)
+        eng.on_info(on_info)
         try:
             while True:
                 event = await q.get()
@@ -257,6 +263,8 @@ def create_app(engine: Engine, with_mcp: bool = False) -> FastAPI:
                 eng._events._on_transition.remove(on_transition)
             if on_reject in eng._events._on_reject:
                 eng._events._on_reject.remove(on_reject)
+            if on_info in eng._events._on_info:
+                eng._events._on_info.remove(on_info)
 
     if mcp_asgi is not None:
         app.mount("/mcp", mcp_asgi)  # agent surface, SAME Engine the UI's WebSocket observes

@@ -231,7 +231,7 @@ def render(projection: NodeProjection) -> str:
     if p.seams:
         for e in p.seams:
             tag = " (discovered)" if e.discovered else ""
-            out.append(f"- `{e.from_id}` depends on `{e.to_id}`{tag}")
+            out.append(f"- `{e.to_id}` depends on `{e.from_id}`{tag}")
             glue = e.glue.value if isinstance(e.glue, GlueMarker) else e.glue
             out.append(f"  - glue (what must match / what breaks): {glue}")
     else:

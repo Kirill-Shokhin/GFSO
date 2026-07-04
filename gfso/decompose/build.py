@@ -6,11 +6,15 @@ the DepEdge is derived (`graph.dep_edges()`).
 """
 from __future__ import annotations
 
+import logging
+
 from gfso.engine import Engine
 from gfso.core.types import (
     Spec, Criteria, NeglectedItem, CriterionMapping, Predictability, TaskId, AgentId,
     Signal, SignalData, State,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _pred(s):
@@ -20,12 +24,17 @@ def _pred(s):
 
 
 def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root",
-                     assignee: str = "human") -> tuple[Engine, TaskId]:
+                     assignee: str = "human") -> tuple[Engine, TaskId, list[str]]:
     """Build the decomposition into a LIVE (started) engine THROUGH the FSM — the canon-faithful counterpart
     to the offline `build_graph`. The root enters via a logged ASSIGN (if absent); the children via
     `decompose_task` (one ASSIGN each), with each Dep seam declared as a `depends_on` CRITERION **at
     creation** (§2.2 Dep=criteria-content) so no post-hoc `add_dependency` fires (which would CANCEL+re-ASSIGN
-    the consumer and cascade). Every node thus enters the graph by a signal — no `_graph.save_task` bypass."""
+    the consumer and cascade). Every node thus enters the graph by a signal — no `_graph.save_task` bypass.
+
+    Returns (engine, root_id, dropped): `dropped` lists every spec item that could NOT be placed, with its
+    reason — nothing is filtered silently; the caller's repair loop feeds these back to the audit.
+    Re-running with a corrected spec is safe: an ASSIGN on an existing live node is a REVISION (same id,
+    subtree retained, v3.7 §6.4 Inv-1) — wholesale rebuild = wholesale revise."""
     rid, A = TaskId(root_id), AgentId(assignee)
     root_crit = tuple(Criteria(c["name"], c.get("description", "")) for c in d.get("root_criteria", []))
     neg = tuple(
@@ -51,28 +60,50 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
     if engine.get_state(rid) == State.REVIEW:
         engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=rid, source=A)); engine.wait_idle()
 
+    # Child ids are NAMESPACED under the root: spec ids are LLM-chosen domain words (proration_engine, ...)
+    # in a flat global TaskId namespace — two decompositions of similar domains WILL collide, and a colliding
+    # ASSIGN is a same-id REVISION of the OTHER tree's node (observed live: cross-tree corruption). Namespacing
+    # makes collisions impossible by construction; a repair re-build of the SAME root maps to the same ids =
+    # the intended wholesale revision.
+    def ns(cid: str) -> str:
+        return cid if cid.startswith(f"{root_id}.") else f"{root_id}.{cid}"
+
     ids = {str(c["id"]) for c in d.get("subtasks", [])}
+    dropped: list[str] = []  # NOTHING is filtered silently — every dropped item is surfaced (returned + logged)
     deps_by_consumer: dict = {}
     for dep in d.get("deps", []):
         f, t = str(dep.get("from", "")), str(dep.get("to", ""))
-        if f in ids and t in ids and f != t:                 # consumer t depends on producer f (§2.2)
-            seen = deps_by_consumer.setdefault(t, [])
-            if not any(ef == f for ef, _ in seen):           # dedup a repeated (producer→consumer) seam
-                seen.append((f, dep.get("glue", "")))
+        if f == t:
+            dropped.append(f"dep {f}->{t}: self-dependency (audit defect)")
+            continue
+        if f not in ids or t not in ids:
+            dropped.append(f"dep {f}->{t}: endpoint not a subtask id")
+            continue
+        seen = deps_by_consumer.setdefault(t, [])
+        if not any(ef == f for ef, _ in seen):               # dedup a repeated (producer→consumer) seam
+            seen.append((f, dep.get("glue", "")))
 
     children = []
     for c in d.get("subtasks", []):
         cid = str(c["id"])
         crit = [Criteria(x["name"], x.get("description", "")) for x in c.get("criteria", [])]
-        crit += [Criteria(name=f"dep__{f}", description=glue, depends_on=TaskId(f))
+        crit += [Criteria(name=f"dep__{f}", description=glue, depends_on=TaskId(ns(f)))
                  for f, glue in deps_by_consumer.get(cid, [])]
-        children.append((TaskId(cid), Spec(c.get("description", ""), tuple(crit),
-                                           name=c.get("name", "")), A))
+        children.append((TaskId(ns(cid)), Spec(c.get("description", ""), tuple(crit),
+                                               name=c.get("name", "")), A))
 
     valid = {c["name"] for c in d.get("root_criteria", [])}
-    mappings = [CriterionMapping(m["criterion"], TaskId(str(m["child_id"])))
-                for m in d.get("mappings", [])
-                if m.get("criterion") in valid and str(m.get("child_id")) in ids]
+    mappings = []
+    for m in d.get("mappings", []):
+        if m.get("criterion") not in valid:
+            dropped.append(f"mapping '{m.get('criterion')}'->{m.get('child_id')}: no such root criterion "
+                           f"(audit name drift — coverage will show as a CHECK-1 hole)")
+        elif str(m.get("child_id")) not in ids:
+            dropped.append(f"mapping '{m.get('criterion')}'->{m.get('child_id')}: no such subtask id")
+        else:
+            mappings.append(CriterionMapping(m["criterion"], TaskId(ns(str(m["child_id"])))))
     if children:
         engine.decompose_task(rid, children, mappings or None); engine.wait_idle()
-    return engine, rid
+    for item in dropped:
+        log.warning(f"build_graph_live dropped: {item}")
+    return engine, rid, dropped

@@ -22,8 +22,10 @@ def _transition(state, signal, ctx=CTX, **kw):
 
 # === Table row count ===
 
-def test_table_has_19_explicit_rows():
-    assert len(_LOOKUP) == 19  # + CANCEL catch-all = 20 transitions
+def test_table_has_21_explicit_rows():
+    # 19 + (CANCELLING, CANCEL_ACK) + (CANCELLING, TIMEOUT) — v3.7 §6.3 two-step cancellation.
+    # Plus the catch-alls in transition(): universal CANCEL → CANCELLING, revision re-ASSIGN → REVIEW.
+    assert len(_LOOKUP) == 21
 
 
 def test_signal_alphabet_frozen_at_12_p2p_plus_timeout():
@@ -168,14 +170,64 @@ def test_timeout_repeated_timeout():
     assert new_state == State.ESCALATED
 
 
-# === CANCEL catch-all ===
+# === Cancellation — two-step handshake (v3.7 §6.3) ===
 
-@pytest.mark.parametrize("state", list(NON_TERMINAL_STATES))
-def test_cancel_from_any_non_terminal(state):
+@pytest.mark.parametrize("state", sorted(NON_TERMINAL_STATES - {State.CANCELLING}, key=lambda s: s.name))
+def test_cancel_from_any_non_terminal_opens_handshake(state):
     new_state, effects = _transition(state, Signal.CANCEL)
-    assert new_state == State.DONE
-    mg = [e for e in effects if isinstance(e, MutateGraph) and e.done_reason is not None][0]
-    assert mg.done_reason == DoneReason.CANCELLED
+    assert new_state == State.CANCELLING
+    assert not any(e.done_reason for e in effects if isinstance(e, MutateGraph))  # V=⊥, no DONE reason
+
+
+def test_cancelling_rejects_re_cancel():
+    """CANCELLING's sole staffed exit is CANCEL_ACK (§6.3) — a repeated CANCEL is not a row."""
+    assert _transition(State.CANCELLING, Signal.CANCEL) is None
+
+
+def test_cancelling_cancel_ack_settles():
+    new_state, effects = _transition(State.CANCELLING, Signal.CANCEL_ACK, in_flight="half-done, rolled back")
+    assert new_state == State.CANCELLED
+    assert any(isinstance(e, MutateGraph) and e.new_state == State.CANCELLED for e in effects)
+
+
+def test_cancelling_timeout_settles():
+    """Cancellation is authoritative (§6.3): executor silence completes it via timeout."""
+    new_state, _ = _transition(State.CANCELLING, Signal.TIMEOUT)
+    assert new_state == State.CANCELLED
+
+
+def test_cancelling_rejects_progress_signals():
+    for sig in (Signal.ASSIGN, Signal.ACCEPT, Signal.DELIVER, Signal.PASS, Signal.BLOCK):
+        assert _transition(State.CANCELLING, sig) is None, f"CANCELLING should reject {sig.name}"
+
+
+# === Revision — re-ASSIGN same id (v3.7 §6.4 Inv-1) ===
+
+from gfso.core.types import Spec, Criteria, MutationType, REASSIGNABLE_STATES
+
+_NEW_SPEC = Spec("revised", (Criteria("c2", "tighter"),))
+
+
+@pytest.mark.parametrize("state", sorted(REASSIGNABLE_STATES, key=lambda s: s.name))
+def test_reassign_live_node_is_revision_to_review(state):
+    """Revision = re-ASSIGN under the SAME id → REVIEW (NOT the CANCEL signal, no CANCELLING pass)."""
+    new_state, effects = _transition(state, Signal.ASSIGN, spec=_NEW_SPEC)
+    assert new_state == State.REVIEW
+    applied = [e for e in effects if isinstance(e, MutateGraph) and e.mutation == MutationType.APPLY_SPEC]
+    assert len(applied) == 1 and applied[0].spec is _NEW_SPEC
+    assert any(isinstance(e, RunChecks) for e in effects)
+
+
+def test_no_revision_from_timeout_or_cancelling():
+    """TIMEOUT accepts no progress signals; CANCELLING's sole exit is CANCEL_ACK (§6.3)."""
+    assert _transition(State.TIMEOUT, Signal.ASSIGN, spec=_NEW_SPEC) is None
+    assert _transition(State.CANCELLING, Signal.ASSIGN, spec=_NEW_SPEC) is None
+
+
+def test_no_revision_of_terminal_nodes():
+    """Terminal is terminal (§6.3) — incl. CANCELLED: no resurrect-by-re-ASSIGN (revision is for live nodes)."""
+    for st in (State.DONE, State.ESCALATED, State.CANCELLED):
+        assert _transition(st, Signal.ASSIGN, spec=_NEW_SPEC) is None
 
 
 # === Invalid transitions ===

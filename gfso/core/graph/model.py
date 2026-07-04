@@ -26,16 +26,16 @@ class Graph:
         return self._storage.get_children(task_id)
 
     def get_active_children(self, task_id: TaskId) -> list[Task]:
-        """Children in the ACTIVE decomposition — excludes DONE(CANCELLED) tombstones.
+        """Children in the ACTIVE decomposition — excludes cancellation (CANCELLING/CANCELLED).
 
         A cancelled node persists in the graph forever (provenance, §7.3.1 / Утв.6) but is no longer
         part of the current decomposition: it must not count toward coverage / non-redundancy / the
-        critic's view. DONE(PASS) and DONE(FAIL) children ARE active (delivered work); only the CANCEL
-        signal's tombstone is filtered. Removal = CANCEL (§6.2/§7.1), realized here as exclusion-from-active.
-        """
+        critic's view. Cancellation is authoritative (§6.3: the executor confirms, not disputes) — the
+        node leaves the decomposition at CANCEL; CANCELLING is just the settlement of the handshake.
+        DONE(PASS) and DONE(FAIL) children ARE active (delivered work)."""
         return [
             c for c in self._storage.get_children(task_id)
-            if not (c.state == State.DONE and c.done_reason == DoneReason.CANCELLED)
+            if c.state not in (State.CANCELLING, State.CANCELLED)
         ]
 
     def get_parent(self, task_id: TaskId) -> Optional[Task]:
@@ -51,7 +51,7 @@ class Graph:
         edges = [
             DepEdge(from_id=c.depends_on, to_id=t.id, discovered=False, glue=c.description)
             for t in self._storage.get_all_tasks()
-            if not (t.state == State.DONE and t.done_reason == DoneReason.CANCELLED)  # tombstone excluded
+            if t.state not in (State.CANCELLING, State.CANCELLED)  # cancellation excluded (§6.3)
             for c in t.spec.criteria
             if c.depends_on
         ]
@@ -65,7 +65,6 @@ class Graph:
         return GuardContext(
             iteration=task.iteration,
             max_iterations=task.max_iterations,
-            done_reason=task.done_reason,
         )
 
     def get_assignee(self, task_id: TaskId) -> Optional[AgentId]:

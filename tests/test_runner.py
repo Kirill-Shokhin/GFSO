@@ -1,10 +1,11 @@
-"""L2 critic runner — the STRUCTURAL gate + the validate storage/dirty-flag. The semantic (search⊕audit)
-pass is deferred, so the gate returns no holes on a clean node; it must never spend an LLM."""
+"""L2 critic runner — the STRUCTURAL gate + the semantic diff-search + the validate storage/dirty-flag.
+The gate blocks the semantic pass; a clean node with no usable LLM produces NO semantic verdict (never
+read as clean); with an LLM, ONE search-in-diff-mode call yields ALREADY-COVERED or advisory findings."""
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
-from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, NeglectedItem
+from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, NeglectedItem, Predictability
 from gfso.critic.runner import critique_node
 
 
@@ -15,10 +16,12 @@ def _engine() -> Engine:
 
 
 def _decompose_clean(e: Engine):
-    # genuinely L0/L1-clean: every child mapped, NEGLECTED present, seam has glue.
+    # genuinely L0/L1-clean: every child mapped, NEGLECTED present (a classified RISK event — v3.7 §5.1:
+    # a scope boundary would not belong here, and an unclassified record fails the STD-2 guard), seam has glue.
     e.assign_task(
         TaskId("p"),
-        Spec("p", (Criteria("c1", "x"), Criteria("c2", "y")), (NeglectedItem("scaling out of scope"),)),
+        Spec("p", (Criteria("c1", "x"), Criteria("c2", "y")),
+             (NeglectedItem("provider rate-limit spike", Predictability.STATISTICAL, "P<1%, off-peak run"),)),
         AgentId("pm"),
     )
     e.wait_idle()
@@ -50,14 +53,55 @@ def test_gate_blocks_on_l0l1_failure():
     assert any("CHECK-1" in f for f in crit.l0l1_failures)
 
 
-def test_clean_node_passes_gate_no_semantic_yet():
-    """A structurally-clean non-leaf passes the gate; the semantic hole-hunt (search⊕audit) is deferred,
-    so no holes are produced and NO LLM is consulted."""
+def test_clean_node_passes_gate_no_semantic_without_llm():
+    """A structurally-clean non-leaf passes the gate; with no LLM (or a stub returning nothing) the
+    semantic verdict stays None — an absent hunt is NEVER read as clean."""
     e = _engine()
     _decompose_clean(e)
     crit = critique_node(e, TaskId("p"))
     assert crit.gate_passed
-    assert crit.holes == () and crit.verdicts == ()
+    assert crit.semantic_covered is None and crit.semantic_findings == ""
+
+
+class _SearchLLM:
+    """Fake searcher: records the diff-mode input, returns a scripted reply."""
+    def __init__(self, reply: str):
+        self.reply, self.seen = reply, []
+
+    def complete(self, prompt: str, context: str = "") -> str:
+        self.seen.append(prompt)
+        return self.reply
+
+
+def test_semantic_search_covered():
+    e = _engine()
+    _decompose_clean(e)
+    llm = _SearchLLM("ALREADY-COVERED — the requirement space is covered.")
+    crit = critique_node(e, TaskId("p"), llm=llm)
+    assert crit.gate_passed and crit.semantic_covered is True and crit.semantic_findings == ""
+    # diff mode: the searcher received the node's projection as the CURRENT DECOMPOSITION
+    assert "CURRENT DECOMPOSITION" in llm.seen[0] and "Decomposition under review" in llm.seen[0]
+
+
+def test_semantic_search_reports_findings():
+    e = _engine()
+    _decompose_clean(e)
+    llm = _SearchLLM("Missing: rollback path when b fails after a committed.")
+    crit = critique_node(e, TaskId("p"), llm=llm)
+    assert crit.gate_passed and crit.semantic_covered is False
+    assert "rollback" in crit.semantic_findings
+
+
+def test_semantic_search_gated_by_structure():
+    """L2 presupposes a structurally-complete graph: a failing gate must not spend the LLM."""
+    e = _engine()
+    e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x"),)), AgentId("pm"))
+    e.wait_idle()
+    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", ()), AgentId("d1"))])
+    e.wait_idle()
+    llm = _SearchLLM("should never be called")
+    crit = critique_node(e, TaskId("p"), llm=llm)
+    assert not crit.gate_passed and llm.seen == []
 
 
 def test_validate_stores_and_sets_verified_then_dirties():
