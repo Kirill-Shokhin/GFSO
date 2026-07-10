@@ -152,18 +152,21 @@ def test_upper_convenience_reneglect_and_edit_criteria():
     A = AgentId("alice")
     eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
     eng.start()
-    eng.assign_task(TaskId("n"), Spec("node", (Criteria("k", "keep"),), neglected=(NeglectedItem("old"),)), A)
+    eng.assign_task(TaskId("n"), Spec("node", (Criteria("k", "keep"),), neglected=(NeglectedItem("old"),),
+                                      scope=("payments — deliberately out",)), A)
     eng.wait_idle()
 
     eng.reneglect(TaskId("n"), (NeglectedItem("new1"), NeglectedItem("new2")), A)
     t = eng.get_task(TaskId("n"))
     assert [x.item for x in t.spec.neglected] == ["new1", "new2"]      # field changed
     assert [c.name for c in t.spec.criteria] == ["k"]                   # rest carried
+    assert t.spec.scope == ("payments — deliberately out",)             # scope-пометка carried (Ст. II.6)
 
     eng.edit_criteria(TaskId("n"), (Criteria("k2", "tighter"),), A)
     t = eng.get_task(TaskId("n"))
     assert [c.name for c in t.spec.criteria] == ["k2"]
     assert [x.item for x in t.spec.neglected] == ["new1", "new2"]       # rest carried
+    assert t.spec.scope == ("payments — deliberately out",)             # scope-пометка carried
     # logged via signals (RMW → revise → ASSIGN-from-REVIEW by the issuer; no bypass)
     sigs = [a.signal for a in eng.audit_log(TaskId("n")) if not a.rejected]
     assert sigs.count(Signal.ASSIGN) >= 3              # initial ASSIGN + reneglect + edit_criteria

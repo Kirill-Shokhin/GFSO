@@ -872,12 +872,43 @@ this set, the register is *incomplete*, not *wrong* — add it.
 
 ---
 
+## Part III.9 — v3.8 metric well-definedness + event-timeliness (§7.2, §13, §16.5)
+
+> Formula-level repairs of the Q family; no new formal result. The falsifiers are **M — analytic on
+> the formulas** plus the **E** deployment hooks the metrics already carry (§16.5).
+
+- **q_D non-degeneracy (the FAIL-event formula).** *Claim.* q_D counts a non-atomic parent whose OWN
+  validation returns FAIL while all its active children pass (the false-positive-D defect), at that
+  event — the DONE-gated formula was identically 1 (DONE ⟹ pass ⟹ numerator ≡ denominator).
+  *Type.* M + E. *Falsifier.* A live graph exhibiting the defect (parent FAIL → REWORK with all
+  active children passing) on which q_D stays 1 ⟹ the formula/instrument still misses its target; OR
+  a defect-free graph where q_D < 1 ⟹ the event proxy over-fires.
+- **Event-timeliness of q_T/q_Del (population = issued contracts).** *Claim.* The defect events the
+  canon itself assigns (§6.6 "CHALLENGE → q_T event"; Inv-1 "re-ASSIGN with a Del change is what
+  q_Del counts") are counted when they happen; a defect trajectory ending CANCELLED/ESCALATED stays
+  counted (the DONE-gate dropped exactly the worst instances). *Type.* M (analytic). *Falsifier.* A
+  defect trajectory expressible in the protocol (a challenged or mis-delegated node) that the new
+  populations still cannot count, OR a demonstration that DONE-gating loses no defect class (⟹ the
+  edit was unnecessary).
+- **q_V discovery carrier (post-hoc independent validation).** *Claim.* A `validate_node` FAIL
+  recorded over an already-DONE(pass/auto) node IS the "pass → later found wrong" event; q_V derives
+  its numerator from that record (the discovery TRIGGER — complaint / incident / audit — stays
+  external per §16.5, but a recorded discovery is counted). *Type.* E. *Falsifier.* A deployment
+  where accepted-then-found-wrong results occur and get re-checked, yet q_V stays ≡1 ⟹ the carrier
+  misses the event; OR post-hoc FAILs systematically mark genuinely-correct results (over-fire).
+- **Named instrument gaps (not claims — registered debt, §16.5):** reason-typing of revisions
+  (capability_mismatch; "criteria changed for a spec defect") and the false-FAIL counter are NOT
+  built; until they land, q_Del over-counts (any Del change) and q_T under-counts (challenges only).
+
+---
+
 ## Provenance
 
-The systematic falsifiability pass referenced by canon §18; tracks canon v3.7 (originally v3.5,
+The systematic falsifiability pass referenced by canon §18; tracks canon v3.8 (originally v3.5,
 extended for the v3.6 agent-free-ontology + methodology layer (§17.4–§17.5, §18.10.1, §18.10.2,
 §18.11) in Part III.6, the continuous-substrate + 3-axis-faithfulness layer (§18.10.0) in Part III.7,
-and the v3.7 protocol-rigor edits (§6.2–§6.4, §7.1–§7.2, §14) in Part III.8).
+the v3.7 protocol-rigor edits (§6.2–§6.4, §7.1–§7.2, §14) in Part III.8, and the v3.8 metric
+well-definedness/event-timeliness edits (§7.2, §13, §16.5) in Part III.9).
 
 > *Label note (v3.6).* The §18.10 **predictions** are tagged **Pred-1/Pred-2/Pred-3** (substitutability /
 > applicability boundary / global falsifier) to keep them disjoint from canon's reserved **P3** (Blackwell,

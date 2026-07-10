@@ -130,6 +130,7 @@ class SqliteStorage(StoragePort):
                          for c in spec.criteria],
             "neglected": SqliteStorage._neglected_to_json(spec.neglected),
             "risk_components": list(spec.risk_components),
+            "scope": list(spec.scope),
         })
 
     @staticmethod
@@ -141,6 +142,7 @@ class SqliteStorage(StoragePort):
                            for c in d["criteria"]),
             neglected=SqliteStorage._neglected_from_json(d.get("neglected", ())),
             risk_components=tuple(d.get("risk_components", ())),
+            scope=tuple(d.get("scope", ())),
             name=d.get("name", ""),
         )
 

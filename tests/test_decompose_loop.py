@@ -1,34 +1,39 @@
-"""The decompose function's guarantees, driven deterministically (FakeLLM, no network):
-- the structured spec is emitted ONLY on the final search↔audit round (intermediate rounds carry prose);
-- ALREADY-COVERED early exit shortens the loop (depth = upper bound, not padding);
-- the build is verified: problems → bounded repair (corrective audit call + wholesale re-build as
-  revision) → clean list_holes, or an HONEST residue in `holes` (never a silent partial)."""
+"""The decompose/refine guarantees, driven deterministically (FakeLLM, no network):
+- TOTAL MONADA: decompose(depth=N) ≡ init (search + fold over the empty state → spec) + build
+  through the FSM + (N−1) × refine, where refine applies the SAME operation to the BUILT GRAPH as
+  the state (search over the real projection → fold-patch → merge → rebuild as revision);
+- early exits: ALREADY-COVERED (searcher) and empty-fold (auditor) — depth = upper bound;
+- the ONE textual read of the state is the graph's own projection (Engine.project) — no separate renderer;
+- extract_spec is the exact inverse of build (roundtrip); rebuild preserves existing children's Del;
+- the build is verified: problems → bounded repair → clean list_holes, or an HONEST residue."""
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.core.types import TaskId
-from gfso.decompose import decompose_into, decompose_spec
-from gfso.decompose.loop import SEARCH_PROMPT, AUDIT_PROMPT
+from gfso.core.types import TaskId, AgentId
+from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
+from gfso.decompose.loop import SEARCH_PROMPT, FOLD_SCHEMA, _fold_merge, shape
 
 
 class FakeLLM:
-    """Queues per channel; records (kind, system) per call so the loop shape is assertable."""
+    """Queues per channel; records (kind, user) per call so the loop shape is assertable."""
     def __init__(self, texts, specs):
         self.texts, self.specs, self.calls = list(texts), list(specs), []
 
     def complete(self, prompt, context=""):
-        kind = "search" if context == SEARCH_PROMPT else "audit_text"
-        self.calls.append((kind, prompt))
+        assert context == SEARCH_PROMPT
+        self.calls.append(("search", prompt))
         return self.texts.pop(0) if self.texts else ""
 
     def complete_structured(self, system, user, schema):
-        self.calls.append(("structured", user))
+        kind = "fold" if schema is FOLD_SCHEMA else "repair"
+        self.calls.append((kind, user))
         return self.specs.pop(0) if self.specs else {}
 
 
 def _spec(mappings=None, neglected=None):
+    """The graph-form state after a successful first fold (also the shape build_graph_live consumes)."""
     return {
-        "name": "Thing", "basis_markdown": "## basis",
+        "name": "Thing",
         "root_criteria": [{"name": "rc1", "description": "A done"}, {"name": "rc2", "description": "B done"}],
         "subtasks": [
             {"id": "a", "name": "A", "description": "do A", "criteria": [{"name": "a1", "description": "A ok"}]},
@@ -41,28 +46,17 @@ def _spec(mappings=None, neglected=None):
     }
 
 
-def test_spec_emitted_only_on_final_round():
-    """depth=3 → 3 searches, 2 prose-only audits, ONE structured audit (the last)."""
-    fake = FakeLLM(texts=["holes1", "md1", "holes2", "md2", "holes3"], specs=[_spec()])
-    decompose_spec("task", depth=3, llm=fake)
-    kinds = [k for k, _ in fake.calls]
-    assert kinds == ["search", "audit_text", "search", "audit_text", "search", "structured"]
+def _init_patch(mappings=None, neglected=None):
+    """The round-1 (empty-state) fold: the same content as _spec(), expressed as adds."""
+    s = _spec(mappings=mappings, neglected=neglected)
+    return {"name": s["name"], "add_root_criteria": s["root_criteria"], "add_subtasks": s["subtasks"],
+            "add_mappings": s["mappings"], "add_deps": s["deps"], "add_neglected": s["neglected"]}
 
 
-def test_already_covered_exits_early():
-    """depth=3 but the pass-2 searcher reports ALREADY-COVERED → the loop finalizes immediately."""
-    fake = FakeLLM(texts=["holes1", "md1", "ALREADY-COVERED\nnothing new"], specs=[_spec()])
-    decompose_spec("task", depth=3, llm=fake)
-    kinds = [k for k, _ in fake.calls]
-    assert kinds == ["search", "audit_text", "search", "structured"]   # rounds 3 skipped
-
-
-def test_first_pass_never_early_exits():
-    """A pass-1 'ALREADY-COVERED' cannot trigger the exit (there is no basis yet to be covered by)."""
-    fake = FakeLLM(texts=["ALREADY-COVERED", "md1", "holes2"], specs=[_spec()])
-    decompose_spec("task", depth=2, llm=fake)
-    kinds = [k for k, _ in fake.calls]
-    assert kinds == ["search", "audit_text", "search", "structured"]
+_ADD_C = {"add_subtasks": [{"id": "c", "name": "C", "description": "do C",
+                            "criteria": [{"name": "c1", "description": "C ok"}]}],
+          "add_mappings": [{"criterion": "rc2", "child_id": "c"}],
+          "add_deps": [{"from": "b", "to": "c", "glue": "C reads B"}]}
 
 
 def _eng():
@@ -71,85 +65,261 @@ def _eng():
     return e
 
 
+# === init round (spec-space) ===
+
+def test_init_round_is_one_search_plus_fold_over_empty_state():
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    out = decompose_spec("task", llm=fake)
+    assert [k for k, _ in fake.calls] == ["search", "fold"]
+    assert "(empty — first round)" in fake.calls[1][1]
+    assert out["name"] == "Thing" and {c["id"] for c in out["subtasks"]} == {"a", "b"}
+
+
+def test_failed_first_fold_returns_empty():
+    """An empty round-1 fold (LLM failure) → {} — an honest nothing, not a phantom spec."""
+    fake = FakeLLM(texts=["holes1"], specs=[{}])
+    assert decompose_spec("task", llm=fake) == {}
+
+
+def test_result_read_artifact_is_the_projection():
+    """d_md = the built root's own projection (Engine.project) — the one canonical read, incl. the
+    children's names/criteria and the seams' glue (what the next fold reads)."""
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    assert res.d_md == res.engine.project(TaskId("root"))
+    assert "`root.a` — A:" in res.d_md                       # child NAME rides the projection now
+    assert "B reads A's output" in res.d_md                  # seam glue present
+    assert "Structural checks already run" in res.d_md
+
+
+def test_fast_rides_init_round_user_content_only():
+    from gfso.decompose.loop import SEARCH_FAST, AUDIT_FAST
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    decompose_spec("task", llm=fake, fast=True)
+    assert fake.calls[0][1].endswith(SEARCH_FAST) and fake.calls[1][1].endswith(AUDIT_FAST)
+    fake2 = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    decompose_spec("task", llm=fake2)
+    assert not any("Pace note" in u for _, u in fake2.calls)
+
+
+# === the total monada: depth>1 = refine over the BUILT graph ===
+
+def test_depth2_refines_over_the_built_graph():
+    """decompose_into(depth=2): init+build, then the refine searcher reads the REAL projection and the
+    fold applies to the extracted graph state; the rebuild lands the new child in the live engine."""
+    fake = FakeLLM(texts=["holes1", "holes2"], specs=[_init_patch(), _ADD_C])
+    res = decompose_into(_eng(), "task", root_id="root", depth=2, llm=fake)
+    kinds = [k for k, _ in fake.calls]
+    assert kinds == ["search", "fold", "search", "fold"]
+    # the refine searcher read the graph's REAL projection (checks section is unique to it)
+    assert "Structural checks already run" in fake.calls[2][1]
+    e = res.engine
+    assert e.get_task(TaskId("root.c")) is not None            # fold landed in the LIVE graph
+    assert res.holes == []
+    assert {c["id"] for c in res.spec["subtasks"]} == {"a", "b", "c"}
+
+
+def test_refine_already_covered_converges():
+    fake = FakeLLM(texts=["holes1", "ALREADY-COVERED\nnothing new"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", depth=3, llm=fake)
+    assert [k for k, _ in fake.calls] == ["search", "fold", "search"]   # no fold, round 3 never runs
+    assert res.holes == []
+
+
+def test_refine_empty_fold_converges():
+    fake = FakeLLM(texts=["holes1", "restatements"], specs=[_init_patch(), {}])
+    res = decompose_into(_eng(), "task", root_id="root", depth=3, llm=fake)
+    assert [k for k, _ in fake.calls] == ["search", "fold", "search", "fold"]
+    assert {c["id"] for c in res.spec["subtasks"]} == {"a", "b"}
+
+
+def test_public_refine_applies_one_iteration_to_existing_graph():
+    """refine() = "+1 итерация над тем, что есть": works on an already-built decomposition."""
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    fake2 = FakeLLM(texts=["found: C is missing"], specs=[_ADD_C])
+    res2 = refine(e, root_id="root", llm=fake2)
+    assert e.get_task(TaskId("root.c")) is not None
+    assert res2.holes == []
+    assert "Structural checks already run" in fake2.calls[0][1]   # searcher saw the real projection
+
+
+def test_refine_preserves_existing_children_del():
+    """A rebuild-as-revision must not stomp an existing child's Del (Inv-1: a Del change is the
+    issuer's own act, not a refinement side effect)."""
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    e.reassign(TaskId("root.a"), AgentId("bob"))                  # issuer delegates a to bob
+    fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
+    refine(e, root_id="root", llm=fake2)
+    assert e.get_task(TaskId("root.a")).assignee == AgentId("bob")   # Del survived the rebuild
+    assert e.get_task(TaskId("root.c")) is not None
+
+
+def test_one_verb_dispatches_to_refine_on_decomposed_node():
+    """decompose_into IS the one verb: on an already-decomposed target it runs refine rounds over
+    what exists (no init round; request optional — the node's contract is the request)."""
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
+    res2 = decompose_into(e, "", root_id="root", depth=1, llm=fake2)     # same verb, no request
+    assert [k for k, _ in fake2.calls] == ["search", "fold"]             # refine path, not init
+    assert "Structural checks already run" in fake2.calls[0][1]          # over the real projection
+    assert e.get_task(TaskId("root.c")) is not None
+    assert res2.holes == []
+
+
+def test_rebuild_preserves_child_own_registers():
+    """A child's OWN NEGLECTED belongs to the CHILD'S decomposer (§5.1) — a parent-level rebuild
+    must not wipe it (same class as Del preservation)."""
+    from gfso.core.types import NeglectedItem
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    e.reneglect(TaskId("root.a"), (NeglectedItem("a-risk"),), AgentId("human"))
+    fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
+    refine(e, root_id="root", llm=fake2)
+    a = e.get_task(TaskId("root.a"))
+    assert [n.item for n in a.spec.neglected] == ["a-risk"]              # survived the rebuild
+
+
+def test_refine_leaves_untouched_children_in_place():
+    """Idempotent rebuild: a refine that doesn't touch a child emits ZERO signals for it — an
+    EXECUTING child keeps executing (a live graph survives a replan; only changed contracts
+    re-negotiate per Инв-1)."""
+    from gfso.core.types import SignalData, Signal
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.a"),
+                                  source=AgentId("human")))
+    e.wait_idle()
+    from gfso.core.types import State
+    assert e.get_state(TaskId("root.a")) == State.EXECUTING
+    n_signals_a = len(e.audit_log(TaskId("root.a")))
+    fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
+    refine(e, root_id="root", llm=fake2)
+    assert e.get_state(TaskId("root.a")) == State.EXECUTING          # untouched → still executing
+    assert len(e.audit_log(TaskId("root.a"))) == n_signals_a         # zero signals on the child
+    assert e.get_task(TaskId("root.c")) is not None                  # the change landed
+
+
+def test_fold_removal_unmaps_but_never_kills():
+    """The auditor's removal opinion is RECORDED and VISIBLE, the kill is not its to make: a fold
+    remove drops the child's coverage (reconciled on rebuild) → the node surfaces as an unmapped
+    hole (non-redundancy guard) for the ISSUER to CANCEL or re-map — it is never destroyed and its
+    state is untouched (surface-don't-destroy, the v3.7 revision guard-set)."""
+    from gfso.core.types import State
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    drop_b = {"remove_subtask_ids": ["b"],
+              "add_mappings": [{"criterion": "rc2", "child_id": "a"}]}   # coverage re-homed onto a
+    fake2 = FakeLLM(texts=["found: b is ballast"], specs=[drop_b])
+    res2 = refine(e, root_id="root", llm=fake2)
+    b = e.get_task(TaskId("root.b"))
+    assert b is not None and b.state == State.REVIEW                 # alive, state untouched
+    root = e.get_task(TaskId("root"))
+    assert all(m.child_id != TaskId("root.b") for m in root.criterion_mappings)   # unmapped
+    assert any("b" in str(h) for h in res2.holes)                    # surfaced as an honest hole
+
+
+def test_extract_spec_roundtrips_build():
+    """extract_spec is the exact inverse of build_graph_live (ids de-namespaced, dep__ criteria back
+    to seams, scope strings verbatim)."""
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    got = extract_spec(res.engine, "root")
+    want = _spec()
+    assert got["name"] == want["name"]
+    assert {c["id"] for c in got["subtasks"]} == {"a", "b"}
+    a = [c for c in got["subtasks"] if c["id"] == "a"][0]
+    assert a["criteria"] == [{"name": "a1", "description": "A ok"}]      # dep__ criteria NOT here
+    assert got["deps"] == [{"from": "a", "to": "b", "glue": "B reads A's output"}]
+    assert sorted((m["criterion"], m["child_id"]) for m in got["mappings"]) == \
+        [("rc1", "a"), ("rc2", "b")]
+    assert got["neglected"][0]["item"] == "provider outage"
+    assert got["neglected"][0]["predictability"] == "STATISTICAL"
+
+
+# === _fold_merge: deterministic, referentially clean, dedup ===
+
+def test_fold_merge_add_update_remove():
+    spec = _spec()
+    patch = {
+        "remove_subtask_ids": ["b"],
+        "update_subtasks": [{"id": "a", "name": "A+", "description": "do A better",
+                             "criteria": [{"name": "a1", "description": "A ok"},
+                                          {"name": "a2", "description": "A edge ok"}]}],
+        "add_subtasks": [{"id": "c", "name": "C", "description": "do C",
+                          "criteria": [{"name": "c1", "description": "C ok"}]}],
+        "add_mappings": [{"criterion": "rc2", "child_id": "c"}],
+        "add_deps": [{"from": "a", "to": "c", "glue": "C reads A"}],
+    }
+    s, ops = _fold_merge(spec, patch)
+    assert {c["id"] for c in s["subtasks"]} == {"a", "c"}
+    assert all(m["child_id"] != "b" for m in s["mappings"])        # removal cleaned b's mapping
+    assert all("b" not in (d["from"], d["to"]) for d in s["deps"])  # ...and b's seam
+    assert [c for c in s["subtasks"] if c["id"] == "a"][0]["name"] == "A+"
+    assert {(d["from"], d["to"]) for d in s["deps"]} == {("a", "c")}
+    assert ops
+
+
+def test_fold_merge_dedup_and_noop():
+    spec = _spec()
+    patch = {"add_subtasks": [dict(spec["subtasks"][0])],
+             "add_mappings": [dict(spec["mappings"][0])],
+             "add_deps": [dict(spec["deps"][0])],
+             "add_neglected": [dict(spec["neglected"][0])],
+             "update_subtasks": [dict(spec["subtasks"][1])],       # identical update = no-op
+             "name": "Thing"}                                      # same name = no-op
+    s, ops = _fold_merge(spec, patch)
+    assert ops == []
+    assert s["subtasks"] == spec["subtasks"] and s["deps"] == spec["deps"]
+
+
+def test_fold_merge_root_criteria_removal_cleans_mappings():
+    spec = _spec()
+    s, ops = _fold_merge(spec, {"remove_root_criteria_names": ["rc1"]})
+    assert [c["name"] for c in s["root_criteria"]] == ["rc2"]
+    assert all(m["criterion"] != "rc1" for m in s["mappings"])
+    assert ops
+
+
+def test_shape_counts():
+    assert shape(_spec()) == (2, 1, 4)   # 2 subtasks · 1 seam · 2 root + 2 child criteria
+
+
+# === build verification (unchanged guarantees) ===
+
 def test_decompose_into_repairs_to_clean():
-    """A spec with a drifted mapping name builds with problems → ONE corrective audit call returns the
-    fixed spec → wholesale re-build (revision, same ids) → holes == [] (the guarantee)."""
-    bad = _spec(mappings=[{"criterion": "rc1_typo", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}])
-    fake = FakeLLM(texts=["holes1"], specs=[bad, _spec()])   # audit → bad; repair → fixed
+    bad_mappings = [{"criterion": "rc1_typo", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}]
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch(mappings=bad_mappings), _spec()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     assert res.holes == []
-    assert ("structured",) == tuple(k for k, _ in fake.calls if k == "structured")[:1]
-    # the repair call received the exposed problems
-    repair_user = [u for k, u in fake.calls if k == "structured"][1]
+    repair_user = [u for k, u in fake.calls if k == "repair"][0]
     assert "rc1_typo" in repair_user
-    e = res.engine
-    root = e.get_task(TaskId("root"))
+    root = res.engine.get_task(TaskId("root"))
     assert {(m.criterion_name, m.child_id) for m in root.criterion_mappings} == \
         {("rc1", TaskId("root.a")), ("rc2", TaskId("root.b"))}
 
 
 def test_decompose_into_reports_honest_residue():
-    """If repair cannot fix the problems (fix call returns {}), the result carries them — no silent success."""
-    bad = _spec(mappings=[{"criterion": "rc1_typo", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}])
-    fake = FakeLLM(texts=["holes1"], specs=[bad])            # repair queue empty → {}
+    bad_mappings = [{"criterion": "rc1_typo", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}]
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch(mappings=bad_mappings)])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
-    assert res.holes                                          # honest residue
+    assert res.holes
     assert any("rc1_typo" in h for h in res.holes)
 
 
 def test_repair_is_a_field_patch():
-    """The corrective audit emits ONLY the fields it changes; the caller merges them into the spec —
-    omitted fields (subtasks, deps, …) are kept as-is, a re-emitted field replaces wholesale."""
-    bad = _spec(mappings=[{"criterion": "rc1_typo", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}])
+    bad_mappings = [{"criterion": "rc1_typo", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}]
     patch = {"mappings": [{"criterion": "rc1", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}]}
-    fake = FakeLLM(texts=["holes1"], specs=[bad, patch])     # audit → bad; repair → PATCH (mappings only)
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch(mappings=bad_mappings), patch])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
-    assert res.holes == []                                    # patched to clean
-    assert len(res.spec["subtasks"]) == 2                     # untouched fields survived the merge
+    assert res.holes == []
+    assert len(res.spec["subtasks"]) == 2
     assert res.spec["mappings"][0]["criterion"] == "rc1"
-
-
-def test_lean_final_carries_intermediate_basis():
-    """LEAN default: the final audit emits structure only; at depth≥2 the carried intermediate prose is
-    returned as basis_markdown (emit_basis=True restores prose emission in the final call itself)."""
-    spec_no_basis = {k: v for k, v in _spec().items() if k != "basis_markdown"}
-    fake = FakeLLM(texts=["holes1", "md-carried", "holes2"], specs=[spec_no_basis])
-    out = decompose_spec("task", depth=2, llm=fake)
-    assert out["basis_markdown"] == "md-carried"
-    # lean is asked of the auditor explicitly (structured-fields-only instruction in user content)
-    final_user = [u for k, u in fake.calls if k == "structured"][0]
-    assert "structured fields ONLY" in final_user
-
-
-def test_fast_appends_pace_suffixes_to_user_content_only():
-    """fast=True rides the USER content of search + final audit (frozen cores untouched — the system
-    prompts are byte-identical); fast=False leaves everything as before; the PATCH repair is never
-    suffixed (it must stay minimal)."""
-    from gfso.decompose.loop import SEARCH_FAST, AUDIT_FAST
-    fake = FakeLLM(texts=["holes1"], specs=[_spec()])
-    decompose_spec("task", depth=1, llm=fake, fast=True)
-    search_user = [u for k, u in fake.calls if k == "search"][0]
-    audit_user = [u for k, u in fake.calls if k == "structured"][0]
-    assert search_user.endswith(SEARCH_FAST) and audit_user.endswith(AUDIT_FAST)
-
-    fake2 = FakeLLM(texts=["holes1"], specs=[_spec()])
-    decompose_spec("task", depth=1, llm=fake2)
-    assert not any("Pace note" in u for _, u in fake2.calls)
-
-
-def test_prose_to_spec_count_check_conservative():
-    """The count-check flags STRONG basis→spec transcription loss (deficit ≥2 in an explicit D/Dep
-    section) and stays silent otherwise (free prose — a misfire would trigger repairs on clean runs)."""
-    from gfso.decompose import _count_problems
-    md = ("# Basis\n## D — Components\n" + "\n".join(f"{i}. comp_{i} — text" for i in range(1, 8))
-          + "\n\n## Dep — Seams\n- a → b: glue\n- b → c: glue\n- c → d: glue\n- d → e: glue\n\n## V\n")
-    lossy = {"basis_markdown": md,
-             "subtasks": [{"id": f"s{i}"} for i in range(4)],       # 7 enumerated vs 4 carried
-             "deps": [{"from": "a", "to": "b"}]}                     # 4 vs 1
-    probs = _count_problems(lossy)
-    assert len(probs) == 2 and "7 components" in probs[0] and "4 seams" in probs[1]
-    clean = {"basis_markdown": md, "subtasks": [{"id": f"s{i}"} for i in range(6)],  # deficit 1 → silent
-             "deps": [{"from": "a", "to": "b"}, {}, {}]}
-    assert _count_problems(clean) == []
-    assert _count_problems({"basis_markdown": "", "subtasks": []}) == []             # no basis → silent
-    assert _count_problems({"basis_markdown": "prose without sections", "subtasks": []}) == []

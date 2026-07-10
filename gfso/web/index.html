@@ -359,9 +359,11 @@ async function refreshMetrics() {
     try {
         const m = await (await fetch('/api/metrics')).json();
         document.getElementById('metrics').innerHTML = Object.entries(m).map(([k,v]) => {
+            const meta = Q_META[k] || { short: k, full: k };
+            if (v === null || v === undefined) // ⊥: empty population (canon §13) — a dash, not a fake 100%
+                return `<div class="metric" title="${meta.full} — no observations yet"><div class="metric-val" style="color:var(--ink-faint)">—</div><div class="metric-label">${meta.short}</div></div>`;
             const pct = (v*100).toFixed(0);
             const color = v >= 0.8 ? 'var(--ui-on-chrome)' : v >= 0.5 ? 'var(--paper)' : 'var(--acc)';
-            const meta = Q_META[k] || { short: k, full: k };
             return `<div class="metric" title="${meta.full}"><div class="metric-val" style="color:${color}">${pct}%</div><div class="metric-label">${meta.short}</div></div>`;
         }).join('');
     } catch(e) {}
@@ -398,6 +400,11 @@ async function selectTask(taskId) {
         if (d.neglected && d.neglected.length) {
             h += `<div class="section"><div class="section-title">Neglected (STD-1)</div><ul class="facet-list">`;
             d.neglected.forEach(n => h += `<li>${n}</li>`);
+            h += `</ul></div>`;
+        }
+        if (d.scope && d.scope.length) {
+            h += `<div class="section"><div class="section-title">Scope — boundary exclusions</div><ul class="facet-list">`;
+            d.scope.forEach(s => h += `<li>${s}</li>`);
             h += `</ul></div>`;
         }
         if (d.risk_components && d.risk_components.length) {
@@ -458,8 +465,13 @@ async function selectTask(taskId) {
             });
             if (!noCancel.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="sendAction('${d.id}','CANCEL','reason',false)">Cancel</button>`;
-            if (['EXECUTING','REVIEW'].includes(d.state))
+            if (['EXECUTING','REVIEW'].includes(d.state)) {
                 h += `<button class="btn btn-sm btn-purple" onclick="openDecompose('${d.id}')">Decompose</button>`;
+                // ONE AI verb, dispatched by the node's state (auto_decompose): undecomposed → author
+                // the subtree; already-decomposed → one refine round over what exists.
+                const hasKids = allTasksCache.some(t => t.parent_id === d.id && t.state !== 'CANCELLED');
+                h += `<button class="btn btn-sm btn-purple" onclick="aiDecompose('${d.id}')">${hasKids ? 'AI refine' : 'AI decompose'}</button>`;
+            }
             if (d.state === 'REVIEW')
                 h += `<button class="btn btn-sm btn-muted" onclick="openEdit('${d.id}')">Edit</button>`;
             h += `</div></div>`;
@@ -479,6 +491,18 @@ async function selectTask(taskId) {
 }
 
 function closeSidebar() { selectedTaskId=null; document.getElementById('sidebar').classList.add('hidden'); }
+
+async function aiDecompose(id) {
+    const t = allTasksCache.find(x => x.id === id) || {};
+    const hasKids = allTasksCache.some(x => x.parent_id === id && x.state !== 'CANCELLED');
+    if (!confirm(`${hasKids ? 'Refine the existing decomposition (one search↔audit round over the graph)'
+                            : 'Auto-decompose this node (search↔audit → verified subtree)'}?\nRuns ~2–6 min; progress streams in the activity strip.`)) return;
+    try {
+        await fetch('/api/run/auto_decompose', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({request: t.description || '', root_id: id, depth: 1})});
+        await refreshAll();
+    } catch(e) { console.error('aiDecompose:', e); }
+}
 
 async function sendAction(taskId, signal, promptField, needsCriteria) {
     const source = myRole();

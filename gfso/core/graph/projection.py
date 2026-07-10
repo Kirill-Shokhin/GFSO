@@ -47,6 +47,7 @@ class SubtaskView:
     assignee: Optional[str]
     criteria: tuple[CriterionView, ...]
     neglected: tuple[str, ...]  # item text of each child-local exclusion
+    name: str = ""              # short node label (UI title); part of the child's contract framing
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class NodeProjection:
     coverage: tuple[CoverageView, ...] = ()
     seams: tuple[SeamView, ...] = ()
     neglected: tuple[NeglectedView, ...] = ()
+    scope: tuple[str, ...] = ()  # Ст. II.6 declared scope-boundary exclusions on the goal
     checks: tuple[CheckView, ...] = ()
 
 
@@ -131,6 +133,7 @@ def build(
             assignee=c.assignee,
             criteria=tuple(CriterionView(cc.name, cc.description) for cc in c.spec.criteria),
             neglected=tuple(n.item for n in c.spec.neglected),
+            name=c.spec.name,
         )
         for c in children
     )
@@ -174,7 +177,8 @@ def build(
         node_id=str(node.id), goal=node.spec.description, criteria=criteria,
         is_leaf=False, subtasks=subtasks,
         mappings_declared=bool(node.criterion_mappings),
-        coverage=coverage, seams=seams, neglected=neglected, checks=checks,
+        coverage=coverage, seams=seams, neglected=neglected,
+        scope=tuple(node.spec.scope), checks=checks,
     )
 
 
@@ -205,7 +209,8 @@ def render(projection: NodeProjection) -> str:
     out.append("## Subtasks (D) — the proposed breakdown")
     for s in p.subtasks:
         who = f" · assignee: {s.assignee}" if s.assignee else ""
-        out.append(f"### `{s.id}` — {s.description or '(no description)'}{who}")
+        label = f"{s.name}: " if s.name else ""
+        out.append(f"### `{s.id}` — {label}{s.description or '(no description)'}{who}")
         if s.criteria:
             for cc in s.criteria:
                 out.append(f"  - {cc.name}: {cc.description or '(no description)'}")
@@ -248,6 +253,15 @@ def render(projection: NodeProjection) -> str:
     else:
         out.append("- (none declared)")
     out.append("")
+
+    # SCOPE is an OPTIONAL goal-level mark (canon §5.1: помечается «когда исключение неочевидно»),
+    # unlike NEGLECTED (mandatory for a decomposed node, CHECK-4) — render only when declared: an
+    # empty section on a child would misread a goal-level object as that child's missing register.
+    if p.scope:
+        out.append("## SCOPE — declared boundary exclusions (capabilities deliberately not included)")
+        for s in p.scope:
+            out.append(f"- {s}")
+        out.append("")
 
     out.append("## Structural checks already run (Solver, L0–L1) — verified, do not re-derive")
     if p.checks:

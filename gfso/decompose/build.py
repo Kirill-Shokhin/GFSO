@@ -42,22 +42,28 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
                       n.get("invalidation", ""))
         for n in d.get("neglected", [])
     )
+    scp = tuple(f"{s['item']} — {s['why_out']}" if s.get("why_out") else s["item"]
+                for s in d.get("scope", []))  # Ст. II.6 scope-boundary exclusions — objectified on the root
     existing = engine.get_task(rid)
     # `assignee` (A) delegates the CHILDREN. The issuer-acts on the ROOT (re-author + ACCEPT) are performed by
     # the root's OWN owner — for a root, issuer == executor == its own assignee; using A here would be a foreign
     # actor re-authoring/accepting someone else's root (correctly rejected by the issuer/executor guards).
     root_actor = A if existing is None else AgentId(existing.assignee)
+    root_revised = False
     if existing is None:
-        engine.assign_task(rid, Spec(request, root_crit, neg, name=d.get("name", "")), A); engine.wait_idle()
+        engine.assign_task(rid, Spec(request, root_crit, neg, scope=scp, name=d.get("name", "")), A); engine.wait_idle()
     else:
-        # The decomposer OWNS the root's CRITERIA: it re-authors them unconditionally to the derived V-set, so
-        # the child `covers` mappings resolve against real criteria. An issuer's hand-written root criteria are
-        # pseudo-criteria (untrusted) — keeping them would strand coverage (CHECK-1 fail). But the human's NAME
-        # and DESCRIPTION are their framing of the goal — PRESERVE them (only fall back to the derived text if
-        # absent). Re-author is safe: revise retains the subtree (no cascade).
-        new_spec = Spec(existing.spec.description or request, root_crit, neg,
+        # The decomposer OWNS the root's CRITERIA: it re-authors them to the derived V-set, so the child
+        # `covers` mappings resolve against real criteria. An issuer's hand-written root criteria are
+        # pseudo-criteria (untrusted) — keeping them would strand coverage (CHECK-1 fail). But the human's
+        # NAME and DESCRIPTION are their framing of the goal — PRESERVE them (only fall back to the derived
+        # text if absent). Re-author is safe: revise retains the subtree (no cascade). IDEMPOTENT: an
+        # unchanged contract emits no signal (a refine that didn't touch the root leaves it in place).
+        new_spec = Spec(existing.spec.description or request, root_crit, neg, scope=scp,
                         name=existing.spec.name or d.get("name", ""))
-        engine.revise(rid, new_spec, root_actor); engine.wait_idle()
+        if new_spec != existing.spec:
+            engine.revise(rid, new_spec, root_actor); engine.wait_idle()
+            root_revised = True
 
     # a decomposed root is being worked on → ACCEPT it so it is EXECUTING (with children), not REVIEW: a
     # parent that still shows 'accept' interleaved with its children confuses the executor's next_step order.
@@ -93,8 +99,19 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
         crit = [Criteria(x["name"], x.get("description", "")) for x in c.get("criteria", [])]
         crit += [Criteria(name=f"dep__{f}", description=glue, depends_on=TaskId(ns(f)))
                  for f, glue in deps_by_consumer.get(cid, [])]
+        # a rebuild-as-revision must not stomp what belongs to OTHER authors (Inv-1): the child's Del
+        # is the issuer's separate act (a Del change = the q_Del event), and the child's OWN
+        # NEGLECTED/scope/risk registers belong to the CHILD'S decomposer (§5.1: NEGLECTED is authored
+        # per-decomposition — «родитель НЕ авторствует NEGLECTED детей») — preserve both; `A` and empty
+        # registers apply only to NEW children. The subtree itself is retained by revision semantics.
+        existing_child = engine.get_task(TaskId(ns(cid)))
+        child_actor = AgentId(existing_child.assignee) if existing_child and existing_child.assignee else A
+        child_neg = existing_child.spec.neglected if existing_child else ()
+        child_scope = existing_child.spec.scope if existing_child else ()
+        child_risk = existing_child.spec.risk_components if existing_child else ()
         children.append((TaskId(ns(cid)), Spec(c.get("description", ""), tuple(crit),
-                                               name=c.get("name", "")), A))
+                                               neglected=child_neg, risk_components=child_risk,
+                                               scope=child_scope, name=c.get("name", "")), child_actor))
 
     valid = {c["name"] for c in d.get("root_criteria", [])}
     mappings = []
@@ -106,8 +123,26 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
             dropped.append(f"mapping '{m.get('criterion')}'->{m.get('child_id')}: no such subtask id")
         else:
             mappings.append(CriterionMapping(m["criterion"], TaskId(ns(str(m["child_id"])))))
-    if children:
-        engine.decompose_task(rid, children, mappings or None); engine.wait_idle()
+    # IDEMPOTENT REBUILD: an untouched child costs ZERO signals — its live state (EXECUTING, a
+    # delivered result, its own registers) survives a parent-level refine; only a child whose contract
+    # or coverage actually changed is re-ASSIGNed (→ REVIEW: the executor re-consents, Инв-1).
+    parent_now = engine.get_task(rid)
+    have_covers = {(m.criterion_name, m.child_id)
+                   for m in (parent_now.criterion_mappings if parent_now else ())}
+    want_by_child: dict = {}
+    for m in mappings:
+        want_by_child.setdefault(m.child_id, set()).add(m.criterion_name)
+    changed = []
+    for cid_t, spec_c, actor in children:
+        ex = engine.get_task(cid_t)
+        if (ex is not None and ex.spec == spec_c
+                and all((c, cid_t) in have_covers for c in want_by_child.get(cid_t, ()))):
+            continue
+        changed.append((cid_t, spec_c, actor))
+    if changed:
+        engine.decompose_task(rid, changed, mappings or None); engine.wait_idle()
+    elif root_revised:
+        engine._recompute_checks(rid)  # criteria changed but no child re-ASSIGN ran the recompute
     for item in dropped:
         log.warning(f"build_graph_live dropped: {item}")
     return engine, rid, dropped

@@ -1,15 +1,17 @@
-"""GFSO single-level decomposition function — the E2 search↔audit loop as one button, end to end.
+"""GFSO single-level decomposition — the E2 search↔audit loop as ONE operation over graph state.
 
-`decompose(request, depth=1)` runs SEARCH↔AUDIT (`depth` = the calibration dial: iterations of the
-refinement loop; trivial task → 1) and builds the CORE graph WHOLESALE from the final spec, then closes
-the loop on structural validity: dropped-item + `list_holes` verification with a bounded repair cycle.
-The transport comes from `runtime.llm_factory()` — headless `claude -p` one-shots for Anthropic (billing
-per GFSO_BILLING) or GenericLLM for a foreign provider (GFSO_PROVIDER=generic).
+`decompose(request, depth=N)` ≡ init (search + fold over the empty state → spec) + build THROUGH the
+FSM + (N−1) × `refine` — where `refine` applies the SAME operation to the BUILT GRAPH as the state:
+search over the real projection → audit fold-patch → deterministic merge → wholesale rebuild as a
+REVISION (same ids, subtree retained, Del of existing children preserved). `refine(engine, root_id)`
+is also public: "+1 iteration" applies to whatever decomposition already exists. The graph only ever
+holds VERIFIED states (each round closes on dropped-item + `list_holes` with a bounded repair cycle).
+The transport comes from `runtime.llm_factory()` — headless `claude -p` one-shots for Anthropic
+(billing per GFSO_BILLING) or GenericLLM for a foreign provider (GFSO_PROVIDER=generic).
 
 Termination & validity guarantees (all bounds hard):
-  ≤ depth search calls + ≤ depth audit calls (early ALREADY-COVERED exit can only shorten)
-  + ≤ REPAIR_ROUNDS repair cycles (one corrective audit call + one wholesale re-build each; a re-build is
-    a wholesale REVISION — same ids, subtree retained, v3.7).
+  ≤ depth search calls + ≤ depth fold calls (ALREADY-COVERED / empty-fold exits can only shorten)
+  + ≤ REPAIR_ROUNDS repair cycles per build (one corrective audit call + one wholesale re-build each).
   The result NEVER claims more than the graph shows: `holes` carries the final `list_holes` output and
   every unplaced spec item — empty `holes` ⟺ the graph passed its own structural checks (CHECK-1..6 per
   node). Non-empty `holes` is an honest partial result, not a silent success.
@@ -23,9 +25,10 @@ from dataclasses import dataclass, field
 from gfso.core.types import TaskId
 from gfso.engine import Engine
 
-from .loop import (decompose_text, decompose_spec, _audit_fix, _progress, _stat_line, _hint,
-                   AUDIT_SCHEMA)
+from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search,
+                   _progress, _stat_line, _hint, _tag, _COVERED, AUDIT_SCHEMA, shape)
 from .build import build_graph_live
+from .extract import extract_spec
 
 REPAIR_ROUNDS = 2
 
@@ -34,7 +37,7 @@ REPAIR_ROUNDS = 2
 class DecomposeResult:
     engine: Engine
     root_id: TaskId
-    d_md: str          # the durable markdown basis (basis_markdown)
+    d_md: str          # the built root's PROJECTION markdown (Engine.project — the one canonical read)
     spec: dict         # the structured graph spec (root_criteria/subtasks/mappings/deps/neglected)
     holes: list = field(default_factory=list)   # [] ⟺ structurally valid; else the honest residue
     stats: list = field(default_factory=list)   # per-call: {stage, duration_ms, input/output/cache tokens}
@@ -54,46 +57,13 @@ def _problems(engine: Engine, root_id: TaskId, dropped: list[str]) -> list[str]:
                       for h in engine.graph_holes(root_id)]
 
 
-def _count_problems(spec: dict) -> list[str]:
-    """The prose→spec COUNT-CHECK: the carried basis is the richer artifact — if its D/Dep sections
-    enumerate clearly MORE items than the structured spec carries, transcription lost content (measured
-    live: −2 Dep / −1 V on a depth-2 T01). Deliberately CONSERVATIVE (the basis is free prose — a
-    misfire would trigger repairs on clean runs): only counts numbered items under an explicit D
-    section header / bullets under a Dep header, and only flags a deficit ≥ 2. V criteria are not
-    counted (spread across nodes; no reliable prose anchor)."""
-    import re
-    md = spec.get("basis_markdown") or ""
-    if not md:
-        return []
-
-    def _section_items(header_re: str, item_re: str) -> int | None:
-        m = re.search(header_re, md, re.MULTILINE)
-        if not m:
-            return None
-        tail = md[m.end():]
-        nxt = re.search(r"^#{1,3}\s", tail, re.MULTILINE)
-        body = tail[:nxt.start()] if nxt else tail
-        return len(re.findall(item_re, body, re.MULTILINE))
-
-    out = []
-    nd = _section_items(r"^#{1,3}\s*D\b[^\n]*$", r"^\s*\d+[.)]\s")
-    if nd is not None and nd >= len(spec.get("subtasks", ())) + 2:
-        out.append(f"the basis D section enumerates {nd} components but the spec carries only "
-                   f"{len(spec.get('subtasks', ()))} subtasks — restore the lost components")
-    ndep = _section_items(r"^#{1,3}\s*Dep\b[^\n]*$", r"^\s*(?:[-*]|\d+[.)])\s")
-    if ndep is not None and ndep >= len(spec.get("deps", ())) + 2:
-        out.append(f"the basis Dep section lists {ndep} seams but the spec carries only "
-                   f"{len(spec.get('deps', ()))} deps — restore the lost seams")
-    return out
-
-
 def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assignee: str,
                     llm, progress=None) -> tuple[TaskId, dict, list[str]]:
     """Build wholesale, then repair-loop: problems → one corrective audit call → wholesale re-build
     (revision semantics). Bounded by REPAIR_ROUNDS; returns the final (root_id, spec, residual problems)."""
     _progress("builder: wholesale build through the FSM…", progress)
     eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee)
-    problems = _count_problems(spec) + _problems(engine, rid, dropped)
+    problems = _problems(engine, rid, dropped)
     _progress(f"builder: {len(engine.get_active_children(rid))} nodes · {len(dropped)} dropped · "
               f"{len(problems)} problem(s)", progress)
     for r in range(REPAIR_ROUNDS):
@@ -112,53 +82,159 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
         spec = {**spec, **{k: fixed[k] for k in patched}}
         _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
         eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee)
-        problems = _count_problems(spec) + _problems(engine, rid, dropped)
+        problems = _problems(engine, rid, dropped)
     _progress("builder: verified clean" if not problems
               else f"builder: honest residue — {len(problems)} problem(s)", progress)
     return rid, spec, problems
 
 
+def _dens_patch(patch: dict, root_id: str) -> dict:
+    """The fold reads the graph's projection, whose node ids are namespaced (`root.walker`) — normalize
+    any echoed prefix back to spec ids so the merge matches the extracted state."""
+    p = f"{root_id}."
+
+    def dn(x) -> str:
+        return str(x).removeprefix(p)
+
+    out = dict(patch)
+    for key in ("add_subtasks", "update_subtasks"):
+        if key in out:
+            out[key] = [{**c, "id": dn(c.get("id", ""))} for c in out[key]]
+    if "remove_subtask_ids" in out:
+        out["remove_subtask_ids"] = [dn(x) for x in out["remove_subtask_ids"]]
+    for key in ("add_mappings", "remove_mappings"):
+        if key in out:
+            out[key] = [{**m, "child_id": dn(m.get("child_id", ""))} for m in out[key]]
+    for key in ("add_deps", "remove_deps"):
+        if key in out:
+            out[key] = [{**d, "from": dn(d.get("from", "")), "to": dn(d.get("to", ""))} for d in out[key]]
+    return out
+
+
+def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm,
+                  progress=None, label: str = "1/1") -> tuple[bool, dict, list[str]]:
+    """ONE refinement application over the BUILT GRAPH as the state: BOTH roles read the graph's real
+    projection (+ any current structural holes) — the one canonical textual read, no separate
+    renderer; the auditor folds the findings in as a patch (ids normalized from the projection's
+    namespace back to spec ids); the merge rebuilds THROUGH the FSM as a wholesale revision (same
+    ids, subtree retained, Del of existing children preserved). Returns (changed, spec, problems);
+    changed=False ⟺ converged (ALREADY-COVERED or an empty fold). NB a fold REMOVAL leaves the
+    removed node live-but-unmapped (the non-redundancy hole surfaces it) — abandoning work is the
+    issuer's explicit CANCEL, never an implicit side effect of refinement."""
+    from gfso.core.types import TaskId
+    proj = engine.project(TaskId(root_id))
+    cur_holes = engine.graph_holes(TaskId(root_id))
+    state_view = proj + (("\n\n# CURRENT STRUCTURAL HOLES (unmet checks)\n"
+                          + "\n".join(f"- {h['task_id']} / {h['check']}: {h['details']}" for h in cur_holes))
+                         if cur_holes else "")
+    _progress(f"{label} searcher (over the graph projection)…", progress)
+    _hint(llm, f"{label} searcher")
+    holes = _search(llm, request, state_view)
+    _tag(llm, "search-refine")
+    _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
+    if holes.lstrip().upper().startswith(_COVERED):
+        _progress(f"{label} searcher: ALREADY-COVERED — converged", progress)
+        return False, extract_spec(engine, root_id), []
+    spec = extract_spec(engine, root_id)
+    _progress(f"{label} auditor (fold into the graph state)…", progress)
+    _hint(llm, f"{label} auditor")
+    patch = _dens_patch(_audit_fold(llm, request, state_view, holes) or {}, root_id)
+    _tag(llm, "audit-fold-refine")
+    new_spec, ops = _fold_merge(spec, patch)
+    if not ops:
+        _progress(f"{label} auditor {_stat_line(llm)} · empty fold — converged", progress)
+        return False, spec, []
+    d0, dep0, v0 = shape(spec)
+    d, dep, v = shape(new_spec)
+    _progress(f"{label} auditor {_stat_line(llm)} · |D| {d0}→{d} · |Dep| {dep0}→{dep} · "
+              f"|V| {v0}→{v} · ops: {'; '.join(ops)}", progress)
+    rid, new_spec, problems = _build_verified(new_spec, request, engine, root_id, assignee, llm,
+                                              progress=progress)
+    return True, new_spec, problems
+
+
+def refine(engine: Engine, root_id: str = "root", rounds: int = 1, model: str = "sonnet",
+           llm=None, progress=None) -> DecomposeResult:
+    """Apply `rounds` refinement operations to an EXISTING decomposition — the graph is the state
+    ("+1 итерация над тем, что есть"): each round = search over the real projection → fold-patch →
+    rebuild as a wholesale revision (verified; holes repaired or returned honestly). Stops early on
+    convergence (ALREADY-COVERED / empty fold). `decompose(depth=N)` is exactly init + (N−1) of these."""
+    from gfso.core.types import TaskId
+    root = engine.get_task(TaskId(root_id))
+    if root is None:
+        raise ValueError(f"refine: no decomposition at {root_id!r}")
+    llm = llm or _default_llm(model)
+    request = root.spec.description
+    assignee = str(root.assignee) if root.assignee else "human"
+    spec, holes = extract_spec(engine, root_id), []
+    for i in range(max(1, rounds)):
+        changed, spec, holes = _refine_round(engine, request, root_id, assignee, llm,
+                                             progress=progress, label=f"{i + 1}/{rounds}")
+        if not changed:
+            break
+    return DecomposeResult(engine, TaskId(root_id), engine.project(TaskId(root_id)), spec, holes,
+                           stats=list(getattr(llm, "calls", [])))
+
+
 def decompose(request: str, depth: int = 1, model: str = "sonnet",
               engine: Engine | None = None, root_id: str = "root",
-              llm=None, emit_basis: bool | None = None, fast: bool = False) -> DecomposeResult:
-    """request -> (search↔audit -> graph spec -> CORE graph -> verified/repaired). Sonnet, depth 1.
-    Final-audit emission policy is measured-auto (depth=1 → prose-first full, depth≥2 → lean structure;
-    see decompose_spec). Builds THROUGH the FSM (the single build path); if no engine is given, spins a
-    fresh started in-memory one."""
-    llm = llm or _default_llm(model)
-    spec = decompose_spec(request, depth=depth, llm=llm, emit_basis=emit_basis, fast=fast)
+              llm=None, fast: bool = False) -> DecomposeResult:
+    """request -> (init search↔fold -> CORE graph -> verified/repaired [-> refine × (depth−1)]).
+    Sonnet, depth 1. Builds THROUGH the FSM (the single build path); if no engine is given, spins a
+    fresh started in-memory one. depth>1 = further refine operations over the BUILT graph state."""
     if engine is None:
         from gfso.adapters.storage.memory import MemoryStorage
         from gfso.adapters.agents.human import HumanAgent
         engine = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True)
         engine.start()
-    rid, spec, holes = _build_verified(spec, request, engine, root_id, "human", llm)
-    return DecomposeResult(engine, rid, spec.get("basis_markdown", ""), spec, holes,
-                           stats=list(getattr(llm, "calls", [])))
+    return decompose_into(engine, request, root_id=root_id, depth=depth, model=model,
+                          llm=llm, fast=fast)
 
 
 def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee: str = "human",
                    depth: int = 1, model: str = "sonnet", llm=None, progress=None,
-                   emit_basis: bool | None = None, fast: bool = False) -> DecomposeResult:
-    """Agent-facing: run search↔audit on `request` and build the result INTO a LIVE engine THROUGH the FSM
-    (signals), under `root_id`, then verify + repair until `list_holes` is clean (or return the residue
-    honestly). Every node is authored by a logged ASSIGN; Dep seams are declared as `depends_on` criteria
-    at creation. The entry the MCP/API surface calls. Final-audit emission = measured-auto (depth=1 →
-    prose-first, depth≥2 → lean; see decompose_spec). `fast` = the measured pace-suffixes (see
-    decompose_spec; ~1.5× faster on simple tasks, content quality unjudged). `progress(msg)` mirrors
-    pipeline stages to a transport channel (stderr always written)."""
+                   fast: bool = False) -> DecomposeResult:
+    """Agent-facing: run the init search↔fold on `request`, build the result INTO a LIVE engine THROUGH
+    the FSM (signals) under `root_id`, verify + repair until `list_holes` is clean (or return the
+    residue honestly) — then apply `depth−1` refine operations over the BUILT graph (each verified;
+    the graph only ever holds verified states). Every node is authored by a logged ASSIGN; Dep seams
+    are declared as `depends_on` criteria at creation. The entry the MCP/API surface calls. `fast` =
+    the measured pace-suffixes (init round only; ~1.5× faster on simple tasks, content quality
+    unjudged). `progress(msg)` mirrors pipeline stages to a transport channel (stderr always written)."""
     import time
+    from gfso.core.types import TaskId
     t0 = time.time()
     llm = llm or _default_llm(model)
-    spec = decompose_spec(request, depth=depth, llm=llm, progress=progress, emit_basis=emit_basis,
-                          fast=fast)
-    rid, spec, holes = _build_verified(spec, request, engine, root_id, assignee, llm, progress=progress)
+    depth = max(1, depth)
+    # ONE verb, dispatched by the state (the monada): an undecomposed target → init round + build
+    # + (depth−1) refines; an ALREADY-decomposed target → depth refine rounds over what exists (its
+    # own contract is the request — re-authoring the goal itself is the revise verb, not decompose).
+    existing = engine.get_task(TaskId(root_id))
+    if existing is not None and engine.get_active_children(TaskId(root_id)):
+        _progress(f"{root_id} is already decomposed → {depth} refine round(s) over the existing graph",
+                  progress)
+        req = existing.spec.description or request
+        spec, holes, rid = extract_spec(engine, root_id), [], TaskId(root_id)
+        for i in range(depth):
+            changed, spec, holes = _refine_round(engine, req, root_id, assignee, llm,
+                                                 progress=progress, label=f"{i + 1}/{depth}")
+            if not changed:
+                break
+    else:
+        spec = decompose_spec(request, llm=llm, progress=progress, fast=fast, label=f"1/{depth}")
+        rid, spec, holes = _build_verified(spec, request, engine, root_id, assignee, llm,
+                                           progress=progress)
+        for i in range(1, depth):
+            changed, spec, holes = _refine_round(engine, request, root_id, assignee, llm,
+                                                 progress=progress, label=f"{i + 1}/{depth}")
+            if not changed:
+                break
     calls = list(getattr(llm, "calls", []))
     total_out = sum((c.get("output_tokens") or 0) for c in calls if isinstance(c, dict))
     _progress(f"total: {time.time() - t0:.0f}s wall · {total_out / 1000:.1f}k tokens · "
               f"{len(calls)} LLM calls", progress)
-    return DecomposeResult(engine, rid, spec.get("basis_markdown", ""), spec, holes, stats=calls)
+    return DecomposeResult(engine, rid, engine.project(rid), spec, holes, stats=calls)
 
 
-__all__ = ["decompose", "decompose_into", "decompose_text", "decompose_spec",
-           "build_graph_live", "DecomposeResult"]
+__all__ = ["decompose", "decompose_into", "decompose_spec", "refine",
+           "extract_spec", "build_graph_live", "DecomposeResult"]

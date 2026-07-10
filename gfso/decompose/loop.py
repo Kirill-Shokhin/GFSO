@@ -1,15 +1,21 @@
-﻿"""The decompose loop — SEARCH (text recall) ↔ AUDIT (one structured output: prose + graph spec).
+﻿"""The decompose loop — SEARCH (text recall) ↔ AUDIT (structured graph spec), incremental at depth>1.
 
 Reproduces the E2 reference-method as a callable. SEARCH is a plain-text exhaustive hole-hunt; AUDIT is a
-single forced-structured call whose `basis_markdown` field is the canonical decomposition in WORDS (the
-durable D artifact, written first so prose quality is preserved) and whose remaining fields are that same
-decomposition AS structure (D/Dep/V/N) — the audit is GFSO-aware, so it self-transcribes; there is no
-separate naive transcriber.
+forced-structured call emitting the decomposition AS structure (D/Dep/V/N) — the audit is GFSO-aware and
+reasons in native model thinking; the GRAPH-form spec is the sole carried state at EVERY depth, and the
+ONE textual read of the state is the built graph's own projection (`Engine.project`) — no separate
+prose representation exists anywhere.
+
+Refinement is INCREMENTAL: round 1 emits the full spec; every later round the searcher reads the rendered
+state and hunts only genuinely new holes, and the auditor emits a FOLD-PATCH (adds/updates/removals only)
+that the orchestrator merges programmatically — the model never re-emits converged content, so it cannot
+drop or compress it (the ×n re-emission cost and the fold-degradation of the earlier prose-carry loop are
+both removed by construction). The loop stops early on ALREADY-COVERED (searcher) or an empty fold (audit).
 
 A decomposition function is **single-level by definition**: it decomposes ONE node into its children.
-Recursion = call it again on a child. The flat spec (root criteria + subtasks + mappings + deps + neglected)
-is therefore the correct one-level encoding; deeper trees are separate calls. `depth` is the iteration
-count of the search↔audit refinement (the depth-of-working-through dial), not tree depth.
+Recursion = call it again on a child. The flat spec (root criteria + subtasks + mappings + deps + neglected
++ scope) is therefore the correct one-level encoding; deeper trees are separate calls. `depth` is the
+iteration count of the search↔audit refinement (the depth-of-working-through dial), not tree depth.
 """
 from __future__ import annotations
 
@@ -64,6 +70,13 @@ def _spec_line(spec: dict) -> str:
     return (f"spec: {len(spec.get('subtasks', []))} subtasks · {len(spec.get('deps', []))} seams · "
             f"{len(spec.get('root_criteria', []))} root criteria · {len(spec.get('neglected', []))} risks")
 
+
+def shape(spec: dict) -> tuple[int, int, int]:
+    """(|D|, |Dep|, |V|) — V counts root spanning criteria + every child's node-local criteria."""
+    n_v = len(spec.get("root_criteria", [])) + sum(len(c.get("criteria", []))
+                                                   for c in spec.get("subtasks", []))
+    return len(spec.get("subtasks", [])), len(spec.get("deps", [])), n_v
+
 _PROMPTS = Path(__file__).parent / "prompts"
 SEARCH_PROMPT = (_PROMPTS / "search.md").read_text(encoding="utf-8")
 AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8")
@@ -71,18 +84,11 @@ AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8")
 _NAME_DESC = {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"}}, "required": ["name", "description"]}
 
-# AUDIT structured output: a PROSE field (the quality artifact) + the same decomposition as graph spec.
+# AUDIT structured output: the decomposition as graph spec (the graph is the artifact; its one
+# textual read is Engine.project — the model never emits prose).
 AUDIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "basis_markdown": {"type": "string", "description":
-            "The COMPLETE canonical basis decomposition in prose markdown — the durable artifact: D "
-            "components, Dep seams (direction + glue), V criteria (spanning invariants and node-local), N "
-            "scope-exclusions. Write this fully and carefully FIRST; the structured fields below are its "
-            "faithful, LOSSLESS transcription — drop nothing, add nothing, every prose item appears once "
-            "in the structure and vice versa — with ONE principled exception: N scope-BOUNDARY items "
-            "(no materialization probability) stay in this prose and shape how root_criteria are drawn; "
-            "only genuine risk EVENTS transcribe into `neglected`."},
         "name": {"type": "string", "description":
             "A SHORT title (≤6 words) for the whole node — the UI label; the request text is the full description."},
         "root_criteria": {"type": "array", "description":
@@ -112,38 +118,62 @@ AUDIT_SCHEMA = {
             "(justification must state why neglecting is acceptable); EXTRAORDINARY = genuinely "
             "unprecedented (no precedent AND not derivable from known models); ORDINARY events may NOT be "
             "neglected — they must be a subtask instead. A deliberate SCOPE BOUNDARY (a capability the goal "
-            "does not include) is NOT a risk — it has no P: keep it in basis_markdown's N section and "
-            "encode it in how root_criteria are drawn; do NOT put it here.",
+            "does not include) is NOT a risk — it has no P: put it in the `scope` field (objectified on the "
+            "goal, visible in the graph), NOT here; it also shapes which root_criteria exist.",
             "items": {"type": "object", "properties": {
                 "item": {"type": "string"},
                 "predictability": {"type": "string", "enum": ["STATISTICAL", "EXTRAORDINARY"]},
                 "justification": {"type": "string"},
                 "invalidation": {"type": "string", "description": "when to revisit this neglect"}},
                 "required": ["item", "predictability", "justification", "invalidation"]}},
+        "scope": {"type": "array", "description":
+            "Deliberate SCOPE-BOUNDARY exclusions — capabilities the goal does NOT include (no materialization "
+            "probability; NOT risks, distinct from `neglected`). Each: the excluded capability + why it is "
+            "safely out. Recording them here OBJECTIFIES the exclusion ON THE GOAL (it becomes visible in the "
+            "graph, not an implicit absence). Emit here every scope-exclusion the basis names in its N section.",
+            "items": {"type": "object", "properties": {
+                "item": {"type": "string"}, "why_out": {"type": "string"}},
+                "required": ["item", "why_out"]}},
     },
-    "required": ["name", "basis_markdown", "root_criteria", "subtasks", "mappings", "deps", "neglected"],
+    "required": ["name", "root_criteria", "subtasks", "mappings", "deps", "neglected"],
 }
-
-
-def _lean_schema() -> dict:
-    """AUDIT_SCHEMA without the prose `basis_markdown` field — the LEAN final: the double emission
-    (prose basis + its structured transcription in one output) is the pipeline's cost center; in lean
-    mode the graph is the artifact (at depth≥2 the carried prose basis from the intermediate rounds is
-    still returned as d_md). Scope boundaries stay encoded in how root_criteria are drawn."""
-    import copy
-    s = copy.deepcopy(AUDIT_SCHEMA)
-    del s["properties"]["basis_markdown"]
-    s["required"] = [k for k in s["required"] if k != "basis_markdown"]
-    s["properties"]["neglected"]["description"] = s["properties"]["neglected"]["description"].replace(
-        "keep it in basis_markdown's N section and encode it in", "encode it in")
-    return s
-
-
-AUDIT_SCHEMA_LEAN = _lean_schema()
 
 # The repair call PATCHES: every field optional — the corrective audit re-emits ONLY what it changes
 # (a full-spec re-emission on a 16-subtask graph cost 33.7k output tokens / 312s, observed live).
-AUDIT_SCHEMA_PATCH = {**AUDIT_SCHEMA_LEAN, "required": []}
+AUDIT_SCHEMA_PATCH = {**AUDIT_SCHEMA, "required": []}
+
+_SUBTASK_ITEM = AUDIT_SCHEMA["properties"]["subtasks"]["items"]
+
+# The FOLD patch (refinement rounds): fine-grained adds/updates/removals ONLY. A top-level field
+# replacement (AUDIT_SCHEMA_PATCH) would make `subtasks` ≈ a full re-emission on every round — the
+# ×n cost center; the fold instead names the delta and the orchestrator merges it deterministically.
+FOLD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description":
+            "SHORT title (≤6 words) for the whole node — set it on the first fold (empty state); "
+            "omit thereafter unless renaming."},
+        "add_subtasks": {"type": "array", "items": _SUBTASK_ITEM, "description":
+            "NEW D components (genuinely new truth-makers). Same shape as subtasks."},
+        "update_subtasks": {"type": "array", "items": _SUBTASK_ITEM, "description":
+            "Sharpened EXISTING components, matched by id — each replaces its node wholesale "
+            "(re-emit the node complete: name, description, ALL its criteria)."},
+        "remove_subtask_ids": {"type": "array", "items": {"type": "string"}, "description":
+            "Ballast / merged-away components (their mappings and seams are cleaned up automatically)."},
+        "add_root_criteria": {"type": "array", "items": _NAME_DESC},
+        "remove_root_criteria_names": {"type": "array", "items": {"type": "string"}},
+        "add_mappings": {"type": "array", "items": AUDIT_SCHEMA["properties"]["mappings"]["items"]},
+        "remove_mappings": {"type": "array", "items": AUDIT_SCHEMA["properties"]["mappings"]["items"]},
+        "add_deps": {"type": "array", "items": AUDIT_SCHEMA["properties"]["deps"]["items"]},
+        "remove_deps": {"type": "array", "items": {"type": "object", "properties": {
+            "from": {"type": "string"}, "to": {"type": "string"}}, "required": ["from", "to"]}},
+        "add_neglected": {"type": "array", "items": AUDIT_SCHEMA["properties"]["neglected"]["items"]},
+        "remove_neglected_items": {"type": "array", "items": {"type": "string"}},
+        "add_scope": {"type": "array", "items": AUDIT_SCHEMA["properties"]["scope"]["items"]},
+        "remove_scope_items": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [],
+}
 
 
 _COVERED = "ALREADY-COVERED"
@@ -157,11 +187,11 @@ _COVERED = "ALREADY-COVERED"
 SEARCH_FAST = ("Pace note: this is a SIMPLE task — keep the enumeration TIGHT: one short line per "
                "hole/component (its falsifier in a few words), no derivations, no re-verification "
                "prose, no closing narration. Completeness of ITEMS matters; wordiness does not.")
-AUDIT_FAST = ("Pace note: this is a SIMPLE task — write the basis TIGHTLY: short prose lines, no "
-              "coverage narration or self-check text (the structure carries the checks). Names "
-              "EXACT and lossless between prose and structure — drop nothing; the NEGLECTED risk "
-              "register stays COMPLETE (each risk with its predictability verdict, justification, "
-              "invalidation).")
+AUDIT_FAST = ("Pace note: this is a SIMPLE task — keep the reduction TIGHT: no narration or "
+              "self-check text (the structure carries the checks). Names EXACT — drop nothing; the "
+              "NEGLECTED risk register stays COMPLETE (each risk with its predictability verdict, "
+              "justification, invalidation). NB: reworded 2026-07-09 for the prose-free loop; the "
+              "measured 63-77s numbers below are from the prose-era wording.")
 
 
 def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False) -> str:
@@ -179,34 +209,91 @@ def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False
     return llm.complete(user, SEARCH_PROMPT)
 
 
-def _audit_text(llm: LLMProviderPort, request: str, prev_md: str, holes: str) -> str:
-    """An INTERMEDIATE audit round: fold + re-emit the canonical basis as PROSE ONLY (the carried .md
-    state). The structured spec is emitted once, on the FINAL round — intermediate structure would be
-    thrown away, and the graph must never receive a half-converged plan."""
-    user = (f"# TASK\n{request}\n\n"
-            + (f"# CURRENT DECOMPOSITION\n{prev_md}\n\n# NEW HOLES TO FOLD IN\n{holes}\n\n"
-               if prev_md else f"# EXHAUSTIVE ENUMERATION TO REDUCE\n{holes}\n\n")
-            + "Re-emit the FULL canonical basis decomposition as prose markdown (D components, Dep seams "
-              "with direction + glue, V criteria, N scope-exclusions, then the basis width). Prose only — "
-              "no structured transcription on this round.")
-    return llm.complete(user, AUDIT_PROMPT)
-
-
-def _audit(llm: LLMProviderPort, request: str, prev_md: str, holes: str, emit_basis: bool = False,
-           fast: bool = False) -> dict:
-    prose = ("as `basis_markdown` (prose) AND the structured fields (its lossless transcription)"
-             if emit_basis else
-             "as the structured fields ONLY — a faithful, LOSSLESS transcription into the schema "
-             "(no prose re-emission; drop nothing, every basis item appears once in the structure)")
-    if prev_md:
-        user = (f"# TASK\n{request}\n\n# CURRENT DECOMPOSITION\n{prev_md}\n\n# NEW HOLES TO FOLD IN\n{holes}\n\n"
-                f"Fold the new holes into the current decomposition and re-emit the FULL canonical basis — {prose}.")
-    else:
-        user = (f"# TASK\n{request}\n\n# EXHAUSTIVE ENUMERATION TO REDUCE\n{holes}\n\n"
-                f"Reduce this to the canonical basis — emit it {prose}.")
+def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
+                fast: bool = False) -> dict:
+    """THE audit call — every round is the same operation (state, findings) → fold-patch; round 1 is
+    just the empty-state case (the whole enumeration reduces to the canonical basis as adds). The
+    orchestrator carries the full state and merges deterministically — the audit emits ONLY what
+    changes, so converged content physically cannot be dropped or compressed by re-emission."""
+    user = (f"# TASK\n{request}\n\n# CURRENT CANONICAL DECOMPOSITION (carried by the orchestrator)\n"
+            f"{state_md or '(empty — first round)'}\n\n# NEW FINDINGS TO FOLD IN\n{holes}\n\n"
+            "Fold: classify each finding against the current basis — a true duplicate of an existing "
+            "item is a no-op; a genuinely new truth-maker is an add; a finding that sharpens an existing "
+            "item is an update (re-emit that node complete); ballast or a wrong scope decision is the "
+            "corresponding remove/add. On the first round (empty state) this reduces the whole "
+            "enumeration to the canonical basis as adds, including `name`. Emit ONLY the changes as a "
+            "fold-patch — omitted content is kept verbatim by the orchestrator. Keep the state "
+            "well-formed: an added root criterion or subtask carries its coverage (add_mappings); an "
+            "added seam names existing subtask ids. If nothing new carries a distinct falsifier, emit "
+            "an empty patch.")
     if fast:
         user += "\n\n" + AUDIT_FAST
-    return llm.complete_structured(AUDIT_PROMPT, user, AUDIT_SCHEMA if emit_basis else AUDIT_SCHEMA_LEAN)
+    return llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
+
+
+def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
+    """Deterministic merge of a fold-patch into the carried spec: removals → updates → adds (deduped).
+    Removing a subtask cleans its mappings and seams (referential integrity by construction). Returns
+    (new spec, human-readable op summary); an empty summary ⟺ the patch changed nothing (converged)."""
+    s = {k: (list(v) if isinstance(v, list) else v) for k, v in spec.items()}
+    for key in ("subtasks", "root_criteria", "mappings", "deps", "neglected", "scope"):
+        s.setdefault(key, [])
+    ops: list[str] = []
+
+    if patch.get("name") and patch["name"] != s.get("name"):
+        s["name"] = patch["name"]
+        ops.append("name")
+
+    rm_ids = {str(x) for x in patch.get("remove_subtask_ids", [])} & {str(c.get("id")) for c in s["subtasks"]}
+    if rm_ids:
+        s["subtasks"] = [c for c in s["subtasks"] if str(c.get("id")) not in rm_ids]
+        s["mappings"] = [m for m in s["mappings"] if str(m.get("child_id")) not in rm_ids]
+        s["deps"] = [d for d in s["deps"]
+                     if str(d.get("from")) not in rm_ids and str(d.get("to")) not in rm_ids]
+        ops.append(f"-D {', '.join(sorted(rm_ids))}")
+    rm_rc = {str(x) for x in patch.get("remove_root_criteria_names", [])} \
+        & {str(c.get("name")) for c in s["root_criteria"]}
+    if rm_rc:
+        s["root_criteria"] = [c for c in s["root_criteria"] if str(c.get("name")) not in rm_rc]
+        s["mappings"] = [m for m in s["mappings"] if str(m.get("criterion")) not in rm_rc]
+        ops.append(f"-V(root) {len(rm_rc)}")
+    for key, tgt, idf in (("remove_mappings", "mappings",
+                           lambda x: (str(x.get("criterion")), str(x.get("child_id")))),
+                          ("remove_deps", "deps", lambda x: (str(x.get("from")), str(x.get("to"))))):
+        rm = {idf(x) for x in patch.get(key, [])}
+        kept = [x for x in s[tgt] if idf(x) not in rm]
+        if len(kept) != len(s[tgt]):
+            ops.append(f"-{tgt} {len(s[tgt]) - len(kept)}")
+            s[tgt] = kept
+    for key, tgt, idf in (("remove_neglected_items", "neglected", lambda x: str(x.get("item"))),
+                          ("remove_scope_items", "scope", lambda x: str(x.get("item")))):
+        rm = {str(x) for x in patch.get(key, [])}
+        kept = [x for x in s[tgt] if idf(x) not in rm]
+        if len(kept) != len(s[tgt]):
+            ops.append(f"-{tgt} {len(s[tgt]) - len(kept)}")
+            s[tgt] = kept
+
+    upd = {str(c.get("id")): c for c in patch.get("update_subtasks", [])}
+    changed = [str(c.get("id")) for c in s["subtasks"] if str(c.get("id")) in upd and upd[str(c.get("id"))] != c]
+    if changed:
+        s["subtasks"] = [upd.get(str(c.get("id")), c) for c in s["subtasks"]]
+        ops.append(f"~D {', '.join(changed)}")
+    unknown_upd = [c for cid, c in upd.items() if cid not in {str(c.get("id")) for c in s["subtasks"]}]
+
+    def _add(tgt: str, items: list, idf) -> None:
+        have = {idf(x) for x in s[tgt]}
+        new = [x for x in items if idf(x) not in have]
+        if new:
+            s[tgt] = s[tgt] + new
+            ops.append(f"+{tgt} {len(new)}")
+    _add("subtasks", list(patch.get("add_subtasks", [])) + unknown_upd, lambda x: str(x.get("id")))
+    _add("root_criteria", patch.get("add_root_criteria", []), lambda x: str(x.get("name")))
+    _add("mappings", patch.get("add_mappings", []),
+         lambda x: (str(x.get("criterion")), str(x.get("child_id"))))
+    _add("deps", patch.get("add_deps", []), lambda x: (str(x.get("from")), str(x.get("to"))))
+    _add("neglected", patch.get("add_neglected", []), lambda x: str(x.get("item")))
+    _add("scope", patch.get("add_scope", []), lambda x: str(x.get("item")))
+    return s, ops
 
 
 def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[str]) -> dict:
@@ -221,73 +308,52 @@ def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[st
             + "\n\nEmit a PATCH: re-emit ONLY the top-level fields you change, complete (a re-emitted field "
               "REPLACES the old one wholesale; omitted fields are kept as-is). Fix ONLY what the problems "
               "require — exact-match mapping/criterion names, add missing predictability verdicts, restore "
-              "lost items; do not rework converged content.")
+              "lost items; do not rework converged content. Any subtask criteria you re-emit must pass the "
+              "per-node completeness test (no Result may pass them all yet fail the node's obligation) — a "
+              "patched node carries its concrete obligation, not a coarse restatement; do not re-open "
+              "converged nodes you are not patching.")
     return llm.complete_structured(AUDIT_PROMPT, user, AUDIT_SCHEMA_PATCH)
 
 
-def decompose_spec(request: str, depth: int = 1, model: str = "sonnet",
-                   llm: LLMProviderPort | None = None, progress=None, emit_basis: bool | None = None,
-                   fast: bool = False) -> dict:
-    """Run search↔audit up to `depth` times (the quality dial, exactly as calibrated in E2: trivial task →
-    depth 1 = one search + one audit); the STRUCTURED spec is emitted only on the FINAL round —
-    intermediate rounds carry the basis as prose (.md). Early exit: if a pass-2+ searcher reports the
-    space ALREADY-COVERED, the loop finalizes immediately (fewer tokens on small tasks; `depth` stays the
-    upper bound, never a padding target).
+def decompose_spec(request: str, model: str = "sonnet",
+                   llm: LLMProviderPort | None = None, progress=None,
+                   fast: bool = False, label: str = "1/1") -> dict:
+    """THE INIT ROUND — one search + one fold over the EMPTY state: the exhaustive enumeration reduces
+    to the canonical basis (spec form). This is the single spec-space operation; every further
+    refinement is the SAME operation applied to the BUILT GRAPH as the state (`refine` in
+    gfso.decompose — extract → search over the projection → fold → rebuild as revision), so
+    decompose(depth=N) ≡ init + build + (N−1) × refine — one monadic operation over graph state.
 
-    `emit_basis` policy (measured, wordfreq A/C/E probes): at depth=1 the FULL prose-first final is both
-    equally fast and MORE stable (all lean runs drifted a mapping name → a repair round; prose-first runs
-    were clean — the auditor copies names from the prose it just wrote), so depth=1 defaults to True; at
-    depth≥2 the final defaults to LEAN (structure only — re-emitting the grown basis is the cost center,
-    and the carried intermediate prose is returned as `basis_markdown`, one search behind the structure).
-    Pass an explicit bool to override either way.
+    There is NO model-emitted prose anywhere: the auditor reasons in native thinking (measured tie vs
+    prose-first on the T01 reference, D/Dep/V 32/39 both, 2026-07-08) and the ONE textual read of the
+    state is the built graph's own projection (`Engine.project`) — no separate renderer exists.
 
     `fast` appends the measured pace-suffixes (SEARCH_FAST/AUDIT_FAST — user content, cores untouched):
     wordfreq simple task 106s/9.8k → 63-77s/5.6-7.4k out with holes==[], 0 repairs, shape parity
     (runs/v2_speed/). Content quality vs the frozen judge is UNMEASURED — the author's Pareto call;
     default stays False."""
-    if emit_basis is None:
-        emit_basis = depth <= 1
     if llm is None:
         from gfso.runtime import llm_factory
         llm = llm_factory(model)
     if getattr(llm, "on_tick", "absent") is None:  # adapter streams live ticks and none wired yet
         llm.on_tick = lambda msg: _progress(msg, progress)
-    depth = max(1, depth)
-    prev_md = ""
-    for i in range(depth):
-        # progress format: ROUND first, ROLE second — the round is the outer grouping, the roles rotate
-        # inside it (1/2 searcher → 1/2 auditor → 2/2 searcher → …).
-        _progress(f"{i + 1}/{depth} searcher…", progress)
-        _hint(llm, f"{i + 1}/{depth} searcher")
-        holes = _search(llm, request, prev_md, fast=fast)
-        _tag(llm, f"search-{i + 1}")
-        _progress(f"{i + 1}/{depth} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings",
+    _progress(f"{label} searcher…", progress)
+    _hint(llm, f"{label} searcher")
+    holes = _search(llm, request, "", fast=fast)
+    _tag(llm, "search-1")
+    _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
+    _progress(f"{label} auditor (fold, first round)…", progress)
+    _hint(llm, f"{label} auditor")
+    patch = _audit_fold(llm, request, "", holes, fast=fast) or {}
+    _tag(llm, "audit-fold-1")
+    spec, ops = _fold_merge({}, patch)
+    if not ops:
+        _progress(f"{label} auditor {_stat_line(llm)} · empty fold — no basis emitted (failed first round)",
                   progress)
-        covered = prev_md and holes.lstrip().upper().startswith(_COVERED)
-        if covered:
-            _progress(f"{i + 1}/{depth} searcher: ALREADY-COVERED — finalizing early", progress)
-        if i == depth - 1 or covered:
-            # final round: fold (nothing new if covered) and emit the structured spec in one call
-            _progress(f"{i + 1}/{depth} auditor (final: "
-                      f"{'basis + spec' if emit_basis else 'spec, lean'})…", progress)
-            _hint(llm, f"{i + 1}/{depth} auditor")
-            spec = _audit(llm, request, prev_md, holes, emit_basis=emit_basis, fast=fast) or {}
-            _tag(llm, f"audit-final-{i + 1}")
-            _progress(f"{i + 1}/{depth} auditor {_stat_line(llm)}", progress)
-            if spec:
-                if not emit_basis and prev_md:
-                    spec.setdefault("basis_markdown", prev_md)  # carried prose (one search behind)
-                _progress(_spec_line(spec), progress)
-            return spec
-        _progress(f"{i + 1}/{depth} auditor (fold → basis.md)…", progress)
-        _hint(llm, f"{i + 1}/{depth} auditor")
-        prev_md = _audit_text(llm, request, prev_md, holes) or prev_md
-        _tag(llm, f"audit-{i + 1}")
-        _progress(f"{i + 1}/{depth} auditor {_stat_line(llm)}", progress)
-    return {}
+        return {}
+    d, dep, v = shape(spec)
+    _progress(f"{label} auditor {_stat_line(llm)} · |D|={d} |Dep|={dep} |V|={v}", progress)
+    _progress(_spec_line(spec), progress)
+    return spec
 
 
-def decompose_text(request: str, depth: int = 1, model: str = "sonnet",
-                   llm: LLMProviderPort | None = None) -> str:
-    """Just the markdown basis (the D artifact)."""
-    return decompose_spec(request, depth=depth, model=model, llm=llm).get("basis_markdown", "")

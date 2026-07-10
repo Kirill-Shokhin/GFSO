@@ -32,6 +32,7 @@ class TaskOut(BaseModel):
     neglected: list[str]  # item texts (back-compat)
     neglected_detail: list[dict] = []  # [{item, predictability, justification}]
     risk_components: list[str]
+    scope: list[str] = []  # Ст. II.6 declared scope-boundary exclusions (objectified on the goal)
     created_at: str
     deadline: str | None
     was_challenged: bool
@@ -89,11 +90,12 @@ class GraphOut(BaseModel):
     edges: list[GraphEdge]
 
 class MetricsOut(BaseModel):
-    q_T: float
-    q_D: float
-    q_V: float
-    q_Dep: float
-    q_Del: float
+    # None = ⊥: empty population (canon §13) — no observations is not "100%"; the UI renders a dash
+    q_T: float | None = None
+    q_D: float | None = None
+    q_V: float | None = None
+    q_Dep: float | None = None
+    q_Del: float | None = None
 
 class SuggestCriteriaRequest(BaseModel):
     description: str
@@ -135,6 +137,7 @@ def task_to_out(t: Task) -> TaskOut:
             "justification": n.justification,
         } for n in t.spec.neglected],
         risk_components=list(t.spec.risk_components),
+        scope=list(t.spec.scope),
         created_at=t.created_at.isoformat(),
         deadline=t.deadline.isoformat() if t.deadline else None,
         was_challenged=t.was_challenged,

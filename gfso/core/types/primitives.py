@@ -42,6 +42,10 @@ class Spec:
     criteria: tuple[Criteria, ...]
     neglected: tuple[NeglectedItem, ...] = ()
     risk_components: tuple[str, ...] = ()  # STD-3: grouped correlated risk factors
+    scope: tuple[str, ...] = ()            # Ст. II.6: declared scope-BOUNDARY exclusions — a capability the goal
+                                           # deliberately does NOT include (no materialization P). Objectified ON
+                                           # the goal so the exclusion is VISIBLE in the graph, not an implicit
+                                           # absence; distinct from NEGLECTED (risk EVENTS with a P).
     name: str = ""                         # short node label (UI title); description = the full text
 
     def __post_init__(self):

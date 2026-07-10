@@ -47,6 +47,7 @@ def _task_out(t) -> Optional[dict]:
         "criteria": [{"name": c.name, "description": c.description,
                       "depends_on": c.depends_on} for c in t.spec.criteria],
         "neglected": [n.item for n in t.spec.neglected],
+        "scope": list(t.spec.scope),
         "done_reason": t.done_reason.name if t.done_reason else None,
         "verified": t.verified,
     }
@@ -432,18 +433,22 @@ def next_steps(engine: Engine, root_id: Optional[str] = None) -> dict:
     return _mark_mine(engine.next_steps(TaskId(root_id) if root_id else None))
 
 
-def auto_decompose(engine: Engine, request: str, root_id: str = "root",
+def auto_decompose(engine: Engine, request: str = "", root_id: str = "root",
                    assignee: Optional[str] = None,
                    depth: int = 1, model: str = "sonnet", fast: bool = False, _progress=None) -> dict:
-    """Author a real GFSO subtree from `request` in ONE call: runs the search↔audit refinement (`depth` =
-    iterations, the quality dial — 1 for a simple task), builds the result INTO the live CORE through the
-    FSM wholesale, then VERIFIES: list_holes + unplaced-item check with a bounded repair loop, so the
-    returned graph is structurally valid — or `holes` reports the honest residue (never a silent partial).
-    The decomposer OWNS the root's criteria: an existing root's hand-written criteria are re-authored to
-    the derived V-set (name/description preserved). Runs on headless subscription-billed Sonnet one-shots.
+    """THE one decomposition verb — dispatched by the target's state (one operation over graph state):
+    (a) empty project / undecomposed node → authors a real GFSO subtree from `request` (the root node
+    itself is created from the request — no hand create_task needed), builds INTO the live CORE through
+    the FSM, VERIFIES (list_holes + bounded repair — honest `holes` residue, never a silent partial),
+    then applies depth−1 refine rounds; (b) an ALREADY-decomposed node → `depth` REFINE rounds over what
+    exists ("+1 iteration": search over the graph's real projection → fold genuinely new findings →
+    rebuild as a verified revision; existing children keep their Del and their own NEGLECTED/scope;
+    `request` may be omitted — the node's own contract is the request). Recursion = the same verb on a
+    child (root_id=<child>). The decomposer OWNS the target node's criteria (re-authored to the derived
+    V-set; name/description preserved). Runs on headless subscription-billed Sonnet one-shots.
     `fast=true` on SIMPLE tasks: measured pace-suffixes, ~1.5× faster / ~40% fewer tokens with the same
-    structural shape (frozen prompt cores untouched). Prefer this over reasoning the graph node-by-node —
-    that under-covers and burns tokens."""
+    structural shape. Prefer this over reasoning the graph node-by-node — that under-covers and burns
+    tokens."""
     from gfso.decompose import decompose_into
 
     def _cb(msg: str) -> None:  # fan out: transport channel (MCP notifications) + the live UI strip
@@ -461,7 +466,7 @@ def auto_decompose(engine: Engine, request: str, root_id: str = "root",
             "subtasks": [{"id": str(c.id), "description": c.spec.description} for c in kids],
             "holes": res.holes,
             "stats": res.stats,
-            "basis_markdown": res.d_md}
+            "projection": res.d_md}  # the built root's projection markdown — the one canonical read
 
 
 # Registry: name -> function. The server registers these; tests call them directly.

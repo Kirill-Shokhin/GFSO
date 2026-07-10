@@ -106,12 +106,12 @@ This is a preliminary release. The theory is close to complete; the two things t
 
 **Theory.** Formal framework (6 theorems + 8 further results), impossibility results (binary scale, `AND`, the 7-mode basis), the agent-free theory-model (§18.10), and a falsifiability register are in place. The canon is a Russian working draft; the English translation is pending.
 
-**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, under 248 tests.
+**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, under 273 tests.
 
 **Empirical.**
 - **E0** — on 148 BCB-Hard tasks, explicit unit-test criteria raise Haiku 4.5's zero-shot solve rate from 29.1% to 63.5% at the same compute.
 - **E1** — the 7-mode taxonomy against 216 public post-mortems: **0 / 216** need an eighth mode.
-- **E2** — coverage of a completeness-audited reference decomposition rises 74 → 81% and 78 → 96% across runs of the search↔audit cycle, productized as `decompose()`.
+- **E2** — the search ↔ audit cycle reliably raises coverage of a completeness-audited reference decomposition (74 → 81% average across ten diverse domains) and is productized as `decompose()`. Measured against a bare-built reference, this shows the cycle *converges* — not that the discipline itself pays off, which is **E3**.
 - **E3** *(open)* — whether compositional validation holds on real multi-agent engineering, where a decomposition's *faithfulness* to its domain is exercised, not just its structure. Long-horizon deployment validation follows.
 
 The permanent boundaries are stated, not buried: a domain-silent false-`pass` cannot be caught a priori by any discipline (Lemma 1); the causal correctness of a decomposition is a characterized boundary, not an open algorithm; uniqueness of the basis is open (§18.9).

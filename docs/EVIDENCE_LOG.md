@@ -242,7 +242,7 @@ this log (see §6 plan).
    binary V) and the Issuer-side discipline thesis.
 
 ### NOT proven yet
-- 7 FM taxonomy completeness on real-world incidents (planned: E1)
+- ~~7 FM taxonomy completeness on real-world incidents~~ → **E1 EXECUTED (§9/§9.1)**: 0/216 in-scope incidents need an 8th FM (completeness-as-basis holds)
 - ~~LLM-Issuer with vs without GFSO discipline~~ → **E2 EXECUTED (§11)**, reframed as a convergence/optimality study (the twin A/B framing was retired)
 - Compositional validation theorem in multi-agent decomposition (planned: E3)
 - CHECK-1..8 effectiveness — no decomposition tested
@@ -976,8 +976,11 @@ live repairing a real Dep-cycle the DAG check caught.
 thinking=0 breaks mapping-name discipline (drift → repair, net slower); a thinking cap ≥ the calls'
 natural usage is a no-op; a lean (structure-only) final at depth=1 saves nothing (thinking dominates
 the saved emission) and drifted names in 3/3 probes while the prose-first final ran clean in 2/2 —
-hence the adopted emission policy: depth=1 prose-first, depth≥2 lean (there the saved re-emission is
-real).
+hence the emission policy adopted THEN: depth=1 prose-first, depth≥2 lean. **SUPERSEDED 2026-07-08/09:**
+the lean-final name-drift did not reproduce on the current model (0 drift over 12 lean runs, prose-first
+vs no-prose a measured tie on T01, D/Dep/V 32/39 both), and the 2026-07-09 incremental loop removed
+model-emitted prose entirely (the basis is now a deterministic render of the graph-form spec; see the
+2026-07-09 entry below).
 
 **Semantic graph-validation** (the decompose SEARCH prompt in diff mode over ONE decomposition level =
 node + all children, gated on clean L0/L1): live on the wordfreq graph — 11 substantive advisory
@@ -1030,7 +1033,50 @@ included) whenever a validator role is registered.
 
 **Dual acceptance run (2026-07-04, same invented log-statistics-CLI task, both regimes end-to-end).** SEQUENTIAL (agent executes): decompose 98s/9.1k → 6 leaves + root delivered, EVERY delivery auto-validated (7/7 PASS first-pass, 24–54s / ~0.5–2k each), root DONE; the deliverable's own test suite green. DELEGATED (pure orchestration): one auto_decompose with assignee=<registered executor> → executors spawned per dep-ready leaf (63–123s / 5–10k each), auto-validated (16–36s), one validator-forced REWORK driven with failed-criteria feedback, discovered-dependency BLOCKs auto-resolved, root DONE; test suite green. The run EXPOSED and closed four dispatcher gaps live: spawns must be dep-gated; a resolved BLOCK must re-queue the executor; a PHANTOM (mis-named) blocker must not deadlock (resolved external=true); root-aggregate deliver steps are executor work too.
 
-Artifacts (local, gitignored): `runs/v2_t01/` (candidates + judge verdicts), `runs/v2_speed/`.
+**Incremental refinement loop (2026-07-09).** depth>1 reworked: the graph-form spec is the sole
+carried state at every depth (model-emitted prose removed entirely; the basis artifact = a
+deterministic render of the spec), and EVERY round is the SAME operation — render(S) → search (new
+holes over the rendered state) → audit FOLD-PATCH (adds/updates/removals) → deterministic merge →
+S′; round 1 is the empty-state case. Converged content is never re-emitted, so it cannot be dropped
+or compressed (the ×n re-emission cost and the fold-degradation of the prose-carry loop are both
+removed by construction); two early exits (searcher ALREADY-COVERED; empty fold). Measured on T01,
+same-day frozen blind judge (Opus, the historical instrument), artifact = the built graph's
+projection: **depth-1 = 34/45 at 228s / 22.7k out** (historical d1: 27/45 at 325s/32.1k);
+**depth-2 = 390s / 37.4k, and the within-run pair discriminates the fold's own effect: S₁ (after
+round 1) = 33/45 (V 13/20) → S₂ (after the fold) = 35/45 (V 16/20)** — the fold's added criteria
+land on real reference items (+3 V; N −1 within judge variance). Historical prose-carry d2:
+35/45 at 698s/71k raw (≈440s/≈40k after the patch-repair fix); the 2026-07-08 prose-carry n=3
+probe: 850s/80k with coverage BELOW its own n=1. The graph artifact's structural N-forfeit is GONE
+(scope-boundary exclusions ride the goal's spec: N 2–3/6 vs the historical 0/6). Reading: round-1
+lands on a ~33–34/45 plateau (3 samples: 34, 34, 33 — T01 is the dataset's saturable
+calibration/null-anchor), a fold round buys ≈ +2 items for ≈ +15k out; token totals track model
+THINKING, not emission (removing prose moved reasoning into native thinking — the emission saving
+is real but secondary), so the pipeline's quality now rides thinking availability (native in the
+reference Claude harness; a thinking-less foreign endpoint is unmeasured and presumed worse).
+Honest caveats: ballast grows with depth (~41–44 — the fold prefers adds over merging into existing
+items), run-to-run shape variance is large (8–12 subtasks), every point is n=1 engineering
+telemetry. Simple-task depth-3 mechanics probe: 345s/31.5k, holes==[], per-round evolution visible
+(|V| 28→37→47), fold ≈ 5.9k/round, one cheap patch repair.
+
+**Refinement totalized to ONE operation over graph state (2026-07-09, later the same day).**
+`refine(engine, root_id, rounds)` is now a public operation: search over the built graph's REAL
+projection (+ any unmet checks) → fold-patch into the extracted spec (extract_spec = the exact
+inverse of the build; roundtrip-tested) → wholesale rebuild as a revision (same ids, subtree
+retained, existing children's Del preserved — a rebuild never stomps a delegation). `decompose
+(depth=N)` ≡ init + build + (N−1) × refine; the live graph only ever holds verified states. This is
+also the replan shape for E3 ("+1 iteration over whatever exists"). Frugal probe on T03 (DB
+migration — the task with E2's LARGEST historical 3-iteration climb, 67→86% on the basis artifact):
+d1 = 309s, S₁ = **30/43 (70%)** (E2's draft was 67%); one refine (+131s/+11.2k, rebuild clean) →
+S₂ = **30/43** (V +2, Dep −1, N −1 — flat within judge variance; ballast 28→18, unmatched candidate
+points 12→18: the fold's additions are real content the reference lacks, not reference items).
+Combined reading across T01 (+2) and T03 (0): **a single fold/refine round buys 0..+2 reference
+items** — the depth dial's measured quality value on these references is marginal (the E2-era climb
+came from 3 full-rework rounds on the prose artifact from a weaker draft); the refine operation's
+present worth is the OPERATION SHAPE (cheap, convergent, degradation-free replan over a live graph),
+not bulk-depth quality. Artifacts: `runs/v2_incr/` (t03_*, judge_t03_*).
+
+Artifacts (local, gitignored): `runs/v2_t01/` (candidates + judge verdicts), `runs/v2_speed/`,
+`runs/v2_incr/` (the 2026-07-09 incremental-loop candidates, judge verdicts, stats).
 
 ---
 

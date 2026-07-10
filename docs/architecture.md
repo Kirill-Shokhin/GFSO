@@ -168,7 +168,7 @@ gfso/
   core/                     ← Level 1: protocol standard (pure library, zero runtime)
     types/
       primitives.py         # Task, Spec, Criteria, CriterionMapping, DepEdge, GuardContext
-      enums.py              # State(10), Signal(13), Verdict, FM(7), AutonomyLevel
+      enums.py              # State(12), Signal(13 = 12 protocol + TIMEOUT), Verdict, FM(7), AutonomyLevel
       effects.py            # MutateGraph, RunChecks, Recommend, Dispatch
       ports.py              # StoragePort, LLMProviderPort, AgentPort
     protocol/
@@ -182,7 +182,7 @@ gfso/
     graph/
       model.py              # G = (N, E_D, E_Dep, σ) over StoragePort
       mutations.py          # Mutation → G'. Cascade returns affected child ids. Invariant enforcement.
-      metrics.py            # Q = (q_T, q_D, q_V, q_Dep, q_Del) — paper §7.2 formulas
+      metrics.py            # Q = (q_T, q_D, q_V, q_Dep, q_Del) — §7.2/§13 v3.8: event-timely; empty population → None (⊥, a dash)
       index.py              # Context building for Recommend + Dispatch
 
   engine/                   ← Level 2: framework (imports core only)
@@ -294,7 +294,7 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 | Upper op | Desugars to (lower) | Notes |
 |---|---|---|
 | create | `ASSIGN` (IDLE → CREATE_TASK effect) | node creation IS the ASSIGN effect (logged) |
-| decompose | one `ASSIGN` per child (+ `covers` → parent mapping effect) | mappings = the child's declaration, logged |
+| decompose | one `ASSIGN` per child (+ `covers` → parent mapping effect) | mappings = the child's declaration, logged; a FULL mappings list SETS the parent's coverage (pairs absent from it are removed — reconcile); `None` adds without wiping |
 | **revise** | re-`ASSIGN` (SAME id) → REVIEW | revision per Inv-1 §6.4 (v3.7): NOT a CANCEL; version appended to the log (Inv-7); **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1/1b/3; issuer-gated |
 | reneglect / edit_criteria | revise (RMW) | change one field, carry the rest |
 | add_dependency (declared) | re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§2.2); edge derived |
@@ -308,6 +308,33 @@ on its executor's CANCEL_ACK (or timeout — cancellation is authoritative). rev
 the node continues under a new contract in REVIEW: its **subtree is RETAINED, no cascade**; coverage staleness
 (uncovered new criterion / dangling mapping) is SURFACED by CHECK-1 / non-redundancy for the agent to resolve
 ∨ declare, not destroyed. The only IN-PLACE spec change is `ACCEPT_CHALLENGE`.
+
+## Decomposition surface — one operation over graph state (canon v3.8 era)
+
+`auto_decompose` is the single decomposition verb, dispatched by the target's state; `depth` N ≡ init +
+(N−1) refine applications of the same operation:
+
+- **init** (empty project / undecomposed node): one SEARCH (exhaustive recall) + one AUDIT fold over the
+  EMPTY state → the graph-form spec; the root node itself is authored from the request (no hand-created
+  root); built through the FSM (`build_graph_live`) and verified (`list_holes` + a bounded patch-repair
+  loop — an honest `holes` residue, never a silent partial).
+- **refine** (an already-decomposed node; also recursion = the same verb on a child): BOTH roles read
+  the graph's REAL projection (+ any unmet checks); the auditor emits a FOLD-PATCH (add/update/remove),
+  applied to the extracted graph state (`extract.py` = the exact data inverse of the build; patch ids
+  normalized from the projection's namespace) — converged content is never re-emitted, so it cannot be
+  dropped or compressed; the merge is deterministic and the result rebuilds wholesale as a REVISION.
+  Early exits: ALREADY-COVERED (searcher) / an empty fold (auditor).
+- **The live graph only ever holds verified states, and a rebuild is idempotent + jurisdiction-aware:** an
+  untouched child receives ZERO signals (an executing node keeps executing); each operation authors only its
+  own level — the target node's criteria/NEGLECTED/scope and the children's contracts + coverage + seams;
+  the children's Del and their OWN registers belong to other authors (the issuer; the child's own
+  decomposer, §5.1) and pass through untouched.
+- **Removal is surfaced, never silent:** coverage reconciles to the decomposer's full mapping set, so a
+  child the auditor dropped becomes an unmapped (non-redundancy) hole — visible in the streamed fold ops,
+  the returned `holes`, and `list_holes`/UI/frontier — and abandoning the work itself stays the issuer's
+  explicit `CANCEL`.
+- There is NO separate prose representation: the one textual read of the state — for the refine roles,
+  the returned artifact, and any human — is the graph's own projection (`Engine.project`).
 
 ## Closure invariant (proven)
 - **Static:** every authored-state write lives in `core/graph/mutations.py::apply`, called ONLY by

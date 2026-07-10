@@ -147,7 +147,7 @@ class Engine:
         if t is None:
             raise ValueError(f"task {task_id} not found")
         new_spec = Spec(t.spec.description, t.spec.criteria, tuple(neglected), t.spec.risk_components,
-                        name=t.spec.name)
+                        scope=t.spec.scope, name=t.spec.name)
         return self.revise(task_id, new_spec, agent)
 
     def edit_criteria(self, task_id: TaskId, criteria: tuple, agent: AgentId) -> Task:
@@ -157,7 +157,7 @@ class Engine:
         if t is None:
             raise ValueError(f"task {task_id} not found")
         new_spec = Spec(t.spec.description, tuple(criteria), t.spec.neglected, t.spec.risk_components,
-                        name=t.spec.name)
+                        scope=t.spec.scope, name=t.spec.name)
         return self.revise(task_id, new_spec, agent)
 
     def reassign(self, task_id: TaskId, new_assignee: AgentId) -> Task:
@@ -254,7 +254,7 @@ class Engine:
 
     # === Metrics API ===
 
-    def metrics(self) -> dict[str, float]:
+    def metrics(self) -> dict[str, float | None]:  # None = ⊥, пустая популяция (§13) — рендерится прочерком
         return {
             "q_T": q_T(self._graph),
             "q_D": q_D(self._graph),
@@ -352,6 +352,21 @@ class Engine:
                 covers=tuple(covers_by_child.get(child_id, [])),
             ))
             created.append(self._graph.get_task(child_id))
+
+        # `criterion_mappings is not None` = the FULL coverage list — RECONCILE (the documented
+        # contract: "pass the full list to SET; None adds children without wiping"): a pair the
+        # decomposer no longer asserts is REMOVED, so a child it dropped becomes visibly UNMAPPED —
+        # CHECK-1b/non-redundancy surfaces it as a hole. The node itself is NEVER killed here:
+        # abandoning work is the issuer's explicit CANCEL (cascade), not a decomposition side effect —
+        # the decomposer owns the FORM (coverage), the issuer owns the work's disposition.
+        if criterion_mappings is not None:
+            p = self._graph.get_task(parent_id)
+            want = {(m.criterion_name, m.child_id) for m in criterion_mappings}
+            kept = tuple(m for m in p.criterion_mappings
+                         if (m.criterion_name, m.child_id) in want)
+            if len(kept) != len(p.criterion_mappings):
+                p.criterion_mappings = kept
+                self._graph.save_task(p)
 
         self._recompute_checks(parent_id)  # eager: parent's checks now reflect its children
         return created

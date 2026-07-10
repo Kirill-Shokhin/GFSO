@@ -13,10 +13,14 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
 
 ## The loop (both regimes start the same)
 
-1. **Structure — never by hand.** `create_task` the root (short name, full description) →
-   `auto_decompose(request, root_id, depth)` — depth 1 for a simple goal, 2+ for a rich one;
-   `fast=true` on simple tasks (~1.5× faster, same structural shape). Then `list_holes()` — resolve
-   or consciously declare every residue BEFORE executing.
+1. **Structure — never by hand.** `auto_decompose(request, root_id, depth)` is THE one decomposition
+   verb, dispatched by the target's state: on an empty project it AUTHORS the root from the request
+   itself (no hand `create_task` needed) and builds the verified subtree; on an already-decomposed
+   node it runs `depth` REFINE rounds over what exists (+1 iteration: new findings fold in as a
+   verified revision — children keep their Del and their own NEGLECTED/scope; `request` may be
+   omitted, the node's contract is the request); on a child (`root_id=<child>`) it recurses one level.
+   depth 1 for a simple goal; `fast=true` on simple tasks (~1.5× faster, same structural shape).
+   Then `list_holes()` — resolve or consciously declare every residue BEFORE executing.
 2. **Drive by the frontier.** Loop `next_steps(root)` until `complete=true`. Each step tells you the
    node, the action, and whether it is YOURS (`mine`). Foreign steps (mine=false) are visible so you
    know what the graph waits on — hands off; surface them to the user if they block you.
