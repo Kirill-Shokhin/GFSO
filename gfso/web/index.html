@@ -463,6 +463,9 @@ async function selectTask(taskId) {
             acts.forEach(a => {
                 h += `<button class="btn btn-sm ${a.cls}" onclick="sendAction('${d.id}','${a.s}','${a.prompt||''}',${!!a.needsCriteria})">${a.label}</button>`;
             });
+            if (d.state === 'VALIDATING')  // the gate needs a RECORDED independent verdict before a
+                // self-executed node's PASS — this is the human counterpart of validate_node
+                h += `<button class="btn btn-sm btn-muted" onclick="recordVerdict('${d.id}')">Record verdict</button>`;
             if (!noCancel.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="sendAction('${d.id}','CANCEL','reason',false)">Cancel</button>`;
             if (['EXECUTING','REVIEW'].includes(d.state)) {
@@ -514,6 +517,23 @@ async function sendAction(taskId, signal, promptField, needsCriteria) {
         await refreshAll();
         if (selectedTaskId) await selectTask(selectedTaskId);
     } catch(e) { console.error('sendAction:', e); }
+}
+
+async function recordVerdict(taskId) {
+    const reviewer = prompt("Reviewer name (must NOT be the node's executor):", myRole());
+    if (!reviewer) return;
+    const failed = prompt('Failed criteria (comma-separated; EMPTY = PASS):');
+    if (failed === null) return;
+    const body = { task_id: taskId, reviewer,
+                   verdict: failed.trim() ? 'FAIL' : 'PASS',
+                   failed_criteria: failed.trim() ? failed.split(',').map(s=>s.trim()) : [] };
+    try {
+        const r = await fetch('/api/run/record_verdict', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+        const out = await r.json();
+        if (out.error) alert(out.error);           // e.g. reviewer == executor — the engine refused
+        if (selectedTaskId) await selectTask(selectedTaskId);
+    } catch(e) { console.error('recordVerdict:', e); }
 }
 
 function onDescInput() {

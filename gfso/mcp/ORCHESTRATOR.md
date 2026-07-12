@@ -17,8 +17,11 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
    verb, dispatched by the target's state: on an empty project it AUTHORS the root from the request
    itself (no hand `create_task` needed) and builds the verified subtree; on an already-decomposed
    node it runs `depth` REFINE rounds over what exists (+1 iteration: new findings fold in as a
-   verified revision — children keep their Del and their own NEGLECTED/scope; `request` may be
-   omitted, the node's contract is the request); on a child (`root_id=<child>`) it recurses one level.
+   verified revision — children keep their Del and their own NEGLECTED/scope; completed children are
+   FROZEN; a BLOCKED child's reason feeds the fold as runtime contact; `request` may be omitted — the
+   node's OWN contract is the request, and a passed `request` is NOT applied on refine (the result
+   carries a note): to change the goal itself, `revise` the node first, then refine; a TERMINAL target
+   is refused — a completed goal is frozen); on a child (`root_id=<child>`) it recurses one level.
    depth 1 for a simple goal; `fast=true` on simple tasks (~1.5× faster, same structural shape).
    Then `list_holes()` — resolve or consciously declare every residue BEFORE executing.
 2. **Drive by the frontier.** Loop `next_steps(root)` until `complete=true`. Each step tells you the
@@ -36,9 +39,11 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
    `FAIL(failed_criteria=<copied from the report>)` → the node returns as a `rework` step — fix
    exactly those criteria and re-deliver (max_iterations bounds the cycle). A `verdict: null`
    report is NEVER a pass — read report_text and decide as issuer.
-5. **Blocked / defective spec:** `BLOCK(reason, blocker_task_id=<node you actually need>)` records the
-   discovered dependency — never route around it informally. A wrong contract = `CHALLENGE`, or fix it
-   with `revise`/`edit_criteria` (same id, subtree retained; CANCEL only to truly abandon — it cascades).
+5. **Blocked / defective spec:** `BLOCK(reason, blocker_task_ids=[<EVERY node you actually need>])`
+   records each discovered dependency — list ALL blockers, never collapse them into one or into prose
+   (an unlisted blocker is an invisible edge), and never route around one informally. A wrong contract =
+   `CHALLENGE`, or fix it with `revise`/`edit_criteria` (same id, subtree retained; CANCEL only to truly
+   abandon — it cascades).
 
 ## Choosing the regime (per NODE, not per task)
 

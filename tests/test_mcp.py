@@ -5,6 +5,7 @@ from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso import tools as T
+from gfso import tools_llm as TL
 from gfso.mcp.server import _bind
 
 
@@ -42,7 +43,7 @@ def test_agent_loop_through_tools():
 
     # lifecycle signal + L2 validate both return JSON-able dicts
     assert T.signal(e, "r", "ACCEPT", "alice")["state"] == "EXECUTING"
-    assert isinstance(T.validate(e, "r"), dict)
+    assert isinstance(TL.validate(e, "r"), dict)
     e.stop()
 
 
@@ -93,11 +94,14 @@ def test_bind_drops_engine_from_signature():
 
 
 def test_tools_registry_complete():
-    """Every authoring + read verb is registered for the agent surface."""
+    """Every authoring + read verb is registered for the agent surface — the COMPLETE registry
+    is tools_llm.TOOLS (structural ∪ LLM); tools.TOOLS stays the structural subset (layer gate)."""
     for name in ("create_task", "decompose", "auto_decompose", "revise", "reneglect", "edit_criteria",
                  "reassign", "add_dependency", "remove_dependency", "map_criterion", "signal", "validate",
                  "project", "get_task", "next_step", "get_graph", "list_holes"):
-        assert name in T.TOOLS
+        assert name in TL.TOOLS
+    for name in ("auto_decompose", "validate", "validate_node"):
+        assert name not in T.TOOLS                      # the LLM verbs live OFF the structural half
 
 
 def test_agent_mutation_fires_the_ui_live_event():

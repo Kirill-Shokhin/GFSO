@@ -41,6 +41,7 @@ class DecomposeResult:
     spec: dict         # the structured graph spec (root_criteria/subtasks/mappings/deps/neglected)
     holes: list = field(default_factory=list)   # [] ⟺ structurally valid; else the honest residue
     stats: list = field(default_factory=list)   # per-call: {stage, duration_ms, input/output/cache tokens}
+    note: str | None = None                     # caller-facing caveat (e.g. `request` ignored on refine)
 
 
 def _default_llm(model: str):
@@ -49,43 +50,73 @@ def _default_llm(model: str):
     return llm_factory(model)
 
 
+def _dep_contradictions(engine: Engine, strip: str = "") -> list[str]:
+    """Declared seams REFUTED by contact — a deterministic read of recorded state, not a guess:
+    a BLOCK-discovered edge (§6.2 ground truth: `to` really consumes `from`) running OPPOSITE to a
+    declared seam. The pair is a cycle CHECK-2 names, but the cycle line alone does not say which
+    direction is true — this does (observed live: the repairer, seeing only declared seams + the
+    cycle, patched mappings twice and left the deadlock standing)."""
+    edges = engine.get_dependencies()
+    declared = {(str(e.from_id), str(e.to_id)) for e in edges if not e.discovered}
+    out = []
+    for e in edges:
+        f, t = str(e.from_id).removeprefix(strip), str(e.to_id).removeprefix(strip)
+        if e.discovered and (str(e.to_id), str(e.from_id)) in declared:
+            out.append(f"contact recorded `{t}` depends on `{f}` (discovered edge — the world's "
+                       f"verdict), but the plan declares the OPPOSITE seam (`{f}` depends on `{t}`): "
+                       f"the declared seam is refuted — re-emit `{t}` with a seam consuming `{f}` "
+                       f"and drop the refuted seam from `{f}`")
+    return out
+
+
 def _problems(engine: Engine, root_id: TaskId, dropped: list[str]) -> list[str]:
-    """Everything structurally wrong right now: unplaced spec items + every unmet check in the subtree.
+    """Everything structurally wrong right now: unplaced spec items + every unmet check in the subtree
+    + declared seams refuted by contact (the actionable direction behind a CHECK-2 cycle).
     Node ids are de-namespaced back to spec ids — the repair audit speaks the spec's language."""
     p = f"{root_id}."
     return dropped + [f"{str(h['task_id']).removeprefix(p)} / {h['check']}: {h['details']}"
-                      for h in engine.graph_holes(root_id)]
+                      for h in engine.graph_holes(root_id)] \
+        + _dep_contradictions(engine, strip=p)
 
 
 def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assignee: str,
                     llm, progress=None) -> tuple[TaskId, dict, list[str]]:
     """Build wholesale, then repair-loop: problems → one corrective audit call → wholesale re-build
-    (revision semantics). Bounded by REPAIR_ROUNDS; returns the final (root_id, spec, residual problems)."""
-    _progress("builder: wholesale build through the FSM…", progress)
-    eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee)
-    problems = _problems(engine, rid, dropped)
-    _progress(f"builder: {len(engine.get_active_children(rid))} nodes · {len(dropped)} dropped · "
-              f"{len(problems)} problem(s)", progress)
-    for r in range(REPAIR_ROUNDS):
-        if not problems:
-            break
-        _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(problems)} problem(s) → corrective auditor (patch)…",
-                  progress)
-        _hint(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
-        fixed = _audit_fix(llm, request, spec, problems)
-        if hasattr(llm, "tag_last"):
-            llm.tag_last(f"audit-fix-{r + 1}")
-        if not fixed:
-            break  # repair call failed — return the honest residue
-        # PATCH semantics: a re-emitted top-level field replaces the old one wholesale; omitted fields kept.
-        patched = [k for k in fixed if k in AUDIT_SCHEMA["properties"]]
-        spec = {**spec, **{k: fixed[k] for k in patched}}
-        _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
+    (revision semantics). Bounded by REPAIR_ROUNDS; returns the final (root_id, spec, residual problems).
+    The dispatcher is QUIESCED for the WHOLE verified cycle (build + repairs): the graph's contract is
+    "only verified states" — an intermediate build with known problems must not be dispatched
+    (observed live: executors spawned on a 2-problem intermediate graph a repair was about to revise)."""
+    engine._dispatch_quiesce = getattr(engine, "_dispatch_quiesce", 0) + 1
+    try:
+        _progress("builder: wholesale build through the FSM…", progress)
         eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee)
         problems = _problems(engine, rid, dropped)
-    _progress("builder: verified clean" if not problems
-              else f"builder: honest residue — {len(problems)} problem(s)", progress)
-    return rid, spec, problems
+        _progress(f"builder: {len(engine.get_active_children(rid))} nodes · {len(dropped)} dropped · "
+                  f"{len(problems)} problem(s)", progress)
+        for r in range(REPAIR_ROUNDS):
+            if not problems:
+                break
+            _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(problems)} problem(s) → corrective auditor (patch)…",
+                      progress)
+            _hint(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
+            fixed = _audit_fix(llm, request, spec, problems)
+            if hasattr(llm, "tag_last"):
+                llm.tag_last(f"audit-fix-{r + 1}")
+            if not fixed:
+                break  # repair call failed — return the honest residue
+            # PATCH semantics: a re-emitted top-level field replaces the old one wholesale; omitted fields kept.
+            patched = [k for k in fixed if k in AUDIT_SCHEMA["properties"]]
+            spec = {**spec, **{k: fixed[k] for k in patched}}
+            _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
+            eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee)
+            problems = _problems(engine, rid, dropped)
+        _progress("builder: verified clean" if not problems
+                  else f"builder: honest residue — {len(problems)} problem(s)", progress)
+        return rid, spec, problems
+    finally:
+        engine._dispatch_quiesce = max(0, getattr(engine, "_dispatch_quiesce", 1) - 1)
+        if not engine._dispatch_quiesce:
+            getattr(engine, "_dispatch_wake", lambda: None)()
 
 
 def _dens_patch(patch: dict, root_id: str) -> dict:
@@ -121,12 +152,36 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     changed=False ⟺ converged (ALREADY-COVERED or an empty fold). NB a fold REMOVAL leaves the
     removed node live-but-unmapped (the non-redundancy hole surfaces it) — abandoning work is the
     issuer's explicit CANCEL, never an implicit side effect of refinement."""
-    from gfso.core.types import TaskId
+    from gfso.core.types import TaskId, Signal
     proj = engine.project(TaskId(root_id))
     cur_holes = engine.graph_holes(TaskId(root_id))
+    kids = engine.get_active_children(TaskId(root_id))
+    frozen = [c for c in kids if c.state.name in ("DONE", "CANCELLED", "ESCALATED")]
+    # RUNTIME contact feeds the replan: a BLOCKED child is the world's verdict on the plan's seams
+    # (observed live: an inverted Dep direction deadlocked the graph, and the fold — reading only the
+    # static projection — could not see WHY, so it re-derived the same structure). Surface each
+    # blocked child with its recorded BLOCK reason so the auditor can restructure against it.
+    blocked = [(c, next((a.reason for a in reversed(engine.audit_log(c.id))
+                         if a.signal == Signal.BLOCK and not a.rejected and a.reason), ""))
+               for c in kids if c.state.name == "BLOCKED"]
+    contradictions = _dep_contradictions(engine)
     state_view = proj + (("\n\n# CURRENT STRUCTURAL HOLES (unmet checks)\n"
                           + "\n".join(f"- {h['task_id']} / {h['check']}: {h['details']}" for h in cur_holes))
-                         if cur_holes else "")
+                         if cur_holes else "") \
+        + (("\n\n# COMPLETED SUBTASKS — contracts FROZEN\n"
+            "These subtasks are terminal; their contracts cannot change (no update/remove, no coverage "
+            "remap — a terminal node admits no revision). Route any NEW obligation to a NEW subtask.\n"
+            + "\n".join(f"- {c.id} ({c.state.name})" for c in frozen)) if frozen else "") \
+        + (("\n\n# BLOCKED SUBTASKS — runtime contact (the world rejected the current seams)\n"
+            "Each blocked executor reported WHY it cannot proceed. If a reason reveals a wrong or "
+            "missing dependency (e.g. the declared Dep direction contradicts what the work really "
+            "consumes), FIX the structure: re-emit the affected subtasks with corrected dep seams.\n"
+            + "\n".join(f"- {c.id}: {r[:300]}" for c, r in blocked)) if blocked else "") \
+        + (("\n\n# DECLARED SEAMS REFUTED BY CONTACT — the fix direction is NOT a guess\n"
+            "BLOCK recorded discovered dependency edges (runtime ground truth). Each line below "
+            "contradicts a declared seam running the opposite way. Re-emit the affected subtasks "
+            "with the seam in the DISCOVERED direction and drop the refuted declared seam.\n"
+            + "\n".join(f"- {c}" for c in contradictions)) if contradictions else "")
     _progress(f"{label} searcher (over the graph projection)…", progress)
     _hint(llm, f"{label} searcher")
     holes = _search(llm, request, state_view)
@@ -210,10 +265,23 @@ def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee
     # + (depth−1) refines; an ALREADY-decomposed target → depth refine rounds over what exists (its
     # own contract is the request — re-authoring the goal itself is the revise verb, not decompose).
     existing = engine.get_task(TaskId(root_id))
+    note = None
+    if existing is not None and existing.state.name in ("DONE", "CANCELLED", "ESCALATED"):
+        # a terminal goal is FROZEN (no revision on terminal nodes, §6.3; REOPEN does not exist) —
+        # refining it would only crash on the root's own re-author. Refuse loudly.
+        raise ValueError(f"auto_decompose: {root_id!r} is {existing.state.name} (terminal) — a completed "
+                         f"goal is frozen; start a NEW goal (new root) instead of refining this one.")
     if existing is not None and engine.get_active_children(TaskId(root_id)):
         _progress(f"{root_id} is already decomposed → {depth} refine round(s) over the existing graph",
                   progress)
         req = existing.spec.description or request
+        if request and request.strip() and request.strip() != (existing.spec.description or "").strip():
+            # NEVER swallow caller intent silently: refine works over the node's OWN contract; a new
+            # goal/requirement is the REVISE verb (re-ASSIGN with the new contract), then refine.
+            note = (f"NOTE: `{root_id}` is already decomposed — refine ran over the node's OWN contract; "
+                    f"your `request` text was NOT applied. To change the goal itself: revise the node "
+                    f"(new description/criteria), then auto_decompose again.")
+            _progress(note, progress)
         spec, holes, rid = extract_spec(engine, root_id), [], TaskId(root_id)
         for i in range(depth):
             changed, spec, holes = _refine_round(engine, req, root_id, assignee, llm,
@@ -233,7 +301,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee
     total_out = sum((c.get("output_tokens") or 0) for c in calls if isinstance(c, dict))
     _progress(f"total: {time.time() - t0:.0f}s wall · {total_out / 1000:.1f}k tokens · "
               f"{len(calls)} LLM calls", progress)
-    return DecomposeResult(engine, rid, engine.project(rid), spec, holes, stats=calls)
+    return DecomposeResult(engine, rid, engine.project(rid), spec, holes, stats=calls, note=note)
 
 
 __all__ = ["decompose", "decompose_into", "decompose_spec", "refine",

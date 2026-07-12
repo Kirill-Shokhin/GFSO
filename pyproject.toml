@@ -8,20 +8,29 @@ version = "0.2.0"
 description = "GFSO: General Framework for Structured Operations — protocol engine"
 requires-python = ">=3.11"
 license = "MIT"
+# `gfso` = the batteries-included product: the DEFAULT install carries everything the
+# recommended experience needs (web UI + the agent door; every LLM role rides the Claude Code
+# CLI over subprocess — no pip dependency exists for it). The PURE CORE is the CHOSEN thing,
+# not the default: the `gfso-core` distribution (zero dependencies, canon-governed) is built
+# from packaging/core_manifest.py (closure proven by tests/test_core_dist.py on every run;
+# packaging/build_core.py builds the wheel) and is published as its own package at
+# distribution time — the door is the package NAME, not an extra.
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
-llm = ["anthropic>=0.39.0"]
-solver = ["z3-solver"]
-mcp = ["mcp>=1.0.0"]
 dev = ["pytest>=7.0", "httpx>=0.25.0"]
-all = ["gfso[llm,solver,mcp]"]
 
 [project.scripts]
 gfso = "gfso.cli:main"
+
+# Explicit discovery: the repo root also carries packaging/ (build tooling) and
+# experiments/ (research artifacts) — flat-layout auto-discovery would refuse the build.
+[tool.setuptools.packages.find]
+include = ["gfso*"]
 
 [tool.setuptools.package-data]
 "gfso.web" = ["*.html"]

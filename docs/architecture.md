@@ -21,7 +21,7 @@ Guards are simple predicates on graph state (only where needed — currently one
 (CHALLENGED, REJECT_CHALLENGE)   → EXECUTING     [MutateGraph, Dispatch]
 (CHALLENGED, timeout)            → TIMEOUT       [MutateGraph]          # escalates §6.3 (§v3.6: no auto-accept)
 (EXECUTING, DELIVER)             → VALIDATING    [MutateGraph, Dispatch]
-(EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP when blocker_task_id named (§6.2)
+(EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP per named blocker (§6.2)
 (EXECUTING, timeout)             → TIMEOUT       [MutateGraph]
 (BLOCKED, RESOLVE_BLOCK)         → EXECUTING     [MutateGraph(ADJUDICATE_DEP), MutateGraph, Dispatch] # confirm/re-attribute/retract (§6.2)
 (BLOCKED, timeout)               → ESCALATED     [MutateGraph]          # direct, see below
@@ -51,10 +51,12 @@ cancellation as DONE(reason=CANCELLED) — migrated on read in the SQLite adapte
 
 ESCALATED resolution is outside FSM — admin action (re-assign or close). Escalation crosses hierarchy levels which the per-task FSM cannot model.
 
-**Discovered-Dep (§6.2/§7.2, two-phase):** a BLOCK naming an undeclared prerequisite NODE
-(`blocker_task_id`) emits RECORD_DEP — a provisional discovered edge (provenance = the BLOCK, T11);
-RESOLVE_BLOCK adjudicates it: payload-free = confirm, `blocker_task_id` = re-attribute, `external` =
-retract (non-producible blocker → the FM-5 currency line). An escalated-unresolved provisional stays
+**Discovered-Dep (§6.2/§7.2, two-phase):** a BLOCK naming undeclared prerequisite NODE(s)
+(`blocker_task_ids`; `blocker_task_id` = single-blocker shorthand) emits RECORD_DEP PER named node —
+provisional discovered edges (provenance = the BLOCK, T11; one BLOCK may surface several prerequisites,
+an edge each); RESOLVE_BLOCK adjudicates the set: payload-free = confirm all, `blocker_task_ids` = the
+corrected FULL set (SET semantics — unlisted provisionals retract, listed sources confirm), `external` =
+retract all (non-producible blocker → the FM-5 currency line). An escalated-unresolved provisional stays
 counted — this is what feeds q_Dep's denominator.
 
 ## Design Decisions
@@ -161,59 +163,59 @@ def timeout_monitor(graph, queue):
 - `handlers.recommend()` returns recommendation. Stored in graph for Dispatch payload.
 - `fsm.transition()` takes guard context as third argument.
 
-## Module Structure
+## Module Structure (current layout; the layer rules are ENFORCED by tests/test_layering.py)
 
 ```
 gfso/
-  core/                     ← Level 1: protocol standard (pure library, zero runtime)
+  core/                     ← L0: the protocol STANDARD (canon-governed; pure, zero deps)
     types/
-      primitives.py         # Task, Spec, Criteria, CriterionMapping, DepEdge, GuardContext
-      enums.py              # State(12), Signal(13 = 12 protocol + TIMEOUT), Verdict, FM(7), AutonomyLevel
-      effects.py            # MutateGraph, RunChecks, Recommend, Dispatch
-      ports.py              # StoragePort, LLMProviderPort, AgentPort
-    protocol/
-      fsm.py                # (State, Signal, GuardContext) → (NewState, [Effect]) — THE TABLE
-      invariants.py         # Criteria immutability, binary V, FAIL requires criteria
-      validation.py         # Signal role mapping from paper §6.2
-    handlers/
-      structural.py         # CHECK-1-6: coverage (CriterionMapping), DAG, deadlines, NEGLECTED, risk_components, delegation
-      constraint.py         # CHECK-7-8: sufficiency, consistency (optional Z3)
-      recommend.py          # System LLM: neglected, decomposition, patterns
-    graph/
-      model.py              # G = (N, E_D, E_Dep, σ) over StoragePort
-      mutations.py          # Mutation → G'. Cascade returns affected child ids. Invariant enforcement.
-      metrics.py            # Q = (q_T, q_D, q_V, q_Dep, q_Del) — §7.2/§13 v3.8: event-timely; empty population → None (⊥, a dash)
-      index.py              # Context building for Recommend + Dispatch
+      primitives.py         # Task, Spec, Criteria (full: input/expected/n/timeout), DepEdge, SignalData
+      enums.py              # State(12), Signal(13 = 12 protocol + TIMEOUT), Verdict, FM(7)
+      effects.py            # MutateGraph (incl. dep_from/dep_froms), RunChecks, Recommend, Dispatch
+      ports.py              # StoragePort (mandatory core incl. the append-only signal log),
+                            # LLMProviderPort, AgentPort, VerifierPort, ClockPort, RunnerPort
+                            # (+ their stdlib defaults SystemClock/ThreadRunner — zero-dep, live here)
+    protocol/               # fsm.py = THE TABLE · invariants.py · validation.py (role map)
+    handlers/               # CHECK-1-6 structural · CHECK-7-8 numeric-bound tier (capability-honest
+                            # skips; the formula/solver tier is a declared, unimplemented extension)
+    graph/                  # model · mutations (incl. RECORD_DEP/ADJUDICATE_DEP) · metrics (∅→None) · projection
 
-  engine/                   ← Level 2: framework (imports core only)
-    __init__.py             # Engine facade: signal/query/metrics/events/audit/decomposition API
-    loop.py                 # Event loop + timeout monitor (dedup). Pre-validates effects.
-    audit.py                # AuditEntry signal log (Th.11 structural transparency)
-    events.py               # EventBus: on_transition, on_error, on_reject (isolated callbacks)
-    validation.py           # Signal role enforcement + invariant 3 check
+  engine/                   ← L1: the reference runtime (imports CORE ONLY — the layer gate)
+    loop.py                 # process_signal = the substrate-free protocol step; event_loop = the
+                            # default pump; timeout_monitor reads the ClockPort (Инв-5)
+    __init__.py             # Engine facade (takes clock=/runner= ports); audit.py; events.py; validation.py
+                            # (verifier≠executor gate; record_reviewer_verdict refuses reviewer==Del)
 
-  adapters/                 ← Level 3: pluggable implementations (imports core ports only)
-    storage/memory.py       # In-memory StoragePort
-    llm/stub.py             # Stub LLMProviderPort
-    agents/human.py         # Human AgentPort (logging)
-    agents/llm_agent.py     # LLM AgentPort (uses LLMProviderPort)
+  tools.py                  ← L1: the STRUCTURAL action surface (core+engine only; ships with the core dist)
+  tools_llm.py              ← L2: the LLM verbs (auto_decompose/validate/validate_node); its TOOLS =
+                            #     the COMPLETE transport registry (structural ∪ LLM)
 
-  main.py                   ← Level 3: CLI entry point
+  adapters/                 ← port implementations (import core only)
+    storage/ (sqlite, memory) · agents/ (human, …) · llm/ (stub | headless Claude CLI, generic
+    OpenAI-compatible) · verifiers/
+
+  decompose/ · critic/ · delegate.py · runtime.py   ← L2: the AI product (search↔audit monada,
+                            # L2 validate, registry+dispatcher, DI/llm_factory/ProjectRegistry)
+  mcp/ · api/ · web/ · cli.py · driver.py · main.py ← binding: the doors (generated from tools_llm.TOOLS)
+
+packaging/core_manifest.py  ← THE gfso-core cut line (core + engine + tools.py + neutral stdlib
+                            # adapters); closure + zero-deps proven by tests/test_core_dist.py;
+                            # build_core.py builds the wheel (version injected from the main pyproject)
+examples/                   ← one working script per entry door (tests/test_examples.py runs the
+                            # deterministic ones live)
 ```
 
-## Dependency Matrix
+## Dependency Matrix (mechanically enforced — a violation is a red CI)
 
 ```
-core/types/      → nothing
-core/protocol/   → core/types
-core/handlers/   → core/types (+ optional Z3)
-core/graph/      → core/types (no protocol knowledge)
-engine/          → core/ (types + protocol + handlers + graph)
-adapters/        → core/types/ports only
-main.py          → engine + adapters
+core/            → core/ only          (hermetic; stdlib-only)
+engine/          → core/               (the ONE framework edge)
+tools.py         → core/ + engine/     (structural surface — no LLM, no adapters)
+adapters/        → core/               (port implementations)
+decompose|critic|delegate|runtime|tools_llm → anything below binding
+mcp|api|web|cli|driver|main            → everything (and NOTHING below imports them)
 ```
 
-No upward dependencies. No cycles. handlers/ and protocol/ both Layer 1 (pure on types). graph/ is Layer 2 (stateful, depends on types only — not protocol).
 
 ## Why Each Module Exists (forcing argument)
 
@@ -223,8 +225,8 @@ No upward dependencies. No cycles. handlers/ and protocol/ both Layer 1 (pure on
 |---|---|---|
 | types/ | Zero deps, everything depends on it | Merge anything IN → import cycles |
 | protocol/ | Pure FSM table + invariants + role validation | Merge with graph → FSM depends on storage |
-| handlers/ | Effect execution: checks + recommend | Merge with protocol → pure FSM becomes impure. Merge with graph → state acquires Z3/LLM deps |
-| graph/ | Persistent state + mutations + metrics | Merge with protocol → FSM depends on storage. Merge with handlers → state acquires Z3/LLM deps |
+| handlers/ | Effect execution: checks + recommend | Merge with protocol → pure FSM becomes impure. Merge with graph → state acquires check/LLM concerns |
+| graph/ | Persistent state + mutations + metrics | Merge with protocol → FSM depends on storage. Merge with handlers → state acquires check/LLM concerns |
 
 **Level 2 (engine/):** Single module. Imports all of core/, provides framework API. Cannot be split further — audit, events, validation, loop are tightly coupled around the signal processing pipeline.
 
@@ -249,9 +251,16 @@ Both use LLMProviderPort (in core/types/ports.py). Different roles, different lo
 
 - **Engine** (engine/) receives signals via `send_signal()` or `assign_task()` → queue
 - **Event loop** (engine/loop.py) validates → FSM transition → pre-validates effects → executes → audit → events
-- **Timeout monitor** (background) checks deadlines → emits timeout signals (deduplicated per task)
+- **Timeout monitor** (background) fires on the node deadline AND — opt-in — on per-state age: every
+  state change stamps `state_entered_at`, and a state older than `GFSO_STATE_TIMEOUT` seconds emits
+  the timeout trigger. **Default 0 = OFF**: the mechanism for Инв-5 finiteness beyond node deadlines
+  is built and tested, but the clock-binding question is OPEN (a real deployment should anchor to
+  real UTC dates or stronger — tamper-resistant time is an implementor's open end); a deadline-less
+  node therefore waits indefinitely unless the knob is set. Deduplicated per (task, state).
 - **Graph store** persists G via StoragePort
-- **Audit trail** records every signal with timestamp, old/new state, effects, errors
+- **Audit trail** records every signal with timestamp, old/new state, effects, errors — APPEND-ONLY in
+  storage (SQLite `audit_log` table): the log hydrates on engine construction, so the T11/Инв-7 trail
+  survives restarts (in-memory only on MemoryStorage, consistent with its ephemerality)
 
 ## Ablation Support
 
@@ -341,10 +350,11 @@ the node continues under a new contract in REVIEW: its **subtree is RETAINED, no
   `engine/loop.py::_execute_effects` (the event loop), which records an audit entry per signal.
 - **Build:** `decompose` builds THROUGH the FSM (`build_graph_live`); the old offline `build_graph` (direct
   `save_task`) was DELETED — one build path, no offline authored-state write.
-- **Discovered-Dep is signal-driven (v3.7, closed):** BLOCK carrying `blocker_task_id` emits RECORD_DEP
-  (provisional edge), RESOLVE_BLOCK emits ADJUDICATE_DEP (confirm/re-attribute/retract) — both through
-  `mutations.apply` (§6.2/§7.2). `add_dependency(discovered=True)` remains as a test/offline convenience
-  only, off every HTTP/MCP/CLI surface.
+- **Discovered-Dep is signal-driven (v3.7, closed):** BLOCK carrying `blocker_task_ids` (or the singular
+  shorthand) emits RECORD_DEP per named blocker (provisional edges), RESOLVE_BLOCK emits ADJUDICATE_DEP
+  (confirm all / corrected full set / retract all) — both through `mutations.apply` (§6.2/§7.2).
+  `add_dependency(discovered=True)` remains as a test/offline convenience only, off every HTTP/MCP/CLI
+  surface.
 - **Derived caches** (check results, `verified`, critique, recommendation) persist but carry NO authored-contract
   state — recomputable projections of signal-driven state, not mutations.
 
@@ -371,3 +381,44 @@ method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-a
 - **Live mirroring:** one process (`gfso mcp` / `gfso serve --mcp`) hosts MCP + HTTP + UI over ONE Engine, so the
   UI's `/ws/events` reflects the agent's writes live. Separate processes share only SQLite (poll, no live WS).
 - **Versioning:** the transports + the UI are DERIVED mirrors of the Engine's verb surface (via `tools.py`).
+
+---
+
+# The scaling contract — semantic vs runtime invariance
+
+> Embedding the core as a library into your own host (storage/clock/runtime behind the ports)
+> has its own pre-registered acceptance suite and wiring reference: `docs/embeddability_acceptance.md`.
+
+**What embedding at scale PRESERVES (guaranteed — semantic invariance).** The protocol semantics
+are pure per-node functions: `fsm.transition(state, signal, guard_ctx)`, the invariants, the L0/L1
+checks, and the Q metrics are all computed from one node (+ its children/edges) with no hidden
+global state; system state is `fold(log)` over the append-only signal log (StoragePort mandatory
+core). One signal's full step is `engine.loop.process_signal` — substrate-free (no thread, no
+blocking queue). Conformance is therefore TRACE-CHECKABLE: replay a signal log through
+`process_signal` on any host and the states must match.
+
+**What it does NOT preserve (by design — no runtime invariance).** A loaded distributed host
+(Spark/Flink/stream processor, multi-region) rewrites the RUNTIME 100%: the stdlib defaults
+(SystemClock, ThreadRunner, queue pump, timeout monitor thread) are reference plumbing, not the
+product. The seams are ports — ClockPort, RunnerPort, StoragePort, LLMProviderPort/AgentPort —
+and the rewrite happens BEHIND them; the FSM table, mutations, checks and metrics are not touched.
+
+**Named discipline points for a distributed runtime (the FSM does not change):**
+
+- **Axiom-2 single clock → per-partition watermarks.** The operational trichotomy (before/during/
+  after an evaluation event) assumes one local clock per validation event. Distributed time =
+  happens-before partial order: keep validation events partition-local and use watermarks; the
+  canon names this cost explicitly (§4.8).
+- **Cross-shard AND-aggregation + the verifier≠executor gate → partition by SUBTREE.** A project
+  boundary is already a Dep-closure boundary (ProjectRegistry) — the ready-made partition unit.
+  Traffic is leaf-heavy/root-light, so the tree shape matches the load shape; a root spanning
+  shards needs a saga over child-PASS events, not a distributed transaction.
+- **Dispatch effects → idempotency.** Effects may be re-delivered on a distributed substrate;
+  consumer-side dedup is the discipline (the dispatcher's node×iteration dedup key is the
+  reference pattern).
+- **T11 total log order → partial order + merge.** The single-process log is totally ordered;
+  shards produce per-partition logs. `state = fold(log)` survives as fold over a merged partial
+  order IF each node's signals stay on one partition (subtree partitioning gives exactly that).
+- **Read scale is not the core's problem.** 100k readers of a public graph = CQRS / materialized
+  views over the log; the write path (the FSM) does not participate.
+

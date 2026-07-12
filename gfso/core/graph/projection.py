@@ -63,6 +63,7 @@ class SeamView:
     to_id: str
     discovered: bool
     glue: str | GlueMarker
+    provisional: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,7 @@ def build(
         SeamView(
             from_id=str(e.from_id), to_id=str(e.to_id), discovered=e.discovered,
             glue=e.glue if e.glue else GlueMarker.NONE_DECLARED,
+            provisional=e.provisional,
         )
         for e in dep_edges
         if e.from_id in child_ids and e.to_id in child_ids
@@ -235,7 +237,10 @@ def render(projection: NodeProjection) -> str:
     out.append("## Dependencies (Dep) — declared seams between subtasks")
     if p.seams:
         for e in p.seams:
-            tag = " (discovered)" if e.discovered else ""
+            # A discovered edge is runtime GROUND TRUTH (a BLOCK named a real prerequisite);
+            # provisional = recorded, awaiting adjudication — still contact, not a guess.
+            tag = (" (discovered by contact — ground truth, provisional)" if e.discovered and e.provisional
+                   else " (discovered by contact — ground truth)" if e.discovered else "")
             out.append(f"- `{e.to_id}` depends on `{e.from_id}`{tag}")
             glue = e.glue.value if isinstance(e.glue, GlueMarker) else e.glue
             out.append(f"  - glue (what must match / what breaks): {glue}")

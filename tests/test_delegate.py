@@ -265,6 +265,200 @@ def test_resolved_block_auto_clears_and_respawns_executor(tmp_path):
     e.stop()
 
 
+def test_multi_blocker_report_records_all_edges_and_gates_on_every_producer(tmp_path):
+    """The executor's blocked report carries blocker_task_ids — EVERY named node records an edge
+    (observed live: a 3-blocker deadlock reported through the singular schema recorded 0 edges →
+    q_Dep starved, auto-resolve blind). The node then auto-resolves only when ALL producers are DONE."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}]})
+    _child(e, "p1"); _child(e, "p2"); _child(e, "cli")
+    llm = _AgentLLM(_fenced({"status": "blocked", "summary": "stopped at imports",
+                             "reason": "need p1 and p2 outputs",
+                             "blocker_task_ids": ["p1", "p2"]}))
+    run_executor(e, TaskId("cli"), "exec-1", agents, _llm=llm)
+    e.wait_idle()
+    assert e.get_state(TaskId("cli")).name == "BLOCKED"
+    disc = sorted(str(x.from_id) for x in e.get_dependencies()
+                  if x.discovered and str(x.to_id) == "cli")
+    assert disc == ["p1", "p2"]                              # BOTH edges recorded
+    d = Dispatcher(e, agents, runner=lambda *a: None)
+    _drive_done(e, "p1")
+    d.dispatch_once()
+    assert e.get_state(TaskId("cli")).name == "BLOCKED"      # one producer still pending → no resolve
+    _drive_done(e, "p2")
+    started = d.dispatch_once()
+    assert e.get_state(TaskId("cli")).name != "BLOCKED"      # all producers DONE → confirm-all
+    assert "cli" in started                                  # dropped seen-key ⟹ fresh executor run
+    assert not [x for x in e.get_dependencies()
+                if x.discovered and str(x.to_id) == "cli" and x.provisional]  # set confirmed
+    e.stop()
+
+
+def test_mixed_phantom_auto_resolve_drops_only_the_bogus_edge(tmp_path):
+    """One phantom source among real blockers must not retract the REAL edges (the old all-or-nothing
+    external=True did exactly that): the auto-resolver adjudicates the corrected set = the real
+    sources, so only the bogus edge goes."""
+    from gfso.core.types import DepEdge
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}]})
+    _child(e, "prod"); _child(e, "blk")
+    _drive_done(e, "prod")
+    T.signal(e, "blk", "ACCEPT", "exec-1")
+    T.signal(e, "blk", "BLOCK", "exec-1", reason="need prod + a name that is not a node",
+             blocker_task_ids=["prod"])
+    # the observed-live phantom shape: a provisional edge whose source node does not exist
+    e.graph._storage.add_dep_edge(DepEdge(TaskId("ghost"), TaskId("blk"), discovered=True,
+                                          glue="", provisional=True))
+    d = Dispatcher(e, agents, runner=lambda *a: None)
+    d.dispatch_once()
+    assert e.get_state(TaskId("blk")).name != "BLOCKED"
+    disc = [(str(x.from_id), x.provisional) for x in e.get_dependencies()
+            if x.discovered and str(x.to_id) == "blk"]
+    assert disc == [("prod", False)]         # real edge confirmed; the phantom edge retracted
+    e.stop()
+
+
+def test_dep_gate_holds_on_not_yet_created_producer(tmp_path):
+    """The mid-build race (observed live): during a build the consumer's ASSIGN can land milliseconds
+    BEFORE its producer's — an unknown producer must read as NOT ready, not as vacuously satisfied
+    (the old `prod is not None and …` skipped the edge → the consumer spawned into a doomed run)."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}]})
+    T.create_task(e, "cons", {"description": "consumer", "criteria": [
+        {"name": "c", "description": "C"},
+        {"name": "dep__prod", "description": "reads prod's output", "depends_on": "prod"}]},
+        assignee="exec-1", parent_id="par")
+    d = Dispatcher(e, agents, runner=lambda *a: None)
+    assert "cons" not in d.dispatch_once()            # producer node does not exist yet → gated
+    _child(e, "prod")
+    assert "cons" not in d.dispatch_once()            # exists but not DONE → still gated
+    _drive_done(e, "prod")
+    assert "cons" in d.dispatch_once()                # producer PASSed → the gate opens
+    e.stop()
+
+
+def test_dispatch_quiesced_while_build_bursts(tmp_path):
+    """A wholesale build/rebuild is a non-atomic signal burst; dispatching a half-built graph races it
+    (observed live: the root spawned as an EXECUTING 'leaf' before its children existed). The build
+    raises engine._dispatch_quiesce → dispatch_once is silent; on exit it pokes _dispatch_wake."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    _node(e, "q1")
+    d = Dispatcher(e, agents, runner=lambda *a: None)
+    e._dispatch_quiesce = 1
+    assert d.dispatch_once() == []                    # quiesced → nothing dispatched
+    e._dispatch_quiesce = 0
+    assert "q1" in d.dispatch_once()                  # resumed on the settled graph
+    woken = []
+    e._dispatch_wake = lambda: woken.append(True)
+    from gfso.decompose.build import build_graph_live
+    spec = {"name": "goal", "root_criteria": [{"name": "r", "description": "R"}],
+            "subtasks": [{"id": "a", "description": "A",
+                          "criteria": [{"name": "ca", "description": "CA"}]}],
+            "mappings": [{"criterion": "r", "child_id": "a"}], "deps": [], "neglected": [
+                {"item": "none material", "predictability": "STATISTICAL",
+                 "justification": "-", "invalidation": "-"}]}
+    build_graph_live(spec, "goal", e, root_id="broot", assignee="exec-1")
+    assert getattr(e, "_dispatch_quiesce", 0) == 0 and woken   # counter cleared + the loop poked
+    e.stop()
+
+
+def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp_path):
+    """(a) A prematurely delivered parent must not burn validator runs: its PASS is structurally
+    rejected until every child passes (Theorem-1 gate; observed live — two doomed PASSes). The
+    validate spawn WAITS for the children. (b) If a verdict IS rejected (gate raced), that is NOT
+    'no verdict': the dedup key is freed (no retry burned) and the node revalidates once the
+    children settle — the same dispatcher, a fresh run."""
+    import time
+    from gfso.delegate import _auto_validate
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent",
+                             "criteria": [{"name": "g", "description": "G"}]}, assignee="exec-1")
+    _child(e, "kid", assignee="exec-2")               # unregistered = human-ish, dispatcher passive
+    T.signal(e, "par", "ACCEPT", "exec-1")
+    T.signal(e, "par", "DELIVER", "exec-1", result="premature aggregate")
+    ok = {"verdict": "PASS", "per_criterion": [], "failed_criteria": []}
+    llm = _AgentLLM(_fenced(ok), _fenced(ok))
+    d = Dispatcher(e, agents, runner=lambda *a: None,
+                   validator_runner=lambda en, t, a: _auto_validate(en, t, a, _llm=llm))
+    # (a) the gate: children not settled → no validator spawn at all
+    assert not any("par" in s for s in d.dispatch_once())
+    assert len(llm._texts) == 2
+    # (b) force past the gate to exercise the rejected path (a race can still produce it)
+    d._children_settled = lambda tid: True
+    assert "validate:par" in d.dispatch_once()
+    for _ in range(300):                              # verdict consumed + guarded postlude done
+        if len(llm._texts) == 1 and "v:par#0" not in d._seen:
+            break
+        time.sleep(0.01)
+    e.wait_idle()
+    assert e.get_state(TaskId("par")).name == "VALIDATING"    # the PASS was FSM-rejected
+    assert "v:par#0" not in d._seen                           # key freed for a later revalidation
+    assert not d._retried                                     # NOT burned as a no-verdict retry
+    del d.__dict__["_children_settled"]                       # restore the real gate
+    T.signal(e, "kid", "ACCEPT", "exec-2")
+    T.signal(e, "kid", "DELIVER", "exec-2", result="kid out")
+    T.signal(e, "kid", "PASS", "exec-1")                      # issuer ≠ Del → accepted
+    assert "validate:par" in d.dispatch_once()                # children settled → fresh validation
+    for _ in range(300):
+        if not llm._texts:
+            break
+        time.sleep(0.01)
+    e.wait_idle()
+    assert e.get_state(TaskId("par")).name == "DONE"          # this PASS survived the gate
+    e.stop()
+
+
+def test_stale_queued_run_releases_slot_without_spawning(tmp_path):
+    """TOCTOU: a queued run can win its semaphore slot minutes after the dispatch decision — if the
+    node has moved on (delivered / revised / new iteration), the run must abort WITHOUT an LLM spawn
+    (observed live: a second-generation queued run fired on a node already in VALIDATING)."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    _node(e, "t1")
+    ran = []
+    d = Dispatcher(e, agents, runner=lambda en, tid, ex, ag: ran.append(str(tid)))
+    # fresh: REVIEW at iteration 0 → runs
+    d._run_guarded(TaskId("t1"), "exec-1", 0)
+    assert ran == ["t1"]
+    # stale by state: the node delivered meanwhile → the queued run drops
+    T.signal(e, "t1", "ACCEPT", "exec-1")
+    T.signal(e, "t1", "DELIVER", "exec-1", result="out")
+    d._run_guarded(TaskId("t1"), "exec-1", 0)
+    assert ran == ["t1"]                                  # no second run
+    # stale validate: iteration mismatch drops AND frees the key for a fresh dispatch
+    d._seen.add("v:t1#5")
+    validated = []
+    d._validate = lambda en, t, a: validated.append(str(t)) or "pass"
+    d._validate_guarded(TaskId("t1"), 5)                  # node is at iteration 0, not 5
+    assert not validated and "v:t1#5" not in d._seen
+    d._validate_guarded(TaskId("t1"), 0)                  # fresh: VALIDATING at iteration 0
+    assert validated == ["t1"]
+    e.stop()
+
+
+def test_revision_resets_spawn_key(tmp_path):
+    """A REVISED node (re-ASSIGN, same id → REVIEW) is fresh work: its consumed spawn key must not
+    block the re-run (observed live: a refined root kept its key and was never re-executed)."""
+    from gfso.core.types import Signal, Spec, AgentId
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    _node(e, "r1")
+    d = Dispatcher(e, agents, runner=lambda *a: None)
+    assert "r1" in d.dispatch_once()
+    assert d.dispatch_once() == []                    # key consumed — dedup holds
+    t = e.get_task(TaskId("r1"))
+    e.revise(TaskId("r1"), Spec("hammer TWO nails", t.spec.criteria, name=t.spec.name),
+             AgentId("exec-1"))                       # issuer of a root = its own assignee
+    d._on_bus(TaskId("r1"), None, None, Signal.ASSIGN)   # what the transition bus delivers
+    assert "r1" in d.dispatch_once()                  # stale key dropped → the revised node re-runs
+    e.stop()
+
+
 def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
     """(a) A registered validator's PASS/FAIL is the issuer's role-V instrument — accepted by the FSM
     on CHILD nodes too (before: only roots worked — the issuer check rejected it, found by the

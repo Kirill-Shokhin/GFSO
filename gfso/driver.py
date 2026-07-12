@@ -20,7 +20,7 @@ import json
 import inspect
 
 from gfso.runtime import build_engine_from_env
-from gfso import tools as T
+from gfso import tools_llm as T  # the COMPLETE registry (structural + LLM verbs)
 
 
 def _coerce(v: str):

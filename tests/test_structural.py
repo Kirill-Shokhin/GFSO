@@ -78,7 +78,11 @@ def test_dag_no_cycle():
 def test_dag_cycle():
     children = [_task("a"), _task("b"), _task("c")]
     edges = [("a", "b"), ("b", "c"), ("c", "a")]
-    assert not check_dag(children, edges).passed
+    result = check_dag(children, edges)
+    assert not result.passed
+    # the cycle is NAMED — an anonymous "cycle detected" gives the repair no locus
+    for n in ("a", "b", "c"):
+        assert n in result.details
 
 def test_dag_empty():
     assert check_dag([], []).passed

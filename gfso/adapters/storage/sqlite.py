@@ -83,6 +83,24 @@ class SqliteStorage(StoragePort):
                 source TEXT NOT NULL,
                 message TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                signal TEXT NOT NULL,
+                old_state TEXT,
+                new_state TEXT,
+                effects_json TEXT DEFAULT '[]',
+                rejected INTEGER DEFAULT 0,
+                error TEXT,
+                source TEXT,
+                reason TEXT,
+                justification TEXT,
+                result TEXT,
+                failed_criteria_json TEXT DEFAULT '[]',
+                action TEXT,
+                in_flight TEXT
+            );
         """)
         # Defensive migrations for DBs created before these columns existed.
         dep_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(dep_edges)")}
@@ -126,7 +144,10 @@ class SqliteStorage(StoragePort):
         return json.dumps({
             "description": spec.description,
             "name": spec.name,
-            "criteria": [{"name": c.name, "description": c.description, "depends_on": c.depends_on}
+            # FULL Criteria roundtrip — input/expected/n/timeout are contract content (a verifier
+            # reads them); dropping them silently was a declared leak of the storage contract.
+            "criteria": [{"name": c.name, "description": c.description, "depends_on": c.depends_on,
+                          "input": c.input, "expected": c.expected, "n": c.n, "timeout": c.timeout}
                          for c in spec.criteria],
             "neglected": SqliteStorage._neglected_to_json(spec.neglected),
             "risk_components": list(spec.risk_components),
@@ -138,7 +159,9 @@ class SqliteStorage(StoragePort):
         d = json.loads(raw)
         return Spec(
             description=d["description"],
-            criteria=tuple(Criteria(c["name"], c["description"], depends_on=c.get("depends_on"))
+            criteria=tuple(Criteria(c["name"], c["description"], depends_on=c.get("depends_on"),
+                                    input=c.get("input"), expected=c.get("expected"),
+                                    n=c.get("n"), timeout=c.get("timeout"))
                            for c in d["criteria"]),
             neglected=SqliteStorage._neglected_from_json(d.get("neglected", ())),
             risk_components=tuple(d.get("risk_components", ())),
@@ -328,3 +351,28 @@ class SqliteStorage(StoragePort):
             "SELECT ts, source, message FROM "
             "(SELECT * FROM pipeline_log ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
         return [{"ts": r["ts"], "source": r["source"], "message": r["message"]} for r in rows]
+
+    # === Audit log (T11/Инв-7): APPEND-ONLY — insert + full ordered read, no update/delete path ===
+
+    def append_audit(self, row: dict) -> None:
+        self._conn.execute(
+            "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
+            "rejected, error, source, reason, justification, result, failed_criteria_json, "
+            "action, in_flight) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
+             json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
+             row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
+             json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight")))
+        self._conn.commit()
+
+    def load_audit(self) -> list[dict]:
+        rows = self._conn.execute("SELECT * FROM audit_log ORDER BY id ASC").fetchall()
+        return [{
+            "ts": r["ts"], "task_id": r["task_id"], "signal": r["signal"],
+            "old_state": r["old_state"], "new_state": r["new_state"],
+            "effects": json.loads(r["effects_json"] or "[]"), "rejected": bool(r["rejected"]),
+            "error": r["error"], "source": r["source"], "reason": r["reason"],
+            "justification": r["justification"], "result": r["result"],
+            "failed_criteria": json.loads(r["failed_criteria_json"] or "[]"),
+            "action": r["action"], "in_flight": r["in_flight"],
+        } for r in rows]

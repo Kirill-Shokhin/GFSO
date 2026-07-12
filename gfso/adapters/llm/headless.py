@@ -81,10 +81,15 @@ class HeadlessClaudeLLM(LLMProviderPort):
         t0 = time.monotonic()
         cap = timeout or self._timeout
         self._est_chars = 0  # per-call char-estimate (fallback token counter while usage is absent)
+        # Windows: a console child ALLOCATES ITS OWN console when the parent has none (the shared
+        # server is spawned detached) — every agent run popped an empty `claude` window on top of
+        # the user's screen, accidentally closable (= killing the run). CREATE_NO_WINDOW suppresses
+        # the console entirely; all real I/O rides the pipes and is unaffected.
+        no_window = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         try:
             proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env,
-                                    cwd=cwd)
+                                    cwd=cwd, **no_window)
 
             def _feed():  # a writer thread — a large prompt would deadlock a same-thread pipe write
                 try:

@@ -12,7 +12,7 @@ import inspect
 import os
 
 from gfso.engine import Engine
-from gfso import tools as T                       # the shared action surface (MCP + CLI both bind it)
+from gfso import tools_llm as T                   # the COMPLETE action surface (structural + LLM verbs)
 
 
 # Session-scoped project defaults: with ONE shared server and several agent sessions in parallel,
@@ -46,7 +46,8 @@ def _resolver(engine_or_registry):
 # human's explicit name; the CLI stays the unpinned dev door). Delegation params (assignee) stay
 # free — NAMING an executor is legitimate; SPEAKING as one is not.
 _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
-                 "reneglect": ("agent",), "edit_criteria": ("agent",)}
+                 "reneglect": ("agent",), "edit_criteria": ("agent",),
+                 "record_verdict": ("reviewer",)}
 
 
 def _bind(engine_or_registry, fn):

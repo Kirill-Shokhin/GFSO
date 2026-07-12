@@ -29,11 +29,22 @@ class AuditEntry:
 
 
 class AuditLog:
-    def __init__(self):
+    """The append-only signal log (T11/Инв-7). With a storage that implements the audit methods
+    (SqliteStorage), every entry is PERSISTED on record and the log HYDRATES on construction —
+    the trail survives a restart (state = fold(log) needs the log to outlive the process; it was
+    in-memory only, and a restarted server had no history at all). A storage without the methods
+    (MemoryStorage) keeps the old in-memory behavior — consistent with its own ephemerality."""
+
+    def __init__(self, storage=None):
         self._entries: list[AuditEntry] = []
+        self._storage = storage if (storage is not None and hasattr(storage, "append_audit")) else None
+        if self._storage is not None:
+            self._entries = [self._from_row(r) for r in self._storage.load_audit()]
 
     def record(self, entry: AuditEntry) -> None:
         self._entries.append(entry)
+        if self._storage is not None:
+            self._storage.append_audit(self._to_row(entry))
 
     def get_entries(self, task_id: TaskId | None = None) -> list[AuditEntry]:
         if task_id is None:
@@ -42,3 +53,31 @@ class AuditLog:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+    @staticmethod
+    def _to_row(e: AuditEntry) -> dict:
+        return {
+            "ts": e.timestamp.isoformat(), "task_id": str(e.task_id), "signal": e.signal.name,
+            "old_state": e.old_state.name if e.old_state else None,
+            "new_state": e.new_state.name if e.new_state else None,
+            "effects": list(e.effects), "rejected": e.rejected, "error": e.error,
+            "source": str(e.source) if e.source else None, "reason": e.reason,
+            "justification": e.justification, "result": e.result,
+            "failed_criteria": list(e.failed_criteria), "action": e.action,
+            "in_flight": e.in_flight,
+        }
+
+    @staticmethod
+    def _from_row(r: dict) -> AuditEntry:
+        return AuditEntry(
+            timestamp=datetime.fromisoformat(r["ts"]), task_id=TaskId(r["task_id"]),
+            signal=Signal[r["signal"]],
+            old_state=State[r["old_state"]] if r.get("old_state") else None,
+            new_state=State[r["new_state"]] if r.get("new_state") else None,
+            effects=tuple(r.get("effects") or ()), rejected=bool(r.get("rejected")),
+            error=r.get("error"),
+            source=AgentId(r["source"]) if r.get("source") else None,
+            reason=r.get("reason"), justification=r.get("justification"), result=r.get("result"),
+            failed_criteria=tuple(r.get("failed_criteria") or ()), action=r.get("action"),
+            in_flight=r.get("in_flight"),
+        )

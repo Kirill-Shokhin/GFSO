@@ -6,7 +6,7 @@ from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, NeglectedItem, Predictability
-from gfso.critic.runner import critique_node
+from gfso.critic.runner import critique_node, validate_decomposition
 
 
 def _engine() -> Engine:
@@ -108,7 +108,7 @@ def test_validate_stores_and_sets_verified_then_dirties():
     e = _engine()
     _decompose_clean(e)
     assert e.get_task(TaskId("p")).verified is False
-    crit = e.validate_decomposition(TaskId("p"))
+    crit = validate_decomposition(e, TaskId("p"))
     assert crit.gate_passed
     assert e.get_task(TaskId("p")).verified is True            # validated → fresh
     assert e.get_critique(TaskId("p"))["gate_passed"] is True  # stored record
@@ -121,7 +121,7 @@ def test_child_reassign_dirties_parent():
     and marked stale."""
     e = _engine()
     _decompose_clean(e)
-    e.validate_decomposition(TaskId("p"))
+    validate_decomposition(e, TaskId("p"))
     assert e.get_task(TaskId("p")).verified is True
     e.assign_task(TaskId("a"), Spec("a v2", (Criteria("c1", "x"),)), AgentId("d1"), parent_id=TaskId("p"))
     e.wait_idle()

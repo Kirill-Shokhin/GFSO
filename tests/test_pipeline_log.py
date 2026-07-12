@@ -63,6 +63,7 @@ def test_deliver_result_survives_restart(tmp_path):
     """The deliverable pointer (DELIVER result) persists — after `gfso down`/restart validate_node's
     default path still has the validator's input (no explicit `deliverable` needed)."""
     from gfso import tools as T
+    from gfso.tools_llm import _last_deliver_result
     db = str(tmp_path / "d.db")
     e = _eng(SqliteStorage(db))
     T.create_task(e, "n", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "w")
@@ -70,5 +71,5 @@ def test_deliver_result_survives_restart(tmp_path):
     T.signal(e, "n", "DELIVER", "w", result="artifact at out/x.txt; a met by ...")
     e.stop()
     e2 = _eng(SqliteStorage(db))                                   # fresh process, empty audit log
-    assert T._last_deliver_result(e2, T.TaskId("n")) == "artifact at out/x.txt; a met by ..."
+    assert _last_deliver_result(e2, T.TaskId("n")) == "artifact at out/x.txt; a met by ..."
     e2.stop()

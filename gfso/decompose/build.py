@@ -36,6 +36,23 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
     Re-running with a corrected spec is safe: an ASSIGN on an existing live node is a REVISION (same id,
     subtree retained, v3.7 §6.4 Inv-1) — wholesale rebuild = wholesale revise."""
     rid, A = TaskId(root_id), AgentId(assignee)
+    # QUIESCE the dispatcher for the signal burst: the build is not atomic (root ASSIGN → children
+    # ASSIGNs land milliseconds apart), and an event-driven dispatcher evaluating the half-built graph
+    # races it — observed live: the root spawned as an EXECUTING "leaf" before its children existed,
+    # and a consumer spawned before its producer node was created. Dispatch resumes on the settled
+    # graph (the counter nests across the repair loop's re-builds; _dispatch_wake pokes the loop).
+    engine._dispatch_quiesce = getattr(engine, "_dispatch_quiesce", 0) + 1
+    try:
+        return _build_graph_live(d, request, engine, rid, A)
+    finally:
+        engine._dispatch_quiesce = max(0, getattr(engine, "_dispatch_quiesce", 1) - 1)
+        if not engine._dispatch_quiesce:
+            getattr(engine, "_dispatch_wake", lambda: None)()
+
+
+def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
+                      A: AgentId) -> tuple[Engine, TaskId, list[str]]:
+    root_id = str(rid)
     root_crit = tuple(Criteria(c["name"], c.get("description", "")) for c in d.get("root_criteria", []))
     neg = tuple(
         NeglectedItem(n["item"], _pred(n.get("predictability")), n.get("justification", ""),
@@ -137,6 +154,15 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
         ex = engine.get_task(cid_t)
         if (ex is not None and ex.spec == spec_c
                 and all((c, cid_t) in have_covers for c in want_by_child.get(cid_t, ()))):
+            continue
+        # COMPLETED work is FROZEN: a terminal node admits no revision (§6.3 — the FSM would reject
+        # the re-ASSIGN anyway; observed live: a refine fold updated DONE children and its intent
+        # vanished into rejected signals). Surface the unapplied change as a problem instead — the
+        # repair loop (or the honest holes residue) routes the new obligation to a NEW subtask.
+        if ex is not None and ex.state in (State.DONE, State.CANCELLED, State.ESCALATED):
+            dropped.append(f"child {cid_t}: {ex.state.name} is terminal — completed work is frozen, "
+                           f"the intended contract/coverage change was NOT applied; route new "
+                           f"obligations to a NEW subtask (or leave the child as built)")
             continue
         changed.append((cid_t, spec_c, actor))
     if changed:

@@ -96,6 +96,9 @@ class Task:
     max_iterations: int = 3
     deadline: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.now)
+    # Инв-5 clock: when the CURRENT state was entered (stamped at every state change). Deliberately
+    # not persisted — a restart re-arms the clock from load time; finiteness still holds.
+    state_entered_at: datetime = field(default_factory=datetime.now)
     done_reason: Optional[DoneReason] = None
     autonomy: AutonomyLevel = AutonomyLevel.MANUAL
     was_challenged: bool = False
@@ -150,6 +153,9 @@ class SignalData:
     in_flight: Optional[str] = None                # CANCEL_ACK: executor's in-flight state at cancellation (T11, §6.3)
     blocker_task_id: Optional[TaskId] = None       # BLOCK: the undeclared prerequisite NODE (→ provisional discovered-Dep,
                                                    # §6.2); RESOLVE_BLOCK: the corrected source on mis-attribution
+    blocker_task_ids: tuple[TaskId, ...] = ()      # BLOCK: ALL undeclared prerequisite nodes — one BLOCK may surface
+                                                   # several (§6.2: an edge per surfaced prerequisite); RESOLVE_BLOCK:
+                                                   # the corrected FULL set (SET semantics — unlisted provisionals retract)
     external: bool = False                         # RESOLVE_BLOCK: blocker was non-producible (no producer node) →
                                                    # retract the provisional edge; the FM-5 currency line, not a Dep (§6.2)
     result: Optional[str] = None                   # DELIVER
@@ -158,6 +164,15 @@ class SignalData:
     justification: Optional[str] = None            # REJECT_CHALLENGE
     failed_criteria: tuple[str, ...] = ()          # FAIL
     action: Optional[str] = None                   # RESOLVE_BLOCK
+
+    @property
+    def blockers(self) -> tuple[TaskId, ...]:
+        """The ONE normalization point for the blocker payload: singular ∪ plural, deduped,
+        order preserved (singular kept for back-compat — a single id ≡ a set of one)."""
+        ids = (self.blocker_task_id,) + tuple(self.blocker_task_ids) if self.blocker_task_id \
+            else tuple(self.blocker_task_ids)
+        seen: set = set()
+        return tuple(b for b in ids if b and not (b in seen or seen.add(b)))
 
 
 @dataclass(frozen=True)

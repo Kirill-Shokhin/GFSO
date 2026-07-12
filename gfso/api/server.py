@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from gfso.core.types import TaskId, AgentId, State
 from gfso.core.protocol.validation import required_role
 from gfso.engine import Engine
-from gfso import tools as _tools   # the shared action surface — the HTTP mutation surface is generated from it
+from gfso import tools_llm as _tools  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
 
 from .models import (
     TaskOut, TaskDetailOut, CheckResultOut, RecommendationOut,

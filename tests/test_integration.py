@@ -324,6 +324,98 @@ def test_block_records_provisional_discovered_dep_and_resolve_adjudicates():
     engine.stop()
 
 
+def test_multi_blocker_records_edge_per_prerequisite_and_adjudicates_the_set():
+    """One BLOCK may surface SEVERAL undeclared prerequisites (§6.2: an edge per surfaced
+    prerequisite — observed live: three blockers collapsed into prose recorded 0 edges, starving
+    q_Dep and blinding auto-resolve). blocker_task_ids records a provisional edge PER existing node
+    (a non-node → the FM-5 line, skipped); RESOLVE_BLOCK adjudicates the SET: payload-free confirms
+    all, a corrected FULL set retracts the unlisted and writes the listed, external retracts all."""
+
+    class NoopAgent(AgentPort):
+        def dispatch(self, agent_id, payload):
+            return None
+
+    engine = _engine(NoopAgent())
+    A = AgentId("a")
+    for tid in ("p1", "p2", "p3", "c1", "c2", "c3"):
+        engine.graph.save_task(Task(id=TaskId(tid), spec=Spec(tid, ()), assignee=A,
+                                    state=State.EXECUTING))
+    engine.start()
+
+    def _edges(to):
+        return sorted((str(e.from_id), e.provisional) for e in engine.get_dependencies()
+                      if e.discovered and str(e.to_id) == to)
+
+    # BLOCK with the plural payload (+ legacy singular merged in) → an edge per EXISTING node
+    engine.send_signal(SignalData(signal=Signal.BLOCK, task_id=TaskId("c1"), source=A,
+                                  reason="needs p1+p2+p3",
+                                  blocker_task_id=TaskId("p3"),
+                                  blocker_task_ids=(TaskId("p1"), TaskId("p2"), TaskId("ghost"))))
+    engine.wait_idle()
+    assert _edges("c1") == [("p1", True), ("p2", True), ("p3", True)]  # ghost → no edge (FM-5 line)
+    assert engine.metrics()["q_Dep"] == 0.0                            # 0 declared / 3 discovered
+
+    # payload-free RESOLVE_BLOCK confirms the whole set
+    engine.send_signal(SignalData(signal=Signal.RESOLVE_BLOCK, task_id=TaskId("c1"), source=A,
+                                  action="all delivered"))
+    engine.wait_idle()
+    assert _edges("c1") == [("p1", False), ("p2", False), ("p3", False)]
+
+    # corrected FULL set: c2 blocked on (p1, p2); the issuer adjudicates the truth as (p2, p3)
+    engine.send_signal(SignalData(signal=Signal.BLOCK, task_id=TaskId("c2"), source=A,
+                                  reason="thought p1+p2",
+                                  blocker_task_ids=(TaskId("p1"), TaskId("p2"))))
+    engine.wait_idle()
+    engine.send_signal(SignalData(signal=Signal.RESOLVE_BLOCK, task_id=TaskId("c2"), source=A,
+                                  blocker_task_ids=(TaskId("p2"), TaskId("p3"))))
+    engine.wait_idle()
+    assert _edges("c2") == [("p2", False), ("p3", False)]              # p1 retracted, p3 written
+
+    # external retracts the whole provisional set (non-producible blocker — the FM-5 currency line)
+    engine.send_signal(SignalData(signal=Signal.BLOCK, task_id=TaskId("c3"), source=A,
+                                  reason="vendor down, and I mis-blamed two nodes",
+                                  blocker_task_ids=(TaskId("p1"), TaskId("p2"))))
+    engine.wait_idle()
+    engine.send_signal(SignalData(signal=Signal.RESOLVE_BLOCK, task_id=TaskId("c3"), source=A,
+                                  external=True))
+    engine.wait_idle()
+    assert _edges("c3") == []
+    engine.stop()
+
+
+def test_discovered_edge_contradicting_declared_seam_surfaces_named_cycle_hole():
+    """A BLOCK-discovered edge is GROUND TRUTH from contact; when it contradicts a declared seam
+    the resulting cycle must be VISIBLE (a named CHECK-2 hole on the parent) IMMEDIATELY — the
+    recorded-but-invisible shape was the live deadlock (list_holes stayed [] over a live 2-cycle
+    because nothing refreshed the parent's cached checks after RECORD_DEP)."""
+
+    class NoopAgent(AgentPort):
+        def dispatch(self, agent_id, payload):
+            return None
+
+    engine = _engine(NoopAgent())
+    A = AgentId("a")
+    engine.graph.save_task(Task(id=TaskId("par"), spec=Spec("par", ()), assignee=A,
+                                state=State.EXECUTING))
+    for tid in ("x", "y"):
+        engine.graph.save_task(Task(id=TaskId(tid), spec=Spec(tid, ()), assignee=A,
+                                    state=State.EXECUTING, parent_id=TaskId("par")))
+    engine.start()
+    engine.add_dependency(TaskId("x"), TaskId("y"))       # declared: y depends on x
+    engine.send_signal(SignalData(signal=Signal.BLOCK, task_id=TaskId("x"), source=A,
+                                  reason="actually I consume y's output",
+                                  blocker_task_ids=(TaskId("y"),)))
+    engine.wait_idle()
+    dag = [h for h in engine.graph_holes() if h["check"] == "CHECK-2:dag"]
+    assert dag and "x" in dag[0]["details"] and "y" in dag[0]["details"]
+    # and the refine/repair instruments receive the DIRECTION, not just the cycle: the declared
+    # seam is named as refuted by the discovered (contact) edge
+    from gfso.decompose import _dep_contradictions
+    contr = _dep_contradictions(engine)
+    assert len(contr) == 1 and "`x` depends on `y`" in contr[0] and "refuted" in contr[0]
+    engine.stop()
+
+
 def test_rework_flow():
     """FAIL with iteration < max → REWORK → DELIVER → PASS → DONE."""
 

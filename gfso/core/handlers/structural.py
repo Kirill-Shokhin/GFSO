@@ -104,25 +104,34 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]]) -> CheckRe
 
     UNVISITED, IN_PROGRESS, DONE = 0, 1, 2
     status: dict[str, int] = {t.id: UNVISITED for t in children}
+    stack: list[str] = []
 
-    def has_cycle(node: str) -> bool:
+    def find_cycle(node: str) -> list[str] | None:
         if node not in status:
-            return False
+            return None
         if status[node] == IN_PROGRESS:
-            return True
+            return stack[stack.index(node):] + [node]
         if status[node] == DONE:
-            return False
+            return None
         status[node] = IN_PROGRESS
+        stack.append(node)
         for neighbor in adj.get(node, []):
-            if has_cycle(neighbor):
-                return True
+            cycle = find_cycle(neighbor)
+            if cycle is not None:
+                return cycle
+        stack.pop()
         status[node] = DONE
-        return False
+        return None
 
     for task in children:
         if status.get(task.id, DONE) == UNVISITED:
-            if has_cycle(task.id):
-                return CheckResult("CHECK-2:dag", False, "cycle detected in dependency graph")
+            cycle = find_cycle(task.id)
+            if cycle is not None:
+                # Name the cycle — an anonymous "cycle detected" leaves the repair (refine reads this
+                # as a structural hole) without a locus; the named path IS the contradiction to fix
+                # (e.g. a declared seam vs a BLOCK-discovered edge running the opposite way).
+                return CheckResult("CHECK-2:dag", False,
+                                   "cycle in dependency graph: " + " -> ".join(cycle))
 
     return CheckResult("CHECK-2:dag", True)
 

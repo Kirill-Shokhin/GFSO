@@ -1078,6 +1078,15 @@ not bulk-depth quality. Artifacts: `runs/v2_incr/` (t03_*, judge_t03_*).
 Artifacts (local, gitignored): `runs/v2_t01/` (candidates + judge verdicts), `runs/v2_speed/`,
 `runs/v2_incr/` (the 2026-07-09 incremental-loop candidates, judge verdicts, stats).
 
+**Embedding acceptance, first run (2026-07-12).** Pre-registered judge (docs/embeddability_acceptance.md +
+tests/acceptance_embeddability/): a FRESH agent with no project context built a working host — own
+JSON-lines StoragePort (mandatory audit-log core + exec-verdict extension), own virtual ClockPort,
+own synchronous pump over `process_signal`, no engine threads — from the public docs + library
+source only. Result: **6/6 green on the first pass, 0 stuck points, 0 author questions**; 9 doc-gaps
+logged (spots where source reading substituted for docs) → folded back into
+docs/embeddability_acceptance.md as the embedder's wiring reference. The host artifact is deliberately
+NOT kept (each acceptance run rebuilds it fresh — keeping one would contaminate future runs).
+
 ---
 
 **Policy (set 2026-06-05):** this log is **empirical evidence only**. Agent-process material —

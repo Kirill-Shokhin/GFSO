@@ -79,7 +79,7 @@ The two properties above are not a paper. They run.
 A reference implementation exercises the protocol end-to-end — a way to run the theory, not a finished product. One engine holds the logic; four front-ends are generated from it — a web UI, an HTTP+WS API, a CLI, and an MCP surface for agents — so humans and agents drive the *same* graphs and every write is mirrored live.
 
 ```bash
-pip install -e ".[mcp]"
+pip install -e .
 
 # register the MCP server — starts a shared engine + live UI at http://localhost:8000
 claude mcp add gfso -- python -m gfso.mcp.connect
@@ -106,7 +106,7 @@ This is a preliminary release. The theory is close to complete; the two things t
 
 **Theory.** Formal framework (6 theorems + 8 further results), impossibility results (binary scale, `AND`, the 7-mode basis), the agent-free theory-model (§18.10), and a falsifiability register are in place. The canon is a Russian working draft; the English translation is pending.
 
-**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, under 273 tests.
+**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, under 310 tests.
 
 **Empirical.**
 - **E0** — on 148 BCB-Hard tasks, explicit unit-test criteria raise Haiku 4.5's zero-shot solve rate from 29.1% to 63.5% at the same compute.
@@ -125,6 +125,8 @@ The permanent boundaries are stated, not buried: a domain-silent false-`pass` ca
 **Onboarding** — [`CORE.md`](docs/CORE.md): one-page primer and common-objection answers (read first). [`applied_gfso_vision.md`](docs/applied_gfso_vision.md): applied FSM, per-metric analysis, intuition.
 
 **Derivation & evidence** — [`gfso_dependency_map.md`](docs/gfso_dependency_map.md) · [`EVIDENCE_LOG.md`](docs/EVIDENCE_LOG.md) · [`architecture.md`](docs/architecture.md).
+
+**Embedding & examples** — [`embeddability_acceptance.md`](docs/embeddability_acceptance.md): embedding the core as a library into your own host — the pre-registered acceptance suite that judges the claim, plus the embedder's wiring reference. [`examples/`](examples/): one working script per entry door (human-only · mixed · autonomous org · async precompute).
 
 ---
 

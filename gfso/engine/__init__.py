@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import queue
 import threading
 from datetime import datetime
 from typing import Optional
@@ -11,6 +10,7 @@ from gfso.core.types import (
     Signal, State, SignalData, TaskId, AgentId,
     Spec, Criteria, Task, CheckResult, Recommendation, CriterionMapping, DepEdge,
     LLMProviderPort, AgentPort, StoragePort,
+    ClockPort, SystemClock, RunnerPort, ThreadRunner,
     TERMINAL_STATES, DoneReason,
 )
 from gfso.core.graph import Graph, q_T, q_D, q_V, q_Dep, q_Del
@@ -49,17 +49,38 @@ class Engine:
         check_interval: float = 10.0,
         validate_signals: bool = True,
         critique_log_path: Optional[str] = None,
+        state_timeout: Optional[float] = None,
+        clock: Optional[ClockPort] = None,
+        runner: Optional[RunnerPort] = None,
     ):
         self._graph = Graph(storage)
         self._agents = agents
         self._llm = llm
         self._check_interval = check_interval
+        # Инв-5 per-STATE finiteness clock (seconds), GFSO_STATE_TIMEOUT. The MECHANISM is built and
+        # tested; the QUESTION stays OPEN (author, 2026-07-11): a real clock binding must anchor to
+        # real UTC dates (or something stronger — tamper-resistant time is an exploit surface), which
+        # is an implementor's open end, not this codebase's to settle; for plain LLM-system operation
+        # it carries little value. So the DEFAULT IS 0 = OFF (equivalent to the mechanism's absence —
+        # no magic 24h figure silently escalating long-lived graphs): Инв-5 finiteness beyond node
+        # deadlines is OPT-IN until the clock question is decided.
+        if state_timeout is None:
+            import os
+            try:
+                state_timeout = float(os.environ.get("GFSO_STATE_TIMEOUT", "0"))
+            except ValueError:
+                state_timeout = 0.0
+        self._state_timeout = state_timeout
         self._validate = validate_signals
         self._critique_log_path = critique_log_path
 
-        self._queue: queue.Queue[SignalData] = queue.Queue()
+        # The execution substrate + time source are PORTS (fake clock / asyncio host swap in
+        # without touching the core); the stdlib defaults preserve the historical behavior exactly.
+        self._clock: ClockPort = clock or SystemClock()
+        self._runner: RunnerPort = runner or ThreadRunner()
+        self._queue = self._runner.new_queue()
         self._stop = threading.Event()
-        self._audit = AuditLog()
+        self._audit = AuditLog(storage)   # persists + hydrates when the storage carries audit methods
         self._events = EventBus()
         self._started = False
 
@@ -71,18 +92,15 @@ class Engine:
             return
         self._started = True
 
-        threading.Thread(
-            target=event_loop,
-            args=(self._graph, self._agents, lambda: self._llm, self._queue,
-                  self._audit, self._events, self._validate),
-            daemon=True,
-        ).start()
+        self._runner.spawn(
+            lambda: event_loop(self._graph, self._agents, lambda: self._llm, self._queue,
+                               self._audit, self._events, self._validate),
+            name="gfso-event-loop")
 
-        threading.Thread(
-            target=timeout_monitor,
-            args=(self._graph, self._queue, self._check_interval, self._stop),
-            daemon=True,
-        ).start()
+        self._runner.spawn(
+            lambda: timeout_monitor(self._graph, self._queue, self._check_interval, self._stop,
+                                    self._state_timeout, self._clock),
+            name="gfso-timeout-monitor")
 
     def stop(self) -> None:
         """Stop engine gracefully."""
@@ -210,44 +228,14 @@ class Engine:
             self._graph.save_task(node)
 
     # === L2 critic / validation API ===
-
-    def validate_decomposition(self, node_id: TaskId, llm: Optional[LLMProviderPort] = None):
-        """L2 validate — the STRUCTURAL gate (cached L0/L1, eager-fresh) + the semantic hole-hunt
-        (SEARCH in diff mode over the projection — same machinery as decompose; gated on a clean L0/L1).
-        Stores the critique as the validation record + sets verified=True (advisory). Returns a NodeCritique."""
-        import json
-        from dataclasses import asdict
-        from gfso.critic.runner import critique_node
-        critique = critique_node(self, node_id, llm or self._llm)
-        self._graph._storage.store_critique(node_id, json.dumps(asdict(critique)))
-        node = self._graph.get_task(node_id)
-        if node is not None:
-            node.verified = True  # critique is now current for this decomposition
-            self._graph.save_task(node)
-        self._log_critique(critique)
-        return critique
+    # The L2 validate itself lives ABOVE the engine: gfso.critic.runner.validate_decomposition(engine,
+    # node_id) — the critic pulls decompose/adapters, and the engine imports core ONLY (the layer gate).
+    # The engine keeps the pure storage reads its layer owns.
 
     def get_critique(self, node_id: TaskId) -> Optional[dict]:
         import json
         raw = self._graph._storage.get_critique(node_id)
         return json.loads(raw) if raw else None
-
-    def _log_critique(self, critique) -> None:
-        """Append a JSONL line per validation — the raw material for coverage curves."""
-        if not self._critique_log_path:
-            return
-        import json
-        from datetime import datetime
-        rec = {
-            "ts": datetime.now().isoformat(),
-            "node": critique.node_id,
-            "gate_passed": critique.gate_passed,
-            "l0l1_failures": list(critique.l0l1_failures),
-            "semantic_covered": critique.semantic_covered,
-            "findings_chars": len(critique.semantic_findings),
-        }
-        with open(self._critique_log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec) + "\n")
 
     def active_tasks(self) -> list[Task]:
         return self._graph.active_tasks()
@@ -305,6 +293,25 @@ class Engine:
             "verdict": verdict, "failed_criteria": list(failed_criteria or ()),
             "validator": validator_id, "iteration": getattr(task, "iteration", 0),
             "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
+
+    def record_reviewer_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
+                                reviewer: str) -> None:
+        """The HUMAN counterpart of validate_node's record: an independent reviewer's verdict on
+        the node's CURRENT delivery (feeds the same self-pass gate). The engine REFUSES a reviewer
+        who IS the node's executor — recording a verdict on your own work would open the
+        verifier≠executor gate from the inside (§6.5 IC; visibility ≠ enforcement: the refusal is
+        here, not in a prompt). FAIL requires failed_criteria (Inv-3)."""
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"unknown task {task_id}")
+        if verdict not in ("PASS", "FAIL"):
+            raise ValueError(f"verdict must be PASS or FAIL, got {verdict!r}")
+        if verdict == "FAIL" and not failed_criteria:
+            raise ValueError("FAIL requires failed_criteria (Inv-3: a FAIL is never criteria-less)")
+        if task.assignee and str(reviewer) == str(task.assignee):
+            raise ValueError(f"reviewer {reviewer!r} is the node's own executor — an independent "
+                             f"verdict cannot come from the executor (verifier ≠ executor, §6.5)")
+        self.record_exec_verdict(task_id, verdict, list(failed_criteria or ()), str(reviewer))
 
     def get_exec_verdict(self, task_id: TaskId) -> Optional[dict]:
         import json as _json

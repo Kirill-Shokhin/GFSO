@@ -50,6 +50,8 @@ def run_code(code: str, stdin_input: str, timeout: float = 10.0) -> ExecutionRes
             proc = subprocess.Popen(
                 [sys.executable, tmp],
                 stdin=fin, stdout=fout, stderr=ferr,
+                # Windows: don't pop a console window (same class as the headless adapter)
+                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
             )
             try:
                 proc.wait(timeout=timeout)

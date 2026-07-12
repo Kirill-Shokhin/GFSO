@@ -65,6 +65,9 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
     if new_state == State.CHALLENGED:
         task.was_challenged = True
 
+    if task.state != new_state:
+        from datetime import datetime
+        task.state_entered_at = datetime.now()   # Инв-5: every state carries its own clock
     task.state = new_state
 
     if effect.done_reason is not None:
@@ -145,23 +148,30 @@ def _record_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
 
 def _adjudicate_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
     """RESOLVE_BLOCK adjudicates the provisional discovered-Dep(s) targeting this task (§6.2):
-    no payload → CONFIRM (provisional=False); dep_external → RETRACT (blocker non-producible — the FM-5
-    line, not a Dep); dep_from → RE-ATTRIBUTE (retract the mis-attributed provisional, write the real
-    source, confirmed). An escalated-unresolved provisional is simply never adjudicated — it stays
-    counted (the hole was real)."""
+    no payload → CONFIRM ALL (provisional=False); dep_external → RETRACT ALL (blocker non-producible —
+    the FM-5 line, not a Dep); a source set (dep_froms / legacy dep_from) → the corrected FULL set
+    (SET semantics, mirroring decompose's mappings reconciliation): unlisted provisionals retract,
+    each listed source is written confirmed (glue kept where the source matches a provisional).
+    An escalated-unresolved provisional is simply never adjudicated — it stays counted (the hole
+    was real)."""
     provisional = [e for e in graph._storage.get_dep_edges()
                    if e.to_id == effect.task_id and e.provisional]
     if effect.dep_external:
         for e in provisional:
             graph._storage.remove_dep_edge(e.from_id, e.to_id)
         return []
-    if effect.dep_from is not None:
-        glue = provisional[0].glue if provisional else ""
+    corrected = effect.dep_froms or ((effect.dep_from,) if effect.dep_from else ())
+    if corrected:
+        glue_by_src = {e.from_id: e.glue for e in provisional}
+        default_glue = provisional[0].glue if provisional else ""
         for e in provisional:
             graph._storage.remove_dep_edge(e.from_id, e.to_id)
-        if graph.get_task(effect.dep_from) is not None:
-            graph._storage.add_dep_edge(DepEdge(effect.dep_from, effect.task_id,
-                                                discovered=True, glue=glue, provisional=False))
+        existing = {(e.from_id, e.to_id) for e in graph._storage.get_dep_edges()}
+        for src in dict.fromkeys(corrected):
+            if graph.get_task(src) is not None and (src, effect.task_id) not in existing:
+                graph._storage.add_dep_edge(DepEdge(src, effect.task_id, discovered=True,
+                                                    glue=glue_by_src.get(src, default_glue),
+                                                    provisional=False))
         return []
     for e in provisional:  # confirm
         graph._storage.remove_dep_edge(e.from_id, e.to_id)

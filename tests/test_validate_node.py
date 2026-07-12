@@ -8,6 +8,7 @@ from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso import tools as T
+from gfso import tools_llm as TL
 
 
 def _eng():
@@ -58,7 +59,7 @@ def test_validate_node_happy_path_embeds_contract_and_deliver():
                                      {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md"},
                                      {"criterion": "holds", "verdict": "pass", "evidence": "ran check"}],
                                  "seams": "checked prod output", "failed_criteria": []}))
-    out = T.validate_node(e, "n1", _llm=llm)
+    out = TL.validate_node(e, "n1", _llm=llm)
     assert out["verdict"] == "PASS" and out["failed_criteria"] == []
     assert len(out["per_criterion"]) == 2 and out["state"] == "VALIDATING"
     assert out["stats"][-1]["stage"] == "validate_node"
@@ -78,7 +79,7 @@ def test_validate_node_fail_report_drives_issuer_fail_signal():
                                      {"criterion": "flush", "verdict": "fail", "evidence": "nail bent"},
                                      {"criterion": "holds", "verdict": "pass", "evidence": "held"}],
                                  "failed_criteria": ["flush"]}))
-    out = T.validate_node(e, "n1", _llm=llm)
+    out = TL.validate_node(e, "n1", _llm=llm)
     assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
     assert e.get_state(T.TaskId("n1")).name == "VALIDATING"   # instrument did NOT mutate the graph
     r = T.signal(e, "n1", "FAIL", "alice", failed_criteria=out["failed_criteria"])
@@ -89,12 +90,12 @@ def test_validate_node_fail_report_drives_issuer_fail_signal():
 def test_validate_node_requires_a_deliverable():
     e = _eng()
     T.create_task(e, "n2", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "alice")
-    out = T.validate_node(e, "n2", _llm=_ValidatorLLM("irrelevant"))
+    out = TL.validate_node(e, "n2", _llm=_ValidatorLLM("irrelevant"))
     assert "error" in out and "DELIVER" in out["error"]
     # explicit deliverable unblocks it (the restart fallback)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "a", "verdict": "pass", "evidence": "ok"}], "failed_criteria": []}))
-    out = T.validate_node(e, "n2", deliverable="see out.txt", _llm=llm)
+    out = TL.validate_node(e, "n2", deliverable="see out.txt", _llm=llm)
     assert out["verdict"] == "PASS" and "see out.txt" in llm.seen["user"]
     e.stop()
 
@@ -103,7 +104,7 @@ def test_validate_node_unparsed_report_is_never_pass():
     e = _eng()
     _delivered_node(e)
     llm = _ValidatorLLM("I looked at it and it seems fine!")   # no fenced json
-    out = T.validate_node(e, "n1", _llm=llm)
+    out = TL.validate_node(e, "n1", _llm=llm)
     assert out["verdict"] is None and "seems fine" in out["report_text"]
     assert llm.calls[-1]["parse_failed"] is True
     e.stop()
@@ -111,13 +112,13 @@ def test_validate_node_unparsed_report_is_never_pass():
 
 def test_validate_node_unknown_task():
     e = _eng()
-    out = T.validate_node(e, "ghost", _llm=_ValidatorLLM(""))
+    out = TL.validate_node(e, "ghost", _llm=_ValidatorLLM(""))
     assert "error" in out
     e.stop()
 
 
 def test_registry_exposes_validate_node():
-    assert "validate_node" in T.TOOLS
+    assert "validate_node" in TL.TOOLS   # the COMPLETE transport registry
 
 
 def test_mcp_server_binds_validate_node_async():
@@ -151,7 +152,7 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     # a FAIL verdict on record does NOT unlock PASS (that override is the falsification q_V fears)
     llm_fail = _ValidatorLLM(_fenced({"verdict": "FAIL", "per_criterion": [
         {"criterion": "flush", "verdict": "fail", "evidence": "bent"}], "failed_criteria": ["flush"]}))
-    T.validate_node(e, "n1", _llm=llm_fail)
+    TL.validate_node(e, "n1", _llm=llm_fail)
     r = T.signal(e, "n1", "PASS", "alice")
     assert r["accepted"] is False and "FAIL" in r["error"]
     # the honest path: FAIL → REWORK → re-deliver → the OLD verdict is stale → re-validate → PASS
@@ -161,7 +162,7 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     assert r["accepted"] is False and "STALE" in r["error"]
     llm_ok = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ok"}], "failed_criteria": []}))
-    T.validate_node(e, "n1", _llm=llm_ok)
+    TL.validate_node(e, "n1", _llm=llm_ok)
     assert T.signal(e, "n1", "PASS", "alice")["state"] == "DONE"
     e.stop()
 
@@ -179,3 +180,27 @@ def test_distinct_issuer_pass_needs_no_verdict_record():
     T.signal(e, "kid", "DELIVER", "worker", result="done")
     assert T.signal(e, "kid", "PASS", "boss")["state"] == "DONE"   # issuer=boss ≠ Del=worker
     e.stop()
+
+
+def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gate():
+    """The human counterpart of validate_node: a SELF-executed node's PASS stays rejected until an
+    INDEPENDENT reviewer records a verdict (record_verdict) — and the engine REFUSES the executor
+    recording one on their own work (the self-stamp would open the gate from the inside)."""
+    e = _eng()
+    T.create_task(e, "n9", {"description": "solo work",
+                            "criteria": [{"name": "a", "description": "A"}]}, "h1")
+    T.signal(e, "n9", "ACCEPT", "h1")
+    T.signal(e, "n9", "DELIVER", "h1", result="done; a met")
+    assert e.get_state(T.TaskId("n9")).name == "VALIDATING"
+    assert T.signal(e, "n9", "PASS", "h1")["accepted"] is False      # gate: no recorded verdict
+
+    out = T.record_verdict(e, "n9", "PASS", reviewer="h1")           # executor tries to self-record
+    assert out["recorded"] is False and "executor" in out["error"]   # the ENGINE refused
+
+    assert T.record_verdict(e, "n9", "FAIL", reviewer="h2")["recorded"] is False  # Inv-3: criteria-less FAIL
+
+    assert T.record_verdict(e, "n9", "PASS", reviewer="h2")["recorded"] is True   # independent human
+    assert T.signal(e, "n9", "PASS", "h1")["accepted"] is True       # gate opens on the RECORD
+    assert e.get_state(T.TaskId("n9")).name == "DONE"
+    e.stop()
+

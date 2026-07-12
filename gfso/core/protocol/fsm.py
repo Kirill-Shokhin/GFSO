@@ -277,24 +277,27 @@ def transition(
             Dispatch(task_id, Signal.CANCEL),
         ])
 
-    # BLOCK naming an undeclared prerequisite NODE — record a provisional discovered-Dep edge (§6.2/§7.2:
-    # a real S\Ŝ edge falsifying the plan's implicit independence claim; provenance = this BLOCK, T11).
+    # BLOCK naming undeclared prerequisite NODE(s) — record a provisional discovered-Dep edge PER
+    # prerequisite (§6.2/§7.2: real S\Ŝ edges falsifying the plan's implicit independence claim;
+    # provenance = this BLOCK, T11). One BLOCK may surface several blockers — collapsing them to one
+    # edge starves q_Dep and blinds auto-resolve (observed live: a 3-blocker deadlock recorded 0 edges).
     # Payload-dependent → handled here; the bare-BLOCK case falls through to the table row (no edge).
-    if signal == Signal.BLOCK and state in (State.EXECUTING, State.REWORK) and signal_data.blocker_task_id:
+    if signal == Signal.BLOCK and state in (State.EXECUTING, State.REWORK) and signal_data.blockers:
         return (State.BLOCKED, [
-            MutateGraph(task_id, MutationType.RECORD_DEP, dep_from=signal_data.blocker_task_id,
-                        glue=signal_data.reason or ""),
+            *(MutateGraph(task_id, MutationType.RECORD_DEP, dep_from=b,
+                          glue=signal_data.reason or "") for b in signal_data.blockers),
             _mg(task_id, State.BLOCKED),
             Dispatch(task_id, Signal.BLOCK),
         ])
 
-    # RESOLVE_BLOCK adjudicating the provisional discovered-Dep (§6.2): re-attribute (corrected source) or
-    # retract (external / non-producible blocker → the FM-5 currency line, not a Dep edge). The plain confirm
-    # is the table row's payload-free ADJUDICATE_DEP.
+    # RESOLVE_BLOCK adjudicating the provisional discovered-Dep(s) (§6.2): the passed blocker set is the
+    # corrected FULL set (SET semantics — unlisted provisionals retract, listed sources confirm; a single
+    # id ≡ a set of one = the old re-attribute), or retract all (external / non-producible blocker → the
+    # FM-5 currency line, not Dep edges). The plain confirm is the table row's payload-free ADJUDICATE_DEP.
     if (signal == Signal.RESOLVE_BLOCK and state == State.BLOCKED
-            and (signal_data.blocker_task_id or signal_data.external)):
+            and (signal_data.blockers or signal_data.external)):
         return (State.EXECUTING, [
-            MutateGraph(task_id, MutationType.ADJUDICATE_DEP, dep_from=signal_data.blocker_task_id,
+            MutateGraph(task_id, MutationType.ADJUDICATE_DEP, dep_froms=signal_data.blockers,
                         dep_external=signal_data.external),
             _mg(task_id, State.EXECUTING),
             Dispatch(task_id, Signal.RESOLVE_BLOCK),

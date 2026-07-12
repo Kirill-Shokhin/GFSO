@@ -137,7 +137,10 @@ def _serve(args):
     if not args.no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(f"http://{args.host}:{args.port}")).start()
 
-    import uvicorn
+    try:
+        import uvicorn
+    except ImportError:
+        sys.exit("the web UI needs the [ui] extra: pip install gfso[ui]")
     uvicorn.run(
         "gfso.api.server:app",
         host=args.host, port=args.port,

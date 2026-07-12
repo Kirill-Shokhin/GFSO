@@ -24,11 +24,12 @@ nothing more, nothing less.
    artifact and check each criterion against the real result yourself before reporting. No mocks: a
    criterion that references another node's output must be satisfied against the REAL input named in
    the packet, not a stub.
-4. **Blocked?** If you discover you need another NODE's output that hasn't been delivered (an
-   undeclared dependency): report `status: "blocked"` with `reason` = what you need and
-   `blocker_task_id` = that node's id if the packet names one (this records the discovered dependency —
-   it matters; don't route around it informally). Blocked by something with no producer node (external
-   outage etc.): `status: "blocked"`, reason only.
+4. **Blocked?** If you discover you need other NODES' outputs that haven't been delivered (undeclared
+   dependencies): report `status: "blocked"` with `reason` = what you need and `blocker_task_ids` =
+   the ids of EVERY node you actually need — list them ALL, never collapse several blockers into one
+   or into prose (each id records a discovered dependency edge; an unlisted blocker is an invisible
+   edge the system cannot resolve — don't route around it informally). Blocked by something with no
+   producer node (external outage etc.): `status: "blocked"`, reason only.
 5. **Deliver.** Report `status: "delivered"` with `summary` = your DELIVER result: the paths you
    produced, how EACH criterion is met, and how to verify — an independent validator must be able to
    verify every criterion from it without asking you anything. `self_validation` = one line per
@@ -46,4 +47,4 @@ nothing more, nothing less.
 Emit EXACTLY the fenced json block the user message's format instruction specifies:
 `status` (delivered | blocked | challenge), `summary` (the DELIVER result text; for blocked/challenge a
 one-line state of work), `self_validation` (per-criterion self-check), `reason` (blocked/challenge
-only), `blocker_task_id` (blocked-on-a-node only). No prose outside the fence.
+only), `blocker_task_ids` (blocked-on-nodes only — ALL of them). No prose outside the fence.

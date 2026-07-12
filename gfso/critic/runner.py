@@ -14,6 +14,43 @@ from gfso.core.types import TaskId
 from .types import NodeCritique
 
 
+def validate_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
+    """L2 validate — the STRUCTURAL gate (cached L0/L1, eager-fresh) + the semantic hole-hunt
+    (SEARCH in diff mode over the projection — same machinery as decompose; gated on a clean L0/L1).
+    Stores the critique as the validation record + sets verified=True (advisory). Returns a NodeCritique.
+    Lives HERE, not on Engine: the critic pulls decompose/adapters, and the engine imports core only
+    (the mechanical layer gate) — the engine is an argument, not a host."""
+    import json
+    from dataclasses import asdict
+    critique = critique_node(engine, node_id, llm or engine._llm)
+    engine._graph._storage.store_critique(node_id, json.dumps(asdict(critique)))
+    node = engine.get_task(node_id)
+    if node is not None:
+        node.verified = True  # critique is now current for this decomposition
+        engine._graph.save_task(node)
+    _log_critique(engine, critique)
+    return critique
+
+
+def _log_critique(engine, critique: NodeCritique) -> None:
+    """Append a JSONL line per validation — the raw material for coverage curves."""
+    path = getattr(engine, "_critique_log_path", None)
+    if not path:
+        return
+    import json
+    from datetime import datetime
+    rec = {
+        "ts": datetime.now().isoformat(),
+        "node": critique.node_id,
+        "gate_passed": critique.gate_passed,
+        "l0l1_failures": list(critique.l0l1_failures),
+        "semantic_covered": critique.semantic_covered,
+        "findings_chars": len(critique.semantic_findings),
+    }
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
 def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
     """The L0/L1 STRUCTURAL gate (cached, O(1)) + optional semantic hole-hunt. A leaf or any structural
     failure ⇒ gate_passed=False with the failures (semantic pass gated out). A structurally-clean

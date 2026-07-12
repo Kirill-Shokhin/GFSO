@@ -121,7 +121,8 @@ def test_create_server_with_registry_builds_all_tools(monkeypatch, tmp_path):
     # signal's payload is EXPLICIT typed params on the wire (a **payload never decodes over MCP —
     # DELIVER results silently vanished, observed live 2026-07-03); `source` is PINNED off the wire
     sig_props = next(t for t in listed if t.name == "signal").inputSchema["properties"]
-    assert {"result", "failed_criteria", "reason", "blocker_task_id"} <= set(sig_props)
+    assert {"result", "failed_criteria", "reason",
+            "blocker_task_id", "blocker_task_ids"} <= set(sig_props)
     assert "source" not in sig_props                    # the agent's door signs as the agent, always
     for e in list(reg._engines.values()):
         e.stop()

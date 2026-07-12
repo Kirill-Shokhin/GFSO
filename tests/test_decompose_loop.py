@@ -207,6 +207,97 @@ def test_refine_leaves_untouched_children_in_place():
     assert e.get_task(TaskId("root.c")) is not None                  # the change landed
 
 
+def test_refine_frozen_terminal_children_surface_as_holes():
+    """Completed work is FROZEN: a fold update targeting a DONE child cannot apply (a terminal node
+    admits no revision, §6.3) — the intent must NOT vanish into rejected signals (observed live):
+    the searcher sees the frozen list, the unapplied change surfaces as an honest hole, and the
+    child's state/audit stay untouched."""
+    from gfso.core.types import SignalData, Signal, State
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    # drive root.a to DONE: executor signals by its Del (human), verdict by an authorized validator
+    for sig in (Signal.ACCEPT, Signal.DELIVER):
+        e.send_signal_sync(SignalData(signal=sig, task_id=TaskId("root.a"), source=AgentId("human"),
+                                      result="a done" if sig is Signal.DELIVER else None))
+    e._graph._authorized_validators = {"vx"}
+    e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root.a"), source=AgentId("vx")))
+    e.wait_idle()
+    assert e.get_state(TaskId("root.a")) == State.DONE
+    n_signals_a = len(e.audit_log(TaskId("root.a")))
+    upd_a = {"update_subtasks": [{"id": "a", "name": "A", "description": "do A DIFFERENTLY",
+                                  "criteria": [{"name": "a1", "description": "A ok"},
+                                               {"name": "a9", "description": "new obligation"}]}]}
+    fake2 = FakeLLM(texts=["found: a must also do a9"], specs=[upd_a, {}])   # repair fails → residue
+    res2 = refine(e, root_id="root", llm=fake2)
+    assert "COMPLETED SUBTASKS — contracts FROZEN" in fake2.calls[0][1]      # searcher saw the freeze
+    assert "root.a" in fake2.calls[0][1]
+    a = e.get_task(TaskId("root.a"))
+    assert a.state == State.DONE and "DIFFERENTLY" not in a.spec.description  # untouched
+    assert len(e.audit_log(TaskId("root.a"))) == n_signals_a                  # zero signals emitted
+    assert any("terminal" in str(h) for h in res2.holes)                      # honest residue
+
+
+def test_refine_on_terminal_target_refused():
+    """A completed goal is frozen (terminal admits no revision; REOPEN is parked) — the one verb
+    refuses loudly instead of crashing on the root's own re-author."""
+    import pytest
+    from gfso.core.types import SignalData, Signal, State
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    e._graph._authorized_validators = {"vx"}
+    for tid in ("root.a", "root.b"):
+        for sig in (Signal.ACCEPT, Signal.DELIVER):
+            e.send_signal_sync(SignalData(signal=sig, task_id=TaskId(tid), source=AgentId("human"),
+                                          result="done" if sig is Signal.DELIVER else None))
+        e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId(tid), source=AgentId("vx")))
+    e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"),
+                                  source=AgentId("human"), result="aggregate"))
+    e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root"), source=AgentId("vx")))
+    e.wait_idle()
+    assert e.get_state(TaskId("root")) == State.DONE
+    with pytest.raises(ValueError, match="terminal"):
+        decompose_into(e, "", root_id="root", llm=FakeLLM(texts=[], specs=[]))
+
+
+def test_refine_state_view_carries_blocked_children_with_reasons():
+    """Runtime contact feeds the replan: a BLOCKED child + its BLOCK reason must reach the refine
+    searcher/auditor (observed live: an inverted Dep direction deadlocked the graph and the fold,
+    blind to the block, re-derived the same structure)."""
+    from gfso.core.types import SignalData, Signal
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    # root.b consumes root.a (declared) — but its executor discovers the direction is wrong
+    e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.b"),
+                                  source=AgentId("human")))
+    e.send_signal_sync(SignalData(signal=Signal.BLOCK, task_id=TaskId("root.b"),
+                                  source=AgentId("human"),
+                                  reason="need A's real output first — the dep direction is inverted"))
+    e.wait_idle()
+    fake2 = FakeLLM(texts=["ALREADY-COVERED"], specs=[])
+    refine(e, root_id="root", llm=fake2)
+    view = fake2.calls[0][1]
+    assert "BLOCKED SUBTASKS" in view and "root.b" in view
+    assert "dep direction is inverted" in view          # the recorded reason reached the fold
+
+
+def test_refine_note_when_request_ignored():
+    """The one-verb dispatch on a decomposed node refines over the node's OWN contract; a caller's
+    `request` text must never be swallowed silently — the result carries a loud note (goal changes
+    are the revise verb)."""
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
+    res = decompose_into(_eng(), "task", root_id="root", llm=fake)
+    e = res.engine
+    fake2 = FakeLLM(texts=["ALREADY-COVERED"], specs=[])
+    res2 = decompose_into(e, "ALSO add a linegrep module", root_id="root", llm=fake2)
+    assert res2.note and "NOT applied" in res2.note
+    fake3 = FakeLLM(texts=["ALREADY-COVERED"], specs=[])
+    res3 = decompose_into(e, "", root_id="root", llm=fake3)                   # no request → no note
+    assert res3.note is None
+
+
 def test_fold_removal_unmaps_but_never_kills():
     """The auditor's removal opinion is RECORDED and VISIBLE, the kill is not its to make: a fold
     remove drops the child's coverage (reconciled on rebuild) → the node surfaces as an unmapped

@@ -1,0 +1,37 @@
+name: tests
+
+# The mechanical gates ride in here: the layer gate (tests/test_layering.py — a dependency-rule
+# violation is a RED CI, not a review comment) and the core-dist closure (tests/test_core_dist.py —
+# the gfso-core cut stays zero-dependency and closed on every push).
+on:
+  push:
+    paths:
+      - 'gfso/**'
+      - 'tests/**'
+      - 'packaging/**'
+      - 'pyproject.toml'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    paths:
+      - 'gfso/**'
+      - 'tests/**'
+      - 'packaging/**'
+      - 'pyproject.toml'
+      - '.github/workflows/tests.yml'
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]   # dev is Windows; CI adds the cross-platform check
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: pip install -e .[dev]
+      - name: Test
+        run: python -m pytest tests -q

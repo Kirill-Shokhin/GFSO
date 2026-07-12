@@ -1,14 +1,18 @@
-"""CHECK-7 and CHECK-8. Basic arithmetic for simple criteria, Z3 for complex."""
+"""CHECK-7 and CHECK-8 — the NUMERIC-BOUND arithmetic tier of the L1 formal checks.
+
+Capability honesty (the embedder's contract): what this tier cannot machine-check is reported
+`skipped` with the missing capability NAMED — never silently green. Checked here: parseable
+numeric bounds (`metric < 200`-style; sums vs the parent bound, upper/lower contradictions).
+Beyond this tier: arbitrary-formula entailment/consistency is a DECLARED extension point
+(SMT — the `gfso-core[solver]` extra); its absence degrades to a visible skip, and the
+semantic (causal) half of sufficiency is L2 by design (§5.4), never this check's claim.
+(A vestigial `import z3` flag that no code read was removed — the module never called Z3;
+claiming otherwise in the header was exactly the silent-degradation this contract forbids.)
+"""
 from __future__ import annotations
 
 import re
 from gfso.core.types import Task, CheckResult
-
-try:
-    import z3
-    _HAS_Z3 = True
-except ImportError:
-    _HAS_Z3 = False
 
 
 def _parse_numeric_bound(desc: str) -> tuple[str, str, float] | None:
@@ -33,10 +37,13 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
 
     child_by_id = {c.id: c for c in children}
     violations = []
+    checked = 0        # parent criteria actually verified at this tier
+    beyond_tier = 0    # criteria this tier cannot machine-check (reported, not silently green)
 
     for parent_crit in task.spec.criteria:
         parent_bound = _parse_numeric_bound(parent_crit.description)
         if not parent_bound:
+            beyond_tier += 1
             continue
 
         p_metric, p_op, p_val = parent_bound
@@ -61,8 +68,10 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
                 parseable = False
 
         if not parseable:
+            beyond_tier += 1
             continue
 
+        checked += 1
         if '<' in p_op and child_sum > p_val:
             violations.append(f"{p_metric}: children sum {child_sum} > parent bound {p_val}")
         elif '>' in p_op and child_sum < p_val:
@@ -70,7 +79,15 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
 
     if violations:
         return CheckResult("CHECK-7:sufficiency", False, "; ".join(violations))
-    return CheckResult("CHECK-7:sufficiency", True)
+    if checked == 0:
+        return CheckResult("CHECK-7:sufficiency", True,
+                           f"skipped: no criteria machine-checkable at the numeric-bound tier "
+                           f"({beyond_tier} beyond it — formula entailment needs the solver "
+                           f"capability; causal sufficiency is L2)", skipped=True)
+    detail = f"verified {checked} numeric bound(s)"
+    if beyond_tier:
+        detail += f"; {beyond_tier} criteria beyond this tier (formula/causal — solver capability / L2)"
+    return CheckResult("CHECK-7:sufficiency", True, detail)
 
 
 def check_consistency(children: list[Task]) -> CheckResult:
@@ -98,7 +115,12 @@ def check_consistency(children: list[Task]) -> CheckResult:
 
     if contradictions:
         return CheckResult("CHECK-8:consistency", False, "; ".join(contradictions))
-    return CheckResult("CHECK-8:consistency", True)
+    if not bounds:
+        return CheckResult("CHECK-8:consistency", True,
+                           "skipped: no numeric bounds to cross-check (formula-level consistency "
+                           "needs the solver capability)", skipped=True)
+    return CheckResult("CHECK-8:consistency", True,
+                       f"cross-checked numeric bounds on {len(bounds)} metric(s)")
 
 
 def run_constraints(task: Task, children: list[Task]) -> list[CheckResult]:
