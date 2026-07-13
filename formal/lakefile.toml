@@ -1,0 +1,10 @@
+name = "gfso-formal"
+defaultTargets = ["GFSO"]
+
+# NOTE: no mathlib dependency — both spike targets discharge by `decide` over finite
+# types (Bool tables, 12×13 State×Signal product), which needs only the Lean 4 core
+# library (Init). This keeps the build to a single small toolchain download, no
+# multi-gigabyte mathlib cache. See formal/README.md.
+
+[[lean_lib]]
+name = "GFSO"

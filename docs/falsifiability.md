@@ -194,14 +194,17 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   line*, not an unconditional survived falsification. Strongest empirical *corroboration* in the
   canon (of a derived structure's adequacy, not of an empirical posit), with that caveat named.
 
-### §4.8 Axiom 2 (single logical evaluation event / single clock) — two halves
-- **Claim.** Validation of t is one logical event with one local clock ⟹ operational
-  trichotomy (before/during/after) is total; AND the FSM **composes** several such events
-  (DELIVER→VALIDATING→FAIL→REWORK→DELIVER), each covered.
-- **(i) Single-clock scope.** Type **C** — explicit named cost. Under concurrent time (Lamport
-  happens-before, no global clock) the trichotomy weakens. Falsifier: not a falsifier of GFSO
-  but a **scope boundary** — a distributed-validation setting with no single-clock ordering
-  shows where Axiom 2 stops. Routed to **E3**. Tested? ◻ — boundary, not yet probed.
+### §4.8 Axiom 2 (operational axis; single clock discharged) — two halves
+- **Claim.** The three operational phases (before / concurrent / after an evaluation event) partition
+  events by a strict **causal** order — no single clock is needed (§4.8/§18.12, Axiom 2 discharged);
+  AND the FSM **composes** several such events (DELIVER→VALIDATING→FAIL→REWORK→DELIVER), each covered.
+- **(i) Phase count is axiom-free.** Type **M** — `Time.phases_exhaustive` covers the three cells for
+  an arbitrary relation; the partition needs only asymmetry (= a strict order). Under concurrent time
+  (Lamport happens-before) the trichotomy does **not** weaken — it generalizes: the middle cell reads
+  as "concurrent" and FM-5 becomes a read/write race. **Falsifier:** a real evaluation whose timing
+  relative to `e` is none of {wholly-before, concurrent, wholly-after}. What remains outside the
+  taxonomy is verdict *atomicity* (protocol dynamics, (ii) below), not axis completeness. *(Supersedes
+  the earlier "single-clock scope = cost, routed to E3" framing; see Part III.10.)*
 - **(ii) FSM-composes-events.** Type **M.** Falsifier: an **in-scope** re-entrant validation
   (a real DELIVER→FAIL→REWORK cycle, single clock) that the per-event atomicity does **not**
   cover — i.e. a validation episode the FSM cannot decompose into covered events. That breaks
@@ -328,7 +331,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
 - **Falsifier.** A purely-formal apparatus (no execution, no agent contact) that **does** detect a
   domain-silent false-PASS → contradicts §18.10 Lemma 1 (S not derivable from the formal half).
 - **Tested?** — analytic (same status as the §18.10 derivation it follows from); the q_V
-  false-FAIL instrument gap (Flag 1) is the nearest empirical edge.
+  false-FAIL aggregate (Flag 1, a diagnostic option) is the nearest empirical edge.
 
 ## Part II — Main results (§8–§14)
 
@@ -431,26 +434,46 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
 - **Claim.** When cost(undetected defect) > cost(signal), honest use of each signal maximizes
   expected payoff for any P(defect)>0. §11.1: removing any one IC-critical feature makes
   honesty cease to dominate for a specific agent.
-- **Non-adversarial sub-domain.** Type **M/C-constructive** (not "merely awaiting deployment"):
-  §11 gives a per-signal payoff argument and §11.1 a **complete 9-feature enumeration**, each
-  with its named dishonest behavior. On the non-adversarial domain (under the two §11 cost
-  conditions) the claim is established by dominated-strategy elimination, not pending data.
-  Falsifier: a signal in the §11.1 table whose removal leaves honesty still dominant (the
+- **Non-adversarial sub-domain — dominant-strategy, not merely Bayesian.** Type **M/C-constructive**
+  (not "merely awaiting deployment"): §11 gives a per-signal payoff argument and §11.1 a **complete
+  9-feature enumeration**, each with its named dishonest behavior. Because detection is **structural**
+  (verifier≠executor + auto_pass/q_V, §6.5/§16.5; a silent BLOCK caught by TIMEOUT) the honesty payoff
+  does **not** depend on the counterpart's strategy — so for each **detection-covered** signal honest use
+  is a **dominant strategy** (stronger than the "Bayesian IC" label), established by dominated-strategy
+  elimination against nature θ, not pending data. **Qualifier:** this holds for Executor signals + Issuer
+  NEGLECTED/criteria; the **Issuer false-FAIL / griefing** direction is *not* detection-covered — it is
+  the **named q_V boundary** (§16.5: false-FAIL is guarantee-safe but cheap for a griefing Issuer), not
+  dominant. Falsifier: a signal in the §11.1 table whose removal leaves honesty still dominant (the
   enumeration over-counts), or a non-adversarial agent with cost(defect)>cost(signal) for whom
   dishonesty pays.
-- **Adversarial domain.** Type **E, genuinely open.** Collusion/gaming/criteria-lowballing is
-  explicitly out of scope (§16.2); the formal threat model is §18.3. IC is **not** claimed here.
-- **Tested?** — (non-adversarial) analytic via §11.1; ◻ (adversarial) blocked on §18.3.
+- **Adversarial domain — characterized boundary (§16.2), not a gap.** Guarantees stratify into
+  **adversarial-independent** form-claims (finality criterion §6.3, composition law T1, 7-FM coverage,
+  self-measuring T10, the minimalities §2.4/§6.4/**§11.1 IC-feature-set**, FSM determinism — sabotage
+  only *instantiates* an FM-form, intent is an orthogonal causal axis, not an 8th FM) and
+  **adversarial-conditional** ones, resolved by three imports off the three §6.3 assumptions: dropping
+  Утв.8 → mechanism design (bond *restores* the Hurwicz inequality cost(defect)>cost(signal) on the
+  incentivized surface); dropping single-Del → crypto-identity; dropping single-sequencer → BFT-consensus
+  — where **identity and order are preconditions** of Hurwicz (the arena in which the inequality is even
+  formulable), not cost-gradients. **Detection split:** detectable-incentivized (p>0) is where mechanism
+  design restores IC (optimal design open); undetectable (p=0) **collapses into the §18.1 domain-silent
+  false-PASS boundary**, not a separate adversarial gap. In the **permissioned** scope (A1∧A2 +
+  institutional boundary) single-Del and single-sequencer are protected for free by the substrate;
+  Sybil/fork need the boundary removed (permissionless), outside A1∧A2. **Genuinely-open** = the
+  detectable-incentivized behavioral core over an **authenticated insider** (optimal collusion-proof
+  mechanism design — Laffont–Martimort-hard), not a GFSO-specific gap. Type **E** for that core (I); the
+  undetectable part (II) is **M**-analytic (§18.1).
+- **Tested?** — (non-adversarial) analytic via §11.1 (dominant-strategy for detection-covered signals);
+  ◻ (adversarial core) open, Laffont–Martimort-hard; undetectable part = §18.1.
 
 ### Теорема 10 — self-measuring (§13)
 - **Claim.** Every Q component is computable from the execution trace with no extra data
   collection.
 - **Type.** M (constructive — each q is a graph query, §13).
 - **Falsifier.** A Q component that cannot be computed from G alone (needs out-of-band data)
-  → self-measuring breaks. **Note a known half-gap:** q_V currently counts only false-PASS;
-  the false-FAIL counter (FM-3 is two-sided, §4.2) is **not built** (owner: §7.2 / §16.5).
-  This is an *instrument* incompleteness, not a falsifier of Theorem 10's computability claim
-  (§13 is untouched), but it is the nearest thing to one and is logged as a flag below.
+  → self-measuring breaks. **On the false-FAIL direction:** q_V senses the acceptance (false-PASS)
+  direction of FM-3 **by design** (§16.5): the false-FAIL direction is guarantee-safe, so an
+  aggregated false-FAIL rate is an *optional diagnostic*, not an instrument incompleteness and not a
+  falsifier of Theorem 10's computability claim (§13 untouched). See the q_V boundary flag below.
 - **Tested?** — analytic (constructive: the queries run on G); ◻ predictive calibration of Q
   vs real outcomes is open (§16.5, §18.2).
 
@@ -498,6 +521,18 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   corroborates rather than survives a real falsification attempt; ✅ withheld until a deliberate
   search for an escaping Scrum element is run. The behavioral claim, being unmade, has nothing to
   falsify yet (and must not be smuggled in as if proven).
+- **Behavioral-generativity frontier — characterized, not a claim.** *Were* the stronger claim made —
+  that A1∧A2 **generate** Scrum's exploratory dynamics (short fixed sprints, empirical inspect-adapt,
+  self-organizing execution-time decomposition) rather than merely **contain** them — its falsifier is
+  **E and E3-bound.** Test: run GFSO from A1∧A2 under Scrum's restriction regime (§17.2: depth≤2,
+  weak-A1, small team, low error-cost) and observe whether the exploratory cadence *emerges as a forced
+  optimum* (cf. §18.11 stop-replan / front-load) or must be added by hand. **Falsified by**
+  restricted-regime GFSO dynamics that (a) fail to reproduce Scrum's cadence (generativity absent), or
+  (b) reproduce it only under an assumption *not entailed* by A1∧A2 (contained, not generated).
+  Behavioral ⟹ needs execution/experiment ⟹ **E3** — the same execution gate as Pred-1 / §18.1 (E2 gave
+  a decomposition-convergence method, not method-value; §14). Until E3 this is **characterized-open**,
+  not merely "unmade": the claim stays unmade, but its falsifier and its dependency are now named. (The
+  structural entry above is unaffected; nothing here is claimed proven.)
 
 ### §18.1 — causal-correctness boundary (the structural anchor)
 - **Claim.** Level-2 causal correctness — that a real decomposition's children criteria *in the
@@ -710,7 +745,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   edge, a-priori uncatchable by *any* discipline, Lemma 1); the representation-leg sub-§4.8 gap
   (§18.10.1, above); the Axiom-1 / single-clock residue (§4.8); and **decomposition-method quality**
   ("how to invent a *faithful* seam" — EMIT formats/grades but does not guarantee faithfulness; **E2
-  closed the generation method (`decompose()`); seam-faithfulness remains the E3 + engineering blocker**).
+  closed the generation procedure (`decompose()`; the logic-free positing leap remains, Reichenbach); seam-faithfulness remains the E3 + engineering blocker**).
 - **Type / routing (consistency-critical).** Each boundary **reduces to an already-registered
   entry** — v3.6 introduces no new boundary type:
   - **faithfulness residue → the irreducible empirical (ii) locus.** Identical to FM-3 / §18.1-(ii)
@@ -721,7 +756,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
     it confirms the v3.6 ontology terminates its empirical irreducibility at *exactly* the
     pre-existing (ii) locus — anchor (β).
   - **representation-leg sub-§4.8 → §18.10.1 entry above** (M, START-fold residue).
-  - **Axiom-1 / single-clock → §4.8 Axiom-1/Axiom-2 entries + Flag 3** (M-residue / C scope-boundary).
+  - **Axiom-1 / single-clock → §4.8 Axiom-1/Axiom-2 entries + Flag 3** (Axiom-1 = M-residue; single-clock **discharged** — no longer a scope-boundary, §4.8/Part III.10).
   - **decomposition-method quality → §18.1 / §7.3.6** (the L2-correctness boundary; M for
     non-reducibility, E-on-execution for the located manifestation). Canon flags it the *real
     blocker*, not a finalization residue.
@@ -730,7 +765,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   (and outside A1∧A2-membership) — which would mean the ontology has an unregistered contact-with-
   world locus. None found; the inventory closes onto the two pre-existing loci (anchor β).
 - **Tested?** ◻ — same as the entries each routes to; the faithfulness-residue locus is dormant
-  (no proxy); the method-quality locus = **E2 closed the generation method (`decompose()`); seam-faithfulness
+  (no proxy); the method-quality locus = **E2 closed the generation procedure (`decompose()`; the logic-free positing leap remains, Reichenbach); seam-faithfulness
   is the open E3 frontier.**
 
 ---
@@ -739,7 +774,7 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
 
 > The continuous-substrate layer (§18.10.0: controlled flow `ẋ=f(x,u)` + capture basins; discrete `(t,{tⱼ})∈S`
 > = derived shadow; `∼_G` functional scale; separators; A1/A2 as conditions of contact T; SOLITUDE/`𝒜`; 3-axis
-> faithfulness; tree/cycle goal topology) adds **no new formal results** (canon: T1/7-FM/minimality/Утв untouched)
+> faithfulness; tree/cycle goal topology) adds **no new SPINE result** (canon: T1/7-FM/minimality/Утв untouched; v3.9 §18.10.0 adds class-level completeness of the two goal-topologies)
 > and **no new empirical hook**. It re-grounds existing claims over a borrowed [STD] control/viability substrate;
 > its empirical irreducibility terminates at *exactly* the two pre-existing loci (anchor β: A1∧A2-membership §2.1
 > + K̂-faithfulness §18.10). Each item routes to a registered entry:
@@ -766,10 +801,15 @@ what it validates) · ◻ falsifiable but not yet tested · — analytic (M), no
   registered ⟨ii-dormant⟩ faithfulness locus; **node** (`Ĝ≠G` / imaginary waypoint) = **FM-1.b / STD-2** (node-gap
   at the posing level); **scale** (`∼_G` leak) = **STD-1**. Node+scale generate edge, so the irreducible (ii)-hook
   stays the single edge/faithfulness locus.
-- **Tree/cycle goal topology.** [STD] control distinction (reachability vs viability/invariance, Aubin/Blanchini);
-  falsifier (M-on-borrowed): a directed action that is neither achievement (reachability-tree) nor maintenance
-  (viability-cycle). Survival = degenerate maintenance. No GFSO-specific hook; the graph-cycle prohibition in `D`
-  (¬A1 via CHECK-2) is untouched.
+- **Tree/cycle goal topology (v3.9 §18.10.0: maintenance brought to parity; class-level completeness).** [STD]
+  control distinction (reachability vs viability/invariance, Aubin/Blanchini). v3.9 dualizes maintenance
+  `Viab_S(V)` (safety `□V`) to achievement `Capt_S(G)` (liveness `◇G`) and proves completeness **at the class
+  level** (Alpern–Schneider: every trace-property = safety ⊕ liveness) — M, analytic-modulo-borrowed-[STD], the
+  same grade as the other covering claims. The two canonical topologies are the **finitely-decidable (one-sided)
+  representatives** of the two classes; goals outside them (`□◇A` recurrence) are a **named-uncovered boundary,
+  NOT a falsifier**. Sharper falsifier (M-on-borrowed): a directed action outside the safety⊕liveness
+  classification, or a `□◇A`-type goal the achievement-reducing generator cannot represent. Survival = degenerate
+  maintenance. The graph-cycle prohibition in `D` (¬A1 via CHECK-2) is untouched.
 
 **Consistency (anchors α, β).** (α) The new structural-completeness content (separators, 3-axis, tree/cycle) is
 **M / analytic-modulo-borrowed-[STD]**, the same grade as the §4.8/§5.4/§18.10.1 covering claims — no new
@@ -783,15 +823,24 @@ empirical posit. (β) The only irreducible empirical hooks remain A1∧A2-member
 These are **not** hedges. Each is a precise statement of where the empirical hook is thin,
 to be strengthened (named premise / built instrument), never softened.
 
-1. **q_V false-FAIL counter not built (§16.5, Theorem 10).** FM-3 is two-sided since v3.3,
-   but the self-measuring instrument only counts false-PASS. Until the false-FAIL counter
-   exists, the *over-rejection* half of FM-3 is asserted-but-not-measured. **Action: build the
-   counter** (code, not theory) — then Theorem 10's coverage matches FM-3's two-sidedness.
+1. **q_V one-sidedness = named priority-boundary (§16.5, §4.2, §7.2).** q_V
+   senses the acceptance (false-PASS) direction of FM-3 **by design**; the false-FAIL direction is
+   guarantee-safe (a false-FAIL can never fabricate an acceptance — DONE⇐PASS §6.3, AND fail-absorbing
+   §3.3) and already covered (structure + T11 log). The one missing item is the *aggregated* false-FAIL
+   **rate** — a diagnostic scalar (over-strict validator / griefing issuer; nets false-FAIL out of q_D
+   contamination at non-atomic nodes), **not** a detection or Q-completeness gap. Buildable, deliberately
+   deferred (deployment-instrumentation option, §16.5). Previously logged as "counter not built / action:
+   build it"; re-leveled to a resolved-boundary — see Part III.10.
 2. **|A|=2 architectural premise (§3.2).** The whole |L|=2 result rests on |A|=2, which is a
    *choice* (granularity → tree/FSM), argued by attribution-purity, not forced. Honest premise,
    not a gap — but the single place an objector lands. Kept named, not dissolved.
-3. **Axiom-2 single-clock (§4.8).** Operational trichotomy is total only under one clock;
-   distributed validation weakens it. Routed to E3 as a scope boundary, not closed.
+3. **Axiom-2 single-clock (§4.8).** The operational phase **count** is now
+   axiom-free (three phases = strict causal order + excluded middle; `Time.phases_exhaustive`, §18.12):
+   Axiom 2 is redundant for the taxonomy and single-clock is carried as a discharged hypothesis
+   `SingleClock`, **not** a covering axiom. Under concurrency the trichotomy generalizes (FM-5 → race),
+   it does not weaken. What remains outside the taxonomy is **verdict atomicity** = protocol
+   liveness/safety dynamics (a distinct object), not axis completeness — no longer an open E3 scope
+   boundary for the count. See Part III.10.
 4. **FM-1.b ↔ §2.1 boundary subjectivity (§5.2).** The "was a foreseeable mitigation missing?"
    line is operationalized (faithfulness / domain-precedent) but the precedent threshold is
    still drawn by judgement. A principled, less-subjective criterion is an open refinement
@@ -802,7 +851,7 @@ to be strengthened (named premise / built instrument), never softened.
    convergence only, see §11 of the evidence log).
 6. **Decomposition-method quality — the real blocker (§18.10.2, §18.11).** EMIT *formats and
    grades* a seam but does **not** guarantee its faithfulness (Lemma 1); "how to invent a
-   *faithful* seam" is the omitted method-quality layer. **E2 closed the generation method**
+   *faithful* seam" is the omitted method-quality layer. **E2 closed the generation procedure**
    (bare-SEARCH ⊕ gfso-AUDIT → `decompose()`, convergence to a completeness-audited reference); **seam-
    faithfulness to the real domain remains the named E3 + engineering blocker**, not a finalization residue.
    It is the located manifestation of the (ii)-faithfulness locus on the *production* side; same dormancy
@@ -896,19 +945,164 @@ this set, the register is *incomplete*, not *wrong* — add it.
   external per §16.5, but a recorded discovery is counted). *Type.* E. *Falsifier.* A deployment
   where accepted-then-found-wrong results occur and get re-checked, yet q_V stays ≡1 ⟹ the carrier
   misses the event; OR post-hoc FAILs systematically mark genuinely-correct results (over-fire).
-- **Named instrument gaps (not claims — registered debt, §16.5):** reason-typing of revisions
-  (capability_mismatch; "criteria changed for a spec defect") and the false-FAIL counter are NOT
-  built; until they land, q_Del over-counts (any Del change) and q_T under-counts (challenges only).
+- **Named instrument gap (registered debt, §16.5):** reason-typing of revisions
+  (capability_mismatch; "criteria changed for a spec defect") is NOT built; until it lands, q_Del
+  over-counts (any Del change) and q_T under-counts (challenges only). (The false-FAIL aggregate is
+  *not* in this debt: §16.5 — a diagnostic option on a guarantee-safe direction, not required for Q completeness.)
+
+---
+
+## Part III.10 — v3.9 canon-status re-levelings + machine-check + sharpened open problems (§18.12, §17.6, §3.2, §4.8, §18.9, §6.5, §6.3, §4.2/§16.5/§7.2)
+
+> **No formal result changes** — statuses, attributions, and open-problem framings are corrected to the
+> right level. Falsifiers stay **M/C** on the canon structure, plus one new **C** machine-checked-closure
+> claim (§18.12). Same E/M/C discipline as above. Two of the changes — the §3.2 source/defense
+> re-attribution and the §6.5 IC=seam explication — add **no new falsifier** and are not separately
+> registered here (they sharpen the referent of the existing |L|=2 / IC falsifiers, not add opponents).
+
+### Machine-checked axiomatic closure (Lean 4, §18.12)
+- **Claim.** The formal spine type-checks in Lean-core (no mathlib, no `sorry`, no `native_decide`),
+  and its whole-environment axiom footprint is **exactly three** covering axioms — Axiom 1 §4.8, Morris
+  §5.4, directed-action §18.10.1 (each *yielding a count*) — plus their uninterpreted carriers and
+  Lean's own {propext, Quot.sound, Classical.choice}. Axiom 2 (single clock, §4.8) is **not** in the
+  footprint: by D3 the operational phase count is axiom-free, so totality is carried as the hypothesis
+  `SingleClock`, discharged from the covering set.
+- **Type.** C — conditional on the three named axioms; the guard makes the *count/identity* of the
+  footprint an M-checkable invariant, but each covering axiom is itself the empirical hook.
+- **Falsifier.** the closure audit goes red: a fourth `GFSO.*` axiom appears, an `opaque` / `sorryAx` /
+  `native_decide` is found in any namespace, or a whitelisted axiom is discharged without the whitelist
+  being updated in review. Encoding-relativity is disclosed, not a falsifier: re-encoding `|A|=2` as an
+  axiom moves the count to four *by design*.
+- **Not falsified by.** A green build alone (a name collision once elaborated a definition to `sorry`
+  silently) — hence the guard is fail-closed and semantic conformance stays a human job.
+- **Tested?** ✅ — guard runs in CI on every `formal/` and canon change.
+
+### §17.6 — scientific method (method core) = GFSO, domain=nature
+- **Claim (structural, ◪).** A1 = decidable form of Popper's demarcation ⟹ GFSO core = the formal
+  content of the method; science = a special case (domain=nature, theory-model implicit); GFSO makes
+  composition / attribution / NEGLECTED / theory-model explicit and lifts the domain.
+- **Type.** structural-embedding, same family as §17.2 (Scrum ⊂ GFSO).
+- **Falsifier.** exhibit an element of the *method* (not institution, not theory-choice, not
+  quantitative statistics) not expressible in GFSO; or a generative contribution to discovery beyond the
+  EMIT-form; **or a rival faithful decomposition that science's method orders but GFSO's structural
+  rankers cannot** (a consilience-choice where unification and `E_FAITH` come apart).
+- **Status.** ◪ — **adversarial search RUN** (10 candidates: prediction/accommodation, novel-fact,
+  consilience, explanation/D-N, IBE, measurement, replication, theory-ladenness, graded confirmation,
+  research-programmes/paradigms): **no escaping method-primitive** — each candidate is either caught by
+  existing structure (theory-ladenness = SOLITUDE; explanation = composition + the L1/L2 gap; Lakatos's
+  correction *dynamics* = backward-attribution + `L·γ`) or folds into exactly **two already-named
+  remainders** (causal L2 / §18.1; one graded-confirmation import — where Lakatos's normative *verdict*
+  progressive-vs-degenerating also lands) or the §18.10.2 discovery boundary. Survives under **two named
+  presuppositions** (the mapping covers the method only where it has a decidable result / A1; and a
+  stable exogenous S + fixed A1 standard ⟹ a rational-reconstruction reading against strong
+  incommensurability). Core analyticity and the absence of a *behavioral* claim (that GFSO *generates*
+  scientific practice) are preserved. Residue routes to §18.10.2 (discovery) — shared with science.
+
+### §18.9 reformulation — basis/protocol uniqueness as bi-interpretability
+- **Claim.** Uniqueness of the basis is now posed as: is σ = ⟨T,D,Dep,Del⟩ *canonical up to
+  bi-interpretability* on Mod(A1∧A2) — i.e. is every adequate signature bi-interpretable with σ?
+- **Type.** M (a bi-interpretation is a mathematical object to exhibit/refute) **conditioned on C**
+  (the admissible-signature class is undelimited).
+- **Falsifier (M).** exhibit an adequate σ′ **not** bi-interpretable with σ.
+- **Un-closable-from-within caveat (C).** even this needs the class of *admissible signatures*
+  delimited (the "wall": completeness of the markup itself quantifies over an undelimited candidate
+  space) — so the reformulation makes the *form* of an answer checkable (a bi-interpretation) and names
+  *where* the undecidability sits, without settling it.
+- **Two escape routes pushed — wall narrowed to one frame-locus (M/C).** The two candidate falsifiers
+  §18.9 itself names are pushed through and neither survives. **(second-order — Dep-reachability Dep\*)**
+  under **FO** it is inexpressible (FO ≠ FO+TC, Immerman) ⟹ σ does not interpret σ∪{Dep\*} ⟹ not
+  mutually-interpretable ⟹ Dep\* is an *addition*, not an equivalent re-coordinatization ⟹ **not adequate
+  ⟹ not a falsifier**; under **FO+TC/MSO** it is **definable-redundant** ⟹ bi-interpretable ⟹ **not a
+  falsifier** (Beth is irrelevant here — the definability is direct, not via Beth). **(factor
+  interpretations, mutual ≠ bi)** the gap opens only under many-sorted/quotient or weak adequacy; under
+  strong adequacy Beth-both-ways ⟹ bi, and no witness for organizational primitives is exhibited. Both
+  routes stream into a **single** frame-locus — the unforced FO-vs-FO+TC / same-domain stipulation — so
+  the wall is **narrowed and pinned** to that one screw, not the generic "any delimitation is circular".
+- **Partial result (M, Beth-class).** Over first-order, same-domain, parameter-free signatures τ that
+  are L_σ-definable and structure-determining (σ implicitly definable over τ), σ is canonical up to
+  definitional equivalence by **Beth's definability theorem** — decidable as a finite case-split under
+  bounded quantifier rank; the dual of §2.4 minimality. **Falsifier:** exhibit such a τ that determines
+  σ yet is *not* bi-interpretable with it. Residue: σ-centric, first-order/same-domain (excludes
+  second-order primitives like Dep/D-reachability, and quotient interpretations), strong-adequacy reading.
+- **Status.** ◻ — the Beth-class sub-question is *closed* (partial result above) and the two escape
+  routes are pushed (wall narrowed to a single frame-locus, above); **global** uniqueness stays open
+  exactly there — at the frame boundary (unforced choice of axioms / FO-vs-SO — the §2.1/§18.10 empirical
+  locus). The live falsifier is only an **adequate non-bi-interpretable σ′ under FO + same domain**, not
+  exhibited. Minimality M proven (§2.4).
+
+### §4.8 Axiom 2 — discharged from the covering set (amends the §4.8 Axiom-2 entry / Flag 3)
+- **Claim.** The three operational phases (before / concurrent / after) are a partition by a strict
+  **causal** order under excluded-middle — **zero assumptions**; neither a single clock nor per-event
+  atomicity is needed. Single-clock only collapses the middle cell to "during `[s,e]`"; under
+  concurrency FM-5 **generalizes** to a read/write race, it does not weaken. Atomicity buys a **clean
+  verdict** (protocol dynamics), not taxonomy completeness — and a torn read is itself a failure mode
+  (FM-3/FM-5), inside the taxonomy.
+- **Type.** M — the phase count is axiom-free (`Time.phases_exhaustive`, §18.12); the residual
+  single-clock cost is now a discharged hypothesis, not a covering axiom.
+- **Falsifier (M).** a real evaluation whose event-timing relative to `e` is none of {wholly-before,
+  concurrent, wholly-after} → the excluded-middle partition has a hole; or a concurrency failure that
+  is a genuinely new mode outside the 7-FM taxonomy.
+- **Supersedes.** the earlier "single-clock scope boundary routed to E3" framing (Axiom-2 (i) entry /
+  Flag 3): the *count* no longer depends on a clock. What remains outside the taxonomy is verdict
+  atomicity = protocol liveness/safety dynamics (a distinct object), not axis completeness.
+- **Tested?** — analytic (machine-checked axiom-free, §18.12).
+
+### Cancellation irreversibility = design boundary (§6.3)
+- **Claim.** From the contract guarantee only **non-arbitrariness** of any admissible reversal is
+  forced (issuer-authorized + counter-bounded + append-forward); terminality of CANCELLED is a
+  *conservative implementation* R (zero in-protocol reversals trivially excludes arbitrariness), **not**
+  a theorem. A bounded authorized REOPEN (R′, `max_reopens`) is guarantee-compatible and is a **named,
+  parked** extension (undo/rollback-along-log + finality), not the base.
+- **Type.** C — a declared design decision under the named guarantee premise.
+- **Falsifier.** the guarantee premise is the hook: a contract useful as a guarantee whose terminal
+  outcome is nevertheless arbitrarily revocable by any party at any time without losing its value → the
+  non-arbitrariness derivation is wrong. (Terminality itself is not an empirical claim — it is the
+  conservative implementation R; refuting "terminality is forced" is *not* a falsifier, because bounded
+  REOPEN R′ is guarantee-compatible by construction.)
+- **Finality (R′ semantics, §6.3).** A terminal outcome is *locally reversible* (bounded authorized
+  REOPEN) ⟺ un-consumed in-graph AND reopens-remaining; **final** (loss of *local* reversibility) ⟺
+  consumed OR `max_reopens`-exhausted. Consumption is derived — reversal goes non-local through AND/Dep
+  (positive) or the settled cascade (negative). No consensus is imported: single-Del authority + a
+  single-sequencer append-only log answer "who may reverse" and "which history is canonical"; the
+  blockchain machinery (fork-choice, Sybil-resistance, quorum) is only what an adversarial/permissionless
+  setting would import. REOPEN reuses re-ASSIGN over a new quasi-terminal→REVIEW edge (DONE→REVIEW positive / CANCELLED→REVIEW negative, §6.3) — not a 13th signal —
+  gated by the consumption-check and `max_reopens`.
+  - **Falsifier (M).** a terminal that is un-consumed yet must be final, or consumed yet must stay
+    *locally* reversible, not reducible to a post-hoc pass→later-fail (§16.5) or an out-of-graph side
+    effect (§16.6).
+  - **Two residues.** (1) consensus-free finality is contingent on non-adversarial agents (§16.2) +
+    single-Del; drop them and a consensus layer must be imported. (2) anti-fake inherits the false-PASS
+    residue (§16.5): REOPEN→REVIEW removes the *stale-verdict* surface but earns correctness only through
+    the verifier≠executor seam + q_V, no stronger.
+- **Status.** ◻ resolved-boundary — base = R (terminality; recovery by re-decomposition), extension R′
+  with a derived finality criterion (consumption ∨ counter-exhaustion); not a cascade-rollback (a cascade
+  is non-local once settled). Protocol unchanged (no 13th signal).
+
+### q_V one-sidedness = named priority-boundary (§16.5)
+- **Claim.** q_V senses the acceptance (false-PASS) direction of FM-3 by design; the false-FAIL
+  direction is guarantee-safe (a false-FAIL can never fabricate an acceptance — DONE⇐PASS §6.3, AND
+  fail-absorbing §3.3) and already covered (structural CHECK-2/T1 for co-occurring FM-4; A1 for
+  non-determinism; T11 log + §16.2 threat-model for systematic griefing).
+- **Type.** C — resolved-boundary.
+- **Falsifier.** exhibit a false-FAIL that is a defect of *acceptance* reliability and is NOT reducible
+  to efficiency / a separate FM-4 / an A1 violation.
+- **Residue (buildable, deferred).** no *aggregated* false-FAIL rate in Q — a diagnostic scalar
+  (over-strict validator / griefing issuer; nets false-FAIL out of q_D contamination at non-atomic
+  nodes), not a detection or guarantee gap. Distinct from the permanent §18.10.2 false-PASS boundary.
+- **Status.** ◻ resolved-boundary. (Re-levels Flag 1 below: the counter is a diagnostic option, not a
+  completeness debt.)
 
 ---
 
 ## Provenance
 
-The systematic falsifiability pass referenced by canon §18; tracks canon v3.8 (originally v3.5,
+The systematic falsifiability pass referenced by canon §18; tracks canon v3.9 (originally v3.5,
 extended for the v3.6 agent-free-ontology + methodology layer (§17.4–§17.5, §18.10.1, §18.10.2,
 §18.11) in Part III.6, the continuous-substrate + 3-axis-faithfulness layer (§18.10.0) in Part III.7,
-the v3.7 protocol-rigor edits (§6.2–§6.4, §7.1–§7.2, §14) in Part III.8, and the v3.8 metric
-well-definedness/event-timeliness edits (§7.2, §13, §16.5) in Part III.9).
+the v3.7 protocol-rigor edits (§6.2–§6.4, §7.1–§7.2, §14) in Part III.8, the v3.8 metric
+well-definedness/event-timeliness edits (§7.2, §13, §16.5) in Part III.9, and the v3.9 canon-status
+re-levelings + Lean machine-check (§18.12, §17.6, §3.2, §4.8, §18.9, §6.5, §6.3, §4.2/§16.5/§7.2) in
+Part III.10).
 
 > *Label note (v3.6).* The §18.10 **predictions** are tagged **Pred-1/Pred-2/Pred-3** (substitutability /
 > applicability boundary / global falsifier) to keep them disjoint from canon's reserved **P3** (Blackwell,

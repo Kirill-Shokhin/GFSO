@@ -1,0 +1,47 @@
+name: formal (Lean)
+
+# Runs on changes to the formalization AND on changes to the canon itself — the latter is the
+# point: when the canon moves, the reference guard re-checks that `formal/` still cites sections
+# that exist. This keeps the Lean layer live rather than a one-off snapshot.
+on:
+  push:
+    paths:
+      - 'formal/**'
+      - 'docs/applied_gfso_v3.md'
+      - '.github/workflows/formal.yml'
+  pull_request:
+    paths:
+      - 'formal/**'
+      - 'docs/applied_gfso_v3.md'
+      - '.github/workflows/formal.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Lean toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ hashFiles('formal/lean-toolchain') }}
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o elan-init.sh
+          sh elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # No mathlib: the whole development rides Lean core. Cold build is ~1–2 min.
+      - name: Build
+        working-directory: formal
+        run: lake build
+
+      # A green build is NOT proof of a proof. These two guards are the real check.
+      - name: Closure guard (no `sorry`; postulate set == AXIOMS.whitelist)
+        run: bash formal/scripts/check_closure.sh
+
+      - name: Canon reference guard (no citation drift)
+        run: bash formal/scripts/check_refs.sh

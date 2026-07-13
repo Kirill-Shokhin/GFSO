@@ -405,10 +405,13 @@ and the rewrite happens BEHIND them; the FSM table, mutations, checks and metric
 
 **Named discipline points for a distributed runtime (the FSM does not change):**
 
-- **Axiom-2 single clock → per-partition watermarks.** The operational trichotomy (before/during/
-  after an evaluation event) assumes one local clock per validation event. Distributed time =
-  happens-before partial order: keep validation events partition-local and use watermarks; the
-  canon names this cost explicitly (§4.8).
+- **Operational trichotomy needs no global clock (happens-before is already enough).** The three
+  operational phases (before / concurrent / after an evaluation event) are a partition by a strict
+  CAUSAL order — no single clock is assumed (canon §4.8: Axiom 2 is discharged, the phase count is
+  axiom-free). Distributed time = happens-before partial order IS that causal order, so the taxonomy
+  holds directly; the middle cell just reads as "concurrent" (FM-5 = a read/write race) instead of
+  "during". Watermarks/partition-local validation events are needed only for the optional *linear*
+  reading, not for the taxonomy.
 - **Cross-shard AND-aggregation + the verifier≠executor gate → partition by SUBTREE.** A project
   boundary is already a Dep-closure boundary (ProjectRegistry) — the ready-made partition unit.
   Traffic is leaf-heavy/root-light, so the tree shape matches the load shape; a root spanning

@@ -1,0 +1,6 @@
+GFSO.FailureModes.correct
+GFSO.FailureModes.evaluation_completeness
+GFSO.Links.Directed
+GFSO.Links.directed_action_completeness
+GFSO.Standards.fullyKnown
+GFSO.Standards.morris_trichotomy

@@ -81,9 +81,10 @@ flowchart TD
   subgraph SAXC[" "]
     direction TB
     AX1["AX1 — Eval Completeness §4.8"]
-    AX2["AX2 — Одно событие оценки §4.8"]
+    AX2["каузальный порядок §4.8 — 3 фазы, ноль допущений<br/>(единые часы разряжены §18.12)"]
   end
-  class AX1,AX2 axiom
+  class AX1 axiom
+  class AX2 derived
 
   subgraph SFM["7 FM — базис отказов §4.4"]
     direction TB
@@ -303,7 +304,7 @@ flowchart LR
 
 ## Ракурс 3 — РЕЗУЛЬТАТЫ ЧАСТИ II И ГРАНИЦЫ
 
-*Что показывает: несущие результаты Part II (P3/P8/каскад), производные (стратификация, Scrum) и 8 границ-узлов, привязанных к тому, что именно они ограничивают.*
+*Что показывает: несущие результаты Part II (P3/P8/каскад), производные (стратификация, Scrum) и 7 границ-узлов, привязанных к тому, что именно они ограничивают.*
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk'}}}%%
@@ -323,10 +324,9 @@ flowchart LR
   class T1,INFO derived
   FM3["FM-3 §4.2"]
   class FM3 fm
-  GRAPH["GRAPH §7.1"]; SIG["SIG §6.2"]; INV["INV §6.4"]; STD1["STD-1 §5.1"]; STD4["STD-4 §5.4"]; BASIS["BASIS §4.4"]; AX2["AX2 §4.8"]
+  GRAPH["GRAPH §7.1"]; SIG["SIG §6.2"]; INV["INV §6.4"]; STD1["STD-1 §5.1"]; STD4["STD-4 §5.4"]; BASIS["BASIS §4.4"]
   class GRAPH,SIG,INV,STD1,STD4 guard
   class BASIS basis
-  class AX2 axiom
   E2["E2 — сходимость к эталону (decompose)"]
   class E2 emp
 
@@ -346,11 +346,10 @@ flowchart LR
   BADV["BADV — non-adversarial §16.2"]
   BCAUS["BCAUS — каузальность L2 §16.3"]
   BOVR["BOVR — overhead §16.4"]
-  BCLK["BCLK — single-clock §4.8"]
   BDOM["BDOM — скоуп A1∧A2 §16.6"]
   BFAITH["BFAITH — остаток верности §18.10.2"]
   BMETH["BMETH — качество метода §18.10.2"]
-  class BRAT,BADV,BCAUS,BOVR,BCLK,BDOM,BFAITH,BMETH bound
+  class BRAT,BADV,BCAUS,BOVR,BDOM,BFAITH,BMETH bound
 
   %% производные
   Dep --> STRAT
@@ -377,7 +376,6 @@ flowchart LR
   BCAUS -.->|bounds| T1
   BCAUS -.->|bounds| FM3
   BOVR -.->|bounds| STD4
-  BCLK -.->|bounds| AX2
   BDOM -.->|bounds| A1
   BDOM -.->|bounds| A2
   BFAITH -.->|bounds| FM3
@@ -414,7 +412,7 @@ flowchart LR
   %% зеркала
   CONST["CONST — method_gfso.md"]
   CORE["CORE.md"]
-  CODE["CODE — gfso/ синхр. v3.7"]
+  CODE["CODE — gfso/ синхр. v3.8"]
   class CONST,CORE,CODE mirror
 
   %% light-якоря
@@ -456,7 +454,9 @@ flowchart LR
   (пунктир `corrob`, 0/216 вне базиса). Всё ниже базиса — реализация, не источник полноты.
 - **Денотационная ось** (что проверяем): аргументы→FM-1/FM-2, значения→FM-3, правило→FM-4
   (§4.2). **Операционная ось** (когда): до→FM-6, во время→FM-5, после→FM-7 — трихотомия
-  линейного времени из A1, цена — единые часы Axiom-2 (§4.8).
+  строгого каузального порядка из A1 по исключённому третьему, без допущений о форме времени;
+  единые часы (Axiom 2) — разряженная гипотеза, линейный частный случай (под конкурентностью
+  FM-5 обобщается в read/write-гонку, не слабеет) (§4.8/§18.12).
 - **Стандарты (§5)** (Ракурс 2) висят НА FM как стражи (§5.5-таблица): STD-1/2/3 операционализируют
   joint-sufficiency FM-1; STD-4 + CHECK-1..8 покрывают FM-1/2/4/5/6/7; FM-3 закрыт
   **аксиоматически** A1 (только структурно — половина (ii) остаётся, см. границы).
@@ -480,15 +480,15 @@ flowchart LR
   feedback-канал FM-7 (CHALLENGE/BLOCK) ⟹ `(L·γ)ⁿ` vs `Lⁿ` при `L·γ<1`.
 - **Границы (§16, §18.10.2)** (Ракурс 3) — пунктирные `bounds`-узлы, привязанные к тому, что ограничивают:
   рациональность (§16.1) ограничивает **P3/Blackwell**; non-adversarial (§16.2) — **P8/IC**;
-  каузальная правильность L2 (§16.3/§18.1) ограничивает T1 и FM-3; single-clock — Axiom-2;
-  A1∧A2 — скоуп; остаток верности и качество-метода — перманентные границы / блокер E3 (метод порождения закрыт E2).
+  каузальная правильность L2 (§16.3/§18.1) ограничивает T1 и FM-3;
+  A1∧A2 — скоуп; остаток верности и качество-метода — перманентные границы / блокер E3 (ПРОЦЕДУРА порождения закрыта E2 (decompose); верность шва — открыто/блокер E3).
 - **Теормодель (§18.10–§18.11) = OVERLAY** (Ракурс 4). Все её рёбра — пунктир `explain`. Она *объясняет*
   протокол (корень `Ŝ∖S` расщеплён на FM-1 / FM-3; субстрат объясняет суставы=non-redundancy и
   шов=joint-sufficiency; 5 звеньев объясняют необходимость агента/AI-слоя; методология объясняет
   STD-4 + verify-vs-explore; value=objectification объясняет, зачем базис обязателен на каждом
   уровне). Она **не** выводит T1/7-FM/минимальность — это явная дисциплина канона (§18.10
   преамбула).
-- **Зеркала** (Ракурс 4) — проекции канона (`mirror`): Constitution, CORE, код `gfso/` (синхр. по v3.7: двухшаговая отмена, discovered-Dep, ревизия = re-ASSIGN, CHECK-4 per-decomposition). Не
+- **Зеркала** (Ракурс 4) — проекции канона (`mirror`): Constitution, CORE, код `gfso/` (синхр. по v3.8: + событийные метрики q_D/q_T/q_Del сняты с DONE-гейта, ∅→⊥, decompose = тотальная монада; поверх v3.7: двухшаговая отмена, discovered-Dep, ревизия = re-ASSIGN, CHECK-4 per-decomposition). Не
   новые примитивы, рендеринги.
 - **E2** (Ракурс 3) наследует полноту отсюда: эталон = декомпозиция, исключающая все 7 FM; «полнота
   корзин» доказана §4.4, «полнота внутри корзины» = faithfulness, добирается циклом (§18.10). **E2 показал
@@ -521,7 +521,7 @@ flowchart LR
 | SIG → GRAPH, FSM → GRAPH | §7.1 | каждый P2P-сигнал = детерминированная мутация графа G |
 | GRAPH → q_* | §7.2 / §13 | каждая q-метрика = запрос к G по уникальным данным сигналов |
 | QT/QD -.detect.-> FM1 | §7.2 / §5.5 | q_T (criteria) и q_D (декомпозиция) ловят FM-1 в runtime |
-| QV -.detect.-> FM3 | §7.2 / §16.5 | q_V ловит FM-3 — **только false-PASS** (счётчик false-FAIL не построен) |
+| QV -.detect.-> FM3 | §7.2 / §16.5 | q_V ловит **приёмочное** (false-PASS) направление FM-3 по дизайну; false-FAIL гарантийно-безопасен, доля — опц. диагностика |
 | QDEP -.detect.-> FM5 | §7.2 | q_Dep (declared vs discovered) ловит currency через зависимости |
 | QDEL -.detect.-> FM7 | §7.2 | q_Del (reassignment) ловит feedback через делегирование |
 | GRAPH → SELF | §13 Теорема 10 | Q вычислимо из trace, cost=0 |
@@ -542,13 +542,12 @@ flowchart LR
 | A2 -.latent.-> COST | §5.4-bis / §18.11 | c_check латентна в A2 («превышает ёмкость» = стоимостная граница) |
 | Dep → FM2, D → FM2 | §4.2 / §4.8 C2 | FM-2 = совместимость criteria детей (D) + межзадачные отношения = Dep |
 | BRAT -.bounds.-> P3 | §16.1 | Blackwell (Утв.3) предполагает рациональность — граница висит на самом результате |
-| BADV -.bounds.-> P8 | §16.2 | IC (Утв.8) предполагает non-adversarial; threat-model открыта |
+| BADV -.bounds.-> P8 | §16.2 | IC (Утв.8) предполагает non-adversarial; характеризованная граница (survives/imports) |
 | BCAUS -.bounds.-> T1, FM3 | §16.3 / §18.1 | каузальная правильность L2 = половина (ii) A1; FM-3 false-PASS остаётся |
 | BOVR -.bounds.-> STD4 | §16.4 | overhead формализации criteria/NEGLECTED/CHECK |
-| BCLK -.bounds.-> AX2 | §4.8 | single-clock: конкурентное время ослабляет трихотомию |
 | BDOM -.bounds.-> A1, A2 | §2.1 / §16.6 | модель применима ⟺ A1 ∧ A2 (границы скоупа) |
 | BFAITH -.bounds.-> FM3 | §18.10.2 | остаток верности: доменно-молчаливый false-PASS, перманентен |
-| BMETH -.bounds.-> E2 | §18.10.2 | качество метода декомпозиции — метод закрыт E2 (decompose); верность-шва — блокер E3 |
+| BMETH -.bounds.-> E2 | §18.10.2 | качество метода декомпозиции — ПРОЦЕДУРА порождения закрыта E2 (decompose); верность шва — открыто/блокер E3 |
 | ROOT -.explain hole-i.-> FM1 | §4.1 (i) / §18.10 | дыра покрытия (забытый клей) = FM-1, не FM-3 |
 | ROOT -.explain insensitive-ii.-> FM3 | §4.1 (ii) | нечувствительное ребро Ŝ\S = FM-3 false-PASS |
 | SSHAT -.explain.-> ROOT | §2.1 / §18.10 | корень любого отказа = ребро Ŝ_used ⊆ S нарушено |
@@ -558,7 +557,7 @@ flowchart LR
 | METH -.explain.-> STD4, COST | §18.11 | стоп-реплан + front-load FORM = вынужденный оптимум; verify-vs-explore |
 | VAL -.explain.-> BASIS | §17.4–§17.5 | value=objectification: базис обязателен на каждом уровне; план фальсифицируем |
 | SSHAT -.explain ii.-> BCAUS | §18.10 / §18.1 | половина (ii) A1 = каузальная правильность, аппаратно несертифицируема |
-| CONST/CORE/CODE -.mirror.-> канон | MEMORY mirrors | проекции канона; код gfso/ синхр. v3.7 |
+| CONST/CORE/CODE -.mirror.-> канон | MEMORY mirrors | проекции канона; код gfso/ синхр. v3.8 |
 
 <details>
 <summary>Полный граф (для зума)</summary>
@@ -603,11 +602,12 @@ flowchart TD
   end
   class JS,NR,BIN,ANDu,T1,INFO derived
 
-  subgraph COV["Покрывающая аксиома (§4.8)"]
+  subgraph COV["Покрытие: Аксиома 1 + каузальный порядок (§4.8)"]
     AX1["Axiom 1 — Evaluation Completeness<br/>вычисление = денотационная ⊕ операционная<br/>3-й независимой оси нет (ПОКРЫТИЕ)"]
-    AX2["Axiom 2 — одно событие оценки<br/>единый локальный таймер ⟹ трихотомия времени"]
+    AX2["Каузальный порядок событий (§4.8/§18.12)<br/>3 фазы до/конкур./после по исключённому третьему —<br/>ноль допущений; единые часы (Axiom 2) разряжены,<br/>линейный частный случай, под конкурентностью FM-5 обобщается"]
   end
-  class AX1,AX2 axiom
+  class AX1 axiom
+  class AX2 derived
 
   subgraph FMS["7 Failure Modes (§4) — денотационная ось (функция f)"]
     FM1["FM-1 Correspondence<br/>аргументы: состав (joint-suff + non-redund)<br/>суб: a b c d e (§4.2)"]
@@ -681,15 +681,14 @@ flowchart TD
 
   subgraph BND["Границы и допущения (§16, §2.1, §18.10.2)"]
     BRAT["§16.1 Рациональность (Blackwell-посылка)"]
-    BADV["§16.2 Non-adversarial (IC; threat-model открыта)"]
+    BADV["§16.2 Non-adversarial (IC; характеризованная граница survives/imports)"]
     BCAUS["§16.3 / §18.1 Каузальная правильность L2<br/>= половина (ii) A1; FM-3 false-PASS остаётся"]
     BOVR["§16.4 Overhead формализации"]
-    BCLK["Axiom-2 single-clock (§4.8)<br/>конкурентное время ослабляет трихотомию"]
     BDOM["§2.1 / §16.6 Границы скоупа<br/>модель применима ⟺ A1 ∧ A2"]
     BFAITH["§18.10.2 Остаток верности<br/>доменно-молчаливый false-PASS, перманентная граница"]
-    BMETH["§18.10.2 Качество метода декомпозиции<br/>метод закрыт E2 (decompose); верность-шва — открыто (E3)"]
+    BMETH["§18.10.2 Качество метода декомпозиции<br/>ПРОЦЕДУРА порождения закрыта E2 (decompose); верность шва — открыто/блокер E3"]
   end
-  class BRAT,BADV,BCAUS,BOVR,BCLK,BDOM,BFAITH,BMETH bound
+  class BRAT,BADV,BCAUS,BOVR,BDOM,BFAITH,BMETH bound
 
   subgraph TM["Теормодель §18.10–§18.11 — OVERLAY (объясняет, не выводит аппарат)"]
     SSHAT["S / Ŝ нотация (§2.1, §18.10)<br/>S реально-не-дано; Ŝ построено агентом;<br/>верность Ŝ_used ⊆ S"]
@@ -709,7 +708,7 @@ flowchart TD
   subgraph MIR["Зеркала канона (проекции, не примитивы)"]
     CONST["Constitution method_gfso.md"]
     CORE["CORE.md (одностраничник)"]
-    CODE["код gfso/ (синхр. v3.7)"]
+    CODE["код gfso/ (синхр. v3.8)"]
   end
   class CONST,CORE,CODE mirror
 
@@ -857,7 +856,6 @@ flowchart TD
   BCAUS -.->|bounds| T1
   BCAUS -.->|bounds| FM3
   BOVR -.->|bounds| STD4
-  BCLK -.->|bounds| AX2
   BDOM -.->|bounds| A1
   BDOM -.->|bounds| A2
   BFAITH -.->|bounds| FM3

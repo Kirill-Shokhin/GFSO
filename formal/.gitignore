@@ -1,0 +1,6 @@
+# Lean build artifacts + fetched toolchain/deps (this whole dir is regenerable via `lake build`)
+/.lake
+# Lake lockfile — regenerable, zero external deps
+/lake-manifest.json
+# Educational walkthrough — kept locally, not a public repo doc
+/WALKTHROUGH.md

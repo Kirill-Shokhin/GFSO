@@ -51,3 +51,5 @@ docs/_depmap_critique.md
 # generated diagram sources (not shipped)
 docs/assets/
 ROADMAP_INTERNAL.md
+deltas/
+docs/notes/

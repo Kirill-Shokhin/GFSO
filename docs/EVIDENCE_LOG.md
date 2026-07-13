@@ -811,7 +811,7 @@ were consolidated away after merge). Merged:
   component properties DERIVED — values←A1+§3.2, rule←§3.3, args←§2.2; **operational axis also
   DERIVED** — trichotomy of linearly-ordered local time, grounded directly in A1's finite-time
   clause (closed via a neutral critic round; only residual cost = Axiom-2
-  single-clock scope). Driver: internal overclaim + E1's 117/216 secondary-FM rate.
+  single-clock scope). Driver: internal overclaim + E1's 117/216 secondary-FM rate. *(v3.9: single-clock discharged — phase count axiom-free, §4.8/§18.12.)*
 - **STD-2 = admissibility (not coverage); STD-1/3 operationalize joint-sufficiency** — §5.5.
 - Changelog added to canon.
 

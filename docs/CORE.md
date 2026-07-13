@@ -33,8 +33,8 @@ organization) is composition of such transactions.
 What it must carry: a Spec, a finite set of decidable Criteria, a
 Deadline, an explicit NEGLECTED section, a Delegation, and (when
 decomposed) Dependencies plus a composition function. Drop any of
-these and a specific failure mode (of the seven proven exhaustive)
-becomes unavoidable.
+these and a specific failure mode (of the seven proven exhaustive
+as a basis, modulo the covering Axiom 1 — §4.8) becomes unavoidable.
 
 When a critic attacks one part, the theory has a defense ready —
 constructive counterexamples for minimality, exhaustive case splits
@@ -87,7 +87,7 @@ Audit trails exist. What none of them give together:
 | Piece | Where GFSO uniquely formalizes it |
 |---|---|
 | Compositional validation | Theorem 1 with explicit correctness conditions |
-| Failure taxonomy | 7 FM, provably exhaustive (falsifiable claim) |
+| Failure taxonomy | 7 FM, a basis provably exhaustive modulo the covering Axiom 1 (falsifiable claim) |
 | Spec quality forcing function | Forced binary V — defects pushed out, no "warning" |
 | Protocol vocabulary | 12 signals × 12 states minimal set |
 | Self-measurement | Q metrics computed from audit graph alone |
