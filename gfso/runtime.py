@@ -13,7 +13,7 @@ from gfso.adapters.agents.human import HumanAgent
 
 def llm_factory(model: str = "sonnet"):
     """THE ONE switch every internal gfso LLM role goes through (decompose, validate, critic, future
-    validate_node/delegate one-shots). Two env knobs, whole-system semantics (no per-role mixing):
+    validate_result/delegate one-shots). Two env knobs, whole-system semantics (no per-role mixing):
 
     - `GFSO_PROVIDER` = anthropic (default) | generic
         anthropic → the headless `claude -p` transport (the ONLY Anthropic path);
@@ -120,6 +120,46 @@ class ProjectRegistry:
         eng = self.engine(name)   # validates + creates
         self._active = name
         return eng
+
+    def delete(self, name: str) -> dict:
+        """Delete a NAMED project irreversibly: stop its engine (+its dispatcher), close the SQLite
+        connection (Windows holds the file lock until then — observed live), remove `<name>.db`
+        (+wal/shm). Refused: `default` (the env-configured engine owns no per-project file) and the
+        ACTIVE project (switch away first — deleting the ground you stand on is the misclick this
+        refusal exists for). A registry operation, not a graph signal: a project's log dies with
+        the project by definition (cross-project provenance was never representable)."""
+        if not self._NAME_RE.match(name):
+            raise ValueError(f"bad project name {name!r} (allowed: [A-Za-z0-9_-], ≤64)")
+        if name == "default":
+            raise ValueError("the default project cannot be deleted")
+        if name == self._active:
+            raise ValueError(f"{name!r} is the ACTIVE project — switch away first (use_project)")
+        eng = self._engines.pop(name, None)
+        if eng is not None:
+            try:
+                from gfso.delegate import _DISPATCHERS
+                d = _DISPATCHERS.pop(id(eng), None)
+                if d:
+                    d.stop()
+            except Exception:
+                pass
+            eng.stop()
+            close = getattr(eng._graph._storage, "close", None)
+            if close:
+                close()
+        base = os.path.join(self._dir, f"{name}.db")
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.remove(base + suffix)
+            except FileNotFoundError:
+                pass
+        cb = getattr(self, "_on_create", None)   # registry-list listeners (UI) refresh on delete too
+        if cb:
+            try:
+                cb(name)
+            except Exception:
+                pass
+        return self.list()
 
     def list(self) -> dict:
         """{active, projects}: every .db in GFSO_DATA_DIR + the loaded ones (default always present)."""

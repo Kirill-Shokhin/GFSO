@@ -39,21 +39,30 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
         # evidence-based issuer PASS from a self-stamp, so the evidence must come from OUTSIDE
         # the id: a recorded independent verdict for the CURRENT delivery (a rework stales it).
         # Distinct ids (source ≠ Del) keep the canon default — the separation already exists.
+        # D6 (§6.5): the gate is a GATE-ON-THE-SEAM — it fires on PUBLIC nodes (a root, or
+        # Del(child) ≠ Del(parent)), not on every node of the graph. An INTERNAL node (same Del
+        # as its parent) is the agent's private decomposition: it legitimately SELF-verifies
+        # (DELIVER carries self_validation) and its guarantee is carried by the validation of the
+        # public result it rolls up into (T1 non-redundancy) — so a same-Del self-PASS passes here.
+        # The ROOT is always a seam: "done" (root DONE/PASS) never completes on a self-stamp.
         task = graph.get_task(signal_data.task_id)
-        if task is not None and signal_data.source and signal_data.source == task.assignee:
-            import json
-            raw = graph._storage.get_exec_verdict(signal_data.task_id)
-            rec = json.loads(raw) if raw else None
+        if (task is not None and signal_data.source and signal_data.source == task.assignee
+                and graph.is_public(task)):
+            rec = graph.exec_verdict_record(signal_data.task_id)
             it = getattr(task, "iteration", 0)
-            if not rec or rec.get("iteration") != it or rec.get("verdict") != "PASS":
+            ro = getattr(task, "reopens", 0)
+            # Generation stamp = (iteration, reopens): a rework stales the verdict, and so does a
+            # REOPEN (§6.3 anti-fake — the pre-reopen PASS must not re-open this gate from the past).
+            stale = bool(rec) and (rec.get("iteration") != it or rec.get("reopens", 0) != ro)
+            if not rec or stale or rec.get("verdict") != "PASS":
                 why = ("no independent verdict is recorded" if not rec
-                       else "the recorded verdict is STALE — this delivery was reworked, re-validate"
-                       if rec.get("iteration") != it
+                       else "the recorded verdict is STALE — this delivery was reworked/reopened, re-validate"
+                       if stale
                        else f"the recorded verdict is {rec.get('verdict')}, not PASS")
                 raise ValidationError(
                     f"PASS on {signal_data.task_id} by its own executor ({signal_data.source}) needs "
                     f"an independent validator verdict for the current delivery ({why}) — run "
-                    f"validate_node first, or delegate validation; verifier ≠ executor (§6.5)")
+                    f"validate_result first, or delegate validation; verifier ≠ executor (§6.5)")
 
     role = required_role(signal_data.signal)
 

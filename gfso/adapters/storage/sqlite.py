@@ -25,6 +25,11 @@ class SqliteStorage(StoragePort):
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._init_tables()
 
+    def close(self) -> None:
+        """Release the file handle (Windows keeps the .db locked until the connection closes —
+        project deletion depends on this)."""
+        self._conn.close()
+
     def _init_tables(self):
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS tasks (
@@ -43,7 +48,13 @@ class SqliteStorage(StoragePort):
                 was_reassigned INTEGER DEFAULT 0,
                 false_positive INTEGER DEFAULT 0,
                 criterion_mappings_json TEXT DEFAULT '[]',
-                verified INTEGER DEFAULT 0
+                verified INTEGER DEFAULT 0,
+                reopens INTEGER DEFAULT 0,
+                max_reopens INTEGER DEFAULT 1,
+                reopened_from_pass INTEGER DEFAULT 0,
+                spec_defect_criteria_change INTEGER DEFAULT 0,
+                reassign_reason_typed INTEGER DEFAULT 0,
+                reassign_capability_mismatch INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS check_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,6 +122,14 @@ class SqliteStorage(StoragePort):
         task_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
         if "verified" not in task_cols:
             self._conn.execute("ALTER TABLE tasks ADD COLUMN verified INTEGER DEFAULT 0")
+        if "reopens" not in task_cols:  # R′ (§6.3)
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN reopens INTEGER DEFAULT 0")
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN max_reopens INTEGER DEFAULT 1")
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN reopened_from_pass INTEGER DEFAULT 0")
+        if "spec_defect_criteria_change" not in task_cols:  # §16.5 revision-reason typing
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN spec_defect_criteria_change INTEGER DEFAULT 0")
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN reassign_reason_typed INTEGER DEFAULT 0")
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN reassign_capability_mismatch INTEGER DEFAULT 0")
 
     # === Serialization ===
 
@@ -202,6 +221,12 @@ class SqliteStorage(StoragePort):
         t.false_positive = bool(row["false_positive"])
         t.criterion_mappings = self._mappings_from_json(row["criterion_mappings_json"])
         t.verified = bool(row["verified"])
+        t.reopens = row["reopens"]
+        t.max_reopens = row["max_reopens"]
+        t.reopened_from_pass = bool(row["reopened_from_pass"])
+        t.spec_defect_criteria_change = bool(row["spec_defect_criteria_change"])
+        t.reassign_reason_typed = bool(row["reassign_reason_typed"])
+        t.reassign_capability_mismatch = bool(row["reassign_capability_mismatch"])
         return t
 
     # === StoragePort ===
@@ -215,8 +240,10 @@ class SqliteStorage(StoragePort):
             """INSERT OR REPLACE INTO tasks
                (id, spec_json, state, parent_id, assignee, iteration, max_iterations,
                 deadline, created_at, done_reason, autonomy,
-                was_challenged, was_reassigned, false_positive, criterion_mappings_json, verified)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                was_challenged, was_reassigned, false_positive, criterion_mappings_json, verified,
+                reopens, max_reopens, reopened_from_pass,
+                spec_defect_criteria_change, reassign_reason_typed, reassign_capability_mismatch)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.id,
                 self._spec_to_json(task.spec),
@@ -234,6 +261,12 @@ class SqliteStorage(StoragePort):
                 int(task.false_positive),
                 self._mappings_to_json(task.criterion_mappings),
                 int(task.verified),
+                task.reopens,
+                task.max_reopens,
+                int(task.reopened_from_pass),
+                int(task.spec_defect_criteria_change),
+                int(task.reassign_reason_typed),
+                int(task.reassign_capability_mismatch),
             ),
         )
         self._conn.commit()

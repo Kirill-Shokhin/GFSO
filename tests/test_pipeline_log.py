@@ -29,7 +29,7 @@ def test_emit_info_persists_lines_but_not_ticks():
 def test_pipeline_log_survives_restart(tmp_path):
     db = str(tmp_path / "p.db")
     e = _eng(SqliteStorage(db))
-    e.emit_info("validate_node", "wc: validator verdict PASS · done in 10s · 0.4k out · Σ 0.4k out")
+    e.emit_info("validate_result", "wc: validator verdict PASS · done in 10s · 0.4k out · Σ 0.4k out")
     e.stop()
     e2 = _eng(SqliteStorage(db))                                    # fresh process over the same file
     rows = e2.pipeline_log()
@@ -60,7 +60,7 @@ def test_api_pipeline_endpoint():
 
 
 def test_deliver_result_survives_restart(tmp_path):
-    """The deliverable pointer (DELIVER result) persists — after `gfso down`/restart validate_node's
+    """The deliverable pointer (DELIVER result) persists — after `gfso down`/restart validate_result's
     default path still has the validator's input (no explicit `deliverable` needed)."""
     from gfso import tools as T
     from gfso.tools_llm import _last_deliver_result

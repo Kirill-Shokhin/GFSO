@@ -59,6 +59,20 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
     return _task_out(engine.get_task(TaskId(task_id)))
 
 
+def get_review(engine: Engine, task_id: str) -> dict:
+    """The stored L2 review record (review_decomposition's LAST verdict: per-criterion
+    sufficient/insufficient/uncertain + conflicts + model + ts) with its freshness: `verified` is
+    True while the decomposition is UNCHANGED since the review — any shape change (criteria,
+    mappings, deps, a child's re-ASSIGN) auto-stales it. review=null ⇒ never reviewed. Reading is
+    free (no LLM); re-run `review_decomposition` to refresh — or for a second opinion pass a
+    stronger model (review_decomposition(model="opus"))."""
+    t = engine.get_task(TaskId(task_id))
+    if t is None:
+        return {"error": f"unknown task {task_id}"}
+    return {"task_id": task_id, "verified": t.verified,
+            "review": engine.get_critique(TaskId(task_id))}
+
+
 def project(engine: Engine, task_id: str) -> str:
     """The read-only projection you REASON over before authoring/validating: goal + subtasks + criteria
     + coverage + seams (Dep) + NEGLECTED + already-run structural checks. Returns markdown."""
@@ -151,12 +165,29 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     return [_task_out(t) for t in engine.decompose_task(TaskId(parent_id), kids, maps)]
 
 
-def revise(engine: Engine, task_id: str, spec: dict, agent: str) -> Optional[dict]:
+def _reason_from(reason: Optional[str]):
+    """§16.5 causal typing at the transport boundary: an optional reason string → RevisionReason.
+    Unknown strings are refused loudly (a mistyped reason silently untyped would corrupt q_T/q_Del)."""
+    from gfso.core.types import RevisionReason
+    if not reason:
+        return None
+    try:
+        return RevisionReason[reason.upper()]
+    except KeyError:
+        valid = ", ".join(r.name.lower() for r in RevisionReason)
+        raise ValueError(f"unknown revision reason {reason!r} — valid: {valid}")
+
+
+def revise(engine: Engine, task_id: str, spec: dict, agent: str,
+           reason: Optional[str] = None) -> Optional[dict]:
     """Revise a node's whole spec. Canon v3.7 Inv-1: a spec change = re-ASSIGN under the SAME id → REVIEW
     (NOT a CANCEL — no cascade, no tombstone; the executor re-ACCEPTs the new contract). The subtree is
     RETAINED (revision ≠ abandonment); if a criteria change strands a child's coverage it shows up as a
-    CHECK-1/CHECK-1b failure to resolve. `agent` must be the issuer (ASSIGN is an issuer signal)."""
-    return _task_out(engine.revise(TaskId(task_id), _spec_from(spec), AgentId(agent)))
+    CHECK-1/CHECK-1b failure to resolve. `agent` must be the issuer (ASSIGN is an issuer signal).
+    `reason` (optional, §16.5): why the revision — spec_defect (criteria were wrong; counts in q_T) |
+    scope_expansion (sanctioned §5.1; never counts) | capability_mismatch | other."""
+    return _task_out(engine.revise(TaskId(task_id), _spec_from(spec), AgentId(agent),
+                                   reason=_reason_from(reason)))
 
 
 def reneglect(engine: Engine, task_id: str, neglected: list, agent: str) -> Optional[dict]:
@@ -167,18 +198,35 @@ def reneglect(engine: Engine, task_id: str, neglected: list, agent: str) -> Opti
     return _task_out(engine.reneglect(TaskId(task_id), _neglected_from(neglected), AgentId(agent)))
 
 
-def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str) -> Optional[dict]:
-    """Replace a node's criteria, carry the rest. RMW over revise. (Dep criteria use `depends_on`.)"""
+def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str,
+                  reason: Optional[str] = None) -> Optional[dict]:
+    """Replace a node's criteria, carry the rest. RMW over revise. (Dep criteria use `depends_on`.)
+    `reason` (optional, §16.5): spec_defect = the criteria were WRONG (counts in q_T) |
+    scope_expansion = sanctioned growth of the goal (§5.1; never counts) | other."""
     crits = tuple(Criteria(c["name"], c.get("description", ""),
                            depends_on=TaskId(c["depends_on"]) if c.get("depends_on") else None)
                   for c in criteria)
-    return _task_out(engine.edit_criteria(TaskId(task_id), crits, AgentId(agent)))
+    return _task_out(engine.edit_criteria(TaskId(task_id), crits, AgentId(agent),
+                                          reason=_reason_from(reason)))
 
 
-def reassign(engine: Engine, task_id: str, assignee: str) -> Optional[dict]:
+def reassign(engine: Engine, task_id: str, assignee: str,
+             reason: Optional[str] = None) -> Optional[dict]:
     """Change a node's executor (Del). Canon Inv-1 fixes Del at ASSIGN → a change = revision: re-ASSIGN
-    (same id) carrying the new executor (the issuer acts; the subtree is retained — no cascade)."""
-    return _task_out(engine.reassign(TaskId(task_id), AgentId(assignee)))
+    (same id) carrying the new executor (the issuer acts; the subtree is retained — no cascade).
+    `reason` (optional, §16.5): capability_mismatch = the executor could not do the work (counts in
+    q_Del) | other (load/handoff; does not count). Untyped counts — omit only when genuinely unknown."""
+    return _task_out(engine.reassign(TaskId(task_id), AgentId(assignee),
+                                     reason=_reason_from(reason)))
+
+
+def reopen(engine: Engine, task_id: str, agent: str) -> Optional[dict]:
+    """Reopen a DONE/CANCELLED node back to REVIEW under its standing contract (R′, §6.3) — the verdict
+    is RE-EARNED by fresh contact, never resurrected. Double-gated by the engine: the node must not be
+    CONSUMED (parent staked its aggregate on it / a Dep-consumer built on it / a cancelled node's hole
+    was replanned around) and reopens must remain (max_reopens, default 1). A consumed terminal is
+    finally locked — recover by re-decomposition, not reopen. `agent` must be the issuer."""
+    return _task_out(engine.reopen(TaskId(task_id), AgentId(agent)))
 
 
 def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "") -> dict:
@@ -269,7 +317,7 @@ def _mark_mine(out: dict) -> dict:
 def record_verdict(engine: Engine, task_id: str, verdict: str,
                    failed_criteria: Optional[list] = None, reviewer: str = "human") -> dict:
     """Record an INDEPENDENT reviewer's verdict on the node's CURRENT delivery — the human
-    counterpart of validate_node (no LLM run): it is what unlocks a self-executed node's PASS
+    counterpart of validate_result (no LLM run): it is what unlocks a self-executed node's PASS
     through the verifier≠executor gate. Per-delivery: a rework stales it. The engine REFUSES a
     reviewer who IS the node's executor (recording a verdict on your own work is the self-stamp
     this system exists to catch); FAIL requires failed_criteria (Inv-3). After recording, the
@@ -302,14 +350,15 @@ def next_steps(engine: Engine, root_id: Optional[str] = None) -> dict:
 
 
 # Registry: name -> function — the STRUCTURAL surface (this module is L1: core+engine only).
-# The verbs that spawn LLM runs (auto_decompose / validate / validate_node) live in gfso.tools_llm,
+# The verbs that spawn LLM runs (auto_decompose / validate / validate_result) live in gfso.tools_llm,
 # whose TOOLS dict is the COMPLETE transport registry (structural ∪ LLM) the binding layers use.
 TOOLS = {
     "get_task": get_task, "project": project, "get_checks": get_checks, "get_graph": get_graph,
-    "list_holes": list_holes,
+    "list_holes": list_holes, "get_review": get_review,
     "available_actions": available_actions, "get_dependencies": get_dependencies, "metrics": metrics,
     "create_task": create_task, "decompose": decompose,
     "revise": revise, "reneglect": reneglect, "edit_criteria": edit_criteria, "reassign": reassign,
+    "reopen": reopen,
     "add_dependency": add_dependency, "remove_dependency": remove_dependency, "map_criterion": map_criterion,
     "signal": signal, "record_verdict": record_verdict,
     "next_step": next_step, "next_steps": next_steps,

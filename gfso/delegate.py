@@ -141,12 +141,8 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     if task is None:
         return {"error": f"unknown task {task_id}"}
 
-    def _cb(msg: str) -> None:
-        try:
-            engine.emit_info("delegate", msg)
-        except Exception:
-            pass
-
+    from gfso.engine.events import emit_cb
+    _cb = emit_cb(engine, "delegate")
     llm = _llm or llm_factory(cfg.get("model", "sonnet"))
     llm.on_tick = _cb
     llm.stage_hint = f"{task_id} executor({executor_id})"
@@ -215,7 +211,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) ->
         return None
     vcfg = agents.get(validator_id) or {}
     ecfg = agents.get(task.assignee) if task else None   # validate WHERE the executor worked
-    out = T.validate_node(engine, str(task_id), model=vcfg.get("model", "sonnet"),
+    out = T.validate_result(engine, str(task_id), model=vcfg.get("model", "sonnet"),
                           workdir=(ecfg or {}).get("workdir") or vcfg.get("workdir"),
                           _llm=_llm)
     verdict = out.get("verdict")
@@ -229,7 +225,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) ->
     else:  # null/error — never auto-signal an unparsed verdict
         engine.emit_info("delegate",
                          f"{task_id}: validator verdict UNPARSED/error — issuer must decide "
-                         f"(report kept in the validate_node output)")
+                         f"(report kept in the validate_result output)")
         return "no-verdict"
     engine.emit_info("delegate", f"{task_id}: validator verdict {verdict} REJECTED by the FSM — "
                      f"the node revalidates on the graph's next change")
@@ -305,6 +301,20 @@ class Dispatcher:
                 self._engine.emit_info("delegate",
                                        f"{t.id}: producers DONE — RESOLVE_BLOCK (auto), executor re-queued")
 
+    def _validate_here(self, task) -> bool:
+        """D6 (§6.5) — validation-at-the-seam: the independent validator instrument auto-fires on
+        PUBLIC nodes (a root, or Del(child) ≠ Del(parent)); an INTERNAL node (the executor's own
+        private decomposition) self-verifies via its DELIVER self_validation, and its guarantee is
+        carried by the public result's validation (T1). NOT validate-every-node — per-node
+        instrumenting stays available as an OPT-IN dial: GFSO_VALIDATE_INTERNAL=1 restores the
+        every-delivery behavior (useful for measurement runs, harmless for correctness)."""
+        import os
+        if task is None:
+            return True
+        if os.environ.get("GFSO_VALIDATE_INTERNAL", "") not in ("", "0"):
+            return True
+        return self._engine._graph.is_public(task)
+
     def _issuer_is_automated(self, task_id: TaskId) -> bool:
         """Auto-validation fires ONLY for nodes whose ISSUER is automated — the standing agent or a
         registered participant. A HUMAN issuer (any unregistered name) validates their node THEMSELVES:
@@ -351,6 +361,8 @@ class Dispatcher:
             if s.get("action") == "validate" and self._agents.validator_for(s.get("assignee")) is not None:
                 if not self._issuer_is_automated(TaskId(s["task_id"])):
                     continue                              # a human issuer keeps their verdict
+                if not self._validate_here(task):
+                    continue                              # D6: internal (same-Del) node — self-validation
                 if not self._children_settled(TaskId(s["task_id"])):
                     continue                              # verdict would be gate-rejected — wait for the children
                 key = f"v:{s['task_id']}#{it}"

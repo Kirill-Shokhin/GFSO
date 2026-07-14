@@ -26,15 +26,17 @@ def q_T(graph: Graph) -> Optional[float]:
     at its protocol event (CHALLENGE, §6.6 "CHALLENGE → q_T event"), NOT gated on DONE — a challenged
     contract that dies in CANCELLED/ESCALATED (the worst spec-defect outcome) stays counted. Population
     = issued contracts (every node is created via ASSIGN, §7.1) ⟹ numerator ⊆ denominator.
-    The canon numerator also includes "criteria changed for a spec defect" (scope expansion per §5.1 is
-    sanctioned, not a defect); the revision REASON is not instrumented (§16.5) — the counted subset is
-    challenges (an under-approximation until reason typing lands).
+    The canon numerator also includes "criteria changed for a spec defect" — instrumented via the
+    §16.5 reason typing: a revision carrying reason=SPEC_DEFECT that changes criteria counts
+    (scope expansion per §5.1 is sanctioned — reason=SCOPE_EXPANSION never counts); an UNTYPED
+    criteria change stays uncounted (the documented under-approximation, now only for untyped acts).
     """
     all_tasks = graph._storage.get_all_tasks()
     if not all_tasks:
         return None  # empty population → ⊥ (§13: нет наблюдений — не «100%»)
-    challenged = sum(1 for t in all_tasks if t.was_challenged)
-    return 1.0 - challenged / len(all_tasks)
+    contested = sum(1 for t in all_tasks
+                    if t.was_challenged or t.spec_defect_criteria_change)
+    return 1.0 - contested / len(all_tasks)
 
 
 def q_D(graph: Graph) -> Optional[float]:
@@ -78,7 +80,7 @@ def q_V(graph: Graph) -> Optional[float]:
     """Validation quality: 1 − |{t : V=pass, later found wrong}| / |{t : V=pass}|.
 
     Paper §7.2: measures false positive rate in validation. The discovery CARRIER is the existing
-    independent-validation instrument run POST-HOC: a `validate_node` FAIL recorded over a node that
+    independent-validation instrument run POST-HOC: a `validate_result` FAIL recorded over a node that
     is already DONE(pass/auto) is the "pass → later found wrong" event (the verdict store keeps one
     record per node, so a post-hoc FAIL replaces the acceptance-time PASS). Derived at metric time
     from the verdict store — no new mutation surface; the `false_positive` flag additionally honors a
@@ -86,7 +88,6 @@ def q_V(graph: Graph) -> Optional[float]:
     what makes someone re-run the check — without any re-check q_V remains optimistic; that blind
     zone is the canon's, not the instrument's).
     """
-    import json as _json
     all_tasks = graph._storage.get_all_tasks()
     passed = [t for t in all_tasks if t.state == State.DONE
               and t.done_reason in (DoneReason.PASS, DoneReason.AUTO)]
@@ -96,13 +97,47 @@ def q_V(graph: Graph) -> Optional[float]:
     def _later_failed(t) -> bool:
         if t.false_positive:
             return True
-        raw = graph._storage.get_exec_verdict(t.id)
-        if not raw:
-            return False
-        return _json.loads(raw).get("verdict") == "FAIL"
+        rec = graph.exec_verdict_record(t.id)
+        # A record from a SUPERSEDED reopen generation is a verdict on the old cycle, not on this
+        # pass (R′ §6.3: the reopen already dropped that verdict; the refuted-old-pass case is
+        # carried by the false_positive flag above, set at the fresh run's first FAIL).
+        return bool(rec) and rec.get("verdict") == "FAIL" and rec.get("reopens", 0) == t.reopens
 
     false_positives = sum(1 for t in passed if _later_failed(t))
     return 1.0 - false_positives / len(passed)
+
+
+def false_fail_share(graph: Graph) -> Optional[float]:
+    """DIAGNOSTIC — deliberately OUTSIDE Q (§4.2/§16.5): false-FAIL is the guarantee-safe direction
+    of FM-3 (it cannot create a false acceptance — DONE only via PASS §6.3, AND absorbs fail §3.3),
+    so it is NOT a Q component; what the canon names aggregatable is the SHARE of false-FAILs as an
+    over-strict-validator / griefing-issuer diagnostic. HIGH = bad (unlike q_*).
+
+    Discovery carrier mirrors q_V's exactly: an independent-validation PASS standing over a node
+    that ended DONE(fail) (rework exhausted) is the "fail → later found wrong" event — a post-hoc
+    re-run, or a mid-flow independent PASS the issuer FAILed anyway (a standing FAIL contradicted
+    by a recorded independent PASS is precisely the contested case this diagnostic exists for).
+    Population = standing FAILs (DONE(fail)) only: a mid-flow FAIL later reworked is unknowable —
+    the work changed, the later PASS proves nothing about the earlier verdict.
+
+    Cross-read vs q_D (§16.5): q_D's numerator counts a parent's own-validation FAILs while all
+    children pass — an over-strict validator's false-FAILs INFLATE that numerator (contaminate
+    q_D downward). The canon keeps both formulas untouched (false-FAIL is guarantee-safe, the
+    share is the named diagnostic): read a low q_D TOGETHER with this share — high false_fail_share
+    marks the over-strict-validator systematics as the candidate cause before blaming D. No
+    subtraction is defined (mid-flow false-FAILs are unknowable — population mismatch by design).
+    """
+    all_tasks = graph._storage.get_all_tasks()
+    failed = [t for t in all_tasks if t.state == State.DONE and t.done_reason == DoneReason.FAIL]
+    if not failed:
+        return None  # empty population → ⊥ (§13)
+
+    def _overturned(t) -> bool:
+        rec = graph.exec_verdict_record(t.id)
+        return (bool(rec) and rec.get("verdict") == "PASS"
+                and rec.get("reopens", 0) == t.reopens)  # same generation only (R′ §6.3)
+
+    return sum(1 for t in failed if _overturned(t)) / len(failed)
 
 
 def q_Dep(graph: Graph) -> Optional[float]:
@@ -125,11 +160,15 @@ def q_Del(graph: Graph) -> Optional[float]:
     defect counts at its protocol event (re-ASSIGN with a Del change — §6.4 Inv-1 "это событие и
     считает q_Del"), NOT gated on DONE — a reassigned node that never reaches DONE stays counted.
     Population = issued contracts (Del is total from ASSIGN) ⟹ numerator ⊆ denominator.
-    The canon counts only re-ASSIGN(capability_mismatch); the reassignment REASON is not instrumented
-    (§16.5) — the code counts every Del change (an over-approximation until reason typing lands).
+    The canon counts only re-ASSIGN(capability_mismatch) — instrumented via the §16.5 reason
+    typing: a node whose Del changes under a TYPED reason counts only when that reason is
+    CAPABILITY_MISMATCH; a node whose Del changed UNTYPED keeps the documented over-approximation
+    (every untyped Del change counts, so the metric never silently improves by omitting the reason).
     """
     all_tasks = graph._storage.get_all_tasks()
     if not all_tasks:
         return None  # empty population → ⊥ (§13)
-    reassigned = sum(1 for t in all_tasks if t.was_reassigned)
+    reassigned = sum(1 for t in all_tasks
+                     if (t.reassign_capability_mismatch if t.reassign_reason_typed
+                         else t.was_reassigned))
     return 1.0 - reassigned / len(all_tasks)

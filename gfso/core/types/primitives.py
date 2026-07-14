@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NewType, Optional
 
-from .enums import State, Signal, DoneReason, Verdict, AutonomyLevel, Predictability
+from .enums import State, Signal, DoneReason, Verdict, AutonomyLevel, Predictability, RevisionReason
 
 
 TaskId = NewType("TaskId", str)
@@ -104,6 +104,19 @@ class Task:
     was_challenged: bool = False
     was_reassigned: bool = False
     false_positive: bool = False  # V=pass but later found wrong (q_V)
+    # R′ (§6.3): ONE sign-agnostic per-node counter next to max_iterations — counts EVERY
+    # quasi-terminal exit (DONE→REVIEW and CANCELLED→REVIEW alike); exhaustion = finality (Инв-5).
+    reopens: int = 0
+    max_reopens: int = 1
+    # Set when a DONE(pass/auto) node is reopened under the SAME criteria: if the fresh run then
+    # FAILs, the old pass is refuted — exactly q_V's pass→later-fail member (§6.3/§7.2), no new machinery.
+    reopened_from_pass: bool = False
+    # §16.5 causal typing of revisions. spec_defect_criteria_change = the q_T member («criteria
+    # изменены по дефекту спеки»); reassign_* refine q_Del: when a Del change carried a typed
+    # reason, only CAPABILITY_MISMATCH counts (untyped keeps the documented over-approximation).
+    spec_defect_criteria_change: bool = False
+    reassign_reason_typed: bool = False
+    reassign_capability_mismatch: bool = False
     criterion_mappings: tuple[CriterionMapping, ...] = ()
     verified: bool = False  # L2 dirty flag: stored critique is fresh for current decomposition
 
@@ -112,6 +125,12 @@ class Task:
 class GuardContext:
     iteration: int
     max_iterations: int
+    # R′ finality-gate inputs (§6.3), computed by the graph at the chokepoint and read by the pure
+    # FSM guard. `consumed` defaults True = FAIL-CLOSED: no reopen unless the graph explicitly
+    # established the terminal is locally reversible (не потреблён). Meaningful only on DONE/CANCELLED.
+    reopens: int = 0
+    max_reopens: int = 1
+    consumed: bool = True
 
 
 @dataclass(frozen=True)
@@ -164,6 +183,7 @@ class SignalData:
     justification: Optional[str] = None            # REJECT_CHALLENGE
     failed_criteria: tuple[str, ...] = ()          # FAIL
     action: Optional[str] = None                   # RESOLVE_BLOCK
+    revision_reason: Optional[RevisionReason] = None  # re-ASSIGN: causal type of the revision (§16.5)
 
     @property
     def blockers(self) -> tuple[TaskId, ...]:

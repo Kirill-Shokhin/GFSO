@@ -5,9 +5,22 @@ import logging
 from typing import Optional
 
 from gfso.core.types import (
-    TaskId, Task, State, MutationType, DoneReason,
+    TaskId, Task, State, MutationType, DoneReason, RevisionReason,
     MutateGraph, CriterionMapping, DepEdge, TERMINAL_STATES,
 )
+
+
+def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_changed: bool) -> None:
+    """§16.5 causal typing — the ONE place a revision's reason lands on the node's metric flags.
+    Untyped revisions keep each metric's documented bias (q_T under-, q_Del over-approximation);
+    a typed reason narrows to the canon member: SPEC_DEFECT → q_T, CAPABILITY_MISMATCH → q_Del."""
+    r = effect.revision_reason
+    if criteria_changed and r == RevisionReason.SPEC_DEFECT:
+        task.spec_defect_criteria_change = True
+    if del_changed and r is not None:
+        task.reassign_reason_typed = True
+        if r == RevisionReason.CAPABILITY_MISMATCH:
+            task.reassign_capability_mismatch = True
 from .model import Graph
 
 log = logging.getLogger(__name__)
@@ -38,6 +51,8 @@ def apply(graph: Graph, effect: MutateGraph) -> list[TaskId]:
             return _record_dep(graph, effect)
         case MutationType.ADJUDICATE_DEP:
             return _adjudicate_dep(graph, effect)
+        case MutationType.REOPEN:
+            return _reopen(graph, task, effect)
         case _:
             log.warning(f"unhandled mutation type: {effect.mutation}")
             return []
@@ -64,6 +79,17 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
     # Track challenge for q_T metric
     if new_state == State.CHALLENGED:
         task.was_challenged = True
+
+    # R′ × q_V (§6.3/§7.2): a DONE(pass/auto) node reopened under the SAME criteria whose FRESH run
+    # FAILs = the old pass refuted by contact — exactly the pass→later-fail member, no new machinery.
+    # The marker is consumed at the first fresh verdict either way (a fresh pass corroborates).
+    if task.reopened_from_pass:
+        if new_state == State.REWORK or (new_state == State.DONE
+                                         and effect.done_reason == DoneReason.FAIL):
+            task.false_positive = True
+            task.reopened_from_pass = False
+        elif new_state == State.DONE and effect.done_reason in (DoneReason.PASS, DoneReason.AUTO):
+            task.reopened_from_pass = False
 
     if task.state != new_state:
         from datetime import datetime
@@ -99,6 +125,9 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     if task is None or effect.spec is None:
         log.error(f"APPLY_SPEC without task/spec for {effect.task_id}")
         return []
+    _type_revision(task, effect,
+                   criteria_changed=task.spec.criteria != effect.spec.criteria,
+                   del_changed=effect.assignee is not None and effect.assignee != task.assignee)
     task.spec = effect.spec
     task.done_reason = None  # re-authored → a fresh contract, no longer a CANCELLED tombstone (clears stale flag)
     # a criteria change strands this node's own mappings that point at a now-removed criterion → prune them here
@@ -113,6 +142,56 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     graph.save_task(task)
     # covers on a re-author: the child (re)declares which parent criteria it covers (§2.2), appended (dedup) —
     # so a mapping can be set/preserved through re-ASSIGN, not only at CREATE_TASK.
+    if effect.covers and task.parent_id:
+        parent = graph.get_task(task.parent_id)
+        if parent is not None:
+            seen = {(m.criterion_name, m.child_id) for m in parent.criterion_mappings}
+            new = tuple(CriterionMapping(c, task.id) for c in effect.covers if (c, task.id) not in seen)
+            if new:
+                parent.criterion_mappings = parent.criterion_mappings + new
+                graph.save_task(parent)
+    return []
+
+
+def _reopen(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[TaskId]:
+    """R′ REOPEN (§6.3): the bookkeeping half of the gated quasi-terminal exit. The FSM guard
+    (finality-gate + counter) has already admitted the edge in the SAME atomic step; here the
+    reopen is SPENT and the stale verdict dropped:
+
+    - `reopens += 1` — ONE sign-agnostic counter (DONE→REVIEW and CANCELLED→REVIEW alike, Инв-5);
+    - `done_reason = None` — V=pass is NOT carried forward: the node re-earns its verdict through
+      ACCEPT→EXECUTE→DELIVER→VALIDATE (anti-fake: REVIEW, not resurrection);
+    - `reopened_from_pass` marks a pass-terminal reopened under the SAME criteria — if the fresh
+      run then FAILs, the old pass is refuted: q_V's pass→later-fail member (§7.2/§16.7);
+    - the recorded independent verdict goes STALE by generation stamp, not deletion (the record is
+      provenance; `record_exec_verdict` stamps (iteration, reopens), the self-PASS gate and the
+      metrics compare both) — an old PASS verdict cannot re-open the verifier≠executor gate;
+    - an optional new spec/assignee/covers rides along exactly like a revision (same re-ASSIGN
+      semantics, §6.4 Inv-1); spec=None = reopen under the standing contract.
+
+    The compensating event is written FORWARD (this mutation + SET_STATE→REVIEW in the log);
+    nothing is rewritten (Инв-7)."""
+    if task is None:
+        log.error(f"task {effect.task_id} not found for REOPEN")
+        return []
+    was_pass = task.state == State.DONE and task.done_reason in (DoneReason.PASS, DoneReason.AUTO)
+    old_criteria = task.spec.criteria
+    _type_revision(task, effect,
+                   criteria_changed=effect.spec is not None and old_criteria != effect.spec.criteria,
+                   del_changed=effect.assignee is not None and effect.assignee != task.assignee)
+    task.reopens += 1
+    task.done_reason = None
+    if effect.spec is not None:
+        task.spec = effect.spec
+        _valid = {c.name for c in task.spec.criteria}
+        if any(m.criterion_name not in _valid for m in task.criterion_mappings):
+            task.criterion_mappings = tuple(
+                m for m in task.criterion_mappings if m.criterion_name in _valid)
+    if effect.assignee is not None and effect.assignee != task.assignee:
+        task.was_reassigned = True  # q_Del: a Del change is a Del change, reopen or not
+        task.assignee = effect.assignee
+    task.reopened_from_pass = was_pass and task.spec.criteria == old_criteria
+    graph.save_task(task)
     if effect.covers and task.parent_id:
         parent = graph.get_task(task.parent_id)
         if parent is not None:

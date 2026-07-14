@@ -90,7 +90,7 @@ modelling choice** (the shape is formalized, the canon's semantic content is not
 | 3 verification levels | 5.4 | ⚠ Morris | `Standards.knowledge_gap_located` |
 | CHECK↔FM guard map; Level-2 & FM-3/FM-6 unguarded | 5.4/5.5 | ✔ axiom-free (canon states both in passing) | `Standards.*` |
 | Signal defect distribution (12 = 5/4/2/1) | 6.2 | ◐ `decide` over a hand-entered table, not a minimality proof | `Protocol.defect_distribution` |
-| Инв-5 finiteness | 6.4 | ✔ (IDLE divergence flagged) | `Fsm.timeout_terminates` |
+| Инв-5 finiteness | 6.4 | ✔ (total — IDLE row added per canon) | `Fsm.timeout_terminates` |
 | Инв-6 determinism | 6.4 | ✔ | `Fsm.step_deterministic`, `.step_iff_admissible` |
 | Инв-1 revision = re-ASSIGN, not cancel | 6.4 | ✔ | `Fsm.reassign_to_review` |
 | Cancellation handshake completes | 6.3 | ✔ | `Fsm.cancel_handshake_terminates` |
@@ -147,15 +147,26 @@ human/agent job — exactly as a passing `pytest` suite does not certify that th
 
 CI runs both guards on every change to `formal/` **and to the canon**.
 
-## Code ↔ canon divergences (flagged, not patched — canon is truth)
+## Code ↔ canon divergences — both flags RESOLVED (canon is truth)
 
-1. **IDLE has no timeout.** `Fsm.idle_has_no_timeout` proves `step IDLE TIMEOUT _ = none`, yet IDLE is a
-   non-terminal state and Инв-5 asks every non-terminal to time out. Either IDLE is a pre-node
-   quasi-state outside Инв-5, or a row is missing in `fsm.py`. All finiteness theorems carry an
-   explicit `s ≠ IDLE` hypothesis rather than paper over it.
-2. **IDLE + CANCEL → CANCELLING**, via the universal-CANCEL catch-all. A not-yet-assigned node can be
-   driven into the cancellation handshake. Arguably vacuous; encoded faithfully because it is what the
-   code does.
+1. **IDLE timeout — the missing row was in `fsm.py`, added.** IDLE is a non-terminal state (§6.3)
+   and Инв-5 asks every non-terminal to time out; the canon's exception list (BLOCKED, CANCELLING,
+   VALIDATING) does not include IDLE ⟹ IDLE ─timeout→ TIMEOUT. `fsm.py` now carries the row
+   (operationally a node is observable in IDLE only as a crash orphan — creation persisted but the
+   SET_STATE→REVIEW of the same effect list did not land; the row is exactly its escape hatch).
+   Инв-5 theorems are now TOTAL over non-terminals — the `s ≠ IDLE` hypotheses are gone;
+   `Fsm.idle_times_out` records the closed flag with the opposite sign.
+2. **IDLE + CANCEL → CANCELLING is canon-conformant, not a divergence.** §6.3's universal CANCEL
+   reads "любое нетерминальное" — IDLE included. The edge is vacuous on the happy path (a node
+   leaves IDLE within the ASSIGN transition that creates it) and REACHABLE exactly for the same
+   crash-orphan IDLE node, where it is the issuer's cleanup path. Encoded faithfully, kept.
+
+**Named abstraction (not a drift): the R′ reopen edge is not in the Lean automaton.** fsm.py
+admits a gated re-ASSIGN out of DONE/CANCELLED (§6.3 R′) whose guard is a GRAPH predicate
+(finality of consumption ∧ reopens < max_reopens) — outside the per-node signature this file
+models. Lean holds the terminal-absorbing base automaton (which R′ preserves in the limit —
+max_reopens exhausts); the reopen edge is TLC-checked at the system level (`formal/tla/FsmSpike`)
+and its graph gate is code-tested (`tests/test_reopen.py`).
 
 ## Layout
 

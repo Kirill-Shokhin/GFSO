@@ -107,7 +107,7 @@ class StoragePort(ABC):
         return None
 
     def store_exec_verdict(self, task_id: TaskId, verdict_json: str) -> None:
-        """Persist a node's EXECUTION-validation verdict (the validate_node record; ≠ critique = the
+        """Persist a node's EXECUTION-validation verdict (the validate_result record; ≠ critique = the
         PLAN's L2). One record per node — the current delivery's verdict. Default no-op."""
         ...
 

@@ -116,8 +116,8 @@ def test_create_server_with_registry_builds_all_tools(monkeypatch, tmp_path):
     reg = _reg(monkeypatch, tmp_path)
     listed = asyncio.run(create_server(reg).list_tools())
     tools = {t.name for t in listed}
-    assert {"signal", "use_project", "list_projects", "auto_decompose", "validate_node",
-            "register_agent", "list_agents"} <= tools
+    assert {"signal", "use_project", "list_projects", "delete_project", "auto_decompose",
+            "validate_result", "register_agent", "list_agents"} <= tools
     # signal's payload is EXPLICIT typed params on the wire (a **payload never decodes over MCP —
     # DELIVER results silently vanished, observed live 2026-07-03); `source` is PINNED off the wire
     sig_props = next(t for t in listed if t.name == "signal").inputSchema["properties"]
@@ -140,6 +140,52 @@ def test_api_projects_endpoints(monkeypatch, tmp_path):
         _mk(reg.engine(), "in_beta")                    # active engine = beta now
         assert c.get("/api/tasks/in_beta").json()["id"] == "in_beta"   # UI follows the switch
         assert c.post("/api/projects/use", json={"name": "../evil"}).status_code == 422
+    for e in list(reg._engines.values()):
+        e.stop()
+
+
+def test_delete_project_full_cycle(monkeypatch, tmp_path):
+    """The deletion verb: a LOADED sqlite project is stopped, its connection CLOSED (Windows keeps
+    the file locked until then — the historical reason deletion needed a verb at all) and its file
+    removed; refusals guard `default` and the ACTIVE project (switch away first); the registry-list
+    hook fires so UIs refresh; a cold file-only project (engine never loaded) deletes too."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "gfso_default.db"))
+    monkeypatch.delenv("GFSO_STORAGE", raising=False)      # named projects: real sqlite files
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    reg = ProjectRegistry()
+    _mk(reg.engine("victim"), "t1")
+    assert (tmp_path / "victim.db").exists()
+    with pytest.raises(ValueError):
+        reg.delete("default")                              # env-configured engine — no file to own
+    reg.use("victim")
+    with pytest.raises(ValueError):
+        reg.delete("victim")                               # ACTIVE — the misclick guard
+    reg.use("default")
+    events = []
+    reg._on_create = events.append
+    out = reg.delete("victim")
+    assert "victim" not in out["projects"]
+    assert not (tmp_path / "victim.db").exists()           # connection closed → unlink succeeded
+    assert events == ["victim"]                            # UI project lists refresh on delete too
+    (tmp_path / "ghost.db").write_bytes(b"")               # cold project: file exists, engine never loaded
+    reg.delete("ghost")
+    assert not (tmp_path / "ghost.db").exists()
+    for e in list(reg._engines.values()):
+        e.stop()
+
+
+def test_api_delete_project(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from gfso.api.server import create_app
+    reg = _reg(monkeypatch, tmp_path)
+    app = create_app(reg.engine(), registry=reg)
+    with TestClient(app) as c:
+        c.post("/api/projects/use", json={"name": "beta"})
+        assert c.delete("/api/projects/beta").status_code == 422       # active — refused
+        c.post("/api/projects/use", json={"name": "default"})
+        assert "beta" not in c.delete("/api/projects/beta").json()["projects"]
+        assert c.delete("/api/projects/default").status_code == 422    # default — refused
     for e in list(reg._engines.values()):
         e.stop()
 

@@ -48,6 +48,7 @@ def step (s : St) (sig : Sig) (canRework : Bool) : Option St :=
   match s with
   | IDLE => match sig with
     | ASSIGN => some REVIEW
+    | Sig.TIMEOUT => some St.TIMEOUT       -- Инв-5 total over non-terminals (crash-orphan escape)
     | CANCEL => some CANCELLING            -- IDLE ∈ non-terminals, ≠ CANCELLING ⇒ CANCEL catch-all
     | _ => none
   | REVIEW => match sig with
@@ -99,6 +100,14 @@ def step (s : St) (sig : Sig) (canRework : Bool) : Option St :=
     | Sig.TIMEOUT => some ESCALATED
     | CANCEL => some CANCELLING
     | _ => none
+  -- DONE/CANCELLED are QUASI-terminal in the full protocol (R′, §6.3): fsm.py admits a
+  -- re-ASSIGN (REOPEN) out of them under a DOUBLE graph-side gate (finality of consumption ∧
+  -- reopens < max_reopens). That guard is a predicate over the GRAPH, not per-node state —
+  -- outside this automaton's signature, so it is NOT encoded here (a named abstraction, not a
+  -- drift): this file holds the terminal-absorbing BASE automaton, which R′ preserves in the
+  -- limit (max_reopens exhausts). The reopen edge's system-level liveness is TLC-checked
+  -- (formal/tla/FsmSpike.tla: Termination = <>[] terminal, FinalityAbsorbing) and the graph
+  -- gate is code-tested (tests/test_reopen.py). ESCALATED is fully terminal everywhere.
   | DONE => none
   | CANCELLED => none
   | ESCALATED => none
@@ -107,7 +116,7 @@ def step (s : St) (sig : Sig) (canRework : Bool) : Option St :=
     the table rows + universal CANCEL for non-terminals≠CANCELLING + re-ASSIGN for
     reassignable states). This is what Инв-6 calls "the admissible set defined in each state". -/
 def admissible : St → List Sig
-  | IDLE        => [ASSIGN, CANCEL]
+  | IDLE        => [ASSIGN, TIMEOUT, CANCEL]
   | REVIEW      => [ACCEPT, CHALLENGE, TIMEOUT, CANCEL, ASSIGN]
   | CHALLENGED  => [ACCEPT_CHALLENGE, REJECT_CHALLENGE, TIMEOUT, CANCEL, ASSIGN]
   | EXECUTING   => [DELIVER, BLOCK, TIMEOUT, CANCEL, ASSIGN]
@@ -162,45 +171,42 @@ theorem step_iff_admissible (s : St) (g : Sig) (b : Bool) :
 
 /-! ### Инв-5 — finiteness / totality -/
 
-/-- Every non-terminal state EXCEPT `IDLE` has a defined TIMEOUT transition (§6.2 finiteness
-    mechanism). `decide`-checked over all states. IDLE is the documented exception — see
-    `idle_has_no_timeout` and the divergence note in `formal/README.md`. -/
+/-- Every non-terminal state has a defined TIMEOUT transition (§6.2 finiteness mechanism) —
+    Инв-5 is TOTAL. `decide`-checked over all states. (Historically IDLE was a flagged
+    divergence — `fsm.py` had no row; the row was added per canon, closing the flag.) -/
 theorem timeout_defined_check :
-    allSt.all (fun s => isTerminal s || (s == IDLE) || (step s TIMEOUT false).isSome) = true := by decide
+    allSt.all (fun s => isTerminal s || (step s TIMEOUT false).isSome) = true := by decide
 
-theorem timeout_defined (s : St) (h₁ : isTerminal s = false) (h₂ : s ≠ IDLE) :
+theorem timeout_defined (s : St) (h₁ : isTerminal s = false) :
     (step s TIMEOUT false).isSome = true := by
   have h := List.all_eq_true.mp timeout_defined_check s (mem_allSt s)
   simp only [Bool.or_eq_true] at h
-  rcases h with (h | h) | h
+  rcases h with h | h
   · simp [h₁] at h
-  · exact absurd (eq_of_beq h) h₂
   · exact h
 
-/-- The state reached by the system TIMEOUT trigger (IDLE and terminals are fixpoints:
-    IDLE has no deadline running; terminals absorb). -/
+/-- The state reached by the system TIMEOUT trigger (terminals are fixpoints: absorb). -/
 def timeoutStep : St → St
-  | REVIEW | CHALLENGED | EXECUTING | REWORK => TIMEOUT   -- first timeout → intermediate TIMEOUT
+  | IDLE | REVIEW | CHALLENGED | EXECUTING | REWORK => TIMEOUT  -- first timeout → intermediate TIMEOUT
   | BLOCKED => ESCALATED
   | VALIDATING => DONE
   | CANCELLING => CANCELLED
   | St.TIMEOUT => ESCALATED                               -- second timeout → terminal
-  | s => s                                                -- IDLE + terminals: fixpoint
+  | s => s                                                -- terminals: fixpoint
 
-/-- **Finiteness / termination (Инв-5).** From EVERY non-terminal state except IDLE, at most
-    TWO system timeouts drive the FSM into a terminal state — the deadline path cannot stall.
+/-- **Finiteness / termination (Инв-5).** From EVERY non-terminal state, at most TWO system
+    timeouts drive the FSM into a terminal state — the deadline path cannot stall.
     This is the real content of Инв-5 (finiteness of every non-terminal). `decide`-checked. -/
 theorem timeout_terminates_check :
     allSt.all (fun s =>
-        isTerminal s || (s == IDLE) || isTerminal (timeoutStep (timeoutStep s))) = true := by decide
+        isTerminal s || isTerminal (timeoutStep (timeoutStep s))) = true := by decide
 
-theorem timeout_terminates (s : St) (h₁ : isTerminal s = false) (h₂ : s ≠ IDLE) :
+theorem timeout_terminates (s : St) (h₁ : isTerminal s = false) :
     isTerminal (timeoutStep (timeoutStep s)) = true := by
   have h := List.all_eq_true.mp timeout_terminates_check s (mem_allSt s)
   simp only [Bool.or_eq_true] at h
-  rcases h with (h | h) | h
+  rcases h with h | h
   · simp [h₁] at h
-  · exact absurd (eq_of_beq h) h₂
   · exact h
 
 /-- `timeoutStep` agrees with `step … TIMEOUT` wherever the latter is defined (sanity tie
@@ -210,10 +216,10 @@ theorem timeoutStep_matches_check :
         !(step s TIMEOUT false).isSome || (step s TIMEOUT false == some (timeoutStep s))) = true := by
   decide
 
-/-- CODE↔CANON DIVERGENCE (flagged, not hidden): IDLE has NO timeout transition in `fsm.py`
-    (no row, no catch-all), yet IDLE is listed as a non-terminal state in §6.3 and Инв-5 asks
-    that *every* non-terminal be finite. Provable directly. See README §divergence. -/
-theorem idle_has_no_timeout : step IDLE TIMEOUT false = none := by decide
+/-- RESOLVED divergence (canon is truth): IDLE is a non-terminal and Инв-5 is total, so `fsm.py`
+    now carries the IDLE+TIMEOUT row (a node is observable in IDLE only as a crash orphan — this
+    row is its escape hatch). The former `idle_has_no_timeout` flag holds with the opposite sign. -/
+theorem idle_times_out : step IDLE TIMEOUT false = some St.TIMEOUT := by decide
 
 /-! ### Инв-1 — revision (re-ASSIGN) is NOT cancellation (§6.3, §6.4)
 

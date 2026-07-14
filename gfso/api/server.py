@@ -199,7 +199,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
             raise HTTPException(404, f"task {task_id} not found")
         return ProjectionOut(node_id=task_id, projection=e.project(TaskId(task_id)))
 
-    # === L2 critic / validation (POST validate = /api/run/validate) ===
+    # === L2 critic / validation (POST /api/run/review_decomposition) ===
 
     @app.get("/api/tasks/{task_id}/critique")
     def get_critique(task_id: str):
@@ -336,6 +336,16 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
         except (KeyError, ValueError) as ex:
             raise HTTPException(422, str(ex))
         return reg.list()
+
+    @app.delete("/api/projects/{name}")
+    def delete_project(name: str):
+        reg = app.state.registry
+        if reg is None:
+            raise HTTPException(400, "single-project server (no registry)")
+        try:
+            return reg.delete(name)   # refuses default + the active project (switch first)
+        except ValueError as ex:
+            raise HTTPException(422, str(ex))
 
     # === WebSocket ===
 

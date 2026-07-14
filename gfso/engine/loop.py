@@ -240,12 +240,17 @@ def timeout_monitor(
     had NO escape). The sub-FSM routes the trigger per state (first → TIMEOUT, repeat →
     ESCALATED; BLOCKED→ESCALATED, CANCELLING→CANCELLED, VALIDATING→DONE(auto_pass) — §6.3).
 
-    Dedup by (task_id, state): fires once per state. When state changes
-    (e.g. REVIEW → TIMEOUT), a new timeout can fire for the same task,
-    enabling TIMEOUT → ESCALATED via repeated timeout.
+    Dedup by state VISIT — (task_id, state, state_entered_at): fires once per visit of a
+    state. Keying on the last-FIRED state alone is NOT enough once R′ exists: a node can
+    leave a fired-in state through a terminal and RE-ENTER it via a gated REOPEN before any
+    cleanup tick (e.g. CANCELLING → CANCELLED → reopen → … → CANCELLING again); with the old
+    key the monitor stayed silent forever and a withheld CANCEL_ACK stuck the node — an
+    Инв-5 violation found by the TLC spike model, not by tests. Every state CHANGE restamps
+    `state_entered_at` (mutations._set_state), so a re-entered state is a fresh visit and
+    fires again; the same persisting visit stays deduped.
     """
     clock = clock or SystemClock()   # Инв-5 reads the ClockPort, never the wall clock directly
-    last_timeout_state: dict[TaskId, State] = {}
+    last_fired: dict[TaskId, tuple[State, object]] = {}   # task → (state, entered_at) of the fired visit
     while True:
         if stop_event and stop_event.is_set():
             break
@@ -256,12 +261,12 @@ def timeout_monitor(
             state_age = now - getattr(task, "state_entered_at", task.created_at).timestamp()
             stale = state_timeout is not None and state_timeout > 0 and state_age > state_timeout
             if (overdue or stale) and task.state not in TERMINAL_STATES:
-                prev = last_timeout_state.get(task.id)
-                if prev != task.state:
-                    last_timeout_state[task.id] = task.state
+                visit = (task.state, getattr(task, "state_entered_at", task.created_at))
+                if last_fired.get(task.id) != visit:
+                    last_fired[task.id] = visit
                     signal_queue.put(SignalData(
                         signal=Signal.TIMEOUT, task_id=task.id,
                     ))
-        # Clean up terminal tasks
-        last_timeout_state = {tid: s for tid, s in last_timeout_state.items()
-                              if graph.get_state(tid) not in TERMINAL_STATES}
+        # Clean up terminal tasks (memory hygiene; correctness now rides on the visit key)
+        last_fired = {tid: v for tid, v in last_fired.items()
+                      if graph.get_state(tid) not in TERMINAL_STATES}

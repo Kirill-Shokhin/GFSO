@@ -136,3 +136,29 @@ def test_build_graph_live_no_cross_tree_collision():
     # a repair-style REBUILD of the SAME root is still the intended wholesale revision (same ids, no dupes)
     build_graph_live(SPEC, "thing one", e, root_id="r1", assignee="human"); e.wait_idle()
     assert {c.id for c in e.get_active_children(TaskId("r1"))} == {TaskId("r1.a"), TaskId("r1.b")}
+
+
+def test_rebuild_reuses_hand_built_bare_ids_no_duplicates():
+    """Refine over a HAND-built graph (bare child ids, no root. namespace): the rebuild must REVISE
+    those nodes in place, never create namespaced duplicates (observed live in the L2 gate
+    experiment: C1..C9 + root.C1..C9 doubled the subtree and orphaned every mapping)."""
+    from gfso import tools as T
+    e = _eng()
+    T.create_task(e, "root", {"description": "goal", "criteria": [{"name": "rc1", "description": "A"}]}, "human")
+    T.decompose(e, "root", [
+        {"task_id": "C1", "spec": {"description": "do A", "criteria": [{"name": "a1", "description": "old"}]}, "assignee": "human"},
+        {"task_id": "C2", "spec": {"description": "do B", "criteria": [{"name": "b1", "description": "B"}]}, "assignee": "human"},
+    ], [{"criterion_name": "rc1", "child_id": "C1"}])
+    e.wait_idle()
+    spec = {"name": "goal", "root_criteria": [{"name": "rc1", "description": "A"}],
+            "subtasks": [
+                {"id": "C1", "name": "Do A", "description": "do A", "criteria": [{"name": "a1", "description": "NEW tighter"}]},
+                {"id": "C2", "name": "Do B", "description": "do B", "criteria": [{"name": "b1", "description": "B"}]}],
+            "mappings": [{"criterion": "rc1", "child_id": "C1"}],
+            "deps": [], "neglected": [{"item": "x", "predictability": "STATISTICAL", "justification": "j", "invalidation": "i"}]}
+    build_graph_live(spec, "goal", e, root_id="root", assignee="human")
+    e.wait_idle()
+    kids = {str(c.id) for c in e.get_active_children(TaskId("root"))}
+    assert kids == {"C1", "C2"}          # revised in place - no root.C1/root.C2 duplicates
+    assert e.get_task(TaskId("C1")).spec.criteria[0].description == "NEW tighter"
+    e.stop()

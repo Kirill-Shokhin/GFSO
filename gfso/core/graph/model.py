@@ -65,7 +65,80 @@ class Graph:
         return GuardContext(
             iteration=task.iteration,
             max_iterations=task.max_iterations,
+            reopens=task.reopens,
+            max_reopens=task.max_reopens,
+            # Computed HERE, consumed by the pure FSM guard in the SAME process_signal step —
+            # gate+edge are one log-serialized atomic act (Инв-7): a concurrent DELIVER that would
+            # consume the node is still in the queue, it cannot interleave (no TOCTOU).
+            consumed=self.is_consumed(task) if task.state in (State.DONE, State.CANCELLED) else True,
         )
+
+    def is_public(self, task: Task) -> bool:
+        """D6 (§6.5): public node ⟺ a DELEGATION SEAM — the node's scope of responsibility differs
+        from its parent's, operationally Del(child) ≠ Del(parent), OR the node is a root (assigned
+        into the graph by an external issuer — the one seam "done" must cross). An INTERNAL node
+        (Del(child) = Del(parent)) is the agent's private decomposition: it SELF-verifies (DELIVER
+        carries self_validation), and its guarantee is carried by the validation of the agent's
+        public result (T1's non-redundancy direction). A missing/unassigned parent reads as a seam
+        — fail-closed toward the stricter side."""
+        if task.parent_id is None:
+            return True
+        parent = self.get_parent(task.id)
+        if parent is None or parent.assignee is None or task.assignee is None:
+            return True
+        return parent.assignee != task.assignee
+
+    def is_consumed(self, task: Task) -> bool:
+        """R′ finality-gate (§6.3): a terminal is LOCALLY reversible ⟺ not consumed in the graph.
+        Consumption is typed per edge sign and read from the STANDING graph state — a conservative,
+        log-visible over-approximation of "the downstream cone presumes this node" (§6.3: the
+        threshold moment is the one design freedom; we take delivered-upward / accepted-into-work).
+        A stake withdrawn by an AUTHORIZED gated act (the parent itself reopened back to REVIEW)
+        releases consumption — the chain unwinds one gated level at a time, each step in T11.
+
+        POSITIVE (DONE): consumed ⟺ the parent staked its aggregate on V=pass — it DELIVERed upward
+        (VALIDATING/REWORK/DONE are reachable only through DELIVER) — OR a Dep-consumer
+        read-and-built on the result (EXECUTING/BLOCKED/VALIDATING/REWORK/DONE are reachable only
+        through ACCEPT: the packet embeds upstream DELIVER results).
+
+        NEGATIVE (CANCELLED, V=⊥ — no pass value): consumed ⟺ the cascade SETTLED (every descendant
+        terminal) AND the parent REPLANNED around the hole — another active child covers a parent
+        criterion this node covered (reviving it would double-cover, FM-1.e)."""
+        if task.state == State.DONE:
+            parent = self.get_parent(task.id)
+            if parent is not None and parent.state in (
+                    State.VALIDATING, State.REWORK, State.DONE):
+                return True
+            built_on = (State.EXECUTING, State.BLOCKED, State.VALIDATING, State.REWORK, State.DONE)
+            for e in self.dep_edges():
+                if e.from_id == task.id:
+                    consumer = self.get_task(e.to_id)
+                    if consumer is not None and consumer.state in built_on:
+                        return True
+            return False
+        if task.state == State.CANCELLED:
+            # cascade settled? — any live (non-terminal) descendant keeps the window open
+            stack = [c for c in self.get_children(task.id)]
+            while stack:
+                n = stack.pop()
+                if n.state not in (State.DONE, State.CANCELLED, State.ESCALATED):
+                    return False
+                stack.extend(self.get_children(n.id))
+            # parent replanned around the hole? — a criterion this node covered is now covered
+            # by another non-cancelled sibling (revival would double-cover, FM-1.e)
+            parent = self.get_parent(task.id)
+            if parent is None:
+                return False
+            mine = {m.criterion_name for m in parent.criterion_mappings if m.child_id == task.id}
+            if not mine:
+                return False
+            for m in parent.criterion_mappings:
+                if m.criterion_name in mine and m.child_id != task.id:
+                    sibling = self.get_task(m.child_id)
+                    if sibling is not None and sibling.state not in (State.CANCELLING, State.CANCELLED):
+                        return True
+            return False
+        return True  # non-quasi-terminal states have no reopen question — fail-closed
 
     def get_assignee(self, task_id: TaskId) -> Optional[AgentId]:
         task = self._storage.get_task(task_id)
@@ -105,6 +178,19 @@ class Graph:
             check_results=tuple(check_results),
             recommendation=recommendation,
         )
+
+    def exec_verdict_record(self, task_id: TaskId) -> Optional[dict]:
+        """THE one reader of the stored independent-validation record ({verdict, failed_criteria,
+        validator, iteration, ts} or None) — the self-PASS gate, q_V and false_fail_share all
+        consume it; parsing lived in three copies before."""
+        import json
+        raw = self._storage.get_exec_verdict(task_id)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except (ValueError, TypeError):
+            return None
 
     def store_check_results(self, task_id: TaskId, results: list[CheckResult]) -> None:
         self._storage.store_check_results(task_id, results)

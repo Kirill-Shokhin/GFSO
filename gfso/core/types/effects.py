@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Union
 
-from .enums import MutationType, Signal, DoneReason, State
+from .enums import MutationType, Signal, DoneReason, State, RevisionReason
 from .primitives import TaskId, Spec, AgentId
 
 
@@ -24,6 +24,7 @@ class MutateGraph:
     dep_froms: tuple[TaskId, ...] = ()   # ADJUDICATE_DEP: corrected FULL source set (SET semantics, §6.2)
     dep_external: bool = False           # ADJUDICATE_DEP: retract — blocker non-producible (FM-5 line, §6.2)
     glue: str = ""                       # RECORD_DEP: provenance text (the BLOCK reason)
+    revision_reason: RevisionReason | None = None  # APPLY_SPEC/REOPEN: causal type of the revision (§16.5)
 
 
 @dataclass(frozen=True)

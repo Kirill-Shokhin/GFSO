@@ -456,6 +456,26 @@ async function selectTask(taskId) {
             h += `</ul></div></div>`;
         }
 
+        // L2 review — the STORED checker verdict + freshness (alerts vanish; the record must not)
+        try {
+            const cr = await (await fetch(`/api/tasks/${d.id}/critique`)).json();
+            if (cr && cr.critique && cr.critique.criteria_verdicts !== undefined) {
+                const rev = cr.critique;
+                const mark = v => v === 'sufficient' ? '✓' : v === 'insufficient' ? '✗' : '?';
+                const gaps = (rev.criteria_verdicts || []).filter(v => v.verdict !== 'sufficient').length
+                           + (rev.conflicts || []).length;
+                const status = !rev.gate_passed ? 'gate failed (L0/L1)'
+                    : rev.semantic_covered === true ? 'no gaps (advisory)'
+                    : rev.semantic_covered === false ? `${gaps} gap(s) — advisory`
+                    : 'no verdict';
+                h += `<div class="section"><div class="section-title">L2 review${cr.verified ? '' : ' — STALE (decomposition changed)'}</div><ul class="item-list">`;
+                h += `<li style="color:var(--ui-text-faint)">${status}${rev.model ? ' · ' + rev.model : ''}${rev.ts ? ' · ' + rev.ts : ''}</li>`;
+                (rev.criteria_verdicts || []).forEach(v => { h += `<li>${mark(v.verdict)} ${v.criterion} — ${v.why || ''}</li>`; });
+                (rev.conflicts || []).forEach(c => { h += `<li>⚡ [${(c.between || []).join(', ')}] ${c.why || ''}</li>`; });
+                h += `</ul></div>`;
+            }
+        } catch(e) {}
+
         const acts = ACTIONS[d.state] || [];
         const noCancel = ['DONE','ESCALATED','CANCELLED','CANCELLING'];  // §6.3: no re-CANCEL from CANCELLING; terminals reject all
         if (acts.length || !noCancel.includes(d.state)) {
@@ -464,7 +484,7 @@ async function selectTask(taskId) {
                 h += `<button class="btn btn-sm ${a.cls}" onclick="sendAction('${d.id}','${a.s}','${a.prompt||''}',${!!a.needsCriteria})">${a.label}</button>`;
             });
             if (d.state === 'VALIDATING')  // the gate needs a RECORDED independent verdict before a
-                // self-executed node's PASS — this is the human counterpart of validate_node
+                // self-executed node's PASS — this is the human counterpart of validate_result
                 h += `<button class="btn btn-sm btn-muted" onclick="recordVerdict('${d.id}')">Record verdict</button>`;
             if (!noCancel.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="sendAction('${d.id}','CANCEL','reason',false)">Cancel</button>`;
@@ -474,6 +494,10 @@ async function selectTask(taskId) {
                 // the subtree; already-decomposed → one refine round over what exists.
                 const hasKids = allTasksCache.some(t => t.parent_id === d.id && t.state !== 'CANCELLED');
                 h += `<button class="btn btn-sm btn-purple" onclick="aiDecompose('${d.id}')">${hasKids ? 'AI refine' : 'AI decompose'}</button>`;
+                // The standalone L2 door (§5.4 Level 2): hand-authored/edited graphs never pass
+                // through decompose's built-in semantic pass — this button is their only L2.
+                if (hasKids)
+                    h += `<button class="btn btn-sm btn-purple" onclick="aiReview('${d.id}')">AI review</button>`;
             }
             if (d.state === 'REVIEW')
                 h += `<button class="btn btn-sm btn-muted" onclick="openEdit('${d.id}')">Edit</button>`;
@@ -505,6 +529,30 @@ async function aiDecompose(id) {
             body: JSON.stringify({request: t.description || '', root_id: id, depth: 1})});
         await refreshAll();
     } catch(e) { console.error('aiDecompose:', e); }
+}
+
+async function aiReview(id) {
+    if (!confirm('Run the L2 checker over this decomposition (L0/L1 gate + one causal-entailment call)?\n'
+               + 'Advisory; re-run any time — the verdict below refreshes. For a stronger second opinion: '
+               + "review_decomposition(model='opus') over MCP/HTTP.\n~1 min; progress streams in the activity strip.")) return;
+    try {
+        const r = await fetch('/api/run/review_decomposition', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({task_id: id})});
+        const d = await r.json();
+        if (!d.gate_passed) alert('Gate FAILED — fix L0/L1 first:\n' + (d.l0l1_failures||[]).join('\n'));
+        else if (d.criteria_verdicts && d.criteria_verdicts.length) {
+            const mark = v => v === 'sufficient' ? '✓' : v === 'insufficient' ? '✗' : '?';
+            const lines = d.criteria_verdicts.map(v => `${mark(v.verdict)} ${v.criterion} — ${v.why}`);
+            (d.conflicts||[]).forEach(c => lines.push(`⚡ conflict [${(c.between||[]).join(', ')}]: ${c.why}`));
+            alert((d.semantic_covered ? 'L2 checker: no gaps found (advisory — the real Level-2 verdict is execution; q_D watches it).\n\n'
+                                      : 'L2 verdicts (advisory — fix via the actions, or declare NEGLECTED):\n\n')
+                  + lines.join('\n').slice(0, 1800));
+        }
+        else if (d.semantic_findings) alert('L2 (advisory):\n\n' + d.semantic_findings.slice(0, 1500));
+        else alert('Structurally clean; checker not run (no LLM on this server).');
+        await refreshAll();
+        await selectTask(id);   // the sidebar's stored L2-review section shows the fresh verdict
+    } catch(e) { console.error('aiReview:', e); }
 }
 
 async function sendAction(taskId, signal, promptField, needsCriteria) {
@@ -783,7 +831,7 @@ async function submitDecompose() {
     closeModal(); await refreshAll();
 }
 
-// ── OBSERVATION WINDOW — every LLM process (decompose sub-calls, validate, validate_node, …) live
+// ── OBSERVATION WINDOW — every LLM process (decompose sub-calls, validate, validate_result, …) live
 //    + the persisted per-run history (GET /api/pipeline; survives refresh/restart). Collapsed = one
 //    line per ACTIVE process; expanded = actives on top + run-grouped history with totals.
 let plS = null;                                       // {active:Map, groups:{}, dayTok, runs, manual}

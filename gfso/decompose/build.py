@@ -92,7 +92,12 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     # ASSIGN is a same-id REVISION of the OTHER tree's node (observed live: cross-tree corruption). Namespacing
     # makes collisions impossible by construction; a repair re-build of the SAME root maps to the same ids =
     # the intended wholesale revision.
+    existing_kids = {str(c.id) for c in engine.get_active_children(rid)}
+
     def ns(cid: str) -> str:
+        if cid in existing_kids:   # a HAND-built child carries a bare id — a rebuild must be a REVISION
+            return cid             # of that node, never a namespaced duplicate (observed live: refine over
+                                   # a manual graph doubled the subtree, C1..C9 + root.C1..C9)
         return cid if cid.startswith(f"{root_id}.") else f"{root_id}.{cid}"
 
     ids = {str(c["id"]) for c in d.get("subtasks", [])}

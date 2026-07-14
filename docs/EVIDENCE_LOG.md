@@ -1087,6 +1087,67 @@ logged (spots where source reading substituted for docs) → folded back into
 docs/embeddability_acceptance.md as the embedder's wiring reference. The host artifact is deliberately
 NOT kept (each acceptance run rebuilds it fresh — keeping one would contaminate future runs).
 
+**Depth-2 grain probe (2026-07-13).** `auto_decompose(depth=2)` on a fresh moderate CLI task
+(mdtab: CSV → GFM table, --align/--max-width per column, error contract with exit code 2, pytest
+suite, README), live Sonnet pipeline, n=1 engineering telemetry: 6 children each carrying **5–11
+concrete criteria of their OWN duty** — the implicit-delegation defect class (a child left with a
+one-line shell contract) does not reproduce at depth 2; 4 spanning invariants at the root with a
+full coverage mapping; every Dep seam carries glue; NEGLECTED with predictability + invalidation;
+`holes == []` (no silent residue); checks 8 PASS + CHECK-7/8 as named capability skips.
+
+**L2 checker, two-sided live probe (2026-07-13).** The standalone Level-2 verb rebuilt as a
+CHECKER (canon §5.4's own question: per parent criterion, do the mapped children's criteria —
+taken as real-world facts — causally guarantee it; + semantic FM-2 conflicts), replacing the
+search-diff hole-hunt (the decomposer's question, now living only in refine). Probe on the real
+mdtab graph (fresh auto_decompose output), one Sonnet zero-tool call per side: **clean side** —
+3/4 sufficient + ONE substantive advisory gap the build-time pass had missed (README glue pins
+flag syntax but nothing entails the shown outputs being reproducible); **sabotaged side** (the
+tests child's criteria gutted to "a few tests exist somewhere" under its standing coverage
+claim) — the targeted criterion flagged insufficient naming the exact gap ("satisfiable by
+trivial tests that verify nothing"). Named caveat: borderline criteria show run-to-run verdict
+variance (n=1 per side; single-call instrument) — the load-bearing result is the two-sided
+discrimination on the targeted criterion, which held cleanly. Fail-closed by construction:
+unparseable or per-criterion-INCOMPLETE verdicts are "no verdict", never clean.
+
+**L2 gate experiment (2026-07-13/14; protocol pre-registered before the runs).**
+TEST A — checker calibration on SEEDED ground truth (no LLM judge). Substrate = fresh
+auto_decompose(T01, d1); recorded substrate prep: one dangling mapping dropped, one builder-residue
+Dep-cycle edge removed — and during the pre-repair attempts the L0/L1 gate correctly refused all 12
+checker runs at ZERO LLM spend (live confirmation of the staging). Seeds: S1 = a mapped child gutted
+to a vacuous stub; S2 = carrier criteria swapped for adjacent non-entailing ones; S3 = contradictory
+rounding rules injected into two siblings. Checker n=3 per condition (Sonnet). RESULT: **9/9 seeded
+runs flag their target, naming the planted defect verbatim; the S3 conflict pair exact 3/3; zero
+spurious conflict pairs across all 12 runs. Pre-registered bar (≥2/3 classes by majority): PASSED —
+3/3, unanimous.** Clean side: covered=False 3/3 with a STABLE core of three flags
+(rounding_reconciliation, idempotency, concurrent_event_ordering — unanimous) + four borderline
+flags (1–2/3); the stable core reads as REAL entailment gaps of the auto-built graph (the class the
+earlier live probe also found); verdict variance concentrates on borderline criteria.
+TEST B — the MANUAL regime (one-shot hand-build → L2 loop ≤3 rounds). Loop behavior: at round 0 the
+gate caught an STD-2 violation of the hand build (two ORDINARY factors declared NEGLECTED — forced
+back into the decomposition); then gaps 3→1, budget-capped. Same-day blind Opus judges (frozen
+protocol) on both arms: **AUTO 35/45** (replicates the historical d1 34–35 — instrument sane;
+ballast 34) vs **MANUAL+L2 24/45** (ballast 11). **Pre-registered bar (±3 of AUTO): FAILED (−11).**
+The mechanism is visible in the categories (Dep 5/10 vs 8/10; V 11/20 vs 15/20): the checker repairs
+ENTAILMENT of what is declared and cannot RECALL absent content — so the manual door requires the
+hole-hunt too: **build → refine (content) → checker (entailment)**, not build+checker alone.
+ARM 3 (corrected recipe, first attempt) — BLOCKED BY A REAL BUG the experiment exposed: refine over
+a MANUALLY-built graph (bare child ids, no `root.` namespace) fails the merge id-match and
+DUPLICATES the subtree (C1..C9 + root.C1..C9 in the DB; blind judge 26/45 with ~30 ballast dominated
+by the duplication; CHECK-1b hole). Fix and honest rerun follow. Instrument note: the L2-loop's
+patch step hallucinated child ids in add_mappings 9× (recorded; criteria edits applied) — the patch
+prompt must carry the child-id roster explicitly.
+ARM 3 RERUN (post-fix, 2026-07-14). The duplication fix confirmed LIVE: refine over the hand-built
+graph reused ch1..ch9 IN PLACE and added two genuinely-new namespaced children (root.ch10/ch11),
+holes empty. Blind judge (same frozen instrument): **31/45** — Dep 8/10 and N 3/6 both AT the AUTO
+arm's level, V 12/20. Final table: **AUTO 35 · manual+checker 24 · manual+refine+checker 31.**
+Reading: ONE refine round recovered precisely the axes a checker cannot (content recall: Dep +3,
+N +3, +7 total) — the door split (decomposer recalls ⊥ checker entails) is CORROBORATED as the
+manual-regime recipe: build → refine → checker. The remaining −4 sits in V with a NAMED harness
+cause: the loop's FIX step failed to land its repairs (13 hallucinated child ids despite a roster
+in the prompt; checker gaps 3→5, non-convergent) — an experiment-harness weakness, not the
+checker's. The ±3 bar is formally still missed by 1 item beyond it (n=1 per arm); follow-up = a
+structured fix step (patch addressed by index, not free-typed ids) before the next measure.
+
 ---
 
 **Policy (set 2026-06-05):** this log is **empirical evidence only**. Agent-process material —

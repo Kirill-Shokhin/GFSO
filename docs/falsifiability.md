@@ -939,7 +939,7 @@ this set, the register is *incomplete*, not *wrong* — add it.
   defect trajectory expressible in the protocol (a challenged or mis-delegated node) that the new
   populations still cannot count, OR a demonstration that DONE-gating loses no defect class (⟹ the
   edit was unnecessary).
-- **q_V discovery carrier (post-hoc independent validation).** *Claim.* A `validate_node` FAIL
+- **q_V discovery carrier (post-hoc independent validation).** *Claim.* A `validate_result` FAIL
   recorded over an already-DONE(pass/auto) node IS the "pass → later found wrong" event; q_V derives
   its numerator from that record (the discovery TRIGGER — complaint / incident / audit — stays
   external per §16.5, but a recorded discovery is counted). *Type.* E. *Falsifier.* A deployment

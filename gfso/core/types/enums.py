@@ -19,6 +19,11 @@ class State(Enum):
 TERMINAL_STATES = frozenset({State.DONE, State.ESCALATED, State.CANCELLED})
 NON_TERMINAL_STATES = frozenset(s for s in State if s not in TERMINAL_STATES)
 
+# R′ (§6.3 "Финальность"): DONE and CANCELLED are QUASI-terminal — a named extension of the
+# admissible set (Инв-6): re-ASSIGN (REOPEN) is admitted under a double gate (finality-gate of
+# consumption + max_reopens). ESCALATED stays fully terminal (its resolution is outside the FSM).
+QUASI_TERMINAL_STATES = frozenset({State.DONE, State.CANCELLED})
+
 # States a live node can be re-ASSIGNed (revised) from — §6.4 Inv-1: revision = re-ASSIGN same id → REVIEW.
 # TIMEOUT accepts no progress signals (§6.3); CANCELLING's sole staffed exit is CANCEL_ACK (§6.3).
 REASSIGNABLE_STATES = frozenset({
@@ -58,6 +63,18 @@ class Verdict(Enum):
     FAIL = auto()
 
 
+class RevisionReason(Enum):
+    """Causal type of a revision (re-ASSIGN, §6.4 Inv-1) — §16.5: the causally-typed members of
+    q_T («criteria изменены по дефекту спеки») and q_Del (re-ASSIGN(capability_mismatch)) require
+    the revision reason typed in the packet. Optional: an untyped revision keeps each metric's
+    documented bias (q_T under-approximates — counts challenges only; q_Del over-approximates —
+    counts every Del change)."""
+    SPEC_DEFECT = auto()          # criteria changed because the contract itself was defective → q_T member
+    SCOPE_EXPANSION = auto()      # sanctioned goal re-ASSIGN with new criteria (§5.1/§13) — NOT a defect
+    CAPABILITY_MISMATCH = auto()  # Del change because the executor could not do the work → q_Del member
+    OTHER = auto()                # routine (load, handoff, restructure) — counted by neither metric
+
+
 class FM(Enum):
     CORRESPONDENCE = auto()
     CONSISTENCY = auto()
@@ -95,3 +112,5 @@ class MutationType(Enum):
     STORE_RECOMMENDATION = auto()
     RECORD_DEP = auto()       # BLOCK named a prerequisite node → provisional discovered-Dep edge (§6.2/§7.2)
     ADJUDICATE_DEP = auto()   # RESOLVE_BLOCK adjudicates the provisional: confirm / re-attribute / retract (§6.2)
+    REOPEN = auto()           # R′ (§6.3): gated re-ASSIGN out of a quasi-terminal — spends a reopen,
+                              # drops the stale verdict (V=pass is re-earned in REVIEW, never carried forward)

@@ -158,7 +158,7 @@ def test_q_V_ignores_fail():
     assert q_V(g) == 1.0
 
 def test_q_V_posthoc_fail_verdict_is_the_discovery_carrier():
-    # A validate_node FAIL recorded over an already-DONE(pass) node = "pass → later found wrong":
+    # A validate_result FAIL recorded over an already-DONE(pass) node = "pass → later found wrong":
     # the metric derives it from the verdict store (no flag write needed).
     import json
     g = _graph(
@@ -175,6 +175,52 @@ def test_q_V_acceptance_time_pass_verdict_not_counted():
     g._storage.store_exec_verdict(TaskId("t1"), json.dumps(
         {"verdict": "PASS", "failed_criteria": [], "validator": "val", "iteration": 0}))
     assert q_V(g) == 1.0
+
+
+# === false_fail_share: over-strict-validator DIAGNOSTIC (outside Q, §16.5) ===
+
+def test_false_fail_share_posthoc_pass_overturns_standing_fail():
+    # Mirror of q_V's carrier: an independent PASS recorded over DONE(fail) = "fail → later
+    # found wrong". One of two standing FAILs overturned → share 0.5. HIGH = bad.
+    import json
+    from gfso.core.graph import false_fail_share
+    g = _graph(
+        _task("t1", State.DONE, done_reason=DoneReason.FAIL),
+        _task("t2", State.DONE, done_reason=DoneReason.FAIL),
+    )
+    g._storage.store_exec_verdict(TaskId("t1"), json.dumps(
+        {"verdict": "PASS", "failed_criteria": [], "validator": "val", "iteration": 3}))
+    assert false_fail_share(g) == 0.5
+
+
+def test_false_fail_share_fail_verdict_is_not_an_overturn():
+    # The validator AGREEING with the standing FAIL is the ordinary case, not a discovery.
+    import json
+    from gfso.core.graph import false_fail_share
+    g = _graph(_task("t1", State.DONE, done_reason=DoneReason.FAIL))
+    g._storage.store_exec_verdict(TaskId("t1"), json.dumps(
+        {"verdict": "FAIL", "failed_criteria": ["c1"], "validator": "val", "iteration": 3}))
+    assert false_fail_share(g) == 0.0
+
+
+def test_false_fail_share_population_is_standing_fails_only():
+    # DONE(pass)/mid-flow nodes are out: a reworked FAIL is unknowable (the work changed).
+    from gfso.core.graph import false_fail_share
+    g = _graph(
+        _task("t1", State.DONE, done_reason=DoneReason.PASS),
+        _task("t2", State.REWORK),
+    )
+    assert false_fail_share(g) is None  # ⊥: no standing FAILs at all
+
+
+def test_false_fail_share_stays_out_of_Q():
+    # §16.5: a diagnostic key rides NEXT TO Q in engine.metrics(), never as a 6th q_*.
+    from gfso.engine import Engine
+    from gfso.adapters.agents.human import HumanAgent
+    e = Engine(MemoryStorage(), HumanAgent(), llm=None)
+    m = e.metrics()
+    assert set(k for k in m if k.startswith("q_")) == {"q_T", "q_D", "q_V", "q_Dep", "q_Del"}
+    assert "false_fail_share" in m
 
 
 # === q_Dep: dependency health ===

@@ -146,15 +146,15 @@ def _bind_auto_decompose(engine_or_registry):  # pragma: no cover — exercised 
     return auto_decompose
 
 
-def _bind_validate_node(engine_or_registry):  # pragma: no cover — exercised live over MCP
-    """validate_node spawns a tool-using validator agent (minutes when it runs real test suites) — same
+def _bind_validate_result(engine_or_registry):  # pragma: no cover — exercised live over MCP
+    """validate_result spawns a tool-using validator agent (minutes when it runs real test suites) — same
     async + progress-notification binding as auto_decompose, for the same MCP-timeout reason."""
     import asyncio
     from typing import Optional
     from mcp.server.fastmcp import Context
     resolve = _resolver(engine_or_registry)
 
-    async def validate_node(task_id: str, deliverable: str = None, model: str = "sonnet",
+    async def validate_result(task_id: str, deliverable: str = None, model: str = "sonnet",
                             workdir: str = None, project: str = None, ctx: Context = None) -> dict:
         loop = asyncio.get_running_loop()
         step = {"n": 0}
@@ -164,19 +164,19 @@ def _bind_validate_node(engine_or_registry):  # pragma: no cover — exercised l
             if ctx is not None:
                 try:
                     asyncio.run_coroutine_threadsafe(
-                        ctx.report_progress(step["n"], None, f"[validate_node] {msg}"), loop)
+                        ctx.report_progress(step["n"], None, f"[validate_result] {msg}"), loop)
                 except Exception:
                     pass  # progress is presentation — never break the pipeline
 
         return await loop.run_in_executor(None, functools.partial(
-            T.validate_node, resolve(project, ctx), task_id, deliverable=deliverable, model=model,
+            T.validate_result, resolve(project, ctx), task_id, deliverable=deliverable, model=model,
             workdir=workdir, _progress=prog))
 
-    validate_node.__doc__ = T.validate_node.__doc__
-    validate_node.__annotations__ = {"task_id": str, "deliverable": Optional[str], "model": str,
+    validate_result.__doc__ = T.validate_result.__doc__
+    validate_result.__annotations__ = {"task_id": str, "deliverable": Optional[str], "model": str,
                                      "workdir": Optional[str], "project": Optional[str],
                                      "ctx": Context, "return": dict}
-    return validate_node
+    return validate_result
 
 
 def create_server(engine_or_registry):
@@ -196,7 +196,7 @@ def create_server(engine_or_registry):
     except OSError:  # pragma: no cover
         protocol = ""
     server = FastMCP("gfso", instructions=protocol)
-    long_running = {"auto_decompose": _bind_auto_decompose, "validate_node": _bind_validate_node}
+    long_running = {"auto_decompose": _bind_auto_decompose, "validate_result": _bind_validate_result}
     for name, fn in T.TOOLS.items():
         if name in long_running:  # minutes-long: async + MCP progress notifications
             server.add_tool(long_running[name](engine_or_registry), name=name,
@@ -230,10 +230,26 @@ def create_server(engine_or_registry):
                 out["active"] = _SESSION_PROJECTS[key]
             return out
 
+        def delete_project(name: str, ctx: _Ctx = None) -> dict:
+            """Delete a NAMED project irreversibly (its graph, audit log and DB file). Refused for
+            `default`, for the server's active project and for YOUR SESSION's current project —
+            switch away first (`use_project`): deleting the ground you stand on is the misclick
+            this refusal exists for."""
+            key = _session_key(ctx)
+            if key is not None and _SESSION_PROJECTS.get(key) == name:
+                raise ValueError(f"{name!r} is your session's current project — use_project away first")
+            out = reg.delete(name)
+            for k, v in list(_SESSION_PROJECTS.items()):   # sessions pointing at the dead project
+                if v == name:                              # fall back to the registry's active
+                    del _SESSION_PROJECTS[k]
+            return out
+
         use_project.__annotations__ = {"name": str, "ctx": _Ctx, "return": dict}
         list_projects.__annotations__ = {"ctx": _Ctx, "return": dict}
+        delete_project.__annotations__ = {"name": str, "ctx": _Ctx, "return": dict}
         server.add_tool(use_project, name="use_project", description=(use_project.__doc__ or "").strip())
         server.add_tool(list_projects, name="list_projects", description=(list_projects.__doc__ or "").strip())
+        server.add_tool(delete_project, name="delete_project", description=(delete_project.__doc__ or "").strip())
     _add_agent_verbs(server, engine_or_registry)
     return server
 

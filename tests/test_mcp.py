@@ -43,7 +43,7 @@ def test_agent_loop_through_tools():
 
     # lifecycle signal + L2 validate both return JSON-able dicts
     assert T.signal(e, "r", "ACCEPT", "alice")["state"] == "EXECUTING"
-    assert isinstance(TL.validate(e, "r"), dict)
+    assert isinstance(TL.review_decomposition(e, "r"), dict)
     e.stop()
 
 
@@ -97,10 +97,10 @@ def test_tools_registry_complete():
     """Every authoring + read verb is registered for the agent surface — the COMPLETE registry
     is tools_llm.TOOLS (structural ∪ LLM); tools.TOOLS stays the structural subset (layer gate)."""
     for name in ("create_task", "decompose", "auto_decompose", "revise", "reneglect", "edit_criteria",
-                 "reassign", "add_dependency", "remove_dependency", "map_criterion", "signal", "validate",
-                 "project", "get_task", "next_step", "get_graph", "list_holes"):
+                 "reassign", "add_dependency", "remove_dependency", "map_criterion", "signal",
+                 "review_decomposition", "project", "get_task", "next_step", "get_graph", "list_holes"):
         assert name in TL.TOOLS
-    for name in ("auto_decompose", "validate", "validate_node"):
+    for name in ("auto_decompose", "review_decomposition", "validate_result"):
         assert name not in T.TOOLS                      # the LLM verbs live OFF the structural half
 
 

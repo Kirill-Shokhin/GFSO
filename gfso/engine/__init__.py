@@ -13,7 +13,7 @@ from gfso.core.types import (
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
     TERMINAL_STATES, DoneReason,
 )
-from gfso.core.graph import Graph, q_T, q_D, q_V, q_Dep, q_Del
+from gfso.core.graph import Graph, q_T, q_D, q_V, q_Dep, q_Del, false_fail_share
 from gfso.core.graph.projection import build as build_projection, render as render_projection
 from gfso.core.protocol.fsm import available_signals
 from gfso.core.protocol.validation import required_role, Role
@@ -144,7 +144,7 @@ class Engine:
 
     # === Authoring operations (UPPER layer — desugar to the 12 signals, NOT new signals) ===
 
-    def revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId) -> Task:
+    def revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId, reason=None) -> Task:
         """Revise a node's spec — canon v3.7 §6.4 Inv-1: a packet change on a live node = **re-ASSIGN under
         the SAME id → REVIEW** (NOT the CANCEL signal). The executor re-ACCEPTs/CHALLENGEs the new contract;
         each version is appended to the log (Inv-7: the immutable record is the LOG, not the node).
@@ -154,8 +154,13 @@ class Engine:
         CHECK-1b (dangling covers) + CHECK-3 (Dep consumers) for the agent to resolve (surface-don't-destroy).
         Only a genuine abandon (CANCEL → CANCELLING → CANCELLED) cascades. The only IN-PLACE spec change is
         ACCEPT_CHALLENGE (executor-initiated negotiation, FM-7→FM-5).
+
+        `reason` (optional RevisionReason, §16.5): the causal type of the revision — SPEC_DEFECT
+        (criteria were wrong → counts in q_T) / SCOPE_EXPANSION (sanctioned §5.1 — never counts) /
+        CAPABILITY_MISMATCH (Del change → counts in q_Del) / OTHER. Untyped keeps each metric's
+        documented bias.
         """
-        return self._revise(task_id, new_spec, agent)
+        return self._revise(task_id, new_spec, agent, reason=reason)
 
     def reneglect(self, task_id: TaskId, neglected: tuple, agent: AgentId) -> Task:
         """UPPER convenience = read-modify-write over REVISE: replace a node's NEGLECTED, keep the rest.
@@ -168,25 +173,43 @@ class Engine:
                         scope=t.spec.scope, name=t.spec.name)
         return self.revise(task_id, new_spec, agent)
 
-    def edit_criteria(self, task_id: TaskId, criteria: tuple, agent: AgentId) -> Task:
+    def edit_criteria(self, task_id: TaskId, criteria: tuple, agent: AgentId, reason=None) -> Task:
         """UPPER convenience = RMW over REVISE: replace a node's criteria, keep description/NEGLECTED.
-        Dep criteria (depends_on) are part of `criteria` — pass the full set (RMW carries the unchanged)."""
+        Dep criteria (depends_on) are part of `criteria` — pass the full set (RMW carries the unchanged).
+        `reason` (§16.5): SPEC_DEFECT = the criteria were WRONG (counts in q_T); SCOPE_EXPANSION =
+        sanctioned growth of the goal (§5.1 — never counts); untyped = uncounted (documented bias)."""
         t = self._graph.get_task(task_id)
         if t is None:
             raise ValueError(f"task {task_id} not found")
         new_spec = Spec(t.spec.description, tuple(criteria), t.spec.neglected, t.spec.risk_components,
                         scope=t.spec.scope, name=t.spec.name)
-        return self.revise(task_id, new_spec, agent)
+        return self.revise(task_id, new_spec, agent, reason=reason)
 
-    def reassign(self, task_id: TaskId, new_assignee: AgentId) -> Task:
+    def reassign(self, task_id: TaskId, new_assignee: AgentId, reason=None) -> Task:
         """UPPER: change a node's executor (Del). Canon Inv-1 fixes Del(t) at ASSIGN too → a change is a
-        revision: re-ASSIGN (same id) carrying the new executor (the issuer acts; q_Del↑). Same node returned."""
+        revision: re-ASSIGN (same id) carrying the new executor (the issuer acts). `reason` (§16.5):
+        CAPABILITY_MISMATCH counts in q_Del; another typed reason (load, handoff) does NOT; untyped
+        keeps the documented over-approximation (every untyped Del change counts). Same node returned."""
         t = self._graph.get_task(task_id)
         if t is None:
             raise ValueError(f"task {task_id} not found")
         parent = self._graph.get_parent(task_id)
         issuer = parent.assignee if parent and parent.assignee else t.assignee
-        return self._revise(task_id, t.spec, issuer, new_assignee=new_assignee)
+        return self._revise(task_id, t.spec, issuer, new_assignee=new_assignee, reason=reason)
+
+    def reopen(self, task_id: TaskId, agent: AgentId) -> Task:
+        """UPPER convenience over the R′ edge (§6.3): re-ASSIGN a quasi-terminal (DONE/CANCELLED)
+        under its OWN standing contract — the node returns to REVIEW to re-earn its verdict by fresh
+        contact (REOPEN is restoration, not a 13th signal). Double-gated in the FSM at the
+        chokepoint: finality-gate (not consumed — positive: the parent has not staked its aggregate
+        and no Dep-consumer built on the result; negative: cascade not settled / parent not
+        replanned) ∧ reopens < max_reopens (one sign-agnostic counter, Инв-5). A CONSUMED terminal
+        is finally locked — recovery there is re-decomposition by the issuer, not reopen. To reopen
+        WITH a new contract, use `revise` (same edge, spec carried)."""
+        t = self._graph.get_task(task_id)
+        if t is None:
+            raise ValueError(f"task {task_id} not found")
+        return self._revise(task_id, t.spec, agent)
 
     # === Query API ===
 
@@ -228,7 +251,7 @@ class Engine:
             self._graph.save_task(node)
 
     # === L2 critic / validation API ===
-    # The L2 validate itself lives ABOVE the engine: gfso.critic.runner.validate_decomposition(engine,
+    # The L2 validate itself lives ABOVE the engine: gfso.critic.runner.review_decomposition(engine,
     # node_id) — the critic pulls decompose/adapters, and the engine imports core ONLY (the layer gate).
     # The engine keeps the pure storage reads its layer owns.
 
@@ -249,6 +272,9 @@ class Engine:
             "q_V": q_V(self._graph),
             "q_Dep": q_Dep(self._graph),
             "q_Del": q_Del(self._graph),
+            # Diagnostic, NOT a Q component (§16.5: false-FAIL is guarantee-safe, outside the
+            # scalar by design; the SHARE is the over-strict-validator diagnostic). HIGH = bad.
+            "false_fail_share": false_fail_share(self._graph),
         }
 
     # === Events API ===
@@ -281,22 +307,24 @@ class Engine:
         """The persisted observation history, oldest-first: [{ts, source, message}]."""
         return self._graph._storage.get_pipeline(limit)
 
-    # === Execution-validation record (the validate_node verdict; feeds the self-pass gate) ===
+    # === Execution-validation record (the validate_result verdict; feeds the self-pass gate) ===
 
     def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
                             validator_id: str) -> None:
         """Store the independent validator's verdict for the node's CURRENT delivery (stamped with the
-        node's iteration — a rework invalidates it: the next delivery needs a fresh verdict)."""
+        node's GENERATION (iteration, reopens) — a rework OR a reopen invalidates it: the next
+        delivery needs a fresh verdict; the superseded record is replaced, never trusted forward)."""
         import json as _json
         task = self.get_task(task_id)
         self._graph._storage.store_exec_verdict(task_id, _json.dumps({
             "verdict": verdict, "failed_criteria": list(failed_criteria or ()),
             "validator": validator_id, "iteration": getattr(task, "iteration", 0),
+            "reopens": getattr(task, "reopens", 0),
             "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
 
     def record_reviewer_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
                                 reviewer: str) -> None:
-        """The HUMAN counterpart of validate_node's record: an independent reviewer's verdict on
+        """The HUMAN counterpart of validate_result's record: an independent reviewer's verdict on
         the node's CURRENT delivery (feeds the same self-pass gate). The engine REFUSES a reviewer
         who IS the node's executor — recording a verdict on your own work would open the
         verifier≠executor gate from the inside (§6.5 IC; visibility ≠ enforcement: the refusal is
@@ -314,9 +342,7 @@ class Engine:
         self.record_exec_verdict(task_id, verdict, list(failed_criteria or ()), str(reviewer))
 
     def get_exec_verdict(self, task_id: TaskId) -> Optional[dict]:
-        import json as _json
-        raw = self._graph._storage.get_exec_verdict(task_id)
-        return _json.loads(raw) if raw else None
+        return self._graph.exec_verdict_record(task_id)
 
     # === Audit API ===
 
@@ -447,7 +473,8 @@ class Engine:
         return self._graph.get_task(parent_id)
 
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
-                new_assignee: Optional[AgentId] = None, covers: tuple = ()) -> Task:
+                new_assignee: Optional[AgentId] = None, covers: tuple = (),
+                reason=None) -> Task:
         """Canon v3.7 Inv-1 (§6.4): a spec/Del change = REVISION — ONE re-ASSIGN under the SAME id → REVIEW,
         never an in-place mutation and never the CANCEL signal (revision ≠ abandonment; no CANCELLING pass,
         no cascade). The id persists (Inv-7) so references (the parent's mapping, dependents' depends_on)
@@ -459,11 +486,14 @@ class Engine:
             raise ValueError(f"task {task_id} not found")
         a = self.send_signal_sync(SignalData(
             signal=Signal.ASSIGN, task_id=task_id, spec=new_spec, source=agent,
-            assignee=new_assignee or old.assignee, covers=tuple(covers)))
+            assignee=new_assignee or old.assignee, covers=tuple(covers),
+            revision_reason=reason))
         if a is None or a.rejected:
             raise ValueError(
-                f"revise rejected at re-ASSIGN (state={self.get_state(task_id)}): the node is terminal, "
-                f"in TIMEOUT/CANCELLING (no revision there, §6.3), or the agent is not its issuer.")
+                f"revise rejected at re-ASSIGN (state={self.get_state(task_id)}): the node is in "
+                f"TIMEOUT/CANCELLING/ESCALATED (no revision there, §6.3), a quasi-terminal that is "
+                f"FINAL (consumed ∨ reopens exhausted — the R′ finality-gate, §6.3), or the agent "
+                f"is not its issuer.")
         self._recompute_checks(task_id)          # the node kept its subtree → refresh its own coverage/checks
         if old.parent_id:
             self._recompute_checks(old.parent_id)

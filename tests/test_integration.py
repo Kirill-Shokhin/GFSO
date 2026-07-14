@@ -130,15 +130,17 @@ def test_pass_requires_all_children_passed_theorem1():
     assert e is None or e.rejected                                # child not PASSed → parent PASS refused
     assert eng.get_state(TaskId("p")) == State.VALIDATING
 
-    # PASS the child, then the parent PASS is allowed. Both nodes are SELF-executed (source == Del),
-    # so each PASS needs a recorded independent verdict first (verifier ≠ executor gate, §6.5).
+    # PASS the child, then the parent PASS is allowed. The child shares the parent's Del (alice) —
+    # an INTERNAL node (D6, §6.5): it self-verifies, no independent verdict demanded. The parent is
+    # the ROOT = the public seam "done" must cross — ITS self-PASS still requires the recorded
+    # verdict (verifier ≠ executor gate fires ON the seam, not on every node).
     eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("c"), source=A)); eng.wait_idle()
     eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("c"), source=A, result="ok")); eng.wait_idle()
-    e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
-    assert e is None or e.rejected                                # self-pass without a verdict → refused
-    eng.record_exec_verdict(TaskId("c"), "PASS", [], "validate_node")
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
-    eng.record_exec_verdict(TaskId("p"), "PASS", [], "validate_node")
+    assert eng.get_state(TaskId("c")) == State.DONE               # internal self-validation (D6)
+    e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
+    assert e is None or e.rejected                                # ROOT self-pass without a verdict → refused
+    eng.record_exec_verdict(TaskId("p"), "PASS", [], "validate_result")
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
     assert eng.get_state(TaskId("p")) == State.DONE and eng.get_task(TaskId("p")).done_reason.name == "PASS"
     eng.stop()

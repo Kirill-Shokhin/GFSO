@@ -36,8 +36,3 @@ SIGNAL_ROLES: dict[Signal, Role] = {
 def required_role(signal: Signal) -> Role:
     """Which role is allowed to send this signal."""
     return SIGNAL_ROLES[signal]
-
-
-def is_valid_sender(signal: Signal, sender_role: Role) -> bool:
-    """Check if sender has the right role for this signal."""
-    return SIGNAL_ROLES[signal] == sender_role

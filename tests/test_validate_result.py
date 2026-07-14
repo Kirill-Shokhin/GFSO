@@ -1,4 +1,4 @@
-"""validate_node — EXECUTION validation (≠ validate, the PLAN's L2): the read-only validator
+"""validate_result — EXECUTION validation (≠ validate, the PLAN's L2): the read-only validator
 INSTRUMENT produces per-criterion evidence; the ISSUER signals PASS/FAIL. Logic tested with a fake
 agent-runner (the live run is a headless subprocess)."""
 import json
@@ -51,7 +51,7 @@ def _delivered_node(e, tid="n1", extra_dep=False):
     assert r["state"] == "VALIDATING"
 
 
-def test_validate_node_happy_path_embeds_contract_and_deliver():
+def test_validate_result_happy_path_embeds_contract_and_deliver():
     e = _eng()
     _delivered_node(e, extra_dep=True)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
@@ -59,10 +59,10 @@ def test_validate_node_happy_path_embeds_contract_and_deliver():
                                      {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md"},
                                      {"criterion": "holds", "verdict": "pass", "evidence": "ran check"}],
                                  "seams": "checked prod output", "failed_criteria": []}))
-    out = TL.validate_node(e, "n1", _llm=llm)
+    out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "PASS" and out["failed_criteria"] == []
     assert len(out["per_criterion"]) == 2 and out["state"] == "VALIDATING"
-    assert out["stats"][-1]["stage"] == "validate_node"
+    assert out["stats"][-1]["stage"] == "validate_result"
     # the packet is SELF-CONTAINED: contract + seam + the audit-log DELIVER result, read-only tool set
     assert "flush" in llm.seen["user"] and "holds verified with 2kg frame" in llm.seen["user"]
     assert "prod" in llm.seen["user"]                       # seam embedded
@@ -70,7 +70,7 @@ def test_validate_node_happy_path_embeds_contract_and_deliver():
     e.stop()
 
 
-def test_validate_node_fail_report_drives_issuer_fail_signal():
+def test_validate_result_fail_report_drives_issuer_fail_signal():
     """The tool never signals; its failed_criteria feed the ISSUER's FAIL → REWORK (Inv-3)."""
     e = _eng()
     _delivered_node(e)
@@ -79,7 +79,7 @@ def test_validate_node_fail_report_drives_issuer_fail_signal():
                                      {"criterion": "flush", "verdict": "fail", "evidence": "nail bent"},
                                      {"criterion": "holds", "verdict": "pass", "evidence": "held"}],
                                  "failed_criteria": ["flush"]}))
-    out = TL.validate_node(e, "n1", _llm=llm)
+    out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
     assert e.get_state(T.TaskId("n1")).name == "VALIDATING"   # instrument did NOT mutate the graph
     r = T.signal(e, "n1", "FAIL", "alice", failed_criteria=out["failed_criteria"])
@@ -87,42 +87,42 @@ def test_validate_node_fail_report_drives_issuer_fail_signal():
     e.stop()
 
 
-def test_validate_node_requires_a_deliverable():
+def test_validate_result_requires_a_deliverable():
     e = _eng()
     T.create_task(e, "n2", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "alice")
-    out = TL.validate_node(e, "n2", _llm=_ValidatorLLM("irrelevant"))
+    out = TL.validate_result(e, "n2", _llm=_ValidatorLLM("irrelevant"))
     assert "error" in out and "DELIVER" in out["error"]
     # explicit deliverable unblocks it (the restart fallback)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "a", "verdict": "pass", "evidence": "ok"}], "failed_criteria": []}))
-    out = TL.validate_node(e, "n2", deliverable="see out.txt", _llm=llm)
+    out = TL.validate_result(e, "n2", deliverable="see out.txt", _llm=llm)
     assert out["verdict"] == "PASS" and "see out.txt" in llm.seen["user"]
     e.stop()
 
 
-def test_validate_node_unparsed_report_is_never_pass():
+def test_validate_result_unparsed_report_is_never_pass():
     e = _eng()
     _delivered_node(e)
     llm = _ValidatorLLM("I looked at it and it seems fine!")   # no fenced json
-    out = TL.validate_node(e, "n1", _llm=llm)
+    out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] is None and "seems fine" in out["report_text"]
     assert llm.calls[-1]["parse_failed"] is True
     e.stop()
 
 
-def test_validate_node_unknown_task():
+def test_validate_result_unknown_task():
     e = _eng()
-    out = TL.validate_node(e, "ghost", _llm=_ValidatorLLM(""))
+    out = TL.validate_result(e, "ghost", _llm=_ValidatorLLM(""))
     assert "error" in out
     e.stop()
 
 
-def test_registry_exposes_validate_node():
-    assert "validate_node" in TL.TOOLS   # the COMPLETE transport registry
+def test_registry_exposes_validate_result():
+    assert "validate_result" in TL.TOOLS   # the COMPLETE transport registry
 
 
-def test_mcp_server_binds_validate_node_async():
-    """The MCP surface exposes validate_node via the long-running async binding (progress notifications,
+def test_mcp_server_binds_validate_result_async():
+    """The MCP surface exposes validate_result via the long-running async binding (progress notifications,
     no engine/_-params in the schema)."""
     import pytest
     pytest.importorskip("mcp")
@@ -132,8 +132,8 @@ def test_mcp_server_binds_validate_node_async():
     e = _eng()
     server = create_server(e)
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
-    assert "validate_node" in tools
-    props = tools["validate_node"].inputSchema["properties"]
+    assert "validate_result" in tools
+    props = tools["validate_result"].inputSchema["properties"]
     assert "task_id" in props and "deliverable" in props
     assert "engine" not in props and "_llm" not in props and "_progress" not in props
     e.stop()
@@ -142,7 +142,7 @@ def test_mcp_server_binds_validate_node_async():
 def test_self_pass_gate_requires_fresh_independent_verdict():
     """The guinea-pig hole (live 2026-07-04): with collapsed ids (executor == issuer == `agent`) the
     FSM couldn't tell an evidence-based PASS from a self-stamp — 6/8 nodes self-passed on the agent's
-    own bash check. Now: PASS where source == Del requires a RECORDED validate_node verdict for the
+    own bash check. Now: PASS where source == Del requires a RECORDED validate_result verdict for the
     CURRENT delivery; a FAIL verdict blocks PASS; a rework stales the record; a DISTINCT issuer
     (source ≠ Del) keeps the canon default."""
     e = _eng()
@@ -152,7 +152,7 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     # a FAIL verdict on record does NOT unlock PASS (that override is the falsification q_V fears)
     llm_fail = _ValidatorLLM(_fenced({"verdict": "FAIL", "per_criterion": [
         {"criterion": "flush", "verdict": "fail", "evidence": "bent"}], "failed_criteria": ["flush"]}))
-    TL.validate_node(e, "n1", _llm=llm_fail)
+    TL.validate_result(e, "n1", _llm=llm_fail)
     r = T.signal(e, "n1", "PASS", "alice")
     assert r["accepted"] is False and "FAIL" in r["error"]
     # the honest path: FAIL → REWORK → re-deliver → the OLD verdict is stale → re-validate → PASS
@@ -162,7 +162,7 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     assert r["accepted"] is False and "STALE" in r["error"]
     llm_ok = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ok"}], "failed_criteria": []}))
-    TL.validate_node(e, "n1", _llm=llm_ok)
+    TL.validate_result(e, "n1", _llm=llm_ok)
     assert T.signal(e, "n1", "PASS", "alice")["state"] == "DONE"
     e.stop()
 
@@ -183,7 +183,7 @@ def test_distinct_issuer_pass_needs_no_verdict_record():
 
 
 def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gate():
-    """The human counterpart of validate_node: a SELF-executed node's PASS stays rejected until an
+    """The human counterpart of validate_result: a SELF-executed node's PASS stays rejected until an
     INDEPENDENT reviewer records a verdict (record_verdict) — and the engine REFUSES the executor
     recording one on their own work (the self-stamp would open the gate from the inside)."""
     e = _eng()

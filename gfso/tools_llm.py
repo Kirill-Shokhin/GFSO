@@ -19,33 +19,32 @@ from gfso import tools as _tools
 from gfso.tools import _agent_id
 
 
-def validate(engine: Engine, task_id: str, model: str = "sonnet") -> dict:
+def review_decomposition(engine: Engine, task_id: str, model: str = "sonnet") -> dict:
     """Validate a node's decomposition: the STRUCTURAL gate (L0/L1: coverage, DAG, glue, non-redundancy —
-    fails ⇒ fix those first) + the SEMANTIC hole-hunt: one headless subagent SEARCH in diff mode over the
-    node's projection → `semantic_covered` (the space is covered) or `semantic_findings` (what's missing —
-    ADVISORY: fix via the FSM verbs or consciously declare NEGLECTED; it never auto-fixes). Use on
-    externally-authored or hand-edited graphs; fresh auto_decompose graphs had this hunt at build time."""
+    fails ⇒ fix those first) + the L2 CHECKER (canon §5.4 Level 2): one zero-tool call judging, per
+    parent criterion, whether the mapped children's criteria — taken as real-world facts — CAUSALLY
+    guarantee it (sufficient / insufficient-with-named-gap / uncertain), plus semantic FM-2 conflicts
+    the formal CHECK-8 can't see. ADVISORY: never auto-fixes — fix via the FSM verbs or consciously
+    declare NEGLECTED. The hole-hunt («what's missing from the space») is NOT this verb — that is the
+    DECOMPOSER's question: run auto_decompose (refine). Use this on externally-authored or hand-edited
+    graphs; the UI's «AI review» button is this verb."""
     from gfso.runtime import llm_factory
     from gfso.decompose.loop import _stat_line
-    from gfso.critic.runner import validate_decomposition
+    from gfso.critic.runner import review_decomposition
+    from gfso.engine.events import emit_cb
 
-    def _cb(msg: str) -> None:  # same observation field as decompose (UI pipeline log)
-        try:
-            engine.emit_info("validate", msg)
-        except Exception:
-            pass
-
+    _cb = emit_cb(engine, "review")
     llm = llm_factory(model)
     llm.on_tick = _cb
-    llm.stage_hint = f"{task_id} validator"
-    _cb(f"{task_id}: semantic hole-hunt (search-diff over the projection)…")
-    out = asdict(validate_decomposition(engine, TaskId(task_id), llm=llm))
+    llm.stage_hint = f"{task_id} L2-checker"
+    _cb(f"{task_id}: L2 checker (causal entailment per parent criterion)…")
+    out = asdict(review_decomposition(engine, TaskId(task_id), llm=llm))
     out["stats"] = list(llm.calls)
     verdict = ("gate FAILED — fix L0/L1 first" if not out.get("gate_passed")
-               else "ALREADY-COVERED" if out.get("semantic_covered")
-               else "advisory findings returned" if out.get("semantic_covered") is False
-               else "no semantic verdict")
-    _cb(f"{task_id}: {verdict} · validator {_stat_line(llm)}")
+               else "no gaps found (advisory)" if out.get("semantic_covered")
+               else "gaps/conflicts returned (advisory)" if out.get("semantic_covered") is False
+               else "no checker verdict")
+    _cb(f"{task_id}: {verdict} · checker {_stat_line(llm)}")
     return out
 
 
@@ -105,7 +104,7 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
             f"Working directory for your tools: {workdir or os.getcwd()}\n")
 
 
-def validate_node(engine: Engine, task_id: str, deliverable: Optional[str] = None,
+def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = None,
                   model: str = "sonnet", workdir: Optional[str] = None,
                   _llm=None, _progress=None) -> dict:
     """Validate EXECUTION (≠ `validate`, which checks the decomposition PLAN): spawn ONE independent
@@ -130,17 +129,11 @@ def validate_node(engine: Engine, task_id: str, deliverable: Optional[str] = Non
         return {"error": f"nothing to validate: {task_id} has no recorded DELIVER result — "
                          f"pass `deliverable` explicitly (state {task.state.name})"}
 
-    def _cb(msg: str) -> None:  # same observation field as decompose/validate (UI pipeline log)
-        try:
-            engine.emit_info("validate_node", msg)
-        except Exception:
-            pass
-        if _progress is not None:
-            _progress(msg)
-
+    from gfso.engine.events import emit_cb
+    _cb = emit_cb(engine, "validate_result", _progress)
     llm = _llm or llm_factory(model)
     if not hasattr(llm, "run_agent"):
-        return {"error": "validate_node needs the headless agent-runner (Anthropic transport); "
+        return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
                          "GFSO_PROVIDER=generic covers zero-tool one-shots only"}
     llm.on_tick = _cb
     llm.stage_hint = f"{task_id} node-validator"
@@ -150,7 +143,7 @@ def validate_node(engine: Engine, task_id: str, deliverable: Optional[str] = Non
     text = llm.run_agent(system, packet + schema_instruction(_VALIDATOR_SCHEMA),
                          allowed_tools=("Read", "Bash", "Glob", "Grep"), cwd=workdir)
     if hasattr(llm, "tag_last"):
-        llm.tag_last("validate_node")
+        llm.tag_last("validate_result")
     out: dict = {"task_id": task_id, "state": task.state.name, "stats": list(getattr(llm, "calls", []))}
     parsed = parse_structured(text, _VALIDATOR_SCHEMA)
     if parsed is None:
@@ -164,7 +157,7 @@ def validate_node(engine: Engine, task_id: str, deliverable: Optional[str] = Non
                 "failed_criteria": list(parsed["failed_criteria"]), "seams": parsed.get("seams", "")})
     try:  # the recorded verdict is what unlocks a self-executed node's PASS (verifier ≠ executor gate)
         engine.record_exec_verdict(TaskId(task_id), parsed["verdict"],
-                                   list(parsed["failed_criteria"]), "validate_node")
+                                   list(parsed["failed_criteria"]), "validate_result")
     except Exception:
         pass
     _cb(f"{task_id}: validator verdict {parsed['verdict']}"
@@ -190,15 +183,9 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = "root",
     structural shape. Prefer this over reasoning the graph node-by-node — that under-covers and burns
     tokens."""
     from gfso.decompose import decompose_into
+    from gfso.engine.events import emit_cb
 
-    def _cb(msg: str) -> None:  # fan out: transport channel (MCP notifications) + the live UI strip
-        try:
-            engine.emit_info("decompose", msg)
-        except Exception:
-            pass
-        if _progress is not None:
-            _progress(msg)
-
+    _cb = emit_cb(engine, "decompose", _progress)
     res = decompose_into(engine, request, root_id=root_id, assignee=assignee or _agent_id(),
                          depth=depth, model=model, fast=fast, progress=_cb)
     kids = engine.get_active_children(res.root_id)
@@ -216,6 +203,6 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = "root",
 TOOLS = {
     **_tools.TOOLS,
     "auto_decompose": auto_decompose,
-    "validate": validate,
-    "validate_node": validate_node,
+    "review_decomposition": review_decomposition,   # pre-contact L2 review of the PLAN (§5.4)
+    "validate_result": validate_result,             # post-contact validation of the RESULT (§6.1)
 }

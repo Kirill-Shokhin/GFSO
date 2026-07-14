@@ -22,10 +22,12 @@ def _transition(state, signal, ctx=CTX, **kw):
 
 # === Table row count ===
 
-def test_table_has_21_explicit_rows():
-    # 19 + (CANCELLING, CANCEL_ACK) + (CANCELLING, TIMEOUT) — v3.7 §6.3 two-step cancellation.
-    # Plus the catch-alls in transition(): universal CANCEL → CANCELLING, revision re-ASSIGN → REVIEW.
-    assert len(_LOOKUP) == 21
+def test_table_has_22_explicit_rows():
+    # 19 + (CANCELLING, CANCEL_ACK) + (CANCELLING, TIMEOUT) — v3.7 §6.3 two-step cancellation —
+    # + (IDLE, TIMEOUT) — Инв-5 total over non-terminals (crash-orphan escape; closed Lean flag).
+    # Plus the catch-alls in transition(): universal CANCEL → CANCELLING, revision re-ASSIGN →
+    # REVIEW, and the R′ REOPEN (quasi-terminal re-ASSIGN under the finality gate, §6.3).
+    assert len(_LOOKUP) == 22
 
 
 def test_signal_alphabet_frozen_at_12_p2p_plus_timeout():
@@ -245,8 +247,10 @@ def test_escalated_rejects_all():
         assert result is None, f"ESCALATED should reject {sig.name}"
 
 def test_idle_rejects_non_assign():
+    # IDLE admits exactly: ASSIGN (creation), CANCEL (universal catch-all), TIMEOUT (Инв-5 total —
+    # the crash-orphan escape). Everything else is rejected.
     for sig in Signal:
-        if sig in (Signal.ASSIGN, Signal.CANCEL):
+        if sig in (Signal.ASSIGN, Signal.CANCEL, Signal.TIMEOUT):
             continue
         result = _transition(State.IDLE, sig)
         assert result is None, f"IDLE should reject {sig.name}"

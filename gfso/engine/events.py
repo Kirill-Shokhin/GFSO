@@ -15,6 +15,20 @@ RejectCallback = Callable[[TaskId, Signal, State], None]
 InfoCallback = Callable[[str, str], None]  # (source, message) — pipeline progress, not graph state
 
 
+def emit_cb(engine, source: str, progress: Callable[[str], None] | None = None) -> Callable[[str], None]:
+    """One observation callback for the LLM-run verbs (review_decomposition / validate_result / auto_decompose /
+    run_executor): emit_info to the UI strip — never breaking the caller — plus the optional
+    transport fan-out (MCP progress). Four verbs used to hand-roll this identically."""
+    def _cb(msg: str) -> None:
+        try:
+            engine.emit_info(source, msg)
+        except Exception:
+            pass
+        if progress is not None:
+            progress(msg)
+    return _cb
+
+
 class EventBus:
     def __init__(self):
         self._on_transition: list[TransitionCallback] = []

@@ -7,7 +7,7 @@ from gfso.core.types import (
     State, Signal, DoneReason, MutationType,
     GuardContext, Effect, SignalData,
     MutateGraph, RunChecks, Dispatch,
-    NON_TERMINAL_STATES, REASSIGNABLE_STATES, TaskId,
+    NON_TERMINAL_STATES, REASSIGNABLE_STATES, QUASI_TERMINAL_STATES, TaskId,
 )
 
 
@@ -45,6 +45,18 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
         _mg(tid, State.REVIEW),
         RunChecks(tid),
         Dispatch(tid, Signal.ASSIGN),
+    ])
+
+
+@_row(State.IDLE, Signal.TIMEOUT)
+def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
+    # Инв-5 is TOTAL over non-terminals (§6.3/§6.4): IDLE is a non-terminal state and is not in the
+    # spec-target exception list — first timeout → TIMEOUT like any other. Operationally a node is
+    # only ever OBSERVABLE in IDLE as a crash orphan (creation persists mid-effects but the
+    # SET_STATE→REVIEW did not land); this row is exactly its escape hatch. Closes the Lean-flagged
+    # divergence (`idle_has_no_timeout` — now a theorem of the opposite sign).
+    return (State.TIMEOUT, [
+        _mg(tid, State.TIMEOUT),
     ])
 
 
@@ -255,6 +267,8 @@ def available_signals(state: State) -> list[Signal]:
         sigs.append(Signal.CANCEL)
     if state in REASSIGNABLE_STATES and Signal.ASSIGN not in sigs:
         sigs.append(Signal.ASSIGN)
+    if state in QUASI_TERMINAL_STATES and Signal.ASSIGN not in sigs:
+        sigs.append(Signal.ASSIGN)  # R′ REOPEN affordance (§6.3) — the finality-gate may still reject
     return sigs
 
 
@@ -340,7 +354,31 @@ def transition(
         return (State.REVIEW, [
             MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.spec,
                         assignee=signal_data.assignee,   # carries a new executor for reassign (Del change); None = keep
-                        covers=signal_data.covers),      # (re)declared coverage of parent criteria (§2.2)
+                        covers=signal_data.covers,       # (re)declared coverage of parent criteria (§2.2)
+                        revision_reason=signal_data.revision_reason),  # causal typing (§16.5)
+            _mg(task_id, State.REVIEW),
+            RunChecks(task_id),
+            Dispatch(task_id, Signal.ASSIGN),
+        ])
+
+    # R′ REOPEN — canon §6.3 "Финальность": DONE and CANCELLED are QUASI-terminal. A re-ASSIGN out of
+    # them (NOT a 13th signal — a named re-ASSIGN over a new edge) is admitted under a DOUBLE gate:
+    # (i) the finality-gate — the terminal is not CONSUMED in the graph (positive: the parent has not
+    # staked its aggregate on V=pass and no Dep-consumer built on the result; negative: the cascade
+    # has not settled or the parent has not replanned around the hole); (ii) reopens remain
+    # (max_reopens, sign-agnostic — restores finiteness for the new outgoing edge, Инв-5).
+    # Both gate inputs arrive via GuardContext, computed at the chokepoint in the SAME atomic step
+    # as this edge (Инв-7) — a concurrent DELIVER cannot consume the node between check and reopen.
+    # Target is REVIEW, never the old terminal: the verdict is RE-EARNED by fresh contact (anti-fake);
+    # for DONE this literally drops V=pass — the REOPEN mutation spends the counter and stales the
+    # recorded verdict. spec=None reopens under the node's own standing contract.
+    if signal == Signal.ASSIGN and state in QUASI_TERMINAL_STATES:
+        if ctx.consumed or ctx.reopens >= ctx.max_reopens:
+            return None  # final: потреблён ∨ исчерпан счётчик (§6.3) — audit-rejected, T11
+        return (State.REVIEW, [
+            MutateGraph(task_id, MutationType.REOPEN, spec=signal_data.spec,
+                        assignee=signal_data.assignee, covers=signal_data.covers,
+                        revision_reason=signal_data.revision_reason),
             _mg(task_id, State.REVIEW),
             RunChecks(task_id),
             Dispatch(task_id, Signal.ASSIGN),
