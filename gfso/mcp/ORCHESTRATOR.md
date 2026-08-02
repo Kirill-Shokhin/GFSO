@@ -26,17 +26,44 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
    depth 1 for a simple goal; `fast=true` on simple tasks (~1.5× faster, same structural shape).
    Then `list_holes()` — resolve or consciously declare every residue BEFORE executing.
 
+   **How much to decompose is YOUR call (§2.2).** Whether a goal is one unit of work or splits into
+   subtasks, and into how many, is a domain judgement you make — it is NOT imposed from outside. Take a
+   goal as a LEAF (`D(t)=∅`) and execute it directly, or split it into subtasks whose parts you can
+   deliver and check — either is legitimate. The one thing that is NOT free is a decomposition that
+   doesn't hold up: a child that self-passes on work the whole later fails REFUTES the split (q_D↓), so
+   split only where the parts genuinely carry the goal, and let the Level-2 check below catch the gaps
+   BEFORE you write code.
+
+   **The plan is verified before you may execute it (enforced, §5.4) — on TWO levels.** A child
+   cannot ACCEPT (start executing) until BOTH hold for its parent's decomposition:
+   - **Structure (Level 0).** No uncovered criterion, no orphan child, no cycle, no incoherent
+     deadlines. The engine names the hole; resolve it (`map_criterion` / fix the graph).
+     (NEGLECTED/risk-nodes are advisory completeness, not execution gates.)
+   - **Causality (Level 2).** A current verdict from `review_decomposition(parent)`: do the mapped
+     children's criteria, taken as facts about the world, actually CARRY each parent criterion?
+     Structure cannot see this — a criterion with a covering child passes Level 0 even when that
+     child's criteria cannot possibly deliver it, and you then pay for the hole in code, as a
+     refused delivery. Every gap the review names must be discharged before work starts: FIX the
+     plan (`edit_criteria` / `map_criterion` / add a child — any edit stales the review, so re-run
+     it) or, if the checker is wrong, say so in writing:
+     `dispute_finding(parent, <criterion>, <why the entailment does hold>)`.
+     The checker is an a-priori approximation, not an oracle — execution keeps the last word (q_D).
+     What the engine enforces is that you CHECKED and dispositioned, never that the checker is right.
+   `next_steps` tells you this as a `review` step before it offers you any work, so you never have to
+   guess. Verify the plan ONCE, up front — not after a failed delivery.
+
    **The MANUAL regime (narrow-domain goals).** When the decomposition needs STUDIED context —
    project sources, docs, meaning an LLM's weights don't carry — auto_decompose cannot study it
    for you: study the context YOURSELF, then hand-build (`create_task`/`decompose`/
-   `edit_criteria`/`map_criterion`) or repair auto_decompose's base. In this regime the L2 check
-   is your NECESSITY, not an option — the loop (measured: a checker REPAIRS entailment but cannot
-   RECALL absent content; one refine round recovered exactly the missing-content axes):
+   `edit_criteria`/`map_criterion`) or repair auto_decompose's base. Here the full loop matters most
+   (measured: a checker REPAIRS entailment but cannot RECALL absent content; one refine round
+   recovered exactly the missing-content axes — so the hole-hunt and the check are BOTH needed):
    `list_holes` (structure, L0/L1) → **one `auto_decompose` refine round over YOUR built graph**
    (the hole-hunt: recalls what you forgot; your structure, ids and Del are preserved — new
    findings fold in as a revision) → `review_decomposition(node)` (the L2 checker: per parent
-   criterion — do the mapped children's criteria causally carry it; + semantic conflicts;
-   ADVISORY) → fix via the verbs or consciously declare NEGLECTED → re-run, until no gaps.
+   criterion — do the mapped children's criteria causally carry it; + semantic conflicts) → fix via
+   the verbs, or `dispute_finding` where the checker is wrong → re-run, until no gaps. The VERDICT is
+   advisory (contact overrules it); RUNNING it and closing what it names is not (the gate above).
    Freshness lives on the node: `get_review(node)` is a FREE read (never spends an LLM) returning
    the stored verdict + `verified` — True while the decomposition is UNCHANGED since the review;
    ANY shape edit (criteria, mappings, deps, a child's re-ASSIGN) auto-stales it, the record
@@ -45,9 +72,17 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
 2. **Drive by the frontier.** Loop `next_steps(root)` until `complete=true`. Each step tells you the
    node, the action, and whether it is YOURS (`mine`). Foreign steps (mine=false) are visible so you
    know what the graph waits on — hands off; surface them to the user if they block you.
-3. **Execute your leaves for real** (the work itself, in the workspace), then
-   `signal(task, "DELIVER", result=<paths + how EACH criterion is met + how to verify>)` — the result
-   text is the validator's input; write it so an independent checker needs nothing else.
+3. **Execute your leaves for real** (the work itself, in the workspace). Then, BEFORE you signal —
+   STOP and self-check by RUNNING, not by intending. For each criterion write a tiny check that
+   exercises your work (a few lines calling it, an assertion on the actual output — you have a shell)
+   and RUN it; read what it actually printed. A signal is a claim about the world, so make the claim
+   from the OBSERVED result, never from "I implemented it". This is the cheap moment that catches the
+   off-by-one, the wrong return type, the unhandled case BEFORE the root's real tests do — a self-pass
+   the root later fails is exactly what drops q_D. If a check surprises you, fix it and re-run; if a
+   criterion is one you genuinely cannot exercise here, say so plainly rather than asserting it passes.
+   Then `signal(task, "DELIVER", result=<paths + for EACH criterion, the check you ran and what it
+   printed>)` — the result text is the validator's input; write it so an independent checker needs
+   nothing else.
 4. **Validate — self-pass is structurally impossible AT THE SEAM.** Validation fires on PUBLIC
    nodes (§6.5 D6): the ROOT and every node whose executor differs from its parent's (a delegation
    seam). There, a PASS by the node's own executor is REJECTED by the FSM unless a FRESH
@@ -59,11 +94,18 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
    `FAIL(failed_criteria=<copied from the report>)` → the node returns as a `rework` step — fix
    exactly those criteria and re-deliver (max_iterations bounds the cycle). A `verdict: null`
    report is NEVER a pass — read report_text and decide as issuer.
+   **Rework flows DOWN, not around (ENFORCED):** when the FAILed criteria are covered by your
+   children, the engine REFUSES a re-DELIVER over the untouched subtree — contact refuted the
+   DECOMPOSITION, not the aggregate (§7.2 q_D). `reopen` the covering child (the refused delivery
+   released it), rework it THERE — or revise its contract / remap / add a covering child — then
+   re-aggregate.
    An INTERNAL node (same executor as its parent — your own private decomposition) self-verifies:
-   your DELIVER's self-validation is its record, and its guarantee is carried by the public
-   result's validation (T1) — you may PASS it directly; running `validate_result` there is still
-   allowed and useful when you want per-node evidence. "Done" (root DONE/PASS) ALWAYS crosses the
-   root seam — it never completes on a self-stamp.
+   RUN its check yourself (for code, actually run the tests), put the evidence in the DELIVER
+   `self_validation`, and PASS it directly. Do NOT spend a `validate_result` on an internal node —
+   that instrument is for the SEAM (the root and real delegation seams); an internal node's
+   guarantee is already carried by the root's validation (T1), so a per-node validator there is
+   pure overhead. Independent validation happens ONCE, at the root. "Done" (root DONE/PASS) ALWAYS
+   crosses the root seam — it never completes on a self-stamp.
 5. **Blocked / defective spec:** `BLOCK(reason, blocker_task_ids=[<EVERY node you actually need>])`
    records each discovered dependency — list ALL blockers, never collapse them into one or into prose
    (an unlisted blocker is an invisible edge), and never route around one informally. A wrong contract =

@@ -1,7 +1,17 @@
 """CHECK-1 through CHECK-6. Pure functions on types. O(n)."""
 from __future__ import annotations
 
+import re
+
 from gfso.core.types import Task, CheckResult, Predictability, DepEdge
+
+
+def _mentions(text: str, name: str) -> bool:
+    """Does `text` name the criterion `name` as a token? Word-boundary exact match — a substring
+    test would fire on any criterion whose name is a common word fragment."""
+    if not text or not name.strip():
+        return False
+    return re.search(rf"(?<!\w){re.escape(name.strip())}(?!\w)", text) is not None
 
 
 def check_anti_mock(children: list[Task], dep_edges: list[DepEdge]) -> CheckResult:
@@ -181,7 +191,21 @@ def check_neglected(task: Task, children: list[Task]) -> CheckResult:
 
     malformed = []
     for n in task.spec.neglected:
-        if n.predictability is None:
+        # A NEGLECTED entry that names a criterion of THIS node is not a risk record — it is a
+        # unilateral contract amendment (§5.1: the register holds risk FACTORS of the decomposition,
+        # each with an estimable P; §2.2: the criteria ARE the obligation). Observed live (BCB/93):
+        # "test_values criterion cannot pass — canonical test has design flaw" was authored as
+        # EXTRAORDINARY, and the validator then excused the red criterion by it → false PASS. The
+        # canon path for a criterion believed defective is CHALLENGE (spec defect, q_T) or the
+        # issuer's revision — both logged, neither silent.
+        named = [c.name for c in task.spec.criteria
+                 if _mentions(n.item, c.name) or _mentions(n.justification, c.name)]
+        if named:
+            malformed.append(
+                f"'{n.item}' names this node's own criterion ({', '.join(named)}) — a criterion is "
+                f"the obligation, not a neglectable risk (§2.2/§5.1). If it is defective: CHALLENGE "
+                f"it (spec defect) or have the issuer revise it; neglect cannot retire it")
+        elif n.predictability is None:
             malformed.append(
                 f"'{n.item}' has no predictability verdict (record incomplete, §5.1; "
                 f"no materialization P → it is a scope boundary, not a risk — move to goal criteria/CHECK-1)")

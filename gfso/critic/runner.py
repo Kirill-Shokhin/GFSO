@@ -42,6 +42,22 @@ CHECKER_SCHEMA = {
     "required": ["criteria"],
 }
 
+# The ATOMICITY report contract (the same check over the degenerate plan D(t)=∅): is the goal one
+# unit of work, or does it hold separable, independently-deliverable parts? Incomplete ⇒ no verdict.
+ATOMICITY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["atomic", "separable"]},
+        "why": {"type": "string"},
+        "concerns": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"name": {"type": "string"},
+                           "criteria": {"type": "array", "items": {"type": "string"}}},
+            "required": ["name", "criteria"]}},
+    },
+    "required": ["verdict", "why"],
+}
+
 
 def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     """L2 validate — the STRUCTURAL gate (cached L0/L1, eager-fresh) + the causal-correctness
@@ -54,7 +70,10 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     used = llm or engine._llm
     critique = critique_node(engine, node_id, used)
     rec = {**asdict(critique),   # + review provenance: re-validation UX needs "who judged, when"
-           "model": str(getattr(used, "model", "") or ""),
+           # `_model` is the port's attribute; the public-looking `model` never existed, so every
+           # record until now stored an empty string — and provenance you cannot read is no provenance
+           # (it hid WHICH model produced a verdict while two runs disagreed about the same plan).
+           "model": str(getattr(used, "_model", None) or getattr(used, "model", "") or ""),
            "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}
     engine._graph._storage.store_critique(node_id, json.dumps(rec))
     node = engine.get_task(node_id)
@@ -86,18 +105,72 @@ def _log_critique(engine, critique: NodeCritique) -> None:
         f.write(json.dumps(rec) + "\n")
 
 
+def _critique_leaf(engine, node_id: TaskId, llm=None) -> NodeCritique:
+    """The same Level-2 question over the DEGENERATE plan: D(t)=∅ — "this goal is one unit of work".
+
+    That is a claim like any other in the plan, and until it is checked it is the cheapest way to
+    route around the method entirely: declare the goal atomic and no decomposition exists to review
+    (observed live — a fresh agent took an issued 6-criteria goal straight to code). So a leaf is
+    reviewed too, by its own question: do these acceptance criteria describe separable,
+    independently-deliverable parts? A `separable` verdict names them as a partition of the criteria;
+    an `atomic` verdict closes the check and the node executes as a leaf, which is a perfectly good
+    answer — this is not a push to decompose (§2.2: inventing a pass-through child makes the plan
+    WORSE). Advisory exactly like the decomposition checker: the agent fixes or disputes, contact
+    decides (§5.4-bis)."""
+    nid = str(node_id)
+    task = engine.get_task(node_id)
+    if llm is None or task is None:
+        return NodeCritique(nid, gate_passed=True)   # no instrument — no verdict, never read as clean
+
+    from gfso.adapters.llm.structured import schema_instruction, parse_structured
+    from gfso.decompose.loop import _tag
+
+    system = (Path(__file__).parent / "prompts" / "atomicity.md").read_text(encoding="utf-8")
+    crits = "\n".join(f"- {c.name}: {c.description}" for c in task.spec.criteria)
+    user = (f"# GOAL DECLARED ATOMIC (no decomposition)\n"
+            f"**{task.spec.name or nid}**\n\n{task.spec.description}\n\n"
+            f"## Acceptance criteria\n{crits}\n\n"
+            f"Judge: one unit of work, or separable parts?")
+    text = llm.complete(prompt=user + schema_instruction(ATOMICITY_SCHEMA), context=system)
+    _tag(llm, "l2-atomicity")
+
+    parsed = parse_structured(text or "", ATOMICITY_SCHEMA)
+    if parsed is None:
+        return NodeCritique(nid, gate_passed=True)   # no verdict — never read as clean
+    if parsed["verdict"] == "atomic":
+        return NodeCritique(nid, gate_passed=True, semantic_covered=True,
+                            criteria_verdicts=({"criterion": "atomicity", "verdict": "sufficient",
+                                                "why": parsed.get("why", "")},))
+    concerns = parsed.get("concerns") or ()
+    named = "; ".join(f"{c.get('name')} [{', '.join(c.get('criteria') or ())}]" for c in concerns)
+    return NodeCritique(
+        nid, gate_passed=True, semantic_covered=False,
+        semantic_findings=f"[separable] {parsed.get('why', '')}" + (f" — concerns: {named}" if named else ""),
+        criteria_verdicts=({"criterion": "atomicity", "verdict": "insufficient",
+                            "why": f"{parsed.get('why', '')}" + (f" Concerns: {named}" if named else "")},))
+
+
 def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
-    """The L0/L1 STRUCTURAL gate (cached, O(1)) + the L2 CHECKER. A leaf or any structural failure
-    ⇒ gate_passed=False (checker gated out — L2 presupposes structure). A structurally-clean
+    """The L0/L1 STRUCTURAL gate (cached, O(1)) + the L2 CHECKER. A leaf or a structural CORRECTNESS
+    failure ⇒ gate_passed=False (checker gated out — L2 presupposes structure). A structurally-clean
     non-leaf with an `llm` ⇒ ONE zero-tool call over the node's projection (the one canonical
     read): per parent criterion sufficient/insufficient/uncertain + FM-2 conflicts. A failed,
-    absent or INCOMPLETE verdict ⇒ semantic_covered=None — never read as clean."""
+    absent or INCOMPLETE verdict ⇒ semantic_covered=None — never read as clean.
+
+    "Structurally clean" means the SAME checks that admit a plan to execution (coverage /
+    non-redundancy / DAG / deadlines — §5.4). The documentation checks (CHECK-4 NEGLECTED, CHECK-5
+    risk-nodes) are advisory there and advisory here: gating the checker on them made a plan with an
+    empty NEGLECTED unable to obtain ANY Level-2 verdict — and since execution now waits for that
+    verdict, it would have deadlocked the agent into inventing a fake NEGLECTED. One definition of an
+    admissible plan, used by both gates."""
+    from gfso.engine.validation import _EXEC_GATING_CHECKS
     nid = str(node_id)
     children = engine.get_active_children(node_id)  # cancelled tombstones are not part of the decomposition
     if not children:
-        return NodeCritique(nid, gate_passed=False, l0l1_failures=("leaf — no decomposition",))
+        return _critique_leaf(engine, node_id, llm)
     checks = engine.get_checks(node_id)  # CACHED, O(1) — eager-fresh, not recomputed here
-    failed = [c for c in checks if not c.passed and not c.skipped]
+    failed = [c for c in checks if not c.passed and not c.skipped
+              and c.check_name.startswith(_EXEC_GATING_CHECKS)]
     if failed:
         failures = tuple(f"{c.check_name} — {c.details}" if c.details else c.check_name for c in failed)
         return NodeCritique(nid, gate_passed=False, l0l1_failures=failures)

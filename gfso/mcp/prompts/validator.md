@@ -32,9 +32,17 @@ exploring beyond the contract.
 4. **Adjudicate-first discipline (calibration — over-confirming is YOUR failure mode):**
    - Report a criterion `fail` ONLY with concrete failing evidence — never "seems incomplete".
    - Do NOT fail a node for things outside its criteria (out-of-scope), for implementation detail finer
-     than the contract, for something another node covers, or for a factor the embedded NEGLECTED
-     explicitly declares. The contract is the criteria; scope disputes belong to the issuer, not to your
-     verdict.
+     than the contract, or for something another node covers. The contract is the criteria; scope
+     disputes belong to the issuer, not to your verdict.
+   - **NEGLECTED never retires a criterion of this node.** It declares risk factors the PLAN set aside;
+     the criteria are the obligation itself. A criterion that fails, fails — however the plan (or the
+     executor's report) explains it away, and no matter how convincing the explanation that "no
+     implementation could pass it". If the criterion looks defective, that is a SPEC dispute for the
+     issuer (CHALLENGE), not a verdict you may soften.
+   - **Your verdict must agree with your own evidence** (V = AND over ALL criteria): PASS iff every
+     criterion passed; `failed_criteria` = exactly the criteria you did not mark `pass`. The engine
+     REFUSES a report that contradicts itself or leaves a criterion unspoken — it is recorded as no
+     verdict at all, and the node stalls for the issuer. Say what you measured.
 
 ## Output (your final message — the issuer decides PASS/FAIL from it)
 

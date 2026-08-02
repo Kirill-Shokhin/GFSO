@@ -124,6 +124,20 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
     task = engine.get_task(TaskId(task_id))
     if task is None:
         return {"error": f"unknown task {task_id}"}
+    # D6 (§6.5): independent validation belongs at the SEAM (a root, or Del(child)≠Del(parent)).
+    # An INTERNAL node self-verifies (its DELIVER carries self_validation) and its guarantee is
+    # carried by the root's validation (T1) — so spawning a validator here is pure overhead. Enforced
+    # in the engine, not the prompt (measured live: a Haiku agent ran a validator on every internal
+    # child despite the protocol telling it not to — visibility ≠ enforcement). The GFSO_VALIDATE_INTERNAL
+    # dial restores every-node validation for measurement runs.
+    import os as _os
+    if (_os.environ.get("GFSO_VALIDATE_INTERNAL", "") in ("", "0")
+            and not engine._graph.is_public(task)):
+        return {"task_id": task_id, "state": task.state.name, "internal": True, "verdict": None,
+                "note": "internal node (same Del as its parent) — no independent validation needed "
+                        "(D6/§6.5): self-verify by running its check yourself, put the evidence in the "
+                        "DELIVER self_validation, and PASS it directly. Independent validation happens "
+                        "once, at the root/seam."}
     deliverable = deliverable or _last_deliver_result(engine, TaskId(task_id))
     if not deliverable:
         return {"error": f"nothing to validate: {task_id} has no recorded DELIVER result — "
@@ -135,35 +149,62 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
     if not hasattr(llm, "run_agent"):
         return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
                          "GFSO_PROVIDER=generic covers zero-tool one-shots only"}
-    llm.on_tick = _cb
-    llm.stage_hint = f"{task_id} node-validator"
-    _cb(f"{task_id}: independent validator (read-only agent) over the deliverable…")
-    system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
-    packet = _validator_packet(engine, task, deliverable, workdir)
-    text = llm.run_agent(system, packet + schema_instruction(_VALIDATOR_SCHEMA),
-                         allowed_tools=("Read", "Bash", "Glob", "Grep"), cwd=workdir)
-    if hasattr(llm, "tag_last"):
-        llm.tag_last("validate_result")
-    out: dict = {"task_id": task_id, "state": task.state.name, "stats": list(getattr(llm, "calls", []))}
-    parsed = parse_structured(text, _VALIDATOR_SCHEMA)
-    if parsed is None:
-        # No retry: an agent run is minutes-long; the raw report is still evidence for the issuer.
-        if getattr(llm, "calls", None):
-            llm.calls[-1]["parse_failed"] = True
-        out.update({"verdict": None, "report_text": text})
-        _cb(f"{task_id}: validator report did not parse (verdict=null) · {_stat_line(llm)}")
+    inflight_key = engine.begin_validation(TaskId(task_id))
+    if inflight_key is None:
+        return {"task_id": task_id, "state": task.state.name, "inflight": True,
+                "note": "a validator run is already in flight for this node generation "
+                        "(node, iteration, reopens) — duplicate spawn suppressed"}
+    try:
+        llm.on_tick = _cb
+        llm.stage_hint = f"{task_id} node-validator"
+        _cb(f"{task_id}: independent validator (read-only agent) over the deliverable…")
+        system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
+        packet = _validator_packet(engine, task, deliverable, workdir)
+        text = llm.run_agent(system, packet + schema_instruction(_VALIDATOR_SCHEMA),
+                             allowed_tools=("Read", "Bash", "Glob", "Grep"), cwd=workdir)
+        if hasattr(llm, "tag_last"):
+            llm.tag_last("validate_result")
+        out: dict = {"task_id": task_id, "state": task.state.name, "stats": list(getattr(llm, "calls", []))}
+        parsed = parse_structured(text, _VALIDATOR_SCHEMA)
+        if parsed is None:
+            # No retry: an agent run is minutes-long; the raw report is still evidence for the issuer.
+            if getattr(llm, "calls", None):
+                llm.calls[-1]["parse_failed"] = True
+            out.update({"verdict": None, "report_text": text})
+            _cb(f"{task_id}: validator report did not parse (verdict=null) · {_stat_line(llm)}")
+            return out
+        out.update({"verdict": parsed["verdict"], "per_criterion": parsed["per_criterion"],
+                    "failed_criteria": list(parsed["failed_criteria"]), "seams": parsed.get("seams", "")})
+        # Tell the issuer the ONE signal this verdict calls for — the evidence tool never signals, and a
+        # bare verdict left agents guessing (observed live: after a FAIL an agent sent PASS from REWORK,
+        # which the FSM refused, and it hung). The directive rides where the agent looks: this reply.
+        if parsed["verdict"] == "PASS":
+            out["next"] = (f"Now sign it: signal('{task_id}','PASS'). This recorded verdict is what "
+                           f"unlocks your PASS at the seam (verifier ≠ executor, §6.5).")
+        else:
+            out["next"] = (f"Now sign it: signal('{task_id}','FAIL', failed_criteria={list(parsed['failed_criteria'])}). "
+                           f"The node returns to REWORK; then fix EXACTLY those criteria and DELIVER again "
+                           f"(do NOT send PASS from REWORK — re-deliver, and the next validation decides).")
+        # A report that contradicts its own evidence or leaves a criterion unspoken is NOT a verdict
+        # (§2.2: V = ⋀ over ALL criteria; ⊥ is not pass) — the engine refuses to record it, and the
+        # tool reports verdict=null, which NEVER auto-signals (delegate escalates to the issuer).
+        # Measured live: a PASS returned over a red `test_values` excused as "NEGLECTED-declared".
+        try:  # the recorded verdict is what unlocks a self-executed node's PASS (verifier ≠ executor gate)
+            engine.record_exec_verdict(TaskId(task_id), parsed["verdict"],
+                                       list(parsed["failed_criteria"]), "validate_result",
+                                       per_criterion=parsed["per_criterion"])
+        except ValueError as e:
+            out.update({"verdict": None, "verdict_defects": str(e), "report_text": text})
+            _cb(f"{task_id}: validator report is NOT a verdict — {e} · {_stat_line(llm)}")
+            return out
+        except Exception:
+            pass
+        _cb(f"{task_id}: validator verdict {parsed['verdict']}"
+            + (f" — failed: {', '.join(parsed['failed_criteria'])}" if parsed["failed_criteria"] else "")
+            + f" · {_stat_line(llm)}")
         return out
-    out.update({"verdict": parsed["verdict"], "per_criterion": parsed["per_criterion"],
-                "failed_criteria": list(parsed["failed_criteria"]), "seams": parsed.get("seams", "")})
-    try:  # the recorded verdict is what unlocks a self-executed node's PASS (verifier ≠ executor gate)
-        engine.record_exec_verdict(TaskId(task_id), parsed["verdict"],
-                                   list(parsed["failed_criteria"]), "validate_result")
-    except Exception:
-        pass
-    _cb(f"{task_id}: validator verdict {parsed['verdict']}"
-        + (f" — failed: {', '.join(parsed['failed_criteria'])}" if parsed["failed_criteria"] else "")
-        + f" · {_stat_line(llm)}")
-    return out
+    finally:
+        engine.end_validation(inflight_key)
 
 
 def auto_decompose(engine: Engine, request: str = "", root_id: str = "root",

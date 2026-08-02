@@ -207,9 +207,10 @@ def test_per_executor_validator_override(tmp_path):
     assert a.validator_for("agent") == "val-default"     # self-executed nodes get the default too
 
 
-def _child(e, tid, parent="par", assignee="exec-1", crit="c"):
+def _child(e, tid, parent="par", assignee="exec-1", crit="c", parent_crit="g"):
     T.create_task(e, tid, {"description": tid, "criteria": [{"name": crit, "description": crit.upper()}]},
                   assignee=assignee, parent_id=parent)
+    T.map_criterion(e, parent, tid, parent_crit)   # §5.4: L0-complete plan before executing children
 
 
 def _drive_done(e, tid, assignee="exec-1"):
@@ -331,6 +332,7 @@ def test_dep_gate_holds_on_not_yet_created_producer(tmp_path):
         {"name": "c", "description": "C"},
         {"name": "dep__prod", "description": "reads prod's output", "depends_on": "prod"}]},
         assignee="exec-1", parent_id="par")
+    T.map_criterion(e, "par", "cons", "g")   # §5.4: L0-complete before exec
     d = Dispatcher(e, agents, runner=lambda *a: None)
     assert "cons" not in d.dispatch_once()            # producer node does not exist yet → gated
     _child(e, "prod")
@@ -381,7 +383,9 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     _child(e, "kid", assignee="exec-2")               # unregistered = human-ish, dispatcher passive
     T.signal(e, "par", "ACCEPT", "exec-1")
     T.signal(e, "par", "DELIVER", "exec-1", result="premature aggregate")
-    ok = {"verdict": "PASS", "per_criterion": [], "failed_criteria": []}
+    ok = {"verdict": "PASS",
+          "per_criterion": [{"criterion": "g", "verdict": "pass", "evidence": "aggregate checked"}],
+          "failed_criteria": []}
     llm = _AgentLLM(_fenced(ok), _fenced(ok))
     d = Dispatcher(e, agents, runner=lambda *a: None,
                    validator_runner=lambda en, t, a: _auto_validate(en, t, a, _llm=llm))
@@ -410,6 +414,80 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
         time.sleep(0.01)
     e.wait_idle()
     assert e.get_state(TaskId("par")).name == "DONE"          # this PASS survived the gate
+    e.stop()
+
+
+def test_auto_validate_reuses_fresh_recorded_verdict(tmp_path):
+    """A fresh recorded verdict for the CURRENT generation (e.g. a manual validate_result already
+    ran) is SIGNED directly by the dispatcher — no duplicate validator spawn (observed live:
+    one duplicate run per rework cycle, minutes + tokens each)."""
+    from gfso.delegate import _auto_validate
+    e = _eng()
+    _node(e)
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    run_executor(e, TaskId("n1"), "exec-1", agents,
+                 _llm=_AgentLLM(_fenced({"status": "delivered", "summary": "done",
+                                         "self_validation": "flush: met"})))
+    e.wait_idle()
+    assert e.get_state(TaskId("n1")).name == "VALIDATING"
+    e.record_exec_verdict(TaskId("n1"), "PASS", [], "validate_result")   # fresh manual verdict
+    e._graph._authorized_validators = {"val-1"}      # the dispatcher syncs this each pass
+    unused = _AgentLLM("never popped")
+    assert _auto_validate(e, TaskId("n1"), agents, _llm=unused) == "pass"
+    assert unused.packets == []                       # verdict reused, no validator spawned
+    e.wait_idle()
+    assert e.get_state(TaskId("n1")).name == "DONE"   # signed from the record
+    e.stop()
+
+
+def test_inflight_validator_lock_suppresses_concurrent_duplicates(tmp_path):
+    """In-flight validator lock (registered debt — E3 it-2 live log: three parallel validators on
+    one VALIDATING node): a second spawn on the same node generation (node, iteration, reopens)
+    returns inflight=True WITHOUT running an agent; the dispatcher path reads it as 'rejected'
+    (dedup key freed, the one no-verdict retry never burned); the lock releases after the run."""
+    import threading
+    import time
+    from gfso import tools_llm as TL
+    from gfso.delegate import _auto_validate
+
+    e = _eng()
+    _node(e)
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    run_executor(e, TaskId("n1"), "exec-1", agents,
+                 _llm=_AgentLLM(_fenced({"status": "delivered", "summary": "done",
+                                         "self_validation": "flush: met"})))
+    e.wait_idle()
+    assert e.get_state(TaskId("n1")).name == "VALIDATING"
+
+    release = threading.Event()
+
+    class _Blocking(_AgentLLM):
+        def run_agent(self, system, user, allowed_tools, cwd=None):
+            release.wait(5)
+            return super().run_agent(system, user, allowed_tools, cwd)
+
+    slow = _Blocking(_fenced({"verdict": "PASS", "per_criterion": [
+        {"criterion": "flush", "verdict": "pass", "evidence": "ran"}], "failed_criteria": []}))
+    first: dict = {}
+    t = threading.Thread(target=lambda: first.update(TL.validate_result(e, "n1", _llm=slow)))
+    t.start()
+    for _ in range(500):                                      # first run claims the slot
+        if e._val_inflight:
+            break
+        time.sleep(0.01)
+    assert e._val_inflight
+
+    dup = TL.validate_result(e, "n1", _llm=_AgentLLM("unused"))
+    assert dup.get("inflight") is True                        # suppressed, no verdict field
+
+    fast = _AgentLLM("unused")
+    assert _auto_validate(e, TaskId("n1"), agents, _llm=fast) == "rejected"
+    assert fast.packets == []                                 # no duplicate agent spawned
+
+    release.set()
+    t.join(5)
+    assert first["verdict"] == "PASS"                         # the holder finished normally
+    assert not e._val_inflight                                # lock released after the run
     e.stop()
 
 
@@ -470,6 +548,7 @@ def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
     T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}]})
     T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
                   assignee="exec-1", parent_id="par")
+    T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")
     T.signal(e, "kid", "DELIVER", "exec-1", result="done; see files")
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
@@ -482,9 +561,53 @@ def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
     T.create_task(e, "hkid", {"description": "human child",
                               "criteria": [{"name": "c", "description": "C"}]}, assignee="kirill",
                   parent_id="hpar")
+    T.map_criterion(e, "hpar", "hkid", "h")
     T.signal(e, "hkid", "ACCEPT", "kirill")
     T.signal(e, "hkid", "DELIVER", "kirill", result="done by hand")
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [], "failed_criteria": []})
     assert not any("hkid" in s for s in started)              # human issuer keeps the verdict
     assert e.get_state(TaskId("hkid")).name == "VALIDATING"
     e.stop()
+
+
+def test_unittest_checker_is_a_deterministic_hidden_test_validator(tmp_path):
+    """The `unittest-checker` validator kind (the E0 design the user asked for): a deterministic
+    hidden-test oracle. It runs the project's hidden unittest suite against the delivered solution.py,
+    maps each test method to the criterion of the same name, and returns a verdict with per-criterion
+    evidence — no LLM, no false-PASS, and the executor never sees the tests. Golden → PASS, naive →
+    FAIL with the failing criteria named."""
+    from gfso.delegate import _checker_validate
+    test_code = (
+        "import unittest\n"
+        "class TestCases(unittest.TestCase):\n"
+        "    def test_returns_two(self):\n        self.assertEqual(f(), 2)\n"
+        "    def test_positive(self):\n        self.assertGreater(f(), 0)\n")
+    canon = tmp_path / "canon.py"; canon.write_text(test_code, encoding="utf-8")
+    ws = tmp_path / "ws"; ws.mkdir()
+    mp = tmp_path / "oracle.json"
+    mp.write_text(json.dumps({"proj": {"task_id": "t", "canonical": str(canon),
+                  "workdir": str(ws), "criteria": ["test_returns_two", "test_positive"]}}), encoding="utf-8")
+
+    class _E:
+        _project_name = "proj"
+    cfg = {"oracle_map": str(mp)}
+
+    (ws / "solution.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    out = _checker_validate(_E(), TaskId("root"), cfg)
+    assert out["verdict"] == "PASS" and out["failed_criteria"] == []
+    assert {p["criterion"] for p in out["per_criterion"]} == {"test_returns_two", "test_positive"}
+
+    (ws / "solution.py").write_text("def f():\n    return -5\n", encoding="utf-8")   # fails both
+    out = _checker_validate(_E(), TaskId("root"), cfg)
+    assert out["verdict"] == "FAIL" and "test_positive" in out["failed_criteria"]
+
+    (ws / "solution.py").unlink()                                                    # nothing delivered
+    out = _checker_validate(_E(), TaskId("root"), cfg)
+    assert out["verdict"] == "FAIL" and set(out["failed_criteria"]) == {"test_returns_two", "test_positive"}
+
+
+def test_unittest_checker_kind_registers_and_is_the_default_validator(tmp_path):
+    a = AgentRegistry(path=str(tmp_path / "agents.json"))
+    a.register("val-1", "unittest-checker")
+    assert a.default_validator() == "val-1"
+    assert a.get("val-1")["kind"] == "unittest-checker"

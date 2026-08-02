@@ -11,7 +11,11 @@ from __future__ import annotations
 import json
 import re
 
-FENCED = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
+# Every fenced block, each matched up to its OWN closing fence. A greedy single match spanned from
+# the first fence to the last, so a reply that emitted more than one block (observed live: models
+# echo the schema, then answer) parsed as nothing — and a checker with no verdict is a checker that
+# silently fails closed. Blocks are tried in order; the first that satisfies the schema wins.
+FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 RETRY_SUFFIX = ("\n\nYour previous output could not be parsed against the schema "
                 "(missing required keys or invalid JSON). Re-emit the ONE fenced json "
@@ -28,15 +32,17 @@ def schema_instruction(schema: dict) -> str:
 
 
 def parse_structured(text: str, schema: dict):
-    """A dict satisfying the schema's `required` keys, or None."""
-    m = FENCED.search(text or "")
-    raw = m.group(1) if m else (text or "").strip()
-    try:
-        obj = json.loads(raw, strict=False)
-    except Exception:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    if any(k not in obj for k in schema.get("required", [])):
-        return None
-    return obj
+    """The FIRST candidate in the reply that is a dict carrying the schema's `required` keys, or None.
+
+    Candidates: each fenced block in order, then the bare text. Trying them all is what makes a
+    schema-echo (or any preamble block) harmless — it parses as JSON but lacks the required keys, so
+    it is skipped rather than swallowing the real answer."""
+    candidates = [m.group(1) for m in FENCED.finditer(text or "")] + [(text or "").strip()]
+    for raw in candidates:
+        try:
+            obj = json.loads(raw, strict=False)
+        except Exception:
+            continue
+        if isinstance(obj, dict) and all(k in obj for k in schema.get("required", [])):
+            return obj
+    return None

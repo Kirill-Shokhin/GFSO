@@ -110,9 +110,11 @@ def test_max_reopens_exhaustion_locks_the_node(engine):
 
 def _parent_child(e: Engine, deliver_parent=False):
     """root(boss→pm) with child(pm→w); child driven to DONE(pass)."""
+    from gfso.core.types import CriterionMapping
     e.assign_task(TaskId("root"), _spec("root goal", "rc"), AgentId("pm"))
     e.wait_idle()
-    e.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child goal", "cc"), AgentId("w"))])
+    e.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child goal", "cc"), AgentId("w"))],
+                     criterion_mappings=[CriterionMapping("rc", TaskId("ch"))])  # §5.4: L0-complete before exec
     e.wait_idle()
     for sd in (
         SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("w")),
@@ -145,6 +147,70 @@ def test_parent_delivered_aggregate_locks_child(engine):
     with pytest.raises(ValueError):
         engine.reopen(TaskId("ch"), AgentId("pm"))
     assert engine.get_state(TaskId("ch")) == State.DONE  # finally locked (consumed)
+
+
+def test_refuted_coverage_gates_parent_redeliver(engine):
+    """q_D made structural (§7.2): a parent FAIL on a criterion COVERED by a PASSed child refutes
+    the mapping's entailment — re-DELIVERing the same aggregate over the untouched subtree is
+    REFUSED (the decomposition is indicted, not the artifact); touching the child (reopen) re-opens
+    the gate. Removing any prompt line changes nothing — the engine enforces it."""
+    import time as _t
+    from gfso.core.types import CriterionMapping
+    engine.assign_task(TaskId("root"), _spec("root goal", "rc"), AgentId("pm"))
+    engine.wait_idle()
+    engine.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child goal", "cc"), AgentId("w"))],
+                          criterion_mappings=[CriterionMapping("rc", TaskId("ch"))])
+    engine.wait_idle()
+    for sd in (
+        SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("w")),
+        SignalData(signal=Signal.DELIVER, task_id=TaskId("ch"), source=AgentId("w"), result="r"),
+    ):
+        engine.send_signal(sd)
+        engine.wait_idle()
+    engine.record_reviewer_verdict(TaskId("ch"), "PASS", [], "reviewer")
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("ch"), source=AgentId("pm")))
+    engine.wait_idle()
+    for sd in (
+        SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=AgentId("pm")),
+        SignalData(signal=Signal.DELIVER, task_id=TaskId("root"), source=AgentId("pm"), result="agg"),
+    ):
+        engine.send_signal(sd)
+        engine.wait_idle()
+    engine.record_exec_verdict(TaskId("root"), "FAIL", ["rc"], "validate_result")
+    _t.sleep(0.01)                                   # the FAIL restamps root AFTER ch's DONE stamp
+    engine.send_signal(SignalData(signal=Signal.FAIL, task_id=TaskId("root"),
+                                  source=AgentId("pm"), failed_criteria=("rc",)))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("root")) == State.REWORK
+    # same aggregate over the untouched subtree — the engine refuses (no prompt involved)
+    engine.send_signal(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"),
+                                  source=AgentId("pm"), result="agg-v2"))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("root")) == State.REWORK   # DELIVER rejected
+    # rework flows DOWN: the refused delivery released the child — reopen it
+    engine.reopen(TaskId("ch"), AgentId("pm"))
+    assert engine.get_state(TaskId("ch")) == State.REVIEW
+    # decomposition re-authored (child touched) — the parent may re-aggregate again
+    engine.send_signal(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"),
+                                  source=AgentId("pm"), result="agg-v3"))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("root")) == State.VALIDATING
+
+
+def test_parent_rework_releases_child_for_reopen(engine):
+    """A REFUSED delivery is a dead stake: parent FAIL→REWORK must RELEASE the child —
+    rework flows DOWN through reopen, the graph keeps telling the truth about where the
+    defect lives (observed live: BCB/93 run 9 — the agent could only mutate the artifact
+    under frozen-DONE children because the consumed-gate still counted the failed stake)."""
+    _parent_child(engine, deliver_parent=True)   # parent VALIDATING — stake pending
+    with pytest.raises(ValueError):
+        engine.reopen(TaskId("ch"), AgentId("pm"))   # pending stake still locks
+    engine.send_signal(SignalData(signal=Signal.FAIL, task_id=TaskId("root"),
+                                  source=AgentId("pm"), failed_criteria=("rc",)))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("root")) == State.REWORK
+    engine.reopen(TaskId("ch"), AgentId("pm"))       # refused stake releases the child
+    assert engine.get_state(TaskId("ch")) == State.REVIEW
 
 
 def test_dep_consumer_built_on_result_locks_producer(engine):

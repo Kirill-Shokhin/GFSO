@@ -64,8 +64,9 @@ def _extract_test_names(test_code: str) -> list[str]:
 
 _PREFIX = (
     # Force non-interactive matplotlib backend so model code that calls plt.show()
-    # doesn't pop GUI windows during the bench.
-    "import matplotlib\nmatplotlib.use('Agg')\n"
+    # doesn't pop GUI windows during the bench. Guarded: the checker is a general instrument,
+    # and a suite that never touches plotting must not require a plotting library to run.
+    "try:\n    import matplotlib\n    matplotlib.use('Agg')\nexcept ImportError:\n    pass\n"
     # Headless mode for tkinter / other GUI toolkits
     "import os\nos.environ.setdefault('MPLBACKEND', 'Agg')\n\n"
 )

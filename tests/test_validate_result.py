@@ -54,14 +54,18 @@ def _delivered_node(e, tid="n1", extra_dep=False):
 def test_validate_result_happy_path_embeds_contract_and_deliver():
     e = _eng()
     _delivered_node(e, extra_dep=True)
+    # the seam is criteria-content (§2.2 Dep): `dep__prod` is a CRITERION of this node, so a verdict
+    # must speak to it too — a report silent on the seam is ⊥ over the seam (anti-mock has teeth)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
                                  "per_criterion": [
                                      {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md"},
-                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check"}],
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check"},
+                                     {"criterion": "dep__prod", "verdict": "pass",
+                                      "evidence": "grep: uses the real bought nails, no stub"}],
                                  "seams": "checked prod output", "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "PASS" and out["failed_criteria"] == []
-    assert len(out["per_criterion"]) == 2 and out["state"] == "VALIDATING"
+    assert len(out["per_criterion"]) == 3 and out["state"] == "VALIDATING"
     assert out["stats"][-1]["stage"] == "validate_result"
     # the packet is SELF-CONTAINED: contract + seam + the audit-log DELIVER result, read-only tool set
     assert "flush" in llm.seen["user"] and "holds verified with 2kg frame" in llm.seen["user"]
@@ -110,6 +114,130 @@ def test_validate_result_unparsed_report_is_never_pass():
     e.stop()
 
 
+def test_pass_contradicting_its_own_evidence_is_not_a_verdict():
+    """THE false-PASS measured live (BCB/93, 2026-07-17): the validator ran the canonical suite
+    correctly, reported `test_values: fail` WITH failing evidence, and still returned verdict PASS
+    with empty failed_criteria — excusing the red criterion as "NEGLECTED-declared, out of scope".
+    A criterion is the obligation (§2.2 V=⋀cᵢ); NEGLECTED (§5.1) holds risks of the decomposition and
+    never retires one. The ENGINE refuses to record it (not the prompt): no verdict ⟹ no PASS."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS",
+                                 "per_criterion": [
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "flush ok"},
+                                     {"criterion": "holds", "verdict": "fail",
+                                      "evidence": "fell off — but the plan NEGLECTED this as an "
+                                                  "impossible criterion, so out of scope"}],
+                                 "failed_criteria": []}))
+    out = TL.validate_result(e, "n1", _llm=llm)
+    assert out["verdict"] is None                      # ⊥, never read as pass
+    assert "holds" in out["verdict_defects"] and "NEGLECTED" in out["verdict_defects"]
+    assert e.get_exec_verdict(T.TaskId("n1")) is None   # nothing recorded — the gate stays shut
+    assert T.signal(e, "n1", "PASS", "alice")["accepted"] is False
+    e.stop()
+
+
+def test_report_leaving_a_criterion_unspoken_is_not_a_verdict():
+    """V = AND over ALL criteria: an unevaluated conjunct is ⊥, not pass (§2.2). A PASS over a
+    partially-evaluated contract would silently drop obligations."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS",
+                                 "per_criterion": [
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "ok"}],
+                                 "failed_criteria": []}))
+    out = TL.validate_result(e, "n1", _llm=llm)
+    assert out["verdict"] is None and "holds" in out["verdict_defects"]
+    e.stop()
+
+
+def test_failed_criteria_must_be_the_reports_own_red_set():
+    """The issuer's FAIL payload IS the report's red set (Inv-3): a FAIL naming other criteria (or
+    naming none) sends the executor to rework the wrong thing."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({"verdict": "FAIL",
+                                 "per_criterion": [
+                                     {"criterion": "flush", "verdict": "fail", "evidence": "bent"},
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "held"}],
+                                 "failed_criteria": ["holds"]}))
+    out = TL.validate_result(e, "n1", _llm=llm)
+    assert out["verdict"] is None and "failed_criteria" in out["verdict_defects"]
+    e.stop()
+
+
+def test_verdict_over_a_foreign_contract_is_not_a_verdict():
+    """A report speaking of criteria this node does not have answers another contract."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS",
+                                 "per_criterion": [
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "ok"},
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "ok"},
+                                     {"criterion": "painted", "verdict": "pass", "evidence": "ok"}],
+                                 "failed_criteria": []}))
+    out = TL.validate_result(e, "n1", _llm=llm)
+    assert out["verdict"] is None and "painted" in out["verdict_defects"]
+    e.stop()
+
+
+def test_recorded_verdict_carries_the_evidence():
+    """§16.5: the T11 trail must show WHAT was verified — a bare verdict cannot be audited post-hoc
+    (the live false-PASS could not be diagnosed from the record; the report was gone)."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
+        {"criterion": "flush", "verdict": "pass", "evidence": "measured 0.2mm proud"},
+        {"criterion": "holds", "verdict": "pass", "evidence": "2kg for 24h"}], "failed_criteria": []}))
+    TL.validate_result(e, "n1", _llm=llm)
+    rec = e.get_exec_verdict(T.TaskId("n1"))
+    assert rec["verdict"] == "PASS"
+    assert [p["criterion"] for p in rec["per_criterion"]] == ["flush", "holds"]
+    assert "0.2mm" in rec["per_criterion"][0]["evidence"]
+    e.stop()
+
+
+def test_validate_result_noops_on_internal_node():
+    """D6 (§6.5): independent validation is a SEAM concept. An internal node (same Del as its parent)
+    self-verifies — spawning a validator there is pure overhead. Enforced in the engine, not the
+    prompt (measured live: a Haiku agent validated every internal child despite being told not to).
+    The tool returns a self-verify directive and NEVER spawns the validator."""
+    e = _eng()
+    T.create_task(e, "par", {"description": "parent",
+                             "criteria": [{"name": "g", "description": "G"}]}, "alice")
+    T.create_task(e, "kid", {"description": "child",
+                             "criteria": [{"name": "k", "description": "K"}]}, "alice", parent_id="par")
+    T.map_criterion(e, "par", "kid", "g")   # §5.4: L0-complete plan before executing
+    T.signal(e, "kid", "ACCEPT", "alice")
+    T.signal(e, "kid", "DELIVER", "alice", result="done; k met")
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
+        {"criterion": "k", "verdict": "pass", "evidence": "x"}], "failed_criteria": []}))
+    out = TL.validate_result(e, "kid", _llm=llm)
+    assert out.get("internal") is True and out["verdict"] is None
+    assert llm.seen is None                         # the validator was NEVER spawned
+    assert e.get_exec_verdict(T.TaskId("kid")) is None
+    # the internal node still PASSes directly (no gate on a same-Del node)
+    assert T.signal(e, "kid", "PASS", "alice")["state"] == "DONE"
+    e.stop()
+
+
+def test_validate_result_still_validates_a_delegation_seam():
+    """The counterpart: a child with a DIFFERENT Del is a seam — validation DOES run there."""
+    e = _eng()
+    T.create_task(e, "par2", {"description": "parent",
+                              "criteria": [{"name": "g", "description": "G"}]}, "alice")
+    T.create_task(e, "kid2", {"description": "child",
+                              "criteria": [{"name": "k", "description": "K"}]}, "bob", parent_id="par2")
+    T.map_criterion(e, "par2", "kid2", "g")
+    T.signal(e, "kid2", "ACCEPT", "bob")
+    T.signal(e, "kid2", "DELIVER", "bob", result="done; k met")
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
+        {"criterion": "k", "verdict": "pass", "evidence": "x"}], "failed_criteria": []}))
+    out = TL.validate_result(e, "kid2", _llm=llm)
+    assert out["verdict"] == "PASS" and llm.seen is not None   # seam → validator DID run
+    e.stop()
+
+
 def test_validate_result_unknown_task():
     e = _eng()
     out = TL.validate_result(e, "ghost", _llm=_ValidatorLLM(""))
@@ -151,7 +279,8 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     assert r["accepted"] is False and "verifier" in r["error"]
     # a FAIL verdict on record does NOT unlock PASS (that override is the falsification q_V fears)
     llm_fail = _ValidatorLLM(_fenced({"verdict": "FAIL", "per_criterion": [
-        {"criterion": "flush", "verdict": "fail", "evidence": "bent"}], "failed_criteria": ["flush"]}))
+        {"criterion": "flush", "verdict": "fail", "evidence": "bent"},
+        {"criterion": "holds", "verdict": "pass", "evidence": "held"}], "failed_criteria": ["flush"]}))
     TL.validate_result(e, "n1", _llm=llm_fail)
     r = T.signal(e, "n1", "PASS", "alice")
     assert r["accepted"] is False and "FAIL" in r["error"]
@@ -161,7 +290,8 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     r = T.signal(e, "n1", "PASS", "alice")
     assert r["accepted"] is False and "STALE" in r["error"]
     llm_ok = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "ok"}], "failed_criteria": []}))
+        {"criterion": "flush", "verdict": "pass", "evidence": "ok"},
+        {"criterion": "holds", "verdict": "pass", "evidence": "held"}], "failed_criteria": []}))
     TL.validate_result(e, "n1", _llm=llm_ok)
     assert T.signal(e, "n1", "PASS", "alice")["state"] == "DONE"
     e.stop()
@@ -176,6 +306,7 @@ def test_distinct_issuer_pass_needs_no_verdict_record():
     T.create_task(e, "kid", {"description": "child",
                              "criteria": [{"name": "k", "description": "K"}]}, "worker",
                   parent_id="par")
+    T.map_criterion(e, "par", "kid", "g")   # §5.4: L0-complete plan before executing
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="done")
     assert T.signal(e, "kid", "PASS", "boss")["state"] == "DONE"   # issuer=boss ≠ Del=worker

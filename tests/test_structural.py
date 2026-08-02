@@ -208,6 +208,33 @@ def test_neglected_record_extraordinary_ok():
     assert check_neglected(t, _KID).passed
 
 
+def test_neglected_naming_own_criterion_is_a_contract_amendment_not_a_risk():
+    """Measured live (BCB/93, 2026-07-17): the agent wrote NEGLECTED = "test_values criterion cannot
+    pass — canonical test has design flaw" (EXTRAORDINARY, well-formed by every other rule) while
+    `test_values` stayed a criterion of the SAME node; the validator then excused the red criterion by
+    it → false PASS. A criterion is the obligation (§2.2), not a neglectable risk factor (§5.1) — the
+    canon path for a criterion believed defective is CHALLENGE or the issuer's revision."""
+    t = _task("t", criteria=["test_values", "shape"],
+              neglected=[NeglectedItem("test_values criterion cannot pass - test has a design flaw",
+                                       Predictability.EXTRAORDINARY)])
+    r = check_neglected(t, _KID)
+    assert not r.passed and "test_values" in r.details and "CHALLENGE" in r.details
+    # the same excuse hidden in the justification is the same amendment
+    t2 = _task("t", criteria=["test_values"],
+               neglected=[NeglectedItem("flaky expectations", Predictability.EXTRAORDINARY,
+                                        "no implementation can ever satisfy test_values")])
+    assert not check_neglected(t2, _KID).passed
+
+
+def test_neglected_about_a_real_external_factor_still_passes():
+    """The guard is word-boundary exact on THIS node's criterion names — a genuine risk record that
+    merely shares vocabulary with the domain is not touched (no ritual, no false gate)."""
+    t = _task("t", criteria=["docs", "tests_green"],
+              neglected=[NeglectedItem("the vendor's docs_portal may be down at release",
+                                       Predictability.STATISTICAL, "P<5%, mirror available")])
+    assert check_neglected(t, _KID).passed
+
+
 # === Full run ===
 
 def test_run_structural_returns_all_checks():

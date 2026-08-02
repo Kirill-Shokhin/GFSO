@@ -17,6 +17,7 @@ from gfso.core.graph import Graph, q_T, q_D, q_V, q_Dep, q_Del, false_fail_share
 from gfso.core.graph.projection import build as build_projection, render as render_projection
 from gfso.core.protocol.fsm import available_signals
 from gfso.core.protocol.validation import required_role, Role
+from gfso.core.protocol.invariants import verdict_report_defects
 from gfso.core.handlers.structural import check_dag
 
 from .audit import AuditLog, AuditEntry
@@ -83,6 +84,8 @@ class Engine:
         self._audit = AuditLog(storage)   # persists + hydrates when the storage carries audit methods
         self._events = EventBus()
         self._started = False
+        self._val_inflight: set = set()   # in-flight validator runs, keyed (node, iteration, reopens)
+        self._val_lock = threading.Lock()
 
     # === Lifecycle ===
 
@@ -260,6 +263,44 @@ class Engine:
         raw = self._graph._storage.get_critique(node_id)
         return json.loads(raw) if raw else None
 
+    def dispute_review_finding(self, node_id: TaskId, criterion: str, why: str,
+                               agent: AgentId) -> dict:
+        """Record the issuer's justified refusal of ONE Level-2 finding — the other way to discharge
+        it (the first being to fix the plan). The checker is an approximation over the faithfulness
+        axis (§5.4-bis) and can be wrong; what the system refuses is a SILENT skip, so the dispute is
+        written into the review record with its author and time (§17.5: an explicit falsifiable claim
+        instead of an unstated one). It dies with that record — any edit to the decomposition stales
+        the review, and the next `review_decomposition` overwrites it, so a dispute never launders a
+        finding across plan versions: it must be re-stated against the fresh verdict.
+
+        Refused when there is no current verdict, or when the named criterion is not one the checker
+        actually flagged (nothing to dispute)."""
+        import json
+        from datetime import datetime
+        node = self._graph.get_task(node_id)
+        if node is None:
+            raise ValueError(f"unknown task {node_id}")
+        raw = self._graph._storage.get_critique(node_id)
+        rec = json.loads(raw) if raw else None
+        if not rec or not getattr(node, "verified", False):
+            raise ValueError(
+                f"no current Level-2 verdict on {node_id} — run review_decomposition first "
+                f"(a finding can only be disputed against the review that named it)")
+        flagged = {str(v.get("criterion")) for v in rec.get("criteria_verdicts") or ()
+                   if v.get("verdict") != "sufficient"}
+        flagged |= {"conflict: " + ", ".join(c.get("between") or ())
+                    for c in rec.get("conflicts") or ()}
+        if criterion not in flagged:
+            raise ValueError(
+                f"{criterion!r} is not an open Level-2 finding on {node_id} — open: "
+                f"{', '.join(sorted(flagged)) or '(none)'}")
+        rec.setdefault("disputes", {})[criterion] = {
+            "why": why, "by": str(agent),
+            "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}
+        self._graph._storage.store_critique(node_id, json.dumps(rec))
+        return {"task_id": str(node_id), "disputed": criterion,
+                "open_findings": sorted(flagged - set(rec["disputes"]))}
+
     def active_tasks(self) -> list[Task]:
         return self._graph.active_tasks()
 
@@ -309,17 +350,50 @@ class Engine:
 
     # === Execution-validation record (the validate_result verdict; feeds the self-pass gate) ===
 
+    def begin_validation(self, task_id: TaskId):
+        """Claim the in-flight validator slot for the node's CURRENT generation (node, iteration,
+        reopens). Returns the claimed key, or None if a run is already in flight — concurrent
+        spawns (manual validate_result × the dispatcher's auto-validation, observed live: three
+        parallel validators on one VALIDATING node) duplicate minutes of agent work whose losing
+        verdict the FSM rejects anyway. Release with end_validation(key)."""
+        task = self.get_task(task_id)
+        key = (str(task_id), getattr(task, "iteration", 0), getattr(task, "reopens", 0))
+        with self._val_lock:
+            if key in self._val_inflight:
+                return None
+            self._val_inflight.add(key)
+            return key
+
+    def end_validation(self, key) -> None:
+        with self._val_lock:
+            self._val_inflight.discard(key)
+
     def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
-                            validator_id: str) -> None:
+                            validator_id: str, per_criterion: Optional[list] = None) -> None:
         """Store the independent validator's verdict for the node's CURRENT delivery (stamped with the
         node's GENERATION (iteration, reopens) — a rework OR a reopen invalidates it: the next
-        delivery needs a fresh verdict; the superseded record is replaced, never trusted forward)."""
+        delivery needs a fresh verdict; the superseded record is replaced, never trusted forward).
+
+        When the report carries per-criterion evidence, the engine RECORDS ONLY A VERDICT: a report
+        that leaves a criterion unspoken or contradicts its own evidence is ⊥, not a verdict (§2.2
+        V=⋀cᵢ), and is REFUSED here — at the record, not in a prompt (visibility ≠ enforcement). The
+        refusal composes with the self-PASS gate (§6.5): with no recorded PASS, the node cannot
+        complete on its executor's own stamp. The evidence is persisted with the verdict — the
+        T11 trail must show WHAT was verified, not just the answer (§16.5: the q_V open-event
+        carrier)."""
         import json as _json
         task = self.get_task(task_id)
+        if per_criterion is not None and task is not None:
+            defects = verdict_report_defects([c.name for c in task.spec.criteria], verdict,
+                                             per_criterion, list(failed_criteria or ()))
+            if defects:
+                raise ValueError(f"not a verdict on {task_id} (⊥, not pass — §2.2): "
+                                 + "; ".join(defects))
         self._graph._storage.store_exec_verdict(task_id, _json.dumps({
             "verdict": verdict, "failed_criteria": list(failed_criteria or ()),
             "validator": validator_id, "iteration": getattr(task, "iteration", 0),
             "reopens": getattr(task, "reopens", 0),
+            "per_criterion": list(per_criterion or ()),
             "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
 
     def record_reviewer_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
@@ -578,6 +652,8 @@ class Engine:
         dep order respected). Returns either a terminal dict ({complete}/{stuck}/empty-graph) or a list of
         (priority, task, action, directive) tuples. Shared by next_step (v1 single directive) and
         next_steps (v2 parallel frontier)."""
+        from gfso.engine.validation import _l0_holes, _l2_undischarged, l2_gate_on
+
         def _passed(t: Task) -> bool:
             return t.state == State.DONE and t.done_reason == DoneReason.PASS
 
@@ -601,19 +677,48 @@ class Engine:
             kids = self.get_active_children(t.id)
             crits = [c.name for c in t.spec.criteria if not c.depends_on]
             nm = t.spec.name or str(t.id)
+            # A plan whose causal check is not discharged is the actionable step ITSELF, ahead of the
+            # work it gates (§5.4): the engine will refuse those children's ACCEPT, so an agent driving
+            # the frontier must be TOLD to review — a gate that only refuses is a wall to walk into.
+            # Ordered after validate/rework (finishing delivered work is never blocked by a plan check)
+            # and before execute/accept (which it gates). Only while it still gates something: some
+            # active child sitting in REVIEW, waiting to start.
+            if (t.state == State.EXECUTING and kids and l2_gate_on()
+                    and any(k.state == State.REVIEW for k in kids)
+                    and not _l0_holes(self._graph, t)):
+                open_l2 = _l2_undischarged(self._graph, t)
+                if open_l2 is None:
+                    cands.append((2.5, t, "review",
+                                  f"REVIEW THE PLAN of '{t.id}' ({nm}): its children cannot start until the "
+                                  f"decomposition has a current Level-2 verdict — call "
+                                  f"review_decomposition('{t.id}') (do the mapped children's criteria "
+                                  f"causally carry {crits}?)."))
+                    continue
+                if open_l2:
+                    cands.append((2.5, t, "review",
+                                  f"CLOSE THE PLAN GAPS of '{t.id}' ({nm}): the Level-2 review named "
+                                  f"{open_l2} as not carried by the mapped children. Fix the plan "
+                                  f"(edit_criteria / map_criterion / add a child) and re-run "
+                                  f"review_decomposition('{t.id}'), or record why the finding is wrong "
+                                  f"(dispute_finding). Reasons: get_review('{t.id}')."))
+                    continue
             if t.state == State.VALIDATING:
                 cand = (1, t, "validate",
                         f"VALIDATE '{t.id}' ({nm}): check the deliverable against criteria {crits}; signal "
                         f"PASS if every criterion holds, else FAIL with the failed criteria.")
             elif t.state == State.REWORK:
                 cand = (2, t, "rework",
-                        f"REWORK '{t.id}' ({nm}): it FAILED — fix the work so criteria {crits} hold, then DELIVER again.")
+                        f"REWORK '{t.id}' ({nm}): the validator FAILED it. Fix exactly what failed, then "
+                        f"DELIVER again.{self._rework_feedback(t.id)}")
             elif t.state == State.EXECUTING and not kids:
                 if not _deps_ready(t.id):
                     continue  # a consumer waits until its producers PASS — do them first (dep order)
                 cand = (3, t, "execute",
-                        f"EXECUTE leaf '{t.id}' ({nm}): do the actual work so criteria {crits} hold, then "
-                        f"signal DELIVER with the result. (If it turns out multi-part, decompose it instead.)")
+                        f"EXECUTE leaf '{t.id}' ({nm}): do the actual work so criteria {crits} hold. Then "
+                        f"BEFORE you DELIVER, self-check by RUNNING: for each criterion write a tiny check, "
+                        f"run it, read the ACTUAL output, and signal from what you OBSERVED — not from "
+                        f"'I implemented it' (an optimistic self-pass the root later fails drops q_D). "
+                        f"DELIVER with, per criterion, the check you ran and what it printed.")
             elif t.state == State.REVIEW and kids:
                 # a re-authored parent dropped back to REVIEW — re-ACCEPT it BEFORE driving its subtree, so the
                 # graph doesn't finish all children while the parent still shows 'accept' (obs: odd ordering).
@@ -622,15 +727,18 @@ class Engine:
                         f"(its existing subtree is retained). Then its children proceed.")
             elif t.state == State.REVIEW:
                 cand = (4, t, "accept",
-                        f"TAKE '{t.id}' ({nm}): signal ACCEPT (or CHALLENGE if its spec is wrong). Then decide by "
-                        f"the criteria {crits}: DECOMPOSE (auto_decompose/decompose) ONLY if it is genuinely "
-                        f"multi-part; otherwise EXECUTE it directly as a leaf — do NOT over-decompose an atomic task.")
+                        f"TAKE '{t.id}' ({nm}): signal ACCEPT (or CHALLENGE if its spec is wrong). Then "
+                        f"decide by the criteria {crits}: DECOMPOSE it into subtasks if that fits the goal "
+                        f"(their number is YOUR call — then review_decomposition checks the split for "
+                        f"causal gaps), or execute it directly as a leaf.")
             elif t.state == State.BLOCKED:
                 cand = (5, t, "resolve", f"'{t.id}' ({nm}) is BLOCKED — clear the blocker, then RESOLVE_BLOCK.")
             elif t.state == State.EXECUTING and kids and all(_passed(k) for k in kids):
                 cand = (6, t, "deliver",
-                        f"AGGREGATE '{t.id}' ({nm}): all its children PASSED — integrate them and signal "
-                        f"DELIVER (the parent's criteria {crits} must hold over the REAL aggregate, not mocks).")
+                        f"AGGREGATE '{t.id}' ({nm}): all its children PASSED — integrate them. Before you "
+                        f"DELIVER, self-check the WHOLE by running: each parent criterion {crits} must hold "
+                        f"over the REAL integrated result (not mocks, not the children's word for it). "
+                        f"Signal from what the run actually shows.")
             elif t.state == State.CANCELLING:
                 # settlement of the cancellation handshake (§6.3) — never preempts real work (lowest priority)
                 cand = (7, t, "cancel_ack",
@@ -646,12 +754,35 @@ class Engine:
         cands.sort(key=lambda c: (c[0], str(c[1].id)))
         return cands
 
+    def _rework_feedback(self, task_id: TaskId) -> str:
+        """The validator's failure detail for the current REWORK — the failed criteria and, when the
+        recorded verdict carries per-criterion evidence (e.g. a unittest-checker's assertion output),
+        that evidence. This is the executor's ONLY window into WHY it failed (it does not see the tests):
+        a FAIL with only criterion names cannot steer a fix on a values/exact-output criterion."""
+        rec = self._graph.exec_verdict_record(task_id)
+        if not rec or rec.get("verdict") != "FAIL":
+            return ""
+        per = {p.get("criterion"): p.get("evidence", "") for p in (rec.get("per_criterion") or [])}
+        lines = []
+        for c in rec.get("failed_criteria") or []:
+            ev = (per.get(c) or "").strip().replace("\n", " ")
+            lines.append(f"\n  - {c}" + (f": {ev[:300]}" if ev and ev != "passed" else ""))
+        return " Failed:" + "".join(lines) if lines else ""
+
     def _step_out(self, t: Task, action: str, directive: str) -> dict:
-        # Surface the structural gate the executor can't otherwise see: a node cannot legitimately PASS while
-        # L0/L1 checks fail (e.g. CHECK-4 empty NEGLECTED, CHECK-1 coverage) — hand them over with the directive.
-        unmet = [f"{c.check_name}: {c.details}" for c in self.get_checks(t.id) if not c.passed and not c.skipped]
+        # Surface unmet checks. The plan-CORRECTNESS ones (coverage/non-redundancy/DAG/deadlines) BLOCK
+        # execution (the engine gates ACCEPT on them, §5.4) — flag them as "resolve first". NEGLECTED
+        # (CHECK-4) and risk-nodes (CHECK-5) are completeness DOCUMENTATION, not a PASS-blocker — surfacing
+        # them as "resolve before PASS" made agents chase an empty NEGLECTED and churn (observed live), so
+        # they are reported as advisory only.
+        from gfso.engine.validation import _EXEC_GATING_CHECKS
+        allc = [c for c in self.get_checks(t.id) if not c.passed and not c.skipped]
+        unmet = [f"{c.check_name}: {c.details}" for c in allc if c.check_name.startswith(_EXEC_GATING_CHECKS)]
+        advisory = [f"{c.check_name}: {c.details}" for c in allc if not c.check_name.startswith(_EXEC_GATING_CHECKS)]
         if unmet:
-            directive += f" | UNMET structural checks (resolve before PASS): {unmet}"
+            directive += f" | UNMET plan checks (resolve before executing): {unmet}"
+        if advisory:
+            directive += f" | advisory (optional): {advisory}"
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
                 "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
                 "criteria": [c.name for c in t.spec.criteria if not c.depends_on], "directive": directive}

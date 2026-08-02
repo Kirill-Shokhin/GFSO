@@ -34,12 +34,15 @@ def _decompose_clean(e: Engine):
     e.add_dependency(TaskId("a"), TaskId("b"), glue="b reads a's total")
 
 
-def test_gate_blocks_leaf():
+def test_leaf_is_reviewed_by_the_atomicity_question():
+    """A childless node is no longer "nothing to review": D(t)=∅ is itself a plan claim (one unit of
+    work), checked by the atomicity question. With a stub LLM returning nothing usable, the verdict
+    stays None — never read as clean (tests/test_l2_gate.py owns the gate that reads it)."""
     e = _engine()
-    e.assign_task(TaskId("leaf"), Spec("x", ()), AgentId("d"))
+    e.assign_task(TaskId("leaf"), Spec("x", (Criteria("c", "y"),)), AgentId("d"))
     e.wait_idle()
     crit = critique_node(e, TaskId("leaf"))
-    assert not crit.gate_passed and "leaf" in crit.l0l1_failures[0]
+    assert crit.gate_passed and crit.semantic_covered is None
 
 
 def test_gate_blocks_on_l0l1_failure():

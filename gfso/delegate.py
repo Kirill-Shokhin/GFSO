@@ -56,9 +56,9 @@ class AgentRegistry:
 
     def register(self, agent_id: str, kind: str, model: str = "sonnet",
                  workdir: str | None = None, validator: str | None = None) -> dict:
-        if kind not in ("llm-executor", "llm-validator", "external"):
-            raise ValueError(f"unknown kind {kind!r} (llm-executor | llm-validator | external; "
-                             f"a human needs no registration — unregistered = human)")
+        if kind not in ("llm-executor", "llm-validator", "unittest-checker", "external"):
+            raise ValueError(f"unknown kind {kind!r} (llm-executor | llm-validator | unittest-checker "
+                             f"| external; a human needs no registration — unregistered = human)")
         with self._lock:
             self._agents[agent_id] = {"kind": kind, "model": model, "workdir": workdir,
                                       "validator": validator}
@@ -80,10 +80,11 @@ class AgentRegistry:
         return dict(self._agents)
 
     def default_validator(self) -> str | None:
-        """The auto-validation instrument: the FIRST registered llm-validator (per-node override =
-        a later dial; with none registered, validation stays the issuer's manual act)."""
+        """The auto-validation instrument: the FIRST registered validator — an `llm-validator` (a fresh
+        read-only agent) or a `unittest-checker` (a deterministic hidden-test runner, the issuer's
+        oracle). With none registered, validation stays the issuer's manual act."""
         for aid, a in self._agents.items():
-            if a.get("kind") == "llm-validator":
+            if a.get("kind") in ("llm-validator", "unittest-checker"):
                 return aid
         return None
 
@@ -196,6 +197,56 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
             "stats": list(getattr(llm, "calls", []))}
 
 
+def _oracle_workdir(engine, vcfg: dict):
+    """The workspace for this project from the issuer-side oracle map (same map the unittest-checker
+    uses), so a criteria-judge validator runs the code where the executor delivered it. None if absent."""
+    import json as _json
+    from pathlib import Path
+    project = getattr(engine, "_project_name", None) or "default"
+    try:
+        entry = _json.loads(Path(vcfg.get("oracle_map", "data/e0_canonical_map.json"))
+                            .read_text(encoding="utf-8")).get(project)
+        return entry.get("workdir") if entry else None
+    except Exception:
+        return None
+
+
+def _checker_validate(engine, task_id: TaskId, vcfg: dict) -> dict:
+    """Deterministic HIDDEN-TEST validation (the issuer's oracle — the executor never sees the tests).
+    Runs the project's hidden unittest suite against the delivered solution.py, maps each test method
+    to the criterion of the same name, returns {verdict, per_criterion, failed_criteria}. No LLM, no
+    false-PASS. The oracle map (config: `oracle_map`) is issuer-side; the agent has no path to it."""
+    import json as _json
+    from pathlib import Path
+    from gfso.adapters.verifiers import evaluate_unittest
+    project = getattr(engine, "_project_name", None) or "default"
+    try:
+        entry = _json.loads(Path(vcfg.get("oracle_map", "data/e0_canonical_map.json"))
+                            .read_text(encoding="utf-8")).get(project)
+    except Exception:
+        entry = None
+    if not entry:
+        return {"verdict": None, "note": f"no hidden-test oracle registered for project {project}"}
+    crits = entry["criteria"]
+    sol = Path(entry["workdir"]) / "solution.py"
+    if not sol.exists():
+        return {"verdict": "FAIL", "failed_criteria": list(crits),
+                "per_criterion": [{"criterion": c, "verdict": "fail",
+                                   "evidence": "no solution.py delivered"} for c in crits]}
+    results = evaluate_unittest(sol.read_text(encoding="utf-8"),
+                               Path(entry["canonical"]).read_text(encoding="utf-8"))
+    by = {r.check_name: r for r in results}
+    per, failed = [], []
+    for c in crits:
+        r = by.get(c)
+        ok = bool(r and r.passed)
+        per.append({"criterion": c, "verdict": "pass" if ok else "fail",
+                    "evidence": ("passed" if ok else (r.details[:400] if r else "test not found in suite"))})
+        if not ok:
+            failed.append(c)
+    return {"verdict": "PASS" if not failed else "FAIL", "per_criterion": per, "failed_criteria": failed}
+
+
 def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) -> str | None:
     """DELIVER→VALIDATING auto-fires the registered validator instrument; the verdict AUTO-SIGNALS
     (PASS → DONE; FAIL(failed_criteria) → REWORK — the rework loop lives in the FSM, max_iterations
@@ -209,11 +260,61 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) ->
     if validator_id is None:
         engine.emit_info("delegate", f"{task_id}: no llm-validator registered — validation stays manual")
         return None
+    # A FRESH recorded verdict for the CURRENT generation (e.g. the agent already ran a manual
+    # validate_result) is signed directly — spawning another validator run would duplicate minutes
+    # of agent work for the same evidence (observed live: one duplicate per rework cycle).
+    # BUT a deterministic hidden-test oracle (unittest-checker) is CHEAP (runs the suite in seconds)
+    # and AUTHORITATIVE (the issuer's ground truth) — it must NOT be pre-empted by a recorded LLM
+    # verdict. Observed live (floor_17): the checker returned FAIL, the agent then ran validate_result
+    # which returned a shallow PASS over its own incomplete mock, and reuse signed that PASS — a false
+    # close. So reuse applies only when the assigned validator is the expensive LLM kind; for a
+    # unittest-checker the oracle always runs, and only ITS OWN verdict is ever reused.
+    _vkind = (agents.get(validator_id) or {}).get("kind")
+    rec = engine._graph.exec_verdict_record(task_id)
+    if (_vkind != "unittest-checker"
+            and rec and task is not None
+            and rec.get("iteration") == getattr(task, "iteration", 0)
+            and rec.get("reopens", 0) == getattr(task, "reopens", 0)
+            and rec.get("verdict") in ("PASS", "FAIL")):
+        engine.emit_info("delegate", f"{task_id}: fresh recorded verdict {rec['verdict']} reused — "
+                                     f"no duplicate validator run")
+        sig = Signal.PASS if rec["verdict"] == "PASS" else Signal.FAIL
+        if _signal(engine, task_id, sig, validator_id,
+                   **({"failed_criteria": tuple(rec.get("failed_criteria") or ())}
+                      if sig == Signal.FAIL else {})):
+            return "pass" if sig == Signal.PASS else "fail"
+        engine.emit_info("delegate", f"{task_id}: reused verdict {rec['verdict']} REJECTED by the "
+                                     f"FSM — the node revalidates on the graph's next change")
+        return "rejected"
     vcfg = agents.get(validator_id) or {}
-    ecfg = agents.get(task.assignee) if task else None   # validate WHERE the executor worked
-    out = T.validate_result(engine, str(task_id), model=vcfg.get("model", "sonnet"),
-                          workdir=(ecfg or {}).get("workdir") or vcfg.get("workdir"),
-                          _llm=_llm)
+    if vcfg.get("kind") == "unittest-checker":
+        # deterministic hidden-test oracle — runs the suite the executor never sees, records the
+        # per-criterion verdict (the integrity gate applies), then auto-signals below.
+        out = _checker_validate(engine, task_id, vcfg)
+        if out.get("verdict") in ("PASS", "FAIL"):
+            try:
+                engine.record_exec_verdict(task_id, out["verdict"], out.get("failed_criteria") or [],
+                                           validator_id, per_criterion=out.get("per_criterion"))
+            except Exception as e:  # a malformed report is ⊥, not a verdict (§2.2) — never auto-signal it
+                engine.emit_info("delegate", f"{task_id}: checker verdict refused ({e})")
+                out = {"verdict": None}
+        f = out.get("failed_criteria") or []
+        engine.emit_info("delegate", f"{task_id}: unittest-checker → {out.get('verdict')}"
+                         + (f" (failed: {', '.join(f)})" if f else ""))
+    else:
+        ecfg = agents.get(task.assignee) if task else None   # validate WHERE the executor worked
+        # The criteria-judge validator must run the code IN the workspace. When neither the executor nor
+        # the validator config pins a workdir (self-execution: the executor is the unregistered user-agent),
+        # fall back to the issuer-side oracle map, where setup records this project's workspace.
+        _wd = (ecfg or {}).get("workdir") or vcfg.get("workdir") or _oracle_workdir(engine, vcfg)
+        out = T.validate_result(engine, str(task_id), model=vcfg.get("model", "sonnet"),
+                              workdir=_wd, _llm=_llm)
+        if out.get("inflight"):
+            # another validator run (e.g. a manual validate_result) already holds this node
+            # generation — treat like a rejected verdict: free the dedup key, revalidate on the
+            # graph's next change, never burn the one no-verdict retry on a suppressed duplicate
+            engine.emit_info("delegate", f"{task_id}: validator already in flight — duplicate spawn suppressed")
+            return "rejected"
     verdict = out.get("verdict")
     if verdict == "PASS":
         if _signal(engine, task_id, Signal.PASS, validator_id):
@@ -349,9 +450,11 @@ class Dispatcher:
         for tid in list(self._stale):
             self._stale.discard(tid)
             self._drop_keys(tid)
-        # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§6.5)
+        # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§6.5) —
+        # both the LLM validator (a fresh read-only agent) and the deterministic unittest-checker
         self._engine._graph._authorized_validators = {
-            aid for aid, cfg in self._agents.list().items() if cfg.get("kind") == "llm-validator"}
+            aid for aid, cfg in self._agents.list().items()
+            if cfg.get("kind") in ("llm-validator", "unittest-checker")}
         self._resolve_ready_blocks()
         started = []
         out = self._engine.next_steps()

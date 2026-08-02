@@ -29,6 +29,33 @@ def engine():
     e.stop()
 
 
+def test_revision_refused_while_validating(engine):
+    """A node cannot be revised while it is VALIDATING — the contract cannot change under the validator
+    (§6.4). Observed live (BCB/120): an agent reneglected the ROOT mid-validation, bouncing it out of
+    VALIDATING three times and re-running the validator each time — pure churn. Enforced at the
+    validation layer (the FSM table / TLA model is untouched)."""
+    from gfso.engine.validation import ValidationError
+    engine.assign_task(TaskId("v1"), _spec(), AgentId("boss"))
+    engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("v1"), source=AgentId("boss")))
+    engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v1"),
+                                       source=AgentId("boss"), result="done"))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("v1")).name == "VALIDATING"
+    try:
+        engine.revise(TaskId("v1"), _spec("c1_changed"), AgentId("boss"))
+    except (ValidationError, Exception):
+        pass
+    # refused: still VALIDATING, contract unchanged (not bounced to REVIEW)
+    assert engine.get_state(TaskId("v1")).name == "VALIDATING"
+    assert engine.get_task(TaskId("v1")).spec.criteria[0].name == "c1"
+    # after the verdict, revision is allowed again
+    engine.send_signal_sync(SignalData(signal=Signal.FAIL, task_id=TaskId("v1"),
+                                        source=AgentId("boss"), failed_criteria=("c1",)))
+    engine.wait_idle()
+    engine.revise(TaskId("v1"), _spec("c1_changed"), AgentId("boss"))
+    assert engine.get_task(TaskId("v1")).spec.criteria[0].name == "c1_changed"
+
+
 def test_spec_defect_criteria_change_counts_in_qt(engine):
     engine.assign_task(TaskId("t1"), _spec(), AgentId("boss"))
     engine.wait_idle()

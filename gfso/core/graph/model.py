@@ -97,17 +97,21 @@ class Graph:
         releases consumption — the chain unwinds one gated level at a time, each step in T11.
 
         POSITIVE (DONE): consumed ⟺ the parent staked its aggregate on V=pass — it DELIVERed upward
-        (VALIDATING/REWORK/DONE are reachable only through DELIVER) — OR a Dep-consumer
-        read-and-built on the result (EXECUTING/BLOCKED/VALIDATING/REWORK/DONE are reachable only
-        through ACCEPT: the packet embeds upstream DELIVER results).
+        and the stake is LIVE: VALIDATING (delivery pending judgment) or DONE (accepted). A parent
+        in REWORK does NOT lock: its delivery was REFUSED (FAIL) — the stake died with the refusal,
+        and rework is exactly when the executor must be able to reopen the failing child (otherwise
+        the only legal move is mutating the artifact under frozen-DONE children — the graph stops
+        telling the truth about where the defect lives; observed live, BCB/93 run 9). A Dep-consumer
+        that read-and-built keeps locking regardless of its state — information transfer is not
+        undone by the consumer's own rework (EXECUTING/BLOCKED/VALIDATING/REWORK/DONE are reachable
+        only through ACCEPT: the packet embeds upstream DELIVER results).
 
         NEGATIVE (CANCELLED, V=⊥ — no pass value): consumed ⟺ the cascade SETTLED (every descendant
         terminal) AND the parent REPLANNED around the hole — another active child covers a parent
         criterion this node covered (reviving it would double-cover, FM-1.e)."""
         if task.state == State.DONE:
             parent = self.get_parent(task.id)
-            if parent is not None and parent.state in (
-                    State.VALIDATING, State.REWORK, State.DONE):
+            if parent is not None and parent.state in (State.VALIDATING, State.DONE):
                 return True
             built_on = (State.EXECUTING, State.BLOCKED, State.VALIDATING, State.REWORK, State.DONE)
             for e in self.dep_edges():

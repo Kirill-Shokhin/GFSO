@@ -101,6 +101,7 @@ class ProjectRegistry:
                 kw["db_path"] = os.path.join(self._dir, f"{name}.db")
                 kw["seed"] = False
             self._engines[name] = build_engine_from_env(**kw)
+            self._engines[name]._project_name = name   # so per-project instruments (checker) can key off it
             try:  # delegation autostart rides with the engine (works under every entry point)
                 from gfso.delegate import ensure_dispatcher
                 ensure_dispatcher(self._engines[name])

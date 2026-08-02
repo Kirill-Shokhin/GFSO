@@ -73,6 +73,17 @@ def get_review(engine: Engine, task_id: str) -> dict:
             "review": engine.get_critique(TaskId(task_id))}
 
 
+def dispute_finding(engine: Engine, task_id: str, criterion: str, why: str) -> dict:
+    """Record why ONE Level-2 finding is wrong — the alternative to fixing the plan. Execution is
+    gated on every finding of the CURRENT review being discharged: either the plan changes (which
+    stales the review — re-run it) or the finding is disputed HERE, in writing. The checker is an
+    a-priori approximation (§5.4-bis) and can be wrong; what the system refuses is skipping it
+    silently. `criterion` = the flagged parent criterion exactly as `get_review` names it (a
+    conflict is disputed as "conflict: <a>, <b>"); `why` = the reason the entailment does hold.
+    The dispute lives in that review record only — a fresh review requires a fresh dispute."""
+    return engine.dispute_review_finding(TaskId(task_id), criterion, why, AgentId(_agent_id()))
+
+
 def project(engine: Engine, task_id: str) -> str:
     """The read-only projection you REASON over before authoring/validating: goal + subtasks + criteria
     + coverage + seams (Dep) + NEGLECTED + already-run structural checks. Returns markdown."""
@@ -281,6 +292,19 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
     st = engine.get_state(TaskId(task_id))
     ok = bool(entry and not entry.rejected)
     out = {"accepted": ok, "state": st.name if st else None}
+    if ok:
+        # Carry the NEXT directive back in the signal's own response. Agents drive by sending signals,
+        # not by polling next_steps between them (observed live: ACCEPT → write code → DELIVER with no
+        # frontier call in between — so a directive that only lives in next_steps never reaches them).
+        # Returning it here puts the next step — e.g. "before DELIVER, self-check by running" — at the
+        # one point the agent always reads: the reply to what it just did. (Enforcement of discipline
+        # rides where the agent LOOKS, not where we hope it polls.)
+        try:
+            nxt = engine.next_step(TaskId(task_id))
+            if nxt.get("directive") and not nxt.get("complete"):
+                out["next"] = nxt["directive"]
+        except Exception:
+            pass
     if not ok:
         # Feedback, not a silent false: WHY it was rejected + the structural gate the executor can't see.
         reason = (entry.error if entry and entry.error else
@@ -354,7 +378,7 @@ def next_steps(engine: Engine, root_id: Optional[str] = None) -> dict:
 # whose TOOLS dict is the COMPLETE transport registry (structural ∪ LLM) the binding layers use.
 TOOLS = {
     "get_task": get_task, "project": project, "get_checks": get_checks, "get_graph": get_graph,
-    "list_holes": list_holes, "get_review": get_review,
+    "list_holes": list_holes, "get_review": get_review, "dispute_finding": dispute_finding,
     "available_actions": available_actions, "get_dependencies": get_dependencies, "metrics": metrics,
     "create_task": create_task, "decompose": decompose,
     "revise": revise, "reneglect": reneglect, "edit_criteria": edit_criteria, "reassign": reassign,

@@ -11,7 +11,7 @@ import pytest
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.core.types import State, Signal, SignalData, TaskId, AgentId, Spec, Criteria
+from gfso.core.types import CriterionMapping, State, Signal, SignalData, TaskId, AgentId, Spec, Criteria
 
 
 def _spec(desc="goal", crit="c1"):
@@ -53,7 +53,8 @@ def test_internal_same_del_node_may_self_pass(engine):
     """The agent's own internal node self-verifies — no recorded verdict demanded (§6.5)."""
     engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("in1"), _spec("in", "ic"), AgentId("agent"))])
+    engine.decompose_task(TaskId("root"), [(TaskId("in1"), _spec("in", "ic"), AgentId("agent"))],
+                          criterion_mappings=[CriterionMapping("rc", TaskId("in1"))])
     engine.wait_idle()
     _deliver(engine, "in1", "agent")
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("agent")))
@@ -80,7 +81,8 @@ def test_seam_child_unaffected_by_d6(engine):
     at all (issuer role), and the issuer's PASS needs no gate change — the seam already exists."""
     engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("pm"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("d1"), _spec("d", "dc"), AgentId("w"))])
+    engine.decompose_task(TaskId("root"), [(TaskId("d1"), _spec("d", "dc"), AgentId("w"))],
+                          criterion_mappings=[CriterionMapping("rc", TaskId("d1"))])
     engine.wait_idle()
     _deliver(engine, "d1", "w")
     # the executor's own PASS on a seam node → rejected by the ISSUER role rule
@@ -112,3 +114,35 @@ def test_dispatcher_validates_seams_only_by_default(engine, monkeypatch):
     assert d._validate_here(engine.get_task(TaskId("root")))       # root → instrument
     monkeypatch.setenv("GFSO_VALIDATE_INTERNAL", "1")
     assert d._validate_here(engine.get_task(TaskId("mine")))       # the opt-in dial
+
+
+def test_execution_gated_on_plan_verification(engine):
+    """§5.4 moved from advice to enforcement: a child cannot start executing (ACCEPT) while its
+    parent's plan fails a CORRECTNESS check — here an uncovered parent criterion (CHECK-1). This is
+    the systemic 'verify before you execute' — the agent physically cannot work a flawed plan, so the
+    plan is completed and checked ONCE up front (no discover-after-delivery, no rework churn)."""
+    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.wait_idle()
+    engine.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child", "cc"), AgentId("agent"))])
+    engine.wait_idle()
+    # unmapped child → parent CHECK-1 fails → ACCEPT is REFUSED (cannot execute an unverified plan)
+    r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
+    assert r.rejected and "Level-0" in (r.error or "")
+    assert engine.get_state(TaskId("ch")) == State.REVIEW
+    # complete the plan (map the child) → now execution is admitted
+    engine.map_criterion(TaskId("root"), TaskId("ch"), "rc")
+    engine.wait_idle()
+    r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
+    assert not r.rejected and engine.get_state(TaskId("ch")) == State.EXECUTING
+
+
+def test_empty_neglected_does_not_gate_execution(engine):
+    """CHECK-4 (NEGLECTED) is completeness DOCUMENTATION, not a correctness gate — an empty NEGLECTED
+    must NOT block execution (gating it forced a fake NEGLECTED and drove reneglect churn, live)."""
+    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.wait_idle()
+    engine.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child", "cc"), AgentId("agent"))],
+                          criterion_mappings=[CriterionMapping("rc", TaskId("ch"))])
+    engine.wait_idle()  # mapped but NO NEGLECTED authored on root
+    r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
+    assert not r.rejected and engine.get_state(TaskId("ch")) == State.EXECUTING

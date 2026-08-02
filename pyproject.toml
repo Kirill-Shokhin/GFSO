@@ -18,11 +18,14 @@ license = "MIT"
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
-    "mcp>=1.0.0",
+    # <2: the MCP surface is built on `mcp.server.fastmcp.FastMCP`, which the 2.x line removed.
+    "mcp>=1.0.0,<2",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "httpx>=0.25.0"]
+# matplotlib: bench suites the unittest-checker runs commonly plot; installed so CI exercises that
+# path instead of silently skipping it (the checker itself does not require it).
+dev = ["pytest>=7.0", "httpx>=0.25.0", "matplotlib>=3.7"]
 
 [project.scripts]
 gfso = "gfso.cli:main"

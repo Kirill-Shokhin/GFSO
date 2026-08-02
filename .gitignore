@@ -52,5 +52,10 @@ docs/_depmap_critique.md
 docs/assets/
 ROADMAP_INTERNAL.md
 E3_PRESPEC.md
+E3_IT2_PRESPEC.md
+E3_IT3_VALUE_MAP.md
+E3_STATUS.md
+experiments/e3/
+experiments/e0_rerun/
 deltas/
 docs/notes/
