@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # CLOSURE GUARD — fail-closed. The postulate set is an invariant the engine rejects violations of.
 #
-# `audit_env.lean` walks the compiled environment, enumerates EVERY theorem under `GFSO.*` (no hand
-# list), and reports:
+# `audit_env.lean` walks the compiled environment, enumerates EVERY declaration under `GFSO.*` that
+# can carry a proof — `theorem` AND `def`/`instance`, because a `def foo : P := by sorry` is a hole
+# spelled differently — and reports:
 #     DECL_AXIOM / DECL_OPAQUE   what we declared under GFSO.*
 #     USES                       every axiom transitively used by any GFSO theorem, wherever it lives
 #
@@ -25,6 +26,12 @@ cd "$(dirname "$0")/.."
 
 CORE_ALLOWED=$'propext\nQuot.sound\nClassical.choice'
 
+# `lake env` LOADS the compiled .oleans — it does not compile. Without this build step the guard
+# audits a STALE environment and prints CLOSURE HOLDS over source it never saw: an edit that adds a
+# `sorry` reads green until something else triggers a rebuild. CI happened to be safe (a Build step
+# precedes it), but this script advertises itself as fail-closed and is run by hand per README.
+echo "── building (else the audit below inspects a stale environment) ───────"
+lake build > /dev/null
 echo "── walking the compiled environment ───────────────────────────────────"
 ENVDUMP="$(lake env lean audit_env.lean)"
 echo "$ENVDUMP" | tail -3
@@ -64,7 +71,9 @@ if [[ -n "$ROGUE" ]]; then
 fi
 
 N_AX="$(printf '%s\n' "$WHITELIST" | grep -c .)"
-N_THM="$(grep -oE 'theorems audited: [0-9]+' <<<"$ENVDUMP" | awk '{print $3}')"
-echo "ok: $N_THM GFSO theorems use only {propext, Quot.sound, Classical.choice} + the $N_AX whitelisted postulates"
+N_THM="$(grep -oE 'declarations audited: [0-9]+' <<<"$ENVDUMP" | awk '{print $3}')"
+echo "ok: $N_THM GFSO declarations (every one that can carry a proof, not just those spelled"
+echo "    \`theorem\`) use only {propext, Quot.sound, Classical.choice} + the whitelist: $N_AX entries ="
+echo "    the 3 covering axioms + the 3 uninterpreted predicates they quantify over (canon §1.4)"
 echo
 echo "CLOSURE HOLDS."

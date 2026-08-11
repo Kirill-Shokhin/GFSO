@@ -21,11 +21,11 @@ TIMEOUT rides the queue and may land after the state has moved.
 The transition function `Step` is a verbatim image of
 `gfso/core/protocol/fsm.py::transition`, including the iteration guard on
 VALIDATING+FAIL, the universal-CANCEL catch-all, revision (re-ASSIGN → REVIEW,
-§6.4 Inv-1) and the **R′ REOPEN edge** (§6.3): DONE/CANCELLED + ASSIGN under the
+§14.4 Inv-1) and the **R′ REOPEN edge** (§14.3): DONE/CANCELLED + ASSIGN under the
 double gate `¬consumed ∧ ro < MaxReopens` → REVIEW. `consumed` (the finality-gate
 verdict) is modeled as a monotone environment fact like `overdue` — it may land at
 any moment or never; the checked claim is finiteness over EVERY consumption
-trajectory. The reopen counter is spent in the same atomic step as the edge (Инв-7).
+trajectory. The reopen counter is spent in the same atomic step as the edge (Inv-7).
 
 Checked by TLC over the **complete** state space (86 616 distinct states,
 MaxReopens = 2):
@@ -33,7 +33,7 @@ MaxReopens = 2):
 | Property | Meaning | Result |
 |---|---|---|
 | `TypeOK` | state/iteration/queue/reopens stay well-typed and bounded | holds |
-| `Termination` | **Инв-5 at the system level, R′-strengthened to `<>[]`(terminal)**: every behavior eventually reaches a terminal state AND STAYS terminal — gated reopens included; max_reopens restores finiteness for the new outgoing edge exactly as §6.3 claims | holds |
+| `Termination` | **Inv-5 at the system level, R′-strengthened to `<>[]`(terminal)**: every behavior eventually reaches a terminal state AND STAYS terminal — gated reopens included; max_reopens restores finiteness for the new outgoing edge exactly as §6.3 claims | holds |
 | `EscalatedAbsorbing` | ESCALATED stays fully terminal (the R′ edge exists only on DONE/CANCELLED) | holds |
 | `FinalityAbsorbing` | a FINAL quasi-terminal (consumed ∨ reopens exhausted) is absorbing — потреблён ∨ исчерпан счётчик ⟹ заперт (§6.3) | holds |
 
@@ -42,7 +42,7 @@ edge added, the FIRST run refuted `Termination`: the monitor's dedup keyed on th
 last-FIRED state, so a node could leave a fired-in state through a terminal and
 REOPEN back into it before any cleanup tick (…→ CANCELLING(fired) → CANCELLED →
 reopen → … → CANCELLING again) — the monitor stayed silent forever and a withheld
-CANCEL_ACK stuck the node: an Инв-5 violation reachable only through R′, invisible
+CANCEL_ACK stuck the node: an Inv-5 violation reachable only through R′, invisible
 to the unit tests. Fix in `loop.py::timeout_monitor`: dedup per state **VISIT** —
 key = (state, `state_entered_at`), every state change restamps the entry ⟹ a
 re-entered state fires again. The model mirrors this as `mark` resetting on every
@@ -52,7 +52,7 @@ refuted artifact.
 **Negative control** (`FsmSpikeNoMonitor.cfg`): the same system with a dead monitor
 (no fairness on `MonitorFire`). `Termination` fails with a lasso counterexample — the
 node sits in CANCELLING forever while the executor withholds CANCEL_ACK. That is
-exactly the FSM-deadlock class §6.2 assigns to CANCEL_ACK, and the live-observed
+exactly the FSM-deadlock class §14.2 assigns to CANCEL_ACK, and the live-observed
 stuck-node defect (probe-hardening G3). The instrument demonstrably fails on a broken
 system; the green run above is not vacuous.
 
@@ -81,7 +81,7 @@ over 113M states, no error (~44 min, 20 workers):
 | Property | Meaning | Result |
 |---|---|---|
 | `TypeOK` | well-typedness incl. queue bound (cascade appends net ≤ 0) | holds |
-| `Termination` | **Инв-5 through a crash**: every CREATED node reaches a terminal state — the monitor re-derives its pressure from persistent data (deadlines) and needs none of its lost memory; hostile actors, stale TIMEOUTs, revisions and a worst-point crash included | holds |
+| `Termination` | **Inv-5 through a crash**: every CREATED node reaches a terminal state — the monitor re-derives its pressure from persistent data (deadlines) and needs none of its lost memory; hostile actors, stale TIMEOUTs, revisions and a worst-point crash included | holds |
 | `TerminalAbsorbing` | terminals absorbing, per node | holds |
 
 **Named boundary (found by construction):** an ASSIGN still in the queue at crash
@@ -131,7 +131,7 @@ table has ONE shared image (`FsmTable.tla`) — models cannot drift apart.
 Runtimes: the spike config is CI-grade (seconds); `FsmSystem.cfg` ~45 min,
 `FsmCascade3.cfg` ~13 min (local/nightly; TLC heap 20g for the cascade run).
 
-## Clock semantics (Инв-5's binding — answered from code, kept honest)
+## Clock semantics (Inv-5's binding — answered from code, kept honest)
 
 One engine process has ONE clock: the `ClockPort` (`SystemClock = time.time()`, epoch
 wall time) — the monitor compares ABSOLUTE persisted deadlines against it. Deadlines
@@ -143,9 +143,9 @@ is disposable, pressure re-derives from persisted data.
 
 Trust boundary, named: the guarantee is exactly as strong as the server clock.
 Clock jumped FORWARD ⟹ mass overdue is indistinguishable from real overdue (incl.
-VALIDATING → DONE(auto_pass), §16.7 — a clock tamper can force auto-acceptance;
+VALIDATING → DONE(auto_pass), §24.7 — a clock tamper can force auto-acceptance;
 T11 keeps the auto_pass provenance visible). Clock jumped BACKWARD ⟹ the monitor
-goes silent until real time catches up (Инв-5 pressure suspended, nothing corrupted —
+goes silent until real time catches up (Inv-5 pressure suspended, nothing corrupted —
 log order is insertion order). Tamper-RESISTANT time (monotonic anchors, signed time)
 is the external-implementor open end recorded at probe-hardening — out of core scope.
 Registered debt (design named): one aware-UTC discipline at the ingress/`datetime.now()`

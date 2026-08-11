@@ -50,11 +50,14 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 
 @_row(State.IDLE, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # Инв-5 is TOTAL over non-terminals (§6.3/§6.4): IDLE is a non-terminal state and is not in the
-    # spec-target exception list — first timeout → TIMEOUT like any other. Operationally a node is
-    # only ever OBSERVABLE in IDLE as a crash orphan (creation persists mid-effects but the
-    # SET_STATE→REVIEW did not land); this row is exactly its escape hatch. Closes the Lean-flagged
-    # divergence (`idle_has_no_timeout` — now a theorem of the opposite sign).
+    # DECLARED DIVERGENCE FROM THE CANON — this row is scheduled for removal (corner #1 in
+    # `formal/README.md`). It was added under the v3.9 reading in which Inv-5 was TOTAL over
+    # non-terminals; canon v4.0 §14.4 exempts IDLE BY NAME ("every non-terminal state except
+    # IDLE"), because the pre-contract state carries no clock and IDLE starvation surfaces as
+    # the PARENT's timeout. The operational motive it was written for stands and must be met
+    # another way: a node is OBSERVABLE in IDLE only as a crash orphan (creation persisted
+    # mid-effects but the SET_STATE→REVIEW did not land), so removing this row needs a
+    # replacement escape hatch for that orphan, not just a deletion.
     return (State.TIMEOUT, [
         _mg(tid, State.TIMEOUT),
     ])

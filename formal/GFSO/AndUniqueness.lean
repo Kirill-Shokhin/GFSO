@@ -1,8 +1,8 @@
 /-
   GFSO — LIGHT spike target: Theorem 2 (uniqueness of AND).
-  Canon `docs/applied_gfso_v3.md` §3.2 (|L|=2) + §3.3 (Теорема 2).
+  Canon `docs/applied_gfso_v4_en.md` §11.2 (|L|=2) + §11.3 (Thm 2).
 
-  Claim (§3.3): on {0,1}, AND is the UNIQUE binary operation satisfying
+  Claim (§11.3): on {0,1}, AND is the UNIQUE binary operation satisfying
     (1) commutativity + associativity,
     (2) an absorbing element 0  (∃0: ⊗(0,x)=0 — from non-redundancy: a failed child ⇒ parent fails),
     (3) nontriviality (not constant).
@@ -32,7 +32,7 @@ def Op.app (o : Op) : Bool → Bool → Bool
 /-- The AND truth table. -/
 def andOp : Op := ⟨false, false, false, true⟩
 
--- The three defining requirements of §3.3, as decidable Bool predicates over the finite domain.
+-- The three defining requirements of §11.3, as decidable Bool predicates over the finite domain.
 
 /-- Commutativity: the only asymmetric pair is (0,1)/(1,0). -/
 def commutative (o : Op) : Bool := o.ft == o.tf
@@ -49,7 +49,7 @@ def absorbing0 (o : Op) : Bool := (!o.ff) && (!o.ft) && (!o.tf)
 /-- Nontrivial: the op is not the constant 0 (some cell is 1). -/
 def nontrivial (o : Op) : Bool := o.ff || o.ft || o.tf || o.tt
 
-/-- The four §3.3 requirements conjoined. -/
+/-- The four §11.3 requirements conjoined. -/
 def satisfiesReqs (o : Op) : Bool :=
   commutative o && associative o && absorbing0 o && nontrivial o
 
@@ -65,11 +65,11 @@ theorem mem_allOps (o : Op) : o ∈ allOps := by
   cases ff <;> cases ft <;> cases tf <;> cases tt <;> decide
 
 /-- THE finite verification: across all 16 ops, satisfying the requirements ⇒ being AND.
-    Discharged by `decide` (kernel-checked exhaustion of the 16-op table — the §3.3 proof). -/
+    Discharged by `decide` (kernel-checked exhaustion of the 16-op table — the §11.3 proof). -/
 theorem and_unique_check :
     allOps.all (fun o => !(satisfiesReqs o) || decide (o = andOp)) = true := by decide
 
-/-- **Theorem 2 (§3.3): AND is the unique nontrivial aggregation.**
+/-- **Theorem 2 (§11.3): AND is the unique nontrivial aggregation.**
     Lifted from the finite check to a genuine ∀ over all binary ops on {0,1}. -/
 theorem and_unique (o : Op) (h : satisfiesReqs o = true) : o = andOp := by
   have hall := List.all_eq_true.mp and_unique_check o (mem_allOps o)

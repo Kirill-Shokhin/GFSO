@@ -1,14 +1,17 @@
 /-
-  GFSO — TIER 3b: the operational axis, AXIOM 2, and its exact minimal replacement (§4.8).
+  GFSO — TIER 3b: the operational axis, CA2, and its exact minimal replacement (§12.8).
 
   ── The canon as it stands ──────────────────────────────────────────────────────────────────
-  Canon §4.8:
-    > **Axiom 2 (одно логическое событие оценки).** Валидация t — одно логическое событие с единым
-    > локальным таймером ⟹ локальное время тотально упорядочено (это и даёт трихотомию операционной
-    > оси)… При конкурентном времени (happens-before — частичный порядок) трихотомия слабеет — это
-    > **явная цена** Axiom 2.
+  The position v3.9 §4.8 held, which v4 §12.8 REFUTES (quoted for contrast, not as v4's claim):
+    > **CA2 (the evaluation as one logical event).** The validation of t is one logical event on a
+    > single local timer ⟹ local time is totally ordered (which is what yields the trichotomy of the
+    > operational axis)… Under concurrent time (happens-before — a partial order) the trichotomy
+    > weakens — the **explicit price** of CA2.
+    (v4 §12.8 discharges this: the phase COUNT is axiom-free; totality buys only the reading of the
+    middle cell. The block above is the position the discharge argues against, kept for contrast.)
 
-  So the three operational phases (⟹ FM-6 / FM-5 / FM-7) are made to rest on a SINGLE CLOCK.
+  So, on THAT reading, the three operational phases (⟹ FM-6 / FM-5 / FM-7) were made to rest on a
+  SINGLE CLOCK. (v4 §12.8 does not: the phase count is axiom-free — see Part 1 below.)
 
   ── What this module shows instead ──────────────────────────────────────────────────────────
     1. `phases_exhaustive`  — the three cells COVER everything for an ARBITRARY relation.
@@ -24,18 +27,18 @@
     4. `asym_of_irrefl_trans` — EVERY strict order is asymmetric (irreflexive + transitive ⟹ asymmetric).
                               Hence total orders, partial orders, **happens-before**, interval and
                               branching time all qualify. This is the load-bearing step.
-    5. `total_collapses_concurrent` — totality (Axiom 2) buys exactly ONE thing: it collapses the
+    5. `total_collapses_concurrent` — totality (CA2) buys exactly ONE thing: it collapses the
                               middle cell from "concurrent" to "equal", so it may be read as
                               *during* rather than *concurrent*. Nothing else.
 
-  ⇒ **The defensible claim:** Axiom 2 (totality) can be replaced by asymmetry, which every strict
+  ⇒ **The defensible claim:** CA2 (totality) can be replaced by asymmetry, which every strict
     order — including happens-before — satisfies. The count of operational failure modes stays 3, so
-    the 7-FM basis survives concurrency, and FM-5 (currency) reads as "concurrent with the
-    evaluation" — precisely the read/write race of distributed systems. The canon's declared cost
-    ("трихотомия слабеет") is avoidable.
+    the 7-FM basis survives concurrency, and FM-5 (freshness) reads as "concurrent with the
+    evaluation" — precisely the read/write race of distributed systems. The cost v3.9 declared
+    ("the trichotomy weakens") is avoidable — and v4 §12.8 carries that finding.
     NOT claimed: that asymmetry is the unique minimal premise, nor that (2) is a deep theorem.
 
-  This finding is carried by the canon (§4.8): Axiom 2 is redundant for the operational taxonomy.
+  This finding is carried by the canon (§12.8): CA2 is redundant for the operational taxonomy.
   The canon is truth; `formal/` exhibits the cost and the exit.
 -/
 
@@ -90,7 +93,9 @@ theorem operational_trichotomy (prec : α → α → Prop) (h : Asymmetric prec)
 /--
 **(3) The premise is TIGHT: asymmetry cannot be dropped.** For a symmetric relation the "before" and
 "after" cells overlap, so the three cases stop being a partition. Witness: the total relation on a
-one-point type. Hence asymmetry is not merely sufficient — it is *necessary*.
+one-point type. Hence the premise cannot simply be DROPPED: some relation satisfying no such
+condition breaks the partition. This is one witness, NOT a claim that asymmetry is the unique
+weakest sufficient condition (the file header states the same hedge).
 -/
 theorem asymmetry_necessary :
     ∃ (prec : Unit → Unit → Prop) (e x : Unit),
@@ -103,7 +108,7 @@ theorem asymmetry_necessary :
 **(4) Every strict order is asymmetric.** Irreflexive + transitive ⟹ asymmetric. Therefore the
 trichotomy holds for total orders, **partial orders (happens-before)**, interval orders and
 branching time alike — every reasonable model of evaluation time. This is what makes the
-replacement of Axiom 2 safe against concurrency *and* against other kinds of time.
+replacement of CA2 safe against concurrency *and* against other kinds of time.
 -/
 theorem asym_of_irrefl_trans (prec : α → α → Prop)
     (hirr : ∀ a, ¬ prec a a)
@@ -118,9 +123,9 @@ theorem trichotomy_of_strict_order (prec : α → α → Prop)
     (prec x e ∨ Concurrent prec x e ∨ prec e x) ∧ (¬(prec x e ∧ prec e x)) :=
   operational_trichotomy prec (asym_of_irrefl_trans prec hirr htr) e x
 
-/-! ### Part 2 — the canon as written: Axiom 2, and exactly what it buys
+/-! ### Part 2 — the canon as written: CA2, and exactly what it buys
 
-Axiom 2 (единый локальный таймер, §4.8) is **NOT postulated as a covering axiom.** By §4.8 the
+CA2 (the single local timer, §12.8) is **NOT postulated as a covering axiom.** By §12.8 the
 phase COUNT is axiom-free — Part 1 derives exhaustiveness with no assumption and the partition from
 asymmetry alone (the definition of a strict causal order). Totality is therefore carried as an
 explicit HYPOTHESIS `SingleClock`, not an `axiom`: it buys ONLY the rename of the middle cell
@@ -128,8 +133,8 @@ explicit HYPOTHESIS `SingleClock`, not an `axiom`: it buys ONLY the rename of th
 stays visible in the type, exactly like the signature hypotheses of `agent_necessary`. Hence this
 module contributes NO axiom to `#print axioms` — the operational axis is fully clock-free. -/
 
-/-- **Totality of a temporal order** — "единый локальный таймер" (Axiom 2, §4.8). A property of a
-    relation, carried as a hypothesis rather than postulated: per §4.8 it is not a covering
+/-- **Totality of a temporal order** — "a single local timer" (CA2, §12.8). A property of a
+    relation, carried as a hypothesis rather than postulated: per §12.8 it is not a covering
     axiom; it only names the middle phase "during". It FAILS under concurrency. -/
 def SingleClock (prec : α → α → Prop) : Prop := ∀ a b, prec a b ∨ a = b ∨ prec b a
 
@@ -140,7 +145,7 @@ theorem op_trichotomy_of_total (prec : α → α → Prop) (hc : SingleClock pre
   hc x e
 
 /--
-**What Axiom 2 actually buys — and it is only this.** Under totality the middle cell collapses from
+**What CA2 actually buys — and it is only this.** Under totality the middle cell collapses from
 "concurrent" to *equal*, so it may be read as **during** instead of **concurrent**. Coverage and
 disjointness never needed totality (Part 1). Drop the clock and the only casualty is the *name* of
 the middle phase — FM-5 becomes "concurrent with the evaluation", the standard read/write race.

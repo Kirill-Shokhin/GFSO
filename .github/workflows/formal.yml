@@ -1,18 +1,23 @@
 name: formal (Lean)
 
-# Runs on changes to the formalization AND on changes to the canon itself — the latter is the
-# point: when the canon moves, the reference guard re-checks that `formal/` still cites sections
-# that exist. This keeps the Lean layer live rather than a one-off snapshot.
+# Runs on changes to the formalization, to the canon itself, AND to any live canon mirror — the
+# last two are the point: when the canon moves, the reference guard re-checks that `formal/` and
+# the mirrors still cite sections that exist. This keeps the theory layer live rather than a
+# one-off snapshot. (`docs/**.md` is a deliberate superset — it also matches the frozen RU draft and
+# the E1/E2 instruments, which merely costs an extra run: the GUARD excludes them, and its exclusion
+# list is the single authority. Enumerating the mirrors here too would let the two drift apart.)
 on:
   push:
     paths:
       - 'formal/**'
-      - 'docs/applied_gfso_v3.md'
+      - 'docs/**.md'
+      - 'README.md'
       - '.github/workflows/formal.yml'
   pull_request:
     paths:
       - 'formal/**'
-      - 'docs/applied_gfso_v3.md'
+      - 'docs/**.md'
+      - 'README.md'
       - '.github/workflows/formal.yml'
   workflow_dispatch:
 
@@ -39,9 +44,29 @@ jobs:
         working-directory: formal
         run: lake build
 
-      # A green build is NOT proof of a proof. These two guards are the real check.
-      - name: Closure guard (no `sorry`; postulate set == AXIOMS.whitelist)
+      # `lake build` builds `defaultTargets = ["GFSO"]` — it does NOT elaborate the root audit
+      # files, so a stale reference in them (e.g. a theorem renamed under their feet) stayed green
+      # until someone ran them by hand. Elaborate them explicitly.
+      - name: Audit files elaborate (per-tier axiom spot-check)
+        working-directory: formal
+        run: lake env lean check_axioms.lean > /dev/null
+
+      # A green build is NOT proof of a proof. These four guards are the real check. The closure
+      # guard builds the tree itself before auditing, so it is safe to run standalone too.
+      - name: Closure guard (no GFSO-reachable `sorry`; postulate set == AXIOMS.whitelist)
         run: bash formal/scripts/check_closure.sh
 
       - name: Canon reference guard (no citation drift)
         run: bash formal/scripts/check_refs.sh
+
+      # Pointers had a guard and stopped rotting; NAMES had none and kept rotting for ten audit
+      # rounds. An invariant nobody enforces is not an invariant.
+      - name: Naming guard (no name v4 retired survives in a mirror or in formal/)
+        run: bash formal/scripts/check_naming.sh
+
+      # The third drift surface: neither guard above can see a mirror that states a different NUMBER
+      # for an object the canon counts, or repeats a formulation the canon replaced — they compare
+      # addresses, never assertions. Counts are read off the canon at run time; each retired-wording
+      # rule carries the canon anchor that superseded it, so the list cannot rot into a lie.
+      - name: Claim guard (no count or retired-formulation drift)
+        run: bash formal/scripts/check_claims.sh

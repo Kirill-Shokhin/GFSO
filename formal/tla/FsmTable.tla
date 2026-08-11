@@ -26,7 +26,7 @@ Sigs == P2P \cup {"TIMEOUT"}                                        \* TIMEOUT i
    graph at the chokepoint in the same atomic step — Инв-7, no TOCTOU). *)
 Step(s, sig, it, ro, consumed) ==
   CASE s = "IDLE"       /\ sig = "ASSIGN"           -> "REVIEW"
-    [] s = "IDLE"       /\ sig = "TIMEOUT"          -> "TIMEOUT"    \* Инв-5 total over non-terminals
+    [] s = "IDLE"       /\ sig = "TIMEOUT"          -> "TIMEOUT"    \* DECLARED DIVERGENCE: v4.0 Inv-5 exempts IDLE (§14.4) — row scheduled for removal
     [] s = "REVIEW"     /\ sig = "ACCEPT"           -> "EXECUTING"
     [] s = "REVIEW"     /\ sig = "CHALLENGE"        -> "CHALLENGED"
     [] s = "REVIEW"     /\ sig = "TIMEOUT"          -> "TIMEOUT"

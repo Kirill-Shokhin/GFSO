@@ -1,31 +1,32 @@
 /-
-  GFSO — TIER 7b: the five constitutive links of directed action (§18.10.1).
+  GFSO — TIER 7b: the five constitutive links of directed action (§4).
 
-  Canon `docs/applied_gfso_v3.md` §18.10.1:
-    Ⅰ цель · Ⅱ строить Ŝ · Ⅲ план D над Ŝ · Ⅳ исполнение · Ⅴ контакт.
-    > **Аксиома (Полнота направленного действия — покрывающая).** …ровно два релята ⟹ ровно две
-    > модальные стороны: REPRESENTATION (что в Ŝ) ⊕ REALIZATION (что в S). Сумма сторон = ровно пять.
-    REPRESENTATION = {Ⅰ,Ⅱ,Ⅲ} = тернарная аргумент-структура `Reaches(route, target ; medium)`.
-    REALIZATION   = {Ⅳ,Ⅴ} = ⟨исполнение (система→мир), контакт (мир→система)⟩.
+  Canon `docs/applied_gfso_v4_en.md` §4:
+    Link-1 goal · Link-2 build-Ŝ · Link-3 plan D over Ŝ · Link-4 execution · Link-5 contact.
+    > **Axiom (completeness of directed action — covering).** …exactly two relata ⟹ exactly two
+    > modal sides by excluded middle on map/territory: REPRESENTATION (what is in Ŝ) ⊕ REALIZATION
+    > (what is in S). The sum of the sides = exactly five links.
+    REPRESENTATION = {Link-1,Link-2,Link-3} = the ternary argument structure of `Reaches(route, target ; medium)`.
+    REALIZATION   = {Link-4,Link-5} = ⟨execution (system→world), contact (world→system)⟩.
 
   Honest grading, from the canon itself: two of the three closure branches are derived to full
-  §4.8 strength (the modal split; the realization in/out split). The **representational branch is
-  BELOW §4.8 grade** — it rests on the named `REACHES-ternarity` axiom, which carries a loaded
+  §12.8 strength (the modal split; the realization in/out split). The **representational branch is
+  BELOW §12.8 grade** — it rests on the named `REACHES-ternarity` axiom, which carries a loaded
   residue: **START** (the source point) is a genuine constitutive relatum, *folded* — not
   eliminated — into "execution-anchored present" by a declared modelling choice. Reject the folding
   and the count 3⊕2=5 breaks. The canon says full parity is NOT achievable this way. We encode that
-  honestly: one named covering axiom, documented as sub-§4.8.
+  honestly: one named covering axiom, documented as sub-§12.8.
 -/
 
 namespace GFSO.Links
 
-/-- The five constitutive links (§18.10.1). Numbered Ⅰ–Ⅴ in the canon. -/
+/-- The five constitutive links (§4). Numbered Link-1–Link-5 in the canon. -/
 inductive Link
-  | goal      -- Ⅰ  цель G ⊆ X          — направлено
-  | buildS    -- Ⅱ  строить Ŝ           — информировано
-  | plan      -- Ⅲ  план D над Ŝ        — структурно
-  | execute   -- Ⅳ  исполнение (rollout в S) — актуально
-  | contact   -- Ⅴ  контакт (вердикт от S)  — реально
+  | goal      -- Link-1  goal G ⊆ X            — directed
+  | buildS    -- Link-2  build Ŝ               — informed
+  | plan      -- Link-3  plan D over Ŝ         — structured
+  | execute   -- Link-4  execution (rollout in S) — actual
+  | contact   -- Link-5  contact (verdict from S) — real
 deriving DecidableEq, Repr
 
 /-- The two modal sides — the Ŝ-vs-S axis of the theory model itself. -/
@@ -34,7 +35,7 @@ deriving DecidableEq, Repr
 
 open Link Modality
 
-/-- Which side each link belongs to: {Ⅰ,Ⅱ,Ⅲ} represent, {Ⅳ,Ⅴ} realize. -/
+/-- Which side each link belongs to: {Link-1,Link-2,Link-3} represent, {Link-4,Link-5} realize. -/
 def side : Link → Modality
   | goal | buildS | plan => representation
   | execute | contact    => realization
@@ -64,15 +65,15 @@ theorem side_surjective : ∀ m : Modality, ∃ l : Link, side l = m := by
 
 /-- A candidate act, decomposed into the five links' presence. -/
 structure Act where
-  /-- Ⅰ there is a goal (directedness). -/
+  /-- Link-1 there is a goal (directedness). -/
   hasGoal : Prop
-  /-- Ⅱ an estimate Ŝ is built (informedness). -/
+  /-- Link-2 an estimate Ŝ is built (informedness). -/
   buildsModel : Prop
-  /-- Ⅲ a route D over Ŝ is laid (structure). -/
+  /-- Link-3 a route D over Ŝ is laid (structure). -/
   hasPlan : Prop
-  /-- Ⅳ the plan is executed in S (actuality). -/
+  /-- Link-4 the plan is executed in S (actuality). -/
   executes : Prop
-  /-- Ⅴ the world returns a verdict (reality). -/
+  /-- Link-5 the world returns a verdict (reality). -/
   contacts : Prop
 
 /-- "This act IS directed action." Uninterpreted: whether something really *is* directed action is
@@ -80,22 +81,22 @@ structure Act where
 axiom Directed : Act → Prop
 
 /--
-**Axiom (completeness of directed action — covering, §18.10.1).** Directed action is *exactly* the
+**Axiom (completeness of directed action — covering, §4).** Directed action is *exactly* the
 conjunction of the five links. Removing any one yields a non-action (dynamics, blind reaction, no
 route, an unexecuted plan, or an open-loop guess).
 
-This bundles the canon's three closure branches. Two are derived to §4.8 strength (modal: two relata
+This bundles the canon's three closure branches. Two are derived to §12.8 strength (modal: two relata
 ⟹ two sides; realization: in/out, no third direction). The third — **REACHES-ternarity**, that the
-representational side has exactly the three roles ⟨goal, medium Ŝ, route D⟩ — is *sub-§4.8*, with
+representational side has exactly the three roles ⟨goal, medium Ŝ, route D⟩ — is *sub-§12.8*, with
 the **START** residue folded by a declared modelling choice. That is why this is an `axiom` and not
 a theorem, and why the canon calls full parity unreachable by this path.
 -/
 axiom directed_action_completeness (a : Act) :
     Directed a ↔ (a.hasGoal ∧ a.buildsModel ∧ a.hasPlan ∧ a.executes ∧ a.contacts)
 
-/-- **Minimality of the five links (§18.10.1).** If an act fails to be directed action, at least one
+/-- **Minimality of the five links (§4).** If an act fails to be directed action, at least one
     link is missing. (Per-element counterexamples — "remove any, get a non-action" — are the canon's
-    §18.10.1 argument; here the covering axiom delivers the localization.) -/
+    §4 argument; here the covering axiom delivers the localization.) -/
 theorem missing_link_located (a : Act) (h : ¬ Directed a) :
     ¬a.hasGoal ∨ ¬a.buildsModel ∨ ¬a.hasPlan ∨ ¬a.executes ∨ ¬a.contacts := by
   rw [directed_action_completeness] at h
@@ -109,8 +110,8 @@ theorem missing_link_located (a : Act) (h : ¬ Directed a) :
   · exact Classical.byContradiction (fun hn => hc (Or.inr (Or.inr (Or.inr (Or.inl hn)))))
   · exact Classical.byContradiction (fun hn => hc (Or.inr (Or.inr (Or.inr (Or.inr hn)))))
 
-/-- Contact (Ⅴ) is the *only* link on the realization side that reads the world — the SOLITUDE
-    property named in §18.10.0. Here: contact is a realization link, and it is not execution. -/
+/-- Contact (Link-5) is the *only* link on the realization side that reads the world — the SINGLE-SEAM
+    property named in §2.4. Here: contact is a realization link, and it is not execution. -/
 theorem contact_is_realization : side contact = realization ∧ contact ≠ execute := by
   exact ⟨rfl, by decide⟩
 

@@ -242,7 +242,7 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
                 raise ValidationError(
                     f"PASS on {signal_data.task_id} by its own executor ({signal_data.source}) needs "
                     f"an independent validator verdict for the current delivery ({why}) — run "
-                    f"validate_result first, or delegate validation; verifier ≠ executor (§6.5)")
+                    f"validate_result first, or delegate validation; verifier ≠ executor (§14.5)")
 
     role = required_role(signal_data.signal)
 

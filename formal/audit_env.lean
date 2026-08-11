@@ -8,9 +8,14 @@
                       `#print axioms` cannot see — always a violation)
     USES        <n>   an axiom actually USED, transitively, by SOME theorem under GFSO.*
 
-  Why all three. Earlier versions were fail-OPEN twice over:
+  Why all three. Earlier versions were fail-OPEN three times over:
     * `#print axioms` on a HAND-LISTED set of theorems — forget to list a theorem and its axiom hides.
-      Fixed: we enumerate every theorem in `GFSO.*` from the environment and collect its axioms.
+      Fixed: we enumerate every declaration in `GFSO.*` from the environment and collect its axioms.
+    * a DECLARATION-KIND filter — we walked `.thmInfo` only, so a proof written as `def foo : P := by
+      sorry` (or an `instance`) was never inspected and its `sorryAx` never surfaced. That reinstated
+      the same fail-open one level down. Fixed: `.defnInfo` is audited too — the audited set is now
+      every GFSO declaration that can carry a proof, not every declaration that happens to be spelled
+      `theorem`.
     * a namespace filter — an axiom declared OUTSIDE `GFSO.*` (say `Externals.smuggled : 2 = 3`) but
       used by a GFSO theorem was invisible. Fixed: `USES` reports axioms by USE, wherever they live.
       The script then rejects anything outside {propext, Quot.sound, Classical.choice} ∪ whitelist —
@@ -26,15 +31,25 @@ open Lean Elab Command
 
 #eval show CommandElabM Unit from do
   let env ← getEnv
-  -- What we declared under GFSO.*, and every theorem under GFSO.* whose footprint we must inspect.
+  -- Membership is by MODULE, not by namespace: everything this package's modules declare is audited,
+  -- whatever its author called it. (A name-prefix filter let a foreign-namespace `sorry` sitting in
+  -- our own source file go uninspected — see the header.)
+  let ours : Name → Bool := fun n =>
+    match env.getModuleIdxFor? n with
+    | some idx =>
+      match env.header.moduleNames[idx.toNat]? with
+      | some m => m == `GFSO || (`GFSO).isPrefixOf m
+      | none   => false
+    | none => false
   let (declAx, declOp, thms) :=
     env.constants.fold
       (fun (a, o, t) n ci =>
-        if n.isInternal || !(`GFSO).isPrefixOf n then (a, o, t)
+        if n.isInternal || !(ours n) then (a, o, t)
         else match ci with
           | .axiomInfo _  => (a.push n, o, t)
           | .opaqueInfo _ => (a, o.push n, t)
           | .thmInfo _    => (a, o, t.push n)
+          | .defnInfo _   => (a, o, t.push n)   -- a `def`/`instance` can carry a proof (and a `sorry`)
           | _             => (a, o, t))
       ((#[] : Array Name), (#[] : Array Name), (#[] : Array Name))
 
@@ -43,7 +58,8 @@ open Lean Elab Command
   for n in declOp.qsort (fun a b => toString a < toString b) do
     IO.println s!"DECL_OPAQUE {n}"
 
-  -- Transitive axiom footprint of EVERY GFSO theorem, unioned. No hand-maintained list.
+  -- Transitive axiom footprint of EVERY declaration in this package's modules that can carry a
+  -- proof. No hand list, and no namespace filter.
   let mut used : NameSet := {}
   for t in thms do
     let axs ← liftCoreM <| Lean.collectAxioms t
@@ -53,4 +69,4 @@ open Lean Elab Command
   let usedArr := used.toList.toArray.qsort (fun a b => toString a < toString b)
   for a in usedArr do
     IO.println s!"USES        {a}"
-  IO.println s!"-- theorems audited: {thms.size}"
+  IO.println s!"-- declarations audited: {thms.size}"

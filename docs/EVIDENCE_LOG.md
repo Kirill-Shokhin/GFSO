@@ -5,6 +5,11 @@
 >
 > Source of truth for "what we've actually shown" vs "what is still hypothesis".
 > Updated as work progresses.
+>
+> **Section numbers are as of each entry's date.** Entries written before the v4.0 canon cite the
+> numbering then in force (the frozen draft, `applied_gfso_v3.md`); renumbering them would falsify
+> the record. Where a later pass corrected a reference inside an older entry, that one reference
+> carries the v4 number while its neighbours keep theirs — the entry's date still fixes the period.
 
 ---
 
@@ -13,7 +18,7 @@
 
 ## 0. Why this document exists
 
-GFSO theory (`docs/applied_gfso_v3.md`) is comprehensive but the *vision of why it matters*
+GFSO theory (`docs/applied_gfso_v4_en.md`) is comprehensive but the *vision of why it matters*
 still floats — even for the author. Individual pieces look like "just composition",
 "just good criteria", "just decomposition", and critics regularly latch onto one of
 those and dismiss the integration as nothing new. This log keeps:
@@ -63,9 +68,9 @@ exist. What none of them give together:
    bad criteria; binary V pushes spec defects out instead of hiding them in "warning".
 4. **Standardized protocol vocabulary** (12 signals, 12 states) across role boundaries.
 5. **Self-measuring metrics** computed from the audit graph itself.
-6. **Adaptive stratification by horizons** (§17.1, derived) — top layers stable, bottom
+6. **Adaptive stratification by horizons** (§25.1, derived) — top layers stable, bottom
    layers fast-changing CHALLENGE-cycles. Not a separate principle of agile/lean —
-   a consequence of Dep coherence + A1.
+   a consequence of deadline coherence along D + A1.
 
 ### Domain the author actually targets
 The under-optimized space of **human work coordination at scale**. Algorithms and
@@ -82,7 +87,7 @@ substrate.
 | "Just another standard like ISO" | ISO is chosen convention. GFSO is derived from axioms + proven minimal. |
 | "1990s contracts/TDD already did this" | DBC describes atom (predicate on function). GFSO describes molecule (transaction structure in hierarchy). Different abstraction levels. |
 | "Half-solving to specify" | Category error. API spec ≠ implementation. Drawing ≠ building. |
-| "Scrum works without all this" | Scrum is a special case (§17.2) under constraints: depth(D)≤2, NEGLECTED=∅, CHECK-7/8 unused, audit informal. Works where those relaxations are cheap; breaks where they're not. |
+| "Scrum works without all this" | Scrum is a special case (§25.2) under constraints: depth(D)≤2, ACCEPTED_RISKS=∅, CHECK-7/8 unused, audit informal. Works where those relaxations are cheap; breaks where they're not. |
 | "Abstract math divorced from reality" | Currently partly fair. Two empirical anchors (formal correctness; +34pp E0 result). Open work: E1 postmortem mapping, E2 LLM Issuer, E3 multi-agent. |
 
 ### Status (2026-05-23) — historical snapshot, superseded by §9 (E1 executed/closed)
@@ -106,7 +111,7 @@ The author confirmed this themselves while building a previous agent system
 to actionable engineering choices, agent system was "smeared across the formalism",
 hard to debug.
 
-### v3 (applied_gfso_v3.md, current)
+### v3 (applied_gfso_v3.md — re-authored as the v4.0 English canon, `applied_gfso_v4_en.md`)
 Reformulated **from operational concerns**: what does a task-handoff require
 formally, derived from A1 + A2. Math became tractable (basic logic, finite
 enumeration, Dirichlet). Doesn't depend on the category-theoretic GFSO Theory at
@@ -207,7 +212,8 @@ this log (see §6 plan).
 ### Files / artifacts
 | Artifact | Path | Purpose |
 |---|---|---|
-| Theory v3 | `docs/applied_gfso_v3.md` | Source of truth for theory |
+| Theory canon (v4.0) | `docs/applied_gfso_v4_en.md` | Source of truth for theory |
+| Theory draft (v3.9, frozen) | `docs/applied_gfso_v3.md` | Provenance record of the canon |
 | LCB results r1 | `bench_results_1.json` | First run (with bugs) |
 | LCB results r2 | `bench_results.json` | After fixes |
 | Perfect results | `bench_results_perfect.json` | criteria=hidden_tests proxy |
@@ -238,7 +244,7 @@ this log (see §6 plan).
    weak, loop helps marginally; when explicit, loop is dormant. The loop is NOT
    where GFSO's value sits for single-agent tasks.
 2. **Explicit-criteria articulation has measurable, large effect** (E0e): +34pp
-   on Haiku 4.5 BCB-Hard 148 tasks. Strong empirical anchor for §3.2 (forced
+   on Haiku 4.5 BCB-Hard 148 tasks. Strong empirical anchor for §11.2 (forced
    binary V) and the Issuer-side discipline thesis.
 
 ### NOT proven yet
@@ -247,14 +253,14 @@ this log (see §6 plan).
 - Compositional validation theorem in multi-agent decomposition (planned: E3)
 - CHECK-1..8 effectiveness — no decomposition tested
 - q_T, q_D, q_V (and the rest of Q) metrics predictive of real-world outcomes — no long deployment
-- Causal correctness / Level 2 semantic completeness (§5.4, open per §18.1)
+- Causal correctness / Pragmatic-level semantic completeness (§13.4; a characterized boundary, §8)
 
 ### Conceptually clarified along the way
-- **Scrum ⊂ GFSO formally** (§17.2): every Scrum primitive maps as direct
+- **Scrum ⊂ GFSO formally** (§25.2): every Scrum primitive maps as direct
   equivalent, implementation-choice, or restriction. No Scrum primitive escapes
   GFSO. This kills the "Scrum is alternative" argument.
-- **Adaptive stratification is derived, not an axiom** (§17.1): top stable / bottom
-  fast is a corollary of Dep coherence + A1, not a separate "agile principle".
+- **Adaptive stratification is derived, not an axiom** (§25.1): top stable / bottom
+  fast is a corollary of deadline coherence along D + A1, not a separate "agile principle".
 - **GFSO loop ≠ value of GFSO**: this was the most important course-correction. We
   spent weeks treating the loop as the test target. It's a fallback. The value
   is at Issuer-side articulation + composition + 7 FM diagnostics + audit.
@@ -346,9 +352,9 @@ demonstrated first.
 - Real team deployment over months
 - q-metric calibration ("q_D = 0.7 in IT vs construction")
 - Adversarial agents threat model
-- Causal correctness via domain ontologies + LLM review (§18.1)
+- Causal correctness via domain ontologies + LLM review (§8 — a characterized boundary; approach vector §15.3)
 
-These are §18 open problems. Out of scope until E1-E3 give the empirical baseline.
+These are §26 open problems. Out of scope until E1-E3 give the empirical baseline.
 
 ---
 
@@ -885,10 +891,10 @@ basis coverage + a clean accounting of the non-FM cases as success / delegation 
 
 ---
 
-## 10. Theory-model — see canon §18.10
+## 10. Theory-model — see canon §2–§3
 
 The standard→theory-model derivation (agent derived as a necessary structural link) lives **in the
-canon, §18.10** (with the calibrated claims); provenance is in the canon Changelog + git history.
+canon, §2–§3** (with the calibrated claims); provenance is in the canon Changelog + git history.
 
 ## 11. E2 EXECUTED — decomposition convergence, 2026-06-30
 
@@ -896,7 +902,7 @@ canon, §18.10** (with the calibrated claims); provenance is in the canon Change
 converges an agent's decomposition to a verified plan? That a critic/iteration helps is industry-standard; the
 open question is whether a given loop is the *optimal* token→convergence regime (the kind of claim GFSO is built
 from). Yardstick = a frozen **reference** (a well-worked, completeness-audited decomposition) — **not an ideal,
-not "100%"** (content-completeness is not a-priori derivable, §4 / §18.10 Lemma 1, so "100%" is not a concept).
+not "100%"** (content-completeness is not a-priori derivable, §12 / §2.5 Lemma 1, so "100%" is not a concept).
 The reference's true ancestor is the method that **builds** it: blind exhaustive enumeration + completeness
 audit.
 
@@ -1002,7 +1008,7 @@ evidence required per criterion. Live two-sided probe (trivial CLI node): correc
 executed evidence (ran the script, matched output) in 13s / 0.4k out; sabotaged work (hardcoded
 output) → FAIL naming exactly the broken criterion, evidence includes running it AND spotting the
 hardcode (anti-mock) in 14s / 0.5k out. The instrument never signals — the issuer reads the report
-and signals PASS/FAIL (§6.5 verifier=issuer).
+and signals PASS/FAIL (§14.5 verifier=issuer).
 
 **Delegated execution, end-to-end (2026-07-04).** Registry-driven autostart: the issuer's ONLY act
 is assigning a node to a registered llm-executor id; the dispatcher picks it off the frontier,
@@ -1096,7 +1102,7 @@ full coverage mapping; every Dep seam carries glue; NEGLECTED with predictabilit
 `holes == []` (no silent residue); checks 8 PASS + CHECK-7/8 as named capability skips.
 
 **L2 checker, two-sided live probe (2026-07-13).** The standalone Level-2 verb rebuilt as a
-CHECKER (canon §5.4's own question: per parent criterion, do the mapped children's criteria —
+CHECKER (canon §13.4's own question: per parent criterion, do the mapped children's criteria —
 taken as real-world facts — causally guarantee it; + semantic FM-2 conflicts), replacing the
 search-diff hole-hunt (the decomposer's question, now living only in refine). Probe on the real
 mdtab graph (fresh auto_decompose output), one Sonnet zero-tool call per side: **clean side** —

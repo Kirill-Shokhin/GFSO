@@ -1,6 +1,12 @@
-GFSO.FailureModes.correct
+# The closure guard's whitelist. SIX entries = the 3 covering axioms + the 3 uninterpreted
+# predicates they quantify over — one fact at two granularities (canon §1.4). Order: axiom,
+# then its carrier(s).
+#
+# --- covering axioms (the "no further kind" claims) ---
 GFSO.FailureModes.evaluation_completeness
-GFSO.Links.Directed
-GFSO.Links.directed_action_completeness
-GFSO.Standards.fullyKnown
 GFSO.Standards.morris_trichotomy
+GFSO.Links.directed_action_completeness
+# --- uninterpreted predicates the axioms quantify over (they localize the empirical residue) ---
+GFSO.FailureModes.correct
+GFSO.Links.Directed
+GFSO.Standards.fullyKnown
