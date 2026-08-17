@@ -1,4 +1,4 @@
-"""T11/Инв-7 survives a restart: the audit log is APPEND-ONLY in SQLite — a fresh engine on the
+"""Thm 11/Inv-7 survives a restart: the audit log is APPEND-ONLY in SQLite — a fresh engine on the
 same DB hydrates the full signal history (it was in-memory only: a restarted server had NO trail,
 so state=fold(log) could not be claimed across the process boundary)."""
 from gfso.engine import Engine

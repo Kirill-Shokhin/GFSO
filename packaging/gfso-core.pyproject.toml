@@ -2,10 +2,12 @@
 # manifest files (packaging/core_manifest.py) into a build tree next to this file. ZERO runtime
 # dependencies is the contract (tests/test_core_dist.py enforces it continuously); no extras —
 # the CHECK-7/8 formula tier's solver extra ships together with its implementation, not before.
-# Published at distribution time; until then the main `gfso` distribution ships the same files
-# inline.
+# NOT published to any index: whoever embeds the core builds this wheel from the repository.
+# The `gfso` distribution ships the same files inline.
 [build-system]
-requires = ["setuptools>=68.0"]
+# >=77.0.3: `license = "MIT"` below is a PEP 639 SPDX expression, which an older
+# setuptools rejects outright — the same floor, and the same reason, as the main pyproject.
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]

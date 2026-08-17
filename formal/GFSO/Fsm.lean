@@ -9,20 +9,17 @@
     * the NAMES are the canon's (see NAMES below);
     * the TRANSITION TABLE is `fsm.py`'s. It is a conformance mirror of the engine, so that a change
       to the engine's shape shows up here as a broken proof rather than as prose drift.
-  One row currently diverges from the canon and is corner #3 in `README.md`:
-  `(VALIDATING, FAIL, iteration ≥ max) → DONE(fail)` (`fsm.py:163`), while canon §14.3 routes the
-  exhausted rework loop to ESCALATED and §12.2 states that DONE is reached through acceptance
-  (PASS ∨ auto_pass) and "never through fail". Resolution (derived from the canon — corner #3): the
-  code's row must become → ESCALATED (the canon has no settled-V=fail terminal; exhausting retries IS
-  the escalation trigger; DONE is consumed under R′). The engineer retargets `fsm.py`; this mirror
-  keeps encoding the code as it is today so the gap stays visible until the engine changes. Do not
-  "fix" it here.
+  The row that used to diverge here — `(VALIDATING, FAIL, iteration ≥ max)` — is CLOSED: the engine
+  now routes the exhausted rework loop to ESCALATED, as canon §14.3 does and as §12.2 requires
+  ("DONE is reached through acceptance (PASS ∨ auto_pass), never through fail"), so mirror and canon
+  agree on it and the proofs below carry the canon's shape rather than a flagged gap (corner #3 in
+  `README.md`, resolved). The engine additionally carries the verdict onto that terminal, which this
+  per-node signature does not model: `step` is a state function, and the settlement REASON is graph
+  data — the same abstraction under which DONE(pass)/DONE(auto) share one constructor here.
 
-  NAMES: this is a mirror of the CANON, so the constructors carry the canon's (v4.0) names. The code
-  still ships the v3.9 identifiers — `OFFERED`/`REWORKING`/`ABANDONED`/`OVERDUE`/`CONFIRM_CANCEL` are
-  `REVIEW`/`REWORK`/`CANCELLED`/`TIMEOUT`/`CANCEL_ACK` in `enums.py` until the scheduled enum
-  migration. The map is 1:1 and touches no row: what is cross-checked against `fsm.py` is the
-  transition structure, not the spelling. (The system trigger `Sig.TIMEOUT` keeps its name in both —
+  NAMES: canon and code now spell the states the same way — the enum migration landed, so the
+  v3.9→v4.0 lag this banner used to declare is gone and the constructors below are simultaneously
+  the canon's names and `enums.py`'s. (The system trigger `Sig.TIMEOUT` keeps its name in both —
   the canon renamed the STATE only, which is what removes the old Signal↔State homograph.)
 
   Everything below is finite; results are discharged by `decide` (kernel exhaustion of the
@@ -62,7 +59,8 @@ THE transition function (§14.3), a faithful port of `fsm.py::transition` + `_LO
 catch-alls (universal CANCEL for non-terminals≠CANCELLING; re-ASSIGN for reassignable states).
 Written as an explicit per-state matcher (so it reduces in the kernel for `decide`).
 `canRework : Bool` = the sole dynamic guard (VALIDATING+FAIL: iteration < max ⇒ REWORKING, else
-DONE(fail); `fsm.py` line 163), lifted into the function's INPUT — see `step_deterministic`.
+ESCALATED — the exhausted loop escalates, §14.3), lifted into the function's INPUT — see
+`step_deterministic`.
 `none` = signal not admissible in this state.
 -/
 def step (s : St) (sig : Sig) (canRework : Bool) : Option St :=
@@ -100,7 +98,7 @@ def step (s : St) (sig : Sig) (canRework : Bool) : Option St :=
     | _ => none
   | VALIDATING => match sig with
     | PASS => some DONE
-    | FAIL => some (if canRework then REWORKING else DONE)  -- guarded (fsm.py:163)
+    | FAIL => some (if canRework then REWORKING else ESCALATED)  -- guarded (§14.3)
     | Sig.TIMEOUT => some DONE                -- direct auto-pass (§24.7)
     | CANCEL => some CANCELLING
     | ASSIGN => some OFFERED

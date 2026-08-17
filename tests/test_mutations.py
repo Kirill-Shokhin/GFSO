@@ -28,10 +28,10 @@ def test_set_state():
     t = _task()
     g.save_task(t)
 
-    effect = MutateGraph(TaskId("t1"), MutationType.SET_STATE, new_state=State.REVIEW)
+    effect = MutateGraph(TaskId("t1"), MutationType.SET_STATE, new_state=State.OFFERED)
     affected = apply(g, effect)
 
-    assert g.get_state(TaskId("t1")) == State.REVIEW
+    assert g.get_state(TaskId("t1")) == State.OFFERED
     assert affected == []
 
 
@@ -49,7 +49,7 @@ def test_set_state_done_with_reason():
 
 
 def test_cancel_cascade_fires_on_entering_cancelling():
-    """v3.7 §6.2: the cascade fires on CANCEL (= entering CANCELLING) — non-terminal, not-yet-cancelling
+    """v3.7 §14.2: the cascade fires on CANCEL (= entering CANCELLING) — non-terminal, not-yet-cancelling
     children are returned for the loop to CANCEL (each runs its own handshake)."""
     g = _graph()
     parent = _task("parent", state=State.EXECUTING)
@@ -65,21 +65,21 @@ def test_cancel_cascade_fires_on_entering_cancelling():
     assert TaskId("c2") not in affected  # terminal untouched
     assert TaskId("c3") not in affected  # already settling its own handshake
 
-    # settling the handshake (CANCEL_ACK → CANCELLED) does NOT re-cascade
-    affected2 = apply(g, MutateGraph(TaskId("parent"), MutationType.SET_STATE, new_state=State.CANCELLED))
+    # settling the handshake (CONFIRM_CANCEL → ABANDONED) does NOT re-cascade
+    affected2 = apply(g, MutateGraph(TaskId("parent"), MutationType.SET_STATE, new_state=State.ABANDONED))
     assert affected2 == []
 
 
 def test_active_children_excludes_cancellation():
-    """CANCELLED nodes persist (provenance, §7.3.1) but leave the ACTIVE decomposition — at CANCEL
-    already (cancellation is authoritative, §6.3), so CANCELLING is excluded too. DONE(PASS/FAIL)
+    """ABANDONED nodes persist (provenance, §15.1) but leave the ACTIVE decomposition — at CANCEL
+    already (cancellation is authoritative, §14.3), so CANCELLING is excluded too. DONE(PASS/FAIL)
     stay active (delivered work)."""
     g = _graph()
     parent = _task("parent", state=State.EXECUTING)
     active = _task("a1c", state=State.EXECUTING, parent_id="parent")
     done_pass = _task("a2c", state=State.DONE, parent_id="parent")
     done_pass.done_reason = DoneReason.PASS
-    cancelled = _task("a3c", state=State.CANCELLED, parent_id="parent")
+    cancelled = _task("a3c", state=State.ABANDONED, parent_id="parent")
     cancelling = _task("a4c", state=State.CANCELLING, parent_id="parent")
     for t in (parent, active, done_pass, cancelled, cancelling):
         g.save_task(t)
@@ -126,7 +126,7 @@ def test_criteria_immutability_violation():
     new_spec = Spec("test", (Criteria("DIFFERENT", "changed"),))
     effect = MutateGraph(
         TaskId("t1"), MutationType.SET_STATE,
-        new_state=State.REVIEW, spec=new_spec,
+        new_state=State.OFFERED, spec=new_spec,
     )
     with pytest.raises(InvariantViolation):
         apply(g, effect)

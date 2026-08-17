@@ -2,22 +2,27 @@
 `cli.py` wires the `run` subcommand, the low-level per-tool dispatch lives here.
 
 It binds the SAME shared action surface as MCP (`gfso.tools.TOOLS`), so the CLI has full parity with MCP by
-construction — add a tool and it appears here for free, no per-command upkeep. Each invocation loads the CORE
-from GFSO_DB_PATH, runs one tool, prints JSON, persists (state lives in SQLite, so a sequence of commands drives
-the graph exactly as MCP calls would). The only thing a persistent MCP process adds is LIVE UI mirroring (WS) —
-a lifecycle difference, not a capability one.
+construction — add a tool and it appears here for free, no per-command upkeep. Each invocation runs one tool and prints JSON. When the one shared server is up the call goes THROUGH it
+(`/api/run/<tool>`), so there is a single engine, a single writer and a single sequencer over the log — and the
+write appears live in the UI. With no server up it opens the database directly, which is the same surface and
+the only one available.
 
     gfso run                                   # list commands
     gfso run auto_decompose "<request>"        # build the graph
     gfso run next_step                          # the forcing-point: the next directive
     gfso run signal <task> ACCEPT human         # ACCEPT / DELIVER (result=...) / PASS / FAIL / ...
     gfso run list_holes | get_graph | get_task <id> | project <id>
+    gfso run next_step project=<name>          # a named project (routed to the server's registry)
 """
 from __future__ import annotations
 
 import sys
+import os
 import json
 import inspect
+import urllib.error
+import urllib.request
+from urllib.parse import quote
 
 from gfso.runtime import build_engine_from_env
 from gfso import tools_llm as T  # the COMPLETE registry (structural + LLM verbs)
@@ -54,6 +59,11 @@ def run(argv: list[str]) -> None:
         return
 
     params = set(inspect.signature(fn).parameters)
+    # `project=` is not a tool parameter — it selects WHICH graph the verb runs against, and belongs
+    # to the door rather than to the verb. Taken out before the split below, or it would fall
+    # through as a positional and be dropped without a word.
+    project = next((a.split("=", 1)[1] for a in rest if a.startswith("project=")), None)
+    rest = [a for a in rest if not a.startswith("project=")]
     pos, kw = [], {}
     for a in rest:                                # `key=value` (a real param) → kwarg; else positional
         if "=" in a and a.split("=", 1)[0] in params:
@@ -62,7 +72,42 @@ def run(argv: list[str]) -> None:
         else:
             pos.append(_coerce(a) if a[:1] in "{[" else a)
 
-    engine = build_engine_from_env()
-    out = fn(engine, *pos, **kw)
-    engine.wait_idle()
+    # THROUGH THE RUNNING SERVER when there is one. This used to open the database directly,
+    # always, and that is a second writer against a file whose single-sequencer property is what
+    # the log's guarantees rest on: Inv-7 gives one non-branching history, and §14.3 requires the
+    # consumption check and the edge it authorizes to be ONE log-serialized step. Two engines over
+    # one file are two sequencers, and the interleaving that breaks it is exactly the one nobody
+    # would reproduce on purpose. It also meant a CLI write appeared in the UI only on a reload, and
+    # reached neither the dispatcher's queue nor the observation panel.
+    #
+    # With no server up, the direct path is still correct — and it is the only one there is.
+    out = _through_server(name, fn, pos, kw, project)
+    if out is None:
+        if project:
+            os.environ["GFSO_PROJECT"] = project
+        engine = build_engine_from_env()
+        out = fn(engine, *pos, **kw)
+        engine.wait_idle()
     print(json.dumps(out, default=str, ensure_ascii=False))
+
+
+def _through_server(name, fn, pos: list, kw: dict, project: str | None):
+    """Run the verb on the live server over `/api/run/<tool>`; None when no server answers.
+
+    The HTTP door takes keyword arguments only, so the positionals are named here off the same
+    signature the CLI already reads — one surface, two spellings of the same call.
+    """
+    from gfso import serverctl
+    if serverctl.runtime() is None:
+        return None
+    names = [p for p in list(inspect.signature(fn).parameters)[1:] if not p.startswith("_")]
+    body = dict(zip(names, pos))
+    body.update(kw)
+    url = f"{serverctl.BASE}/api/run/{name}" + (f"?project={quote(project)}" if project else "")
+    req = urllib.request.Request(url, data=json.dumps(body, default=str).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            return json.loads(r.read() or b"null")
+    except urllib.error.HTTPError as ex:
+        return {"error": ex.read().decode("utf-8", "replace")[:2000], "status": ex.code}

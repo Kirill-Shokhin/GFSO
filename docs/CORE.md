@@ -1,7 +1,8 @@
-# GFSO — core definition (for agents and future-self)
+# GFSO — the core definition, on one page
 
-> Read this BEFORE writing code, prompts, or commits. One page, on purpose.
-> If you find yourself confused about what GFSO is, re-read this file.
+> What GFSO is, what it is not, and what it does and does not claim — deliberately one page. The
+> canon is `applied_gfso_v4_en.md`; this is the orientation that fits in a reader's head first, and
+> a working reference for anyone writing code, prompts or documents against the framework.
 
 ---
 
@@ -9,7 +10,9 @@
 
 **GFSO is a formal language for the minimum a verifiable task-handoff
 transaction must carry**, derived from two axioms (verifiability +
-decomposability) and proven minimal.
+decomposability). Each element of the basis is shown necessary; that the
+basis is the ONLY one is open (§26.9, `formal/README.md`) — "minimal", not
+"proven unique".
 
 Analog: TCP/IP for hierarchical work coordination, or Codd 1970 for
 relational databases. Tractable math; the framing enables a domain.
@@ -132,7 +135,7 @@ If A1 ∧ A2 hold for a domain, GFSO applies. If not, GFSO is out of scope.
 
 ---
 
-## Common drift traps (things I have already gotten wrong)
+## Common drift traps (each one has been walked into)
 
 1. **"GFSO loop adds the value"** — NO. The loop is a fallback for weak
    criteria. With explicit criteria on a competent model, the loop is
@@ -178,31 +181,22 @@ at that substrate.
 
 ---
 
-## Status check before extending
-
-Before adding more theory, more code, more experiments — ask:
-
-- Does this address one of E1, E2, E3, or a §26 open problem?
-- If not, am I just polishing? Polishing isn't progress.
-- Does this validate or falsify a specific claim? Or just illustrate one?
+## What is settled empirically, and what is not
 
 Empirically, **E1 (postmortem taxonomy validation) is closed** (0/216
 cases need an 8th failure mode). **E2 (decomposition convergence) ran**:
 it established the convergence *method* — bare SEARCH ⊕ gfso
-AUDIT, iterated, productized as `decompose()` — but **not** the method's value
+AUDIT, iterated, productized as `auto_decompose()` — but **not** the method's value
 over bare (coverage-to-a-bare-built reference can't read it; that is **E3**).
 The next move is **E3 (multi-agent compositional validation, under execution)** —
 falsifiable, the biggest signal-per-effort available now.
 
 ---
 
-## When in doubt
+## Reading order, and the test that settles an argument
 
-- Re-read this file
-- Then re-read `applied_gfso_v4_en.md` §1 + §9–§11 (axioms + composition theorem)
-- Then re-read `EVIDENCE_LOG.md` §4 (what's actually proven vs not)
+`applied_gfso_v4_en.md` §1 + §9–§11 (the axioms and the composition theorem) is the framework
+itself; `EVIDENCE_LOG.md` §4 is what has and has not been shown.
 
-If still confused, the operational test is: **can I state the claim
-being tested in the form "if X, then Y, falsifiable by Z"?** If not,
-you're not doing GFSO empirically — you're doing something else and
-calling it GFSO.
+The operational test for any claim made in GFSO's name: **can it be stated as "if X, then Y,
+falsifiable by Z"?** If not, whatever is being done empirically is not this framework.

@@ -19,6 +19,7 @@ class MemoryStorage(StoragePort):
         self._dep_edges: list[DepEdge] = []
         self._critiques: dict[TaskId, str] = {}
         self._exec_verdicts: dict[TaskId, str] = {}
+        self._usage: list[dict] = []
         self._deliver_results: dict[TaskId, str] = {}
         self._pipeline: list[dict] = []
         self._audit_rows: list[dict] = []
@@ -87,6 +88,13 @@ class MemoryStorage(StoragePort):
     def get_pipeline(self, limit: int = 500) -> list[dict]:
         return list(self._pipeline[-limit:])
 
+    def log_usage(self, row: dict) -> None:
+        self._usage.append(dict(row))
+        del self._usage[:-20000]
+
+    def get_usage(self, limit: int = 5000) -> list[dict]:
+        return list(self._usage[-limit:])
+
     def add_dep_edge(self, edge: DepEdge) -> None:
         self._dep_edges.append(edge)
 
@@ -98,7 +106,7 @@ class MemoryStorage(StoragePort):
     def get_dep_edges(self) -> list[DepEdge]:
         return list(self._dep_edges)
 
-    # --- the MANDATORY append-only signal log (T11/Инв-7: state = fold(log)) ---
+    # --- the MANDATORY append-only signal log (Thm 11/Inv-7: state = fold(log)) ---
     # In-memory is this adapter's declared MEDIUM, not a contract degradation: the log is complete
     # and replayable for the process lifetime, exactly as ephemeral as every other record it holds.
 

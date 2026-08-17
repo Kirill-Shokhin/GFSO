@@ -1,11 +1,11 @@
-"""Delegation — the registry-driven autostart machinery (designs §3.1-7 + §7, author-confirmed).
+"""Delegation — the registry-driven autostart machinery (designs doc §3.1-7 + §7, author-confirmed).
 
 The issuer's ONLY act is setting Del: a node whose assignee is a REGISTERED llm-executor is picked up
 from the frontier by the DISPATCHER, which spawns a headless executor (work tools, scoped cwd), wraps
 its single structured report into the canonical FSM signals (ACCEPT/DELIVER/BLOCK/CHALLENGE,
-source = the executor's id — the executor itself never touches the graph), then AUTO-VALIDATES on
-DELIVER→VALIDATING with the registered llm-validator instrument and AUTO-SIGNALS the verdict
-(PASS → DONE; FAIL(failed_criteria) → the FSM's own REWORK loop, bounded by max_iterations).
+source = the executor's id — the executor itself never touches the graph), then AUTO_PASS-VALIDATES on
+DELIVER→VALIDATING with the registered llm-validator instrument and AUTO_PASS-SIGNALS the verdict
+(PASS → DONE; FAIL(failed_criteria) → the FSM's own REWORKING loop, bounded by max_iterations).
 An unparsed validator report NEVER auto-signals — it escalates to the issuer (the one manual point).
 Unregistered ids = human = the system stays passive (the safe default); registered NON-executor kinds
 never spawn (kind-guard). Identity/authority stays canon-exact: Del binds at delegation, the
@@ -15,8 +15,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
-import time
 from pathlib import Path
 
 from gfso.core.types import TaskId, AgentId, Signal, SignalData
@@ -46,22 +46,78 @@ class AgentRegistry:
     default data/agents.json): survives restarts, editable by hand, no schema migration."""
 
     def __init__(self, path: str | None = None):
-        self._path = Path(path or os.environ.get("GFSO_AGENTS_PATH", "data/agents.json"))
+        from gfso.runtime import data_dir
+        self._path = Path(path or os.environ.get("GFSO_AGENTS_PATH") or (data_dir() / "agents.json"))
         self._agents: dict[str, dict] = {}
         self._lock = threading.Lock()
+        self._mtime: float | None = None
+        self._load()
+
+    def _load(self) -> None:
+        """Read the roster, and re-read it when the FILE has changed underneath.
+
+        The docstring above promises a roster "editable by hand", and the registry is a per-process
+        singleton — so it read the file once, at server start, and every later edit was invisible.
+        Measured: a probe rewrote the roster to point two executors at its own workspace, the server
+        went on using the entry from the run before it, and both agents worked in a directory that
+        belonged to a different experiment. Nothing said so; the graph looked healthy and the verdicts
+        judged the wrong tree. One `stat` per access is the price of the promise being true.
+        """
+        try:
+            mtime = self._path.stat().st_mtime
+        except OSError:
+            return                     # no roster yet is the normal first-run state
+        if self._mtime == mtime:
+            return
         try:
             self._agents = json.loads(self._path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+            self._mtime = mtime
+        except FileNotFoundError:
+            pass                      # no roster yet is the normal first-run state
+        except Exception as ex:
+            # An unreadable roster is not an empty roster. Silent, it disabled delegation whole:
+            # every node assigned to an executor simply waited, with no line anywhere — the exact
+            # shape that reads as "the agent is not working".
+            # stderr, not stdout: `gfso mcp` speaks JSON-RPC on stdout, and a diagnostic printed
+            # there corrupts the very door it is diagnosing.
+            print(f"gfso: agent registry {self._path} is unreadable ({ex}) — delegation is OFF "
+                  f"until it is fixed or removed", file=sys.stderr, flush=True)
 
     def register(self, agent_id: str, kind: str, model: str = "sonnet",
-                 workdir: str | None = None, validator: str | None = None) -> dict:
+                 workdir: str | None = None, validator: str | None = None,
+                 oracle_map: str | None = None, max_turns: int | None = None) -> dict:
         if kind not in ("llm-executor", "llm-validator", "unittest-checker", "external"):
             raise ValueError(f"unknown kind {kind!r} (llm-executor | llm-validator | unittest-checker "
                              f"| external; a human needs no registration — unregistered = human)")
+        # An agent role with no working directory cannot work, and the ways it failed were the worst
+        # available: the executor's spawn raised into a blanket handler that only logged, and the
+        # node was never retried; the validator's error was discarded and the node sat in VALIDATING
+        # forever. Neither reached the user. This is the earliest point at which the missing fact
+        # can be named, and the only one where naming it costs nothing.
+        if kind == "unittest-checker" and not oracle_map:
+            # It reads its hidden tests from an issuer-side map, and there was no way to give it
+            # one through `register_agent` — so a checker registered through the product's own door
+            # ALWAYS returned no verdict, and, being the first registered validator, silently
+            # disabled any llm-validator registered after it.
+            raise ValueError(
+                f"registering {agent_id!r} as unittest-checker needs `oracle_map`: the path to the "
+                f"issuer-side map of hidden tests it runs. Without it no verdict can ever be "
+                f"produced, and its presence would stop an llm-validator from being used.")
+        if kind in ("llm-executor", "llm-validator") and not workdir:
+            raise ValueError(
+                f"registering {agent_id!r} as {kind} needs `workdir`: the directory of the project "
+                f"it works in. Without it the agent would be spawned where the server stands — the "
+                f"gfso state home — which contains none of the work it is meant to do or judge.")
         with self._lock:
             self._agents[agent_id] = {"kind": kind, "model": model, "workdir": workdir,
                                       "validator": validator}
+            if oracle_map:
+                self._agents[agent_id]["oracle_map"] = oracle_map
+            if max_turns:
+                # The executor's step budget, declared with the role rather than inherited from
+                # whatever the transport defaults to: two runs of "the same agent" under different
+                # caps are different agents, and a comparison across them measures the cap.
+                self._agents[agent_id]["max_turns"] = int(max_turns)
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(json.dumps(self._agents, ensure_ascii=False, indent=1),
                                   encoding="utf-8")
@@ -74,15 +130,18 @@ class AgentRegistry:
         return cfg.get("validator") or self.default_validator()
 
     def get(self, agent_id: str) -> dict | None:
+        self._load()
         return self._agents.get(str(agent_id))
 
     def list(self) -> dict:
+        self._load()
         return dict(self._agents)
 
     def default_validator(self) -> str | None:
         """The auto-validation instrument: the FIRST registered validator — an `llm-validator` (a fresh
         read-only agent) or a `unittest-checker` (a deterministic hidden-test runner, the issuer's
         oracle). With none registered, validation stays the issuer's manual act."""
+        self._load()
         for aid, a in self._agents.items():
             if a.get("kind") in ("llm-validator", "unittest-checker"):
                 return aid
@@ -91,7 +150,7 @@ class AgentRegistry:
 
 def _executor_packet(engine, task, workdir: str | None) -> str:
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
-    inputs (the REAL delivered outputs it consumes) + NEGLECTED + rework feedback if any."""
+    inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any."""
     from gfso.tools_llm import _last_deliver_result
     tid = str(task.id)
     crits = "\n".join(f"- **{c.name}**: {c.description}" for c in task.spec.criteria) or "- (none)"
@@ -103,18 +162,18 @@ def _executor_packet(engine, task, workdir: str | None) -> str:
             name = (prod.spec.name or prod.spec.description[:40]) if prod else "?"
             ups.append(f"- input from `{e.from_id}` ({name})"
                        + (f" — glue: {e.glue}" if e.glue else "") + f"\n  its DELIVER: {delivered}")
-    negl = "\n".join(f"- {n.item}" for n in task.spec.neglected)
+    negl = "\n".join(f"- {n.item}" for n in task.spec.accepted_risks)
     rework = ""
-    if task.state.name == "REWORK":
+    if task.state.name == "REWORKING":
         failed = next((list(a.failed_criteria) for a in reversed(engine.audit_log(task.id))
                        if a.signal == Signal.FAIL and not a.rejected and a.failed_criteria), [])
-        rework = (f"\n## REWORK (iteration {task.iteration}) — the validator FAILED these criteria; "
+        rework = (f"\n## REWORKING (iteration {task.iteration}) — the validator FAILED these criteria; "
                   f"fix exactly them:\n" + "\n".join(f"- {f}" for f in failed) + "\n")
     return (f"# Your node: {tid} — {task.spec.name}\n\n{task.spec.description}\n\n"
             f"## Criteria (your ENTIRE obligation; each must really hold)\n{crits}\n\n"
             f"## Inputs (upstream deliveries you consume — use the REAL outputs, no stubs)\n"
             f"{chr(10).join(ups) or '- none'}\n\n"
-            f"## NEGLECTED (declared plan assumptions — do not gold-plate against these)\n"
+            f"## ACCEPTED_RISKS (declared plan assumptions — do not gold-plate against these)\n"
             f"{negl or '- none'}\n{rework}\n"
             f"Working directory: {workdir or os.getcwd()}\n")
 
@@ -155,16 +214,23 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
         cap = max(60, int((task.deadline - datetime.now()).total_seconds()))
     _cb(f"{task_id}: executor {executor_id} spawned (workdir={cfg.get('workdir') or 'cwd'}"
         + (f", cap {cap}s" if cap else "") + ")…")
+    # The dispatcher's own spawn is the LONGEST thing this server does — up to a fifteen-minute
+    # `claude -p` — and it was the one path that never appeared in `busy`, so a reconcile arriving
+    # from another session read the server as idle and restarted it mid-run.
+    from gfso.tools_llm import _inflight
     system = (_PROMPTS / "executor.md").read_text(encoding="utf-8")
     packet = _executor_packet(engine, task, cfg.get("workdir"))
-    try:
-        text = llm.run_agent(system, packet + schema_instruction(EXECUTOR_SCHEMA),
-                             allowed_tools=EXECUTOR_TOOLS, cwd=cfg.get("workdir"), timeout=cap)
-    except TypeError:  # a runner without the timeout param (fakes)
-        text = llm.run_agent(system, packet + schema_instruction(EXECUTOR_SCHEMA),
-                             allowed_tools=EXECUTOR_TOOLS, cwd=cfg.get("workdir"))
+    with _inflight("delegated_execution"):
+        try:
+            text = llm.run_agent(system, packet + schema_instruction(EXECUTOR_SCHEMA),
+                                 allowed_tools=EXECUTOR_TOOLS, cwd=cfg.get("workdir"), timeout=cap,
+                                 max_turns=cfg.get("max_turns"))
+        except TypeError:  # a runner without the timeout/turn-cap params (fakes)
+            text = llm.run_agent(system, packet + schema_instruction(EXECUTOR_SCHEMA),
+                                 allowed_tools=EXECUTOR_TOOLS, cwd=cfg.get("workdir"))
     if hasattr(llm, "tag_last"):
         llm.tag_last("executor")
+    engine.record_llm_usage("executor", llm, task_id)      # the work's own spend, per node
     report = parse_structured(text, EXECUTOR_SCHEMA)
     if report is None:
         # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
@@ -179,7 +245,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
         _signal(engine, task_id, Signal.CHALLENGE, executor_id, reason=report.get("reason", ""))
         _cb(f"{task_id}: executor CHALLENGED the spec — issuer resolves · {_stat_line(llm)}")
     elif status == "blocked":
-        if task.state.name == "REVIEW":  # consent happened (it worked far enough to find the block)
+        if task.state.name == "OFFERED":  # consent happened (it worked far enough to find the block)
             _signal(engine, task_id, Signal.ACCEPT, executor_id)
         blocker = report.get("blocker_task_id")
         blockers = tuple(TaskId(b) for b in (report.get("blocker_task_ids") or []) if b)
@@ -189,7 +255,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
         _cb(f"{task_id}: executor BLOCKED ({report.get('reason', '')[:80]}) · {_stat_line(llm)}")
     else:  # delivered — the DISPATCHER picks the VALIDATING node up and auto-validates (one path
         # for every delivery, delegated or self-executed; natural node×iteration dedup)
-        if task.state.name == "REVIEW":
+        if task.state.name == "OFFERED":
             _signal(engine, task_id, Signal.ACCEPT, executor_id)
         _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"])
         _cb(f"{task_id}: executor DELIVERED · {_stat_line(llm)}")
@@ -204,8 +270,7 @@ def _oracle_workdir(engine, vcfg: dict):
     from pathlib import Path
     project = getattr(engine, "_project_name", None) or "default"
     try:
-        entry = _json.loads(Path(vcfg.get("oracle_map", "data/e0_canonical_map.json"))
-                            .read_text(encoding="utf-8")).get(project)
+        entry = _json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
         return entry.get("workdir") if entry else None
     except Exception:
         return None
@@ -215,14 +280,15 @@ def _checker_validate(engine, task_id: TaskId, vcfg: dict) -> dict:
     """Deterministic HIDDEN-TEST validation (the issuer's oracle — the executor never sees the tests).
     Runs the project's hidden unittest suite against the delivered solution.py, maps each test method
     to the criterion of the same name, returns {verdict, per_criterion, failed_criteria}. No LLM, no
-    false-PASS. The oracle map (config: `oracle_map`) is issuer-side; the agent has no path to it."""
+    false-PASS. The oracle map (config: `oracle_map`) is issuer-side; the agent has no path to it.
+    It has NO default: a shipped default pointed every install at one experiment's map file, which
+    on any other machine simply did not exist — a registration that names no map now says so."""
     import json as _json
     from pathlib import Path
     from gfso.adapters.verifiers import evaluate_unittest
     project = getattr(engine, "_project_name", None) or "default"
     try:
-        entry = _json.loads(Path(vcfg.get("oracle_map", "data/e0_canonical_map.json"))
-                            .read_text(encoding="utf-8")).get(project)
+        entry = _json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
     except Exception:
         entry = None
     if not entry:
@@ -248,8 +314,8 @@ def _checker_validate(engine, task_id: TaskId, vcfg: dict) -> dict:
 
 
 def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) -> str | None:
-    """DELIVER→VALIDATING auto-fires the registered validator instrument; the verdict AUTO-SIGNALS
-    (PASS → DONE; FAIL(failed_criteria) → REWORK — the rework loop lives in the FSM, max_iterations
+    """DELIVER→VALIDATING auto-fires the registered validator instrument; the verdict AUTO_PASS-SIGNALS
+    (PASS → DONE; FAIL(failed_criteria) → REWORKING — the rework loop lives in the FSM, max_iterations
     bounds it). verdict:null NEVER auto-signals — the one escalation to the issuer. Returns the
     outcome for the dispatcher: 'pass'/'fail' (signed), 'rejected' (the FSM refused the verdict —
     ≠ no-verdict: the graph wasn't ready, revalidate on its next change), 'no-verdict'."""
@@ -290,12 +356,14 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) ->
     if vcfg.get("kind") == "unittest-checker":
         # deterministic hidden-test oracle — runs the suite the executor never sees, records the
         # per-criterion verdict (the integrity gate applies), then auto-signals below.
+        generation = engine.generation_of(task_id)     # the delivery THIS check reads (§14.5 gate)
         out = _checker_validate(engine, task_id, vcfg)
         if out.get("verdict") in ("PASS", "FAIL"):
             try:
                 engine.record_exec_verdict(task_id, out["verdict"], out.get("failed_criteria") or [],
-                                           validator_id, per_criterion=out.get("per_criterion"))
-            except Exception as e:  # a malformed report is ⊥, not a verdict (§2.2) — never auto-signal it
+                                           validator_id, per_criterion=out.get("per_criterion"),
+                                           generation=generation)
+            except Exception as e:  # a malformed report is ⊥, not a verdict (§10) — never auto-signal it
                 engine.emit_info("delegate", f"{task_id}: checker verdict refused ({e})")
                 out = {"verdict": None}
         f = out.get("failed_criteria") or []
@@ -307,7 +375,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None) ->
         # the validator config pins a workdir (self-execution: the executor is the unregistered user-agent),
         # fall back to the issuer-side oracle map, where setup records this project's workspace.
         _wd = (ecfg or {}).get("workdir") or vcfg.get("workdir") or _oracle_workdir(engine, vcfg)
-        out = T.validate_result(engine, str(task_id), model=vcfg.get("model", "sonnet"),
+        out = T.TOOLS["validate_result"](engine, str(task_id), model=vcfg.get("model", "sonnet"),
                               workdir=_wd, _llm=_llm)
         if out.get("inflight"):
             # another validator run (e.g. a manual validate_result) already holds this node
@@ -347,8 +415,14 @@ class Dispatcher:
         self._runner = runner
         self._validate = validator_runner or _auto_validate
         self._seen: set[str] = set()      # "{task}#{iter}" / "v:{task}#{iter}" — one run per round
+        # …and the claim on a key is ATOMIC. The dedup was a bare check-then-add over a set, and
+        # `dispatch_once` runs from two places by design — the poll loop and the transition wake — so
+        # two rounds could both read "not seen" before either wrote, and the node was executed TWICE:
+        # two paid agent runs on one contract, writing the same files. Measured live (an unrelated
+        # timing change in the roster read was enough to open the window every time), which is what a
+        # latent race does — it waits for the schedule to shift.
+        self._claim_lock = threading.Lock()
         self._retried: set[str] = set()   # validator no-verdict retries (one per node×iteration)
-        self._stale: set[str] = set()     # re-ASSIGNed (revised) nodes → their dedup keys no longer bind
         self._stop = threading.Event()
         self._dirty = threading.Event()   # set by every transition → the loop re-evaluates the frontier
 
@@ -398,15 +472,15 @@ class Dispatcher:
                             blocker_task_ids=tuple(TaskId(x) for x in prov_real))
                 else:
                     _signal(self._engine, t.id, Signal.RESOLVE_BLOCK, issuer, external=True)
-                self._seen.discard(f"{t.id}#{getattr(t, 'iteration', 0)}")
+                self._seen.discard(self._round_key(t))
                 self._engine.emit_info("delegate",
                                        f"{t.id}: producers DONE — RESOLVE_BLOCK (auto), executor re-queued")
 
     def _validate_here(self, task) -> bool:
-        """D6 (§6.5) — validation-at-the-seam: the independent validator instrument auto-fires on
+        """D6 (§14.5) — validation-at-the-seam: the independent validator instrument auto-fires on
         PUBLIC nodes (a root, or Del(child) ≠ Del(parent)); an INTERNAL node (the executor's own
         private decomposition) self-verifies via its DELIVER self_validation, and its guarantee is
-        carried by the public result's validation (T1). NOT validate-every-node — per-node
+        carried by the public result's validation (Thm 1). NOT validate-every-node — per-node
         instrumenting stays available as an OPT-IN dial: GFSO_VALIDATE_INTERNAL=1 restores the
         every-delivery behavior (useful for measurement runs, harmless for correctness)."""
         import os
@@ -439,6 +513,48 @@ class Dispatcher:
         return all(k.state.name == "DONE" and getattr(k.done_reason, "name", "") == "PASS"
                    for k in kids)
 
+    def _round_key(self, task, prefix: str = "") -> str:
+        """The dedup key of a node's CURRENT round: id + the generation that makes it a round.
+
+        It used to be id + iteration only, and a revision moves neither iteration nor reopens — so a
+        revised node kept a key that was already spent and was never re-executed. That was patched by
+        MARKING revised nodes and dropping their keys on the next pass, and the patch had its own
+        defect: the mark fired on EVERY ASSIGN, creation included, so a node's key could be dropped
+        moments after its first claim and the node was executed TWICE (two paid runs, one contract —
+        measured live). Putting the generation IN the key removes both: a revision is a new round by
+        construction, and nothing has to be un-remembered."""
+        return (f"{prefix}{task.id}#{getattr(task, 'iteration', 0)}"
+                f"#{getattr(task, 'reopens', 0)}#{getattr(task, 'revisions', 0)}")
+
+    def _admissible(self, task_id: TaskId) -> bool:
+        """Would the node's first execution step be ADMITTED? Asked before paying for it.
+
+        The execution gate lives on the ACCEPT signal, and the dispatcher spawns the executor BEFORE
+        that signal exists — the run's report is what produces it. So a leaf under a plan the gate
+        refuses had its executor spawned, worked, and reported, and only then was the ACCEPT rejected:
+        a paid call thrown away, repeatedly, while the plan sat unfixed. This asks the gate's own
+        question first, exactly as `_deps_ready` asks the dependency one."""
+        from gfso.engine.validation import _l0_holes, _l2_undischarged, l2_gate_on
+        parent = self._engine._graph.get_parent(task_id)
+        if parent is None:
+            return True                                  # a root has no plan above it to admit it
+        if _l0_holes(self._engine._graph, parent):
+            return False
+        return not l2_gate_on() or _l2_undischarged(self._engine._graph, parent) == []
+
+    def _claim(self, key: str) -> bool:
+        """Claim a round for a node ONCE: True to the first caller, False to everyone after.
+
+        The check and the write have to be one step. `dispatch_once` is called from the poll loop AND
+        from the transition wake (that is the point of an event-driven dispatcher), so a bare
+        `if key not in seen: seen.add(key)` lets two rounds through — and each spends a real agent
+        call on the same contract."""
+        with self._claim_lock:
+            if key in self._seen:
+                return False
+            self._seen.add(key)
+            return True
+
     def dispatch_once(self) -> list[str]:
         """One poll round (the testable unit): spawn executor runs for executor-ready steps AND the
         auto-validation for EVERY freshly delivered node (delegated or self-executed — one path;
@@ -446,11 +562,7 @@ class Dispatcher:
         validation stays the issuer's act)."""
         if getattr(self._engine, "_dispatch_quiesce", 0):
             return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
-        # a re-ASSIGNed (revised) node is fresh work: its old spawn/validate keys no longer bind
-        for tid in list(self._stale):
-            self._stale.discard(tid)
-            self._drop_keys(tid)
-        # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§6.5) —
+        # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§14.5) —
         # both the LLM validator (a fresh read-only agent) and the deterministic unittest-checker
         self._engine._graph._authorized_validators = {
             aid for aid, cfg in self._agents.list().items()
@@ -468,9 +580,7 @@ class Dispatcher:
                     continue                              # D6: internal (same-Del) node — self-validation
                 if not self._children_settled(TaskId(s["task_id"])):
                     continue                              # verdict would be gate-rejected — wait for the children
-                key = f"v:{s['task_id']}#{it}"
-                if key not in self._seen:
-                    self._seen.add(key)
+                if self._claim(self._round_key(task, "v:")):
                     started.append(f"validate:{s['task_id']}")
                     threading.Thread(target=self._validate_guarded,
                                      args=(TaskId(s["task_id"]), it), daemon=True).start()
@@ -479,6 +589,9 @@ class Dispatcher:
                 continue
             if s.get("action") == "accept" and not self._deps_ready(TaskId(s["task_id"])):
                 continue                   # spawning before the producers deliver ⇒ instant BLOCK
+            if s.get("action") == "accept" and not self._admissible(TaskId(s["task_id"])):
+                continue                   # the plan is not admitted to execution — the ACCEPT would
+                                           # be refused, and the executor's work with it
             cfg = self._agents.get(s.get("assignee") or "")
             if cfg is None:
                 continue                   # unregistered = human = passive
@@ -487,16 +600,14 @@ class Dispatcher:
                                        f"{s['task_id']}: Del={s['assignee']} is a registered "
                                        f"{cfg.get('kind')} — not an executor kind, nothing to start")
                 continue
-            key = f"{s['task_id']}#{it}"
-            if key in self._seen:
+            if not self._claim(self._round_key(task)):
                 continue
-            self._seen.add(key)
             started.append(s["task_id"])
             threading.Thread(target=self._run_guarded,
                              args=(TaskId(s["task_id"]), s["assignee"], it), daemon=True).start()
         return started
 
-    _EXECUTOR_STATES = ("REVIEW", "EXECUTING", "REWORK")
+    _EXECUTOR_STATES = ("OFFERED", "EXECUTING", "REWORKING")
 
     def _fresh(self, task_id: TaskId, expect_iter: int, states: tuple) -> bool:
         """TOCTOU guard: the dispatch decision can be minutes older than the semaphore slot (observed
@@ -516,14 +627,43 @@ class Dispatcher:
             if not self._fresh(task_id, expect_iter, self._EXECUTOR_STATES):
                 return
             try:
-                self._runner(self._engine, task_id, executor_id, self._agents)
+                out = self._runner(self._engine, task_id, executor_id, self._agents)
+                # An UNPARSED report sends no signal — correctly, nothing may be forged from it — so
+                # the node stays exactly where it was and the dispatcher's spent key means it is
+                # never picked up again. Measured live: one leaf of a delegated run sat in OFFERED
+                # for the rest of the run on a single unreadable report, while the arm watched a
+                # graph that was, as far as it could tell, simply waiting. One retry, then the node
+                # is left alone and SAID so — a parked node with a reason beats a silent one.
+                if isinstance(out, dict) and out.get("status") == "unparsed":
+                    t = self._engine.get_task(task_id)
+                    key = self._round_key(t, "u:") if t is not None else None
+                    if key and key not in self._retried:
+                        self._retried.add(key)
+                        self._seen.discard(self._round_key(t))
+                        self._dirty.set()
+                        self._engine.emit_info(
+                            "delegate", f"{task_id}: unreadable executor report — one retry")
+                    else:
+                        self._engine.emit_info(
+                            "delegate", f"{task_id}: unreadable executor report twice — the node is "
+                                        f"PARKED where it stands and needs its issuer; nothing was "
+                                        f"signalled on its behalf")
             except Exception as e:
+                # Into the OBSERVATION FIELD, not only a log record. This handler catches the whole
+                # spawn path, and a node whose dispatch raised is never retried — its key stays in
+                # `_seen` until a re-ASSIGN. Logged alone, that is a graph which simply stops.
                 log.warning(f"delegate run failed on {task_id}: {e}")
+                try:
+                    self._engine.emit_info("delegate", f"{task_id}: dispatch failed — {e}")
+                except Exception:
+                    pass
 
     def _validate_guarded(self, task_id: TaskId, expect_iter: int = 0) -> None:
         with self._cap:
+            _t0 = self._engine.get_task(task_id)
             if not self._fresh(task_id, expect_iter, ("VALIDATING",)):
-                self._seen.discard(f"v:{task_id}#{expect_iter}")
+                if _t0 is not None:
+                    self._seen.discard(self._round_key(_t0, "v:"))
                 return
             ret = None
             try:
@@ -537,25 +677,44 @@ class Dispatcher:
                 # and never burn the one no-verdict retry on it (observed live: a rejected PASS
                 # was misread as no-verdict → the retry was wasted → the node stuck for good).
                 if t is not None:
-                    self._seen.discard(f"v:{task_id}#{getattr(t, 'iteration', 0)}")
+                    self._seen.discard(self._round_key(t, "v:"))
                 return
             # a validator run that died/unparsed leaves VALIDATING with no verdict — ONE retry
             if t is not None and t.state.name == "VALIDATING":
-                key = f"v:{task_id}#{getattr(t, 'iteration', 0)}"
+                key = self._round_key(t, "v:")
                 if key not in self._retried:
                     self._retried.add(key)
                     self._seen.discard(key)
                     self._engine.emit_info("delegate",
                                            f"{task_id}: validator returned no verdict — one retry queued")
+                else:
+                    # The retry produced no verdict either, and ⊥ is not pass (§2.2): the node cannot
+                    # complete, and until now nothing said so — it simply stayed in VALIDATING. That
+                    # is the canon's exhausted-automation case, whose answer is ATTENTION (§1.1's
+                    # third mode), not silence and not auto-acceptance: auto-passing a node no one
+                    # could judge would manufacture exactly the false close this system exists to
+                    # prevent. Measured live (markdown_renderer, 2026-08-12): two unparsed reports,
+                    # then a root sat in VALIDATING until the harness's own wall clock ended the run
+                    # — the protocol's finiteness could not help, the per-state clock being opt-in
+                    # and off by default. What is NOT done here: sending the system timeout, which
+                    # (VALIDATING, TIMEOUT) routes to DONE(auto_pass) — auto-accepting a node no one
+                    # could judge is the false close this measurement exists to detect; and there is
+                    # no VALIDATING→ESCALATED edge in the canon to reach for instead. So the engine
+                    # says it loudly and the ISSUER decides, which is what the canon prescribes for
+                    # a ⊥ verdict; an unattended caller reads this line and ends its run by it.
+                    self._engine.emit_info("delegate",
+                                           f"{task_id}: validator produced no verdict twice — the ISSUER "
+                                           f"must decide (⊥ is not pass, §11.2); the node stays in "
+                                           f"VALIDATING and no automatic verdict will arrive")
 
     def _on_bus(self, tid=None, old=None, new=None, signal=None) -> None:
-        """The transition-bus callback — trivial (set a flag + note revisions), never blocks the signal
-        path nor re-enters dispatch (the loop thread runs the real pass). An ASSIGN on the bus = a
-        (re)authored node: mark its dedup keys stale so a REVISED node is fresh work (observed live:
-        a revised root kept its consumed spawn key and was never re-executed). An initial ASSIGN has
-        no keys — the mark is a free no-op."""
-        if getattr(signal, "name", "") == "ASSIGN" and tid is not None:
-            self._stale.add(str(tid))
+        """The transition-bus callback — trivial (set a flag), never blocks the signal path nor
+        re-enters dispatch (the loop thread runs the real pass).
+
+        It used to also mark ASSIGNed nodes so their dedup keys would be dropped — the way a REVISED
+        node became fresh work. The generation now rides in the key itself (`_round_key`), so a
+        revision is a new round with nothing to un-remember, and the mark is gone along with the
+        double dispatch it caused on a node's FIRST assign."""
         self._dirty.set()
 
     def start(self) -> None:

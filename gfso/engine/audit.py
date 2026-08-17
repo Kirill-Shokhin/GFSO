@@ -1,4 +1,4 @@
-"""Audit trail — signal log for Th.11 (structural transparency)."""
+"""Audit trail — signal log for Thm 11 (structural transparency)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,18 +18,18 @@ class AuditEntry:
     effects: tuple[str, ...]  # effect type names
     rejected: bool = False
     error: Optional[str] = None
-    # SignalData payload — who decided and why (Th.11, §11 structural transparency)
+    # SignalData payload — who decided and why (Thm 11, §22 structural transparency)
     source: Optional[AgentId] = None
     reason: Optional[str] = None
     justification: Optional[str] = None
     result: Optional[str] = None
     failed_criteria: tuple[str, ...] = ()
     action: Optional[str] = None
-    in_flight: Optional[str] = None  # CANCEL_ACK: executor's in-flight state at cancellation (T11, §6.3)
+    in_flight: Optional[str] = None  # CONFIRM_CANCEL: executor's in-flight state at cancellation (Thm 11, §14.3)
 
 
 class AuditLog:
-    """The append-only signal log (T11/Инв-7). With a storage that implements the audit methods
+    """The append-only signal log (Thm 11/Inv-7). With a storage that implements the audit methods
     (SqliteStorage), every entry is PERSISTED on record and the log HYDRATES on construction —
     the trail survives a restart (state = fold(log) needs the log to outlive the process; it was
     in-memory only, and a restarted server had no history at all). A storage without the methods

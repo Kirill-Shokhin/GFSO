@@ -453,7 +453,7 @@ flowchart LR
   %% mirrors
   CONST["CONST — method_gfso.md"]
   CORE["CORE.md"]
-  CODE["CODE — gfso/ (names = v3.9; the enum migration to v4 is a named debt)"]
+  CODE["CODE — gfso/ (the canon's v4.0 names, enum to model checker)"]
   class CONST,CORE,CODE mirror
 
   %% light anchors
@@ -571,7 +571,7 @@ flowchart LR
   calls an empirical question; L2 causal
   correctness (§24.3/§8) bounds T1 and FM-3; A1∧A2 is the scope; the faithfulness residue is a permanent
   boundary, while method-quality is a **SPLIT** (§8): its *faithfulness* half is a boundary (Lemma 1),
-  its *generation-procedure* half an OPEN PROBLEM closed as a procedure by E2 (`decompose()`) — the
+  its *generation-procedure* half an OPEN PROBLEM closed as a procedure by E2 (`auto_decompose()`) — the
   seam's faithfulness remains the E3 blocker.
 - **The two uniqueness verdicts (§26.9)** are OPPOSITE and must not be read as one: **(a) the basis** —
   uniqueness open, with a positive partial result (σ-canonicity over the Beth class, the wall pinned to the
@@ -588,12 +588,12 @@ flowchart LR
   T1 / the 7 FM / minimality — their proofs live in the apparatus tiers (§11–§12), and the canon derives
   the apparatus itself from the theory-model (§1.5, §2.1).
 - **The mirrors** (View 4) are projections of the canon (`mirror`): the Constitution, CORE, the code
-  `gfso/` (which carries the v3.9 names — the enum migration to v4 is a named debt, `architecture.md`).
+  `gfso/` (which carries the canon's v4.0 names throughout, `architecture.md`).
   Not new primitives — renderings.
 - **E2** (View 3) inherits its completeness from here: the reference = a decomposition that excludes all
   7 FM; "completeness of the buckets" is proved by §12.4, "completeness inside a bucket" = faithfulness,
   reached by the cycle (§2–§3). **E2 showed that cycle converges** (bare-SEARCH ⊕ gfso-AUDIT →
-  `decompose()`); faithfulness to the real domain remains (E3).
+  `auto_decompose()`); faithfulness to the real domain remains (E3).
 
 ## Edge ledger (the grounding — for the critic)
 
@@ -658,7 +658,7 @@ flowchart LR
 | BOVR -.bounds.-> STD4 | §24.4 | the overhead of formalizing criteria/ACCEPTED_RISKS/CHECK |
 | BDOM -.bounds.-> A1, A2 | §9 / §24.6 | the model applies ⟺ A1 ∧ A2 (the scope boundaries) |
 | BFAITH -.bounds.-> FM3 | §8 | the faithfulness residue: the domain-silent false-PASS, permanent |
-| BMETH -.bounds.-> E2 | §8 | decomposition-method quality — a **SPLIT** (§8): the faithfulness half is a boundary (Lemma 1), the generation-procedure half an open problem, closed as a PROCEDURE by E2 (`decompose()`); the seam's faithfulness is the E3 blocker |
+| BMETH -.bounds.-> E2 | §8 | decomposition-method quality — a **SPLIT** (§8): the faithfulness half is a boundary (Lemma 1), the generation-procedure half an open problem, closed as a PROCEDURE by E2 (`auto_decompose()`); the seam's faithfulness is the E3 blocker |
 | ROOT -.explain hole-i.-> FM1 | §2.2 (i) / §12.2 | a coverage hole (forgotten glue) = FM-1 — tagged FM-1.f, Pragmatic level, no a-priori CHECK: it breaks the DOMAIN face of the correspondence condition while the apparatus face passes — not FM-3 |
 | ROOT -.explain insensitive-ii.-> FM3 | §2.2 (ii) / §12 | an insensitive edge of Ŝ∖S = the FM-3 false-PASS |
 | SSHAT -.explain.-> ROOT | §2.2 | the root of any failure = a violated edge of `Ŝ_used ⊆ S` |
@@ -668,7 +668,7 @@ flowchart LR
 | METH -.explain.-> STD4, COST | §7 | stop-and-replan + front-loaded FORM = a forced optimum; verify-vs-explore |
 | VAL -.explain.-> BASIS | §6.1–§6.2 | value = making-explicit: the basis is mandatory at every level; the plan becomes falsifiable |
 | SSHAT -.explain ii.-> BCAUS | §3.1 / §8 | half (ii) of A1 = causal correctness, uncertifiable by the apparatus |
-| CONST/CORE/CODE -.mirror.-> the canon | MEMORY mirrors | projections of the canon; the code `gfso/` carries the v3.9 names — the enum migration to v4 is a named debt (architecture.md) |
+| CONST/CORE/CODE -.mirror.-> the canon | MEMORY mirrors | projections of the canon; the code `gfso/` carries the canon's v4.0 names, guarded (architecture.md) |
 
 <details>
 <summary>The full graph (for zooming)</summary>
@@ -827,7 +827,7 @@ flowchart TD
   subgraph MIR["Canon mirrors (projections, not primitives)"]
     CONST["Constitution method_gfso.md"]
     CORE["CORE.md (the one-pager)"]
-    CODE["the code gfso/ (names = v3.9; the enum migration to v4 is a debt)"]
+    CODE["the code gfso/ (the canon's v4.0 names)"]
   end
   class CONST,CORE,CODE mirror
 

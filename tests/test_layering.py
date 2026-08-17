@@ -27,7 +27,8 @@ RULES = {
     "gfso.adapters": {"gfso.core", "gfso.adapters"},
 }
 
-BINDING = {"gfso.mcp", "gfso.api", "gfso.web", "gfso.cli", "gfso.driver", "gfso.main"}
+# gfso.doctor is binding: it reports on the doors, and `setup` drives them (it imports gfso.mcp).
+BINDING = {"gfso.mcp", "gfso.api", "gfso.web", "gfso.cli", "gfso.driver", "gfso.main", "gfso.doctor"}
 
 
 def _imports(py: pathlib.Path) -> set[str]:

@@ -22,7 +22,7 @@
 #       The COUNT half never scans the canon: the canon is where the counts are read FROM.
 #
 # Not in scope, each for the same reason as the sibling guards: `docs/architecture.md` (mirrors the
-# CODE, declares its lag in a banner), `docs/applied_gfso_v3.md` (frozen draft), `docs/EVIDENCE_LOG.md`
+# CODE, declares its lag in a banner), `docs/EVIDENCE_LOG.md`
 # (dated records — a superseded count inside a dated merge entry is provenance, not drift),
 # `docs/e1/`, `experiments/`, `gfso/`, `tests/`, `examples/`.
 # ---------------------------------------------------------------------------

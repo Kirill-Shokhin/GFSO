@@ -29,14 +29,20 @@ class TaskOut(BaseModel):
     max_iterations: int
     done_reason: str | None
     criteria: list[CriteriaIn]
-    neglected: list[str]  # item texts (back-compat)
-    neglected_detail: list[dict] = []  # [{item, predictability, justification}]
+    accepted_risks: list[str]  # item texts (back-compat)
+    accepted_risks_detail: list[dict] = []  # [{item, predictability, justification}]
     risk_components: list[str]
-    scope: list[str] = []  # Ст. II.6 declared scope-boundary exclusions (objectified on the goal)
+    scope: list[str] = []  # §13.1 declared scope-boundary exclusions (objectified on the goal)
     created_at: str
     deadline: str | None
     was_challenged: bool
     criterion_mappings: list[dict] = []  # [{criterion_name, child_id}]
+    reopens: int = 0
+    # When the CURRENT state was entered. Two engine decisions key on it — the Inv-5 per-state clock
+    # and the contact-refuted-coverage gate ("was a covering child touched since that FAIL?") — and
+    # neither was observable from outside: a live run where the gate did not refuse could not be
+    # diagnosed, because the field is in memory only and a restart re-arms it to load time.
+    state_entered_at: str | None = None
 
 class CheckResultOut(BaseModel):
     check_name: str
@@ -62,7 +68,7 @@ class AuditEntryOut(BaseModel):
     result: str | None = None
     failed_criteria: list[str] = []
     action: str | None = None
-    in_flight: str | None = None  # CANCEL_ACK: executor's in-flight state at cancellation (T11)
+    in_flight: str | None = None  # CONFIRM_CANCEL: executor's in-flight state at cancellation (Thm 11)
 
 class TaskDetailOut(TaskOut):
     checks: list[CheckResultOut]
@@ -77,7 +83,7 @@ class GraphNode(BaseModel):
     assignee: str | None
     parent_id: str | None
     has_children: bool
-    done_reason: str | None = None   # CANCELLED = a tombstone (UI greys it, not an active node)
+    done_reason: str | None = None   # ABANDONED = a tombstone (UI greys it, not an active node)
 
 class GraphEdge(BaseModel):
     source: str
@@ -90,7 +96,7 @@ class GraphOut(BaseModel):
     edges: list[GraphEdge]
 
 class MetricsOut(BaseModel):
-    # None = ⊥: empty population (canon §13) — no observations is not "100%"; the UI renders a dash
+    # None = ⊥: empty population (canon §21) — no observations is not "100%"; the UI renders a dash
     q_T: float | None = None
     q_D: float | None = None
     q_V: float | None = None
@@ -130,18 +136,20 @@ def task_to_out(t: Task) -> TaskOut:
         iteration=t.iteration, max_iterations=t.max_iterations,
         done_reason=t.done_reason.name if t.done_reason else None,
         criteria=[CriteriaIn(name=c.name, description=c.description) for c in t.spec.criteria],
-        neglected=[n.item for n in t.spec.neglected],
-        neglected_detail=[{
+        accepted_risks=[n.item for n in t.spec.accepted_risks],
+        accepted_risks_detail=[{
             "item": n.item,
             "predictability": n.predictability.name if n.predictability else None,
             "justification": n.justification,
-        } for n in t.spec.neglected],
+        } for n in t.spec.accepted_risks],
         risk_components=list(t.spec.risk_components),
         scope=list(t.spec.scope),
         created_at=t.created_at.isoformat(),
         deadline=t.deadline.isoformat() if t.deadline else None,
         was_challenged=t.was_challenged,
         criterion_mappings=[{"criterion_name": m.criterion_name, "child_id": m.child_id} for m in t.criterion_mappings],
+        reopens=getattr(t, "reopens", 0),
+        state_entered_at=(t.state_entered_at.isoformat() if getattr(t, "state_entered_at", None) else None),
     )
 
 def audit_to_out(e: AuditEntry) -> AuditEntryOut:

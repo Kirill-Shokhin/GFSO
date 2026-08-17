@@ -48,7 +48,7 @@ def _parse_model():
                      r'THEN "(\w+)" ELSE "(\w+)"', text, re.S)
     cancel = re.search(r'\\notin Terminal.*?sig = "CANCEL"\s*-> "(\w+)"', text, re.S)
     reassign = re.search(r'\\in Reassignable\s+/\\ sig = "ASSIGN"\s*-> "(\w+)"', text, re.S)
-    # R' REOPEN (§6.3): QuasiTerminal + ASSIGN under ~consumed /\ ro < MaxReopens
+    # R' REOPEN (§14.3): QuasiTerminal + ASSIGN under ~consumed /\ ro < MaxReopens
     reopen = re.search(r'\\in QuasiTerminal\s+/\\ sig = "ASSIGN"\s*'
                        r'/\\ ~consumed\s*/\\ ro < MaxReopens\s*-> "(\w+)"', text, re.S)
     assert fail and cancel and reassign and reopen, "special rows not found in FsmTable.tla"
@@ -112,12 +112,12 @@ def test_model_terminals_match_code():
 def _walk(e: Engine, tid: str, seed: int, steps: int = 200):
     T.create_task(e, tid, SPEC_DICT, "w")
     e.wait_idle()
-    assert e.get_state(TaskId(tid)).name == "REVIEW"
+    assert e.get_state(TaskId(tid)).name == "OFFERED"
 
     # The walk's single node has no parent and no Dep consumers ⟹ the graph's finality-gate
     # computes consumed=False on its quasi-terminals — the model mirrors that; reopens live
     # (max_reopens defaults to 1), so the walk exercises the R' edge AND its exhaustion.
-    model_state, model_iter, model_ro = "REVIEW", 0, 0
+    model_state, model_iter, model_ro = "OFFERED", 0, 0
     rng = random.Random(seed)
     alphabet = list(Signal)
     absorbed = 0
@@ -132,7 +132,7 @@ def _walk(e: Engine, tid: str, seed: int, steps: int = 200):
         if ns != "REJECT":
             if model_state == "VALIDATING" and sig.name == "FAIL" and model_iter < 3:
                 model_iter += 1
-            if model_state in ("DONE", "CANCELLED") and sig.name == "ASSIGN":
+            if model_state in ("DONE", "ABANDONED") and sig.name == "ASSIGN":
                 model_ro += 1  # the REOPEN mutation spends the counter
             model_state = ns
 

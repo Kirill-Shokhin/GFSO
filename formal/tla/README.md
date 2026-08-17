@@ -6,11 +6,12 @@ handshake reaching a terminal). This directory checks what Lean cannot see — t
 **concurrent system half**: the engine's runtime composition, where many signal sources
 interleave through one queue and an asynchronous timeout monitor races the actors.
 
-Model premises are the canon's own (v3.9 §4.8, delta D3): the evaluation act is atomic
+Model premises are the canon's own (§14.3, and §11.1 for the atomicity of an evaluation):
+the evaluation act is atomic
 (one `process_signal` call = one model step) and time is the causal order of queue
 events — no global clock is assumed anywhere.
 
-## Spike (ROADMAP DoD 2.0) — DONE
+## Spike — DONE
 
 `FsmSpike.tla` — ONE node, the full 12-signal alphabet, hostile actors (any P2P signal
 at any time; the engine's rejection path is part of the model), the timeout monitor as
@@ -20,9 +21,9 @@ TIMEOUT rides the queue and may land after the state has moved.
 
 The transition function `Step` is a verbatim image of
 `gfso/core/protocol/fsm.py::transition`, including the iteration guard on
-VALIDATING+FAIL, the universal-CANCEL catch-all, revision (re-ASSIGN → REVIEW,
-§14.4 Inv-1) and the **R′ REOPEN edge** (§14.3): DONE/CANCELLED + ASSIGN under the
-double gate `¬consumed ∧ ro < MaxReopens` → REVIEW. `consumed` (the finality-gate
+VALIDATING+FAIL, the universal-CANCEL catch-all, revision (re-ASSIGN → OFFERED,
+§14.4 Inv-1) and the **R′ REOPEN edge** (§14.3): DONE/ABANDONED + ASSIGN under the
+double gate `¬consumed ∧ ro < MaxReopens` → OFFERED. `consumed` (the finality-gate
 verdict) is modeled as a monotone environment fact like `overdue` — it may land at
 any moment or never; the checked claim is finiteness over EVERY consumption
 trajectory. The reopen counter is spent in the same atomic step as the edge (Inv-7).
@@ -33,16 +34,16 @@ MaxReopens = 2):
 | Property | Meaning | Result |
 |---|---|---|
 | `TypeOK` | state/iteration/queue/reopens stay well-typed and bounded | holds |
-| `Termination` | **Inv-5 at the system level, R′-strengthened to `<>[]`(terminal)**: every behavior eventually reaches a terminal state AND STAYS terminal — gated reopens included; max_reopens restores finiteness for the new outgoing edge exactly as §6.3 claims | holds |
-| `EscalatedAbsorbing` | ESCALATED stays fully terminal (the R′ edge exists only on DONE/CANCELLED) | holds |
-| `FinalityAbsorbing` | a FINAL quasi-terminal (consumed ∨ reopens exhausted) is absorbing — потреблён ∨ исчерпан счётчик ⟹ заперт (§6.3) | holds |
+| `Termination` | **Inv-5 at the system level, R′-strengthened to `<>[]`(terminal)**: every behavior eventually reaches a terminal state AND STAYS terminal — gated reopens included; max_reopens restores finiteness for the new outgoing edge exactly as §14.3 claims | holds |
+| `EscalatedAbsorbing` | ESCALATED stays fully terminal (the R′ edge exists only on DONE/ABANDONED) | holds |
+| `FinalityAbsorbing` | a FINAL quasi-terminal (consumed ∨ reopens exhausted) is absorbing — once the verdict is consumed or the counter is spent, the node is locked (§14.3) | holds |
 
 **R′ regression the model caught (and the code fix it forced).** With the reopen
 edge added, the FIRST run refuted `Termination`: the monitor's dedup keyed on the
 last-FIRED state, so a node could leave a fired-in state through a terminal and
-REOPEN back into it before any cleanup tick (…→ CANCELLING(fired) → CANCELLED →
+REOPEN back into it before any cleanup tick (…→ CANCELLING(fired) → ABANDONED →
 reopen → … → CANCELLING again) — the monitor stayed silent forever and a withheld
-CANCEL_ACK stuck the node: an Inv-5 violation reachable only through R′, invisible
+CONFIRM_CANCEL stuck the node: an Inv-5 violation reachable only through R′, invisible
 to the unit tests. Fix in `loop.py::timeout_monitor`: dedup per state **VISIT** —
 key = (state, `state_entered_at`), every state change restamps the entry ⟹ a
 re-entered state fires again. The model mirrors this as `mark` resetting on every
@@ -51,8 +52,8 @@ refuted artifact.
 
 **Negative control** (`FsmSpikeNoMonitor.cfg`): the same system with a dead monitor
 (no fairness on `MonitorFire`). `Termination` fails with a lasso counterexample — the
-node sits in CANCELLING forever while the executor withholds CANCEL_ACK. That is
-exactly the FSM-deadlock class §14.2 assigns to CANCEL_ACK, and the live-observed
+node sits in CANCELLING forever while the executor withholds CONFIRM_CANCEL. That is
+exactly the FSM-deadlock class §14.2 assigns to CONFIRM_CANCEL, and the live-observed
 stuck-node defect (probe-hardening G3). The instrument demonstrably fails on a broken
 system; the green run above is not vacuous.
 
@@ -66,7 +67,7 @@ Named modeling choices:
   construction, not silently.
 - Bounds: `MaxIterations = 2`, `QueueCap = 3` (complete search within them).
 
-## System model (DoD 2.1) — first result
+## System model — first result
 
 `FsmSystem.tla` — the composition Lean cannot see: two nodes (root + child, E_D edge)
 over ONE shared queue, the CANCEL cascade (entering CANCELLING enqueues CANCEL per
@@ -106,7 +107,7 @@ the same cascade rule composing THROUGH an intermediate node, a crash allowed at
 point (a queued cascade-CANCEL dies with the queue — the monitor terminates the
 orphans from persisted data). Complete 5 275 552-state search, temporal over 52.7M:
 no error. Actor alphabet reduced to the cancel/cascade core {ASSIGN, ACCEPT, CANCEL,
-CANCEL_ACK} — a named choice: full hostility is proven at N=1 and N=2; the first
+CONFIRM_CANCEL} — a named choice: full hostility is proven at N=1 and N=2; the first
 full-alphabet attempt OOM'd the liveness graph (13.5M states × 10 branches), and the
 dropped branches only multiply that graph without touching the cascade mechanism.
 
@@ -121,7 +122,7 @@ the N≥2 checked objects are semantically unchanged from their green runs (thei
 adequate for a node that cannot exit a terminal; the code's per-visit dedup only
 fires MORE often, which is monotone for the liveness those runs claim).
 
-**DoD 2.1 status: the modeled scope is CLOSED** — interleaving over a shared queue
+**Status: the modeled scope is CLOSED** — interleaving over a shared queue
 (N=2, full alphabet), the monitor as a live process (stale fires included), the
 cancel handshake and cascade through depth 2, crash/recovery (= signal loss),
 system-level liveness (Termination) and terminal absorption; R′ reopens at N=1
@@ -137,7 +138,7 @@ One engine process has ONE clock: the `ClockPort` (`SystemClock = time.time()`, 
 wall time) — the monitor compares ABSOLUTE persisted deadlines against it. Deadlines
 are data (ISO strings in SQLite), not running timers ⟹ process sleep/suspend for N
 hours is handled correctly by construction: on wake the next 10s tick sweeps every
-deadline that passed meanwhile (first fire → TIMEOUT / spec-targets, a tick later →
+deadline that passed meanwhile (first fire → OVERDUE / spec-targets, a tick later →
 ESCALATED). Restart = the same shape (the model's Crash step): the monitor's memory
 is disposable, pressure re-derives from persisted data.
 

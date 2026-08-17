@@ -1,6 +1,6 @@
 """FastMCP server (track-b): exposes the CORE upper API to the agent as MCP tools.
 
-Requires the MCP SDK: `pip install gfso[mcp]`. Run:  python -m gfso.mcp.server
+Run:  python -m gfso.mcp.server
 Holds ONE Engine (SQLite-persistent) = the same CORE the UI observes — the agent's tool calls and the
 UI watch one graph. Every authoring tool desugars to the closed 12-signal FSM (no bypass); the tool
 docstrings (from tools.py) become the tool descriptions the agent reads.
@@ -46,8 +46,34 @@ def _resolver(engine_or_registry):
 # human's explicit name; the CLI stays the unpinned dev door). Delegation params (assignee) stay
 # free — NAMING an executor is legitimate; SPEAKING as one is not.
 _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
-                 "reneglect": ("agent",), "edit_criteria": ("agent",),
-                 "record_verdict": ("reviewer",)}
+                 "edit_accepted_risks": ("agent",), "edit_criteria": ("agent",),
+                 "record_verdict": ("reviewer",),
+                 # reopen re-earns a TERMINAL node under R′ (§14.3) — as load-bearing an act as any
+                 # signal, and it was the one whose actor the caller still chose freely, so it
+                 # landed in the audit log attributed to whatever name the model wrote.
+                 "reopen": ("agent",)}
+
+
+# The verbs an agent calls when it ENTERS a graph — the moment a human would want to look at it.
+# The address lived only in the agent's instructions, so no tool RESULT carried it and the link was
+# offered only if the model happened to remember one; here it rides back with the act itself.
+_UI_LINK_VERBS = frozenset({"use_project", "create_task", "project", "auto_decompose"})
+
+
+def _with_ui_link(name: str, out, project=None, ctx=None):
+    """Attach the local UI address to an entry verb's result (dict results only — `project` returns
+    markdown and keeps its shape). Best-effort: a link is a convenience, never a reason to fail a
+    call. The UI is tab-per-project (`?project=`), so the link points at the graph just acted on."""
+    if name not in _UI_LINK_VERBS or not isinstance(out, dict) or "ui" in out:
+        return out
+    try:
+        from gfso import serverctl
+        name_ = project or out.get("active") or _SESSION_PROJECTS.get(_session_key(ctx) or 0)
+        from urllib.parse import quote
+        out["ui"] = f"{serverctl.BASE}/" + (f"?project={quote(str(name_))}" if name_ else "")
+    except Exception:
+        pass
+    return out
 
 
 def _bind(engine_or_registry, fn):
@@ -90,13 +116,23 @@ def _bind(engine_or_registry, fn):
             params.insert(var_kw + 1, inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY,
                                                         default=None, annotation=Context))
 
+    # ASYNC, and the body runs in a worker thread. The SDK awaits a synchronous tool INLINE on the
+    # event loop, so any tool that blocks blocks the whole process: `review_decomposition` spawns a
+    # `claude -p` subprocess capped at 900 seconds, and while it ran the UI stopped updating, the
+    # WebSocket stalled, `/api/runtime` did not answer — which a concurrently starting session then
+    # read as "the address is held by something that is not a gfso server". Two verbs had been
+    # special-cased for this reason; the third was missed, and it is the one the protocol tells an
+    # agent to run FIRST. A thread per call closes the class rather than the instance.
     @functools.wraps(fn)
-    def wrapper(*args, project=None, ctx=None, **kwargs):
+    async def wrapper(*args, project=None, ctx=None, **kwargs):
+        import anyio
         if pinned:
             from gfso.tools import _agent_id
             for name in pinned:
                 kwargs[name] = _agent_id()
-        return fn(resolve(project, ctx), *args, **kwargs)
+        out = await anyio.to_thread.run_sync(
+            functools.partial(fn, resolve(project, ctx), *args, **kwargs))
+        return _with_ui_link(fn.__name__, out, project, ctx)
 
     wrapper.__signature__ = sig.replace(
         parameters=params, return_annotation=hints.get("return", sig.return_annotation))
@@ -133,9 +169,10 @@ def _bind_auto_decompose(engine_or_registry):  # pragma: no cover — exercised 
                 except Exception:
                     pass  # progress is presentation — never break the pipeline
 
-        return await loop.run_in_executor(None, functools.partial(
-            T.auto_decompose, resolve(project, ctx), request, root_id=root_id, assignee=assignee,
+        out = await loop.run_in_executor(None, functools.partial(
+            T.TOOLS["auto_decompose"], resolve(project, ctx), request, root_id=root_id, assignee=assignee,
             depth=depth, model=model, fast=fast, _progress=prog))
+        return _with_ui_link("auto_decompose", out, project, ctx)
 
     auto_decompose.__doc__ = T.auto_decompose.__doc__
     # `from __future__ import annotations` stringifies hints and Context is imported locally — hand the
@@ -169,7 +206,7 @@ def _bind_validate_result(engine_or_registry):  # pragma: no cover — exercised
                     pass  # progress is presentation — never break the pipeline
 
         return await loop.run_in_executor(None, functools.partial(
-            T.validate_result, resolve(project, ctx), task_id, deliverable=deliverable, model=model,
+            T.TOOLS["validate_result"], resolve(project, ctx), task_id, deliverable=deliverable, model=model,
             workdir=workdir, _progress=prog))
 
     validate_result.__doc__ = T.validate_result.__doc__
@@ -186,16 +223,22 @@ def create_server(engine_or_registry):
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as e:  # pragma: no cover
-        raise RuntimeError("MCP SDK not installed — run `pip install gfso[mcp]`") from e
+        raise RuntimeError("MCP SDK not installed — reinstall the package: `pip install gfso`") from e
     # The user-agent's protocol travels as the server's INSTRUCTIONS (delivered at initialize) — the
     # agent starts knowing WHAT GFSO is and HOW to drive it, not just 25 bare tool schemas. One source
     # of truth: gfso/mcp/ORCHESTRATOR.md.
+    #
+    # Read UNGUARDED. A swallowed OSError here handed the agent an empty protocol on any install
+    # whose wheel lacked the file, and the server looked healthy from every angle — 32 tools, clean
+    # initialize, instructions "". tests/test_packaging.py keeps the file in the distribution; if it
+    # is ever missing, a traceback is the correct outcome.
     from pathlib import Path
-    try:
-        protocol = (Path(__file__).parent / "ORCHESTRATOR.md").read_text(encoding="utf-8")
-    except OSError:  # pragma: no cover
-        protocol = ""
+    protocol = (Path(__file__).parent / "ORCHESTRATOR.md").read_text(encoding="utf-8")
     server = FastMCP("gfso", instructions=protocol)
+    # NOTE: the two bindings below call `T.TOOLS[...]`, not the module functions — the registry
+    # entries are the ones wrapped to announce themselves in INFLIGHT. Bound to the bare functions,
+    # `/api/runtime` reported `busy: []` throughout a decomposition or a validator run, which is
+    # exactly the window in which another session's reconcile must not restart the server.
     long_running = {"auto_decompose": _bind_auto_decompose, "validate_result": _bind_validate_result}
     for name, fn in T.TOOLS.items():
         if name in long_running:  # minutes-long: async + MCP progress notifications
@@ -219,7 +262,7 @@ def create_server(engine_or_registry):
                 _SESSION_PROJECTS[key] = name
             else:                                         # no session (bare transport) → global active
                 reg.use(name)
-            return {**reg.list(), "active": name}
+            return _with_ui_link("use_project", {**reg.list(), "active": name})
 
         def list_projects(ctx: _Ctx = None) -> dict:
             """{active, projects}: the isolated project graphs this server owns (one DB file each);
@@ -269,7 +312,8 @@ def _add_agent_verbs(server, engine_or_registry) -> None:
         ensure_dispatcher(engine_or_registry, agents)
 
     def register_agent(agent_id: str, kind: str, model: str = "sonnet",
-                       workdir: str = None, validator: str = None) -> dict:
+                       workdir: str = None, validator: str = None,
+                       oracle_map: str = None, max_turns: int = None) -> dict:
         """Register a NON-human participant (humans need no registration — an unregistered Del = human,
         the system stays passive). kind: `llm-executor` (nodes assigned to this id AUTOSTART: headless
         executor with work tools in `workdir`, its report wrapped into ACCEPT/DELIVER/BLOCK/CHALLENGE) ·
@@ -277,8 +321,14 @@ def _add_agent_verbs(server, engine_or_registry) -> None:
         self-executed; its verdict auto-signals PASS/FAIL) · `external` (a system that sends its own
         signals; nothing spawns). `validator` on an executor entry = a per-executor instrument override
         (else the first registered llm-validator serves everyone). To delegate work after this: just
-        assign/reassign nodes to the registered id."""
-        return agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator)
+        assign/reassign nodes to the registered id.
+
+        `workdir` is REQUIRED for `llm-executor` and `llm-validator`: the directory of the project
+        the agent works in or judges. Without it the agent would be spawned where the SERVER stands
+        — the gfso state home — which holds none of the work, and both ways that failed were silent
+        (a node never dispatched again; a node left in VALIDATING with the cause discarded)."""
+        return agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
+                               oracle_map=oracle_map, max_turns=max_turns)
 
     def list_agents() -> dict:
         """The delegation roster {agent_id → kind/model/workdir}. Unlisted ids = humans."""
@@ -286,6 +336,7 @@ def _add_agent_verbs(server, engine_or_registry) -> None:
 
     register_agent.__annotations__ = {"agent_id": str, "kind": str, "model": str,
                                       "workdir": Optional[str], "validator": Optional[str],
+                                      "oracle_map": Optional[str], "max_turns": Optional[int],
                                       "return": dict}
     list_agents.__annotations__ = {"return": dict}
     server.add_tool(register_agent, name="register_agent", description=(register_agent.__doc__ or "").strip())

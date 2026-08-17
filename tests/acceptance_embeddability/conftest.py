@@ -28,16 +28,20 @@ anything under gfso/core or gfso/engine (the layer gate stays green).
 """
 import importlib.util
 import os
+from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture()
 def host(tmp_path):
-    path = os.environ.get("GFSO_EMBED_HOST")
-    if not path or not os.path.exists(path):
-        pytest.skip("no embedding host present (set GFSO_EMBED_HOST to the embedder's host "
-                    "module — the fresh-agent acceptance run provides one)")
+    # Default subject = the reference host shipped beside this file, so the claim is CHECKED on
+    # every run rather than skipped. It is a CLIENT of the public ports (not a mirror of anything):
+    # when it breaks, the embedding contract broke, which is exactly when we want a red CI.
+    # A fresh-agent acceptance run still overrides it with its own host via GFSO_EMBED_HOST.
+    path = os.environ.get("GFSO_EMBED_HOST") or str(Path(__file__).with_name("reference_host.py"))
+    if not os.path.exists(path):
+        pytest.skip(f"embedding host not found at {path}")
     spec = importlib.util.spec_from_file_location("embed_host", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

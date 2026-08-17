@@ -737,7 +737,7 @@ a seam (it writes out φ, Dep, ACCEPTED_RISKS as A1-checkable, separately falsif
 edges, graded by faithfulness), but does **not guarantee** its faithfulness (Lemma 1, §8). "How to invent
 a *faithful* seam" is the omitted decomposition-METHOD-quality layer; bare seam generation is a [known]
 heuristic, not a [GFSO] guarantee. The method of generating a decomposition (bare-SEARCH ⊕ gfso-AUDIT,
-`decompose()`) converges to a completeness-audited reference, but **does not guarantee the seam's
+`auto_decompose()`) converges to a completeness-audited reference, but **does not guarantee the seam's
 faithfulness to the real domain** — a **permanent boundary** (§8, Lemma 1) + a blocker under execution
 (E3, the engineering demo). *It is an error:* to pass off the EXTERNALIZE form or convergence-to-a-
 reference as a guarantee of a faithful seam.

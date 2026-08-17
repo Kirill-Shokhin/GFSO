@@ -23,10 +23,15 @@
 # The rule: a name v4 retired must not appear in a live canon mirror or in `formal/`.
 #
 # NOT in scope (each for its own reason, same as check_refs.sh):
-#  * `docs/architecture.md` — describes the CODE, whose identifiers still carry the old names; it
-#    declares that lag in a banner. Excluding it is the point, not an oversight.
-#  * `docs/applied_gfso_v3.md` (the frozen draft), `docs/EVIDENCE_LOG.md` (dated records),
-#    `docs/e1/`, `experiments/` (frozen instruments), `gfso/`, `tests/`, `examples/` (named debt).
+#    (`docs/architecture.md` used to sit here, on the ground that it described code still carrying
+#    the old names. The migration landed and it is watched now.)
+#  * `docs/EVIDENCE_LOG.md` (dated records),
+#    `docs/e1/`, `experiments/` (frozen instruments - their vocabulary is the one the instrument
+#    used at observation time; rewriting it would break run-to-run comparability).
+#  * NO LONGER excluded: `gfso/`, `tests/`, `examples/`, `docs/architecture.md`. The enum migration
+#    landed, so the product tree is watched like everything else — and the read-shim that once
+#    decoded pre-migration artifacts is gone with the migration, so nothing here is licensed to
+#    carry an old spelling except this script and the pre-v3.7 `DoneReason.CANCELLED` member.
 #  * provenance mentions: the canon names retired terms on purpose — `(v3.9: HBP)`, `v3.9 names:
 #    OFFERED was REVIEW`. Those are stripped before matching, exactly as check_refs.sh strips them.
 set -euo pipefail
@@ -39,9 +44,24 @@ cd "$(dirname "$0")/.."
 
 CANON=../docs/applied_gfso_v4_en.md
 
+shopt -s globstar nullglob
 FILES=(../README.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
-       ../docs/applied_gfso_vision.md ../docs/falsifiability.md README.md
-       GFSO/*.lean GFSO.lean audit_env.lean check_axioms.lean)
+       ../docs/applied_gfso_vision.md ../docs/falsifiability.md ../docs/USING_GFSO.md README.md
+       GFSO/*.lean GFSO.lean audit_env.lean check_axioms.lean
+       # closed gap: the TLA+ layer declares the state/signal SETS as strings, and the embedding
+       # contract is live — neither was watched before.
+       tla/*.tla tla/README.md ../docs/embeddability_acceptance.md ../docs/TASK_PACKET.md
+       # THE PRODUCT TREE - the "named debt" exclusion is gone: the enum migration landed, so a
+       # retired name surviving in the code, the tests, the examples, the agent-facing prompts or
+       # the UI is now a CI failure like anywhere else.
+       # EVERY .md under the package, by glob rather than by an enumerated list of prompt
+       # directories: the enumeration missed `gfso/decompose/prompts/`, and the miss was not
+       # cosmetic — that prompt told the model to answer with the retired register key, so a
+       # decomposition came back with its risk register silently empty once the reader stopped
+       # accepting the old spelling. A shipped prompt IS the wire contract with the model.
+       ../gfso/**/*.py ../gfso/**/*.md ../gfso/web/index.html ../gfso/web/gfso.css
+       ../tests/**/*.py
+       ../docs/architecture.md)
 
 # ---------------------------------------------------------------------------
 # 0. FAIL-CLOSED PRE-FLIGHT: every watched file must exist.
@@ -137,8 +157,8 @@ handling_for() {
     'EMIT')                echo $'WATCH	'"EMIT\b" ;;
     'objectification')     echo $'WATCH	'"objectification|объективац" ;;
     '[STD]')               echo $'WATCH	'"\[STD\]" ;;
-    'FM-3 Verifiability')  echo $'WATCH	'"FM-3 \(?Verifiability|Verifiability \(FM-3|FM-3 \(?Верифицируемость|Верифицируемость \(FM-3" ;;
-    'FM-5 Currency')       echo $'WATCH	'"FM-5 \(?Currency|Currency \(FM-5|FM-5 \(?Актуальность|Актуальность \(FM-5" ;;
+    'FM-3 Verifiability')  echo $'WATCH	'"FM-3['\"’:. ()-]{0,6}Verifiability|Verifiability['\"’:. ()-]{0,6}FM-3|FM-3['\"’:. ()-]{0,6}Верифицируемость|Верифицируемость['\"’:. ()-]{0,6}FM-3" ;;
+    'FM-5 Currency')       echo $'WATCH	'"FM-5['\"’:. ()-]{0,6}Currency|Currency['\"’:. ()-]{0,6}FM-5|FM-5['\"’:. ()-]{0,6}Актуальность|Актуальность['\"’:. ()-]{0,6}FM-5" ;;
     'Verifiability')       echo $'SKIP	'"v4 KEEPS it as A1 s own name; only FM-3 was renamed - watched as FM-3 Verifiability" ;;
     'Currency')            echo $'SKIP	'"watched as the FM-5 Currency pattern; the bare word is not a canon term" ;;
     'Structural validation') echo $'WATCH	'"Structural validation|Структурная валидация" ;;
@@ -219,11 +239,36 @@ if [[ "$UNHANDLED" -ne 0 ]]; then
   exit 1
 fi
 
+# SECOND CONTRACT SOURCE — the code-side renames the canon never states (a tool verb, JSON keys,
+# a type, an `action` value). Nothing derives them from the canon, so without this table they would
+# be watched by nobody: a stale `reneglect` in a prompt or in a shipped document would stay green
+# forever. It lives INSIDE the guard rather than in a data file beside it: the migration that
+# produced these renames is over and its tooling is not in the repository, so a lone contract file
+# would read as leftover — here it is the guard's own rule, in the one file already licensed to name
+# retired spellings. Fail-closed: fewer rows than declared is a guard failure, not a skip.
+ENG_CONTRACT_ROWS=(
+  "reneglect|edit_accepted_risks|the action surface spells an RMW over one Spec field as edit_<field>, like its sibling edit_criteria"
+  "neglected|accepted_risks|the register JSON key (API, the criteria input contract, the decomposer schema) follows the canon NEGLECTED -> ACCEPTED_RISKS"
+  "neglected_detail|accepted_risks_detail|the same object, API projection"
+  "NeglectedItem|AcceptedRiskItem|the register entry type"
+  "cancel_ack|confirm_cancel|an action value is derived from the SIGNAL it asks for, and that signal is CANCEL_ACK -> CONFIRM_CANCEL"
+)
+ENG_ROWS=0
+for row in "${ENG_CONTRACT_ROWS[@]}"; do
+  old="${row%%|*}"; rest="${row#*|}"; new="${rest%%|*}"; why="${rest#*|}"
+  PAIRS+=("\b${old}\b"$'	'"${old} → ${new} (${why})")
+  ENG_ROWS=$((ENG_ROWS + 1))
+done
+[[ "$ENG_ROWS" -ge 5 ]] || { echo "FAIL: the engineering rename table yields $ENG_ROWS rows, expected >= 5 — a row was dropped." >&2; exit 1; }
+
 for e in "${EXTRA[@]}"; do PAIRS+=("$e"); done
 
 # Strip what may legitimately name a retired term:
 #  * `(v3.9: X)` / `v3.9 names: …` / `v3.9 carried this as "X"` — the canon's own provenance notes;
-#  * the Fsm.lean NAMES banner, which must list the code's identifiers to declare the lag.
+#  * the pre-v3.7 `DoneReason.CANCELLED` legacy member, which names a spelling the storage layer
+#    still decodes on read (§14.3) and which no rename retired.
+# (The v3.9 read-shim once licensed here is gone: the migration is over and nothing writes or reads
+# the old spellings any more, so a region licensed to carry them would license a regression.)
 # Licensed regions are BLANKED, never deleted: `sed '…d'` shifts every later line number, which made
 # this guard report the wrong line for every hit after the banner.
 strip_licensed() {
@@ -231,7 +276,7 @@ strip_licensed() {
       -e 's/v3\.9 names:[^)]*//g' \
       -e 's/v3\.9 carried this as "[^"]*"//g' \
       -e 's/v3\.9 §[0-9.]*//g' \
-      -e '/NAMES: this is a mirror of the CANON/,/^$/s/.*//'
+      -e '/DoneReason\.CANCELLED\|DONE(reason=CANCELLED)\|DONE(cancelled)\|done_reason === .CANCELLED.\|legacy DoneReason/s/.*//'
 }
 
 # One combined alternation, one pass per file: patterns × files as separate greps is ~450 process
@@ -249,9 +294,14 @@ explain() {  # matched text → what v4 says
   echo "see the contract in the canon's Changelog"
 }
 
+# A file may be licensed WHOLE when naming the retired spellings is its subject. One rule, and it is
+# narrow: this guard names them in order to watch them. Anything else is unlicensed by default.
+LICENSED_FILES='check_naming\.sh'
+
 BAD=0
 for f in "${FILES[@]}"; do
   [[ -f "$f" ]] || continue
+  [[ "$f" =~ $LICENSED_FILES ]] && continue
   hits="$(strip_licensed < "$f" | grep -noE "$ALT" || true)"
   [[ -z "$hits" ]] && continue
   while IFS= read -r line; do

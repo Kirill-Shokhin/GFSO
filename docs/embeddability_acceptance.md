@@ -31,7 +31,7 @@ The embedder makes THIS suite green without modifying anything under `gfso/core/
    consumer cannot be driven before its producer delivers).
 3. **Reject**: an executor signal from a non-Del source is rejected and audited as rejected.
 4. **Timeout**: with the virtual clock advanced past a deadline, the sub-FSM escalates
-   (REVIEW→TIMEOUT→ESCALATED) — no real waiting.
+   (OFFERED→OVERDUE→ESCALATED) — no real waiting.
 5. **Checks**: an intentionally cyclic Dep declaration is refused; a BLOCK naming a sibling
    records the discovered edge and CHECK-2 names the resulting cycle in `graph_holes`.
 6. **Restart**: a new host process over the same JSONL store hydrates the audit log and
@@ -87,6 +87,15 @@ Spec / Criteria / DepEdge field sets · `gfso/core/protocol/fsm.py` — the live
 
 ## Status
 
-- [x] Suite implemented (skips without a host; red against an empty attempt)
+- [x] Suite implemented (red against an empty attempt)
 - [x] Fresh-agent run executed (2026-07-12: 6/6 green first pass, 0 stuck points, 0 author questions; 9 doc-gaps logged)
 - [x] Doc-gaps triaged → the wiring reference above (semantics documented, schemas pointed at)
+- [x] **Checked on every run, not only when a volunteer host exists.** A reference host ships beside
+      the suite (`tests/acceptance_embeddability/reference_host.py`) and is its default subject: a
+      JSON-lines store, a virtual clock, and its own signal pump over `gfso.engine.loop.process_signal`
+      — no Engine, no engine threads, and nothing imported outside the public ports. So the claim is
+      now falsified by a red CI the moment the embedding contract breaks, rather than skipped.
+      `GFSO_EMBED_HOST` still overrides it, which is how a fresh-agent acceptance run is judged.
+
+  The reference host is a **client** of the ports, not a mirror of them: it duplicates no engine
+  logic, so it can only break when the contract it consumes does.

@@ -9,15 +9,15 @@ EXTENDS Naturals, Sequences
 
 CONSTANTS MaxIterations, MaxReopens
 
-States == {"IDLE", "REVIEW", "CHALLENGED", "EXECUTING", "BLOCKED", "VALIDATING",
-           "REWORK", "CANCELLING", "TIMEOUT", "DONE", "CANCELLED", "ESCALATED"}
-Terminal == {"DONE", "CANCELLED", "ESCALATED"}                      \* enums.py TERMINAL_STATES
-Reassignable == {"REVIEW", "CHALLENGED", "EXECUTING", "BLOCKED",    \* enums.py REASSIGNABLE_STATES
-                 "VALIDATING", "REWORK"}
-QuasiTerminal == {"DONE", "CANCELLED"}                              \* enums.py QUASI_TERMINAL_STATES (R', §6.3)
+States == {"IDLE", "OFFERED", "CHALLENGED", "EXECUTING", "BLOCKED", "VALIDATING",
+           "REWORKING", "CANCELLING", "OVERDUE", "DONE", "ABANDONED", "ESCALATED"}
+Terminal == {"DONE", "ABANDONED", "ESCALATED"}                      \* enums.py TERMINAL_STATES
+Reassignable == {"OFFERED", "CHALLENGED", "EXECUTING", "BLOCKED",    \* enums.py REASSIGNABLE_STATES
+                 "VALIDATING", "REWORKING"}
+QuasiTerminal == {"DONE", "ABANDONED"}                              \* enums.py QUASI_TERMINAL_STATES (R', §6.3)
 
 P2P == {"ASSIGN", "ACCEPT", "CHALLENGE", "ACCEPT_CHALLENGE", "REJECT_CHALLENGE",
-        "DELIVER", "BLOCK", "RESOLVE_BLOCK", "PASS", "FAIL", "CANCEL", "CANCEL_ACK"}
+        "DELIVER", "BLOCK", "RESOLVE_BLOCK", "PASS", "FAIL", "CANCEL", "CONFIRM_CANCEL"}
 Sigs == P2P \cup {"TIMEOUT"}                                        \* TIMEOUT is systemic, not P2P (§6.2)
 
 (* fsm.py `transition`; "REJECT" = table lookup miss → engine audit-rejects. `it` =
@@ -25,35 +25,39 @@ Sigs == P2P \cup {"TIMEOUT"}                                        \* TIMEOUT i
    counter and `consumed` = the finality-gate verdict (GuardContext, computed by the
    graph at the chokepoint in the same atomic step — Инв-7, no TOCTOU). *)
 Step(s, sig, it, ro, consumed) ==
-  CASE s = "IDLE"       /\ sig = "ASSIGN"           -> "REVIEW"
-    [] s = "IDLE"       /\ sig = "TIMEOUT"          -> "TIMEOUT"    \* DECLARED DIVERGENCE: v4.0 Inv-5 exempts IDLE (§14.4) — row scheduled for removal
-    [] s = "REVIEW"     /\ sig = "ACCEPT"           -> "EXECUTING"
-    [] s = "REVIEW"     /\ sig = "CHALLENGE"        -> "CHALLENGED"
-    [] s = "REVIEW"     /\ sig = "TIMEOUT"          -> "TIMEOUT"
-    [] s = "CHALLENGED" /\ sig = "ACCEPT_CHALLENGE" -> "REVIEW"
+  CASE s = "IDLE"       /\ sig = "ASSIGN"           -> "OFFERED"
+    \* No (IDLE, TIMEOUT) row: v4.0 Inv-5 exempts IDLE by name (§14.4) — the pre-contract state
+    \* carries no clock, and its starvation surfaces as the PARENT's timeout. A crash orphan is
+    \* recovered by finishing the interrupted ASSIGN (Engine._recover_orphans), not by this edge.
+    [] s = "OFFERED"     /\ sig = "ACCEPT"           -> "EXECUTING"
+    [] s = "OFFERED"     /\ sig = "CHALLENGE"        -> "CHALLENGED"
+    [] s = "OFFERED"     /\ sig = "TIMEOUT"          -> "OVERDUE"
+    [] s = "CHALLENGED" /\ sig = "ACCEPT_CHALLENGE" -> "OFFERED"
     [] s = "CHALLENGED" /\ sig = "REJECT_CHALLENGE" -> "EXECUTING"
-    [] s = "CHALLENGED" /\ sig = "TIMEOUT"          -> "TIMEOUT"
+    [] s = "CHALLENGED" /\ sig = "TIMEOUT"          -> "OVERDUE"
     [] s = "EXECUTING"  /\ sig = "DELIVER"          -> "VALIDATING"
     [] s = "EXECUTING"  /\ sig = "BLOCK"            -> "BLOCKED"
-    [] s = "EXECUTING"  /\ sig = "TIMEOUT"          -> "TIMEOUT"
+    [] s = "EXECUTING"  /\ sig = "TIMEOUT"          -> "OVERDUE"
     [] s = "BLOCKED"    /\ sig = "RESOLVE_BLOCK"    -> "EXECUTING"
     [] s = "BLOCKED"    /\ sig = "TIMEOUT"          -> "ESCALATED"   \* block IS the escalation
     [] s = "VALIDATING" /\ sig = "PASS"             -> "DONE"
     [] s = "VALIDATING" /\ sig = "FAIL"             -> IF it < MaxIterations
-                                                       THEN "REWORK" ELSE "DONE"  \* DONE(fail)
+                                                       THEN "REWORKING" ELSE "ESCALATED"
+                                                       \* exhausted rework escalates (§14.3); the
+                                                       \* canon has no "V = fail, settled" terminal
     [] s = "VALIDATING" /\ sig = "TIMEOUT"          -> "DONE"        \* DONE(auto_pass), §16.7
-    [] s = "REWORK"     /\ sig = "DELIVER"          -> "VALIDATING"
-    [] s = "REWORK"     /\ sig = "BLOCK"            -> "BLOCKED"
-    [] s = "REWORK"     /\ sig = "TIMEOUT"          -> "TIMEOUT"
-    [] s = "TIMEOUT"    /\ sig = "TIMEOUT"          -> "ESCALATED"   \* repeated timeout
-    [] s = "CANCELLING" /\ sig = "CANCEL_ACK"       -> "CANCELLED"
-    [] s = "CANCELLING" /\ sig = "TIMEOUT"          -> "CANCELLED"   \* cancellation authoritative
+    [] s = "REWORKING"     /\ sig = "DELIVER"          -> "VALIDATING"
+    [] s = "REWORKING"     /\ sig = "BLOCK"            -> "BLOCKED"
+    [] s = "REWORKING"     /\ sig = "TIMEOUT"          -> "OVERDUE"
+    [] s = "OVERDUE"    /\ sig = "TIMEOUT"          -> "ESCALATED"   \* repeated timeout
+    [] s = "CANCELLING" /\ sig = "CONFIRM_CANCEL"       -> "ABANDONED"
+    [] s = "CANCELLING" /\ sig = "TIMEOUT"          -> "ABANDONED"   \* cancellation authoritative
     [] s \notin Terminal /\ s # "CANCELLING"
                         /\ sig = "CANCEL"           -> "CANCELLING"  \* universal catch-all (§6.3)
-    [] s \in Reassignable /\ sig = "ASSIGN"         -> "REVIEW"      \* revision, same id (§6.4 Inv-1)
+    [] s \in Reassignable /\ sig = "ASSIGN"         -> "OFFERED"      \* revision, same id (§6.4 Inv-1)
     [] s \in QuasiTerminal /\ sig = "ASSIGN"
                           /\ ~consumed
-                          /\ ro < MaxReopens        -> "REVIEW"      \* R' REOPEN (§6.3): finality-gate ∧ counter
+                          /\ ro < MaxReopens        -> "OFFERED"      \* R' REOPEN (§6.3): finality-gate ∧ counter
     [] OTHER                                        -> "REJECT"
 
 ============================================================================

@@ -19,12 +19,12 @@ class MutateGraph:
     parent_id: TaskId | None = None      # CREATE_TASK: parent link
     deadline: datetime | None = None     # CREATE_TASK: T deadline
     max_iterations: int = 3              # CREATE_TASK: rework bound
-    covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§2.2)
-    dep_from: TaskId | None = None       # RECORD_DEP: prerequisite node; ADJUDICATE_DEP: corrected source (§6.2)
-    dep_froms: tuple[TaskId, ...] = ()   # ADJUDICATE_DEP: corrected FULL source set (SET semantics, §6.2)
-    dep_external: bool = False           # ADJUDICATE_DEP: retract — blocker non-producible (FM-5 line, §6.2)
+    covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§10)
+    dep_from: TaskId | None = None       # RECORD_DEP: prerequisite node; ADJUDICATE_DEP: corrected source (§14.2)
+    dep_froms: tuple[TaskId, ...] = ()   # ADJUDICATE_DEP: corrected FULL source set (SET semantics, §14.2)
+    dep_external: bool = False           # ADJUDICATE_DEP: retract — blocker non-producible (FM-5 line, §14.2)
     glue: str = ""                       # RECORD_DEP: provenance text (the BLOCK reason)
-    revision_reason: RevisionReason | None = None  # APPLY_SPEC/REOPEN: causal type of the revision (§16.5)
+    revision_reason: RevisionReason | None = None  # APPLY_SPEC/REOPEN: causal type of the revision (§24.5)
 
 
 @dataclass(frozen=True)

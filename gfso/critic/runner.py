@@ -1,10 +1,10 @@
-"""L2 critic — the STRUCTURAL GATE + the causal-correctness CHECKER (canon §5.4 Level 2).
+"""L2 critic — the STRUCTURAL GATE + the causal-correctness CHECKER (canon §13.4 Level 2).
 
 Level 2's question is a CHECK, not a hunt: per parent criterion — do the mapped children's
 criteria, taken as real-world facts, causally guarantee it? (Plus the semantic FM-2 residue the
-formal CHECK-8 cannot see.) EPISTEMIC STATUS (§5.4-bis/§18.1): the Level-2 AXIS is checkable
+formal CHECK-8 cannot see.) EPISTEMIC STATUS (§13.5/§8): the Level-2 AXIS is checkable
 only by EXECUTION — no pre-contact instrument can verify it (any verdict is itself a Level-2
-claim); this checker is the canon's named LLM-REVIEW approximation — an a-priori estimate over
+claim); this checker is the canon's named LLM-OFFERED approximation — an a-priori estimate over
 the faithfulness axis — and the real Level-2 verdict stays with contact (q_D). Hence ADVISORY by
 construction, never an acceptance blocker.
 
@@ -12,7 +12,7 @@ Two prior designs are deliberately dead: the analyst⊥judge monolithic critic (
 polices form, cannot move content) and the SEARCH-in-diff-mode hole-hunt (the opposite extreme —
 "what is missing" is the DECOMPOSER's question and lives in refine, not here). Staged: the L0/L1
 gate BLOCKS the checker (L2 presupposes a structurally-complete graph); the verdict never
-auto-fixes — the agent fixes via FSM verbs or consciously declares NEGLECTED.
+auto-fixes — the agent fixes via FSM verbs or consciously declares ACCEPTED_RISKS.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ ATOMICITY_SCHEMA = {
 
 def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     """L2 validate — the STRUCTURAL gate (cached L0/L1, eager-fresh) + the causal-correctness
-    CHECKER. Stores the critique as the validation record + sets verified=True (advisory).
+    CHECKER. Stores the critique as the validation record + sets verified=True.
     Lives HERE, not on Engine: the critic pulls decompose/adapters, and the engine imports core
     only (the mechanical layer gate) — the engine is an argument, not a host."""
     import json
@@ -114,9 +114,9 @@ def _critique_leaf(engine, node_id: TaskId, llm=None) -> NodeCritique:
     reviewed too, by its own question: do these acceptance criteria describe separable,
     independently-deliverable parts? A `separable` verdict names them as a partition of the criteria;
     an `atomic` verdict closes the check and the node executes as a leaf, which is a perfectly good
-    answer — this is not a push to decompose (§2.2: inventing a pass-through child makes the plan
+    answer — this is not a push to decompose (§10: inventing a pass-through child makes the plan
     WORSE). Advisory exactly like the decomposition checker: the agent fixes or disputes, contact
-    decides (§5.4-bis)."""
+    decides (§13.5)."""
     nid = str(node_id)
     task = engine.get_task(node_id)
     if llm is None or task is None:
@@ -157,12 +157,14 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
     read): per parent criterion sufficient/insufficient/uncertain + FM-2 conflicts. A failed,
     absent or INCOMPLETE verdict ⇒ semantic_covered=None — never read as clean.
 
-    "Structurally clean" means the SAME checks that admit a plan to execution (coverage /
-    non-redundancy / DAG / deadlines — §5.4). The documentation checks (CHECK-4 NEGLECTED, CHECK-5
-    risk-nodes) are advisory there and advisory here: gating the checker on them made a plan with an
-    empty NEGLECTED unable to obtain ANY Level-2 verdict — and since execution now waits for that
-    verdict, it would have deadlocked the agent into inventing a fake NEGLECTED. One definition of an
-    admissible plan, used by both gates."""
+    "Structurally clean" means the SAME checks that admit a plan to execution: the whole Syntactic
+    level (CHECK-1, 1b, 2, 3, 4, 5, 6 — §13.4), read from `_EXEC_GATING_CHECKS` so the two gates
+    cannot drift apart. The register and risk-node rows are on that level too (§13.1: "a decomposition
+    without the register is incomplete by definition"), so a plan with an empty ACCEPTED_RISKS gets no
+    Level-2 verdict and no execution — the hole is repaired, not routed around. What that costs is
+    real and was measured (gating the register bought fabricated entries and churn), and it is a q_T
+    defect with a name and an owner — an argument about incentives, not about whose rule this is.
+    One definition of an admissible plan, used by both gates."""
     from gfso.engine.validation import _EXEC_GATING_CHECKS
     nid = str(node_id)
     children = engine.get_active_children(node_id)  # cancelled tombstones are not part of the decomposition

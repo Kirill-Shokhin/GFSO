@@ -19,7 +19,7 @@ def test_agent_loop_through_tools():
     """The agent's authoring loop driven entirely through the MCP tool functions → JSON-able dicts."""
     e = _eng()
     root = T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
-    assert root["state"] == "REVIEW" and root["id"] == "r"
+    assert root["state"] == "OFFERED" and root["id"] == "r"
 
     proj = T.project(e, "r")
     assert isinstance(proj, str) and "root" in proj
@@ -59,13 +59,13 @@ def test_signal_rejection_reports_reason():
     """A rejected signal returns WHY + the structural gate, not a silent accepted:false (BUG-3)."""
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
-    # decompose it (CHECK-4 gates decomposed nodes only, v3.7 §5.1) — root has no NEGLECTED → open hole
+    # decompose it (CHECK-4 gates decomposed nodes only, v3.7 §13.1) — root has no ACCEPTED_RISKS → open hole
     T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
                 [{"criterion_name": "a", "child_id": "k"}])
-    res = T.signal(e, "r", "PASS", "alice")            # PASS is invalid in REVIEW
+    res = T.signal(e, "r", "PASS", "alice")            # PASS is invalid in OFFERED
     assert res["accepted"] is False
     assert "error" in res and "PASS" in res["error"]   # names the offending signal / valid set
-    assert res.get("failing_checks")                   # surfaces CHECK-4 (empty NEGLECTED on a decomposed node)
+    assert res.get("failing_checks")                   # surfaces CHECK-4 (empty ACCEPTED_RISKS on a decomposed node)
     e.stop()
 
 
@@ -75,10 +75,10 @@ def test_list_holes_surfaces_graph_gaps():
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
     holes = T.list_holes(e)
-    assert not any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)  # leaf: not gated (§5.1)
+    assert not any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)  # leaf: not gated (§13.1)
     T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
                 [{"criterion_name": "a", "child_id": "k"}])
-    holes = T.list_holes(e)                 # decomposed root with no NEGLECTED → CHECK-4 is an open hole
+    holes = T.list_holes(e)                 # decomposed root with no ACCEPTED_RISKS → CHECK-4 is an open hole
     assert any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)
     e.stop()
 
@@ -96,7 +96,7 @@ def test_bind_drops_engine_from_signature():
 def test_tools_registry_complete():
     """Every authoring + read verb is registered for the agent surface — the COMPLETE registry
     is tools_llm.TOOLS (structural ∪ LLM); tools.TOOLS stays the structural subset (layer gate)."""
-    for name in ("create_task", "decompose", "auto_decompose", "revise", "reneglect", "edit_criteria",
+    for name in ("create_task", "decompose", "auto_decompose", "revise", "edit_accepted_risks", "edit_criteria",
                  "reassign", "add_dependency", "remove_dependency", "map_criterion", "signal",
                  "review_decomposition", "project", "get_task", "next_step", "get_graph", "list_holes"):
         assert name in TL.TOOLS
@@ -113,7 +113,7 @@ def test_agent_mutation_fires_the_ui_live_event():
     e.on_transition(lambda tid, old, new, sig: events.append((str(tid), new.name, sig.name)))
     T.create_task(e, "live", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "alice")
     e.wait_idle()
-    assert any(t == "live" and new == "REVIEW" and sig == "ASSIGN" for t, new, sig in events)
+    assert any(t == "live" and new == "OFFERED" and sig == "ASSIGN" for t, new, sig in events)
 
 
 def test_unified_mcp_transport_mounts_and_handshakes():
@@ -160,3 +160,20 @@ def test_default_assignee_is_the_calling_agent(monkeypatch):
     t3 = T.create_task(e, "named", {"description": "z", "criteria": [{"name": "c", "description": "C"}]})
     assert t3["assignee"] == "claude-main"
     e.stop()
+
+
+def test_entry_verbs_carry_the_local_ui_link():
+    """The address of the UI lived only in the agent's INSTRUCTIONS: no tool result carried it, so
+    whether the human ever got a link depended on the model remembering one. The verbs that mean
+    "I am entering this graph" now answer with it, pointed at the project just acted on (the UI is
+    tab-per-project, `?project=`). A link is a convenience, so it never fails a call and never
+    reshapes a non-dict result."""
+    from gfso.mcp.server import _with_ui_link
+    from gfso import serverctl
+
+    out = _with_ui_link("use_project", {"active": "e3"})
+    assert out["ui"] == f"{serverctl.BASE}/?project=e3"
+    assert _with_ui_link("create_task", {"id": "root"}, project="demo")["ui"].endswith("?project=demo")
+    assert "ui" in _with_ui_link("create_task", {"id": "root"})          # no project → bare address
+    assert _with_ui_link("get_checks", {"x": 1}) == {"x": 1}             # not an entry verb
+    assert _with_ui_link("project", "# markdown") == "# markdown"        # non-dict result untouched

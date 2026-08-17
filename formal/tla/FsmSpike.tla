@@ -1,5 +1,5 @@
 ---------------------------- MODULE FsmSpike ----------------------------
-(* GFSO protocol under concurrency — the phase-2.0 spike (ROADMAP DoD 2.0).
+(* GFSO protocol under concurrency — the first spike.
 
    ONE node, the full signal alphabet, hostile actors (any P2P signal at any time —
    the engine's rejection path is part of the model, visibility≠enforcement), and
@@ -61,7 +61,7 @@ Init ==
    (state, state_entered_at); a state change restamps entered_at ⟹ a re-entered state is a
    fresh visit). The earlier last-fired-state dedup was REFUTED by this model once the R'
    edge existed: leave a fired-in state through a terminal, REOPEN back in before any
-   cleanup — the monitor stays silent and a withheld CANCEL_ACK sticks the node forever. *)
+   cleanup — the monitor stays silent and a withheld CONFIRM_CANCEL sticks the node forever. *)
 Process ==
   /\ Len(queue) > 0
   /\ LET sig == Head(queue)
@@ -89,7 +89,7 @@ ActorSend(sig) ==
 
 (* loop.py timeout_monitor: overdue node, not terminal, dedup per state. The enqueued
    TIMEOUT does NOT carry the state it was fired for — staleness modeled faithfully.
-   NB after a reopen the node is non-terminal again (REVIEW) — the monitor's pressure
+   NB after a reopen the node is non-terminal again (OFFERED) — the monitor's pressure
    resumes exactly as the code's does (dedup is per state, and the state changed). *)
 MonitorFire ==
   /\ overdue
@@ -152,10 +152,10 @@ SpecNoMonitor ==
    edge, plain <>(terminal) would be too weak (a reopen legally leaves DONE); the
    claim is absorption-in-the-limit: max_reopens exhausts (or consumption locks the
    node) and the node settles. This is precisely §6.3's "max_reopens восстанавливает
-   конечность при появившемся у DONE/CANCELLED исходящем ребре (Инв-5)". *)
+   конечность при появившемся у DONE/ABANDONED исходящем ребре (Инв-5)". *)
 Termination == <>[](state \in Terminal)
 
-(* ESCALATED stays FULLY terminal — the R' edge exists only on DONE/CANCELLED. *)
+(* ESCALATED stays FULLY terminal — the R' edge exists only on DONE/ABANDONED. *)
 EscalatedAbsorbing == [](state = "ESCALATED" => [](state = "ESCALATED"))
 
 (* Quasi-terminal finality (§6.3): a FINAL quasi-terminal — consumed, or with the

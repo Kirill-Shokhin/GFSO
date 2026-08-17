@@ -109,27 +109,27 @@ def test_audit_carries_source_and_reason():
 
 # === Item 4: predictability via API ===
 
-def test_create_task_structured_neglected():
+def test_create_task_structured_accepted_risks():
     c = _client(_engine())
     r = c.post("/api/run/create_task", json={
         "task_id": "t1", "assignee": "d",
-        "spec": {"description": "x", "neglected": [
+        "spec": {"description": "x", "accepted_risks": [
             {"item": "rare outage", "predictability": "STATISTICAL", "justification": "P<1%"},
         ]},
     })
     assert r.status_code == 200
-    # dict-form NEGLECTED is accepted (structured parse doesn't crash); the item is extracted
-    assert r.json()["neglected"] == ["rare outage"]
+    # dict-form ACCEPTED_RISKS is accepted (structured parse doesn't crash); the item is extracted
+    assert r.json()["accepted_risks"] == ["rare outage"]
 
 
-def test_plain_string_neglected_still_accepted():
+def test_plain_string_accepted_risks_still_accepted():
     c = _client(_engine())
     r = c.post("/api/run/create_task", json={
         "task_id": "t1", "assignee": "d",
-        "spec": {"description": "x", "neglected": ["legacy text"]},
+        "spec": {"description": "x", "accepted_risks": ["legacy text"]},
     })
     assert r.status_code == 200
-    assert r.json()["neglected"] == ["legacy text"]
+    assert r.json()["accepted_risks"] == ["legacy text"]
 
 
 # === Item 5: per-role actions ===
@@ -138,9 +138,9 @@ def test_available_actions_by_role():
     e = _engine()
     # root task: assignee = executor
     e.assign_task(TaskId("t1"), Spec("x", ()), AgentId("dev"))
-    e.wait_idle()  # now in REVIEW
+    e.wait_idle()  # now in OFFERED
     exec_actions = e.available_actions(TaskId("t1"), AgentId("dev"))
-    assert Signal.ACCEPT in exec_actions  # executor can accept in REVIEW
+    assert Signal.ACCEPT in exec_actions  # executor can accept in OFFERED
     assert Signal.PASS not in exec_actions  # PASS is an issuer signal
 
 
@@ -156,7 +156,7 @@ def test_actions_endpoint():
     assert "TIMEOUT" not in names  # system signal never offered
 
 
-# === Dep glue (anti-mock truth-maker) + NEGLECTED invalidation ===
+# === Dep glue (anti-mock truth-maker) + ACCEPTED_RISKS invalidation ===
 
 def test_dep_glue_persists_and_checks():
     from gfso.core.types import Criteria, CriterionMapping
@@ -181,12 +181,12 @@ def test_dep_glue_persists_and_checks():
 
 
 def test_projection_shows_glue_and_invalidation():
-    from gfso.core.types import Criteria, CriterionMapping, NeglectedItem, Predictability
+    from gfso.core.types import Criteria, CriterionMapping, AcceptedRiskItem, Predictability
     e = _engine()
     e.assign_task(
         TaskId("p"),
         Spec("p", (Criteria("c", "x"),),
-             (NeglectedItem("fx rates", Predictability.STATISTICAL, "external", "if multi-currency added"),)),
+             (AcceptedRiskItem("fx rates", Predictability.STATISTICAL, "external", "if multi-currency added"),)),
         AgentId("pm"),
     )
     e.wait_idle()
@@ -225,7 +225,7 @@ def test_projection_renders_decomposition():
     assert "tested" in md and "coverage" in md  # parent + child criteria
     assert "`c1`" in md                    # subtask
     assert "tested** → c1" in md           # criterion coverage
-    assert "legacy browsers" in md         # NEGLECTED
+    assert "legacy browsers" in md         # ACCEPTED_RISKS
     assert "CHECK-1:coverage" in md        # Solver results embedded
 
 

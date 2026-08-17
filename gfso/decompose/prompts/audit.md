@@ -25,6 +25,12 @@ Reduce everything to a canonical, non-redundant **BASIS**:
     self-dependency (X → X); an internal ordering within one subtask is not a Dep. **Anti-mock:** the seam's
     criterion must bind the producer's **real output artifact** to the consumer's input — a criterion that
     could still pass while the real link is broken is a mock, not a seam.
+    **Shared artifact ⇒ declared edge.** Two subtasks that will WRITE THE SAME FILE are not
+    independent, whatever their topics. Say so where it belongs: give each subtask its own artifact,
+    or, when one module genuinely must be edited by both, emit the Dep that orders them (source =
+    the one that must land first, with what breaks if it does not). Independence is a CLAIM here —
+    the executors of independent subtasks may run at the same time, and two of them in one file means
+    the later write silently takes the earlier one's work.
   - **V** — criteria: each a **decidable predicate over the produced result** (not an action description, not
     a self-report). Place each where it is OWNED: a criterion that spans several subtasks / belongs to the
     whole node is a **parent-level spanning invariant**; a criterion about one component's own output belongs
@@ -33,7 +39,7 @@ Reduce everything to a canonical, non-redundant **BASIS**:
   - **N (scope)** — declared scope-BOUNDARY exclusions: a capability the goal deliberately does NOT include
     (no materialization probability — NOT a risk event). Each with why it is safely out. These are objectified
     ON THE GOAL — they belong in the graph's `scope` (not prose-only) and shape which criteria exist; a risk
-    EVENT with a probability is a `neglected` item, not this.
+    EVENT with a probability is an `accepted_risks` item, not this.
 
 **Criteria completeness — the load-bearing check, applied to EVERY node, not just the root.** Each subtask's
 criteria must be **jointly sufficient for its own obligation**, not merely present. Test per node: *could a

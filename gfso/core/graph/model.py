@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from gfso.core.types import (
-    TaskId, AgentId, Task, State, Signal, DoneReason,
+    TaskId, AgentId, Task, State, Signal,
     GuardContext, GraphContext, CheckResult, Recommendation,
     DispatchPayload, StoragePort,
 )
@@ -22,27 +22,34 @@ class Graph:
         return self._storage.get_task(task_id)
 
     def get_children(self, task_id: TaskId) -> list[Task]:
-        """ALL children incl. CANCELLED tombstones — provenance view (§7.3.1: nothing deleted)."""
+        """ALL children incl. ABANDONED tombstones — provenance view (§15.1: nothing deleted)."""
         return self._storage.get_children(task_id)
 
     def get_active_children(self, task_id: TaskId) -> list[Task]:
-        """Children in the ACTIVE decomposition — excludes cancellation (CANCELLING/CANCELLED).
+        """Children in the ACTIVE decomposition — excludes cancellation (CANCELLING/ABANDONED).
 
-        A cancelled node persists in the graph forever (provenance, §7.3.1 / Утв.6) but is no longer
+        A cancelled node persists in the graph forever (provenance, §15.1 / Prop 6) but is no longer
         part of the current decomposition: it must not count toward coverage / non-redundancy / the
-        critic's view. Cancellation is authoritative (§6.3: the executor confirms, not disputes) — the
+        critic's view. Cancellation is authoritative (§14.3: the executor confirms, not disputes) — the
         node leaves the decomposition at CANCEL; CANCELLING is just the settlement of the handshake.
         DONE(PASS) and DONE(FAIL) children ARE active (delivered work)."""
         return [
             c for c in self._storage.get_children(task_id)
-            if c.state not in (State.CANCELLING, State.CANCELLED)
+            if c.state not in (State.CANCELLING, State.ABANDONED)
         ]
+
+    def non_leaf_ids(self, children: list[Task]) -> set[str]:
+        """Which of these children decompose further — the fact CHECK-6 needs and a single split
+        does not carry (§13.4 quantifies over LEAVES). A node that splits is accountable through its
+        own children; demanding an executor for it reads Del as a label rather than as §10's
+        per-node accountability."""
+        return {str(c.id) for c in children if self.get_active_children(c.id)}
 
     def get_parent(self, task_id: TaskId) -> Optional[Task]:
         return self._storage.get_parent(task_id)
 
     def dep_edges(self) -> list:
-        """All dependency edges. DECLARED edges are DERIVED from criteria (§2.2): a criterion with
+        """All dependency edges. DECLARED edges are DERIVED from criteria (§10): a criterion with
         `depends_on=X` means this task depends on X's output, with the criterion's description as the
         glue (anti-mock truth-maker) — Dep is criteria-content, not a standalone stored record.
         DISCOVERED edges (surfaced at runtime via BLOCK) remain stored. This is the single read path
@@ -51,7 +58,7 @@ class Graph:
         edges = [
             DepEdge(from_id=c.depends_on, to_id=t.id, discovered=False, glue=c.description)
             for t in self._storage.get_all_tasks()
-            if t.state not in (State.CANCELLING, State.CANCELLED)  # cancellation excluded (§6.3)
+            if t.state not in (State.CANCELLING, State.ABANDONED)  # cancellation excluded (§14.3)
             for c in t.spec.criteria
             if c.depends_on
         ]
@@ -68,18 +75,18 @@ class Graph:
             reopens=task.reopens,
             max_reopens=task.max_reopens,
             # Computed HERE, consumed by the pure FSM guard in the SAME process_signal step —
-            # gate+edge are one log-serialized atomic act (Инв-7): a concurrent DELIVER that would
+            # gate+edge are one log-serialized atomic act (Inv-7): a concurrent DELIVER that would
             # consume the node is still in the queue, it cannot interleave (no TOCTOU).
-            consumed=self.is_consumed(task) if task.state in (State.DONE, State.CANCELLED) else True,
+            consumed=self.is_consumed(task) if task.state in (State.DONE, State.ABANDONED) else True,
         )
 
     def is_public(self, task: Task) -> bool:
-        """D6 (§6.5): public node ⟺ a DELEGATION SEAM — the node's scope of responsibility differs
+        """D6 (§14.5): public node ⟺ a DELEGATION SEAM — the node's scope of responsibility differs
         from its parent's, operationally Del(child) ≠ Del(parent), OR the node is a root (assigned
         into the graph by an external issuer — the one seam "done" must cross). An INTERNAL node
         (Del(child) = Del(parent)) is the agent's private decomposition: it SELF-verifies (DELIVER
         carries self_validation), and its guarantee is carried by the validation of the agent's
-        public result (T1's non-redundancy direction). A missing/unassigned parent reads as a seam
+        public result (Thm 1's non-redundancy direction). A missing/unassigned parent reads as a seam
         — fail-closed toward the stricter side."""
         if task.parent_id is None:
             return True
@@ -89,43 +96,43 @@ class Graph:
         return parent.assignee != task.assignee
 
     def is_consumed(self, task: Task) -> bool:
-        """R′ finality-gate (§6.3): a terminal is LOCALLY reversible ⟺ not consumed in the graph.
+        """R′ finality-gate (§14.3): a terminal is LOCALLY reversible ⟺ not consumed in the graph.
         Consumption is typed per edge sign and read from the STANDING graph state — a conservative,
-        log-visible over-approximation of "the downstream cone presumes this node" (§6.3: the
+        log-visible over-approximation of "the downstream cone presumes this node" (§14.3: the
         threshold moment is the one design freedom; we take delivered-upward / accepted-into-work).
-        A stake withdrawn by an AUTHORIZED gated act (the parent itself reopened back to REVIEW)
-        releases consumption — the chain unwinds one gated level at a time, each step in T11.
+        A stake withdrawn by an AUTHORIZED gated act (the parent itself reopened back to OFFERED)
+        releases consumption — the chain unwinds one gated level at a time, each step in Thm 11.
 
         POSITIVE (DONE): consumed ⟺ the parent staked its aggregate on V=pass — it DELIVERed upward
         and the stake is LIVE: VALIDATING (delivery pending judgment) or DONE (accepted). A parent
-        in REWORK does NOT lock: its delivery was REFUSED (FAIL) — the stake died with the refusal,
+        in REWORKING does NOT lock: its delivery was REFUSED (FAIL) — the stake died with the refusal,
         and rework is exactly when the executor must be able to reopen the failing child (otherwise
         the only legal move is mutating the artifact under frozen-DONE children — the graph stops
         telling the truth about where the defect lives; observed live, BCB/93 run 9). A Dep-consumer
         that read-and-built keeps locking regardless of its state — information transfer is not
-        undone by the consumer's own rework (EXECUTING/BLOCKED/VALIDATING/REWORK/DONE are reachable
+        undone by the consumer's own rework (EXECUTING/BLOCKED/VALIDATING/REWORKING/DONE are reachable
         only through ACCEPT: the packet embeds upstream DELIVER results).
 
-        NEGATIVE (CANCELLED, V=⊥ — no pass value): consumed ⟺ the cascade SETTLED (every descendant
+        NEGATIVE (ABANDONED, V=⊥ — no pass value): consumed ⟺ the cascade SETTLED (every descendant
         terminal) AND the parent REPLANNED around the hole — another active child covers a parent
         criterion this node covered (reviving it would double-cover, FM-1.e)."""
         if task.state == State.DONE:
             parent = self.get_parent(task.id)
             if parent is not None and parent.state in (State.VALIDATING, State.DONE):
                 return True
-            built_on = (State.EXECUTING, State.BLOCKED, State.VALIDATING, State.REWORK, State.DONE)
+            built_on = (State.EXECUTING, State.BLOCKED, State.VALIDATING, State.REWORKING, State.DONE)
             for e in self.dep_edges():
                 if e.from_id == task.id:
                     consumer = self.get_task(e.to_id)
                     if consumer is not None and consumer.state in built_on:
                         return True
             return False
-        if task.state == State.CANCELLED:
+        if task.state == State.ABANDONED:
             # cascade settled? — any live (non-terminal) descendant keeps the window open
             stack = [c for c in self.get_children(task.id)]
             while stack:
                 n = stack.pop()
-                if n.state not in (State.DONE, State.CANCELLED, State.ESCALATED):
+                if n.state not in (State.DONE, State.ABANDONED, State.ESCALATED):
                     return False
                 stack.extend(self.get_children(n.id))
             # parent replanned around the hole? — a criterion this node covered is now covered
@@ -139,7 +146,7 @@ class Graph:
             for m in parent.criterion_mappings:
                 if m.criterion_name in mine and m.child_id != task.id:
                     sibling = self.get_task(m.child_id)
-                    if sibling is not None and sibling.state not in (State.CANCELLING, State.CANCELLED):
+                    if sibling is not None and sibling.state not in (State.CANCELLING, State.ABANDONED):
                         return True
             return False
         return True  # non-quasi-terminal states have no reopen question — fail-closed
@@ -195,6 +202,22 @@ class Graph:
             return json.loads(raw)
         except (ValueError, TypeError):
             return None
+
+    def void_pending_pass(self, task_id: TaskId, reason: str) -> None:
+        """Void a recorded PASS whose delivery no longer stands (§14.3/§6.3: a re-ASSIGN "voids the
+        pending delivery" — the node re-earns its verdict through ACCEPT→DELIVER→VALIDATE).
+
+        Only a PASS is voided. A recorded FAIL is left exactly as it is: it opens no gate, and it
+        carries the refutation the re-delivery disposition reads (the criteria snapshot that tells a
+        repair from a lowered criterion). The record is rewritten in place — this store holds the
+        CURRENT verdict and always did ("the superseded record is replaced, never trusted forward");
+        the event itself stays in the log (Inv-7)."""
+        import json
+        rec = self.exec_verdict_record(task_id)
+        if not rec or rec.get("verdict") != "PASS":
+            return
+        rec = dict(rec, verdict="VOID", superseded_verdict="PASS", voided_because=reason)
+        self._storage.store_exec_verdict(task_id, json.dumps(rec))
 
     def store_check_results(self, task_id: TaskId, results: list[CheckResult]) -> None:
         self._storage.store_check_results(task_id, results)

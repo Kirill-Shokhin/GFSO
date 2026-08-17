@@ -9,7 +9,7 @@ from gfso.core.types import (
 
 
 def test_state_count():
-    assert len(State) == 12  # canon v3.7 §6.3: +CANCELLING (non-terminal), +CANCELLED (terminal, V=⊥)
+    assert len(State) == 12  # canon v3.7 §14.3: +CANCELLING (non-terminal), +ABANDONED (terminal, V=⊥)
 
 
 def test_signal_count():
@@ -23,13 +23,13 @@ def test_fm_count():
 def test_terminal_states():
     assert State.DONE in TERMINAL_STATES
     assert State.ESCALATED in TERMINAL_STATES
-    assert State.CANCELLED in TERMINAL_STATES  # v3.7 §6.3: terminal, V=⊥
+    assert State.ABANDONED in TERMINAL_STATES  # v3.7 §14.3: terminal, V=⊥
     assert len(TERMINAL_STATES) == 3
 
 
 def test_non_terminal_states():
     assert len(NON_TERMINAL_STATES) == 9
-    assert State.CANCELLING in NON_TERMINAL_STATES  # v3.7 §6.3: handshake in flight
+    assert State.CANCELLING in NON_TERMINAL_STATES  # v3.7 §14.3: handshake in flight
     assert State.DONE not in NON_TERMINAL_STATES
 
 
@@ -53,7 +53,7 @@ def test_spec_frozen():
 
 
 def test_effects_frozen():
-    mg = MutateGraph(TaskId("t1"), MutationType.SET_STATE, new_state=State.REVIEW)
+    mg = MutateGraph(TaskId("t1"), MutationType.SET_STATE, new_state=State.OFFERED)
     try:
         mg.task_id = TaskId("t2")
         assert False, "should be frozen"

@@ -4,76 +4,74 @@
 
 **The FSM transition table IS the architecture.** `(State, Signal, Guard) → (NewState, [Effects])`. The table is the single source of truth for all system behavior. No hidden middleware, hooks, or plugins. If something happens, a row in the table says so.
 
-Guards are simple predicates on graph state (only where needed — currently one: iteration check). Effects are skeletal (task_id only). The event loop hydrates effects from graph + signal data before passing to handlers.
+Guards are simple predicates on graph state, read off `GuardContext` (`iteration`/`max_iterations` on the rework loop; `consumed`/`reopens`/`max_reopens` on the R′ finality gate). Effects are skeletal (task_id only). The event loop hydrates effects from graph + signal data before passing to handlers.
 
-**Division of responsibility:** FSM decides WHICH effects. Graph provides DATA. Handlers EXECUTE. Main.py COMPOSES.
+**Division of responsibility:** FSM decides WHICH effects. Graph provides DATA. Handlers EXECUTE. The composition root (`gfso/runtime.py::build_engine_from_env`, entered through `gfso/cli.py`) COMPOSES.
 
 ## FSM Transition Table (from paper §14 + vision doc)
 
-> **Canon names vs code identifiers (v4.0 naming lag — declared, not silent).** The canon (v4.0) renamed
-> five protocol names; the code still ships the old identifiers, and this document describes the code, so
-> the table below keeps them. The mapping is 1:1 and the transition table itself is unchanged:
-> `REVIEW→OFFERED` · `REWORK→REWORKING` · `CANCELLED→ABANDONED` · state `TIMEOUT→OVERDUE` (the trigger
-> keeps the name `timeout`) · `CANCEL_ACK→CONFIRM_CANCEL`; register field `NEGLECTED→ACCEPTED_RISKS`,
-> `AUTO→AUTO_PASS`; FM-3 `Verifiability→Veracity`, FM-5 `Currency→Freshness`. Migrating the enums (DB +
-> read shims) is a named debt; until it lands, read a canon name here as its code twin.
-> Section references in this document are v4.0 numbering.
+> **Canon names = code identifiers (the v4.0 naming lag is CLOSED).** The enum migration landed:
+> the code ships `OFFERED`, `REWORKING`, `ABANDONED`, `OVERDUE` (the system trigger keeps the
+> lowercase name `timeout`), `CONFIRM_CANCEL`, the register field `ACCEPTED_RISKS`, `AUTO_PASS`, and
+> FM-3 `Veracity` / FM-5 `Freshness` — so a name in this document is the canon's and the code's at
+> once. The read-shim that decoded the pre-migration spellings is gone with the migration that
+> needed it: one vocabulary is written, and the same one is read. (One older read-map survives and is
+> a different thing — a pre-v3.7 `DONE(reason=CANCELLED)` row is mapped to `ABANDONED` on read, which
+> is why `DoneReason.CANCELLED` is still a member.) Section references here are v4.0 numbering.
 >
-> **Two rows diverge from the canon in SHAPE, not in spelling — declared, not silent.**
+> **The two rows that diverged from the canon in SHAPE are closed** (corners #3 and #1 of
+> `formal/README.md`), so the table below is canon-shaped and no longer carries a declared gap.
 >
-> **(1)** `(VALIDATING, FAIL, iter >= max) → DONE` (reason=fail) is what the engine does; the canon does not
-> carry that edge. §14.3 routes the exhausted `FAIL↔REWORKING` loop to **ESCALATED**, and §12.2 states
-> that "DONE is reached through acceptance (PASS ∨ auto_pass), **never through fail**".
-> **Resolution (derived from the canon, see corner #3 in `formal/README.md`): the row must become
-> `→ ESCALATED`.** The canon has no "V = fail, settled" terminal (its negatives are ABANDONED = ⊥ and
-> ESCALATED = attention); exhausting the retry loop IS the escalation trigger (§1.1: automatic
-> handling failed ⟹ the "trust, but see" attention mode); and DONE is consumed under R′ (a Dep consumer
-> reads-and-builds on the result), so DONE(fail) would let a neighbor build on a failure. Engineer's
-> action: retarget the `(VALIDATING, FAIL, iter >= max)` row to ESCALATED (terminal). This table keeps
-> describing the engine as it is until that lands.
+> **(1)** `(VALIDATING, FAIL, iter >= max)` now targets **ESCALATED**, as §14.3 routes the exhausted
+> `FAIL↔REWORKING` loop and as §12.2 requires ("DONE is reached through acceptance (PASS ∨ auto_pass),
+> **never through fail**"). The canon has no "V = fail, settled" terminal — its negatives are
+> ABANDONED = ⊥ and ESCALATED = attention — exhausting the retry loop IS the escalation trigger (§1.1:
+> automatic handling failed ⟹ the "trust, but see" attention mode), and a DONE(fail) would additionally
+> be consumable under R′, letting a Dep consumer read-and-build on a failure. The terminal carries
+> `done_reason=FAIL`, so a verdict-escalation stays distinguishable from a timeout one and the
+> standing-FAIL metric populations (q_D's exhausted arm, `false_fail_share`) still see it.
 >
-> **(2)** `(IDLE, timeout) → TIMEOUT` is a row the canon does not carry: v4.0 Inv-5 exempts IDLE **by
-> name** (§14.4), the pre-contract state having no clock of its own and its starvation surfacing as the
-> parent's timeout. The row was added under the v3.9 reading in which Inv-5 was total over non-terminals.
-> **Resolution: the row must be removed** (corner #1 in `formal/README.md`) — but the motive it was
-> written for is real (a crash orphan is observable only in IDLE), so removal owes that orphan another
-> escape hatch, not a bare deletion.
+> **(2)** `(IDLE, timeout)` is **removed**: v4.0 Inv-5 exempts IDLE **by name** (§14.4), the pre-contract
+> state having no clock of its own and its starvation surfacing as the parent's timeout. The motive the
+> row was written for — a crash orphan, observable in IDLE because CREATE_TASK persisted while the
+> ASSIGN's landing did not — is met where the defect lives: `Engine._recover_orphans` finishes the
+> interrupted transition at startup, through the queue, validated and logged.
 
 ```
 (State, Signal, Guard)           → NewState      Effects
 ───────────────────────────────────────────────────────────────────
-(IDLE, ASSIGN)                   → REVIEW        [MutateGraph, RunChecks, Dispatch]   # Recommend removed
-(IDLE, timeout)                  → TIMEOUT       [MutateGraph]          # DIVERGENCE (2): v4.0 Inv-5 exempts IDLE BY NAME (§14.4) — row to be removed
-(REVIEW, ACCEPT)                 → EXECUTING     [MutateGraph, Dispatch]
-(REVIEW, CHALLENGE)              → CHALLENGED    [MutateGraph, Dispatch]
-(REVIEW, timeout)                → TIMEOUT       [MutateGraph]
-(CHALLENGED, ACCEPT_CHALLENGE)   → REVIEW        [MutateGraph, RunChecks, Dispatch]
+(IDLE, ASSIGN)                   → OFFERED        [MutateGraph, RunChecks, Dispatch]   # Recommend removed
+(OFFERED, ACCEPT)                 → EXECUTING     [MutateGraph, Dispatch]
+(OFFERED, CHALLENGE)              → CHALLENGED    [MutateGraph, Dispatch]
+(OFFERED, timeout)                → OVERDUE       [MutateGraph]
+(CHALLENGED, ACCEPT_CHALLENGE)   → OFFERED        [MutateGraph, RunChecks, Dispatch]
 (CHALLENGED, REJECT_CHALLENGE)   → EXECUTING     [MutateGraph, Dispatch]
-(CHALLENGED, timeout)            → TIMEOUT       [MutateGraph]          # escalates §14.3 (no auto-accept)
+(CHALLENGED, timeout)            → OVERDUE       [MutateGraph]          # escalates §14.3 (no auto-accept)
 (EXECUTING, DELIVER)             → VALIDATING    [MutateGraph, Dispatch]
 (EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP per named blocker (§14.2)
-(EXECUTING, timeout)             → TIMEOUT       [MutateGraph]
+(EXECUTING, timeout)             → OVERDUE       [MutateGraph]
 (BLOCKED, RESOLVE_BLOCK)         → EXECUTING     [MutateGraph(ADJUDICATE_DEP), MutateGraph, Dispatch] # confirm/re-attribute/retract (§14.2)
 (BLOCKED, timeout)               → ESCALATED     [MutateGraph]          # direct, see below
 (VALIDATING, PASS)               → DONE          [MutateGraph, Dispatch]
-(VALIDATING, FAIL, iter < max)   → REWORK        [MutateGraph, Dispatch]
-(VALIDATING, FAIL, iter >= max)  → DONE          [MutateGraph, Dispatch] # reason=fail in mutation
+(VALIDATING, FAIL, iter < max)   → REWORKING        [MutateGraph, Dispatch]
+(VALIDATING, FAIL, iter >= max)  → ESCALATED     [MutateGraph, Dispatch] # reason=fail carried onto the terminal (§14.3)
 (VALIDATING, timeout)            → DONE          [MutateGraph, Dispatch] # reason=auto in mutation
-(REWORK, DELIVER)                → VALIDATING    [MutateGraph, Dispatch]
-(REWORK, BLOCK)                  → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP as above
-(REWORK, timeout)                → TIMEOUT       [MutateGraph]
-(TIMEOUT, timeout)               → ESCALATED     [MutateGraph]          # repeated timeout
-(CANCELLING, CANCEL_ACK)         → CANCELLED     [MutateGraph, Dispatch] # in_flight logged (T11)
-(CANCELLING, timeout)            → CANCELLED     [MutateGraph]          # cancellation is authoritative (§14.3)
+(REWORKING, DELIVER)                → VALIDATING    [MutateGraph, Dispatch]
+(REWORKING, BLOCK)                  → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP as above
+(REWORKING, timeout)                → OVERDUE       [MutateGraph]
+(OVERDUE, timeout)               → ESCALATED     [MutateGraph]          # repeated timeout
+(CANCELLING, CONFIRM_CANCEL)         → ABANDONED     [MutateGraph, Dispatch] # in_flight logged (T11)
+(CANCELLING, timeout)            → ABANDONED     [MutateGraph]          # cancellation is authoritative (§14.3)
 (ANY_NON_TERM \ CANCELLING, CANCEL) → CANCELLING [MutateGraph, Dispatch] # opens the handshake; cascades CANCEL to subtree (§14.2)
-(REASSIGNABLE, ASSIGN+spec)      → REVIEW        [MutateGraph(APPLY_SPEC), MutateGraph, RunChecks, Dispatch]
-                                                 # REVISION (§14.4 Inv-1): re-ASSIGN same id, no cascade; excluded: TIMEOUT, CANCELLING, terminals
-(DONE|CANCELLED, ASSIGN,
-   ¬consumed ∧ reopens<max)      → REVIEW        [MutateGraph(REOPEN), MutateGraph, RunChecks, Dispatch]
+(REASSIGNABLE, ASSIGN+spec)      → OFFERED        [MutateGraph(APPLY_SPEC), MutateGraph, RunChecks, Dispatch]
+                                                 # REVISION (§14.4 Inv-1): re-ASSIGN same id, no cascade; excluded: OVERDUE, CANCELLING, terminals
+(DONE|ABANDONED, ASSIGN,
+   ¬consumed ∧ reopens<max)      → OFFERED        [MutateGraph(REOPEN), MutateGraph, RunChecks, Dispatch]
                                                  # R′ REOPEN (§14.3): a gated re-ASSIGN, NOT a 13th signal — see below
 ```
 
-Terminal states: DONE (with reason: pass/fail/auto), ESCALATED, CANCELLED (V=⊥). **DONE and CANCELLED
+Terminal states: DONE (with reason: pass/auto — acceptance only, §12.2), ESCALATED (attention; carries
+reason=fail when it is the exhausted validation loop rather than a timeout), ABANDONED (V=⊥). **DONE and ABANDONED
 are QUASI-terminal (R′, §14.3):** a re-ASSIGN out of them is admitted under a DOUBLE gate — (i) the
 finality-gate: the terminal is not CONSUMED in the graph (positive: the parent has not DELIVERed the
 aggregate that presumes this pass AND no Dep-consumer has ACCEPTed into work on the result; negative:
@@ -82,16 +80,20 @@ same criterion); (ii) `reopens < max_reopens` (ONE sign-agnostic per-node counte
 max_iterations, default 1 — restores Inv-5 finiteness for the new outgoing edge). Both gate inputs ride
 GuardContext, computed by the graph in the SAME `process_signal` step as the edge — gate+edge are one
 log-serialized atomic act (Inv-7, no TOCTOU with a concurrent DELIVER). The REOPEN mutation spends the
-counter, drops `done_reason` (V=pass is RE-EARNED in REVIEW, never resurrected), and generation-stamps
-stale the recorded independent verdict (records carry `(iteration, reopens)`; the self-PASS gate and
-q_V/false_fail_share compare both). A pass-terminal reopened under the SAME criteria whose fresh run
+counter, drops `done_reason` (V=pass is RE-EARNED in OFFERED, never resurrected), and generation-stamps
+stale the recorded independent verdict. The generation is `(iteration, reopens, revisions)` — the third
+member because §14.3 admits a re-ASSIGN from VALIDATING and §6.3 voids the pending delivery with it,
+while neither of the first two moves on a revision; and it is captured when a validation RUN STARTS
+(`Engine.generation_of`, handed to `record_exec_verdict`), because a verdict is about the delivery the
+validator read, not about whatever the node has become by the time it finishes. The self-PASS gate
+compares all three; q_V/false_fail_share compare the reopen generation. A pass-terminal reopened under the SAME criteria whose fresh run
 FAILs sets `false_positive` — exactly q_V's pass→later-fail member. ESCALATED stays fully terminal.
 
 DONE is one state; completion reason is metadata in the MutateGraph mutation. Cancellation is NOT a DONE
-reason — canon §14.3 gives it its own two-step handshake `CANCEL→CANCELLING→CANCEL_ACK→CANCELLED`
-(mirror of ASSIGN→ACCEPT; CANCEL_ACK = the sole staffed exit from CANCELLING, an FSM-deadlock signal
-carrying the executor's in-flight report). **12 states in enum**: IDLE, REVIEW, CHALLENGED, EXECUTING,
-BLOCKED, VALIDATING, REWORK, CANCELLING, DONE, CANCELLED, TIMEOUT, ESCALATED. Pre-v3.7 DBs stored
+reason — canon §14.3 gives it its own two-step handshake `CANCEL→CANCELLING→CONFIRM_CANCEL→ABANDONED`
+(mirror of ASSIGN→ACCEPT; CONFIRM_CANCEL = the sole staffed exit from CANCELLING, an FSM-deadlock signal
+carrying the executor's in-flight report). **12 states in enum**: IDLE, OFFERED, CHALLENGED, EXECUTING,
+BLOCKED, VALIDATING, REWORKING, CANCELLING, DONE, ABANDONED, OVERDUE, ESCALATED. Pre-v3.7 DBs stored
 cancellation as DONE(reason=CANCELLED) — migrated on read in the SQLite adapter.
 
 ESCALATED resolution is outside FSM — admin action (re-assign or close). Escalation crosses hierarchy levels which the per-task FSM cannot model.
@@ -106,7 +108,7 @@ counted — this is what feeds q_Dep's denominator.
 
 ## Design Decisions
 
-**Validation at the SEAM (D6, §14.5).** A node is PUBLIC ⟺ it is a delegation seam: a root, or
+**Validation at the SEAM (§14.5).** A node is PUBLIC ⟺ it is a delegation seam: a root, or
 Del(child) ≠ Del(parent). The verifier≠executor gate (engine/validation.py) demands a recorded
 independent verdict ONLY there; an INTERNAL node (same Del as its parent — the executor's own private
 decomposition) legitimately self-verifies (its DELIVER carries `self_validation`), and its guarantee is
@@ -118,27 +120,49 @@ completes on a self-stamp. Revision reasons are typed in the packet (§24.5:
 changes, q_Del narrows to capability_mismatch where typed and keeps its documented over-approximation
 where untyped.
 
-**Guarded transition (VALIDATING + FAIL).** Only transition with a guard. Iteration counter lives in graph task node, not FSM state — FSM stays memoryless except for this one predicate read. Alternative was splitting FAIL/FAIL_FINAL into two signals, but that inflates the signal set for what is a single semantic action (validation failed).
+**Parallelism is registration, not a second driver.** `next_steps` returns the whole actionable
+frontier with `parallel_ok` on the execute-class steps — pairwise independent by construction, each a
+leaf whose Dep producers have PASSED — and `delegate.Dispatcher` spawns a thread per ready step under
+a concurrency cap, gating each spawn on its producers and wrapping the report into
+ACCEPT/DELIVER/BLOCK. Nothing else needs to schedule: an orchestrator that assigns nodes to
+registered executors gets concurrency, dependency order and signal translation from the engine, while
+one that keeps every node assigned to itself gets none of it and serialises — which is a property of
+the assignment, not of the protocol. Independence is a CLAIM the executors act on: two subtasks that
+write one artifact are not independent whatever their topics, so the split declares the Dep (or gives
+each its own artifact), and a coupling that slips through surfaces at runtime as BLOCK — a discovered
+Dep edge with an owner, which is what q_Dep divides by.
 
-**DONE is one state.** DONE(pass), DONE(fail), DONE(auto), DONE(cancelled) are the same FSM state with different metadata in the graph. Simplifies the FSM — terminal is terminal. Reason is recorded by MutateGraph for metrics.
+**What a graph costs (`/api/usage`).** Every internal model call is recorded with the ROLE that made
+it — decomposer, Level-2 review, validator, executor — and totalled per project: tokens, dollars, and
+a per-role split (surfaced in the observation window, not beside the quality metrics: those are
+properties of the graph, while spend is a property of one way of working it — with people at the
+nodes there are no calls to report). `costed_calls` rides beside the money because a transport that reports no price
+(any OpenAI-compatible endpoint) contributes zero, and a total that cannot tell "not reported" from
+"free" is the ⊥-as-zero error in the one column where it looks like a fact. An executor's turn budget
+is declared with its role (`register_agent(..., max_turns=N)`) for the same reason its model is: two
+runs of "the same agent" under different caps are not the same agent.
 
-**BLOCKED timeout → ESCALATED directly.** Other timeouts go through TIMEOUT state first. BLOCKED skips this: the block itself IS the escalation signal. The team already knows there's a problem. Adding a TIMEOUT intermediate is unnecessary indirection.
+**Guarded transition (VALIDATING + FAIL).** One of two guarded families (the other is REOPEN under the R′ finality gate). Iteration counter lives in graph task node, not FSM state — FSM stays memoryless except for this one predicate read. Alternative was splitting FAIL/FAIL_FINAL into two signals, but that inflates the signal set for what is a single semantic action (validation failed).
 
-**CHALLENGED timeout → TIMEOUT (escalates, §14.3).** A pending challenge that times out is an unresolved spec dispute, not a benign event — it escalates via the standard timeout sub-FSM (→ TIMEOUT → ESCALATED), never auto-accepts. (Earlier drafts auto-accepted → REVIEW; that silently resolved a dispute in the issuer's favour and was removed — matches table row and canon §14.3.)
+**DONE is one state.** DONE(pass) and DONE(auto) are the same FSM state with different metadata in the graph. Simplifies the FSM — terminal is terminal. Reason is recorded by MutateGraph for metrics. What DONE does NOT carry is a verdict of fail: acceptance is its only route in (§12.2), the exhausted rework loop settles in ESCALATED(fail) instead, and DONE(cancelled) is a pre-v3.7 encoding migrated on read.
+
+**BLOCKED timeout → ESCALATED directly.** Other timeouts go through OVERDUE state first. BLOCKED skips this: the block itself IS the escalation signal. The team already knows there's a problem. Adding a OVERDUE intermediate is unnecessary indirection.
+
+**CHALLENGED timeout → OVERDUE (escalates, §14.3).** A pending challenge that times out is an unresolved spec dispute, not a benign event — it escalates via the standard timeout sub-FSM (→ OVERDUE → ESCALATED), never auto-accepts. (Earlier drafts auto-accepted → OFFERED; that silently resolved a dispute in the issuer's favour and was removed — matches table row and canon §14.3.)
 
 **VALIDATING timeout now includes Dispatch.** Executor must be notified that their delivery was auto-accepted. Symmetry with all other terminal transitions.
 
-**TIMEOUT is transient.** TIMEOUT state exists between first and second timeout. If CANCEL arrives before the next timeout monitor tick, task goes to CANCELLING instead of ESCALATED. This is a natural intervention window (one tick), not a designed guarantee. TIMEOUT accepts no progress signals (§14.3) — only repeated timeout or the universal CANCEL.
+**OVERDUE is transient.** OVERDUE state exists between first and second timeout. If CANCEL arrives before the next timeout monitor tick, task goes to CANCELLING instead of ESCALATED. This is a natural intervention window (one tick), not a designed guarantee. OVERDUE accepts no progress signals (§14.3) — only repeated timeout or the universal CANCEL.
 
-**CANCEL_ACK — two-step handshake (canon §14.3; code synced at v3.7).** Cancellation is `CANCEL(issuer)→CANCELLING→CANCEL_ACK(executor)→CANCELLED`, mirroring ASSIGN→ACCEPT. CANCEL_ACK is an FSM-deadlock signal: the sole staffed exit from CANCELLING, carrying the executor's in-flight state (`SignalData.in_flight`) onto the audit log (T11). `CANCELLING--timeout-->CANCELLED` — cancellation is authoritative, executor silence still completes it (without the in-flight report). The cascade fires on CANCEL (entering CANCELLING): every live descendant gets its own CANCEL and runs its own handshake.
+**CONFIRM_CANCEL — two-step handshake (canon §14.3; code synced at v3.7).** Cancellation is `CANCEL(issuer)→CANCELLING→CONFIRM_CANCEL(executor)→ABANDONED`, mirroring ASSIGN→ACCEPT. CONFIRM_CANCEL is an FSM-deadlock signal: the sole staffed exit from CANCELLING, carrying the executor's in-flight state (`SignalData.in_flight`) onto the audit log (T11). `CANCELLING--timeout-->ABANDONED` — cancellation is authoritative, executor silence still completes it (without the in-flight report). The cascade fires on CANCEL (entering CANCELLING): every live descendant gets its own CANCEL and runs its own handshake.
 
-**Revision = re-ASSIGN, same id (canon §14.4 Inv-1; code synced at v3.7).** A packet change on a live node is ONE re-ASSIGN under the same id → REVIEW (the executor re-ACCEPTs/CHALLENGEs); the APPLY_SPEC mutation re-authors in place and the superseded version lives in the append-only log (Inv-7). No CANCEL signal, no CANCELLING pass, no cascade — subtree retained; staleness surfaces via CHECK-1/CHECK-1b/CHECK-3. Not accepted from TIMEOUT (no progress signals), CANCELLING, or terminals.
+**Revision = re-ASSIGN, same id (canon §14.4 Inv-1; code synced at v3.7).** A packet change on a live node is ONE re-ASSIGN under the same id → OFFERED (the executor re-ACCEPTs/CHALLENGEs); the APPLY_SPEC mutation re-authors in place and the superseded version lives in the append-only log (Inv-7). No CANCEL signal, no CANCELLING pass, no cascade — subtree retained; staleness surfaces via CHECK-1/CHECK-1b/CHECK-3. Not accepted from OVERDUE (no progress signals), CANCELLING, or terminals.
 
-**REWORK has no CHALLENGE.** REWORK criteria = same criteria as original ASSIGN (immutable per protocol invariant). Challenging criteria you already executed against is incoherent. REWORK only accepts DELIVER or BLOCK.
+**REWORKING has no CHALLENGE.** REWORKING criteria = same criteria as original ASSIGN (immutable per protocol invariant). Challenging criteria you already executed against is incoherent. REWORKING only accepts DELIVER or BLOCK.
 
-**BLOCKED → RESOLVE_BLOCK always → EXECUTING.** Even if entered from REWORK. EXECUTING and REWORK have identical allowed signals (DELIVER, BLOCK, timeout). The iteration counter in graph state preserves rework context. No semantic difference.
+**BLOCKED → RESOLVE_BLOCK always → EXECUTING.** Even if entered from REWORKING. EXECUTING and REWORKING have identical allowed signals (DELIVER, BLOCK, timeout). The iteration counter in graph state preserves rework context. No semantic difference.
 
-**Iteration counter in graph task node.** `task.iteration: int`. Incremented on REWORK entry. Checked by FSM guard on FAIL. Counter is graph state, not FSM state.
+**Iteration counter in graph task node.** `task.iteration: int`. Incremented on REWORKING entry. Checked by FSM guard on FAIL. Counter is graph state, not FSM state.
 
 ## Typed Effects
 
@@ -163,12 +187,12 @@ class Dispatch:
 
 ```
 
-EmitSignal removed — was only used for ESCALATE which is now handled by repeated timeout.
+`EmitSignal` stays in the `Effect` union but no FSM row emits one: escalation is reached by a repeated timeout, and the one signal the system generates for itself — the cascade CANCEL — is put on the queue by the loop (below), not returned as an effect.
 
 ## Runtime: Event Loop
 
 ```python
-# engine/loop.py — event loop (L2)
+# engine/loop.py — event loop (L1)
 def event_loop(graph, agents, llm, queue, audit, events):
     while True:
         signal = queue.get()
@@ -215,7 +239,7 @@ def timeout_monitor(graph, queue):
 ```
 
 **Key changes from v3:**
-- `graph.apply()` returns affected child task_ids, not signals. main.py decides to emit CANCEL for each. Signal generation stays in composition root, not graph.
+- `graph.apply()` returns affected child task_ids, not signals; the engine loop (`gfso/engine/loop.py`) puts a CANCEL on the queue for each. Signal generation stays out of the graph.
 - `handlers.run_checks()` returns results. Stored in graph for Dispatch payload and metrics.
 - `handlers.recommend()` returns recommendation. Stored in graph for Dispatch payload.
 - `fsm.transition()` takes guard context as third argument.
@@ -227,7 +251,7 @@ gfso/
   core/                     ← L0: the protocol STANDARD (canon-governed; pure, zero deps)
     types/
       primitives.py         # Task, Spec, Criteria (full: input/expected/n/timeout), DepEdge, SignalData
-      enums.py              # State(12; DONE/CANCELLED quasi-terminal §14.3), Signal(13 = 12 protocol
+      enums.py              # State(12; DONE/ABANDONED quasi-terminal §14.3), Signal(13 = 12 protocol
                             # + TIMEOUT), Verdict, FM(7), RevisionReason (§24.5 typing)
       effects.py            # MutateGraph (incl. dep_from/dep_froms), RunChecks, Recommend, Dispatch
       ports.py              # StoragePort (mandatory core incl. the append-only signal log),
@@ -258,26 +282,28 @@ gfso/
 
 packaging/core_manifest.py  ← THE gfso-core cut line (core + engine + tools.py + neutral stdlib
                             # adapters); closure + zero-deps proven by tests/test_core_dist.py;
-                            # build_core.py builds the wheel (version injected from the main pyproject)
-examples/                   ← one working script per entry door (tests/test_examples.py runs the
-                            # deterministic ones live)
+                            # build_core.py builds the wheel (version read from gfso/__init__.py —
+                            # the one place it is written; the pyproject key is dynamic)
+gfso/examples/              ← one working script per entry door, INSIDE the package so the wheel
+                            # carries them (`gfso demo`); tests/test_examples.py runs the
+                            # deterministic ones live
 ```
 
 ## Dependency Matrix (mechanically enforced — a violation is a red CI)
 
 ```
 core/            → core/ only          (hermetic; stdlib-only)
-engine/          → core/               (the ONE framework edge)
+engine/          → core/ + engine/     (the ONE framework edge)
 tools.py         → core/ + engine/     (structural surface — no LLM, no adapters)
-adapters/        → core/               (port implementations)
+adapters/        → core/ + adapters/   (port implementations, and each other)
 decompose|critic|delegate|runtime|tools_llm → anything below binding
-mcp|api|web|cli|driver|main            → everything (and NOTHING below imports them)
+mcp|api|web|cli|driver|main|doctor     → everything (and NOTHING below imports them)
 ```
 
 
 ## Why Each Module Exists (forcing argument)
 
-**Level 1 (core/):**
+**L0 (core/):**
 
 | Module | Why it exists | Merge with any neighbor → breaks what |
 |---|---|---|
@@ -286,17 +312,23 @@ mcp|api|web|cli|driver|main            → everything (and NOTHING below imports
 | handlers/ | Effect execution: checks + recommend | Merge with protocol → pure FSM becomes impure. Merge with graph → state acquires check/LLM concerns |
 | graph/ | Persistent state + mutations + metrics | Merge with protocol → FSM depends on storage. Merge with handlers → state acquires check/LLM concerns |
 
-**Level 2 (engine/):** Single module. Imports all of core/, provides framework API. Cannot be split further — audit, events, validation, loop are tightly coupled around the signal processing pipeline.
+**L1 (engine/):** Single module. Imports all of core/, provides framework API. Cannot be split further — audit, events, validation, loop are tightly coupled around the signal processing pipeline.
 
-**Level 3 (adapters/, main.py):** Pluggable. Implements core/ ports. engine/ doesn't know which adapters exist.
+**L3 (adapters/):** Pluggable. Implements core/ ports. engine/ doesn't know which adapters exist.
 
-No upward dependencies. L1 never imports L2. L2 never imports L3.
+No upward dependencies, and the matrix above is the one the gate enforces (`tests/test_layering.py`) — including the part this prose used to round off: `gfso.adapters` may import `gfso.core` and other adapters, and binding (`mcp`/`api`/`web`/`cli`/`driver`/`main`/`doctor`) is the only place allowed to import binding.
 
-## Level-2 semantic validation — the ONE map (canon §13.4)
+## The Level-2 review — the ONE map (canon §13.4)
 
-⚠ Naming collision, named explicitly: "L1/L2/L3" above = CODE LAYERS; "Level 0/1/2" here =
-the canon's CHECK levels (§13.4: L0 topology · L1 formal entailment · **L2 = causal/semantic
-correctness, pre-contact**). The two scales are unrelated. (The collision feeds the parked
+⚠ Naming collision, named explicitly: the CODE LAYERS above are L0 `core/` · L1 `engine/`,
+`tools.py` · L2 `tools_llm.py`, `decompose/`, `critic/`, `delegate.py`, `runtime.py` · L3
+`adapters/`, with binding above all of them. The canon's VERIFICATION LEVELS are a different scale
+entirely (§13.4, Morris: **Syntactic** = level 0, topology · **Semantic** = level 1, formal
+entailment · **Pragmatic** = level 2, causal correctness, pre-contact) — the collision is at "2",
+where a code layer and a verification level share a number and mean nothing alike. Note also that
+"semantic" belongs to verification level 1 — what `review_decomposition` reaches for is the
+Pragmatic level, which the canon marks a permanent boundary rather than a solved check (Ch. 8), so
+what runs here is an approximation to it, not the level itself. (The collision feeds the parked
 naming-overhaul; until then this section is the disambiguation.)
 
 Level 2 is NOT one component — it is one FUNCTION with four deliberate surfaces, split by
@@ -309,7 +341,7 @@ it lives in refine and only there):
 |---|---|---|---|
 | **L2-inside-decompose** | "what is missing from the space" (recall) | `decompose/loop.py` search↔audit at build/refine time | every `auto_decompose` graph — the DEFAULT path; on-demand re-runs = the "AI refine" button / refine rounds |
 | **Standalone L2 CHECKER** | "does the DECLARED mapping causally entail" (§13.4's own question): per parent criterion — mapped children's criteria taken as facts ⇒ sufficient / insufficient-with-named-gap / uncertain; + semantic FM-2 conflicts CHECK-8 can't see | `critic/runner.py` (frozen role `critic/prompts/checker.md`), exposed as `review_decomposition` (MCP · `POST /api/run/review_decomposition` · CLI; the name split is deliberate: `review_*` = pre-contact over the PLAN, `validate_result` = post-contact over the RESULT) | externally-authored / hand-edited graphs that never passed through decompose |
-| **UI door** | the same checker, one click | the sidebar "AI review" button; per-criterion verdicts rendered, ADVISORY (fix via FSM verbs or declare NEGLECTED) | the pure-UI human — the ONLY consumer for whom the standalone checker is load-bearing |
+| **UI door** | the same checker, one click | the sidebar "AI review" button; per-criterion verdicts rendered, ADVISORY (fix via FSM verbs or declare ACCEPTED_RISKS) | the pure-UI human — the ONLY consumer for whom the standalone checker is load-bearing |
 | **Runtime detection** | "did a mapping that LOOKED sufficient fail live" | `core/graph/metrics.py::q_D` | everyone — **the real Level-2 verdict**: the axis is checkable only by execution (§13.5) |
 
 Epistemic status, held everywhere (§13.5 / Ch. 8's Level-2 boundary): no pre-contact instrument VERIFIES Level 2 —
@@ -362,7 +394,7 @@ Both use LLMProviderPort (in core/types/ports.py). Different roles, different lo
 | core/handlers/constraint.py | CHECK-7-8 skipped. CHECK-1-6 still work |
 | core/handlers/recommend.py | Recommend becomes no-op. Protocol + graph + checks still work |
 | adapters/llm/ | System + Agent LLM degraded to stubs. Everything else works |
-| adapters/agents/bench_agent.py | No AI workers. Human agents still work |
+| adapters/agents/human.py | Nothing to hand a node to: dispatch to a person is what this port does (delegation to an LLM executor is `delegate.py`, not an agent adapter) |
 | engine/ | Use core/ as pure library. Call protocol.transition() + mutations.apply() directly |
 
 ---
@@ -380,11 +412,11 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
    UI / MCP / CLI            — thin transports; send upper-layer calls
         │
    UPPER API (convenience compositions — read-modify-write):
-     decompose · revise · reneglect · edit_criteria · reassign · add/remove_dependency · map_criterion
+     decompose · revise · edit_accepted_risks · edit_criteria · reassign · add/remove_dependency · map_criterion
         │  desugars to ↓ (never bypasses)
    LOWER API = THE CANON FSM — send_signal() + reads
      CLOSED alphabet: 12 P2P signals + TIMEOUT (frozen by test):
-     ASSIGN ACCEPT CHALLENGE BLOCK DELIVER CANCEL_ACK ACCEPT_CHALLENGE REJECT_CHALLENGE PASS FAIL CANCEL RESOLVE_BLOCK
+     ASSIGN ACCEPT CHALLENGE BLOCK DELIVER CONFIRM_CANCEL ACCEPT_CHALLENGE REJECT_CHALLENGE PASS FAIL CANCEL RESOLVE_BLOCK
      every signal → audited mutation (loop → audit). No 13th.
         │
    graph / storage
@@ -395,18 +427,18 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 |---|---|---|
 | create | `ASSIGN` (IDLE → CREATE_TASK effect) | node creation IS the ASSIGN effect (logged) |
 | decompose | one `ASSIGN` per child (+ `covers` → parent mapping effect) | mappings = the child's declaration, logged; a FULL mappings list SETS the parent's coverage (pairs absent from it are removed — reconcile); `None` adds without wiping |
-| **revise** | re-`ASSIGN` (SAME id) → REVIEW | revision per Inv-1 §14.4: NOT a CANCEL; version appended to the log (Inv-7); **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1/1b/3; issuer-gated |
-| reneglect / edit_criteria | revise (RMW) | change one field, carry the rest |
+| **revise** | re-`ASSIGN` (SAME id) → OFFERED | revision per Inv-1 §14.4: NOT a CANCEL; version appended to the log (Inv-7); **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1/1b/3; issuer-gated |
+| edit_accepted_risks / edit_criteria | revise (RMW) | change one field, carry the rest |
 | add_dependency (declared) | re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§10); edge derived |
 | map_criterion | re-`ASSIGN` of the child carrying `covers` | binds an existing child to a parent criterion (logged) |
 | reassign | re-`ASSIGN` with a new executor | Del change per Inv-1 (q_Del) |
-| **reopen** | re-`ASSIGN` out of DONE/CANCELLED → REVIEW | R′ (§14.3): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |
-| **abandon** | `CANCEL` → CANCELLING → `CANCEL_ACK` → CANCELLED | two-step handshake (§14.3); **cascades CANCEL to subtree**; never deleted (§15.3.1) |
+| **reopen** | re-`ASSIGN` out of DONE/ABANDONED → OFFERED | R′ (§14.3): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |
+| **abandon** | `CANCEL` → CANCELLING → `CONFIRM_CANCEL` → ABANDONED | two-step handshake (§14.3); **cascades CANCEL to subtree**; never deleted (§15.3.1) |
 
 **Surface-don't-destroy** (canon §14.3; code synced at v3.7). abandon = `CANCEL` → opens the handshake and cascades the
-subtree (its sub-work served a contract that no longer exists, §15.1); each node settles CANCELLING→CANCELLED
-on its executor's CANCEL_ACK (or timeout — cancellation is authoritative). revise = re-`ASSIGN` (same id) →
-the node continues under a new contract in REVIEW: its **subtree is RETAINED, no cascade**; coverage staleness
+subtree (its sub-work served a contract that no longer exists, §15.1); each node settles CANCELLING→ABANDONED
+on its executor's CONFIRM_CANCEL (or timeout — cancellation is authoritative). revise = re-`ASSIGN` (same id) →
+the node continues under a new contract in OFFERED: its **subtree is RETAINED, no cascade**; coverage staleness
 (uncovered new criterion / dangling mapping) is SURFACED by CHECK-1 / non-redundancy for the agent to resolve
 ∨ declare, not destroyed. The only IN-PLACE spec change is `ACCEPT_CHALLENGE`.
 
@@ -427,7 +459,7 @@ the node continues under a new contract in REVIEW: its **subtree is RETAINED, no
   Early exits: ALREADY-COVERED (searcher) / an empty fold (auditor).
 - **The live graph only ever holds verified states, and a rebuild is idempotent + jurisdiction-aware:** an
   untouched child receives ZERO signals (an executing node keeps executing); each operation authors only its
-  own level — the target node's criteria/NEGLECTED/scope and the children's contracts + coverage + seams;
+  own level — the target node's criteria/ACCEPTED_RISKS/scope and the children's contracts + coverage + seams;
   the children's Del and their OWN registers belong to other authors (the issuer; the child's own
   decomposer, §13.1) and pass through untouched.
 - **Removal is surfaced, never silent:** coverage reconciles to the decomposer's full mapping set, so a
@@ -462,7 +494,8 @@ method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-a
    Engine (CORE)  ── the one place all logic lives; every verb is an Engine method
      │
    gfso/tools.py  ── the SINGLE action surface: (engine,*args) → JSON dict, one fn per verb (TOOLS registry)
-     ├─ gfso/mcp     MCP server — binds each TOOLS fn as an MCP tool (stdio)          ← the agent
+     ├─ gfso/mcp     MCP server — binds each TOOLS fn as an MCP tool; mounted on the one server over
+     │               streamable HTTP at `/mcp`, which `gfso connect` bridges to a client's stdio ← the agent
      ├─ gfso/driver  `gfso run` — binds each TOOLS fn to argv                          ← scripts / CI / subagents
      └─ gfso/api     HTTP `POST /api/run/{tool}` — dispatches to TOOLS                 ← the UI (browser client)
                      (+ bespoke typed GET reads: task detail / graph / metrics / …)
@@ -470,7 +503,7 @@ method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-a
 
 - `runtime.build_engine_from_env` = the shared CORE constructor (one Engine from `GFSO_DB_PATH`).
 - HTTP **reads** stay bespoke typed routes (view-specific shapes for the UI — reads aren't a mutation surface).
-- **Live mirroring:** one process (`gfso mcp` / `gfso serve --mcp`) hosts MCP + HTTP + UI over ONE Engine, so the
+- **Live mirroring:** ONE process (raised by `gfso up`; `gfso serve` is that process in the foreground) hosts MCP + HTTP + UI over ONE Engine, so the
   UI's `/ws/events` reflects the agent's writes live. Separate processes share only SQLite (poll, no live WS).
 - **Versioning:** the transports + the UI are DERIVED mirrors of the Engine's verb surface (via `tools.py`).
 

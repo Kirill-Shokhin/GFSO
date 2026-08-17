@@ -1,0 +1,19 @@
+# The sdist is built from the WORKING TREE, where the research material and the internal documents
+# sit beside pyproject.toml — gitignored, so a clean checkout does not have them, and present on
+# every machine that actually cuts a release. Nothing below is currently reached by setuptools'
+# defaults; these lines exist so that a later `graft`/`include` cannot sweep them in by accident.
+# `tests/test_distribution.py` fails if any of it reaches an artifact, and was shown to fail on a
+# planted leak.
+# The sdist is a source distribution: a packager or a `pip download` user expects the changelog and
+# the build tooling the tests import. Only pruning meant it shipped `tests/` that could not run.
+include CHANGELOG.md SECURITY.md
+recursive-include packaging *.py *.toml
+
+prune experiments
+prune runs
+prune data
+prune docs/notes
+prune .claude
+exclude E3_*.md
+exclude ROADMAP_INTERNAL.md
+exclude *.db

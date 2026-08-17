@@ -66,7 +66,7 @@ def test_next_step_gate_blocks_early_completion():
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     e.decompose_task(TaskId("root"), [(TaskId("a"), _sp("a", ("x", "x")), A)],
                      [CriterionMapping("ra", TaskId("a"))]); e.wait_idle()
-    # child still in REVIEW → not complete, directive points at the child
+    # child still in OFFERED → not complete, directive points at the child
     s = e.next_step(TaskId("root"))
     assert not s.get("complete")
     assert s["task_id"] == "a" and s["action"] == "accept"
@@ -94,7 +94,7 @@ def test_next_step_respects_dependency_order():
 
 
 def test_next_step_re_accepts_reauthored_parent_first():
-    """A re-authored parent drops back to REVIEW with its subtree retained → next_step RE-ACCEPTs it before
+    """A re-authored parent drops back to OFFERED with its subtree retained → next_step RE-ACCEPTs it before
     driving the children (obs: else the graph finished all children while the root still showed 'accept')."""
     A = AgentId("exec")
     e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
@@ -104,7 +104,7 @@ def test_next_step_re_accepts_reauthored_parent_first():
     e.decompose_task(TaskId("root"), [(TaskId("a"), _sp("a", ("x", "x")), A)],
                      [CriterionMapping("ra", TaskId("a"))]); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"), source=A)); e.wait_idle()  # a EXECUTING
-    e.reneglect(TaskId("root"), (), A); e.wait_idle()               # re-author → root back to REVIEW, child kept
+    e.edit_accepted_risks(TaskId("root"), (), A); e.wait_idle()               # re-author → root back to OFFERED, child kept
     s = e.next_step(TaskId("root"))
     assert s["task_id"] == "root" and s["action"] == "accept"       # re-accept parent BEFORE its child executes
 
@@ -199,4 +199,30 @@ def test_frontier_is_del_aware(monkeypatch):
     assert r["accepted"] is False and "not executor" in r["error"]
     # and the rightful executor passes
     assert T.signal(e, "his1", "ACCEPT", "kirill")["state"] == "EXECUTING"
+    e.stop()
+
+
+def test_a_refused_signal_says_which_kind_of_refusal_it_was():
+    """A rejection an operator can act on — the two refusals are not the same problem.
+
+    A signal the STATE does not admit is a wrong move; a signal the state admits whose transition
+    GUARD refused it is a right move on a node that is not ready. Both used to print the same
+    sentence, built from the state's own action list — so the first thing a new operator saw was
+    "ASSIGN is not valid in state OFFERED — valid here: [… 'ASSIGN']", which contradicts itself.
+    """
+    from gfso import tools as T
+
+    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e.start()
+    T.create_task(e, "n", {"description": "node", "criteria": [{"name": "c", "description": "C"}]},
+                  assignee="human")
+
+    guard = T.signal(e, "n", "ASSIGN", "human")          # state-valid, guard says no
+    assert guard["accepted"] is False
+    assert "ASSIGN" in [s.name for s in e.available_actions(TaskId("n"))]
+    assert "GUARD" in guard["error"] and "not valid in state" not in guard["error"]
+
+    wrong = T.signal(e, "n", "DELIVER", "human")         # OFFERED admits no DELIVER at all
+    assert wrong["accepted"] is False
+    assert "not valid in state OFFERED" in wrong["error"] and "ACCEPT" in wrong["error"]
     e.stop()

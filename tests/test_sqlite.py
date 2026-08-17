@@ -38,7 +38,7 @@ def test_complex_spec_roundtrip():
     got = s.get_task(TaskId("t1"))
     assert len(got.spec.criteria) == 2
     assert got.spec.criteria[0].name == "perf"
-    assert got.spec.neglected[0].item == "risk1"
+    assert got.spec.accepted_risks[0].item == "risk1"
     assert got.spec.risk_components == ("drought",)
 
 
@@ -144,7 +144,32 @@ def test_update_task():
     s = _storage()
     t = _task()
     s.save_task(t)
-    t.state = State.REVIEW
+    t.state = State.OFFERED
     s.save_task(t)
     got = s.get_task(TaskId("t1"))
-    assert got.state == State.REVIEW
+    assert got.state == State.OFFERED
+
+
+def test_v4_migration_mark_is_not_read_as_a_newer_schema(tmp_path):
+    """The two meanings of one field, planted exactly as they collided.
+
+    The v4.0 rename migration marked every file it converted with `PRAGMA user_version = 40` — its
+    "already migrated" flag, written before this field carried a schema version. The later
+    schema-stamp then refused anything above 1 as "written by a newer gfso", so all 149 migrated
+    databases — including the default one and the E3 run DBs — became unopenable and the server
+    would not start at all. The mark is recognised and normalised; a genuinely newer schema is still
+    refused, which is the control on the same code path."""
+    import sqlite3
+    import pytest
+    from gfso.adapters.storage.sqlite import SqliteStorage
+
+    marked = tmp_path / "v4.db"
+    sqlite3.connect(marked).execute("PRAGMA user_version = 40").connection.close()
+    s = SqliteStorage(str(marked))
+    assert s._conn.execute("PRAGMA user_version").fetchone()[0] == SqliteStorage.SCHEMA_VERSION
+    s.close()
+
+    newer = tmp_path / "future.db"
+    sqlite3.connect(newer).execute("PRAGMA user_version = 41").connection.close()
+    with pytest.raises(RuntimeError, match="newer gfso"):
+        SqliteStorage(str(newer))

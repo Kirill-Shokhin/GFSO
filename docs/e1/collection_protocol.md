@@ -12,7 +12,7 @@
 ## Goal
 
 Validate or falsify the claim that GFSO's **7 Failure Modes** (defined in
-`docs/applied_gfso_v3.md` §4) exhaustively cover failures of compositional
+the v3.9 draft §4; v4.0 carries them at §12) exhaustively cover failures of compositional
 validation in real software systems.
 
 **Pass criterion**: ≥95% of classified incidents fit exactly one FM with high

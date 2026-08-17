@@ -12,12 +12,22 @@ on:
       - 'formal/**'
       - 'docs/**.md'
       - 'README.md'
+      # The naming and reference guards now watch the PRODUCT tree (the enum migration landed and
+      # their exclusions are gone). Without these paths the guards would never run on the very
+      # surface they were extended to cover — an invariant nobody enforces is not an invariant.
+      - 'gfso/**'
+      - 'tests/**'
       - '.github/workflows/formal.yml'
   pull_request:
     paths:
       - 'formal/**'
       - 'docs/**.md'
       - 'README.md'
+      # The naming and reference guards now watch the PRODUCT tree (the enum migration landed and
+      # their exclusions are gone). Without these paths the guards would never run on the very
+      # surface they were extended to cover — an invariant nobody enforces is not an invariant.
+      - 'gfso/**'
+      - 'tests/**'
       - '.github/workflows/formal.yml'
   workflow_dispatch:
 

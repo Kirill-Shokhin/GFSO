@@ -14,11 +14,11 @@ class StoragePort(ABC):
 
     MANDATORY CORE (abstract — an adapter cannot exist without them): task/child reads+writes,
     dep edges, check-result cache, AND the append-only signal log (`append_audit`/`load_audit`).
-    The log is core, not an extension: the T11/Инв-7 guarantee `state = fold(log)` is CONDITIONED
+    The log is core, not an extension: the Thm 11/Inv-7 guarantee `state = fold(log)` is CONDITIONED
     on log completeness — an adapter that silently drops entries voids the guarantee, so silence
     is not an option. An adapter whose MEDIUM is ephemeral (in-memory) still implements the log
     honestly for its lifetime; an adapter that consciously chooses not to persist it is a
-    DECLARED degraded mode (no T11-over-restart, no replay) — declared in ITS code, never
+    DECLARED degraded mode (no Thm 11-over-restart, no replay) — declared in ITS code, never
     defaulted here.
 
     OPTIONAL EXTENSIONS (defaults below): critique / deliver-result / exec-verdict / pipeline
@@ -80,7 +80,7 @@ class StoragePort(ABC):
 
     @abstractmethod
     def append_audit(self, row: dict) -> None:
-        """Append ONE signal-log entry (append-only — the T11/Инв-7 carrier; state = fold(log))."""
+        """Append ONE signal-log entry (append-only — the Thm 11/Inv-7 carrier; state = fold(log))."""
         ...
 
     @abstractmethod
@@ -123,6 +123,21 @@ class StoragePort(ABC):
         """The most recent pipeline lines, oldest-first: [{ts, source, message}]."""
         return []
 
+    def log_usage(self, row: dict) -> None:
+        """Persist ONE model call's cost and tokens: {ts, stage, model, node_id, input_tokens,
+        output_tokens, cache_input_tokens, cost_usd}.
+
+        What a project cost is a question the system could not answer about itself: the numbers
+        existed per call, inside whichever verb happened to run, and were printed into a progress
+        line as text. Nothing accumulated them, so "what did this graph cost" had no answer, and an
+        experiment measuring cost had to reconstruct it from its own side of the wire — which works
+        only for the calls that side makes. Default no-op so existing storages stay valid."""
+        ...
+
+    def get_usage(self, limit: int = 5000) -> list[dict]:
+        """The recorded model calls, oldest-first."""
+        return []
+
 
 class LLMProviderPort(ABC):
     @abstractmethod
@@ -154,7 +169,7 @@ class VerifierPort(ABC):
 
 
 class ClockPort(ABC):
-    """The runtime's time source — Инв-5 (finiteness) enforcement reads THIS, never the wall clock
+    """The runtime's time source — Inv-5 (finiteness) enforcement reads THIS, never the wall clock
     directly, so a host can substitute virtual time (tests) or an anchored/tamper-resistant source
     (a real deployment; the clock-anchoring question is a DECLARED open end for implementors —
     the port is the seam, not the answer)."""

@@ -167,7 +167,7 @@ root_spec = Spec(
         "pause and resume. Decompose this task."
     ),
     criteria=root_criteria,
-    neglected=root_neglected,
+    accepted_risks=root_neglected,
 )
 
 # ─── ROOT task — save directly to storage (no FSM event loop needed) ─────────
@@ -513,7 +513,7 @@ for child_id, spec, assignee, *_ in children:
 def declare_dep(from_id, to_id, glue=""):
     t = engine._graph.get_task(to_id)
     crit = Criteria(name=f"dep__{from_id}", description=glue, depends_on=from_id)
-    t.spec = Spec(t.spec.description, t.spec.criteria + (crit,), t.spec.neglected, t.spec.risk_components)
+    t.spec = Spec(t.spec.description, t.spec.criteria + (crit,), t.spec.accepted_risks, t.spec.risk_components)
     engine._graph.save_task(t)
 
 
@@ -682,7 +682,7 @@ print(f"  DB path:        {os.path.abspath(DB_PATH)}")
 print(f"  Subtasks (D):   {len(child_list)}")
 print(f"  Dep edges:      {len(sibling_deps)}")
 print(f"  Root criteria:  {len(root.spec.criteria)}")
-print(f"  Neglected (N):  {len(root.spec.neglected)}")
+print(f"  ACCEPTED_RISKS: {len(root.spec.accepted_risks)}")
 print("\nTo view in the UI:")
 print(
     "  GFSO_STORAGE=sqlite GFSO_DB_PATH=data/t01_reference.db GFSO_NO_SEED=1 "

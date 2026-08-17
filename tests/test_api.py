@@ -30,7 +30,7 @@ def test_create_task():
     assert r.status_code == 200
     d = r.json()
     assert d["description"] == "build feature"
-    assert d["state"] == "REVIEW"
+    assert d["state"] == "OFFERED"
 
 
 def test_list_tasks():
@@ -57,8 +57,8 @@ def test_upper_authoring_endpoints():
     c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "node",
            "criteria": [{"name": "k", "description": "keep"}]}, "assignee": "alice"})
 
-    r = c.post("/api/run/reneglect", json={"task_id": "n", "neglected": [{"item": "out of scope"}], "agent": "alice"})
-    assert r.status_code == 200 and r.json()["neglected"] == ["out of scope"]
+    r = c.post("/api/run/edit_accepted_risks", json={"task_id": "n", "accepted_risks": [{"item": "out of scope"}], "agent": "alice"})
+    assert r.status_code == 200 and r.json()["accepted_risks"] == ["out of scope"]
 
     r = c.post("/api/run/edit_criteria",
                json={"task_id": "n", "criteria": [{"name": "k2", "description": "tighter"}], "agent": "alice"})
@@ -96,7 +96,7 @@ def test_get_task_not_found():
 def test_send_signal():
     c = _client()
     c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x"}, "assignee": "dev"})
-    # Task is in REVIEW after create. Send ACCEPT.
+    # Task is in OFFERED after create. Send ACCEPT.
     r = c.post("/api/run/signal", json={"task_id": "t1", "signal": "ACCEPT", "source": "dev"})
     assert r.status_code == 200
     d = r.json()
@@ -108,11 +108,11 @@ def test_send_signal():
 def test_send_signal_rejected():
     c = _client()
     c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x"}, "assignee": "dev"})
-    # PASS is invalid in REVIEW state → dispatched, tool reports not-accepted (still HTTP 200)
+    # PASS is invalid in OFFERED state → dispatched, tool reports not-accepted (still HTTP 200)
     r = c.post("/api/run/signal", json={"task_id": "t1", "signal": "PASS", "source": "dev"})
     assert r.status_code == 200
     assert r.json()["accepted"] is False
-    assert c.get("/api/tasks/t1").json()["state"] == "REVIEW"  # state unchanged
+    assert c.get("/api/tasks/t1").json()["state"] == "OFFERED"  # state unchanged
 
 
 def test_graph_endpoint():
@@ -172,7 +172,7 @@ def test_decompose():
 def test_unified_app_shares_one_engine_with_mcp_tools():
     """UI (HTTP) and the agent (MCP tool layer) operate ONE Engine: a write through the MCP tools is
     read back via HTTP. `with_mcp=True` degrades gracefully when the MCP SDK is absent (mount skipped,
-    no crash) — the /mcp transport mount itself is verified once `gfso[mcp]` is installed."""
+    no crash) — the /mcp transport mount itself is verified by the MCP suite."""
     from gfso import tools as T
     engine = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
     engine.start()

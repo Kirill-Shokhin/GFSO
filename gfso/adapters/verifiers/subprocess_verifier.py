@@ -1,9 +1,36 @@
-"""GFSO Verification adapter: runs code against Spec criteria.
+"""GFSO verification adapter for BENCHMARK tasks: runs a delivered program against Spec criteria.
 
-Criterion type determined by fields:
-  - input + expected → exact output check
-  - input (no expected) → crash check
-  - n + timeout → performance check
+Scope, so nobody mistakes this for the product's notion of a criterion. A criterion in the canon is
+a decidable condition on a task's result (A1, §2.1), and in normal use a validator reads the
+delivery and runs what the criterion names. THIS adapter decides a narrower, mechanical payload —
+the competitive-programming shape the E0 benchmark work needed (`docs/EVIDENCE_LOG.md` §3). It is
+constructed by that harness and by nothing inside this package.
+
+The payload rides four `Criteria` fields (`input`, `expected`, `n`, `timeout`). They are persisted
+by the SQLite adapter, but **neither `create_task` nor `edit_criteria` carries them** — both build
+`Criteria(name, description, depends_on=…)` and drop the rest silently — so they can only be set by
+constructing `Criteria` directly, as a host or a harness does. A criterion authored through a door
+therefore arrives here with none of them and is reported failed, "No input/expected/n fields".
+
+Criterion type, dispatched in this order — first match wins:
+  - input + expected → exact output check: run it, compare stdout with ALL trailing newlines
+    stripped against `expected`; also requires exit 0 and no timeout
+  - input, no expected → crash check: exit 0 and no timeout
+  - n (no input)      → performance check: scale the example input to n elements, require it to
+                        finish within `timeout` (default 10s)
+  - none of them      → not decidable here; reported FAILED, never silently skipped
+
+Two ways this passes WITHOUT measuring, both of them real:
+  * The performance check needs `example_input` — a constructor argument that defaults to `""`. With
+    it unset (and nothing in this package sets it) `_generate_scaled_input` returns None and the
+    criterion is recorded PASSED with "skipped: cannot generate input" in its details. Even when it
+    is set, scaling is defined only for a first line that is a flat JSON array or a quoted string.
+    A green performance criterion is evidence of nothing until its detail line is read.
+  * `starter_code` changes what a criterion MEANS. With a `def <name>(self` in it, the deliverable
+    is spliced at module level, `from typing import *` is prepended, and the harness calls
+    `Solution().<name>(<the input lines as literal arguments>)` — so the deliverable must itself
+    define `class Solution`, stdin is empty, and `expected` is compared against `print()` of the
+    returned object. Without it the deliverable is run as a program reading `input` on stdin.
 """
 from __future__ import annotations
 

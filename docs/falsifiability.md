@@ -281,7 +281,9 @@ dormant (the (ii)-faithfulness flag), the requirement is declared, not enforced.
   certifies mutually-unsatisfiable children criteria as consistent. Either breaks the instrument's
   soundness.
 - **Tested?** — analytic (decision procedures); ◻ no empirical run of CHECK-7/8 against a corpus of
-  real decompositions (E3-adjacent — no decomposition has been GFSO-checked end-to-end yet).
+  real decompositions. (E3-adjacent: decompositions HAVE now been GFSO-checked end-to-end on a
+  third-party benchmark — EVIDENCE_LOG §13, calibration tier, and §13.6 measures the Level-2 gate's
+  discrimination on PLANTED holes. Neither is the corpus run this row asks for.)
 
 ---
 
@@ -771,7 +773,8 @@ dormant (the (ii)-faithfulness flag), the requirement is declared, not enforced.
   segment" floor) is **forced-free** — orthogonal, so unfalsifiable-by-design and correctly so.
 - **Tested?** — (forcing) analytic; (magnitudes) ◻ routed to E3 + the §26.8 Λ,γ measurement (E2 was
   decomposition-convergence, not these magnitudes), the same empirical hooks as the C-claims (Flag 5). No
-  methodology run end-to-end yet.
+  run measures THESE magnitudes; the methodology itself has been driven end-to-end on a benchmark at
+  calibration tier (EVIDENCE_LOG §13), which is not the same thing.
 
 ### §7 — verify-vs-explore structure (how far to run the FORM mechanism)
 - **Claim.** "How far to discharge FORM" is itself a **structured tradeoff** (verify-vs-explore,

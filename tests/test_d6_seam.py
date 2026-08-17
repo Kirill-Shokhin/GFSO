@@ -1,9 +1,9 @@
-"""D6 (canon §6.5) — validation at the SEAM, not at every node.
+"""D6 (canon §14.5) — validation at the SEAM, not at every node.
 
 Public node ⟺ delegation seam: a root, or Del(child) ≠ Del(parent). The verifier≠executor
 gate fires there. An INTERNAL node (same Del as its parent) is the agent's private
 decomposition — it self-verifies (DELIVER carries self_validation) and its guarantee is
-carried by the validation of the public result it rolls up into (T1 non-redundancy).
+carried by the validation of the public result it rolls up into (Thm 1 non-redundancy).
 The root always stays gated: "done" never completes on a self-stamp.
 """
 import pytest
@@ -11,11 +11,14 @@ import pytest
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.core.types import CriterionMapping, State, Signal, SignalData, TaskId, AgentId, Spec, Criteria
+from gfso.core.types import (AcceptedRiskItem, CriterionMapping, Predictability, State, Signal,
+                             SignalData, TaskId, AgentId, Spec, Criteria)
 
 
 def _spec(desc="goal", crit="c1"):
-    return Spec(description=desc, criteria=(Criteria(crit, f"{crit} description"),))
+    return Spec(description=desc, criteria=(Criteria(crit, f"{crit} description"),),
+                accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
+                                                 Predictability.EXTRAORDINARY),))
 
 
 @pytest.fixture
@@ -50,7 +53,7 @@ def test_is_public_classification(engine):
 
 
 def test_internal_same_del_node_may_self_pass(engine):
-    """The agent's own internal node self-verifies — no recorded verdict demanded (§6.5)."""
+    """The agent's own internal node self-verifies — no recorded verdict demanded (§14.5)."""
     engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [(TaskId("in1"), _spec("in", "ic"), AgentId("agent"))],
@@ -117,7 +120,7 @@ def test_dispatcher_validates_seams_only_by_default(engine, monkeypatch):
 
 
 def test_execution_gated_on_plan_verification(engine):
-    """§5.4 moved from advice to enforcement: a child cannot start executing (ACCEPT) while its
+    """§13.4 moved from advice to enforcement: a child cannot start executing (ACCEPT) while its
     parent's plan fails a CORRECTNESS check — here an uncovered parent criterion (CHECK-1). This is
     the systemic 'verify before you execute' — the agent physically cannot work a flawed plan, so the
     plan is completed and checked ONCE up front (no discover-after-delivery, no rework churn)."""
@@ -128,7 +131,7 @@ def test_execution_gated_on_plan_verification(engine):
     # unmapped child → parent CHECK-1 fails → ACCEPT is REFUSED (cannot execute an unverified plan)
     r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
     assert r.rejected and "Level-0" in (r.error or "")
-    assert engine.get_state(TaskId("ch")) == State.REVIEW
+    assert engine.get_state(TaskId("ch")) == State.OFFERED
     # complete the plan (map the child) → now execution is admitted
     engine.map_criterion(TaskId("root"), TaskId("ch"), "rc")
     engine.wait_idle()
@@ -136,13 +139,13 @@ def test_execution_gated_on_plan_verification(engine):
     assert not r.rejected and engine.get_state(TaskId("ch")) == State.EXECUTING
 
 
-def test_empty_neglected_does_not_gate_execution(engine):
-    """CHECK-4 (NEGLECTED) is completeness DOCUMENTATION, not a correctness gate — an empty NEGLECTED
-    must NOT block execution (gating it forced a fake NEGLECTED and drove reneglect churn, live)."""
+def test_empty_accepted_risks_does_not_gate_execution(engine):
+    """CHECK-4 (ACCEPTED_RISKS) is completeness DOCUMENTATION, not a correctness gate — an empty ACCEPTED_RISKS
+    must NOT block execution (gating it forced a fake ACCEPTED_RISKS and drove edit_accepted_risks churn, live)."""
     engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child", "cc"), AgentId("agent"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("ch"))])
-    engine.wait_idle()  # mapped but NO NEGLECTED authored on root
+    engine.wait_idle()  # mapped but NO ACCEPTED_RISKS authored on root
     r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
     assert not r.rejected and engine.get_state(TaskId("ch")) == State.EXECUTING

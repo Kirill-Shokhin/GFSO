@@ -5,7 +5,7 @@ Capability honesty (the embedder's contract): what this tier cannot machine-chec
 numeric bounds (`metric < 200`-style; sums vs the parent bound, upper/lower contradictions).
 Beyond this tier: arbitrary-formula entailment/consistency is a DECLARED extension point
 (SMT — the `gfso-core[solver]` extra); its absence degrades to a visible skip, and the
-semantic (causal) half of sufficiency is L2 by design (§5.4), never this check's claim.
+semantic (causal) half of sufficiency is L2 by design (§13.4), never this check's claim.
 (A vestigial `import z3` flag that no code read was removed — the module never called Z3;
 claiming otherwise in the header was exactly the silent-degradation this contract forbids.)
 """
@@ -16,8 +16,14 @@ from gfso.core.types import Task, CheckResult
 
 
 def _parse_numeric_bound(desc: str) -> tuple[str, str, float] | None:
-    """Try to parse 'metric < 200ms' or 'metric > 80%' style criteria."""
-    m = re.match(r'(.+?)\s*([<>]=?)\s*([\d.]+)', desc.strip())
+    """Try to parse 'metric < 200ms' or 'metric > 80%' style criteria.
+
+    The number must actually BE a number. `[\\d.]+` also matches a run of dots, and a criterion
+    describing markdown ("`> ...` renders as a blockquote") then reached `float('...')` and threw —
+    taking the whole decomposition down with a 422 instead of degrading to a skip. A tier that
+    cannot machine-check something reports it, never crashes on it (this module's own contract).
+    """
+    m = re.match(r'(.+?)\s*([<>]=?)\s*(\d+(?:\.\d+)?)', desc.strip())
     if m:
         return m.group(1).strip(), m.group(2), float(m.group(3))
     return None

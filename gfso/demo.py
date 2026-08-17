@@ -26,7 +26,7 @@ def seed_demo(engine: Engine) -> None:
                 Criteria("data_migrated", "Database schema migrated without data loss"),
                 Criteria("docs_updated", "User docs reflect all changes"),
             ),
-            neglected=("legacy API backward compat edge cases",),
+            accepted_risks=("legacy API backward compat edge cases",),
             risk_components=("data_integrity", "performance_regression"),
         ),
         AgentId("tech-lead"),
@@ -50,7 +50,7 @@ def seed_demo(engine: Engine) -> None:
                     Criteria("endpoints", "All CRUD endpoints working"),
                     Criteria("tests", "API test coverage > 80%"),
                 ),
-                neglected=("rate limiting",),
+                accepted_risks=("rate limiting",),
             ), AgentId("dev-alice")),
 
             (TaskId("frontend-ui"), Spec(
@@ -58,11 +58,11 @@ def seed_demo(engine: Engine) -> None:
                 criteria=(
                     Criteria("responsive", "Works on mobile and desktop"),
                     Criteria("accessible", "WCAG 2.1 AA compliant"),
-                    # Dep is criteria-content (§2.2): the UI depends on the backend API's contract.
+                    # Dep is criteria-content (§10): the UI depends on the backend API's contract.
                     Criteria("uses_backend_api", "UI calls the backend API; breaks if the API contract differs",
                              depends_on=TaskId("backend-api")),
                 ),
-                neglected=("IE11 support",),
+                accepted_risks=("IE11 support",),
             ), AgentId("dev-bob")),
 
             (TaskId("db-migration"), Spec(
@@ -71,7 +71,7 @@ def seed_demo(engine: Engine) -> None:
                     Criteria("schema", "New schema deployed"),
                     Criteria("rollback", "Rollback script tested"),
                 ),
-                neglected=("performance on 10M+ rows",),
+                accepted_risks=("performance on 10M+ rows",),
             ), AgentId("dev-carol")),
 
             (TaskId("docs"), Spec(
@@ -80,7 +80,7 @@ def seed_demo(engine: Engine) -> None:
                     Criteria("api_docs", "OpenAPI spec updated"),
                     Criteria("user_guide", "User guide covers new features"),
                 ),
-                neglected=("internal architecture docs",),
+                accepted_risks=("internal architecture docs",),
             ), AgentId("dev-dave")),
         ],
         criterion_mappings=[
@@ -132,8 +132,8 @@ def seed_demo(engine: Engine) -> None:
     ))
     engine.wait_idle()
 
-    # Docs: stays in REVIEW (dave hasn't accepted yet)
-    # (already in REVIEW from decompose_task → ASSIGN)
+    # Docs: stays in OFFERED (dave hasn't accepted yet)
+    # (already in OFFERED from decompose_task → ASSIGN)
     # Frontend→backend dependency is declared as criteria-content in frontend-ui's spec (above).
 
     log.info("Demo project seeded.")

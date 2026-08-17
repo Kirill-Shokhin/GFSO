@@ -53,6 +53,10 @@ class GenericLLM(LLMProviderPort):
                 "input_tokens": usage.get("prompt_tokens"),
                 "output_tokens": usage.get("completion_tokens"),
                 "cache_read_input_tokens": None, "cache_creation_input_tokens": None,
+                # An OpenAI-compatible endpoint prices per provider, not per response: no cost field
+                # exists here, and inventing one from a token count would be a made-up number in a
+                # column that must be measured. None = not reported, never 0.0.
+                "cost_usd": None, "model": self._model,
             })
             return ((out.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         except Exception as e:

@@ -9,7 +9,7 @@ from gfso.core.types import TaskId, AgentId, Task, Spec, Criteria, State, Storag
 
 
 def test_port_refuses_an_adapter_without_the_signal_log():
-    """append_audit/load_audit are abstract: an adapter that would silently lose the T11 log
+    """append_audit/load_audit are abstract: an adapter that would silently lose the Thm 11 log
     fails at INSTANTIATION, not at the first lost entry."""
 
     class LossyStorage(StoragePort):
@@ -45,7 +45,7 @@ def test_criteria_serialize_in_full_over_sqlite(tmp_path):
     silently was a declared storage-contract leak (§3A audit)."""
     s = SqliteStorage(str(tmp_path / "c.db"))
     crit = Criteria("io", "echoes the input", input="ping", expected="pong", n=3, timeout=15)
-    t = Task(id=TaskId("n"), spec=Spec("x", (crit,)), assignee=AgentId("w"), state=State.REVIEW)
+    t = Task(id=TaskId("n"), spec=Spec("x", (crit,)), assignee=AgentId("w"), state=State.OFFERED)
     s.save_task(t)
     back = s.get_task(TaskId("n")).spec.criteria[0]
     assert (back.input, back.expected, back.n, back.timeout) == ("ping", "pong", 3, 15)

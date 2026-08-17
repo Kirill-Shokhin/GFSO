@@ -3,7 +3,7 @@
 (Two removed extremes, for provenance: the analyst⊥judge monolithic critic was E2-refuted — polices
 form, can't move content; its replacement, the decompose SEARCH prompt in diff mode, was the
 OPPOSITE extreme — a hole-hunt is the decomposer's question ("what is missing"), not Level 2's
-("does the declared mapping causally entail"). The checker asks canon §5.4's own question.)
+("does the declared mapping causally entail"). The checker asks canon §13.4's own question.)
 """
 from __future__ import annotations
 

@@ -27,7 +27,7 @@ This protocol incorporates fixes surfaced by the initial 13-record trial.
 
 ## Track A — incidents → 7 Failure Modes
 
-### The 7 FM (canonical, from applied_gfso_v3.md §4)
+### The 7 FM (canonical, from the v3.9 draft §4 — v4.0 carries them at §12)
 
 | FM | Name | Definition |
 |---|---|---|

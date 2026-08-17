@@ -55,7 +55,14 @@ E3_PRESPEC.md
 E3_IT2_PRESPEC.md
 E3_IT3_VALUE_MAP.md
 E3_STATUS.md
+E3_PREREG.md
+experiments/e3_specbench/
 experiments/e3/
 experiments/e0_rerun/
 deltas/
 docs/notes/
+
+# Validation scratch: `validate_result` makes one directory per run INSIDE the project it judges,
+# so it lands in the user's repository as well as in this one. The engine prunes all but the most
+# recent; this keeps them out of the working tree in the meantime.
+.gfso-scratch/

@@ -30,7 +30,7 @@ class FakeLLM:
         return self.specs.pop(0) if self.specs else {}
 
 
-def _spec(mappings=None, neglected=None):
+def _spec(mappings=None, accepted_risks=None):
     """The graph-form state after a successful first fold (also the shape build_graph_live consumes)."""
     return {
         "name": "Thing",
@@ -41,16 +41,16 @@ def _spec(mappings=None, neglected=None):
         ],
         "mappings": mappings or [{"criterion": "rc1", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}],
         "deps": [{"from": "a", "to": "b", "glue": "B reads A's output"}],
-        "neglected": neglected or [{"item": "provider outage", "predictability": "STATISTICAL",
+        "accepted_risks": accepted_risks or [{"item": "provider outage", "predictability": "STATISTICAL",
                                     "justification": "P<1%", "invalidation": "outage seen"}],
     }
 
 
-def _init_patch(mappings=None, neglected=None):
+def _init_patch(mappings=None, accepted_risks=None):
     """The round-1 (empty-state) fold: the same content as _spec(), expressed as adds."""
-    s = _spec(mappings=mappings, neglected=neglected)
+    s = _spec(mappings=mappings, accepted_risks=accepted_risks)
     return {"name": s["name"], "add_root_criteria": s["root_criteria"], "add_subtasks": s["subtasks"],
-            "add_mappings": s["mappings"], "add_deps": s["deps"], "add_neglected": s["neglected"]}
+            "add_mappings": s["mappings"], "add_deps": s["deps"], "add_accepted_risks": s["accepted_risks"]}
 
 
 _ADD_C = {"add_subtasks": [{"id": "c", "name": "C", "description": "do C",
@@ -173,23 +173,23 @@ def test_one_verb_dispatches_to_refine_on_decomposed_node():
 
 
 def test_rebuild_preserves_child_own_registers():
-    """A child's OWN NEGLECTED belongs to the CHILD'S decomposer (§5.1) — a parent-level rebuild
+    """A child's OWN ACCEPTED_RISKS belongs to the CHILD'S decomposer (§13.1) — a parent-level rebuild
     must not wipe it (same class as Del preservation)."""
-    from gfso.core.types import NeglectedItem
+    from gfso.core.types import AcceptedRiskItem
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
-    e.reneglect(TaskId("root.a"), (NeglectedItem("a-risk"),), AgentId("human"))
+    e.edit_accepted_risks(TaskId("root.a"), (AcceptedRiskItem("a-risk"),), AgentId("human"))
     fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
     refine(e, root_id="root", llm=fake2)
     a = e.get_task(TaskId("root.a"))
-    assert [n.item for n in a.spec.neglected] == ["a-risk"]              # survived the rebuild
+    assert [n.item for n in a.spec.accepted_risks] == ["a-risk"]              # survived the rebuild
 
 
 def test_refine_leaves_untouched_children_in_place():
     """Idempotent rebuild: a refine that doesn't touch a child emits ZERO signals for it — an
     EXECUTING child keeps executing (a live graph survives a replan; only changed contracts
-    re-negotiate per Инв-1)."""
+    re-negotiate per Inv-1)."""
     from gfso.core.types import SignalData, Signal
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
@@ -209,7 +209,7 @@ def test_refine_leaves_untouched_children_in_place():
 
 def test_refine_frozen_terminal_children_surface_as_holes():
     """Completed work is FROZEN: a fold update targeting a DONE child cannot apply (a terminal node
-    admits no revision, §6.3) — the intent must NOT vanish into rejected signals (observed live):
+    admits no revision, §14.3) — the intent must NOT vanish into rejected signals (observed live):
     the searcher sees the frozen list, the unapplied change surfaces as an honest hole, and the
     child's state/audit stay untouched."""
     from gfso.core.types import SignalData, Signal, State
@@ -312,7 +312,7 @@ def test_fold_removal_unmaps_but_never_kills():
     fake2 = FakeLLM(texts=["found: b is ballast"], specs=[drop_b])
     res2 = refine(e, root_id="root", llm=fake2)
     b = e.get_task(TaskId("root.b"))
-    assert b is not None and b.state == State.REVIEW                 # alive, state untouched
+    assert b is not None and b.state == State.OFFERED                 # alive, state untouched
     root = e.get_task(TaskId("root"))
     assert all(m.child_id != TaskId("root.b") for m in root.criterion_mappings)   # unmapped
     assert any("b" in str(h) for h in res2.holes)                    # surfaced as an honest hole
@@ -332,8 +332,8 @@ def test_extract_spec_roundtrips_build():
     assert got["deps"] == [{"from": "a", "to": "b", "glue": "B reads A's output"}]
     assert sorted((m["criterion"], m["child_id"]) for m in got["mappings"]) == \
         [("rc1", "a"), ("rc2", "b")]
-    assert got["neglected"][0]["item"] == "provider outage"
-    assert got["neglected"][0]["predictability"] == "STATISTICAL"
+    assert got["accepted_risks"][0]["item"] == "provider outage"
+    assert got["accepted_risks"][0]["predictability"] == "STATISTICAL"
 
 
 # === _fold_merge: deterministic, referentially clean, dedup ===
@@ -364,7 +364,7 @@ def test_fold_merge_dedup_and_noop():
     patch = {"add_subtasks": [dict(spec["subtasks"][0])],
              "add_mappings": [dict(spec["mappings"][0])],
              "add_deps": [dict(spec["deps"][0])],
-             "add_neglected": [dict(spec["neglected"][0])],
+             "add_accepted_risks": [dict(spec["accepted_risks"][0])],
              "update_subtasks": [dict(spec["subtasks"][1])],       # identical update = no-op
              "name": "Thing"}                                      # same name = no-op
     s, ops = _fold_merge(spec, patch)
@@ -414,3 +414,36 @@ def test_repair_is_a_field_patch():
     assert res.holes == []
     assert len(res.spec["subtasks"]) == 2
     assert res.spec["mappings"][0]["criterion"] == "rc1"
+
+
+def test_a_silent_provider_is_reported_as_a_provider_fact(monkeypatch):
+    """An LLM that never answers must not read as a goal that needs no subtasks.
+
+    The LLM ports return "" / {} on transport failure by contract, so a provider that is unreachable
+    or unauthenticated produced a *clean* run — 0 subtasks, 0 holes, "verified" — indistinguishable
+    in the result from a goal that is genuinely atomic. That is the first thing a fresh install
+    without credentials meets, on the verb it is told to start with.
+
+    The transport is patched at `decompose._default_llm`, not on the Engine: `auto_decompose` builds
+    its own from the environment (runtime.llm_factory) and never consults the engine's.
+    """
+    from gfso import decompose as D
+    from gfso import tools_llm as T
+
+    class Silent:
+        """What a dead endpoint looks like through the port: nothing said, nothing recorded."""
+        calls = ()
+
+        def complete(self, prompt, context=""):
+            return ""
+
+        def complete_structured(self, system, user, schema):
+            return {}
+
+    monkeypatch.setattr(D, "_default_llm", lambda model: Silent())
+    e = Engine(MemoryStorage(), HumanAgent(), Silent(), validate_signals=True)
+    e.start()
+    out = T.auto_decompose(e, "ship a hello world script", root_id="r", assignee="human")
+    assert out["subtasks"] == []
+    assert "provider" in out.get("error", "")
+    e.stop()

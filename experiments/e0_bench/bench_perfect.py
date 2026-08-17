@@ -23,8 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bench_single as bs
 from gfso.core.types import TaskId, AgentId, Spec, Criteria
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.verification import CodeVerifier
-from gfso.adapters.agents.bench_agent import BenchAgent
+from gfso.adapters.verifiers import SubprocessVerifier as CodeVerifier
+from bench.bench_agent import BenchAgent
 from gfso.engine import Engine
 
 bs.RESULTS_FILE = "runs/bench_results_perfect.json"
@@ -57,7 +57,7 @@ def run_gfso_perfect(problem, hidden_tests):
         f"Public examples shown above. Additional hidden tests will validate edge cases and constraints."
     )
 
-    spec = Spec(description=problem_prompt, criteria=criteria, neglected=())
+    spec = Spec(description=problem_prompt, criteria=criteria, accepted_risks=())
     storage = MemoryStorage()
     example_input = pub[0]['input'] if pub else ""
     verifier = CodeVerifier(storage, example_input, starter_code=starter_code)

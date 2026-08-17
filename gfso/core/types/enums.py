@@ -3,32 +3,32 @@ from enum import Enum, auto
 
 class State(Enum):
     IDLE = auto()
-    REVIEW = auto()
+    OFFERED = auto()
     CHALLENGED = auto()
     EXECUTING = auto()
     BLOCKED = auto()
     VALIDATING = auto()
-    REWORK = auto()
-    CANCELLING = auto()   # cancellation handshake in flight (§6.3): CANCEL received, CANCEL_ACK pending
+    REWORKING = auto()
+    CANCELLING = auto()   # cancellation handshake in flight (§14.3): CANCEL received, CONFIRM_CANCEL pending
     DONE = auto()
-    CANCELLED = auto()    # terminal, V=⊥ — task abandoned (§6.3), distinct from DONE(pass/fail)
-    TIMEOUT = auto()
+    ABANDONED = auto()    # terminal, V=⊥ — task abandoned (§14.3), distinct from DONE(pass/fail)
+    OVERDUE = auto()
     ESCALATED = auto()
 
 
-TERMINAL_STATES = frozenset({State.DONE, State.ESCALATED, State.CANCELLED})
+TERMINAL_STATES = frozenset({State.DONE, State.ESCALATED, State.ABANDONED})
 NON_TERMINAL_STATES = frozenset(s for s in State if s not in TERMINAL_STATES)
 
-# R′ (§6.3 "Финальность"): DONE and CANCELLED are QUASI-terminal — a named extension of the
-# admissible set (Инв-6): re-ASSIGN (REOPEN) is admitted under a double gate (finality-gate of
+# R′ (§14.3 "Финальность"): DONE and ABANDONED are QUASI-terminal — a named extension of the
+# admissible set (Inv-6): re-ASSIGN (REOPEN) is admitted under a double gate (finality-gate of
 # consumption + max_reopens). ESCALATED stays fully terminal (its resolution is outside the FSM).
-QUASI_TERMINAL_STATES = frozenset({State.DONE, State.CANCELLED})
+QUASI_TERMINAL_STATES = frozenset({State.DONE, State.ABANDONED})
 
-# States a live node can be re-ASSIGNed (revised) from — §6.4 Inv-1: revision = re-ASSIGN same id → REVIEW.
-# TIMEOUT accepts no progress signals (§6.3); CANCELLING's sole staffed exit is CANCEL_ACK (§6.3).
+# States a live node can be re-ASSIGNed (revised) from — §14.4 Inv-1: revision = re-ASSIGN same id → OFFERED.
+# OVERDUE accepts no progress signals (§14.3); CANCELLING's sole staffed exit is CONFIRM_CANCEL (§14.3).
 REASSIGNABLE_STATES = frozenset({
-    State.REVIEW, State.CHALLENGED, State.EXECUTING,
-    State.BLOCKED, State.VALIDATING, State.REWORK,
+    State.OFFERED, State.CHALLENGED, State.EXECUTING,
+    State.BLOCKED, State.VALIDATING, State.REWORKING,
 })
 
 
@@ -38,7 +38,7 @@ class Signal(Enum):
     CHALLENGE = auto()
     BLOCK = auto()
     DELIVER = auto()
-    CANCEL_ACK = auto()
+    CONFIRM_CANCEL = auto()
     # Issuer → Executor
     ASSIGN = auto()
     ACCEPT_CHALLENGE = auto()
@@ -54,8 +54,8 @@ class Signal(Enum):
 class DoneReason(Enum):
     PASS = auto()
     FAIL = auto()
-    AUTO = auto()
-    CANCELLED = auto()  # legacy only (pre-v3.7 DBs stored cancellation as DONE(cancelled)); new cancellations end in State.CANCELLED
+    AUTO_PASS = auto()
+    CANCELLED = auto()  # legacy only (pre-v3.7 DBs stored cancellation as DONE(cancelled)); new cancellations end in State.ABANDONED
 
 
 class Verdict(Enum):
@@ -64,13 +64,13 @@ class Verdict(Enum):
 
 
 class RevisionReason(Enum):
-    """Causal type of a revision (re-ASSIGN, §6.4 Inv-1) — §16.5: the causally-typed members of
+    """Causal type of a revision (re-ASSIGN, §14.4 Inv-1) — §24.5: the causally-typed members of
     q_T («criteria изменены по дефекту спеки») and q_Del (re-ASSIGN(capability_mismatch)) require
     the revision reason typed in the packet. Optional: an untyped revision keeps each metric's
     documented bias (q_T under-approximates — counts challenges only; q_Del over-approximates —
     counts every Del change)."""
     SPEC_DEFECT = auto()          # criteria changed because the contract itself was defective → q_T member
-    SCOPE_EXPANSION = auto()      # sanctioned goal re-ASSIGN with new criteria (§5.1/§13) — NOT a defect
+    SCOPE_EXPANSION = auto()      # sanctioned goal re-ASSIGN with new criteria (§13.1/§21) — NOT a defect
     CAPABILITY_MISMATCH = auto()  # Del change because the executor could not do the work → q_Del member
     OTHER = auto()                # routine (load, handoff, restructure) — counted by neither metric
 
@@ -78,9 +78,9 @@ class RevisionReason(Enum):
 class FM(Enum):
     CORRESPONDENCE = auto()
     CONSISTENCY = auto()
-    VERIFIABILITY = auto()
+    VERACITY = auto()
     PROPAGATION = auto()
-    CURRENCY = auto()
+    FRESHNESS = auto()
     FEASIBILITY = auto()
     FEEDBACK = auto()
 
@@ -92,11 +92,11 @@ class AutonomyLevel(Enum):
 
 
 class Predictability(Enum):
-    """STD-2 (§5.2): predictability class of a neglected factor.
+    """STD-2 (§5.2): predictability class of an accepted-risk factor.
 
-    ORDINARY      — regular in domain, P estimable → MUST be in decomposition (not neglectable).
-    STATISTICAL   — P estimable but rare → neglectable only WITH justification.
-    EXTRAORDINARY — no precedent AND not derivable from known models → neglectable.
+    ORDINARY      — regular in domain, P estimable → MUST be in decomposition (never acceptable as a risk).
+    STATISTICAL   — P estimable but rare → acceptable as a risk only WITH justification.
+    EXTRAORDINARY — no precedent AND not derivable from known models → acceptable as a risk.
     """
     ORDINARY = auto()
     STATISTICAL = auto()
@@ -106,11 +106,11 @@ class Predictability(Enum):
 class MutationType(Enum):
     CREATE_TASK = auto()
     SET_STATE = auto()
-    APPLY_SPEC = auto()       # sanctioned spec revision via ACCEPT_CHALLENGE (§6.2/§6.6) — may change criteria
+    APPLY_SPEC = auto()       # sanctioned spec revision via ACCEPT_CHALLENGE (§14.2/§14.6) — may change criteria
     INCREMENT_ITERATION = auto()
     STORE_CHECK_RESULTS = auto()
     STORE_RECOMMENDATION = auto()
-    RECORD_DEP = auto()       # BLOCK named a prerequisite node → provisional discovered-Dep edge (§6.2/§7.2)
-    ADJUDICATE_DEP = auto()   # RESOLVE_BLOCK adjudicates the provisional: confirm / re-attribute / retract (§6.2)
-    REOPEN = auto()           # R′ (§6.3): gated re-ASSIGN out of a quasi-terminal — spends a reopen,
-                              # drops the stale verdict (V=pass is re-earned in REVIEW, never carried forward)
+    RECORD_DEP = auto()       # BLOCK named a prerequisite node → provisional discovered-Dep edge (§14.2/§15.2)
+    ADJUDICATE_DEP = auto()   # RESOLVE_BLOCK adjudicates the provisional: confirm / re-attribute / retract (§14.2)
+    REOPEN = auto()           # R′ (§14.3): gated re-ASSIGN out of a quasi-terminal — spends a reopen,
+                              # drops the stale verdict (V=pass is re-earned in OFFERED, never carried forward)

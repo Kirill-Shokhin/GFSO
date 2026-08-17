@@ -13,7 +13,7 @@ drop or compress it (the ×n re-emission cost and the fold-degradation of the ea
 both removed by construction). The loop stops early on ALREADY-COVERED (searcher) or an empty fold (audit).
 
 A decomposition function is **single-level by definition**: it decomposes ONE node into its children.
-Recursion = call it again on a child. The flat spec (root criteria + subtasks + mappings + deps + neglected
+Recursion = call it again on a child. The flat spec (root criteria + subtasks + mappings + deps + accepted_risks
 + scope) is therefore the correct one-level encoding; deeper trees are separate calls. `depth` is the
 iteration count of the search↔audit refinement (the depth-of-working-through dial), not tree depth.
 """
@@ -68,7 +68,7 @@ def _hint(llm, stage: str) -> None:
 def _spec_line(spec: dict) -> str:
     """Shape readout of a structured spec (what is about to be built)."""
     return (f"spec: {len(spec.get('subtasks', []))} subtasks · {len(spec.get('deps', []))} seams · "
-            f"{len(spec.get('root_criteria', []))} root criteria · {len(spec.get('neglected', []))} risks")
+            f"{len(spec.get('root_criteria', []))} root criteria · {len(spec.get('accepted_risks', []))} risks")
 
 
 def shape(spec: dict) -> tuple[int, int, int]:
@@ -112,30 +112,30 @@ AUDIT_SCHEMA = {
             "items": {"type": "object", "properties": {
                 "from": {"type": "string"}, "to": {"type": "string"}, "glue": {"type": "string"}},
                 "required": ["from", "to", "glue"]}},
-        "neglected": {"type": "array", "description":
+        "accepted_risks": {"type": "array", "description":
             "The RISK REGISTER — ONLY uncertain EVENTS with a real materialization probability that this "
             "decomposition ignores. predictability verdict per event: STATISTICAL = P estimable but rare "
-            "(justification must state why neglecting is acceptable); EXTRAORDINARY = genuinely "
+            "(justification must state why carrying it as an accepted risk is acceptable); EXTRAORDINARY = genuinely "
             "unprecedented (no precedent AND not derivable from known models); ORDINARY events may NOT be "
-            "neglected — they must be a subtask instead. A deliberate SCOPE BOUNDARY (a capability the goal "
+            "accepted_risks — they must be a subtask instead. A deliberate SCOPE BOUNDARY (a capability the goal "
             "does not include) is NOT a risk — it has no P: put it in the `scope` field (objectified on the "
             "goal, visible in the graph), NOT here; it also shapes which root_criteria exist.",
             "items": {"type": "object", "properties": {
                 "item": {"type": "string"},
                 "predictability": {"type": "string", "enum": ["STATISTICAL", "EXTRAORDINARY"]},
                 "justification": {"type": "string"},
-                "invalidation": {"type": "string", "description": "when to revisit this neglect"}},
+                "invalidation": {"type": "string", "description": "when to revisit this accepted risk"}},
                 "required": ["item", "predictability", "justification", "invalidation"]}},
         "scope": {"type": "array", "description":
             "Deliberate SCOPE-BOUNDARY exclusions — capabilities the goal does NOT include (no materialization "
-            "probability; NOT risks, distinct from `neglected`). Each: the excluded capability + why it is "
+            "probability; NOT risks, distinct from `accepted_risks`). Each: the excluded capability + why it is "
             "safely out. Recording them here OBJECTIFIES the exclusion ON THE GOAL (it becomes visible in the "
             "graph, not an implicit absence). Emit here every scope-exclusion the basis names in its N section.",
             "items": {"type": "object", "properties": {
                 "item": {"type": "string"}, "why_out": {"type": "string"}},
                 "required": ["item", "why_out"]}},
     },
-    "required": ["name", "root_criteria", "subtasks", "mappings", "deps", "neglected"],
+    "required": ["name", "root_criteria", "subtasks", "mappings", "deps", "accepted_risks"],
 }
 
 # The repair call PATCHES: every field optional — the corrective audit re-emits ONLY what it changes
@@ -167,8 +167,8 @@ FOLD_SCHEMA = {
         "add_deps": {"type": "array", "items": AUDIT_SCHEMA["properties"]["deps"]["items"]},
         "remove_deps": {"type": "array", "items": {"type": "object", "properties": {
             "from": {"type": "string"}, "to": {"type": "string"}}, "required": ["from", "to"]}},
-        "add_neglected": {"type": "array", "items": AUDIT_SCHEMA["properties"]["neglected"]["items"]},
-        "remove_neglected_items": {"type": "array", "items": {"type": "string"}},
+        "add_accepted_risks": {"type": "array", "items": AUDIT_SCHEMA["properties"]["accepted_risks"]["items"]},
+        "remove_accepted_risks_items": {"type": "array", "items": {"type": "string"}},
         "add_scope": {"type": "array", "items": AUDIT_SCHEMA["properties"]["scope"]["items"]},
         "remove_scope_items": {"type": "array", "items": {"type": "string"}},
     },
@@ -181,7 +181,7 @@ _COVERED = "ALREADY-COVERED"
 # `fast` pace-suffixes — USER-content additions (frozen prompt CORES untouched; same sanctioned class
 # as the ALREADY-COVERED sentinel). Measured on the wordfreq simple task (runs/v2_speed/suffix_*.json):
 # baseline 106s/9.8k out → both suffixes 63-77s/5.6-7.4k out, holes==[], 0 repairs, shape parity
-# (the audit suffix MUST carry the keep-NEGLECTED clause — without it the register got dropped → repair).
+# (the audit suffix MUST carry the keep-ACCEPTED_RISKS clause — without it the register got dropped → repair).
 # ⚠ SIMPLE TASKS ONLY — measured on the complex T01 reference (2026-07-04): 2× cheaper (325s/32k →
 # 167s/17k) but coverage −9/45 on the basis (35→26; V-criteria content is what compresses away).
 SEARCH_FAST = ("Pace note: this is a SIMPLE task — keep the enumeration TIGHT: one short line per "
@@ -189,7 +189,7 @@ SEARCH_FAST = ("Pace note: this is a SIMPLE task — keep the enumeration TIGHT:
                "prose, no closing narration. Completeness of ITEMS matters; wordiness does not.")
 AUDIT_FAST = ("Pace note: this is a SIMPLE task — keep the reduction TIGHT: no narration or "
               "self-check text (the structure carries the checks). Names EXACT — drop nothing; the "
-              "NEGLECTED risk register stays COMPLETE (each risk with its predictability verdict, "
+              "ACCEPTED_RISKS risk register stays COMPLETE (each risk with its predictability verdict, "
               "justification, invalidation). NB: reworded 2026-07-09 for the prose-free loop; the "
               "measured 63-77s numbers below are from the prose-era wording.")
 
@@ -236,7 +236,7 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
     Removing a subtask cleans its mappings and seams (referential integrity by construction). Returns
     (new spec, human-readable op summary); an empty summary ⟺ the patch changed nothing (converged)."""
     s = {k: (list(v) if isinstance(v, list) else v) for k, v in spec.items()}
-    for key in ("subtasks", "root_criteria", "mappings", "deps", "neglected", "scope"):
+    for key in ("subtasks", "root_criteria", "mappings", "deps", "accepted_risks", "scope"):
         s.setdefault(key, [])
     ops: list[str] = []
 
@@ -265,7 +265,7 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
         if len(kept) != len(s[tgt]):
             ops.append(f"-{tgt} {len(s[tgt]) - len(kept)}")
             s[tgt] = kept
-    for key, tgt, idf in (("remove_neglected_items", "neglected", lambda x: str(x.get("item"))),
+    for key, tgt, idf in (("remove_accepted_risks_items", "accepted_risks", lambda x: str(x.get("item"))),
                           ("remove_scope_items", "scope", lambda x: str(x.get("item")))):
         rm = {str(x) for x in patch.get(key, [])}
         kept = [x for x in s[tgt] if idf(x) not in rm]
@@ -291,7 +291,7 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
     _add("mappings", patch.get("add_mappings", []),
          lambda x: (str(x.get("criterion")), str(x.get("child_id"))))
     _add("deps", patch.get("add_deps", []), lambda x: (str(x.get("from")), str(x.get("to"))))
-    _add("neglected", patch.get("add_neglected", []), lambda x: str(x.get("item")))
+    _add("accepted_risks", patch.get("add_accepted_risks", []), lambda x: str(x.get("item")))
     _add("scope", patch.get("add_scope", []), lambda x: str(x.get("item")))
     return s, ops
 

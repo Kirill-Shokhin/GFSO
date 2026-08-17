@@ -1,0 +1,187 @@
+name: release
+
+# A tag is the release. `v0.1.0` on a commit builds the artifacts, runs the suite, INSTALLS the built
+# wheel on all three platforms and drives it from a directory that is not the checkout, and only then
+# publishes. The order matters: a version on PyPI is permanent — it cannot be replaced, only yanked —
+# so the artifact is exercised before it becomes irreversible.
+#
+# ── CUTTING A RELEASE ────────────────────────────────────────────────────────────────────────────
+#   0. Merge to `main` first. `[project.urls]` bakes blob/main links into metadata that cannot be
+#      edited afterwards, so a tag off an unmerged branch publishes a page whose links 404 forever.
+#      The `build` job below refuses a tag that is not an ancestor of `main`, so this is enforced.
+#   1. Move the `Unreleased` entries in CHANGELOG.md into a dated `## [x.y.z]` section + compare link.
+#   2. Set `__version__` in gfso/__init__.py — the one place the version is written. The `build` job
+#      refuses a tag that disagrees with it.
+#   3. Rehearse: Actions → release → Run workflow, `publish` checked → the whole pipeline against
+#      TestPyPI. Verify it installs:
+#        pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple gfso
+#   4. Tag `vx.y.z` and push the tag. That is the release.
+#
+# ── ONE-TIME SETUP (before the first release; nothing is stored as a secret) ──────────────────────
+#   Publishing uses PyPI Trusted Publishing: PyPI is told which workflow may upload, and the exchange
+#   rides a short-lived OIDC token.
+#   1. Accounts on pypi.org and test.pypi.org (separate registrations), each with 2FA.
+#   2. On EACH site: Your account → Publishing → Add a pending publisher ("pending" = the project does
+#      not exist yet):  project `gfso` · owner `Kirill-Shokhin` · repository `GFSO` ·
+#      workflow `release.yml` · environment `pypi` on pypi.org, `testpypi` on test.pypi.org.
+#   3. On GitHub: Settings → Environments → create `pypi` and `testpypi`. A required reviewer on
+#      `pypi` makes every publish need one click.
+#   A missing environment fails before the upload; a missing pending publisher fails at it. Both are
+#   cheap — neither can publish a broken version.
+#
+# ── VERSIONING ───────────────────────────────────────────────────────────────────────────────────
+#   The software has its own SemVer line and THE CANON HAS NOTHING TO DO WITH IT. The canon is closed
+#   at v4.0; this package is at 0.x. Never synchronise the two numbers.
+#   While 0.x: the protocol, the twelve signals and the state machine are stable (they are the
+#   canon's). The Python API, the CLI surface and the web UI are not — a break in those ships in a
+#   MINOR bump, named in CHANGELOG.md. At 1.0.0 they become major-only.
+permissions:
+  contents: read          # the two jobs that need more ask for it themselves
+
+concurrency:              # two tags pushed close together must not race the same PyPI project
+  group: release
+  cancel-in-progress: false
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to TestPyPI (a dry run of the whole pipeline)'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }      # merge-base needs history
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: The tag and the package must state the same version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python - <<'PY'
+          import os, pathlib, re, sys
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          src = pathlib.Path("gfso/__init__.py").read_text(encoding="utf-8")
+          ver = re.search(r'__version__ = "([^"]+)"', src).group(1)
+          if tag != ver:
+              sys.exit(f"tag {tag!r} does not match gfso.__version__ {ver!r}")
+          print(f"tag and package agree on {ver}")
+          PY
+      - name: The tag must be on main — the metadata points there permanently
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # `[project.urls]` bakes blob/main links into METADATA, which cannot be edited after
+          # upload. A tag cut from an unmerged branch publishes a page whose Documentation and
+          # Changelog links 404 for the life of the version.
+          # NOT --depth=1: a shallow fetch grafts origin/main at its tip, and `merge-base` then
+          # refuses a tag on a commit that IS on main but behind it — a legitimate release.
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main             || { echo "::error::this commit is not on main; merge before tagging"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist/ }
+
+  # The tag is the only trigger a release has, and `tests.yml` is path-filtered on pushes, so
+  # without this job a tag on a commit that never had green CI would publish permanently.
+  suite:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:                       # the same cells as tests.yml — a release gate narrower than
+        os: [ubuntu-latest, windows-latest]   # the PR gate publishes what the PR gate would catch
+        python-version: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e .[dev] build
+      - run: python -m pytest tests -q
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - name: Install the built wheel, and let pip resolve its DECLARED dependencies
+        shell: bash
+        run: pip install "$(ls dist/*.whl)"
+      - name: The declared dependencies are the ones the product needs
+        shell: bash
+        # Everything else here runs on the stdlib, so a wheel declaring NO dependencies at all would
+        # pass the whole pipeline. This import is what makes the dependency list load-bearing.
+        run: python -c "import gfso.api.server, gfso.mcp.server, gfso.mcp.connect; print('imports ok')"
+      - name: Use it from a directory that is not the repository
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/elsewhere" && cd "$RUNNER_TEMP/elsewhere"
+          gfso --version
+          gfso demo human_only | tee out.txt
+          grep -q "accepted? False" out.txt
+          grep -q "final: DONE" out.txt
+          # `doctor` reports; it exits non-zero when something blocks work, and on a runner the
+          # Claude Code CLI is legitimately absent — which is not a blocking condition.
+          gfso doctor || true
+          (gfso doctor || true) | grep -q "state home"
+
+  publish:
+    needs: [suite, smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # PyPI Trusted Publishing — no API token is stored anywhere
+      contents: write        # the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with: { skip-existing: true }   # a re-run must reach the Release step below
+      - name: GitHub Release, with the changelog section for this version
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          m = re.search(rf"^## \[{re.escape(tag)}\].*?(?=^## \[|\Z)", text, re.S | re.M)
+          notes = m.group(0).strip() if m else f"See CHANGELOG.md for {tag}."
+          # written, not printed: the changelog is full of em dashes and the runner's locale is
+          # not a thing to bet an irreversible step on.
+          pathlib.Path("notes.md").write_text(notes, encoding="utf-8")
+          PY
+          # PyPI is already permanent by now, so a Release that already exists (a re-run) must not
+          # turn the job red: update it instead, and attach the exact artifacts that were uploaded.
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME"                             --notes-file notes.md dist/*             || { gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+                 gh release upload "$GITHUB_REF_NAME" dist/* --clobber; }
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  testpypi:
+    needs: [suite, smoke]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true      # a rehearsal is repeatable by definition

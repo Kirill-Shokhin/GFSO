@@ -22,24 +22,21 @@
     /* Five visual buckets — direct translation of Applied-v3 theory:
          done      = V=pass, ¬intervene   — DONE
          quiet     = V=⊥,    ¬intervene   — IDLE, EXECUTING
-         attend   = V=⊥,    intervene    — REVIEW, VALIDATING
-         fail      = V=fail, intervene    — REWORK, CHALLENGED        (only acc)
-         pathology = V=⊥ + FM, intervene  — BLOCKED, TIMEOUT, ESCALATED
+         attend   = V=⊥,    intervene    — OFFERED, VALIDATING
+         fail      = V=fail, intervene    — REWORKING, CHALLENGED        (only acc)
+         pathology = V=⊥ + FM, intervene  — BLOCKED, OVERDUE, ESCALATED
 
-       Axes (§3.2 + §4):
+       Axes (§11.2 + §12):
          A {intervene, ¬intervene} → fill weight (faint outline vs solid)
          V {pass, fail, ⊥}         → fill identity (ink vs acc)
          FM {present, absent}      → structural marker (dashed outline) */
-    --st-idle:       var(--ink-faint);  /* unused — kept for legacy refs */
-    --st-timeout:    var(--ink-faint);
-    --st-review:     var(--paper);
+    /* Only the four the stylesheet actually reads. The other six were dead, and three of those
+       spelled states v4.0 retired (review/rework/timeout) — a lowercase identifier the naming
+       guard's uppercase patterns cannot see, which is how they outlived the migration. */
     --st-validating: var(--paper);
     --st-executing:  var(--ink-soft);
     --st-done:       var(--ink);
-    --st-blocked:    var(--acc);
     --st-challenged: var(--acc);
-    --st-rework:     var(--acc);
-    --st-escalated:  var(--acc);
 
     --radius: 4px;
 }
@@ -606,7 +603,7 @@ body {
 .expand-form textarea:focus { border-color: var(--acc); }
 .expand-form input[type="datetime-local"] { color-scheme: dark; }
 
-/* List editor — NEGLECTED, risk_components */
+/* List editor — ACCEPTED_RISKS, risk_components */
 .list-editor { display: flex; flex-direction: column; gap: 4px; }
 .list-item { display: flex; gap: 4px; align-items: center; }
 .list-item input { flex: 1; }
@@ -694,7 +691,7 @@ body {
 .composition-row .child-name { flex: 1; cursor: pointer; }
 .composition-row .child-name:hover { color: var(--ink); }
 
-/* NEGLECTED / risk display in sidebar */
+/* ACCEPTED_RISKS / risk display in sidebar */
 .facet-list {
     list-style: none;
     margin-top: 4px;

@@ -6,6 +6,30 @@ import re
 from gfso.core.types import Task, CheckResult, Predictability, DepEdge
 
 
+# The canon's own CHECK → failure-mode routing (§13.4's battery, corroborated by §13.6's table).
+# ONE table, in the product, read by everything that displays it — the UI used to carry its own copy
+# in JavaScript, which drifted: it credited CHECK-6 to FM-1 where §13.4 routes leaf delegation to
+# FM-7, and knew nothing of CHECK-1b/7/8. `tests/test_canon_check_map.py` parses the battery out of
+# the canon and compares both directions, the same way the FSM table is guarded.
+# CHECK-1c (anti-mock) is deliberately absent: it is an engineering addition with no canon row.
+CHECK_TO_FM: dict[str, str] = {
+    "CHECK-1:coverage":       "FM-1.a",
+    "CHECK-1b:no_orphan":     "FM-1.e",
+    "CHECK-2:dag":            "FM-4",
+    "CHECK-3:deadlines":      "FM-5",
+    "CHECK-4:accepted_risks": "FM-1",
+    "CHECK-5:risk_nodes":     "FM-1",
+    "CHECK-6:delegation":     "FM-7",
+    "CHECK-7:sufficiency":    "FM-1",
+    "CHECK-8:consistency":    "FM-2",
+}
+
+FM_LABEL: dict[str, str] = {
+    "FM-1": "Correspondence", "FM-2": "Consistency", "FM-3": "Veracity", "FM-4": "Propagation",
+    "FM-5": "Freshness", "FM-6": "Feasibility", "FM-7": "Feedback",
+}
+
+
 def _mentions(text: str, name: str) -> bool:
     """Does `text` name the criterion `name` as a token? Word-boundary exact match — a substring
     test would fire on any criterion whose name is a common word fragment."""
@@ -15,7 +39,7 @@ def _mentions(text: str, name: str) -> bool:
 
 
 def check_anti_mock(children: list[Task], dep_edges: list[DepEdge]) -> CheckResult:
-    """CHECK-1c (anti-mock): every sibling seam carries a glue truth-maker (§2.2/§18.10) → FM-1.
+    """CHECK-1c (anti-mock): every sibling seam carries a glue truth-maker (§10/§2) → FM-1.
 
     A declared Dep edge with empty glue is the forgotten-glue hole: the edge says two
     parts couple but nothing states what must match / what breaks. (Glue *quality* —
@@ -42,6 +66,18 @@ def check_coverage(task: Task, children: list[Task]) -> CheckResult:
     CHECK-1 verifies: (a) every criterion has a mapping, (b) mapped child exists.
     """
     if not task.spec.criteria:
+        # A DECOMPOSED node with no criteria of its own is not "covered", it is UNJUDGEABLE. By A1 a
+        # task is a goal plus a decidable predicate, so an empty criteria set makes V(node) true
+        # vacuously — the §26.3 shape of a check that passes because its population is empty.
+        # Measured: a two-hour run built five well-specified children under a root carrying ZERO
+        # criteria; coverage reported no holes (nothing to cover), the Level-2 gate reported
+        # `semantic_covered: true` over `criteria_judged: 0`, every child passed, and the only thing
+        # that caught it was the validator refusing to invent a criterion to judge the root by.
+        if children:
+            return CheckResult("CHECK-1:coverage", False,
+                               "the node has children but no criteria of its own — nothing to "
+                               "cover and nothing to validate it against (A1: a task is a goal "
+                               "plus a decidable predicate)")
         return CheckResult("CHECK-1:coverage", True, "no criteria defined")
 
     if not children:
@@ -81,31 +117,54 @@ def check_coverage(task: Task, children: list[Task]) -> CheckResult:
 
 
 def check_non_redundancy(task: Task, children: list[Task]) -> CheckResult:
-    """CHECK-1b: non-redundancy — the second side of FM-1 (§4.1 C1, §2.2.2).
+    """CHECK-1b: non-redundancy — the second side of FM-1 (§12.1 C1, §10).
 
     Every child must address at least one parent criterion (via criterion_mappings).
     A child mapped to nothing is superfluous: it inflates the decomposition and
     breaks the non-redundancy half of correctness (Theorem 1 needs both sides).
     """
     if not children:
-        return CheckResult("CHECK-1b:non_redundancy", True, "leaf task", skipped=True)
+        return CheckResult("CHECK-1b:no_orphan", True, "leaf task", skipped=True)
     if not task.criterion_mappings:
-        return CheckResult("CHECK-1b:non_redundancy", True, "no mappings declared", skipped=True)
+        return CheckResult("CHECK-1b:no_orphan", True, "no mappings declared", skipped=True)
 
     mapped_children = {m.child_id for m in task.criterion_mappings}
     redundant = [c.id for c in children if c.id not in mapped_children]
     if redundant:
         return CheckResult(
-            "CHECK-1b:non_redundancy", False,
+            "CHECK-1b:no_orphan", False,
             f"children addressing no parent criterion: {', '.join(redundant)}",
         )
-    return CheckResult("CHECK-1b:non_redundancy", True)
+    return CheckResult("CHECK-1b:no_orphan", True)
 
 
-def check_dag(children: list[Task], dep_edges: list[tuple[str, str]]) -> CheckResult:
-    """CHECK-2: decomposition graph is a DAG (no cycles)."""
+def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
+              task: Task | None = None) -> CheckResult:
+    """CHECK-2: the graph of D is a DAG (§13.4 → FM-4), and Dep is acyclic (§10, which defines Dep as
+    an acyclic relation and has no CHECK row of its own).
+
+    The D clause is the canon's own row and used to be missing entirely: this check walked the *Dep*
+    edges and reported "CHECK-2:dag" over them, so "a cycle → infinite recursion → an A1 violation"
+    (§10) was verified nowhere. What is decidable from ONE split is a node that is its own child
+    (a self-parent — reachable through the authoring door, measured) and a repeated child; a longer
+    D cycle is not visible from a single node's split and is refused where the whole graph is —
+    `Engine._assert_no_d_cycle`, at the ASSIGN that would close it.
+    """
+    if task is not None:
+        seen: set[str] = set()
+        for c in children:
+            if str(c.id) == str(task.id):
+                return CheckResult("CHECK-2:dag", False,
+                                   f"cycle in the decomposition graph: {task.id} is its own child "
+                                   f"(D must be a DAG — a cycle is infinite recursion, §10/§13.4)")
+            if str(c.id) in seen:
+                return CheckResult("CHECK-2:dag", False,
+                                   f"cycle in the decomposition graph: {c.id} appears twice among "
+                                   f"the children of {task.id}")
+            seen.add(str(c.id))
+
     if not dep_edges:
-        return CheckResult("CHECK-2:dag", True, "no dependency edges")
+        return CheckResult("CHECK-2:dag", True, "D acyclic; no dependency edges")
 
     # Build adjacency and detect cycle via DFS
     adj: dict[str, list[str]] = {}
@@ -147,10 +206,17 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]]) -> CheckRe
 
 
 def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str, str]]) -> CheckResult:
-    """CHECK-3: for every dependency (a, b), deadline(a) < deadline(b)."""
-    if not dep_edges:
-        return CheckResult("CHECK-3:deadlines", True, "no dependency edges")
+    """CHECK-3: deadline coherence, BOTH rules the canon states.
 
+    HORIZONTAL (§10, Dep coherence): for every dependency (a, b), deadline(a) < deadline(b).
+    VERTICAL (§3.4 item 6): every child's deadline < its parent's — a child that may finish after
+    its parent's own deadline cannot compose into it, so the plan promises a passage time denies.
+
+    The vertical rule was stated and derivable but had **no pre-exec check** — the canon names that
+    gap itself (§26.5-bis, "the un-operationalized form items"), and §15.4's triage tie-break leans
+    on the rule. It is L0 (packet fields, no domain knowledge), so it belongs here, with the
+    horizontal one, rather than in the open-problems list.
+    """
     deadlines = {t.id: t.deadline for t in children}
     deadlines[task.id] = task.deadline
 
@@ -161,39 +227,51 @@ def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str,
         if dl_a is None or dl_b is None:
             continue
         if dl_a >= dl_b:
-            violations.append(f"{a}(deadline={dl_a}) >= {b}(deadline={dl_b})")
+            violations.append(f"Dep {a}(deadline={dl_a}) >= {b}(deadline={dl_b})")
+
+    for c in children:
+        if c.deadline is None or task.deadline is None:
+            continue                      # a deadline is a design decision, not a mandatory field
+        if c.deadline >= task.deadline:
+            # Tagged by the rule it enforces, not by the check it rides in: this is §3.4 item (6),
+            # which the canon states and gives no CHECK of its own (§26.5-bis; corner #6). Crediting
+            # it to CHECK-3 in a failure message would be wrong about the canon.
+            violations.append(f"[§3.4(6) vertical] child {c.id}(deadline={c.deadline}) >= parent "
+                              f"{task.id}(deadline={task.deadline})")
 
     if violations:
         return CheckResult("CHECK-3:deadlines", False, "; ".join(violations))
+    if not dep_edges and not any(c.deadline for c in children):
+        return CheckResult("CHECK-3:deadlines", True, "no dependency edges, no child deadlines")
     return CheckResult("CHECK-3:deadlines", True)
 
 
-def check_neglected(task: Task, children: list[Task]) -> CheckResult:
-    """CHECK-4: for a DECOMPOSED node (D≠∅), the NEGLECTED section exists, is non-empty, and its records
-    are well-formed (v3.7 §5.1; record schema §5.1/Ст. I.10).
+def check_accepted_risks(task: Task, children: list[Task]) -> CheckResult:
+    """CHECK-4: for a DECOMPOSED node (D≠∅), the ACCEPTED_RISKS section exists, is non-empty, and its records
+    are well-formed (record schema §13.1, predictability per factor §13.2).
 
-    NEGLECTED is authored per-decomposition by the node's own decomposer — a leaf (D=∅) has no
-    decomposition, so its NEGLECTED is vacuous and CHECK-4 does not gate it (nor a freshly created child;
+    ACCEPTED_RISKS is authored per-decomposition by the node's own decomposer — a leaf (D=∅) has no
+    decomposition, so its ACCEPTED_RISKS is vacuous and CHECK-4 does not gate it (nor a freshly created child;
     it is authored lazily when/if the child decomposes).
 
-    Record FORM is what L0 can check mechanically (an incomplete record is not a NEGLECTED record, Ст. I.10):
-    - a predictability verdict is present per factor (it doubles as the risk-vs-scope discriminator, §5.1:
+    Record FORM is what L0 can check mechanically (an incomplete record is not an ACCEPTED_RISKS record, §13.1):
+    - a predictability verdict is present per factor (it doubles as the risk-vs-scope discriminator, §13.1:
       an entry with no estimable materialization P is a goal SCOPE boundary → goal criteria/CHECK-1);
-    - a self-declared ORDINARY factor cannot sit in NEGLECTED (internal contradiction of the record, §5.2);
-    - a STATISTICAL factor carries its justification (§5.2).
-    Whether the factor is REALLY that predictability class in the domain (S-regularity, FM-1.b vs §2.1)
+    - a self-declared ORDINARY factor cannot sit in ACCEPTED_RISKS (internal contradiction of the record, §13.2);
+    - a STATISTICAL factor carries its justification (§13.2).
+    Whether the factor is REALLY that predictability class in the domain (S-regularity, FM-1.b vs §9)
     is a domain question — L2/validator territory, not decidable here."""
     if not children:
-        return CheckResult("CHECK-4:neglected", True,
-                           "leaf (D=∅): NEGLECTED is per-decomposition (§5.1)", skipped=True)
-    if not task.spec.neglected:
-        return CheckResult("CHECK-4:neglected", False, "NEGLECTED section is empty")
+        return CheckResult("CHECK-4:accepted_risks", True,
+                           "leaf (D=∅): ACCEPTED_RISKS is per-decomposition (§13.1)", skipped=True)
+    if not task.spec.accepted_risks:
+        return CheckResult("CHECK-4:accepted_risks", False, "ACCEPTED_RISKS section is empty")
 
     malformed = []
-    for n in task.spec.neglected:
-        # A NEGLECTED entry that names a criterion of THIS node is not a risk record — it is a
-        # unilateral contract amendment (§5.1: the register holds risk FACTORS of the decomposition,
-        # each with an estimable P; §2.2: the criteria ARE the obligation). Observed live (BCB/93):
+    for n in task.spec.accepted_risks:
+        # A ACCEPTED_RISKS entry that names a criterion of THIS node is not a risk record — it is a
+        # unilateral contract amendment (§13.1: the register holds risk FACTORS of the decomposition,
+        # each with an estimable P; §10: the criteria ARE the obligation). Observed live (BCB/93):
         # "test_values criterion cannot pass — canonical test has design flaw" was authored as
         # EXTRAORDINARY, and the validator then excused the red criterion by it → false PASS. The
         # canon path for a criterion believed defective is CHALLENGE (spec defect, q_T) or the
@@ -203,25 +281,25 @@ def check_neglected(task: Task, children: list[Task]) -> CheckResult:
         if named:
             malformed.append(
                 f"'{n.item}' names this node's own criterion ({', '.join(named)}) — a criterion is "
-                f"the obligation, not a neglectable risk (§2.2/§5.1). If it is defective: CHALLENGE "
-                f"it (spec defect) or have the issuer revise it; neglect cannot retire it")
+                f"the obligation, not an acceptable risk (§2.2/§5.1). If it is defective: CHALLENGE "
+                f"it (spec defect) or have the issuer revise it; accepting it as a risk cannot retire it")
         elif n.predictability is None:
             malformed.append(
-                f"'{n.item}' has no predictability verdict (record incomplete, §5.1; "
+                f"'{n.item}' has no predictability verdict (record incomplete, §13.1; "
                 f"no materialization P → it is a scope boundary, not a risk — move to goal criteria/CHECK-1)")
         elif n.predictability == Predictability.ORDINARY:
-            malformed.append(f"'{n.item}' is declared ORDINARY — must be in the decomposition, not neglected")
+            malformed.append(f"'{n.item}' is declared ORDINARY — must be in the decomposition, not accepted_risks")
         elif n.predictability == Predictability.STATISTICAL and not n.justification.strip():
-            malformed.append(f"'{n.item}' is STATISTICAL — neglect requires a justification")
+            malformed.append(f"'{n.item}' is STATISTICAL — accepting it as a risk requires a justification")
     if malformed:
-        return CheckResult("CHECK-4:neglected", False, "; ".join(malformed))
-    return CheckResult("CHECK-4:neglected", True)
+        return CheckResult("CHECK-4:accepted_risks", False, "; ".join(malformed))
+    return CheckResult("CHECK-4:accepted_risks", True)
 
 
 def check_risk_nodes(task: Task, children: list[Task]) -> CheckResult:
     """CHECK-5: for each risk component (STD-3), a risk-node exists in children.
 
-    Paper §5.3: risk components group correlated factors with a common root cause.
+    Paper §13.3: risk components group correlated factors with a common root cause.
     Each component must have a corresponding child task addressing it.
     """
     if not task.spec.risk_components:
@@ -244,26 +322,42 @@ def check_risk_nodes(task: Task, children: list[Task]) -> CheckResult:
     return CheckResult("CHECK-5:risk_nodes", True)
 
 
-def check_delegation(children: list[Task]) -> CheckResult:
-    """CHECK-6: every leaf task has an assignee."""
-    unassigned = [t.id for t in children if t.assignee is None]
+def check_delegation(children: list[Task], task: Task | None = None,
+                     non_leaf_ids: set[str] | None = None) -> CheckResult:
+    """CHECK-6: "∀ leaf t: Del(t) ≠ ∅" (§13.4 → FM-7).
+
+    The quantifier is over LEAVES, and it used to be read over every child: a decomposed child was
+    demanded an executor it does not need (its work is its own children's — §10 Del is per node, and
+    a node that delegates further is accountable through them), while the node the canon does name
+    went unchecked when it was a leaf with no parent to run the check for it. Both directions are
+    fixed: leaves among the children (`non_leaf_ids` tells which children decompose further; without
+    it the caller cannot distinguish, so every child is treated as a leaf — the conservative read),
+    and the node ITSELF when it has no split at all, which is the case §13.4 states literally."""
+    non_leaf = non_leaf_ids or set()
+    if not children:
+        if task is not None and task.assignee is None:
+            return CheckResult("CHECK-6:delegation", False,
+                               f"leaf without an executor: {task.id} (FM-7 — no one to report to)")
+        return CheckResult("CHECK-6:delegation", True)
+    unassigned = [t.id for t in children if t.assignee is None and str(t.id) not in non_leaf]
     if unassigned:
         return CheckResult(
             "CHECK-6:delegation", False,
-            f"unassigned tasks: {', '.join(unassigned)}",
+            f"unassigned leaves: {', '.join(unassigned)}",
         )
     return CheckResult("CHECK-6:delegation", True)
 
 
-def run_structural(task: Task, children: list[Task], dep_edges: list[tuple[str, str]] | None = None) -> list[CheckResult]:
+def run_structural(task: Task, children: list[Task], dep_edges: list[tuple[str, str]] | None = None,
+                   non_leaf_ids: set[str] | None = None) -> list[CheckResult]:
     """Run all structural checks (CHECK-1 through CHECK-6)."""
     edges = dep_edges or []
     return [
         check_coverage(task, children),
         check_non_redundancy(task, children),
-        check_dag(children, edges),
+        check_dag(children, edges, task),
         check_deadlines(task, children, edges),
-        check_neglected(task, children),
+        check_accepted_risks(task, children),
         check_risk_nodes(task, children),
-        check_delegation(children),
+        check_delegation(children, task, non_leaf_ids),
     ]

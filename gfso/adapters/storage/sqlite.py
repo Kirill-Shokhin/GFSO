@@ -2,20 +2,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime
 from typing import Optional
 
 from gfso.core.types import (
     TaskId, AgentId, Task, State, DoneReason, AutonomyLevel, Predictability,
-    Spec, Criteria, CriterionMapping, NeglectedItem,
+    Spec, Criteria, CriterionMapping, AcceptedRiskItem,
     CheckResult, Recommendation, DepEdge,
     StoragePort, TERMINAL_STATES,
 )
 
+log = logging.getLogger(__name__)
+
 
 class SqliteStorage(StoragePort):
     def __init__(self, db_path: str = "data/gfso.db"):
+        self._db_path = db_path
         if db_path != ":memory:":
             from pathlib import Path
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -23,12 +27,52 @@ class SqliteStorage(StoragePort):
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
+        self._check_schema_version()
         self._init_tables()
 
     def close(self) -> None:
         """Release the file handle (Windows keeps the .db locked until the connection closes —
         project deletion depends on this)."""
         self._conn.close()
+
+    # The schema this build of gfso writes. Bumped only when a change is not additive — the
+    # migrations below handle additive ones by inspecting `PRAGMA table_info`.
+    SCHEMA_VERSION = 1
+
+    # The v4.0 rename migration (2026-08-13) used `PRAGMA user_version = 40` as its "already
+    # migrated" mark, before this field carried a schema version at all. Recognised, never written.
+    _V4_MIGRATION_MARK = 40
+
+    def _check_schema_version(self):
+        """Stamp the schema version, and REFUSE a database written by a newer gfso.
+
+        Forward migration is handled below; the other direction was the silent one. A user who
+        installs 0.2.0, works, then pins back to an older release opens a database this code does
+        not understand: a state name it has never heard of raises `KeyError` deep inside a read, and
+        the user sees a blank UI or a 500 rather than "this database is newer than this gfso".
+        The stamp costs one PRAGMA and cannot be retrofitted onto databases already written, which
+        is why it goes in the first release rather than the first one that needs it.
+        """
+        found = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if found == self._V4_MIGRATION_MARK:
+            # NOT a newer schema — our own marker, in the field this stamp later claimed. The v4.0
+            # rename migration wrote `user_version = 40` as its idempotence mark ("this file was
+            # migrated") months before `user_version` meant "schema version" here; the refusal below
+            # then read every migrated database — the default one and all 149 experiment DBs — as
+            # "written by a newer gfso" and the server would not start on them at all. The rows are
+            # this build's own schema, so the mark is normalised and the file opens.
+            log.info("database %s carries the v4.0 migration mark (user_version=40) — normalising "
+                     "it to schema %d; the schema itself is unchanged", self._db_path, self.SCHEMA_VERSION)
+            self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+            found = self.SCHEMA_VERSION
+        if found > self.SCHEMA_VERSION:
+            from gfso import __version__
+            raise RuntimeError(
+                f"this database was written by a newer gfso (schema {found}; this build of "
+                f"gfso {__version__} understands {self.SCHEMA_VERSION}). Upgrade with "
+                f"`pip install -U gfso`, or point GFSO_HOME at a different directory.")
+        if found != self.SCHEMA_VERSION:
+            self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
     def _init_tables(self):
         self._conn.executescript("""
@@ -54,7 +98,8 @@ class SqliteStorage(StoragePort):
                 reopened_from_pass INTEGER DEFAULT 0,
                 spec_defect_criteria_change INTEGER DEFAULT 0,
                 reassign_reason_typed INTEGER DEFAULT 0,
-                reassign_capability_mismatch INTEGER DEFAULT 0
+                reassign_capability_mismatch INTEGER DEFAULT 0,
+                revisions INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS check_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +132,18 @@ class SqliteStorage(StoragePort):
             CREATE TABLE IF NOT EXISTS deliver_results (
                 task_id TEXT PRIMARY KEY,
                 result TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS llm_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                model TEXT DEFAULT '',
+                node_id TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cache_input_tokens INTEGER DEFAULT 0,
+                cost_usd REAL DEFAULT 0.0,
+                duration_ms INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS pipeline_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,19 +179,21 @@ class SqliteStorage(StoragePort):
         task_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
         if "verified" not in task_cols:
             self._conn.execute("ALTER TABLE tasks ADD COLUMN verified INTEGER DEFAULT 0")
-        if "reopens" not in task_cols:  # R′ (§6.3)
+        if "reopens" not in task_cols:  # R′ (§14.3)
             self._conn.execute("ALTER TABLE tasks ADD COLUMN reopens INTEGER DEFAULT 0")
             self._conn.execute("ALTER TABLE tasks ADD COLUMN max_reopens INTEGER DEFAULT 1")
             self._conn.execute("ALTER TABLE tasks ADD COLUMN reopened_from_pass INTEGER DEFAULT 0")
-        if "spec_defect_criteria_change" not in task_cols:  # §16.5 revision-reason typing
+        if "spec_defect_criteria_change" not in task_cols:  # §24.5 revision-reason typing
             self._conn.execute("ALTER TABLE tasks ADD COLUMN spec_defect_criteria_change INTEGER DEFAULT 0")
             self._conn.execute("ALTER TABLE tasks ADD COLUMN reassign_reason_typed INTEGER DEFAULT 0")
             self._conn.execute("ALTER TABLE tasks ADD COLUMN reassign_capability_mismatch INTEGER DEFAULT 0")
+        if "revisions" not in task_cols:   # contract generation (Inv-1 revisions)
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN revisions INTEGER DEFAULT 0")
 
     # === Serialization ===
 
     @staticmethod
-    def _neglected_to_json(items: tuple[NeglectedItem, ...]) -> list[dict]:
+    def _accepted_risks_to_json(items: tuple[AcceptedRiskItem, ...]) -> list[dict]:
         return [{
             "item": n.item,
             "predictability": n.predictability.name if n.predictability else None,
@@ -143,14 +202,14 @@ class SqliteStorage(StoragePort):
         } for n in items]
 
     @staticmethod
-    def _neglected_from_json(raw) -> tuple[NeglectedItem, ...]:
+    def _accepted_risks_from_json(raw) -> tuple[AcceptedRiskItem, ...]:
         out = []
         for n in raw or ():
             if isinstance(n, str):  # legacy plain-string format
-                out.append(NeglectedItem(n))
+                out.append(AcceptedRiskItem(n))
             else:
                 p = n.get("predictability")
-                out.append(NeglectedItem(
+                out.append(AcceptedRiskItem(
                     n["item"],
                     Predictability[p] if p else None,
                     n.get("justification", ""),
@@ -168,7 +227,7 @@ class SqliteStorage(StoragePort):
             "criteria": [{"name": c.name, "description": c.description, "depends_on": c.depends_on,
                           "input": c.input, "expected": c.expected, "n": c.n, "timeout": c.timeout}
                          for c in spec.criteria],
-            "neglected": SqliteStorage._neglected_to_json(spec.neglected),
+            "accepted_risks": SqliteStorage._accepted_risks_to_json(spec.accepted_risks),
             "risk_components": list(spec.risk_components),
             "scope": list(spec.scope),
         })
@@ -182,7 +241,7 @@ class SqliteStorage(StoragePort):
                                     input=c.get("input"), expected=c.get("expected"),
                                     n=c.get("n"), timeout=c.get("timeout"))
                            for c in d["criteria"]),
-            neglected=SqliteStorage._neglected_from_json(d.get("neglected", ())),
+            accepted_risks=SqliteStorage._accepted_risks_from_json(d.get("accepted_risks", ())),
             risk_components=tuple(d.get("risk_components", ())),
             scope=tuple(d.get("scope", ())),
             name=d.get("name", ""),
@@ -198,11 +257,11 @@ class SqliteStorage(StoragePort):
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         # Read-side migration: pre-v3.7 DBs stored cancellation as DONE(reason=CANCELLED); canon v3.7
-        # gives it its own terminal state (§6.3). Map on read — no new writes produce the legacy form.
+        # gives it its own terminal state (§14.3). Map on read — no new writes produce the legacy form.
         state = State[row["state"]]
         done_reason = DoneReason[row["done_reason"]] if row["done_reason"] else None
         if state == State.DONE and done_reason == DoneReason.CANCELLED:
-            state, done_reason = State.CANCELLED, None
+            state, done_reason = State.ABANDONED, None
         t = Task(
             id=TaskId(row["id"]),
             spec=self._spec_from_json(row["spec_json"]),
@@ -227,6 +286,7 @@ class SqliteStorage(StoragePort):
         t.spec_defect_criteria_change = bool(row["spec_defect_criteria_change"])
         t.reassign_reason_typed = bool(row["reassign_reason_typed"])
         t.reassign_capability_mismatch = bool(row["reassign_capability_mismatch"])
+        t.revisions = row["revisions"] if "revisions" in row.keys() else 0
         return t
 
     # === StoragePort ===
@@ -242,8 +302,9 @@ class SqliteStorage(StoragePort):
                 deadline, created_at, done_reason, autonomy,
                 was_challenged, was_reassigned, false_positive, criterion_mappings_json, verified,
                 reopens, max_reopens, reopened_from_pass,
-                spec_defect_criteria_change, reassign_reason_typed, reassign_capability_mismatch)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                spec_defect_criteria_change, reassign_reason_typed, reassign_capability_mismatch,
+                revisions)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.id,
                 self._spec_to_json(task.spec),
@@ -267,6 +328,7 @@ class SqliteStorage(StoragePort):
                 int(task.spec_defect_criteria_change),
                 int(task.reassign_reason_typed),
                 int(task.reassign_capability_mismatch),
+                int(getattr(task, "revisions", 0)),
             ),
         )
         self._conn.commit()
@@ -385,7 +447,24 @@ class SqliteStorage(StoragePort):
             "(SELECT * FROM pipeline_log ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
         return [{"ts": r["ts"], "source": r["source"], "message": r["message"]} for r in rows]
 
-    # === Audit log (T11/Инв-7): APPEND-ONLY — insert + full ordered read, no update/delete path ===
+    _USAGE_COLS = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens",
+                   "cache_input_tokens", "cost_usd", "duration_ms")
+
+    def log_usage(self, row: dict) -> None:
+        self._conn.execute(
+            f"INSERT INTO llm_usage ({', '.join(self._USAGE_COLS)}) "
+            f"VALUES ({', '.join('?' * len(self._USAGE_COLS))})",
+            tuple(row.get(c) if c in ("ts", "stage", "model", "node_id") else (row.get(c) or 0)
+                  for c in self._USAGE_COLS))
+        self._conn.commit()
+
+    def get_usage(self, limit: int = 5000) -> list[dict]:
+        rows = self._conn.execute(
+            f"SELECT {', '.join(self._USAGE_COLS)} FROM "
+            f"(SELECT * FROM llm_usage ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
+        return [{c: r[c] for c in self._USAGE_COLS} for r in rows]
+
+    # === Audit log (Thm 11/Inv-7): APPEND-ONLY — insert + full ordered read, no update/delete path ===
 
     def append_audit(self, row: dict) -> None:
         self._conn.execute(

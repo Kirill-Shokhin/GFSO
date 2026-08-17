@@ -5,7 +5,7 @@ import logging
 
 from gfso.core.types import TaskId, AgentId, Criteria
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.bench_agent import BenchAgent
+from bench.bench_agent import BenchAgent
 from gfso.engine import Engine
 
 from .task import BenchTask

@@ -20,7 +20,7 @@ ChildOf(n) == IF n = "root" THEN "mid" ELSE IF n = "mid" THEN "leaf" ELSE "none"
 (* Cancel/cascade core only: DELIVER/PASS branches are exercised at N=1/N=2 with the
    full alphabet; here they only multiply the liveness graph (first attempt OOM'd on
    13.5M states × 10 temporal branches). *)
-ActorSigs == {"ASSIGN", "ACCEPT", "CANCEL", "CANCEL_ACK"}
+ActorSigs == {"ASSIGN", "ACCEPT", "CANCEL", "CONFIRM_CANCEL"}
 
 Msg == [node: Nodes, sig: Sigs]
 

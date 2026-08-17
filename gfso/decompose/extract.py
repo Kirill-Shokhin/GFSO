@@ -3,7 +3,7 @@ of `build_graph_live`, so refine rounds operate on the GRAPH as the state (extra
 as revision, same ids).
 
 Inverse mapping (see build.py): child ids are de-namespaced (`{root}.{id}` → `{id}`); a child's
-`dep__{producer}` criterion (build's encoding of a Dep seam, §2.2 Dep=criteria-content) becomes a
+`dep__{producer}` criterion (build's encoding of a Dep seam, §10 Dep=criteria-content) becomes a
 {from, to, glue} seam and leaves the child's criteria list; only DECLARED seams extract (discovered
 edges live in storage independently and survive a rebuild); scope strings pass through verbatim
 (build re-emits them as-is via the no-why_out branch — the roundtrip is idempotent).
@@ -41,9 +41,9 @@ def extract_spec(engine, root_id: str = "root") -> dict:
         "mappings": [{"criterion": m.criterion_name, "child_id": dens(m.child_id)}
                      for m in root.criterion_mappings],
         "deps": deps,
-        "neglected": [{"item": n.item,
+        "accepted_risks": [{"item": n.item,
                        "predictability": n.predictability.name if n.predictability else "",
                        "justification": n.justification, "invalidation": n.invalidation_condition}
-                      for n in root.spec.neglected],
+                      for n in root.spec.accepted_risks],
         "scope": [{"item": s, "why_out": ""} for s in root.spec.scope],
     }

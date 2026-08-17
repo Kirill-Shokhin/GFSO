@@ -12,16 +12,18 @@
 # defects. This guard catches the mechanical half only.
 #
 # NOT in scope, deliberately, and each for its own reason:
-#  * the frozen RU draft (`applied_gfso_v3.md`) — provenance; its §-refs ARE the old numbering;
+#  * (the frozen RU draft used to sit here, exempt because its §-refs ARE the old numbering. It is
+#    out of the repository now — the canon's Changelog carries the provenance, and git carries the
+#    file.)
 #  * the E1/E2 instruments (`docs/e1/`, `experiments/`) — frozen: renaming inside them would break
-#    run-to-run comparability, and they cite the frozen draft, so their pointers still resolve;
+#    run-to-run comparability, and their §-refs are the numbering in force when they were written;
 #  * `docs/notes/` — untracked;
-#  * `gfso/**`, `tests/**`, `examples/**` — the product tree. It carries ~175 canon §-refs in code
-#    comments plus `gfso/mcp/ORCHESTRATOR.md`, all still on v3.9 numbering. They are NOT
-#    dangling-by-accident here: that tree migrates as one unit with the enum rename (the engineer's
-#    post-E3 item, declared in `docs/architecture.md`), and guarding it before the migration would
-#    fire on every file it is about to touch. **This is a named debt, not a clean surface** — when
-#    the migration lands, the §-refs go with it and this exclusion should be deleted.
+#  (The product tree was excluded here as a named debt — ~175 v3.9-numbered §-refs awaiting the
+#  enum migration. That migration landed and the references were re-anchored group by group, so the
+#  exclusion is DELETED: `gfso/**`, `tests/**`, `examples/**` are scanned below as PRODUCT. A code
+#  comment pointing at a section the canon does not have is now a CI failure — and the agent-facing
+#  surfaces (`gfso/mcp/ORCHESTRATOR.md`, the tool docstrings, the prompts) are exactly where a
+#  dangling pointer is read by a MODEL rather than by a maintainer.)
 # EVIDENCE_LOG is out of scope too, but for a WEAKER reason and only as a whole file: it
 # is mixed — its dated snapshots keep the old numbering legitimately (they record what was true then),
 # while its navigation/status lines are live and are kept anchored by hand. Guarding it wholesale
@@ -46,7 +48,9 @@ sed '/^## Changelog/,$d' "$CANON_FILE" > "$CANON"
 # Live canon mirrors. A doc joins this list when it starts citing the canon.
 # (`README.md` unprefixed = formal/README.md, the Lean layer's own entry doc.)
 MIRRORS=(../README.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
-         ../docs/applied_gfso_vision.md ../docs/falsifiability.md ../docs/architecture.md README.md)
+         ../docs/applied_gfso_vision.md ../docs/falsifiability.md ../docs/architecture.md
+         # the working-loop page cites the canon nine times and was watched by neither guard
+         ../docs/USING_GFSO.md README.md)
 
 # FAIL-CLOSED PRE-FLIGHT: a watched mirror that is deleted or renamed must break the guard, not be
 # silently dropped by the `2>/dev/null` on the `cat`s below.
@@ -63,6 +67,15 @@ done
 # not be blessed by the mention). The marker sits on EITHER side, and a range carries two refs.
 # The newline→space fold is load-bearing: a foreign ref may straddle a line break ("…(EVIDENCE_LOG\n
 # §9.1 …"), which a line-oriented filter would miss and then report as canon drift.
+# THE PRODUCT TREE — same pipeline, no exception. `strip_foreign` is what keeps a citation of
+# another document (`EVIDENCE_LOG §13.3`) from being read as a canon reference.
+shopt -s globstar nullglob
+# Every .md under the package by glob, not an enumeration of prompt directories: the enumerated
+# form missed `gfso/decompose/prompts/`, and what hid there was a live contract with the model.
+PRODUCT=(../gfso/**/*.py ../gfso/**/*.md
+         ../gfso/web/index.html ../gfso/web/gfso.css ../tests/**/*.py
+         ../docs/embeddability_acceptance.md ../docs/TASK_PACKET.md)
+
 strip_foreign() {
   tr '\n' ' ' \
     | sed -e 's/EVIDENCE_LOG[^§]\{0,15\}§[0-9.]*\(–\(§\)\{0,1\}[0-9.]*\)\{0,1\}//g' \
@@ -102,20 +115,21 @@ check_ranges() {
       echo "BROKEN RANGE: §${head}–${tail} does not ascend — a half-remapped citation" >&2
       bad=1
     fi
-  done < <(cat "${MIRRORS[@]}" "$CANON" GFSO/*.lean *.lean 2>/dev/null | normalize_chapters \
+  done < <(cat "${MIRRORS[@]}" "$CANON" GFSO/*.lean *.lean "${PRODUCT[@]}" 2>/dev/null | normalize_chapters \
             | strip_foreign | sed 's/–/-/g' \
             | grep -ohE '§[0-9]+(\.[0-9]+)*-(§)?[0-9]+(\.[0-9]+)*' || true)
   return $bad
 }
 
 REFS_FORMAL="$(cat GFSO/*.lean *.lean 2>/dev/null | normalize_chapters | strip_foreign | collect | sed 's/^§//' | sort -u -V)"
+REFS_PRODUCT="$(cat "${PRODUCT[@]}" 2>/dev/null | normalize_chapters | strip_foreign | collect | sed 's/^§//' | sort -u -V)"
 # The canon's own body is scanned too: a self-citation into a section it does not have is the same
 # defect as a mirror's, and nothing else was watching that surface.
 # A range's TAIL is a cited section too ("§12.2–99" cites 99). check_ranges only orders them; if the
 # tail is never resolved, a cited section goes unchecked. Feed both endpoints in.
-REFS_TAILS="$(cat "${MIRRORS[@]}" "$CANON" GFSO/*.lean *.lean 2>/dev/null | normalize_chapters | strip_foreign               | sed 's/–/-/g' | grep -ohE '§[0-9]+(\.[0-9]+)*-(§)?[0-9]+(\.[0-9]+)*'               | sed -E 's/.*-(§)?//' | sort -u -V || true)"
+REFS_TAILS="$(cat "${MIRRORS[@]}" "$CANON" GFSO/*.lean *.lean "${PRODUCT[@]}" 2>/dev/null | normalize_chapters | strip_foreign               | sed 's/–/-/g' | grep -ohE '§[0-9]+(\.[0-9]+)*-(§)?[0-9]+(\.[0-9]+)*'               | sed -E 's/.*-(§)?//' | sort -u -V || true)"
 REFS_MIRROR="$(cat "${MIRRORS[@]}" "$CANON" 2>/dev/null | normalize_chapters | strip_foreign | collect | sed 's/^§//' | sort -u -V)"
-REFS="$(printf '%s\n%s\n%s\n' "$REFS_FORMAL" "$REFS_MIRROR" "$REFS_TAILS" | sort -u -V | grep -v '^$')"
+REFS="$(printf '%s\n%s\n%s\n' "$REFS_FORMAL" "$REFS_MIRROR" "$REFS_TAILS" "$REFS_PRODUCT" | sort -u -V | grep -v '^$')"
 
 MISSING=0
 for r in $REFS; do
@@ -174,7 +188,7 @@ check_labels() {
     # the first version of this check.
     canon_nums="$(sed 's/v3\.9[^"]\{0,40\}"[^"]*"//g' "$CANON" \
                   | grep -ohE "${pat} ?[0-9]+(\.[a-z])?" | grep -ohE '[0-9]+(\.[a-z])?$' | sort -u)"
-    cited="$(cat "${MIRRORS[@]}" GFSO/*.lean *.lean 2>/dev/null | sed 's/–/-/g'              | grep -ohE "${pat} ?[0-9]+(\.[a-z])?(-[0-9]+(\.[a-z])?)?"              | grep -ohE '[0-9]+(\.[a-z])?' | sort -u)"
+    cited="$(cat "${MIRRORS[@]}" GFSO/*.lean *.lean "${PRODUCT[@]}" 2>/dev/null | sed 's/–/-/g'              | grep -ohE "${pat} ?[0-9]+(\.[a-z])?(-[0-9]+(\.[a-z])?)?"              | grep -ohE '[0-9]+(\.[a-z])?' | sort -u)"
     for num in $cited; do
       grep -qx "$num" <<<"$canon_nums" || { echo "MISSING LABEL: ${kind} ${num} is cited but the canon has no such result" >&2; bad=1; }
     done

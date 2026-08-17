@@ -11,7 +11,18 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from gfso import __version__
 from gfso.core.types import TaskId, AgentId, State
+
+# Stamped ONCE, when this process imports its code — not recomputed per request, because the point
+# is to report what is LOADED, not what is on disk now. `gfso up` compares the two and restarts on
+# a difference, which is how "is the server current" stops being a question anyone has to ask.
+from gfso import serverctl as _serverctl
+try:
+    from gfso.serverctl import source_fingerprint as _sfp
+    _CODE_VERSION = _sfp()
+except Exception:                                    # never let a diagnostic field break the server
+    _CODE_VERSION = "unknown"
 from gfso.core.protocol.validation import required_role
 from gfso.engine import Engine
 from gfso import tools_llm as _tools  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
@@ -29,7 +40,7 @@ WEB_DIR = Path(__file__).parent.parent / "web"
 
 def _build_mcp(engine: Engine):
     """MCP server + its streamable-HTTP ASGI app over the SAME Engine instance.
-    Returns (mcp, asgi) or (None, None) if the MCP SDK isn't installed (`pip install gfso[mcp]`)."""
+    Returns (mcp, asgi) or (None, None) if the MCP SDK isn't installed (it is a required dependency — reinstall the package)."""
     try:
         from gfso.mcp.server import create_server
         mcp = create_server(engine)  # raises RuntimeError if the SDK is absent
@@ -74,7 +85,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
             async with mcp.session_manager.run():
                 yield
 
-    app = FastAPI(title="GFSO", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="GFSO", version=__version__, lifespan=lifespan)
     app.state.engine = engine
     app.state.registry = registry
     app.state.ws_clients = set()      # one asyncio.Queue per live WS — for GLOBAL broadcasts (project list)
@@ -110,9 +121,19 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
             return app.state.registry.engine(_req_project.get())
         return app.state.engine
 
+    # LOOPBACK ONLY. The shipped UI is served from this same origin, so a wildcard bought nothing —
+    # and it cost everything: this server has no authentication (SECURITY.md), and `/api/run/{tool}`
+    # exposes the whole tool registry, including a `signal` whose source the caller chooses and a
+    # `validate_result` that spawns a model with shell access in a directory the caller names. With
+    # `*`, any page the user happened to have open in a browser could drive that chain.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+        # The one server's own port comes from `serverctl` (whose single knob is GFSO_SHARED_URL) —
+        # a literal 8000 here allowed the page and its API to disagree about which server they are.
+        # 8080 stays for a UI served from a dev static host beside it.
+        allow_origins=[f"http://{h}:{p}" for h in ("127.0.0.1", "localhost")
+                       for p in dict.fromkeys((_serverctl.PORT, 8080))],
+        allow_methods=["*"], allow_headers=["*"],
     )
 
     # === Static UI ===
@@ -180,7 +201,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
         except (ValueError, TypeError, KeyError) as ex:
             raise HTTPException(422, str(ex))
 
-    # === Per-role actions (§6.2) ===
+    # === Per-role actions (§14.2) ===
 
     @app.get("/api/tasks/{task_id}/actions", response_model=list[ActionOut])
     def get_actions(task_id: str, role: Optional[str] = None):
@@ -209,7 +230,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
             raise HTTPException(404, f"task {task_id} not found")
         return {"verified": t.verified, "critique": e.get_critique(TaskId(task_id))}
 
-    # === Solver (§7.3 — deterministic, separate from LLM) ===
+    # === Solver (§15.3 — deterministic, separate from LLM) ===
 
     @app.get("/api/tasks/{task_id}/solver", response_model=SolverOut)
     def get_solver(task_id: str):
@@ -265,6 +286,29 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
 
     # === Metrics ===
 
+    @app.get("/api/check_map")
+    def get_check_map():
+        """The canon's CHECK → failure-mode routing (§13.4) and the FM names (§12.6), served so the
+        UI renders the product's table instead of a copy of it — the copy drifted (CHECK-6 shown as
+        FM-1 where the canon routes it to FM-7). Guarded against the canon in
+        `tests/test_canon_check_map.py`."""
+        from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
+        return {"check_to_fm": CHECK_TO_FM, "fm_label": FM_LABEL}
+
+    @app.get("/api/usage")
+    def get_usage(detail: bool = False):
+        """What this project's graph COST in model calls: totals, a per-ROLE split (decomposer /
+        l2_review / validator / executor), and the calls themselves with `detail=true`.
+
+        `costed_calls` is carried beside `cost_usd` on purpose: a transport that reports no price
+        contributes zero, and a money total that cannot tell "free" from "not reported" is the same
+        ⊥-as-zero error the metrics refuse elsewhere."""
+        e: Engine = _e()
+        out = e.usage_totals()
+        if detail:
+            out["calls"] = e._graph._storage.get_usage()
+        return out
+
     @app.get("/api/metrics", response_model=MetricsOut)
     def get_metrics():
         m = _e().metrics()
@@ -285,31 +329,69 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
         return _e().pipeline_log(limit)
 
     # === Lifecycle: session leases + self-shutdown (the shared-server automation) ===
-    # Every connect.py bridge (one per Claude session) heartbeats a lease; when the LAST lease
-    # expires the server exits itself (only under GFSO_AUTOEXIT=1 — how connect.py spawns it;
-    # a manually run `gfso serve` never self-terminates). `gfso down` → POST /api/shutdown for
-    # code updates: the next session reconnect auto-spawns a fresh server.
+    # Every connect.py bridge (one per Claude session) heartbeats a lease. Under GFSO_AUTOEXIT=1 the
+    # server exits itself once the LAST lease expires — which is now OPT-IN, and used to be what a
+    # session-spawned server did. As a product default it was wrong twice over: the UI a person left
+    # open kept showing the last graph it had seen, with no indication that the process behind it was
+    # gone (the page only retries its socket), and an in-flight delegated executor was orphaned
+    # rather than stopped. The server is a background service now: it stays until `gfso down`.
     app.state.leases = {}
     app.state.exit_fn = (lambda: os._exit(0))
+
+    LEASE_GRACE = 12.0
+
+    def _live_leases() -> list[str]:
+        """Leases that have heartbeated recently. Expiry belongs HERE, not in the reaper.
+
+        The reaper was the only thing that ever pruned this dict, and it is opt-in now — so a
+        session that ended without dropping its lease (a killed client; the drop rides a daemon
+        thread) left an entry that never expired. Everything downstream reads `sessions` to decide
+        whether a reconcile would interrupt somebody, so one stale entry made every later upgrade
+        decline to take effect, permanently and silently.
+        """
+        import time as _t
+        now = _t.monotonic()
+        for k, ts in list(app.state.leases.items()):
+            if now - ts > LEASE_GRACE:
+                app.state.leases.pop(k, None)
+        return list(app.state.leases)
 
     @app.post("/api/lease")
     def renew_lease(body: dict = Body(...)):
         import time as _t
         app.state.leases[str(body.get("id", "?"))] = _t.monotonic()
-        return {"ok": True, "sessions": len(app.state.leases)}
+        return {"ok": True, "sessions": len(_live_leases())}
 
     @app.delete("/api/lease/{lease_id}")
     def drop_lease(lease_id: str):
         app.state.leases.pop(lease_id, None)
-        return {"ok": True, "sessions": len(app.state.leases)}
+        return {"ok": True, "sessions": len(_live_leases())}
 
     @app.post("/api/shutdown")
-    def shutdown():
+    def shutdown(body: dict = Body(default={})):
+        """Stop the server — unless someone is using it, and then only when asked to mean it.
+
+        The rule lives HERE, not in the reconciler, because a client holds its own code in memory:
+        an older `gfso up` still on a long-lived session bridge kept restarting a drifted server
+        under a run that had paid for hours of work, and no fix in the client could reach it. The
+        server is the one party that cannot be out of date about itself.
+
+        `gfso down` and a deliberate restart pass `force`; a routine reconcile does not, and gets
+        told who is on it. A newly declared state applies to the NEXT start.
+        """
         import threading as _th
+        # ONE definition of "someone is on it": `_live_leases()` also prunes, so a killed client
+        # cannot hold the server hostage forever. Two windows here meant two answers to the same
+        # question — the endpoint said 90s while everything else said 12.
+        live = _live_leases()
+        if live and not body.get("force"):
+            raise HTTPException(409, f"{len(live)} client(s) are working on this server "
+                                     f"({', '.join(sorted(live)[:4])}) — not stopping. Pass "
+                                     f"force=true (that is what `gfso down` does) to mean it.")
         _th.Timer(0.3, app.state.exit_fn).start()   # answer first, then exit
         return {"ok": True, "bye": True}
 
-    if os.environ.get("GFSO_AUTOEXIT") == "1":
+    if os.environ.get("GFSO_AUTOEXIT", "0") == "1":     # opt-in, see above
         _start_reaper(app)
 
     # === Delegation roster (read view; registration = the MCP verb) ===
@@ -318,6 +400,84 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     def get_agents():
         from gfso.delegate import AgentRegistry
         return AgentRegistry().list()
+
+    @app.get("/api/tasks/{task_id}/verdict")
+    def get_task_verdict(task_id: str):
+        """The stored independent verdict for the node's current delivery, evidence included.
+
+        `record_exec_verdict` persists the per-criterion evidence precisely so the trail shows WHAT
+        was verified and not merely the answer (Thm 11) — but nothing could read it back, so a
+        contested FAIL was auditable only by reading the server's log. Read-only, and deliberately
+        NOT in the agent tool surface: the executor already learns which criteria failed through
+        the FAIL signal, and handing it the validator's reasoning would change what a run measures.
+        """
+        e: Engine = _e()
+        if e.get_task(TaskId(task_id)) is None:
+            raise HTTPException(404, f"task {task_id} not found")
+        return e.get_exec_verdict(TaskId(task_id))
+
+    def _hash_registry_file() -> str:
+        import hashlib as _h, os as _os
+        path = _os.environ.get("GFSO_AGENTS_PATH", "")
+        try:
+            return _h.sha256(open(path, "rb").read()).hexdigest()[:12] if path else ""
+        except OSError:
+            return "missing"
+
+    # Stamped ONCE, at startup, for the same reason `code_version` is: the question is what this
+    # PROCESS loaded, not what is on disk now. Read per request it answered with the file's current
+    # hash, so the caller compared the file against itself — a comparison that cannot fail, while
+    # the defect it was written for (an edited registry that reaches nothing until a restart) went
+    # on happening. The roster really is a process singleton, loaded once.
+    _AGENTS_VERSION = _hash_registry_file()
+
+    def _agents_fingerprint() -> str:
+        """Hash of the agent registry AS LOADED BY THIS PROCESS."""
+        return _AGENTS_VERSION
+
+    @app.get("/api/runtime")
+    def get_runtime():
+        """The switches that are PROCESS-scoped, so a client can see what this server actually does.
+
+        Both change behaviour a caller would otherwise have to infer from silence: with
+        `validate_internal` off, a node inside one Del scope self-verifies (§14.5 D6) and no
+        independent verdict ever arrives — indistinguishable, from the outside, from a validator
+        that is merely slow; with the L2 gate off, execution starts on an unreviewed plan (the
+        canon's EXPLORE branch, §13.5). They are set per PROCESS, so a restart can silently drop
+        one — which is exactly how a measurement run stalled for 25 minutes waiting on a verdict
+        that was never going to come.
+        """
+        import os as _os
+        from gfso.runtime import data_dir
+        from gfso.serverctl import home as _home
+        return {"version": __version__,   # the RELEASE; `code_version` below is the source hash
+                # WHERE this process keeps state, and WHETHER the agent door is mounted. Both were
+                # invisible, and both are ways the live server can differ from the installation
+                # asking about it: a second install serves another database, and a hand-started
+                # `gfso serve` holds the address with no /mcp — an agent session then 404s while
+                # every diagnostic reported a healthy server.
+                "home": str(_home()),
+                "data_dir": str(data_dir()),
+                # Who else is on this server, and is it working. A reconcile that restarts the one
+                # server without asking either question ends someone else's run mid-flight — and a
+                # killed process does not take its `claude` children with it, so they go on writing
+                # into a working directory with nobody left to receive the report.
+                "sessions": len(_live_leases()),
+                "busy": sorted(_tools.INFLIGHT),
+                "with_mcp": _os.environ.get("GFSO_WITH_MCP") == "1",
+                "autoexit": _os.environ.get("GFSO_AUTOEXIT", "0") not in ("", "0"),
+                "validate_internal": _os.environ.get("GFSO_VALIDATE_INTERNAL", "") not in ("", "0"),
+                "l2_gate": _os.environ.get("GFSO_L2_GATE", "1") not in ("", "0"),
+                # What CODE is actually serving: a running process holds its sources in memory, so an
+                # edited tree does not reach it and nothing about the port or the health check says so.
+                # Stamped once at startup — comparing it with the tree's is the whole staleness test.
+                "code_version": _CODE_VERSION,
+                "agents_path": _os.environ.get("GFSO_AGENTS_PATH", ""),
+                # …and the CONTENT the process actually loaded. The registry is read once, at
+                # startup, so editing the file changes nothing until a restart — and `gfso up`
+                # reported "already-correct" while the live server still held the previous
+                # validators. The path alone cannot see that; a fingerprint of what was loaded can.
+                "agents_version": _agents_fingerprint()}
 
     # === Projects (multi-project registry; single-project servers report just "default") ===
 
@@ -409,6 +569,8 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
 # shares the DB file but NOT the event bus — its live ticks are invisible to the UI).
 from gfso.runtime import ProjectRegistry as _PR
 _registry = _PR(default_storage="memory", default_llm="stub",
-                seed=not os.environ.get("GFSO_NO_SEED"))
+                # Seeding is OPT-IN here too. Importing this module — which the release smoke test
+                # and any introspection tool does — used to build an engine AND write a demo graph.
+                seed=os.environ.get("GFSO_SEED") == "1")
 app = create_app(_registry.engine(), with_mcp=os.environ.get("GFSO_WITH_MCP") == "1",
                  registry=_registry)

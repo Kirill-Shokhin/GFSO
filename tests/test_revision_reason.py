@@ -1,4 +1,4 @@
-"""§16.5 — causal typing of revisions in the packet.
+"""§24.5 — causal typing of revisions in the packet.
 
 q_T's canon numerator includes «criteria изменены по дефекту спеки»; q_Del counts only
 re-ASSIGN(capability_mismatch). Both members require the revision REASON typed on the
@@ -29,31 +29,41 @@ def engine():
     e.stop()
 
 
-def test_revision_refused_while_validating(engine):
-    """A node cannot be revised while it is VALIDATING — the contract cannot change under the validator
-    (§6.4). Observed live (BCB/120): an agent reneglected the ROOT mid-validation, bouncing it out of
-    VALIDATING three times and re-running the validator each time — pure churn. Enforced at the
-    validation layer (the FSM table / TLA model is untouched)."""
-    from gfso.engine.validation import ValidationError
+def test_revision_from_validating_is_admitted_and_voids_the_delivery(engine):
+    """§14.3 lists ASSIGN→OFFERED in VALIDATING's admissible set, and §6.3 prices it: the issuer may
+    revise with the delivery in hand, "at the price of a logged event, a voided delivery and a fresh
+    consent and re-delivery". The engine used to REFUSE the edge over measured churn (BCB/120) — an
+    argument about what an agent does under a rule, not about whose rule it is.
+
+    What must hold instead is the PRICE: the recorded PASS of the pre-revision delivery is voided, so
+    the node cannot complete on a verdict about a contract it no longer carries (§14.5 self-PASS
+    gate). A recorded FAIL is NOT voided — it opens no gate and carries the criteria snapshot the
+    re-delivery disposition reads."""
     engine.assign_task(TaskId("v1"), _spec(), AgentId("boss"))
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("v1"), source=AgentId("boss")))
     engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v1"),
                                        source=AgentId("boss"), result="done"))
     engine.wait_idle()
     assert engine.get_state(TaskId("v1")).name == "VALIDATING"
-    try:
-        engine.revise(TaskId("v1"), _spec("c1_changed"), AgentId("boss"))
-    except (ValidationError, Exception):
-        pass
-    # refused: still VALIDATING, contract unchanged (not bounced to REVIEW)
-    assert engine.get_state(TaskId("v1")).name == "VALIDATING"
-    assert engine.get_task(TaskId("v1")).spec.criteria[0].name == "c1"
-    # after the verdict, revision is allowed again
-    engine.send_signal_sync(SignalData(signal=Signal.FAIL, task_id=TaskId("v1"),
-                                        source=AgentId("boss"), failed_criteria=("c1",)))
-    engine.wait_idle()
+    engine.record_exec_verdict(TaskId("v1"), "PASS", [], "val-1")
+
     engine.revise(TaskId("v1"), _spec("c1_changed"), AgentId("boss"))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("v1")).name == "OFFERED"          # re-consent, §14.4 Inv-1
     assert engine.get_task(TaskId("v1")).spec.criteria[0].name == "c1_changed"
+    rec = engine.get_exec_verdict(TaskId("v1"))
+    assert rec["verdict"] == "VOID" and rec["superseded_verdict"] == "PASS"
+
+    # a FAIL record survives a revision intact (it gates nothing and its snapshot is load-bearing)
+    engine.assign_task(TaskId("v2"), _spec(), AgentId("boss"))
+    engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("v2"), source=AgentId("boss")))
+    engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v2"),
+                                       source=AgentId("boss"), result="done"))
+    engine.wait_idle()
+    engine.record_exec_verdict(TaskId("v2"), "FAIL", ["c1"], "val-1")
+    engine.revise(TaskId("v2"), _spec("c1_changed"), AgentId("boss"))
+    engine.wait_idle()
+    assert engine.get_exec_verdict(TaskId("v2"))["verdict"] == "FAIL"
 
 
 def test_spec_defect_criteria_change_counts_in_qt(engine):
@@ -72,7 +82,7 @@ def test_scope_expansion_never_counts(engine):
     engine.revise(TaskId("t1"), _spec("c1_wider"), AgentId("boss"),
                   reason=RevisionReason.SCOPE_EXPANSION)
     assert not engine.get_task(TaskId("t1")).spec_defect_criteria_change
-    assert q_T(engine._graph) == 1.0  # sanctioned §5.1 — not a defect
+    assert q_T(engine._graph) == 1.0  # sanctioned §13.1 — not a defect
 
 
 def test_untyped_criteria_change_stays_uncounted(engine):
@@ -126,3 +136,31 @@ def test_transport_reason_string_mapping(engine):
     assert engine.get_task(TaskId("x1")).reassign_capability_mismatch
     with pytest.raises(ValueError, match="unknown revision reason"):
         T.reassign(engine, "x1", "w10", reason="because")
+
+
+def test_a_verdict_landing_after_a_revision_does_not_open_the_seam(engine):
+    """The race the admitted edge opens: a validator already running on the pending delivery lands
+    its PASS *after* the issuer revised the contract. Neither counter moves on a revision — iteration
+    is the rework loop, reopens is R′ — so the generation stamp alone would let that verdict satisfy
+    the verifier ≠ executor gate for a contract it never read. The record's own criteria snapshot is
+    what settles it."""
+    from gfso.engine.validation import ValidationError
+    import pytest
+    A = AgentId("solo")
+    engine.assign_task(TaskId("r1"), _spec(), A)
+    engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("r1"), source=A))
+    engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("r1"), source=A, result="x"))
+    engine.wait_idle()
+    generation = engine.generation_of(TaskId("r1"))          # the validator starts on THIS delivery
+    engine.revise(TaskId("r1"), _spec("c1_changed"), A)       # contract changes under it
+    engine.wait_idle()
+    engine.record_exec_verdict(TaskId("r1"), "PASS", [], "val-1", generation=generation)  # lands late
+
+    # re-earn the delivery under the NEW contract, then try to self-PASS on that verdict
+    engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("r1"), source=A))
+    engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("r1"), source=A, result="x2"))
+    engine.wait_idle()
+    entry = engine.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("r1"), source=A))
+    engine.wait_idle()
+    assert entry is not None and entry.rejected
+    assert engine.get_state(TaskId("r1")).name == "VALIDATING"

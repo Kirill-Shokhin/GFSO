@@ -30,8 +30,8 @@ from anthropic import Anthropic
 
 from gfso.core.types import TaskId, AgentId, Spec, Criteria, CheckResult
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.verification import run_code, CodeVerifier
-from gfso.adapters.agents.bench_agent import BenchAgent
+from gfso.adapters.verifiers import run_code, SubprocessVerifier as CodeVerifier
+from bench.bench_agent import BenchAgent
 from gfso.engine import Engine
 
 import time
@@ -246,9 +246,10 @@ def run_gfso(problem, bench_input, hidden_tests):
             return f"- {c.name}: Completes within {c.timeout or 10}s for n={c.n}"
         return f"- {c.name}: {c.description}"
     criteria_text = "\n".join(format_criterion(c) for c in criteria)
-    neglected = tuple(bench_input.get('neglected', []))
+    # frozen input files keep the v3.9 key; the field is ACCEPTED_RISKS (v4.0 §13.1)
+    accepted_risks = tuple(bench_input.get('neglected', []))
 
-    spec = Spec(description=problem_prompt, criteria=criteria, neglected=neglected)
+    spec = Spec(description=problem_prompt, criteria=criteria, accepted_risks=accepted_risks)
     storage = MemoryStorage()
     example_input = pub[0]['input'] if pub else ""
     starter_code = problem.get('starter_code', '')

@@ -1,42 +1,92 @@
+# >=77.0.3 is the floor at which `license = "MIT"` below is read as the PEP 639 SPDX expression it
+# is. Under an older setuptools the build fails on that field — invisible with pip's default build
+# isolation (it fetches a current one) and fatal for anyone building with --no-build-isolation.
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "gfso"
-version = "0.2.0"
+# The version lives in `gfso/__init__.py` and is read from there, so `gfso --version`, the HTTP
+# surface and the distribution can never disagree — they had already drifted (0.3.0 here against a
+# hard-coded 0.2.0 in the API) while there was more than one place to write it.
+dynamic = ["version"]
 description = "GFSO: General Framework for Structured Operations — protocol engine"
-requires-python = ">=3.11"
+readme = "README.md"
+# The cap is exactly what the matrix tests and the classifiers claim — 3.11 through 3.13. It had
+# been one version wider than both, which for permanent metadata is a promise about a Python nobody
+# ran: `uvicorn[standard]` pulls compiled dependencies (httptools, uvloop, watchfiles) whose wheels
+# lag a new CPython by months, and a user without a compiler would read that failure as ours.
+# Raise the cap and the classifier together when the matrix does.
+requires-python = ">=3.11,<3.14"
 license = "MIT"
-# `gfso` = the batteries-included product: the DEFAULT install carries everything the
-# recommended experience needs (web UI + the agent door; every LLM role rides the Claude Code
-# CLI over subprocess — no pip dependency exists for it). The PURE CORE is the CHOSEN thing,
-# not the default: the `gfso-core` distribution (zero dependencies, canon-governed) is built
-# from packaging/core_manifest.py (closure proven by tests/test_core_dist.py on every run;
-# packaging/build_core.py builds the wheel) and is published as its own package at
-# distribution time — the door is the package NAME, not an extra.
-dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    # <2: the MCP surface is built on `mcp.server.fastmcp.FastMCP`, which the 2.x line removed.
-    "mcp>=1.0.0,<2",
+authors = [{ name = "Kirill Shokhin", email = "kashokhin@gmail.com" }]
+keywords = ["task-graph", "decomposition", "mcp", "agents", "verification", "protocol"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
 ]
+
+# `gfso` is the whole product and the only PUBLISHED distribution: one install carries the engine,
+# the web UI and the agent door; every LLM role rides the Claude Code CLI over subprocess, so no pip
+# dependency exists for it. The zero-dependency `gfso-core` cut (packaging/core_manifest.py, closure
+# proven by tests/test_core_dist.py on every run, wheel built by packaging/build_core.py) is BUILT
+# FROM THIS REPOSITORY BY WHOEVER EMBEDS IT — it is not on any index, and nothing here promises it is.
+dependencies = [
+    # Upper bounds, for the same reason `mcp` has one: this metadata is permanent, so a future
+    # FastAPI 1.0 or Uvicorn 1.0 would break every already-published version with no way to amend it.
+    "fastapi>=0.104.0,<1",
+    "uvicorn[standard]>=0.24.0,<1",
+    # Imported directly by the MCP door and the bridge (`anyio.to_thread`, `anyio.run`); it arrives
+    # transitively today, which is not the same as being declared.
+    "anyio>=4.0",
+    # >=1.8: the streamable-HTTP transport this product is built on (`mcp.streamable_http_app`,
+    # `mcp.client.streamable_http.streamablehttp_client`) landed there. The floor was 1.0, which any
+    # backtracking resolver could satisfy with a release that ImportErrors at `gfso connect` — and a
+    # published version's metadata cannot be corrected, only superseded.
+    # <2: the surface is `mcp.server.fastmcp.FastMCP`, which the 2.x line removed.
+    "mcp>=1.8.0,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/Kirill-Shokhin/GFSO"
+Documentation = "https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/USING_GFSO.md"
+Changelog = "https://github.com/Kirill-Shokhin/GFSO/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Kirill-Shokhin/GFSO/issues"
 
 [project.optional-dependencies]
 # matplotlib: bench suites the unittest-checker runs commonly plot; installed so CI exercises that
 # path instead of silently skipping it (the checker itself does not require it).
-dev = ["pytest>=7.0", "httpx>=0.25.0", "matplotlib>=3.7"]
+# `build`: tests/test_distribution.py builds the artifacts it checks, and without it that whole
+# suite reports SKIP — green, i.e. the load-bearing packaging check would silently not run.
+dev = ["pytest>=7.0", "httpx>=0.25.0", "matplotlib>=3.7", "build>=1.0"]
 
 [project.scripts]
 gfso = "gfso.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "gfso.__version__" }
 
 # Explicit discovery: the repo root also carries packaging/ (build tooling) and
 # experiments/ (research artifacts) — flat-layout auto-discovery would refuse the build.
 [tool.setuptools.packages.find]
 include = ["gfso*"]
 
+# Every non-.py file under gfso/ is read at RUNTIME by the module beside it: the UI stylesheet and
+# icon, the decompose/critic prompts (`gfso.decompose.loop` reads them at IMPORT), the executor and
+# validator prompts, and ORCHESTRATOR.md — the MCP server's instructions, everything an agent is told
+# about the protocol at initialize. Declared for `*` so an asset added to any package ships without a
+# second edit here. These globs DECIDE the artifact: measured from a clean export, dropping `*.css`
+# builds a wheel with no stylesheet. tests/test_packaging.py fails on the first file they stop
+# covering, and tests/test_distribution.py opens the built wheel to check they did their job.
 [tool.setuptools.package-data]
-"gfso.web" = ["*.html"]
+"*" = ["*.html", "*.css", "*.svg", "*.md", "prompts/*.md", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

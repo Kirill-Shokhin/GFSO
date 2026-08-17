@@ -35,6 +35,19 @@ def llm_factory(model: str = "sonnet"):
                              keep_api_key=os.environ.get("GFSO_BILLING", "subscription") == "api")
 
 
+def data_dir():
+    """THE state directory: `GFSO_DATA_DIR` if set, else `data/` under the installation's home.
+
+    Anchored on `serverctl.home()` rather than on the current directory, because every default path
+    in this package used to resolve against wherever the caller happened to stand — so `gfso run`
+    from one directory and the server started from another read different databases, silently, and
+    the user's graphs went missing rather than erroring.
+    """
+    from pathlib import Path
+    from gfso.serverctl import home
+    return Path(os.environ.get("GFSO_DATA_DIR") or (home() / "data"))
+
+
 def build_engine_from_env(*, validate_signals: bool = True, default_storage: str = "sqlite",
                           default_llm: str = "none", seed: bool = False,
                           db_path: str | None = None) -> Engine:
@@ -42,12 +55,12 @@ def build_engine_from_env(*, validate_signals: bool = True, default_storage: str
     `GFSO_STORAGE` (sqlite|memory, default `default_storage`) · `GFSO_DB_PATH` (sqlite path) ·
     `GFSO_LLM` (llm|stub|none, default `default_llm`; `llm` = the real provider via `llm_factory`,
     `GFSO_MODEL` selects its model). Headless entry points (MCP, CLI) take the defaults (sqlite,
-    no llm, no seed); `gfso serve` passes default_storage='memory', default_llm='stub', seed=True.
+    no llm, no seed); `gfso serve` passes default_storage='memory', default_llm='stub'; seeding is opt-in (`--seed`).
     `db_path` overrides the sqlite file (the ProjectRegistry's per-project isolation).
     Returns a STARTED engine."""
     if os.environ.get("GFSO_STORAGE", default_storage) == "sqlite":
         from gfso.adapters.storage.sqlite import SqliteStorage
-        storage = SqliteStorage(db_path or os.environ.get("GFSO_DB_PATH", "data/gfso.db"))
+        storage = SqliteStorage(db_path or os.environ.get("GFSO_DB_PATH", str(data_dir() / "gfso.db")))
     else:
         from gfso.adapters.storage.memory import MemoryStorage
         storage = MemoryStorage()
@@ -81,7 +94,7 @@ class ProjectRegistry:
     def __init__(self, **engine_kwargs):
         import re
         self._kw = engine_kwargs
-        self._dir = os.environ.get("GFSO_DATA_DIR", "data")
+        self._dir = str(data_dir())
         self._engines: dict[str, Engine] = {}
         self._active = os.environ.get("GFSO_PROJECT", "default")
         ProjectRegistry._NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -105,8 +118,14 @@ class ProjectRegistry:
             try:  # delegation autostart rides with the engine (works under every entry point)
                 from gfso.delegate import ensure_dispatcher
                 ensure_dispatcher(self._engines[name])
-            except Exception:
-                pass
+            except Exception as ex:
+                # Swallowed, this left a project that never auto-executes and never auto-validates
+                # anything for the life of the process — indistinguishable, from outside, from an
+                # executor that is merely slow.
+                import sys as _sys      # stderr: stdout is `gfso mcp`'s JSON-RPC channel
+                print(f"gfso: delegation dispatcher failed to start for project {name!r} ({ex}) — "
+                      f"nothing will be dispatched or auto-validated there",
+                      file=_sys.stderr, flush=True)
             cb = getattr(self, "_on_create", None)   # notify listeners (e.g. UI project list) that a project appeared
             if cb:
                 try:
@@ -171,4 +190,21 @@ class ProjectRegistry:
         except OSError:
             pass
         names.discard("gfso")  # the default project's own file — not a separate project
-        return {"active": self._active, "projects": sorted(names)}
+        # …ordered by when each was last WORKED IN, newest first. Alphabetical order made the picker
+        # useless the moment the installation had a history: the project someone is actually on sat
+        # somewhere in the middle of hundreds of names from finished runs and probes (measured: 271
+        # entries, the live one 69th). Recency is the fact a picker needs, and the database's own
+        # mtime already carries it — nothing new to track, and nothing has to be deleted to make the
+        # list readable (those files are the provenance of past measurements).
+        def _touched(name: str) -> float:
+            for candidate in (f"{name}.db", "gfso.db" if name == "default" else f"{name}.db"):
+                try:
+                    return os.path.getmtime(os.path.join(self._dir, candidate))
+                except OSError:
+                    continue
+            return 0.0
+
+        by_recency = sorted(names, key=lambda n: (-_touched(n), n))
+        return {"active": self._active, "projects": by_recency,
+                # The raw stamps too, so a client can group or age them without a second call.
+                "last_active": {n: round(_touched(n), 0) for n in by_recency}}

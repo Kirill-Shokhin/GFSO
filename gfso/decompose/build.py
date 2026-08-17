@@ -1,7 +1,7 @@
 """Build a CORE graph from a structured decomposition spec THROUGH the FSM (signals) — the SINGLE build path.
 
 Every node enters the graph via a logged ASSIGN (no `_graph.save_task` bypass); Dep is criteria-content
-(§2.2): a seam = a `depends_on` criterion on the CONSUMER, declared at creation so no post-hoc cascade fires;
+(§10): a seam = a `depends_on` criterion on the CONSUMER, declared at creation so no post-hoc cascade fires;
 the DepEdge is derived (`graph.dep_edges()`).
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ import logging
 
 from gfso.engine import Engine
 from gfso.core.types import (
-    Spec, Criteria, NeglectedItem, CriterionMapping, Predictability, TaskId, AgentId,
+    Spec, Criteria, AcceptedRiskItem, CriterionMapping, Predictability, TaskId, AgentId,
     Signal, SignalData, State,
 )
 
@@ -24,17 +24,17 @@ def _pred(s):
 
 
 def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root",
-                     assignee: str = "human") -> tuple[Engine, TaskId, list[str]]:
+                     assignee: str = "human", max_iterations: int | None = None) -> tuple[Engine, TaskId, list[str]]:
     """Build the decomposition into a LIVE (started) engine THROUGH the FSM — the canon-faithful counterpart
     to the offline `build_graph`. The root enters via a logged ASSIGN (if absent); the children via
     `decompose_task` (one ASSIGN each), with each Dep seam declared as a `depends_on` CRITERION **at
-    creation** (§2.2 Dep=criteria-content) so no post-hoc `add_dependency` fires (which would CANCEL+re-ASSIGN
+    creation** (§10 Dep=criteria-content) so no post-hoc `add_dependency` fires (which would CANCEL+re-ASSIGN
     the consumer and cascade). Every node thus enters the graph by a signal — no `_graph.save_task` bypass.
 
     Returns (engine, root_id, dropped): `dropped` lists every spec item that could NOT be placed, with its
     reason — nothing is filtered silently; the caller's repair loop feeds these back to the audit.
     Re-running with a corrected spec is safe: an ASSIGN on an existing live node is a REVISION (same id,
-    subtree retained, v3.7 §6.4 Inv-1) — wholesale rebuild = wholesale revise."""
+    subtree retained, v3.7 §14.4 Inv-1) — wholesale rebuild = wholesale revise."""
     rid, A = TaskId(root_id), AgentId(assignee)
     # QUIESCE the dispatcher for the signal burst: the build is not atomic (root ASSIGN → children
     # ASSIGNs land milliseconds apart), and an event-driven dispatcher evaluating the half-built graph
@@ -43,7 +43,7 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
     # graph (the counter nests across the repair loop's re-builds; _dispatch_wake pokes the loop).
     engine._dispatch_quiesce = getattr(engine, "_dispatch_quiesce", 0) + 1
     try:
-        return _build_graph_live(d, request, engine, rid, A)
+        return _build_graph_live(d, request, engine, rid, A, max_iterations)
     finally:
         engine._dispatch_quiesce = max(0, getattr(engine, "_dispatch_quiesce", 1) - 1)
         if not engine._dispatch_quiesce:
@@ -51,16 +51,19 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = "root
 
 
 def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
-                      A: AgentId) -> tuple[Engine, TaskId, list[str]]:
+                      A: AgentId, max_iterations: int | None = None) -> tuple[Engine, TaskId, list[str]]:
     root_id = str(rid)
     root_crit = tuple(Criteria(c["name"], c.get("description", "")) for c in d.get("root_criteria", []))
     neg = tuple(
-        NeglectedItem(n["item"], _pred(n.get("predictability")), n.get("justification", ""),
+        AcceptedRiskItem(n["item"], _pred(n.get("predictability")), n.get("justification", ""),
                       n.get("invalidation", ""))
-        for n in d.get("neglected", [])
+        # The schema is a CALIBRATED artifact: a model answers in the vocabulary it was asked in,
+        # and a key the parser does not read returns an EMPTY register silently — a CHECK-4 hole the
+        # plan never had. Which is why this key and the one in the prompt schema move together.
+        for n in d.get("accepted_risks", [])
     )
     scp = tuple(f"{s['item']} — {s['why_out']}" if s.get("why_out") else s["item"]
-                for s in d.get("scope", []))  # Ст. II.6 scope-boundary exclusions — objectified on the root
+                for s in d.get("scope", []))  # §13.1 scope-boundary exclusions — objectified on the root
     existing = engine.get_task(rid)
     # `assignee` (A) delegates the CHILDREN. The issuer-acts on the ROOT (re-author + ACCEPT) are performed by
     # the root's OWN owner — for a root, issuer == executor == its own assignee; using A here would be a foreign
@@ -68,7 +71,8 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     root_actor = A if existing is None else AgentId(existing.assignee)
     root_revised = False
     if existing is None:
-        engine.assign_task(rid, Spec(request, root_crit, neg, scope=scp, name=d.get("name", "")), A); engine.wait_idle()
+        engine.assign_task(rid, Spec(request, root_crit, neg, scope=scp, name=d.get("name", "")), A,
+                           max_iterations=max_iterations); engine.wait_idle()
     else:
         # The decomposer OWNS the root's CRITERIA: it re-authors them to the derived V-set, so the child
         # `covers` mappings resolve against real criteria. An issuer's hand-written root criteria are
@@ -82,9 +86,9 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
             engine.revise(rid, new_spec, root_actor); engine.wait_idle()
             root_revised = True
 
-    # a decomposed root is being worked on → ACCEPT it so it is EXECUTING (with children), not REVIEW: a
+    # a decomposed root is being worked on → ACCEPT it so it is EXECUTING (with children), not OFFERED: a
     # parent that still shows 'accept' interleaved with its children confuses the executor's next_step order.
-    if engine.get_state(rid) == State.REVIEW:
+    if engine.get_state(rid) == State.OFFERED:
         engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=rid, source=root_actor)); engine.wait_idle()
 
     # Child ids are NAMESPACED under the root: spec ids are LLM-chosen domain words (proration_engine, ...)
@@ -123,16 +127,16 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
                  for f, glue in deps_by_consumer.get(cid, [])]
         # a rebuild-as-revision must not stomp what belongs to OTHER authors (Inv-1): the child's Del
         # is the issuer's separate act (a Del change = the q_Del event), and the child's OWN
-        # NEGLECTED/scope/risk registers belong to the CHILD'S decomposer (§5.1: NEGLECTED is authored
-        # per-decomposition — «родитель НЕ авторствует NEGLECTED детей») — preserve both; `A` and empty
+        # ACCEPTED_RISKS/scope/risk registers belong to the CHILD'S decomposer (§13.1: ACCEPTED_RISKS is authored
+        # per-decomposition — «родитель НЕ авторствует ACCEPTED_RISKS детей») — preserve both; `A` and empty
         # registers apply only to NEW children. The subtree itself is retained by revision semantics.
         existing_child = engine.get_task(TaskId(ns(cid)))
         child_actor = AgentId(existing_child.assignee) if existing_child and existing_child.assignee else A
-        child_neg = existing_child.spec.neglected if existing_child else ()
+        child_neg = existing_child.spec.accepted_risks if existing_child else ()
         child_scope = existing_child.spec.scope if existing_child else ()
         child_risk = existing_child.spec.risk_components if existing_child else ()
         children.append((TaskId(ns(cid)), Spec(c.get("description", ""), tuple(crit),
-                                               neglected=child_neg, risk_components=child_risk,
+                                               accepted_risks=child_neg, risk_components=child_risk,
                                                scope=child_scope, name=c.get("name", "")), child_actor))
 
     valid = {c["name"] for c in d.get("root_criteria", [])}
@@ -147,7 +151,7 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
             mappings.append(CriterionMapping(m["criterion"], TaskId(ns(str(m["child_id"])))))
     # IDEMPOTENT REBUILD: an untouched child costs ZERO signals — its live state (EXECUTING, a
     # delivered result, its own registers) survives a parent-level refine; only a child whose contract
-    # or coverage actually changed is re-ASSIGNed (→ REVIEW: the executor re-consents, Инв-1).
+    # or coverage actually changed is re-ASSIGNed (→ OFFERED: the executor re-consents, Inv-1).
     parent_now = engine.get_task(rid)
     have_covers = {(m.criterion_name, m.child_id)
                    for m in (parent_now.criterion_mappings if parent_now else ())}
@@ -160,18 +164,18 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
         if (ex is not None and ex.spec == spec_c
                 and all((c, cid_t) in have_covers for c in want_by_child.get(cid_t, ()))):
             continue
-        # COMPLETED work is FROZEN: a terminal node admits no revision (§6.3 — the FSM would reject
+        # COMPLETED work is FROZEN: a terminal node admits no revision (§14.3 — the FSM would reject
         # the re-ASSIGN anyway; observed live: a refine fold updated DONE children and its intent
         # vanished into rejected signals). Surface the unapplied change as a problem instead — the
         # repair loop (or the honest holes residue) routes the new obligation to a NEW subtask.
-        if ex is not None and ex.state in (State.DONE, State.CANCELLED, State.ESCALATED):
+        if ex is not None and ex.state in (State.DONE, State.ABANDONED, State.ESCALATED):
             dropped.append(f"child {cid_t}: {ex.state.name} is terminal — completed work is frozen, "
                            f"the intended contract/coverage change was NOT applied; route new "
                            f"obligations to a NEW subtask (or leave the child as built)")
             continue
         changed.append((cid_t, spec_c, actor))
     if changed:
-        engine.decompose_task(rid, changed, mappings or None); engine.wait_idle()
+        engine.decompose_task(rid, changed, mappings or None, max_iterations); engine.wait_idle()
     elif root_revised:
         engine._recompute_checks(rid)  # criteria changed but no child re-ASSIGN ran the recompute
     for item in dropped:

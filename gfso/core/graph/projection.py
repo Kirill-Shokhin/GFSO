@@ -2,7 +2,7 @@
 
 Renders the unit a semantic critic (analyst + judge) reasons over: a node's goal,
 its proposed breakdown (subtasks, their criteria, criterion-coverage, seams,
-NEGLECTED) and the already-run structural (Solver / L0–L1) checks.
+ACCEPTED_RISKS) and the already-run structural (Solver / L0–L1) checks.
 
 Two layers, no strings-as-transport:
   * `NodeProjection` (frozen) — the DATA of the projection, typed end-to-end.
@@ -46,7 +46,7 @@ class SubtaskView:
     description: str
     assignee: Optional[str]
     criteria: tuple[CriterionView, ...]
-    neglected: tuple[str, ...]  # item text of each child-local exclusion
+    accepted_risks: tuple[str, ...]  # item text of each child-local exclusion
     name: str = ""              # short node label (UI title); part of the child's contract framing
 
 
@@ -67,7 +67,7 @@ class SeamView:
 
 
 @dataclass(frozen=True)
-class NeglectedView:
+class AcceptedRiskView:
     item: str
     predictability: Optional[Predictability]
     justification: str
@@ -86,7 +86,7 @@ class CheckView:
 class NodeProjection:
     """Typed DATA of one node's decomposition projection (no markdown here).
 
-    `is_leaf=True` ⇒ no decomposition to review; coverage/seams/neglected/checks
+    `is_leaf=True` ⇒ no decomposition to review; coverage/seams/accepted_risks/checks
     are not rendered (matches the leaf short-circuit).
     `criteria_declared=False` distinguishes "no criterion mappings declared" from
     "mappings declared but a criterion is unmapped".
@@ -99,8 +99,8 @@ class NodeProjection:
     mappings_declared: bool = False
     coverage: tuple[CoverageView, ...] = ()
     seams: tuple[SeamView, ...] = ()
-    neglected: tuple[NeglectedView, ...] = ()
-    scope: tuple[str, ...] = ()  # Ст. II.6 declared scope-boundary exclusions on the goal
+    accepted_risks: tuple[AcceptedRiskView, ...] = ()
+    scope: tuple[str, ...] = ()  # §13.1 declared scope-boundary exclusions on the goal
     checks: tuple[CheckView, ...] = ()
 
 
@@ -133,7 +133,7 @@ def build(
             description=c.spec.description,
             assignee=c.assignee,
             criteria=tuple(CriterionView(cc.name, cc.description) for cc in c.spec.criteria),
-            neglected=tuple(n.item for n in c.spec.neglected),
+            accepted_risks=tuple(n.item for n in c.spec.accepted_risks),
             name=c.spec.name,
         )
         for c in children
@@ -161,14 +161,14 @@ def build(
         if e.from_id in child_ids and e.to_id in child_ids
     )
 
-    neglected = tuple(
-        NeglectedView(
+    accepted_risks = tuple(
+        AcceptedRiskView(
             item=n.item,
             predictability=n.predictability,
             justification=n.justification,
             invalidation_condition=n.invalidation_condition,
         )
-        for n in node.spec.neglected
+        for n in node.spec.accepted_risks
     )
 
     checks = tuple(
@@ -179,7 +179,7 @@ def build(
         node_id=str(node.id), goal=node.spec.description, criteria=criteria,
         is_leaf=False, subtasks=subtasks,
         mappings_declared=bool(node.criterion_mappings),
-        coverage=coverage, seams=seams, neglected=neglected,
+        coverage=coverage, seams=seams, accepted_risks=accepted_risks,
         scope=tuple(node.spec.scope), checks=checks,
     )
 
@@ -218,8 +218,8 @@ def render(projection: NodeProjection) -> str:
                 out.append(f"  - {cc.name}: {cc.description or '(no description)'}")
         else:
             out.append("  - (no criteria declared)")
-        for item in s.neglected:
-            out.append(f"  - NEGLECTED: {item}")
+        for item in s.accepted_risks:
+            out.append(f"  - ACCEPTED_RISKS: {item}")
     out.append("")
 
     out.append("## Criterion coverage — which subtask owns which acceptance criterion")
@@ -248,9 +248,9 @@ def render(projection: NodeProjection) -> str:
         out.append("- (none declared)")
     out.append("")
 
-    out.append("## NEGLECTED — declared scope-exclusions for this node")
-    if p.neglected:
-        for n in p.neglected:
+    out.append("## ACCEPTED_RISKS — declared scope-exclusions for this node")
+    if p.accepted_risks:
+        for n in p.accepted_risks:
             pr = n.predictability.name if n.predictability else "unclassified"
             j = f"; justification: {n.justification}" if n.justification else ""
             inv = f"; invalidation: {n.invalidation_condition}" if n.invalidation_condition else ""
@@ -259,8 +259,8 @@ def render(projection: NodeProjection) -> str:
         out.append("- (none declared)")
     out.append("")
 
-    # SCOPE is an OPTIONAL goal-level mark (canon §5.1: помечается «когда исключение неочевидно»),
-    # unlike NEGLECTED (mandatory for a decomposed node, CHECK-4) — render only when declared: an
+    # SCOPE is an OPTIONAL goal-level mark (canon §13.1: помечается «когда исключение неочевидно»),
+    # unlike ACCEPTED_RISKS (mandatory for a decomposed node, CHECK-4) — render only when declared: an
     # empty section on a child would misread a goal-level object as that child's missing register.
     if p.scope:
         out.append("## SCOPE — declared boundary exclusions (capabilities deliberately not included)")

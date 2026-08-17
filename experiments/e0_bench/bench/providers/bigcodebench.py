@@ -59,7 +59,7 @@ class BigCodeBenchProvider(BenchProvider):
         prompt = _build_prompt(complete_prompt, test_code)
         test_names = _extract_test_names(test_code)
         criteria = tuple(Criteria(name=n, description=f"unittest method {n}") for n in test_names)
-        spec = Spec(description=prompt, criteria=criteria, neglected=())
+        spec = Spec(description=prompt, criteria=criteria, accepted_risks=())
 
         captured_test = test_code
         captured_timeout = self._verify_timeout

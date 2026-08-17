@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 
 def _payload_fields(sd: SignalData) -> dict:
-    """SignalData payload carried onto the audit entry (who/why, Th.11)."""
+    """SignalData payload carried onto the audit entry (who/why, Thm 11)."""
     return dict(
         source=sd.source, reason=sd.reason, justification=sd.justification,
         result=sd.result, failed_criteria=sd.failed_criteria, action=sd.action,
@@ -127,8 +127,8 @@ def process_signal(
         events.emit_error(task_id, signal_data.signal, e)
         return
 
-    # Execute effects (invariants already validated). Revision (re-ASSIGN, §6.4 Inv-1) never returns
-    # cascade children — only entering CANCELLING does (§6.2: CANCEL cascades the subtree).
+    # Execute effects (invariants already validated). Revision (re-ASSIGN, §14.4 Inv-1) never returns
+    # cascade children — only entering CANCELLING does (§14.2: CANCEL cascades the subtree).
     _execute_effects(effects, graph, agents, llm, signal_queue)
 
     # Success
@@ -151,7 +151,7 @@ def _validate_effects(effects: list, graph: Graph) -> None:
     """Pre-validate all MutateGraph effects for invariant violations."""
     for effect in effects:
         # Guard only the DEFAULT path (SET_STATE carrying a spec). APPLY_SPEC is the sanctioned
-        # CHALLENGE-channel revision (§6.2/§6.6) and is allowed to change criteria.
+        # CHALLENGE-channel revision (§14.2/§14.6) and is allowed to change criteria.
         if (isinstance(effect, MutateGraph) and effect.mutation == MutationType.SET_STATE
                 and effect.spec is not None):
             task = graph.get_task(effect.task_id)
@@ -186,10 +186,12 @@ def _execute_effects(
                             seen.add(pid)
                             pt = graph.get_task(pid)
                             if pt:
+                                _pc = graph.get_children(pid)
                                 graph.store_check_results(
-                                    pid, run_all_checks(pt, graph.get_children(pid), graph.dep_edges()))
+                                    pid, run_all_checks(pt, _pc, graph.dep_edges(),
+                                                        graph.non_leaf_ids(_pc)))
                 if affected:
-                    # The subtree cascade (canon §6.2/§7.1: CANCEL cascades — the protocol sends CANCEL to
+                    # The subtree cascade (canon §14.2/§15.1: CANCEL cascades — the protocol sends CANCEL to
                     # every descendant; each runs its own handshake). An issuer action: each child's issuer
                     # is the cancelling parent's assignee — carried as source so the cascade is a VALID
                     # issuer-CANCEL (else it is rejected under validate_signals).
@@ -205,7 +207,8 @@ def _execute_effects(
                 task = graph.get_task(tid)
                 children = graph.get_children(tid)
                 if task:
-                    results = run_all_checks(task, children, graph.dep_edges())
+                    results = run_all_checks(task, children, graph.dep_edges(),
+                                             graph.non_leaf_ids(children))
                     graph.store_check_results(tid, results)
 
             case Recommend(task_id=tid):
@@ -233,23 +236,23 @@ def timeout_monitor(
 ) -> None:
     """Background thread: checks deadlines AND per-state age, emits timeout signals.
 
-    Инв-5 (§6.4): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
+    Inv-5 (§14.4): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
     (a) the task's own deadline (exact, when set); (b) the per-STATE clock — a state older than
     `state_timeout` seconds fires regardless of deadline, so a deadline-less node can never sit
     in a non-terminal state forever (observed live: a stuck VALIDATING root with deadline=None
     had NO escape). The sub-FSM routes the trigger per state (first → TIMEOUT, repeat →
-    ESCALATED; BLOCKED→ESCALATED, CANCELLING→CANCELLED, VALIDATING→DONE(auto_pass) — §6.3).
+    ESCALATED; BLOCKED→ESCALATED, CANCELLING→ABANDONED, VALIDATING→DONE(auto_pass) — §14.3).
 
     Dedup by state VISIT — (task_id, state, state_entered_at): fires once per visit of a
     state. Keying on the last-FIRED state alone is NOT enough once R′ exists: a node can
     leave a fired-in state through a terminal and RE-ENTER it via a gated REOPEN before any
-    cleanup tick (e.g. CANCELLING → CANCELLED → reopen → … → CANCELLING again); with the old
-    key the monitor stayed silent forever and a withheld CANCEL_ACK stuck the node — an
-    Инв-5 violation found by the TLC spike model, not by tests. Every state CHANGE restamps
+    cleanup tick (e.g. CANCELLING → ABANDONED → reopen → … → CANCELLING again); with the old
+    key the monitor stayed silent forever and a withheld CONFIRM_CANCEL stuck the node — an
+    Inv-5 violation found by the TLC spike model, not by tests. Every state CHANGE restamps
     `state_entered_at` (mutations._set_state), so a re-entered state is a fresh visit and
     fires again; the same persisting visit stays deduped.
     """
-    clock = clock or SystemClock()   # Инв-5 reads the ClockPort, never the wall clock directly
+    clock = clock or SystemClock()   # Inv-5 reads the ClockPort, never the wall clock directly
     last_fired: dict[TaskId, tuple[State, object]] = {}   # task → (state, entered_at) of the fired visit
     while True:
         if stop_event and stop_event.is_set():

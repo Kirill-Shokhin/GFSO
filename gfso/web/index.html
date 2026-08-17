@@ -45,9 +45,9 @@
 </div>
 <div class="expand-form hidden" id="more-form">
     <div class="field-group">
-        <span class="label">NEGLECTED (STD-1)</span>
-        <div class="list-editor" id="neglected-list"></div>
-        <button class="list-add" onclick="addListItem('neglected-list','neglected')">+ factor</button>
+        <span class="label">ACCEPTED_RISKS (STD-1)</span>
+        <div class="list-editor" id="accepted_risks-list"></div>
+        <button class="list-add" onclick="addListItem('accepted_risks-list','accepted_risks')">+ factor</button>
         <span class="hint">explicit ε-assumptions; required for valid decomposition</span>
     </div>
     <div class="field-group">
@@ -87,9 +87,9 @@
     <div class="section-title">Criteria</div>
     <div id="edit-criteria-rows"></div>
     <button class="btn btn-sm btn-muted" onclick="addEditCriterion()" style="margin-top:6px">+ Criterion</button>
-    <div class="section-title" style="margin-top:12px">NEGLECTED</div>
-    <div id="edit-neglected-list"></div>
-    <button class="btn btn-sm btn-muted" onclick="addEditNeglected()" style="margin-top:6px">+ NEGLECTED</button>
+    <div class="section-title" style="margin-top:12px">ACCEPTED_RISKS</div>
+    <div id="edit-accepted_risks-list"></div>
+    <button class="btn btn-sm btn-muted" onclick="addEditAcceptedRisk()" style="margin-top:6px">+ ACCEPTED_RISKS</button>
     <div class="section-title" style="margin-top:12px">Executor (reassign)</div>
     <input id="edit-assignee" placeholder="executor">
     <div style="display:flex;gap:8px;margin-top:14px">
@@ -115,13 +115,13 @@ const T_BG        = tok('--bg');
 const T_ACC       = tok('--acc');
 const T_FONT_BODY = tok('--font-body');
 
-// Five buckets — direct translation of Applied-v3 §3.2 + §4. See gfso.css.
+// Five buckets — a direct translation of canon §11.2 + §12. See gfso.css.
 const BUCKET = {
-    DONE: 'done', CANCELLED: 'quiet',
+    DONE: 'done', ABANDONED: 'quiet',
     IDLE: 'quiet', EXECUTING: 'quiet',
-    REVIEW: 'attend', VALIDATING: 'attend',
-    REWORK: 'fail', CHALLENGED: 'fail',
-    BLOCKED: 'pathology', TIMEOUT: 'pathology', ESCALATED: 'pathology', CANCELLING: 'pathology',
+    OFFERED: 'attend', VALIDATING: 'attend',
+    REWORKING: 'fail', CHALLENGED: 'fail',
+    BLOCKED: 'pathology', OVERDUE: 'pathology', ESCALATED: 'pathology', CANCELLING: 'pathology',
 };
 const bucketOf = (s) => BUCKET[s] || 'quiet';
 
@@ -142,23 +142,23 @@ const DOT_ON_CHROME = {
 };
 
 const STATE_LABEL = {
-    IDLE:'Waiting', REVIEW:'In Review', CHALLENGED:'Challenged', EXECUTING:'In Progress',
-    BLOCKED:'Blocked', VALIDATING:'Validating', REWORK:'Rework', DONE:'Done',
-    CANCELLING:'Cancelling', CANCELLED:'Cancelled',
-    TIMEOUT:'Timeout', ESCALATED:'Escalated'
+    IDLE:'Waiting', OFFERED:'In Review', CHALLENGED:'Challenged', EXECUTING:'In Progress',
+    BLOCKED:'Blocked', VALIDATING:'Validating', REWORKING:'Rework', DONE:'Done',
+    CANCELLING:'Cancelling', ABANDONED:'Cancelled',
+    OVERDUE:'Timeout', ESCALATED:'Escalated'
 };
-// A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO — canon §6): show it directly.
+// A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO_PASS — canon §14): show it directly.
 const statusLabel = (state, done_reason) =>
     (state === 'DONE' && done_reason) ? done_reason : (STATE_LABEL[state] || state);
 const ACTIONS = {
-    REVIEW:     [{s:'ACCEPT',cls:'btn-green',label:'Accept'},{s:'CHALLENGE',cls:'btn-orange',label:'Challenge',prompt:'reason'}],
+    OFFERED:     [{s:'ACCEPT',cls:'btn-green',label:'Accept'},{s:'CHALLENGE',cls:'btn-orange',label:'Challenge',prompt:'reason'}],
     CHALLENGED: [{s:'ACCEPT_CHALLENGE',cls:'btn-green',label:'Accept Challenge'},{s:'REJECT_CHALLENGE',cls:'btn-muted',label:'Reject Challenge',prompt:'justification'}],
     EXECUTING:  [{s:'DELIVER',cls:'btn-blue',label:'Deliver',prompt:'result'},{s:'BLOCK',cls:'btn-red',label:'Block',prompt:'reason'}],
     BLOCKED:    [{s:'RESOLVE_BLOCK',cls:'btn-blue',label:'Resolve Block',prompt:'action'}],
     VALIDATING: [{s:'PASS',cls:'btn-green',label:'Pass'},{s:'FAIL',cls:'btn-red',label:'Fail',needsCriteria:true}],
-    REWORK:     [{s:'DELIVER',cls:'btn-blue',label:'Re-deliver',prompt:'result'},{s:'BLOCK',cls:'btn-red',label:'Block',prompt:'reason'}],
-    // §6.3 handshake settlement: the executor confirms the cancellation, reporting in-flight state (T11).
-    CANCELLING: [{s:'CANCEL_ACK',cls:'btn-muted',label:'Confirm Cancel',prompt:'in_flight'}],
+    REWORKING:     [{s:'DELIVER',cls:'btn-blue',label:'Re-deliver',prompt:'result'},{s:'BLOCK',cls:'btn-red',label:'Block',prompt:'reason'}],
+    // §6.3 handshake settlement: the executor confirms the cancellation, reporting in-flight state (Thm 11).
+    CANCELLING: [{s:'CONFIRM_CANCEL',cls:'btn-muted',label:'Confirm Cancel',prompt:'in_flight'}],
 };
 
 let cy, selectedTaskId = null, decomposeTaskId = null, allTasksCache = [];
@@ -167,36 +167,28 @@ let mineOnly = false;
 let decomposeParentCriteria = [];
 
 // ---- Theory derivations ----
-// V(t) derivation per §3.2: pass = DONE, fail = REWORK/CHALLENGED, ⊥ otherwise.
+// V(t) derivation per §11.2: pass = DONE, fail = REWORKING/CHALLENGED, ⊥ otherwise.
 // V is the central concept of the protocol; FSM state is the process layer.
-const V_OF = { DONE: 'pass', REWORK: 'fail', CHALLENGED: 'fail' };
+const V_OF = { DONE: 'pass', REWORKING: 'fail', CHALLENGED: 'fail' };
 const vOf = (state) => V_OF[state] || 'undef';
 const V_SYMBOL = { pass: '✓', fail: '✗', undef: '⊥' };
 
-// FM grouping per §4. Each CHECK addresses one or more FMs.
-// CHECK-1 coverage, -4 neglected, -5 risk_nodes, -6 delegation → FM-1 Correspondence
-// CHECK-2 dag → FM-4 Propagation (AND semantics depends on DAG)
-// CHECK-3 deadlines → FM-5 Currency
-const FM_LABEL = {
-    'FM-1': 'Correspondence',
-    'FM-2': 'Consistency',
-    'FM-3': 'Verifiability',
-    'FM-4': 'Propagation',
-    'FM-5': 'Currency',
-    'FM-6': 'Feasibility',
-    'FM-7': 'Feedback',
-};
-const CHECK_TO_FM = {
-    'CHECK-1:coverage':    'FM-1',
-    'CHECK-2:dag':         'FM-4',
-    'CHECK-3:deadlines':   'FM-5',
-    'CHECK-4:neglected':   'FM-1',
-    'CHECK-5:risk_nodes':  'FM-1',
-    'CHECK-6:delegation':  'FM-1',
-};
+// CHECK → failure-mode routing (§13.4) and the FM names (§12.6) come FROM THE PRODUCT
+// (/api/check_map), never from a copy kept here: the copy drifted — it routed CHECK-6 to FM-1 where
+// the canon routes leaf delegation to FM-7, and never learned CHECK-1b/7/8. The table is guarded
+// against the canon itself in tests/test_canon_check_map.py; this page only renders it.
+let FM_LABEL = {};
+let CHECK_TO_FM = {};
+async function loadCheckMap() {
+    try {
+        const m = await (await fetch('/api/check_map')).json();
+        CHECK_TO_FM = m.check_to_fm || {};
+        FM_LABEL = m.fm_label || {};
+    } catch (e) { /* offline: render the codes bare rather than a wrong name */ }
+}
 const fmOf = (checkName) => CHECK_TO_FM[checkName] || 'FM-?';
 
-// Q metric labels per §7. Short name + tooltip for full meaning.
+// Q metric labels per §15. Short name + tooltip for full meaning.
 const Q_META = {
     q_T:   { short: 'task',  full: 'q_T — task quality: criteria resolvability + completeness' },
     q_D:   { short: 'decomp',full: 'q_D — decomposition quality: joint sufficiency + non-redundancy' },
@@ -222,6 +214,7 @@ function inkAlpha(a) { /* cytoscape needs concrete rgba, not color-mix */
 }
 
 async function init() {
+    await loadCheckMap();          // the routing is the product's, fetched once
     cy = cytoscape({
         container: document.getElementById('cy'),
         style: [
@@ -252,7 +245,7 @@ async function init() {
             }},
             { selector: 'node.dimmed', style: { 'opacity': 0.22 }},
             { selector: 'edge.dimmed', style: { 'opacity': 0.15 }},
-            // CANCELLED tombstone: kept for provenance but visibly NOT an active node (grey, faded, dashed).
+            // ABANDONED tombstone: kept for provenance but visibly NOT an active node (grey, faded, dashed).
             { selector: 'node.cancelled', style: {
                 'opacity': 0.4, 'background-color': '#8a8a8a', 'border-color': '#6a6a6a',
                 'border-style': 'dashed', 'text-opacity': 0.6 }},
@@ -307,8 +300,16 @@ async function refreshProjects() {
         const d = await (await fetch('/api/projects')).json();
         const cur = TAB_PROJECT || d.active;
         const sel = document.getElementById('project-select');
-        sel.innerHTML = d.projects.map(p =>
+        // Newest first (the server orders by when each project was last worked in) and capped: an
+        // installation with a history had 271 entries here, alphabetical, with the live project 69th —
+        // a picker that cannot show you what you are on. The rest stay reachable by name: the current
+        // one is always in the list, and `?project=<name>` opens any of them directly.
+        const recent = d.projects.slice(0, 25);
+        if (cur && !recent.includes(cur)) recent.unshift(cur);
+        const hidden = d.projects.length - recent.length;
+        sel.innerHTML = recent.map(p =>
             `<option value="${p}"${p === cur ? ' selected' : ''}>${p}</option>`).join('')
+            + (hidden > 0 ? `<option value="" disabled>… ${hidden} older (open by ?project=)</option>` : '')
             + '<option value="__new__">+ new…</option>';
     } catch (e) { /* single-project server */ }
 }
@@ -331,7 +332,7 @@ async function refreshGraph() {
         const cancelled = new Set();
         for (const n of g.nodes) {
             const st = styleOf(n.state);
-            const isCancelled = n.state === 'CANCELLED' || n.done_reason === 'CANCELLED';  // v3.7 state (+legacy reason)
+            const isCancelled = n.state === 'ABANDONED' || n.done_reason === 'CANCELLED';  // the state (+ the legacy DoneReason of pre-v3.7 rows)
             if (isCancelled) cancelled.add(n.id);
             cy.add({ data: { id: n.id, label: n.label, state: n.state, bucket: bucketOf(n.state),
                              bg: st.bg, fg: st.fg, bw: st.bw, bc: st.bc, bs: st.bs, bo: st.bo },
@@ -349,7 +350,7 @@ async function refreshStats() {
     if (!allTasksCache.length) { el.innerHTML = ''; return; }
     const counts = {};
     allTasksCache.forEach(t => { counts[t.state] = (counts[t.state]||0) + 1; });
-    const order = ['DONE','EXECUTING','REVIEW','BLOCKED','REWORK','CHALLENGED','VALIDATING','IDLE','CANCELLING','CANCELLED','TIMEOUT','ESCALATED'];
+    const order = ['DONE','EXECUTING','OFFERED','BLOCKED','REWORKING','CHALLENGED','VALIDATING','IDLE','CANCELLING','ABANDONED','OVERDUE','ESCALATED'];
     el.innerHTML = order.filter(s => counts[s]).map(s =>
         `<span class="stat"><span class="stat-dot" style="background:${DOT_ON_CHROME[bucketOf(s)]}"></span>${counts[s]} ${STATE_LABEL[s]||s}</span>`
     ).join('');
@@ -360,7 +361,7 @@ async function refreshMetrics() {
         const m = await (await fetch('/api/metrics')).json();
         document.getElementById('metrics').innerHTML = Object.entries(m).map(([k,v]) => {
             const meta = Q_META[k] || { short: k, full: k };
-            if (v === null || v === undefined) // ⊥: empty population (canon §13) — a dash, not a fake 100%
+            if (v === null || v === undefined) // ⊥: empty population (canon §21) — a dash, not a fake 100%
                 return `<div class="metric" title="${meta.full} — no observations yet"><div class="metric-val" style="color:var(--ink-faint)">—</div><div class="metric-label">${meta.short}</div></div>`;
             const pct = (v*100).toFixed(0);
             const color = v >= 0.8 ? 'var(--ui-on-chrome)' : v >= 0.5 ? 'var(--paper)' : 'var(--acc)';
@@ -385,7 +386,7 @@ async function selectTask(taskId) {
         let h = `<div class="sidebar-header"><h2>${d.name || d.description}</h2><button class="sidebar-close" onclick="closeSidebar()">&times;</button></div>`;
         if (d.name && d.description && d.name !== d.description) h += `<p class="node-desc" style="color:var(--text-dim,#888);margin:0 0 8px;font-size:13px">${d.description}</p>`;
         h += `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">`;
-        h += `<span class="v-badge v-${v}" title="V(t) — validation outcome §3.2"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`;
+        h += `<span class="v-badge v-${v}" title="V(t) — validation outcome §11.2"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`;
         h += `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, d.done_reason)}</span>`;
         if (dl) h += `<span class="deadline-chip${dl.overdue ? ' overdue':''}" title="deadline">⏱ ${dl.text}</span>`;
         h += `</div>`;
@@ -397,9 +398,9 @@ async function selectTask(taskId) {
             h += `</ul></div>`;
         }
 
-        if (d.neglected && d.neglected.length) {
-            h += `<div class="section"><div class="section-title">Neglected (STD-1)</div><ul class="facet-list">`;
-            d.neglected.forEach(n => h += `<li>${n}</li>`);
+        if (d.accepted_risks && d.accepted_risks.length) {
+            h += `<div class="section"><div class="section-title">AcceptedRisk (STD-1)</div><ul class="facet-list">`;
+            d.accepted_risks.forEach(n => h += `<li>${n}</li>`);
             h += `</ul></div>`;
         }
         if (d.scope && d.scope.length) {
@@ -428,7 +429,7 @@ async function selectTask(taskId) {
             h += `</div></div>`;
         }
 
-        // Checks grouped by FM (§4 failure modes)
+        // Checks grouped by FM (§12 failure modes)
         const realChecks = d.checks.filter(c => !c.skipped);
         if (realChecks.length) {
             const byFm = {};
@@ -477,7 +478,7 @@ async function selectTask(taskId) {
         } catch(e) {}
 
         const acts = ACTIONS[d.state] || [];
-        const noCancel = ['DONE','ESCALATED','CANCELLED','CANCELLING'];  // §6.3: no re-CANCEL from CANCELLING; terminals reject all
+        const noCancel = ['DONE','ESCALATED','ABANDONED','CANCELLING'];  // §14.3: no re-CANCEL from CANCELLING; terminals reject all
         if (acts.length || !noCancel.includes(d.state)) {
             h += `<div class="section"><div class="section-title">Actions</div><div class="actions">`;
             acts.forEach(a => {
@@ -488,18 +489,18 @@ async function selectTask(taskId) {
                 h += `<button class="btn btn-sm btn-muted" onclick="recordVerdict('${d.id}')">Record verdict</button>`;
             if (!noCancel.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="sendAction('${d.id}','CANCEL','reason',false)">Cancel</button>`;
-            if (['EXECUTING','REVIEW'].includes(d.state)) {
+            if (['EXECUTING','OFFERED'].includes(d.state)) {
                 h += `<button class="btn btn-sm btn-purple" onclick="openDecompose('${d.id}')">Decompose</button>`;
                 // ONE AI verb, dispatched by the node's state (auto_decompose): undecomposed → author
                 // the subtree; already-decomposed → one refine round over what exists.
-                const hasKids = allTasksCache.some(t => t.parent_id === d.id && t.state !== 'CANCELLED');
+                const hasKids = allTasksCache.some(t => t.parent_id === d.id && t.state !== 'ABANDONED');
                 h += `<button class="btn btn-sm btn-purple" onclick="aiDecompose('${d.id}')">${hasKids ? 'AI refine' : 'AI decompose'}</button>`;
-                // The standalone L2 door (§5.4 Level 2): hand-authored/edited graphs never pass
+                // The standalone L2 door (§13.4 Level 2): hand-authored/edited graphs never pass
                 // through decompose's built-in semantic pass — this button is their only L2.
                 if (hasKids)
                     h += `<button class="btn btn-sm btn-purple" onclick="aiReview('${d.id}')">AI review</button>`;
             }
-            if (d.state === 'REVIEW')
+            if (d.state === 'OFFERED')
                 h += `<button class="btn btn-sm btn-muted" onclick="openEdit('${d.id}')">Edit</button>`;
             h += `</div></div>`;
         }
@@ -521,7 +522,7 @@ function closeSidebar() { selectedTaskId=null; document.getElementById('sidebar'
 
 async function aiDecompose(id) {
     const t = allTasksCache.find(x => x.id === id) || {};
-    const hasKids = allTasksCache.some(x => x.parent_id === id && x.state !== 'CANCELLED');
+    const hasKids = allTasksCache.some(x => x.parent_id === id && x.state !== 'ABANDONED');
     if (!confirm(`${hasKids ? 'Refine the existing decomposition (one search↔audit round over the graph)'
                             : 'Auto-decompose this node (search↔audit → verified subtree)'}?\nRuns ~2–6 min; progress streams in the activity strip.`)) return;
     try {
@@ -545,7 +546,12 @@ async function aiReview(id) {
             const lines = d.criteria_verdicts.map(v => `${mark(v.verdict)} ${v.criterion} — ${v.why}`);
             (d.conflicts||[]).forEach(c => lines.push(`⚡ conflict [${(c.between||[]).join(', ')}]: ${c.why}`));
             alert((d.semantic_covered ? 'L2 checker: no gaps found (advisory — the real Level-2 verdict is execution; q_D watches it).\n\n'
-                                      : 'L2 verdicts (advisory — fix via the actions, or declare NEGLECTED):\n\n')
+                                      // Two discharges — and the register is NOT one of them: a parent
+                                      // criterion the children's criteria do not carry is FM-1.d, repaired
+                                      // on the PLAN or refuted in writing. §13.1's register holds risk
+                                      // EVENTS with an estimable P; writing an uncovered entailment into it
+                                      // forbids nothing and closes nothing (§2.1).
+                                      : 'L2 verdicts (advisory — repair the PLAN (edit criteria / map or add a child), or record why the finding is wrong (dispute_finding). NOT the risk register — §13.1 holds risk events, not uncovered entailment):\n\n')
                   + lines.join('\n').slice(0, 1800));
         }
         else if (d.semantic_findings) alert('L2 (advisory):\n\n' + d.semantic_findings.slice(0, 1500));
@@ -629,7 +635,7 @@ function addListItem(containerId, prefix, value='') {
     const c = document.getElementById(containerId);
     const row = document.createElement('div');
     row.className = 'list-item';
-    row.innerHTML = `<input placeholder="${prefix === 'neglected' ? 'factor + justification…' : 'risk component…'}" value="${value}"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
+    row.innerHTML = `<input placeholder="${prefix === 'accepted_risks' ? 'factor + justification…' : 'risk component…'}" value="${value}"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
     c.appendChild(row);
 }
 function toggleMore() {
@@ -661,16 +667,16 @@ async function createTask() {
     const assignee = document.getElementById('new-assignee').value.trim();
     if (!desc || !assignee) return;
     const criteria = getCriteria();
-    const neglected = getListItems('neglected-list');
+    const accepted_risks = getListItems('accepted_risks-list');
     const risk_components = getListItems('risk-list');
     const dlRaw = document.getElementById('new-deadline').value;
     const deadline = dlRaw ? new Date(dlRaw).toISOString() : null;
     await fetch('/api/run/create_task', {method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({spec:{description:desc,criteria,neglected,risk_components},assignee,deadline})});
+        body:JSON.stringify({spec:{description:desc,criteria,accepted_risks,risk_components},assignee,deadline})});
     document.getElementById('new-desc').value = '';
     document.getElementById('new-assignee').value = '';
     document.getElementById('new-deadline').value = '';
-    document.getElementById('neglected-list').innerHTML = '';
+    document.getElementById('accepted_risks-list').innerHTML = '';
     document.getElementById('risk-list').innerHTML = '';
     document.getElementById('criteria-rows').innerHTML = '';
     document.getElementById('criteria-panel').classList.add('hidden');
@@ -693,7 +699,7 @@ async function openDecompose(id) {
 }
 function closeModal() { document.getElementById('decompose-modal').classList.remove('active'); }
 
-// === Edit node (upper-layer authoring: RMW over revise/reneglect/reassign endpoints) ===
+// === Edit node (upper-layer authoring: RMW over revise/edit_accepted_risks/reassign endpoints) ===
 let editTaskId = null, editOrigAssignee = '';
 async function openEdit(id) {
     editTaskId = id;
@@ -701,8 +707,8 @@ async function openEdit(id) {
     editOrigAssignee = d.assignee || '';
     const cr = document.getElementById('edit-criteria-rows'); cr.innerHTML = '';
     (d.criteria || []).forEach(c => addEditCriterion(c.name, c.description));
-    const nl = document.getElementById('edit-neglected-list'); nl.innerHTML = '';
-    (d.neglected || []).forEach(n => addEditNeglected(n));
+    const nl = document.getElementById('edit-accepted_risks-list'); nl.innerHTML = '';
+    (d.accepted_risks || []).forEach(n => addEditAcceptedRisk(n));
     document.getElementById('edit-assignee').value = d.assignee || '';
     document.getElementById('edit-modal').classList.add('active');
 }
@@ -711,10 +717,10 @@ function addEditCriterion(name='', desc='') {
     row.innerHTML = `<input class="ec-name" placeholder="name" value="${name}"><input class="ec-desc" placeholder="description" value="${desc}"><button class="cr-del" onclick="this.parentElement.remove()">&times;</button>`;
     document.getElementById('edit-criteria-rows').appendChild(row);
 }
-function addEditNeglected(value='') {
+function addEditAcceptedRisk(value='') {
     const row = document.createElement('div'); row.className = 'list-item';
     row.innerHTML = `<input placeholder="excluded factor…" value="${value}"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
-    document.getElementById('edit-neglected-list').appendChild(row);
+    document.getElementById('edit-accepted_risks-list').appendChild(row);
 }
 async function submitEdit() {
     const agent = myRole();
@@ -722,12 +728,12 @@ async function submitEdit() {
     const criteria = Array.from(document.querySelectorAll('#edit-criteria-rows .criterion-row')).map(r => ({
         name: r.querySelector('.ec-name').value.trim(), description: r.querySelector('.ec-desc').value.trim(),
     })).filter(c => c.name && c.description);
-    const neglected = Array.from(document.querySelectorAll('#edit-neglected-list .list-item input')).map(i => i.value.trim()).filter(Boolean);
+    const accepted_risks = Array.from(document.querySelectorAll('#edit-accepted_risks-list .list-item input')).map(i => i.value.trim()).filter(Boolean);
     const newAssignee = document.getElementById('edit-assignee').value.trim();
     const post = (tool, body) => fetch(`/api/run/${tool}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task_id:editTaskId, ...body})});
     try {
         let r = await post('edit_criteria', {criteria, agent});
-        if (r.ok) r = await post('reneglect', {neglected, agent});
+        if (r.ok) r = await post('edit_accepted_risks', {accepted_risks, agent});
         if (r.ok && newAssignee && newAssignee !== editOrigAssignee) r = await post('reassign', {assignee:newAssignee});
         if (!r.ok) { const e = await r.json().catch(()=>({})); alert('Edit rejected: ' + (e.detail || r.status) + '\n(a delegated/committed node → cancel + re-assign)'); }
     } catch(e) { console.error('edit:', e); }
@@ -745,17 +751,17 @@ function addChildForm() {
         <button class="btn btn-sm btn-purple" onclick="suggestChildCriteria(this)" style="margin-left:4px">AI</button>
         <div class="dc-criteria-rows" style="margin-top:4px"></div>
         <button class="btn btn-sm btn-muted" onclick="addChildCriterion(this)" style="font-size:10px">+ criterion</button>
-        <div class="dc-neglected-rows" style="margin-top:6px"></div>
-        <button class="btn btn-sm btn-muted" onclick="addChildNeglected(this)" style="font-size:10px">+ neglected</button>
+        <div class="dc-accepted_risks-rows" style="margin-top:6px"></div>
+        <button class="btn btn-sm btn-muted" onclick="addChildAcceptedRisk(this)" style="font-size:10px">+ accepted_risks</button>
     `;
     document.getElementById('decompose-children').appendChild(d);
     renderMappings();
 }
-function addChildNeglected(btn, value='') {
-    const c = btn.parentElement.querySelector('.dc-neglected-rows');
+function addChildAcceptedRisk(btn, value='') {
+    const c = btn.parentElement.querySelector('.dc-accepted_risks-rows');
     const row = document.createElement('div');
     row.className = 'list-item';
-    row.innerHTML = `<input placeholder="neglected factor…" value="${value}" style="flex:1"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
+    row.innerHTML = `<input placeholder="accepted risk factor…" value="${value}" style="flex:1"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
     c.appendChild(row);
 }
 function renderMappings() {
@@ -807,9 +813,9 @@ async function submitDecompose() {
             name: row.querySelector('.cr-name').value.trim(),
             description: row.querySelector('.cr-desc').value.trim(),
         })).filter(c => c.name && c.description);
-        const neglected = Array.from(f.querySelectorAll('.dc-neglected-rows .list-item input'))
+        const accepted_risks = Array.from(f.querySelectorAll('.dc-accepted_risks-rows .list-item input'))
             .map(i => i.value.trim()).filter(Boolean);
-        return { spec: { description: desc, criteria, neglected }, assignee, deadline };
+        return { spec: { description: desc, criteria, accepted_risks }, assignee, deadline };
     }).filter(c => c.spec.description && c.assignee);
     if (!children.length) return;
 
@@ -853,7 +859,28 @@ function plShow(open) {
 function plHeader() {
     const n = plS.active.size;
     document.getElementById('pl-count').textContent =
-        (n ? `${n} active · ` : '') + `${plS.runs} runs · Σ today ${plS.dayTok.toFixed(1)}k tokens`;
+        (n ? `${n} active · ` : '') + `${plS.runs} runs · Σ today ${plS.dayTok.toFixed(1)}k tokens`
+        + (plS.spend ? ` · ${plS.spend}` : '');
+}
+
+// What the model calls of THIS project have cost, per role. It belongs HERE and not beside the
+// quality metrics: those describe the graph and read the same whoever works it, while a spend figure
+// describes ONE way of working it — a graph driven by people has no calls and shows nothing.
+async function plSpend() {
+    try {
+        const u = await (await fetch('/api/usage')).json();
+        if (!u || !u.calls) return;                       // no model calls: nothing to report
+        const by = Object.entries(u.by_stage || {})
+            .map(([k, v]) => `${k} $${(v.cost_usd || 0).toFixed(2)}`).join(' · ');
+        // "not reported" is not "free": an OpenAI-compatible endpoint prices per provider and returns
+        // no cost at all, so the count of PRICED calls rides beside the money.
+        plS.spend = u.costed_calls === u.calls
+            ? `$${(u.cost_usd || 0).toFixed(2)} spent`
+            : `$${(u.cost_usd || 0).toFixed(2)} spent (${u.costed_calls}/${u.calls} calls priced)`;
+        const el = document.getElementById('pl-body');
+        if (el && by) el.title = by;
+        plHeader();
+    } catch (e) { /* presentation only */ }
 }
 function plRenderActive() {
     const el = document.getElementById('pl-active');
@@ -915,6 +942,27 @@ async function plEnsure() {
         hist.forEach(r => plLine(r.source, r.message, (r.ts || '').slice(11), (r.ts || '').slice(0, 10) === today));
     } catch (e) { /* history is presentation */ }
     plHeader();
+    plSpend();
+    setInterval(plSpend, 30000);
+}
+
+// The page must never keep showing a graph it can no longer hear about. Its only reaction to a
+// closed socket was a silent retry, so a stopped server looked exactly like a quiet one: the last
+// state stayed on screen indefinitely, and a person watching could not tell the difference between
+// "nothing is happening" and "nothing is connected".
+function setLive(live, why) {
+    let el = document.getElementById('gfso-conn');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'gfso-conn';
+        el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;padding:6px 12px;'
+            + 'font:12px/1.4 var(--tr-mono,monospace);letter-spacing:.04em;text-align:center;'
+            + 'background:#8a1c1c;color:#fff;display:none';
+        document.body.appendChild(el);
+    }
+    el.style.display = live ? 'none' : 'block';
+    if (!live) el.textContent = (why || 'disconnected')
+        + ' — this page is showing the last state it received. Is the server running? `gfso doctor`';
 }
 
 function connectWS() {
@@ -951,7 +999,9 @@ function connectWS() {
             if (selectedTaskId===d.task_id) await selectTask(d.task_id);
         }
     };
-    ws.onclose = () => setTimeout(connectWS, 2000);
+    ws.onopen = () => setLive(true);
+    ws.onerror = () => setLive(false, 'connection lost');
+    ws.onclose = () => { setLive(false, 'connection lost'); setTimeout(connectWS, 2000); };
 }
 
 init();

@@ -21,11 +21,20 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _main_version() -> str:
-    """The ONE version source is the main pyproject — the core template carries a placeholder,
-    so there is no second version string to keep in sync."""
-    import tomllib
-    with open(ROOT / "pyproject.toml", "rb") as f:
-        return tomllib.load(f)["project"]["version"]
+    """The ONE version source is `gfso.__version__` — the core template carries a placeholder, so
+    there is no second version string to keep in sync.
+
+    Read out of the source file rather than imported: this script stages a subset of the package and
+    must run without the package's dependencies installed. (It read `[project] version` from the
+    pyproject until that key became `dynamic`, at which point this raised KeyError and the core
+    wheel could not be built at all — unnoticed, because the closure test re-implements the staging
+    loop instead of calling into here.)"""
+    import re
+    src = (ROOT / "gfso" / "__init__.py").read_text(encoding="utf-8")
+    m = re.search(r'^__version__ = "([^"]+)"', src, re.M)
+    if not m:
+        raise RuntimeError(f"no __version__ in {ROOT / 'gfso' / '__init__.py'}")
+    return m.group(1)
 
 
 def stage(build_root: pathlib.Path) -> None:

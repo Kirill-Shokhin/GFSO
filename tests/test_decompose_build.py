@@ -10,6 +10,7 @@ from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import TaskId, Signal, State
 from gfso.decompose.build import build_graph_live
+from gfso import tools as T
 
 SPEC = {
     "name": "Build the thing",
@@ -21,7 +22,7 @@ SPEC = {
     ],
     "mappings": [{"criterion": "rc1", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}],
     "deps": [{"from": "a", "to": "b", "glue": "B consumes A's output"}],
-    "neglected": [{"item": "edge case X", "predictability": "ORDINARY",
+    "accepted_risks": [{"item": "edge case X", "predictability": "ORDINARY",
                    "justification": "rare", "invalidation": "if X observed"}],
 }
 
@@ -46,7 +47,7 @@ def test_build_graph_live_is_signal_routed():
     assert root.state == State.EXECUTING                             # a decomposed root is accepted (working)
     assert root.spec.name == "Build the thing"                       # short label, separate from description
     assert {c.name for c in root.spec.criteria} == {"rc1", "rc2"}
-    assert [n.item for n in root.spec.neglected] == ["edge case X"]
+    assert [n.item for n in root.spec.accepted_risks] == ["edge case X"]
     assert e.get_task(TaskId("root.a")).spec.name == "Do A"          # children carry their short name too
 
     # children are active (no cascade), parented, mapped — under NAMESPACED ids
@@ -55,7 +56,7 @@ def test_build_graph_live_is_signal_routed():
     assert {(m.criterion_name, m.child_id) for m in root.criterion_mappings} == \
         {("rc1", TaskId("root.a")), ("rc2", TaskId("root.b"))}
 
-    # Dep = criteria-content: consumer b carries depends_on=a; the edge is DERIVED a→b (§2.2 direction)
+    # Dep = criteria-content: consumer b carries depends_on=a; the edge is DERIVED a→b (§10 direction)
     b = e.get_task(TaskId("root.b"))
     assert any(c.depends_on == TaskId("root.a") for c in b.spec.criteria)
     edges = {(ed.from_id, ed.to_id) for ed in e.graph.dep_edges()}
@@ -155,10 +156,54 @@ def test_rebuild_reuses_hand_built_bare_ids_no_duplicates():
                 {"id": "C1", "name": "Do A", "description": "do A", "criteria": [{"name": "a1", "description": "NEW tighter"}]},
                 {"id": "C2", "name": "Do B", "description": "do B", "criteria": [{"name": "b1", "description": "B"}]}],
             "mappings": [{"criterion": "rc1", "child_id": "C1"}],
-            "deps": [], "neglected": [{"item": "x", "predictability": "STATISTICAL", "justification": "j", "invalidation": "i"}]}
+            "deps": [], "accepted_risks": [{"item": "x", "predictability": "STATISTICAL", "justification": "j", "invalidation": "i"}]}
     build_graph_live(spec, "goal", e, root_id="root", assignee="human")
     e.wait_idle()
     kids = {str(c.id) for c in e.get_active_children(TaskId("root"))}
     assert kids == {"C1", "C2"}          # revised in place - no root.C1/root.C2 duplicates
     assert e.get_task(TaskId("C1")).spec.criteria[0].description == "NEW tighter"
+    e.stop()
+
+
+def test_the_register_key_the_schema_asks_for_is_the_key_the_parser_reads():
+    """The decomposer's schema is a CALIBRATED artifact: a model answers in the vocabulary it was
+    asked in, so the key in the requested schema and the key `build_graph_live` reads must be one
+    key. When they drift, the register comes back EMPTY with nothing raised, and CHECK-4 reports a
+    hole the plan never had — the failure is silent at exactly the layer that cannot see it.
+    """
+    from gfso.decompose.loop import AUDIT_SCHEMA
+
+    assert "accepted_risks" in AUDIT_SCHEMA["properties"]
+    assert "accepted_risks" in AUDIT_SCHEMA["required"]
+
+    e = _eng()
+    _, rid, _ = build_graph_live(SPEC, "build the thing", e, root_id="root", assignee="human")
+    root = e.get_task(TaskId(rid))
+    assert [(n.item, n.justification) for n in root.spec.accepted_risks] == [("edge case X", "rare")]
+
+
+def test_a_child_may_declare_the_parent_criteria_it_covers():
+    """`covers` on the child, or the flat `mappings` — both are the same claim.
+
+    The tool description an agent reads said `covers` while the code read only `mappings`, so a
+    decomposition that used the documented spelling came back successful with the mapping silently
+    dropped; the refusal arrived later, at the child's first ACCEPT, as an unexplained coverage
+    failure naming a check rather than the ignored key."""
+    e = _eng()
+    T.create_task(e, "app", {"description": "ship it",
+                             "criteria": [{"name": "cli", "description": "the CLI runs"},
+                                          {"name": "docs", "description": "the README is true"}]})
+    T.decompose(e, "app", children=[
+        {"task_id": "impl", "spec": {"description": "write it",
+                                     "criteria": [{"name": "c", "description": "C"}]},
+         "covers": ["cli"]},
+        {"task_id": "write", "spec": {"description": "document it",
+                                      "criteria": [{"name": "d", "description": "D"}]},
+         "covers": ["docs"]},
+    ])
+    covered = {m.criterion_name for m in e.get_task(TaskId("app")).criterion_mappings}
+    assert covered == {"cli", "docs"}, f"`covers` was dropped: {covered}"
+    failed = [c for c in T.get_checks(e, "app")
+              if not c["passed"] and "coverage" in c["check"]]
+    assert not failed, failed
     e.stop()

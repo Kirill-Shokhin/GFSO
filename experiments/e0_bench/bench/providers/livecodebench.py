@@ -114,8 +114,9 @@ class LiveCodeBenchProvider(BenchProvider):
             n=c.get("n"),
             timeout=c.get("timeout"),
         ) for c in bench_input["criteria"])
-        neglected = tuple(bench_input.get("neglected", []))
-        spec = Spec(description=prompt, criteria=criteria, neglected=neglected)
+        # the FROZEN input files carry the v3.9 key name; the field is ACCEPTED_RISKS (v4.0 §13.1)
+        accepted_risks = tuple(bench_input.get("neglected", []))
+        spec = Spec(description=prompt, criteria=criteria, accepted_risks=accepted_risks)
 
         example_input = pub[0]["input"] if pub else ""
         captured_starter = starter_code

@@ -63,6 +63,13 @@ def test_bad_project_name_rejected(monkeypatch, tmp_path):
             reg.use(bad) if bad else reg.use("../also")
 
 
+def _call(w, *a, **kw):
+    """Drive a bound MCP tool the way the SDK does: it is a coroutine now, because a synchronous
+    tool is awaited INLINE on the event loop and one blocking verb froze the whole server."""
+    import anyio
+    return anyio.run(lambda: w(*a, **kw))
+
+
 def test_mcp_bind_gains_project_param_and_routes(monkeypatch, tmp_path):
     from gfso.mcp.server import _bind
     reg = _reg(monkeypatch, tmp_path)
@@ -70,10 +77,10 @@ def test_mcp_bind_gains_project_param_and_routes(monkeypatch, tmp_path):
     params = inspect.signature(w).parameters
     assert "project" in params and params["project"].default is None
     _mk(reg.engine("p1"), "n1")
-    assert w("n1", project="p1")["id"] == "n1"         # explicit per-call routing
-    assert w("n1") is None                              # active = default — isolated
+    assert _call(w, "n1", project="p1")["id"] == "n1"         # explicit per-call routing
+    assert _call(w, "n1") is None                              # active = default — isolated
     reg.use("p1")
-    assert w("n1")["id"] == "n1"                        # follows the active switch
+    assert _call(w, "n1")["id"] == "n1"                        # follows the active switch
     for e in list(reg._engines.values()):
         e.stop()
 
@@ -98,11 +105,11 @@ def test_mcp_bind_project_param_with_var_keyword(monkeypatch, tmp_path):
     assert "source" not in inspect.signature(ws).parameters
     T.create_task(reg.engine("pk"), "s1", {"description": "mine",
                                            "criteria": [{"name": "a", "description": "A"}]})  # Del=agent
-    assert ws("s1", "ACCEPT", project="pk")["state"] == "EXECUTING"
-    assert ws("s1", "DELIVER", result="paths…", project="pk")["state"] == "VALIDATING"
+    assert _call(ws, "s1", "ACCEPT", project="pk")["state"] == "EXECUTING"
+    assert _call(ws, "s1", "DELIVER", result="paths…", project="pk")["state"] == "VALIDATING"
     # a node delegated to someone else does NOT move on the agent's signal (FSM: source ≠ Del)
     _mk(reg.engine("pk"), "his")                        # Del="x"
-    assert ws("his", "ACCEPT", project="pk")["accepted"] is False
+    assert _call(ws, "his", "ACCEPT", project="pk")["accepted"] is False
     for e in list(reg._engines.values()):
         e.stop()
 
@@ -284,3 +291,26 @@ def test_lease_lifecycle_and_reaper(monkeypatch, tmp_path):
         assert exited
     for e in list(reg._engines.values()):
         e.stop()
+
+
+def test_projects_are_listed_newest_first_with_their_stamps(tmp_path, monkeypatch):
+    """Alphabetical order made the picker useless the moment the installation had a history: 271
+    projects from finished runs and probes, with the live one 69th — a list that cannot show you what
+    you are working on. Recency is the fact a picker needs, and the database's own mtime already
+    carries it, so nothing new is tracked and nothing has to be DELETED to make the list readable
+    (those files are the provenance of past measurements)."""
+    import os
+    import time
+
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    for name in ("old_run", "middle_run", "new_run"):
+        (tmp_path / f"{name}.db").write_bytes(b"")
+        time.sleep(0.01)
+    now = time.time()
+    os.utime(tmp_path / "old_run.db", (now - 900, now - 900))
+    os.utime(tmp_path / "middle_run.db", (now - 300, now - 300))
+
+    from gfso.runtime import ProjectRegistry
+    listing = ProjectRegistry(data_dir=str(tmp_path)).list()
+    assert listing["projects"][:3] == ["new_run", "middle_run", "old_run"]
+    assert listing["last_active"]["new_run"] >= listing["last_active"]["old_run"]

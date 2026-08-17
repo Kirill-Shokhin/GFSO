@@ -1,7 +1,7 @@
 """NodeProjection: typed DATA layer + pure render at the markdown boundary."""
 from gfso.core.types import (
     Task, TaskId, AgentId, Spec, Criteria, CriterionMapping, DepEdge,
-    NeglectedItem, Predictability, CheckResult,
+    AcceptedRiskItem, Predictability, CheckResult,
 )
 from gfso.core.graph.projection import (
     build, render, render_node_projection,
@@ -13,13 +13,13 @@ def _node():
     parent = Task(
         id=TaskId("p"),
         spec=Spec("ship", (Criteria("tested", "all pass"), Criteria("fast", "p99<1s")),
-                  (NeglectedItem("legacy", Predictability.STATISTICAL, "rare", "if IE returns"),)),
+                  (AcceptedRiskItem("legacy", Predictability.STATISTICAL, "rare", "if IE returns"),)),
         assignee=AgentId("pm"),
         criterion_mappings=(CriterionMapping("tested", TaskId("c1")),),  # 'fast' unmapped
     )
     children = [
         Task(id=TaskId("c1"), spec=Spec("write tests", (Criteria("cov", ">=80%"),),
-                                        (NeglectedItem("flaky"),)), assignee=AgentId("qa")),
+                                        (AcceptedRiskItem("flaky"),)), assignee=AgentId("qa")),
         Task(id=TaskId("c2"), spec=Spec("bench", ()), assignee=AgentId("perf")),
     ]
     deps = [DepEdge(TaskId("c2"), TaskId("c1"), False, "")]  # seam, no glue

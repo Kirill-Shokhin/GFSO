@@ -1,0 +1,40 @@
+name: Bug report
+description: Something the engine, the CLI, the UI or the agent door does wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before anything else: run **`gfso doctor`** and paste its output below. Most reports about
+        this product turn on facts it prints — which version is installed, where the state lives,
+        whether something else holds the address, whether the Claude Code CLI answers — and none of
+        those are visible from a description of the symptom.
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `gfso doctor`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+      description: The exact command or tool call, and what it printed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: From a fresh install if you can get there.
+
+  - type: markdown
+    attributes:
+      value: |
+        **Not a bug report:** questions about the theory. The canon (`docs/applied_gfso_v4_en.md`)
+        is closed at v4.0 and is versioned separately from this software; what reopens it is a
+        falsifier registered in `docs/falsifiability.md`, not an issue.

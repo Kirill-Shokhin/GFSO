@@ -2,11 +2,12 @@
 The gate blocks the checker; a clean node with no usable LLM produces NO verdict (never read as clean);
 with an LLM, ONE zero-tool call yields per-parent-criterion sufficient/insufficient/uncertain + FM-2
 conflicts; an INCOMPLETE verdict (a parent criterion unjudged) is treated as NO verdict."""
+import pytest
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
-from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, NeglectedItem, Predictability
+from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, AcceptedRiskItem, Predictability
 from gfso.critic.runner import critique_node, review_decomposition
 
 
@@ -17,12 +18,12 @@ def _engine() -> Engine:
 
 
 def _decompose_clean(e: Engine):
-    # genuinely L0/L1-clean: every child mapped, NEGLECTED present (a classified RISK event — v3.7 §5.1:
+    # genuinely L0/L1-clean: every child mapped, ACCEPTED_RISKS present (a classified RISK event — v3.7 §13.1:
     # a scope boundary would not belong here, and an unclassified record fails the STD-2 guard), seam has glue.
     e.assign_task(
         TaskId("p"),
         Spec("p", (Criteria("c1", "x"), Criteria("c2", "y")),
-             (NeglectedItem("provider rate-limit spike", Predictability.STATISTICAL, "P<1%, off-peak run"),)),
+             (AcceptedRiskItem("provider rate-limit spike", Predictability.STATISTICAL, "P<1%, off-peak run"),)),
         AgentId("pm"),
     )
     e.wait_idle()
@@ -197,3 +198,52 @@ def test_child_reassign_dirties_parent():
     e.assign_task(TaskId("a"), Spec("a v2", (Criteria("c1", "x"),)), AgentId("d1"), parent_id=TaskId("p"))
     e.wait_idle()
     assert e.get_task(TaskId("p")).verified is False
+
+
+def test_gfso_run_goes_through_the_live_server_when_there_is_one(monkeypatch):
+    """One engine, one writer, one sequencer over the log.
+
+    `gfso run` opened the database directly, always — a second engine over the same SQLite file
+    while the server holds it. The log's guarantees rest on there being ONE sequencer (Inv-7's
+    single non-branching history; §14.3 requires a consumption check and the edge it authorizes to
+    be one log-serialized step), and two writers are two sequencers. The visible half was smaller
+    and still wrong: a CLI write reached neither the UI, nor the dispatcher, nor the observation
+    panel until something reloaded.
+    """
+    import json as _json
+
+    from gfso import driver, serverctl
+
+    sent = {}
+
+    class _Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"ok": true}'
+
+    def _urlopen(req, timeout=None):
+        sent["url"] = req.full_url
+        sent["body"] = _json.loads(req.data)
+        return _Resp()
+
+    monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: {"code_version": "x"})
+    monkeypatch.setattr(driver.urllib.request, "urlopen", _urlopen)
+    monkeypatch.setattr(driver, "build_engine_from_env",
+                        lambda *a, **k: pytest.fail("it opened the database behind a live server"))
+
+    driver.run(["signal", "n1", "ACCEPT", "source=alice", "project=work"])
+
+    assert sent["url"].endswith("/api/run/signal?project=work")
+    assert sent["body"]["task_id"] == "n1"          # positionals named off the same signature
+    assert sent["body"]["signal"] == "ACCEPT"
+    assert sent["body"]["source"] == "alice"
+
+
+def test_gfso_run_still_works_with_no_server(monkeypatch, tmp_path):
+    """…and with nothing listening, the direct path is correct and is the only one there is."""
+    from gfso import driver, serverctl
+
+    monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: None)
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "g.db"))
+    driver.run(["create_task", "n1", '{"description": "x", "criteria": [{"name": "a", "description": "A"}]}'])
+    driver.run(["get_task", "n1"])

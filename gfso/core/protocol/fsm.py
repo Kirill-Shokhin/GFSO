@@ -41,31 +41,26 @@ def _row(state: State, signal: Signal):
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     # No Recommend effect: the AI-recommendation panel is a deferred human-L2/UI convenience, not part of
     # the agentic path — it must not fire a System-LLM call per ASSIGN. Recompute on-demand when built.
-    return (State.REVIEW, [
-        _mg(tid, State.REVIEW),
+    return (State.OFFERED, [
+        _mg(tid, State.OFFERED),
         RunChecks(tid),
         Dispatch(tid, Signal.ASSIGN),
     ])
 
 
-@_row(State.IDLE, Signal.TIMEOUT)
-def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # DECLARED DIVERGENCE FROM THE CANON — this row is scheduled for removal (corner #1 in
-    # `formal/README.md`). It was added under the v3.9 reading in which Inv-5 was TOTAL over
-    # non-terminals; canon v4.0 §14.4 exempts IDLE BY NAME ("every non-terminal state except
-    # IDLE"), because the pre-contract state carries no clock and IDLE starvation surfaces as
-    # the PARENT's timeout. The operational motive it was written for stands and must be met
-    # another way: a node is OBSERVABLE in IDLE only as a crash orphan (creation persisted
-    # mid-effects but the SET_STATE→REVIEW did not land), so removing this row needs a
-    # replacement escape hatch for that orphan, not just a deletion.
-    return (State.TIMEOUT, [
-        _mg(tid, State.TIMEOUT),
-    ])
+# NO (IDLE, TIMEOUT) ROW — deliberately, and the canon says why (corner #1, closed). Deadlines
+# attach at ASSIGN, so IDLE, the pre-contract state, carries no clock of its own; Inv-5 exempts it
+# BY NAME ("every non-terminal state except IDLE", §14.4) and is not breached here, because an IDLE
+# child gates its parent only through the parent's AND and the parent's contract carries the clock
+# — starvation surfaces as the PARENT's timeout. The row that used to sit here came from the v3.9
+# reading of Inv-5 as TOTAL over non-terminals. What it was actually written for — a crash orphan,
+# observable in IDLE because CREATE_TASK persisted and the ASSIGN's landing did not — is now met
+# where the defect lives: `Engine._recover_orphans` finishes the interrupted transition at startup.
 
 
-# === REVIEW ===
+# === OFFERED ===
 
-@_row(State.REVIEW, Signal.ACCEPT)
+@_row(State.OFFERED, Signal.ACCEPT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     return (State.EXECUTING, [
         _mg(tid, State.EXECUTING),
@@ -73,7 +68,7 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     ])
 
 
-@_row(State.REVIEW, Signal.CHALLENGE)
+@_row(State.OFFERED, Signal.CHALLENGE)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     return (State.CHALLENGED, [
         _mg(tid, State.CHALLENGED),
@@ -81,10 +76,10 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     ])
 
 
-@_row(State.REVIEW, Signal.TIMEOUT)
+@_row(State.OFFERED, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    return (State.TIMEOUT, [
-        _mg(tid, State.TIMEOUT),
+    return (State.OVERDUE, [
+        _mg(tid, State.OVERDUE),
     ])
 
 
@@ -92,8 +87,8 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 
 @_row(State.CHALLENGED, Signal.ACCEPT_CHALLENGE)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    return (State.REVIEW, [
-        _mg(tid, State.REVIEW),
+    return (State.OFFERED, [
+        _mg(tid, State.OFFERED),
         RunChecks(tid),
         Dispatch(tid, Signal.ACCEPT_CHALLENGE),
     ])
@@ -109,10 +104,10 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 
 @_row(State.CHALLENGED, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # Canon §6.3: a first timeout in any non-terminal (except BLOCKED) → TIMEOUT. A challenge is NOT
+    # Canon §14.3: a first timeout in any non-terminal (except BLOCKED) → OVERDUE. A challenge is NOT
     # auto-accepted in the executor's favour — that would silently resolve a disputed spec; it escalates.
-    return (State.TIMEOUT, [
-        _mg(tid, State.TIMEOUT),
+    return (State.OVERDUE, [
+        _mg(tid, State.OVERDUE),
     ])
 
 
@@ -136,8 +131,8 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 
 @_row(State.EXECUTING, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    return (State.TIMEOUT, [
-        _mg(tid, State.TIMEOUT),
+    return (State.OVERDUE, [
+        _mg(tid, State.OVERDUE),
     ])
 
 
@@ -146,7 +141,7 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 @_row(State.BLOCKED, Signal.RESOLVE_BLOCK)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     # ADJUDICATE_DEP with no payload = CONFIRM any provisional discovered-Dep this task's BLOCK recorded
-    # (§6.2: RESOLVE_BLOCK adjudicates truth; the re-attribute/retract variants carry payload → transition()).
+    # (§14.2: RESOLVE_BLOCK adjudicates truth; the re-attribute/retract variants carry payload → transition()).
     return (State.EXECUTING, [
         MutateGraph(tid, MutationType.ADJUDICATE_DEP),
         _mg(tid, State.EXECUTING),
@@ -174,15 +169,26 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 
 @_row(State.VALIDATING, Signal.FAIL)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # Guarded: iteration < max → REWORK, else → DONE(fail)
+    # Guarded: iteration < max → REWORKING, else → ESCALATED. Exhausting the rework loop is the
+    # ESCALATION trigger (§14.3: "the FAIL↔REWORKING loop bounded by max_iterations", with
+    # escalation as its exit), not a terminal acceptance: the canon carries NO terminal for
+    # "V = fail, settled" — its negative terminals are ABANDONED (V = ⊥, cancelled) and ESCALATED
+    # (attention needed) — and §12.2 states as fact that DONE is reached through acceptance
+    # (PASS ∨ auto_pass), never through fail. A DONE(fail) also becomes CONSUMABLE under R′
+    # (§14.3), letting a Dep-consumer read-and-build on a failure, and buries the exact event
+    # §1.1's third mode exists to surface. Closes corner #3 of `formal/README.md`.
     if ctx.iteration < ctx.max_iterations:
-        return (State.REWORK, [
+        return (State.REWORKING, [
             MutateGraph(tid, MutationType.INCREMENT_ITERATION),
-            _mg(tid, State.REWORK),
+            _mg(tid, State.REWORKING),
             Dispatch(tid, Signal.FAIL),
         ])
-    return (State.DONE, [
-        _mg(tid, State.DONE, DoneReason.FAIL),
+    # The settlement REASON is carried onto the terminal: ESCALATED is reached from three routes
+    # (this one, BLOCKED's timeout, OVERDUE's repeat), and only this one is a VERDICT. Without the
+    # reason the metric populations that read "a standing FAIL" (q_D's exhausted arm,
+    # `false_fail_share`) would silently empty out — a blind metric reads as a clean one.
+    return (State.ESCALATED, [
+        _mg(tid, State.ESCALATED, DoneReason.FAIL),
         Dispatch(tid, Signal.FAIL),
     ])
 
@@ -191,14 +197,14 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     # Auto-pass
     return (State.DONE, [
-        _mg(tid, State.DONE, DoneReason.AUTO),
+        _mg(tid, State.DONE, DoneReason.AUTO_PASS),
         Dispatch(tid, Signal.TIMEOUT),
     ])
 
 
-# === REWORK ===
+# === REWORKING ===
 
-@_row(State.REWORK, Signal.DELIVER)
+@_row(State.REWORKING, Signal.DELIVER)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     return (State.VALIDATING, [
         _mg(tid, State.VALIDATING),
@@ -206,7 +212,7 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     ])
 
 
-@_row(State.REWORK, Signal.BLOCK)
+@_row(State.REWORKING, Signal.BLOCK)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     return (State.BLOCKED, [
         _mg(tid, State.BLOCKED),
@@ -214,40 +220,40 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     ])
 
 
-@_row(State.REWORK, Signal.TIMEOUT)
+@_row(State.REWORKING, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    return (State.TIMEOUT, [
-        _mg(tid, State.TIMEOUT),
+    return (State.OVERDUE, [
+        _mg(tid, State.OVERDUE),
     ])
 
 
-# === TIMEOUT ===
+# === OVERDUE ===
 
-@_row(State.TIMEOUT, Signal.TIMEOUT)
+@_row(State.OVERDUE, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # Repeated timeout in TIMEOUT state → escalate
+    # Repeated timeout in OVERDUE state → escalate
     return (State.ESCALATED, [
         _mg(tid, State.ESCALATED),
     ])
 
 
-# === CANCELLING (§6.3: cancellation is a two-step handshake, mirror of ASSIGN→ACCEPT) ===
+# === CANCELLING (§14.3: cancellation is a two-step handshake, mirror of ASSIGN→ACCEPT) ===
 
-@_row(State.CANCELLING, Signal.CANCEL_ACK)
+@_row(State.CANCELLING, Signal.CONFIRM_CANCEL)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # Sole staffed exit from CANCELLING (CANCEL_ACK's defect type = FSM-deadlock, §6.2). The in-flight
-    # report rides on SignalData.in_flight → audit log (T11); no done_reason — CANCELLED is its own state, V=⊥.
-    return (State.CANCELLED, [
-        _mg(tid, State.CANCELLED),
-        Dispatch(tid, Signal.CANCEL_ACK),
+    # Sole staffed exit from CANCELLING (CONFIRM_CANCEL's defect type = FSM-deadlock, §14.2). The in-flight
+    # report rides on SignalData.in_flight → audit log (Thm 11); no done_reason — ABANDONED is its own state, V=⊥.
+    return (State.ABANDONED, [
+        _mg(tid, State.ABANDONED),
+        Dispatch(tid, Signal.CONFIRM_CANCEL),
     ])
 
 
 @_row(State.CANCELLING, Signal.TIMEOUT)
 def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
-    # Cancellation is authoritative (§6.3): executor silence still completes it, just without the in-flight report.
-    return (State.CANCELLED, [
-        _mg(tid, State.CANCELLED),
+    # Cancellation is authoritative (§14.3): executor silence still completes it, just without the in-flight report.
+    return (State.ABANDONED, [
+        _mg(tid, State.ABANDONED),
     ])
 
 
@@ -260,10 +266,10 @@ _LOOKUP: dict[tuple[State, Signal], Callable] = {
 
 def available_signals(state: State) -> list[Signal]:
     """Signals that have a transition row from this state (+ the catch-alls: universal CANCEL for
-    non-terminals except CANCELLING (§6.3: its sole staffed exit is CANCEL_ACK), and re-ASSIGN for
-    revisable states (§6.4 Inv-1)).
+    non-terminals except CANCELLING (§14.3: its sole staffed exit is CONFIRM_CANCEL), and re-ASSIGN for
+    revisable states (§14.4 Inv-1)).
 
-    Pure on State. Used to expose valid actions per (state, role) to UIs/agents (§6.2).
+    Pure on State. Used to expose valid actions per (state, role) to UIs/agents (§14.2).
     """
     sigs = [signal for (st, signal) in _LOOKUP if st == state]
     if state in NON_TERMINAL_STATES and state != State.CANCELLING and Signal.CANCEL not in sigs:
@@ -271,7 +277,7 @@ def available_signals(state: State) -> list[Signal]:
     if state in REASSIGNABLE_STATES and Signal.ASSIGN not in sigs:
         sigs.append(Signal.ASSIGN)
     if state in QUASI_TERMINAL_STATES and Signal.ASSIGN not in sigs:
-        sigs.append(Signal.ASSIGN)  # R′ REOPEN affordance (§6.3) — the finality-gate may still reject
+        sigs.append(Signal.ASSIGN)  # R′ REOPEN affordance (§14.3) — the finality-gate may still reject
     return sigs
 
 
@@ -284,9 +290,9 @@ def transition(
     signal = signal_data.signal
     task_id = signal_data.task_id
 
-    # ANY_NON_TERMINAL + CANCEL catch-all → CANCELLING (§6.3: two-step handshake, mirror of ASSIGN→ACCEPT).
-    # CANCELLING itself is excluded: its sole staffed exit is CANCEL_ACK (re-CANCEL is a no-op, not a row).
-    # The subtree cascade (§6.2: the protocol sends CANCEL to every descendant) fires HERE, on CANCEL —
+    # ANY_NON_TERMINAL + CANCEL catch-all → CANCELLING (§14.3: two-step handshake, mirror of ASSIGN→ACCEPT).
+    # CANCELLING itself is excluded: its sole staffed exit is CONFIRM_CANCEL (re-CANCEL is a no-op, not a row).
+    # The subtree cascade (§14.2: the protocol sends CANCEL to every descendant) fires HERE, on CANCEL —
     # mutations.apply returns the affected children for the loop to CANCEL, each running its own handshake.
     if signal == Signal.CANCEL and state in NON_TERMINAL_STATES and state != State.CANCELLING:
         return (State.CANCELLING, [
@@ -295,11 +301,11 @@ def transition(
         ])
 
     # BLOCK naming undeclared prerequisite NODE(s) — record a provisional discovered-Dep edge PER
-    # prerequisite (§6.2/§7.2: real S\Ŝ edges falsifying the plan's implicit independence claim;
-    # provenance = this BLOCK, T11). One BLOCK may surface several blockers — collapsing them to one
+    # prerequisite (§14.2/§15.2: real S\Ŝ edges falsifying the plan's implicit independence claim;
+    # provenance = this BLOCK, Thm 11). One BLOCK may surface several blockers — collapsing them to one
     # edge starves q_Dep and blinds auto-resolve (observed live: a 3-blocker deadlock recorded 0 edges).
     # Payload-dependent → handled here; the bare-BLOCK case falls through to the table row (no edge).
-    if signal == Signal.BLOCK and state in (State.EXECUTING, State.REWORK) and signal_data.blockers:
+    if signal == Signal.BLOCK and state in (State.EXECUTING, State.REWORKING) and signal_data.blockers:
         return (State.BLOCKED, [
             *(MutateGraph(task_id, MutationType.RECORD_DEP, dep_from=b,
                           glue=signal_data.reason or "") for b in signal_data.blockers),
@@ -307,7 +313,7 @@ def transition(
             Dispatch(task_id, Signal.BLOCK),
         ])
 
-    # RESOLVE_BLOCK adjudicating the provisional discovered-Dep(s) (§6.2): the passed blocker set is the
+    # RESOLVE_BLOCK adjudicating the provisional discovered-Dep(s) (§14.2): the passed blocker set is the
     # corrected FULL set (SET semantics — unlisted provisionals retract, listed sources confirm; a single
     # id ≡ a set of one = the old re-attribute), or retract all (external / non-producible blocker → the
     # FM-5 currency line, not Dep edges). The plain confirm is the table row's payload-free ADJUDICATE_DEP.
@@ -321,68 +327,68 @@ def transition(
         ])
 
     # ACCEPT_CHALLENGE carrying a renegotiated spec — APPLY it (sanctioned pre-acceptance revision,
-    # §6.2/§6.6; the only in-place spec change allowed to alter criteria). Needs signal_data, so it is
+    # §14.2/§14.6; the only in-place spec change allowed to alter criteria). Needs signal_data, so it is
     # handled here; the no-spec case falls through to the table row (which also registers the affordance).
     if signal == Signal.ACCEPT_CHALLENGE and state == State.CHALLENGED and signal_data.new_spec is not None:
-        return (State.REVIEW, [
+        return (State.OFFERED, [
             MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.new_spec),
-            _mg(task_id, State.REVIEW),
+            _mg(task_id, State.OFFERED),
             RunChecks(task_id),
             Dispatch(task_id, Signal.ACCEPT_CHALLENGE),
         ])
 
-    # ASSIGN carries the packet and CREATES the node as a logged effect (§7.1 "ASSIGN adds a node").
+    # ASSIGN carries the packet and CREATES the node as a logged effect (§15.1 "ASSIGN adds a node").
     # Needs signal_data, so handled here; the no-spec case falls through to the table row (legacy /
     # affordance). This is what closes the unlogged pre-save: creation is now the ASSIGN transition.
     if signal == Signal.ASSIGN and state == State.IDLE and signal_data.spec is not None:
-        return (State.REVIEW, [
+        return (State.OFFERED, [
             MutateGraph(task_id, MutationType.CREATE_TASK, spec=signal_data.spec,
                         assignee=signal_data.assignee, parent_id=signal_data.parent_id,
                         deadline=signal_data.deadline, max_iterations=signal_data.max_iterations,
                         covers=signal_data.covers),
-            _mg(task_id, State.REVIEW),
+            _mg(task_id, State.OFFERED),
             RunChecks(task_id),
             Dispatch(task_id, Signal.ASSIGN),
         ])
 
-    # REVISION — canon v3.7 §6.4 Inv-1: a packet change on a LIVE node = re-ASSIGN under the SAME id →
-    # REVIEW (the executor re-ACCEPTs/CHALLENGEs — the same IC protection as the first ASSIGN, §6.3).
+    # REVISION — canon v3.7 §14.4 Inv-1: a packet change on a LIVE node = re-ASSIGN under the SAME id →
+    # OFFERED (the executor re-ACCEPTs/CHALLENGEs — the same IC protection as the first ASSIGN, §14.3).
     # NOT the CANCEL signal, no pass through CANCELLING, and NO cascade — the subtree is retained; staleness
     # surfaces via CHECK-1 + non-redundancy/CHECK-1b (dangling covers) + CHECK-3 (Dep consumers). Each
     # version is appended to the log (Inv-7: the immutable record is the LOG, not the node). Excluded:
-    # TIMEOUT (no progress signals, §6.3), CANCELLING (sole exit CANCEL_ACK), terminals (no rows).
+    # OVERDUE (no progress signals, §14.3), CANCELLING (sole exit CONFIRM_CANCEL), terminals (no rows).
     # The single in-place spec change remains ACCEPT_CHALLENGE (above) — executor-initiated (FM-7→FM-5).
     if (signal == Signal.ASSIGN and state in REASSIGNABLE_STATES
             and signal_data.spec is not None):
-        return (State.REVIEW, [
+        return (State.OFFERED, [
             MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.spec,
                         assignee=signal_data.assignee,   # carries a new executor for reassign (Del change); None = keep
-                        covers=signal_data.covers,       # (re)declared coverage of parent criteria (§2.2)
-                        revision_reason=signal_data.revision_reason),  # causal typing (§16.5)
-            _mg(task_id, State.REVIEW),
+                        covers=signal_data.covers,       # (re)declared coverage of parent criteria (§10)
+                        revision_reason=signal_data.revision_reason),  # causal typing (§24.5)
+            _mg(task_id, State.OFFERED),
             RunChecks(task_id),
             Dispatch(task_id, Signal.ASSIGN),
         ])
 
-    # R′ REOPEN — canon §6.3 "Финальность": DONE and CANCELLED are QUASI-terminal. A re-ASSIGN out of
+    # R′ REOPEN — canon §14.3 "Финальность": DONE and ABANDONED are QUASI-terminal. A re-ASSIGN out of
     # them (NOT a 13th signal — a named re-ASSIGN over a new edge) is admitted under a DOUBLE gate:
     # (i) the finality-gate — the terminal is not CONSUMED in the graph (positive: the parent has not
     # staked its aggregate on V=pass and no Dep-consumer built on the result; negative: the cascade
     # has not settled or the parent has not replanned around the hole); (ii) reopens remain
-    # (max_reopens, sign-agnostic — restores finiteness for the new outgoing edge, Инв-5).
+    # (max_reopens, sign-agnostic — restores finiteness for the new outgoing edge, Inv-5).
     # Both gate inputs arrive via GuardContext, computed at the chokepoint in the SAME atomic step
-    # as this edge (Инв-7) — a concurrent DELIVER cannot consume the node between check and reopen.
-    # Target is REVIEW, never the old terminal: the verdict is RE-EARNED by fresh contact (anti-fake);
+    # as this edge (Inv-7) — a concurrent DELIVER cannot consume the node between check and reopen.
+    # Target is OFFERED, never the old terminal: the verdict is RE-EARNED by fresh contact (anti-fake);
     # for DONE this literally drops V=pass — the REOPEN mutation spends the counter and stales the
     # recorded verdict. spec=None reopens under the node's own standing contract.
     if signal == Signal.ASSIGN and state in QUASI_TERMINAL_STATES:
         if ctx.consumed or ctx.reopens >= ctx.max_reopens:
-            return None  # final: потреблён ∨ исчерпан счётчик (§6.3) — audit-rejected, T11
-        return (State.REVIEW, [
+            return None  # final: потреблён ∨ исчерпан счётчик (§14.3) — audit-rejected, Thm 11
+        return (State.OFFERED, [
             MutateGraph(task_id, MutationType.REOPEN, spec=signal_data.spec,
                         assignee=signal_data.assignee, covers=signal_data.covers,
                         revision_reason=signal_data.revision_reason),
-            _mg(task_id, State.REVIEW),
+            _mg(task_id, State.OFFERED),
             RunChecks(task_id),
             Dispatch(task_id, Signal.ASSIGN),
         ])

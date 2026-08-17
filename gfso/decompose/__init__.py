@@ -38,7 +38,7 @@ class DecomposeResult:
     engine: Engine
     root_id: TaskId
     d_md: str          # the built root's PROJECTION markdown (Engine.project — the one canonical read)
-    spec: dict         # the structured graph spec (root_criteria/subtasks/mappings/deps/neglected)
+    spec: dict         # the structured graph spec (root_criteria/subtasks/mappings/deps/accepted_risks)
     holes: list = field(default_factory=list)   # [] ⟺ structurally valid; else the honest residue
     stats: list = field(default_factory=list)   # per-call: {stage, duration_ms, input/output/cache tokens}
     note: str | None = None                     # caller-facing caveat (e.g. `request` ignored on refine)
@@ -52,7 +52,7 @@ def _default_llm(model: str):
 
 def _dep_contradictions(engine: Engine, strip: str = "") -> list[str]:
     """Declared seams REFUTED by contact — a deterministic read of recorded state, not a guess:
-    a BLOCK-discovered edge (§6.2 ground truth: `to` really consumes `from`) running OPPOSITE to a
+    a BLOCK-discovered edge (§14.2 ground truth: `to` really consumes `from`) running OPPOSITE to a
     declared seam. The pair is a cycle CHECK-2 names, but the cycle line alone does not say which
     direction is true — this does (observed live: the repairer, seeing only declared seams + the
     cycle, patched mappings twice and left the deadlock standing)."""
@@ -80,7 +80,7 @@ def _problems(engine: Engine, root_id: TaskId, dropped: list[str]) -> list[str]:
 
 
 def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assignee: str,
-                    llm, progress=None) -> tuple[TaskId, dict, list[str]]:
+                    llm, progress=None, max_iterations: int | None = None) -> tuple[TaskId, dict, list[str]]:
     """Build wholesale, then repair-loop: problems → one corrective audit call → wholesale re-build
     (revision semantics). Bounded by REPAIR_ROUNDS; returns the final (root_id, spec, residual problems).
     The dispatcher is QUIESCED for the WHOLE verified cycle (build + repairs): the graph's contract is
@@ -89,7 +89,8 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
     engine._dispatch_quiesce = getattr(engine, "_dispatch_quiesce", 0) + 1
     try:
         _progress("builder: wholesale build through the FSM…", progress)
-        eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee)
+        eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
+                                                 max_iterations=max_iterations)
         problems = _problems(engine, rid, dropped)
         _progress(f"builder: {len(engine.get_active_children(rid))} nodes · {len(dropped)} dropped · "
                   f"{len(problems)} problem(s)", progress)
@@ -108,10 +109,18 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             patched = [k for k in fixed if k in AUDIT_SCHEMA["properties"]]
             spec = {**spec, **{k: fixed[k] for k in patched}}
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
-            eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee)
+            eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
+                                                 max_iterations=max_iterations)
             problems = _problems(engine, rid, dropped)
-        _progress("builder: verified clean" if not problems
-                  else f"builder: honest residue — {len(problems)} problem(s)", progress)
+        # "No problems" over an EMPTY build is vacuous, not clean — the checks had nothing to fail
+        # on. Said as "verified clean", it read as a good decomposition to anyone watching the
+        # progress line, in exactly the case that matters most: the provider was unreachable or
+        # unauthenticated, so nothing was ever proposed.
+        built = len(engine.get_active_children(rid))
+        _progress("builder: nothing was built — no verdict to give (the model proposed no subtasks)"
+                  if not built else
+                  "builder: verified clean" if not problems else
+                  f"builder: honest residue — {len(problems)} problem(s)", progress)
         return rid, spec, problems
     finally:
         engine._dispatch_quiesce = max(0, getattr(engine, "_dispatch_quiesce", 1) - 1)
@@ -156,7 +165,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     proj = engine.project(TaskId(root_id))
     cur_holes = engine.graph_holes(TaskId(root_id))
     kids = engine.get_active_children(TaskId(root_id))
-    frozen = [c for c in kids if c.state.name in ("DONE", "CANCELLED", "ESCALATED")]
+    frozen = [c for c in kids if c.state.name in ("DONE", "ABANDONED", "ESCALATED")]
     # RUNTIME contact feeds the replan: a BLOCKED child is the world's verdict on the plan's seams
     # (observed live: an inverted Dep direction deadlocked the graph, and the fold — reading only the
     # static projection — could not see WHY, so it re-derived the same structure). Surface each
@@ -248,7 +257,7 @@ def decompose(request: str, depth: int = 1, model: str = "sonnet",
 
 def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee: str = "human",
                    depth: int = 1, model: str = "sonnet", llm=None, progress=None,
-                   fast: bool = False) -> DecomposeResult:
+                   fast: bool = False, max_iterations: int | None = None) -> DecomposeResult:
     """Agent-facing: run the init search↔fold on `request`, build the result INTO a LIVE engine THROUGH
     the FSM (signals) under `root_id`, verify + repair until `list_holes` is clean (or return the
     residue honestly) — then apply `depth−1` refine operations over the BUILT graph (each verified;
@@ -266,8 +275,8 @@ def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee
     # own contract is the request — re-authoring the goal itself is the revise verb, not decompose).
     existing = engine.get_task(TaskId(root_id))
     note = None
-    if existing is not None and existing.state.name in ("DONE", "CANCELLED", "ESCALATED"):
-        # a terminal goal is FROZEN (no revision on terminal nodes, §6.3; REOPEN does not exist) —
+    if existing is not None and existing.state.name in ("DONE", "ABANDONED", "ESCALATED"):
+        # a terminal goal is FROZEN (no revision on terminal nodes, §14.3; REOPEN does not exist) —
         # refining it would only crash on the root's own re-author. Refuse loudly.
         raise ValueError(f"auto_decompose: {root_id!r} is {existing.state.name} (terminal) — a completed "
                          f"goal is frozen; start a NEW goal (new root) instead of refining this one.")
@@ -291,7 +300,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee
     else:
         spec = decompose_spec(request, llm=llm, progress=progress, fast=fast, label=f"1/{depth}")
         rid, spec, holes = _build_verified(spec, request, engine, root_id, assignee, llm,
-                                           progress=progress)
+                                           progress=progress, max_iterations=max_iterations)
         for i in range(1, depth):
             changed, spec, holes = _refine_round(engine, request, root_id, assignee, llm,
                                                  progress=progress, label=f"{i + 1}/{depth}")

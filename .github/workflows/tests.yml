@@ -1,8 +1,23 @@
 name: tests
 
+# THE GATES, and how to run them by hand:
+#   python -m pytest -q                    (the suite; `pip install -e .[dev]` first)
+#   bash formal/scripts/check_refs.sh      §-refs cited anywhere name a section the canon has
+#   bash formal/scripts/check_naming.sh    no retired spelling survives, no kept homograph vanished
+#   bash formal/scripts/check_claims.sh    the counts stated in prose are read off the canon and compared
+#   bash formal/scripts/check_closure.sh   the Lean development declares no axiom outside the whitelist
+#                                          (needs elan/lake — the other three need only bash)
+# A term that reads like GFSO's but is not the canon's fails a guard: do not invent vocabulary.
+# Nothing in this repository's prose may state an EFFECT of using GFSO — no measurement exists yet.
+#
 # The mechanical gates ride in here: the layer gate (tests/test_layering.py — a dependency-rule
-# violation is a RED CI, not a review comment) and the core-dist closure (tests/test_core_dist.py —
-# the gfso-core cut stays zero-dependency and closed on every push).
+# violation is a RED CI, not a review comment), the core-dist closure (tests/test_core_dist.py —
+# the gfso-core cut stays zero-dependency and closed on every push), and the distribution check
+# (tests/test_distribution.py — the built wheel is installed and driven from outside the checkout).
+#
+# The path lists carry the packaging and release surface too: they were narrower, so an edit to
+# CHANGELOG, MANIFEST.in or a workflow itself ran nothing at all. (Written out twice because GitHub
+# Actions does not resolve YAML anchors.)
 on:
   push:
     paths:
@@ -10,28 +25,40 @@ on:
       - 'tests/**'
       - 'packaging/**'
       - 'pyproject.toml'
-      - '.github/workflows/tests.yml'
+      - 'MANIFEST.in'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'SECURITY.md'
+      - '.github/workflows/**'
   pull_request:
     paths:
       - 'gfso/**'
       - 'tests/**'
       - 'packaging/**'
       - 'pyproject.toml'
-      - '.github/workflows/tests.yml'
+      - 'MANIFEST.in'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'SECURITY.md'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 jobs:
   pytest:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]   # dev is Windows; CI adds the cross-platform check
+        # The edges of what `requires-python = ">=3.11"` promises, on both developed platforms.
+        # A middle version buys little; an unchecked edge is an untested claim on the PyPI page.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11', '3.13']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
       - name: Install
-        run: pip install -e .[dev]
+        run: pip install -e .[dev] build
       - name: Test
         run: python -m pytest tests -q
