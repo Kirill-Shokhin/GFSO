@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import json
 import logging
+import os
 import sys
 import threading
 import webbrowser
 
 from gfso import __version__, serverctl
+from gfso.config import LOOPBACK
+from gfso import serverctl
 
 
 def main():
@@ -20,13 +25,44 @@ def main():
             stream.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
+    # …AND THE CONSOLE HAS TO AGREE. Writing UTF-8 into a console still set to a legacy code page
+    # renders every dash and arrow as mojibake — `вЂ"` where an em-dash belongs — through the whole
+    # of this product's most-read prose (measured on the human door 2026-08-22: a tester reported it
+    # as corrupted STORED data; the store was clean, the terminal was not). Asking Windows for
+    # UTF-8 output costs one call and is what makes the reconfigure above visible.
+    if os.name == "nt":
+        try:
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        except Exception:
+            pass          # a redirected stream or a non-console host: nothing to set, nothing lost
 
-    args = build_parser().parse_args()
+    # ONE grammar for `project`, whichever command a person learnt first: `gfso run` takes
+    # `project=<name>` and `gfso log` took only `--project <name>`, and each refused the other's
+    # spelling. Translated here rather than in either parser, so both keep their own shape.
+    argv = [f"--project={a.split('=', 1)[1]}" if a.startswith("project=") else a
+            for a in sys.argv[1:]]
+    args = build_parser().parse_args(argv)
     if args.command is None:
         build_parser().print_help()
         sys.exit(1)
 
     _dispatch(args)
+
+
+def _add_projects_parser(sub) -> None:
+    """The `projects` subcommand, built apart — the human door's answer to `list_projects`, plus the
+    delete the agent door has always had and the shell had no way to reach."""
+    projp = sub.add_parser("projects", help="List the project graphs this server holds, most recently "
+                                            "worked in first — the human door's answer to "
+                                            "`list_projects`, which only the agent door had")
+    projp.add_argument("-n", type=int, default=20, help="how many to show (default 20; 0 = all)")
+    projp.add_argument("--match", default="", help="substring filter")
+    projp.add_argument("--delete", default="", metavar="NAME",
+                       help="delete one project irreversibly (graph, audit log and DB file); needs "
+                            "--yes. The agent door has had this verb; the human door had no way to "
+                            "clean up after itself")
+    projp.add_argument("--yes", action="store_true", help="confirm --delete")
+
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     # THE address, from the one place that computes it (`GFSO_SHARED_URL` is its single knob):
     # a literal here meant `serve` could bind a port that `up`/`down`/`log` were not talking to.
     serve.add_argument("--port", type=int, default=serverctl.PORT)
-    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--host", default=LOOPBACK)
     serve.add_argument("--storage", choices=["sqlite", "memory"], default="sqlite")
     # None, not "data/gfso.db": a relative default resolves against the caller's directory, so this
     # one command put the DEFAULT project's database beside whoever typed it while its named
@@ -122,9 +158,13 @@ def build_parser() -> argparse.ArgumentParser:
                                        "shows the gate refusing a self-signed PASS, with no AI.")
     demo.add_argument("name", nargs="?", default=None)
 
+    _add_projects_parser(sub)
+
     logp = sub.add_parser("log", help="The observation field in the terminal — same persisted lines "
                                       "the UI panel shows (per project)")
-    logp.add_argument("--project", default=None, help="project name (default: the active one)")
+    logp.add_argument("--project", default=None,
+                      help="project name (default: the active one); `project=<name>` also accepted, "
+                           "as on `gfso run`")
     logp.add_argument("-n", type=int, default=40, help="lines to show (default 40)")
     logp.add_argument("-f", "--follow", action="store_true", help="keep polling for new lines")
 
@@ -138,7 +178,10 @@ def _dispatch(args) -> None:
         _mcp(args)
     elif args.command == "run":
         from gfso.driver import run
-        run(args.args)
+        # THE EXIT CODE CARRIES THE REFUSAL. The verbs answer rather than raise — deliberate, and
+        # about the SHAPE of the answer — but every 422 came back as rc 0, so a batch of `gfso run`
+        # calls reported success on the ones the engine had refused (measured 2026-08-21).
+        raise SystemExit(run(args.args))
     elif args.command == "connect":
         from gfso.mcp.connect import main as connect_main
         connect_main()
@@ -152,6 +195,8 @@ def _dispatch(args) -> None:
             sys.exit(f"gfso: {ex}")
     elif args.command == "down":
         _down()
+    elif args.command == "projects":
+        _projects(args)
     elif args.command == "log":
         _log(args)
     elif args.command == "setup":
@@ -187,9 +232,54 @@ def _demo(name: str | None) -> int:
     return 0
 
 
+def _delete_project(name: str, confirmed: bool) -> None:
+    """Delete one project through the live server — irreversible, so it is asked for twice.
+
+    The server refuses `default` and whatever is active on its own; deleting the ground you stand on
+    is the misclick that refusal exists for. The answer is a LINE: the server's payload carries the
+    whole inventory (300 names and a name→timestamp map, ~15 KB), which is right for the UI and pure
+    noise in a terminal that asked to delete one thing."""
+    if not confirmed:
+        print(f"this deletes the project '{name}' irreversibly — its graph, its audit log and its "
+              f"DB file. Add --yes to confirm.")
+        return
+    out = serverctl.delete_project(name)
+    if not out.get("error"):
+        print(f"deleted '{name}' — {len(out.get('projects', ()))} project(s) left")
+        return
+    # The server answers a refusal as a JSON body; a person asked in words and is answered in words.
+    why = out["error"]
+    if why.startswith("{"):
+        why = json.loads(why).get("detail", why)
+    print(f"not deleted: {why}")
+
+
+def _projects(args):
+    """The project graphs this server holds — the human door's answer to a question only the agent
+    door could ask. A person driving from the shell had no way to see what they had already made
+    (measured 2026-08-21: `list_projects` and `use_project` exist on MCP alone), and `project=` is
+    useless if you cannot remember the name."""
+    if args.delete:
+        _delete_project(args.delete, args.yes)
+        return
+    out = serverctl.projects()
+    if out is None:
+        print("no server is up — `gfso up` starts the one server, and the projects live in it")
+        return
+    names = [n for n in out.get("projects", []) if not args.match or args.match in n]
+    shown = names if not args.n else names[:args.n]
+    active = out.get("active")
+    print(f"{len(names)} project(s), most recently worked in first"
+          + (f" (showing {len(shown)})" if len(shown) < len(names) else "") + ":")
+    for n in shown:
+        print(f"  {'*' if n == active else ' '} {n}")
+    print("\n  * = the server's active project. Every `gfso run` verb takes `project=<name>`; "
+          "the name is the isolation boundary, not a port or a directory.")
+
+
 def _log(args):
     """Terminal mirror of the UI observation panel: the persisted pipeline lines of one project."""
-    import json as _json
+    import json
     import os
     import time
     import urllib.parse
@@ -204,7 +294,7 @@ def _log(args):
     last: list = []
     while True:
         try:
-            rows = _json.loads(urllib.request.urlopen(base, timeout=5).read())
+            rows = json.loads(urllib.request.urlopen(base, timeout=5).read())
         except Exception as e:
             print(f"no server answering ({type(e).__name__})")
             return
@@ -219,7 +309,7 @@ def _log(args):
 
 
 def _down():
-    import json as _json
+    import json
     import os
     import urllib.request
     api = f"{serverctl.BASE}/api/shutdown"
@@ -230,7 +320,12 @@ def _down():
         out = urllib.request.urlopen(urllib.request.Request(
             api, data=b'{"force": true}', method="POST",
             headers={"Content-Type": "application/json"}), timeout=3).read()
-        print(f"server stopping: {_json.loads(out)}")
+        print(f"server stopping: {json.loads(out)}")
+        # …and WAIT for it to be gone, on the same wait the reconciler already uses. Returning
+        # before the port is free makes `down` a request rather than a fact, and the command is
+        # named for the fact.
+        if not serverctl.wait_closed():
+            print(f"warning: {serverctl.BASE} still answering — it did not exit on request")
     except Exception as e:
         print(f"no server answering at {api} ({type(e).__name__}) — nothing to stop")
 

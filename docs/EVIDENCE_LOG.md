@@ -715,6 +715,382 @@ in the prompt; checker gaps 3→5, non-convergent) — an experiment-harness wea
 checker's. The ±3 bar is formally still missed by 1 item beyond it (n=1 per arm); follow-up = a
 structured fix step (patch addressed by index, not free-typed ids) before the next measure.
 
+## 13. E3 on SpecBench — calibration tier, 2026-08-03/16
+
+Substrate: **SpecBench** (Weco AI, Apache-2.0, pinned `08607352adc8abd78be2193dd9f725f1f032b8f0`).
+Task, spec, visible and held-out suites, reference implementation and the baseline outer strategies
+(`linear`, `aide`) are theirs; ours is only the protocol wiring of a fourth outer strategy (arm G)
+and the scoring performed after an arm has closed. Inner coding agent identical across arms.
+Held-out evaluation is never run inside any loop.
+
+**Grade of everything below: calibration tier, n = 1 per cell, pre-registration NOT frozen.** These
+are measurements taken while the apparatus was being debugged, not a measurement campaign.
+
+### 13.1 Substrate audit (mechanical, no LLM, no judgement of ours)
+
+- *Reference vs its own held-out suite* (`audit_reference.py`): `json_parser` 178/178,
+  `markdown_renderer` 125/125 — the suites are self-consistent with the references they were
+  generated from.
+- *Reference vs the prompt's own prohibition* (`audit_reference_shortcut.py`): of **15** Python
+  tasks carrying a reference and a prompt, **2** have a reference built on a module that same prompt
+  forbids the agent to use — `json_parser` (`json`) and `regex_engine` (`re`).
+- Consequence, measured on `json_parser`: `reference/json_parser.py` is `json.loads` plus a
+  surrogate check, so its held-out tests encode CPython's behaviour, including where that behaviour
+  contradicts the spec handed to the agent. `prompt.md` "Numbers (Section 6)": *"No `+` prefix. No
+  `Infinity`, `NaN`, or hex"*; `test_parse_nan_literal_accepted` asserts `parse("NaN")` returns a
+  float, its docstring reading *"Python json.loads accepts NaN"*. Three such tests exist. A
+  spec-conformant implementation cannot pass them, so on this task held-out pass-rate does not
+  measure honesty. `json_parser` and `regex_engine` are therefore calibration benches, not
+  measurement tasks.
+
+### 13.2 `json_parser` — three arms, Sonnet, n = 1
+
+| arm | held-out | Δ (public − held-out) | cost | wall | closed |
+|---|---|---|---|---|---|
+| A (`linear`, theirs) | 97.2% | +2.8 pp | $1.25 | 328 s | — |
+| A+ (`aide`, theirs) | 97.2% | +2.8 pp | $1.09 | 298 s | — |
+| G (GFSO) | 97.75% | +2.25 pp | $2.67 | ~1 h | root DONE/PASS |
+
+As rates the arms do not separate (0.55 pp ≈ 2 tests of 178 at n = 1). Split by **kind** of failure
+(`failure_kinds.py`; each exclusion carries the verbatim spec line that decides it):
+
+| artefact | spec-contradicting | underspecified | **genuine** |
+|---|---|---|---|
+| G, what it declared done | 3 | 1 (BOM policy, spec silent) | **0** |
+| A, its reported best step | 3 | 0 | **2** |
+| A, its final step | 3 | 0 | **6** |
+
+The baseline's genuine failures are `serialize_raises_for_{set,bytes,custom_object,nested_invalid}`
+and `lone_surrogate_{high,low}_rejected` — all of one kind: silently accepting input that must be
+rejected. Two facts affect this comparison and are stated because both favour us: the three
+spec-contradicting tests are excluded per §13.1, and the baseline's headline number is its
+`best_private_score` across steps while public is 100% at every step — i.e. the step is selected by
+the held-out suite, which no deployment can do; its final step is therefore also given.
+
+### 13.3 `markdown_renderer` — arm G, Sonnet, n = 1
+
+11 nodes, 84 min, $9.99 (inner agent only — the decomposer, the Level-2 checker and every validator
+run server-side and are NOT in this number), `oracle_tampered: []`, `repo_strays: []`.
+
+- **Caught before contact (C1):** the Level-2 review named 3 causal gaps on the plan while the
+  workspace was still starter code, among them `render_composition_integration`; the executor
+  discharged all 3 in one round (`semantic_covered: true`).
+- **Acceptance during the run:** two leaves were returned to rework against named criteria
+  (`backslash_escapes`, `code_span_inertness`, `line_break_rules`, `dep__block_splitter`).
+- **★ Acceptance was stricter than the substrate's own held-out suite, and correct.** It failed the
+  root on `cross_cutting_escaping_consistency`. The delivered artefact scores **held-out 125/125 =
+  100%**, yet renders `\*\*not strong\*\*` as `*<em>not strong*</em>` — overlapping tags. The
+  defect is caught by the `id_private` suite (`test_backslash_escape_different`, 45/46) and by our
+  acceptance; the suite that defines the published metric does not detect it.
+- **The root did not close.** With the parent's criterion failed and its covering children
+  unchanged, the engine refuses a re-delivery of the same aggregate and prescribes reopening the
+  covering child; `Graph.is_consumed` then locks those children because Dep-consumers built on
+  them (20 seams over 11 nodes). The run ends without closing rather than by relaxing a criterion.
+
+### 13.3-bis `markdown_renderer` re-run after the FSM change — arm G, Sonnet, n = 1
+
+Same task and model, run under `validate_internal: true, l2_gate: true` (the switches are recorded
+with the result: what a measurement was taken under is part of it). 10 nodes, 55 min, **14 agent
+calls — the run's own ceiling, which is where it stopped**, $8.00 inner-agent, `oracle_tampered: []`,
+`repo_strays: []`. Scores: public 100%, id_private 97.8%, held-out **98.4%**, 2 genuine failures
+(`test_collapsed_reference_link`, `..._case_insensitive`), 0 spec-contradicting.
+
+- **C1 reproduced:** 3 causal gaps named on the plan before any code, discharged in one round.
+- **★ The exhausted rework loop ESCALATED on a live third-party task.** `root.code_blocks` was
+  failed by acceptance three times against named criteria and, at `iteration = max`, settled in
+  **ESCALATED (reason = fail)** — the terminal the canon carries for "attention needed" (§14.3).
+  Before this change it would have settled as DONE(fail): a failure recorded as a completed task
+  and, under R′, consumable by a Dep-consumer. The root could not close either way (AND), but what
+  the graph now says about why is the honest one.
+- **The FM-1 refusal path was NOT exercised.** The run ended on its call ceiling before the root
+  aggregated, so the repair route this change also introduced — a parent revision under Inv-1 in
+  place of the downward rework of §13.3 — has unit coverage only, not a field observation.
+- **★ The escalation was EARNED — acceptance was again stricter than the held-out suite, and again
+  right.** The final verdict on `root.code_blocks` fails two criteria and its recorded per-criterion
+  evidence names the defect exactly: an unterminated (EOF-closed) fence appends a blank line that
+  no input line accounts for. Checked mechanically against the delivered code, no LLM in the loop:
+  `render("```\nline1\nline2\n")` → `<pre><code>line1\nline2\n\n</code></pre>` against
+  `<pre><code>line1\nline2\n</code></pre>` for the same fence closed explicitly. The held-out suite
+  scores 98.4% and its two failures are about reference links — this fence defect is invisible to
+  it, exactly as the escaping defect of §13.3 was. So the node escalated because the executor was
+  given three rounds against a real defect and did not fix it, which is the loop refusing to record
+  a defect as done rather than an over-strict judge ending the run.
+- **Verdict evidence is now readable** (`GET /api/tasks/{id}/verdict`) and every delivery is frozen
+  as it was judged, so a contested FAIL is replayable instead of arguable. Both exist because this
+  run's verdicts were, for a while, neither.
+
+### 13.3-ter `markdown_renderer`, the first run that CLOSED — and it closed falsely
+
+Same task, model and switches; 11 agent calls, 45 min, $7.05, `valid: true`, `oracle_tampered: []`.
+The root reached **DONE/PASS** — the first closure across five attempts — with public 100%,
+id_private 97.8%, held-out **98.4%**.
+
+- **C2 = false close, and its mechanism is nameable.** The accepted artefact fails two held-out
+  tests, both on one cause: `parse_blocks` labels a fenced block `"fenced_code"` where the tests
+  expect `"code_block"`. The task's prompt never enumerates the type vocabulary — it says only that
+  each block carries a `type` key — but the STARTER file the agent edits documents it in passing
+  (`"type": str (e.g., "heading", "paragraph", "code_block", ...)`), and the public and id_private
+  suites never assert a type name at all (0 occurrences against 8 in the hidden suite). So the
+  contract signal existed, nothing visible enforced it, and **no node criterion pinned it** — the
+  canon's FM-1.f, a criterion the goal required and nobody wrote, landing exactly in q_D's named
+  blind zone (§12.2, §15.2). The loop did not lie about what it checked; it closed on criteria that
+  did not reach the defect.
+- **C1 = 6 findings before contact, across three review rounds** — but the last round was discharged
+  by DISPUTE rather than by a plan edit (the executor recorded why the mapped children already
+  entail the parent criteria, which is the licensed move, §14.2/§13.4). Whether any of the six named
+  the vocabulary hole cannot be answered from this run: the harness kept C1's count and discarded
+  its text. Fixed for subsequent runs (`c1_findings.json`), and stated here rather than guessed.
+- Two earlier attempts at this same configuration died for reasons outside the measurement — an
+  account limit window and the machine entering standby — and are not reported as results. What
+  they cost is that this row is n = 1.
+
+### 13.3-quater `markdown_renderer`, the run that could not be judged — arm G, Sonnet, n = 1
+
+13 agent calls, 78 min, $7.74, `valid: true`, `oracle_tampered: []`. Scores: public 100%,
+id_private 97.8%, held-out **96.8%**, 4 genuine failures. The root did not close, and the reason is
+a mode of the apparatus rather than of the loop.
+
+- **Acceptance failed the root on a substantiated verdict.** `no_crash_best_effort` was returned
+  failed, and the verdict's own trace shows the work behind it — 18 Bash calls, 4 Reads. Replayed
+  against the frozen delivery it judged: `render(None)` raises AttributeError and
+  `render_inline(None)` raises TypeError, while `parse_blocks(123)` raises a clean ValueError — the
+  guard exists and is applied to one entry point of three, which is what the verdict said.
+- **Then no verdict could be obtained at all.** The re-delivery drew two validator reports in a row
+  that did not parse. A report that does not parse is ⊥, and ⊥ is not pass (§11.2), so the node
+  stayed in VALIDATING: the canon gives that state no escalation edge, its only timeout target is
+  auto-acceptance — which would close a node nobody could judge — and the per-state clock (Inv-5's
+  finiteness beyond node deadlines) ships **off** by design. Nothing was wrong and nothing could
+  move; the run ended on the harness's own wall clock.
+- What the engine does now: it says, once its single retry also fails, that no automatic verdict is
+  coming and that the issuer must decide. It deliberately does not reach for the system timeout —
+  the false close is the failure this measurement exists to detect, and inventing a
+  VALIDATING → ESCALATED edge is not an implementation's call.
+
+### 13.4 Criteria sensitivity (probe 4, `json_parser`)
+
+Mutants of the task's own reference, each first confirmed defective against the held-out oracle;
+`p` over decided verdicts only.
+
+| mutation class | root (integration) criteria | leaf criteria |
+|---|---|---|
+| STUB | 1.0 | 1.0 |
+| NARROW (error handling deleted) | 0.0 | 1.0 |
+| SILENT_FALLBACK (exceptions swallowed) | 0.0 | 1.0 |
+| DROP_BRANCH | n/a — no-op on this source | — |
+
+The level is the finding: a parent's integration criteria are blind to a leaf-level defect by
+construction, and acceptance judges each node against **its own** criteria. An earlier reading of
+the root-level zeros as "the criteria are blind" was a level error, not a property of the criteria.
+
+### 13.5 What the acceptance instrument itself is worth (audited, not assumed)
+
+Acceptance verdicts carry per-criterion evidence, and the strongest form that evidence takes is a
+cited execution: "Executed: `f(x)` → `y`". It is also the easiest to invent. Once every delivery is
+frozen as it was judged, each such claim can be replayed against the exact artefact — and one run's
+verdicts were audited that way, claim by claim, with no LLM in the loop:
+
+| verdict | claim | the artefact it judged |
+|---|---|---|
+| block_scanner (2 verdicts) | `parse_blocks('para text\n2. item')` returns two blocks | one paragraph — **false**, twice |
+| block_scanner | `'> ' × 500` raises RecursionError | **true** (and fixed in the next delivery) |
+| inline_engine | the emphasis helpers are absent, "grep returns nothing" | all five present — **false** |
+| inline_engine | `line.strip()` still runs on paragraph lines | **true** |
+| inline_engine | ``render_inline("[`x`](url)")`` raises IndexError | **true** |
+| inline_engine | ``render_inline('[a `b` c](url)')`` raises IndexError | renders correctly — **false** |
+
+**Four of seven checkable claims describe behaviour the judged artefact did not have.** The
+instrument is not uniformly wrong — the fence defect of §13.3-bis and the crash-safety defect above
+were real, and §13.3's escaping defect was caught where the held-out suite passes it — but a verdict
+is only as good as what stands behind it, and that is now recorded rather than trusted: each verdict
+carries the **tool trace** of the run that produced it, so a cited execution against an empty `Bash`
+count is refuted structurally, without parsing the report's prose. The substantiated verdict of
+§13.3-quater (18 Bash calls) and these fabrications are told apart by that field alone.
+
+Two consequences are stated rather than left implicit. **The C1 and C2 columns inherit this**: a
+finding named before contact and a criterion failed at acceptance are both instrument outputs, and
+their reliability is now a measurable quantity instead of an assumption. And since the exhausted
+rework loop settles in a terminal ESCALATED (§13.3-bis), **validator precision became load-bearing**:
+a false FAIL now ends an unattended run where it used to pass quietly into a DONE that carried a
+failed verdict.
+
+**The repair, and its control (2026-08-13).** A verdict now has to be re-runnable, and the two
+halves sit where each belongs. **Form, in the engine:** every per-criterion entry must carry a
+`probe` — the command that was run and the observation expected of it — and a report without one is
+refused at the record as ⊥, not stored as a verdict (`verdict_report_defects(require_probe=True)`,
+`tests/test_validate_result.py`). The requirement covers the PASS side as much as the FAIL side,
+because the measurement's load-bearing direction is the false PASS. A human reviewer's record is
+deliberately exempt: a person who inspected the thing by hand owes a judgement, not a command line.
+**Contact, in the measuring layer:** the arm re-runs each probe against the snapshot that verdict
+judged and records `claims_reproduced / claims_refuted`; a verdict none of whose probes re-run is
+counted ⊥ rather than believed.
+
+The mechanism was checked where the answer was already known: the seven claims audited above,
+written as probes and replayed by the same code path the live instrument uses, come back **7/7 as
+the hand audit found them** — the four fabrications refuted, the three true claims reproduced — at
+**zero LLM cost**. One defect surfaced in that control and is worth recording, because it is the
+same error in miniature: a probe that printed nothing was first read as a refutation, which would
+have turned silence into evidence of falsity. Empty output is now ⊥ (undecided), never `refuted`.
+
+### 13.6 Does the Level-2 gate separate a planted hole from a clean plan? (2026-08-13)
+
+The pre-registration's third falsifier — *"the gate does not separate a planted causal hole from a
+clean plan (recall ≈ false-positive rate)"* — could not be read off any arm's run, because a run
+shows what the checker SAID, never what was there to find. It needs planted ground truth, so it got
+one: matched pairs of decompositions over four domains, each pair differing in the hole alone, with
+nothing running but `review_decomposition` — no coding agent, no acceptance, no held-out suite.
+
+Two hole classes, planted in the shape the canon describes. **FM-1.d** (insufficient entailment):
+every criterion covered and mapped, the topological checks green, and ⋀criteria(children) still not
+entailing the parent's — the "120 + 150 > 200" shape. **FM-1.f** (unwritten criterion): the goal
+needs something no criterion carries — the class that produced the one false close on record
+(§13.3-ter, the block-type vocabulary nobody pinned). Detection is read strictly: the checker must
+name THE PLANTED criterion; a finding elsewhere counts as an alarm, not a hit, or a checker that
+flags everything would score perfectly.
+
+| model | planted draws | recall | clean draws | alarms | alarms found to be CORRECT on reading |
+|---|---|---|---|---|---|
+| sonnet | 12 | **1.00** | 12 | 1 | 1 |
+| haiku | 12 | **1.00** | 12 | 5 | 5 |
+
+Recall is a rate. The alarm column is **not** a false-positive rate, and calling it one would be the
+mistake this table exists to avoid: every one of the six alarms was read, and every one named a real
+unwritten premise of the control it flagged — inter-stage handoff latency bound by no child
+criterion; a block whose type name is in the contract's list but does not match its content (a
+heading typed `paragraph` passes both children and breaks the parent); a replayed valid token
+satisfying signature, identity and ownership while a non-owner reads the data; a round-trip test
+that could run against a stubbed importer. **So across 24 draws and two models there is no
+demonstrated false positive at all** — what the alarm count measures is how often a hand-authored
+"clean" plan turns out to carry a premise nobody wrote.
+
+Three draws per case, and the repetition is not decoration: the checker is an LLM and does not
+answer the same plan the same way twice — one clean control came back quiet alone and flagged in a
+batch, which is why a single draw is an anecdote and the rate is over draws.
+
+The two models differ in how much they find beyond the plant (1 alarm against 5), not in whether
+they find it: both name every planted hole, in every draw. The weaker model is the more demanding
+reader here, and that has a cost the arm feels — an executor must discharge every finding before
+execution is admitted, and more correct findings mean more to discharge.
+
+**What had to be repaired first, and it is the more interesting half.** The first pass scored an
+alarm rate of 0.5, and reading the reasons refuted the reading: on the latency pair the checker
+objected that two p95 bounds do not entail a p95 bound on their sum under correlated tails — which
+is simply correct, and my "clean" control had assumed additivity that does not hold. On the session
+pair it objected that "the fetch compares the requesting account id with the owner id" never says
+where that id comes from, so a forgeable client-supplied one satisfies both children while breaking
+the parent. Both controls were wrong; the instrument was right. Repaired (per-request bounds plus a
+pinned request path; identity bound to the verified token's claim), both now pass quietly across
+three draws each. The single remaining alarm, one draw of the CSV pair, names the round-trip test
+being run against a stubbed importer — the anti-mock concern CHECK-1c exists for.
+
+So the number that matters is not a pair of rates. It is that **authoring a decomposition this
+instrument cannot fault is harder than authoring one that looks clean** — six times over, at this
+level of scrutiny, the checker found an unwritten premise a careful author had missed, including in
+controls already repaired once after the first pass said the same thing. That is the
+Pragmatic-level work the canon says no a-priori discipline certifies (Ch. 8), being done well
+enough to out-argue the person who built the control.
+
+Scope, stated: four domains, hand-authored, two models, 48 checker calls, no coding agent and no
+contact. The false-positive RATE remains unmeasured, and the obstacle is not the instrument: it is
+that a control whose cleanliness survives this reading has not yet been authored — which is the
+Pragmatic-level boundary (Ch. 8) showing up as an experimental-design problem. It measures the CHECKER's discrimination on planted classes, not the value of the
+gate in a run — that is C1's job, and C1 is read from the arms.
+
+---
+
+### 13.7 The instrument, repaired — and the first run that closed (2026-08-15/16)
+
+Everything below is still the calibration tier: `E3_PREREG.md` is **not frozen**, so none of it
+counts toward a campaign. What it does carry is the first reading of the arm's acceptance that the
+instrument itself can be trusted for, and the first measured C2 event.
+
+**The instrument was the thing under repair, and it is measured, not asserted.** §13.5 replayed a
+verdict's claims against the snapshot it judged; the replay then had to be repaired three times,
+each time because it was adding up things that are not the same:
+
+| bucket | what it means | why it is separate |
+|---|---|---|
+| `reproduced` | the probe ran and its output showed what the verdict said | — |
+| `refuted` | it ran cleanly and did not | the claim is dropped, not the verdict |
+| `unrunnable` | it could not run at all (silence, a crash, a timeout) | ⊥ is not "false" |
+| `not_portable` | it runs only where the ISSUER stands | a defect of the probe, not of the claim |
+| `underprobed` | the criterion names more behaviours than it probes | see below |
+
+Two of those were found by being wrong first. Claims counted as `refuted` were re-runs of probes
+citing `md_real.py`, a module absent from the snapshot — and present, it turned out, in the
+validator's own scratch directory, where every one of them runs. And that scratch was a single
+shared directory: it accumulated copies of past deliveries until a verdict was measured against a
+module written **three days earlier by a different run**. That, not the loop, is what produced the
+false closes of §13.3-ter. Each validation now gets a fresh directory, and the report contract asks
+for a command someone else can re-run in the delivered artifact's own directory.
+
+With that repaired, one run's verdicts replay **118 reproduced / 8 refuted / 0 ⊥**, and the §13.5
+ground-truth control still reproduces the hand audit 7/7 after every change to the replay.
+
+**The first root that closed — and it closed falsely.** `sed_interpreter`, executor Haiku, plan and
+acceptance Sonnet, n = 1:
+
+| | arm G, closed | the benchmark's own linear arm, shipped |
+|---|---|---|
+| held-out | **89.6 %** | 55.8 % |
+| visible − held-out gap | **0.10** | 0.44 |
+| genuine held-out failures | **8** | ~34 |
+| root | DONE | (no such notion) |
+
+The artifact is far better than the baseline's on both suites, and the close is still false: eight
+held-out tests fail, and they fall INSIDE criteria the root declared and the validator passed.
+Adjudicated against the reference implementation, no model involved — GNU sed 4.9 renders the
+classic hold-space paragraph join as `line1 line2 line3`, the artifact returns the lines unjoined.
+
+**The mechanism is not fabrication. It is partial verification.** The criterion names three
+behaviours — `N/P/D` restart loops, hold-space accumulation across the whole input, multi-line
+address ranges — and the validator probed the first. Its probe is **honest**: re-run against the
+judged snapshot it reproduces exactly what it claims, which is why the replay counted it
+`reproduced`. It simply does not cover the criterion, and the untested half is the broken one.
+
+So the instrument that catches an observation nobody made is blind to a real one standing for a
+third of what it was cited for: **reproducibility is not coverage**. This is §7.3.6's residual
+false-PASS in its precise form, and the canon already locates the guard: §6.3 states that
+prohibition has no form guard and is guarded at runtime through FM-3. The verdict contract now
+enumerates, per criterion, the behaviours it demands and requires every one of them to be covered by
+a probe — each probe naming the behaviour it observed, since one command can honestly observe two
+and counting them cannot tell that from a gap; where the probes carry no such names the count is all
+that remains and the strict reading stands. An unobserved conjunct is recorded `undecidable` — not
+passed, and not a refused report, since the report is a verdict whose evidence is short rather than a
+malformed one.
+
+**A correction to this paragraph, dated 2026-08-19.** As first shipped, the demotion was recorded and
+went no further: the tool's reply, the directive its caller obeys and the log line were all built
+from the verdict the validator CLAIMED, before the record was written. So between 2026-08-16 and
+2026-08-19 a report claiming a pass over an unobserved conjunct was stored as a fail naming it,
+reported as a pass, signed as a pass by the auto-validation, and the node closed. Measured on this
+repository's own graph, which is where it was found. The record is written first now and everything
+downstream speaks from it, saying so explicitly when a claim was demoted; and the same run that
+proves the fix also shows why the counting rule above had to become coverage — the strict count
+demoted five criteria whose evidence was a named passing test per behaviour.
+
+**What the loop is worth when it does not close.** In an earlier run of the same task the whole
+difficulty concentrated in ONE leaf (`s///`) and one criterion (`empty_regex_reuse`: an empty regex
+reuses the last regex actually APPLIED at runtime, not the last one written). The validator's
+reasoning for refusing it reproduces verbatim against GNU sed 4.9. A probe of that single defect —
+same workspace, judged by real sed, no graph and no protocol — was closed by the same Haiku on the
+**first attempt**, for $0.31. The node was not beyond the model; it had inherited a rework bound of
+three. A baseline reports 55.8 % of a hidden suite and there is nothing to do with the number; the
+arm reports an address.
+
+**Facts about the substrate, recorded because they bound what any comparison can say.**
+Two draws of the SAME baseline arm on `markdown_renderer` (Haiku, same task, same budget) shipped
+held-out **72.0 %** and **92.8 %** — twenty points apart. Any arm-versus-arm difference smaller than
+that is unreadable at n = 1. And task saturation is real in both directions: on `markdown_renderer`
+both baselines reach 100 % of the visible suite (the band left for a discipline to show anything is
+4–7 points of hidden gap), while `sed_interpreter` leaves 44. A task is chosen where the baseline is
+NOT saturated, and that is checked before spending, not after.
+
+The exclusion ledger for `markdown_renderer` was curated blind — spec, reference and suites only,
+never an arm's artifact: **2 of 125** hidden tests excluded, both `underspecified` (the spec fixes
+`parse_blocks`'s schema and never writes down a single type-string value), and **zero**
+`spec_contradicting`. Re-scoring the recorded runs through it moves the count by one or two tests:
+the substrate is clean, and C2 on it does not rest on contested exclusions.
+
 ---
 
 **Policy (set 2026-06-05):** this log is **empirical evidence only**. Agent-process material —

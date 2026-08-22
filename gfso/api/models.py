@@ -1,6 +1,8 @@
 """Pydantic request/response models for GFSO API."""
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 from gfso.core.types import Task
@@ -45,10 +47,26 @@ class TaskOut(BaseModel):
     state_entered_at: str | None = None
 
 class CheckResultOut(BaseModel):
+    """One structural check as a reader sees it.
+
+    A SKIPPED CHECK IS NOT A PASSED ONE. `passed` was a bare bool beside `skipped`, so a check the
+    battery could not run shipped as `passed=True, skipped=True` — fail-open, and the UI reads
+    `passed`. The tool door had already been fixed to send `None` there (`gfso/tools.py`) and this
+    door had not, so the same check answered differently depending on which one you came in by.
+    `verdict` is the word both doors now say: met · unmet · skipped."""
+
     check_name: str
-    passed: bool
+    passed: Optional[bool]              # None ⟺ skipped: the check did not run, so it says nothing
     details: str
     skipped: bool
+    verdict: str = "unmet"              # met | unmet | skipped — the one word, no bool arithmetic
+
+    @classmethod
+    def of(cls, c) -> "CheckResultOut":
+        """From the engine's own `CheckResult` — one place builds this row."""
+        return cls(check_name=c.check_name, details=c.details, skipped=c.skipped,
+                   passed=None if c.skipped else c.passed,
+                   verdict="skipped" if c.skipped else "met" if c.passed else "unmet")
 
 class RecommendationOut(BaseModel):
     suggestions: list[str]

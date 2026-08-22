@@ -26,6 +26,12 @@ class AuditEntry:
     failed_criteria: tuple[str, ...] = ()
     action: Optional[str] = None
     in_flight: Optional[str] = None  # CONFIRM_CANCEL: executor's in-flight state at cancellation (Thm 11, §14.3)
+    # THE CONTRACT THIS SIGNAL SET (ASSIGN only) — Inv-1/Inv-7: "every re-ASSIGN appends a VERSION
+    # to the append-only log … past versions live in the log". They did not: the row carried the
+    # revision EVENT and no spec, and `tasks.revisions` is a counter, so a contract overwritten by a
+    # revision was gone. Measured 2026-08-20: one session's `create_task` replaced another's live
+    # root, and nothing anywhere could say what the original had been.
+    spec: Optional[str] = None       # JSON of the spec this ASSIGN installed
 
 
 class AuditLog:
@@ -64,7 +70,7 @@ class AuditLog:
             "source": str(e.source) if e.source else None, "reason": e.reason,
             "justification": e.justification, "result": e.result,
             "failed_criteria": list(e.failed_criteria), "action": e.action,
-            "in_flight": e.in_flight,
+            "in_flight": e.in_flight, "spec": e.spec,
         }
 
     @staticmethod
@@ -79,5 +85,5 @@ class AuditLog:
             source=AgentId(r["source"]) if r.get("source") else None,
             reason=r.get("reason"), justification=r.get("justification"), result=r.get("result"),
             failed_criteria=tuple(r.get("failed_criteria") or ()), action=r.get("action"),
-            in_flight=r.get("in_flight"),
+            in_flight=r.get("in_flight"), spec=r.get("spec"),
         )

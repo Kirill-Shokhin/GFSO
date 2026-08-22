@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from gfso.core.types import State, DoneReason
+from gfso.core.types import State, DoneReason, Verdict, passed, settled_positive
 from .model import Graph
 
 
@@ -70,11 +70,11 @@ def q_D(graph: Graph) -> Optional[float]:
         children = graph.get_active_children(t.id)  # cancelled tombstones not part of the decomposition
         if not children:
             continue  # atomic task — no decomposition to score
-        if not all(c.state == State.DONE and c.done_reason == DoneReason.PASS for c in children):
+        if not all(passed(c) for c in children):
             continue  # not all children passing → the false-positive-D precondition is absent
         failed_own = t.iteration > 0 or (t.state in _STANDING_FAIL_STATES
                                          and t.done_reason == DoneReason.FAIL)
-        passed_own = t.state == State.DONE and t.done_reason == DoneReason.PASS
+        passed_own = passed(t)
         if not (failed_own or passed_own):
             continue  # parent has not reached its own verdict yet (or auto_pass = no verdict) → out of scope
         denom += 1
@@ -83,6 +83,18 @@ def q_D(graph: Graph) -> Optional[float]:
     if denom == 0:
         return None  # empty population → ⊥ (§21)
     return 1.0 - defects / denom
+
+
+def _q_V_later_failed(graph: Graph, t) -> bool:
+    """"This pass was later found wrong" — the q_V event, with one owner.
+
+    A record from a SUPERSEDED reopen generation is a verdict on the old cycle, not on this pass
+    (R′ §14.3: the reopen already dropped that verdict; the refuted-old-pass case is carried by the
+    `false_positive` flag, set at the fresh run's first FAIL)."""
+    if t.false_positive:
+        return True
+    rec = graph.exec_verdict_record(t.id)
+    return bool(rec) and rec.get("verdict") == Verdict.FAIL and rec.get("reopens", 0) == t.reopens
 
 
 def q_V(graph: Graph) -> Optional[float]:
@@ -98,22 +110,27 @@ def q_V(graph: Graph) -> Optional[float]:
     zone is the canon's, not the instrument's).
     """
     all_tasks = graph._storage.get_all_tasks()
-    passed = [t for t in all_tasks if t.state == State.DONE
-              and t.done_reason in (DoneReason.PASS, DoneReason.AUTO_PASS)]
-    if not passed:
+    # settled_positive, not passed: this population is every node that completed WITHOUT a
+    # refusal, auto_pass included (§21 records that close apart from a pass — and counts it here).
+    positives = [t for t in all_tasks if settled_positive(t)]
+    if not positives:
         return None  # empty population → ⊥ (§21)
 
     def _later_failed(t) -> bool:
-        if t.false_positive:
-            return True
-        rec = graph.exec_verdict_record(t.id)
-        # A record from a SUPERSEDED reopen generation is a verdict on the old cycle, not on this
-        # pass (R′ §14.3: the reopen already dropped that verdict; the refuted-old-pass case is
-        # carried by the false_positive flag above, set at the fresh run's first FAIL).
-        return bool(rec) and rec.get("verdict") == "FAIL" and rec.get("reopens", 0) == t.reopens
+        return _q_V_later_failed(graph, t)
 
-    false_positives = sum(1 for t in passed if _later_failed(t))
-    return 1.0 - false_positives / len(passed)
+    return 1.0 - len([t for t in positives if _later_failed(t)]) / len(positives)
+
+
+def q_V_reversed(graph: Graph) -> list[str]:
+    """WHICH passes were later found wrong — q_V's numerator, by name.
+
+    The number alone was unreadable: a reader watched it go 0.5 then 0.8 with nothing saying which
+    node had had its PASS taken back (measured on the human door 2026-08-21, beside a `q_T` that
+    does name its nodes). Derived from the same predicate q_V counts with, so the list and the
+    number can never disagree."""
+    return [str(t.id) for t in graph._storage.get_all_tasks()
+            if settled_positive(t) and _q_V_later_failed(graph, t)]
 
 
 def false_fail_share(graph: Graph) -> Optional[float]:
@@ -144,7 +161,7 @@ def false_fail_share(graph: Graph) -> Optional[float]:
 
     def _overturned(t) -> bool:
         rec = graph.exec_verdict_record(t.id)
-        return (bool(rec) and rec.get("verdict") == "PASS"
+        return (bool(rec) and rec.get("verdict") == Verdict.PASS
                 and rec.get("reopens", 0) == t.reopens)  # same generation only (R′ §14.3)
 
     return sum(1 for t in failed if _overturned(t)) / len(failed)

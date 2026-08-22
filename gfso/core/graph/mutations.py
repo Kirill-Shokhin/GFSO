@@ -22,6 +22,7 @@ def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_
         if r == RevisionReason.CAPABILITY_MISMATCH:
             task.reassign_capability_mismatch = True
 from .model import Graph
+from gfso.core.types import settled_positive
 
 log = logging.getLogger(__name__)
 
@@ -146,8 +147,18 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # a criteria change strands this node's own mappings that point at a now-removed criterion → prune them here
     # (logged, part of APPLY_SPEC) so no stale mapping persists; the now-unmapped child surfaces via CHECK-1b.
     _valid = {c.name for c in task.spec.criteria}
-    if any(m.criterion_name not in _valid for m in task.criterion_mappings):
-        task.criterion_mappings = tuple(m for m in task.criterion_mappings if m.criterion_name in _valid)
+    # …AND THE MAPPINGS WHOSE CHILD IS GONE. A cancelled child leaves the parent pointing at a
+    # tombstone, and CHECK-1 reads that as an invalid mapping — correctly, and forever: measured on
+    # the human door 2026-08-21, a coverage hole that `map_criterion` could only add beside,
+    # `edit_criteria` did not touch, `revise` refused, and the person escaped by guessing an
+    # undocumented rebuild that wiped every OTHER mapping too. A re-author is the node's own act on
+    # its own coverage, so it prunes what no longer exists — the criterion it covered becomes an
+    # honest, fixable CHECK-1 hole instead of a permanent one.
+    _live = {str(t.id) for t in graph.get_active_children(task.id)} if graph is not None else None
+    _dead = (lambda m: _live is not None and str(m.child_id) not in _live)
+    if any(m.criterion_name not in _valid or _dead(m) for m in task.criterion_mappings):
+        task.criterion_mappings = tuple(m for m in task.criterion_mappings
+                                        if m.criterion_name in _valid and not _dead(m))
     if effect.assignee is not None:  # reassign (Del change) via the same pre-acceptance channel
         if effect.assignee != task.assignee:
             task.was_reassigned = True  # q_Del
@@ -187,7 +198,7 @@ def _reopen(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[Tas
     if task is None:
         log.error(f"task {effect.task_id} not found for REOPEN")
         return []
-    was_pass = task.state == State.DONE and task.done_reason in (DoneReason.PASS, DoneReason.AUTO_PASS)
+    was_pass = settled_positive(task)
     old_criteria = task.spec.criteria
     _type_revision(task, effect,
                    criteria_changed=effect.spec is not None and old_criteria != effect.spec.criteria,

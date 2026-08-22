@@ -11,9 +11,10 @@ edges live in storage independently and survive a rebuild); scope strings pass t
 from __future__ import annotations
 
 from gfso.core.types import TaskId
+from gfso.config import ROOT_ID
 
 
-def extract_spec(engine, root_id: str = "root") -> dict:
+def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
     root = engine.get_task(TaskId(root_id))
     if root is None:
         raise ValueError(f"no node {root_id!r} to extract")

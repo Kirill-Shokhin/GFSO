@@ -5,6 +5,7 @@ import inspect
 
 import pytest
 
+from gfso.mcp.server import create_server
 from gfso.runtime import ProjectRegistry
 from gfso import tools as T
 
@@ -78,7 +79,7 @@ def test_mcp_bind_gains_project_param_and_routes(monkeypatch, tmp_path):
     assert "project" in params and params["project"].default is None
     _mk(reg.engine("p1"), "n1")
     assert _call(w, "n1", project="p1")["id"] == "n1"         # explicit per-call routing
-    assert _call(w, "n1") is None                              # active = default — isolated
+    assert _call(w, "n1").get("error")                        # active = default — isolated
     reg.use("p1")
     assert _call(w, "n1")["id"] == "n1"                        # follows the active switch
     for e in list(reg._engines.values()):
@@ -314,3 +315,16 @@ def test_projects_are_listed_newest_first_with_their_stamps(tmp_path, monkeypatc
     listing = ProjectRegistry(data_dir=str(tmp_path)).list()
     assert listing["projects"][:3] == ["new_run", "middle_run", "old_run"]
     assert listing["last_active"]["new_run"] >= listing["last_active"]["old_run"]
+
+
+def test_use_project_takes_the_word_every_other_verb_uses():
+    """Every verb spells it `project`; this one alone wanted `name`.
+
+    Measured 2026-08-21 through the MCP door: a caller passing `project=` — as they had on every
+    other call in the session — lost a round to a validation error, for a difference nobody could
+    infer. Both spellings work now, and asking with neither says which words it takes."""
+    reg = ProjectRegistry(default_storage="memory", default_llm="stub", seed=False)
+    srv = create_server(reg)
+    use = next(t for t in srv._tool_manager.list_tools() if t.name == "use_project")
+    params = set(use.parameters.get("properties", {}))
+    assert {"name", "project"} <= params

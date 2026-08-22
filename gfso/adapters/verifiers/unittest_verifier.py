@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-from gfso.core.types import TaskId, Spec, CheckResult, StoragePort, VerifierPort
+from gfso.core.types import TaskId, Spec, CheckResult, StoragePort, VerifierPort, Verdict
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class UnittestVerifier(VerifierPort):
         self._timeout = timeout
 
     def verify(self, task_id: TaskId, deliverable: str, spec: Spec) -> list[CheckResult]:
-        log.info(f"[UnittestVerifier] === VERIFICATION {task_id} ({len(spec.criteria)} criteria) ===")
+        log.info(f"=== VERIFICATION {task_id} ({len(spec.criteria)} criteria) ===")
         raw = _run_suite(deliverable, self._test_code, timeout=self._timeout)
         by_name = {r["name"]: r for r in raw}
         out: list[CheckResult] = []
@@ -140,10 +140,10 @@ class UnittestVerifier(VerifierPort):
                 out.append(CheckResult(check_name=c.name, passed=r["passed"], details=r["details"]))
         self._storage.store_check_results(task_id, out)
         passed = sum(1 for r in out if r.passed)
-        log.info(f"[UnittestVerifier] RESULT: {passed}/{len(out)} passed")
+        log.info(f"RESULT: {passed}/{len(out)} passed")
         for r in out:
-            status = "PASS" if r.passed else "FAIL"
-            log.info(f"[UnittestVerifier] {r.check_name}: {status}")
+            status = Verdict.PASS if r.passed else Verdict.FAIL
+            log.info(f"{r.check_name}: {status}")
             if not r.passed and r.details:
-                log.info(f"[UnittestVerifier]   {r.details[:500]}")
+                log.info(f"{r.details[:500]}")
         return out

@@ -280,7 +280,7 @@ def test_run_structural_returns_all_checks():
 # === CHECK-7/8: the numeric-bound tier must DEGRADE, never crash ===
 
 def test_numeric_bound_ignores_non_numbers():
-    """`[\d.]+` also matched a run of dots: a markdown criterion ("`> ...` renders as a
+    r"""`[\d.]+` also matched a run of dots: a markdown criterion ("`> ...` renders as a
     blockquote") reached float('...') and threw, taking a whole auto_decompose down with a 422.
     A tier that cannot machine-check something reports it — it does not raise."""
     from gfso.core.handlers.constraint import _parse_numeric_bound

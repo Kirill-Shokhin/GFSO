@@ -9,9 +9,12 @@ import os
 
 from gfso.engine import Engine
 from gfso.adapters.agents.human import HumanAgent
+from gfso import config as _config
+from gfso.config import (data_dir as _config_data_dir, MODEL_DEFAULT, active_project,
+                         DEFAULT_PROJECT)
 
 
-def llm_factory(model: str = "sonnet"):
+def llm_factory(model: str = MODEL_DEFAULT):
     """THE ONE switch every internal gfso LLM role goes through (decompose, validate, critic, future
     validate_result/delegate one-shots). Two env knobs, whole-system semantics (no per-role mixing):
 
@@ -25,14 +28,15 @@ def llm_factory(model: str = "sonnet"):
         `subscription` strips it (claude.ai login).
 
     Flipping the whole system to a foreign provider and seamlessly back IS these two variables."""
-    if os.environ.get("GFSO_PROVIDER", "anthropic") == "generic":
+    if _config.provider() == "generic":
         from gfso.adapters.llm.generic import GenericLLM
-        return GenericLLM(base_url=os.environ["GFSO_GENERIC_BASE_URL"],
-                          model=os.environ.get("GFSO_GENERIC_MODEL", model),
-                          api_key=os.environ.get("GFSO_GENERIC_API_KEY"))
+        _g = _config.generic_provider()
+        if not _g["base_url"]:
+            raise ValueError("GFSO_PROVIDER=generic needs GFSO_GENERIC_BASE_URL — the OpenAI-compatible "
+                             "endpoint to talk to")
+        return GenericLLM(base_url=_g["base_url"], model=_g["model"] or model, api_key=_g["api_key"])
     from gfso.adapters.llm.headless import HeadlessClaudeLLM
-    return HeadlessClaudeLLM(model=model,
-                             keep_api_key=os.environ.get("GFSO_BILLING", "subscription") == "api")
+    return HeadlessClaudeLLM(model=model, keep_api_key=_config.api_billing())
 
 
 def data_dir():
@@ -43,9 +47,7 @@ def data_dir():
     from one directory and the server started from another read different databases, silently, and
     the user's graphs went missing rather than erroring.
     """
-    from pathlib import Path
-    from gfso.serverctl import home
-    return Path(os.environ.get("GFSO_DATA_DIR") or (home() / "data"))
+    return _config_data_dir()
 
 
 def build_engine_from_env(*, validate_signals: bool = True, default_storage: str = "sqlite",
@@ -58,16 +60,16 @@ def build_engine_from_env(*, validate_signals: bool = True, default_storage: str
     no llm, no seed); `gfso serve` passes default_storage='memory', default_llm='stub'; seeding is opt-in (`--seed`).
     `db_path` overrides the sqlite file (the ProjectRegistry's per-project isolation).
     Returns a STARTED engine."""
-    if os.environ.get("GFSO_STORAGE", default_storage) == "sqlite":
+    if _config.storage_kind(default_storage) == "sqlite":
         from gfso.adapters.storage.sqlite import SqliteStorage
-        storage = SqliteStorage(db_path or os.environ.get("GFSO_DB_PATH", str(data_dir() / "gfso.db")))
+        storage = SqliteStorage(str(db_path or _config.db_path()))
     else:
         from gfso.adapters.storage.memory import MemoryStorage
         storage = MemoryStorage()
 
-    llm_kind = os.environ.get("GFSO_LLM", default_llm)
+    llm_kind = _config.llm_kind(default_llm)
     if llm_kind in ("llm", "claude"):   # "claude" = the legacy alias for the real-provider path
-        llm = llm_factory(model=os.environ.get("GFSO_MODEL", "haiku"))
+        llm = llm_factory(model=_config.engine_model())
     elif llm_kind == "stub":
         from gfso.adapters.llm.stub import StubLLM
         llm = StubLLM()
@@ -96,25 +98,36 @@ class ProjectRegistry:
         self._kw = engine_kwargs
         self._dir = str(data_dir())
         self._engines: dict[str, Engine] = {}
-        self._active = os.environ.get("GFSO_PROJECT", "default")
+        self._active = active_project()
         ProjectRegistry._NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
     @property
     def active(self) -> str:
         return self._active
 
-    def engine(self, project: str | None = None) -> Engine:
-        """The project's engine, created lazily; None/'' → the ACTIVE project."""
+    def engine(self, project: str | None = None, create: bool = True) -> Engine:
+        """The project's engine, created lazily; None/'' → the ACTIVE project.
+
+        `create=False` REFUSES an unknown name instead of making one. A read used to create the
+        project it was reading: `get_task root project=beta` on a name that did not exist answered
+        "unknown task" and left a `beta.db` behind, so every typo became a permanent project — this
+        installation had accumulated 315 of them (measured 2026-08-21). Only the verbs that AUTHOR
+        create."""
         name = project or self._active
         if not self._NAME_RE.match(name):
             raise ValueError(f"bad project name {name!r} (allowed: [A-Za-z0-9_-], ≤64)")
+        if (name not in self._engines and not create
+                and name != DEFAULT_PROJECT
+                and not os.path.exists(os.path.join(self._dir, f"{name}.db"))):
+            raise KeyError(name)
         if name not in self._engines:
             kw = dict(self._kw)
             if name != "default":
                 kw["db_path"] = os.path.join(self._dir, f"{name}.db")
                 kw["seed"] = False
             self._engines[name] = build_engine_from_env(**kw)
-            self._engines[name]._project_name = name   # so per-project instruments (checker) can key off it
+            self._engines[name].project_name = name    # per-project instruments key off it
+            self._engines[name]._project_name = name    # (the older spelling, still read downstream)
             try:  # delegation autostart rides with the engine (works under every entry point)
                 from gfso.delegate import ensure_dispatcher
                 ensure_dispatcher(self._engines[name])

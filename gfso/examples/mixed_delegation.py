@@ -14,6 +14,7 @@ from gfso.adapters.agents.human import HumanAgent
 from gfso.delegate import AgentRegistry, Dispatcher
 from gfso import tools as T
 import time
+from gfso.config import MODEL_DEFAULT
 
 
 def main() -> None:
@@ -27,8 +28,8 @@ def main() -> None:
     e.start()
 
     agents = AgentRegistry(path=scratch("agents.json"))
-    agents.register("worker-1", "llm-executor", model="sonnet", workdir=work)
-    agents.register("checker-1", "llm-validator", workdir=work, model="sonnet")
+    agents.register("worker-1", "llm-executor", model=MODEL_DEFAULT, workdir=work)
+    agents.register("checker-1", "llm-validator", workdir=work, model=MODEL_DEFAULT)
 
     # the human's own node — the system stays passive on it (unregistered id = human)
     T.create_task(e, "brief", {"description": "Write the one-line brief",

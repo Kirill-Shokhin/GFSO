@@ -78,9 +78,9 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
             continue
 
         checked += 1
-        if '<' in p_op and child_sum > p_val:
+        if "<" in p_op and child_sum > p_val:
             violations.append(f"{p_metric}: children sum {child_sum} > parent bound {p_val}")
-        elif '>' in p_op and child_sum < p_val:
+        elif ">" in p_op and child_sum < p_val:
             violations.append(f"{p_metric}: children sum {child_sum} < parent bound {p_val}")
 
     if violations:
@@ -112,8 +112,8 @@ def check_consistency(children: list[Task]) -> CheckResult:
 
     contradictions = []
     for metric, entries in bounds.items():
-        uppers = [(v, cid) for op, v, cid in entries if '<' in op]
-        lowers = [(v, cid) for op, v, cid in entries if '>' in op]
+        uppers = [(v, cid) for op, v, cid in entries if "<" in op]
+        lowers = [(v, cid) for op, v, cid in entries if ">" in op]
         for uv, uid in uppers:
             for lv, lid in lowers:
                 if uv <= lv:

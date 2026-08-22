@@ -3,7 +3,7 @@ from gfso.core.types import (
     AcceptedRiskItem, Predictability,
     State, Signal, TaskId, AgentId, SignalData,
     Spec, Criteria, Task, CriterionMapping, DepEdge,
-    DispatchPayload, AgentPort,
+    DispatchPayload, AgentPort, Verdict,
 )
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
@@ -140,7 +140,8 @@ def test_pass_requires_all_children_passed_theorem1():
     # the ROOT = the public seam "done" must cross — ITS self-PASS still requires the recorded
     # verdict (verifier ≠ executor gate fires ON the seam, not on every node).
     eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("c"), source=A)); eng.wait_idle()
-    eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("c"), source=A, result="ok")); eng.wait_idle()
+    eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("c"), source=A, result="ok",
+                                    self_validation=Verdict.PASS)); eng.wait_idle()   # D6: the self-check IS its record
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
     assert eng.get_state(TaskId("c")) == State.DONE               # internal self-validation (D6)
     e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()

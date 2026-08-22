@@ -22,13 +22,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from gfso.core.types import TaskId
+from gfso.core.types import Stage, TaskId
 from gfso.engine import Engine
 
 from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search,
                    _progress, _stat_line, _hint, _tag, _COVERED, AUDIT_SCHEMA, shape)
 from .build import build_graph_live
 from .extract import extract_spec
+from gfso.config import ROOT_ID, MODEL_DEFAULT
 
 REPAIR_ROUNDS = 2
 
@@ -80,7 +81,8 @@ def _problems(engine: Engine, root_id: TaskId, dropped: list[str]) -> list[str]:
 
 
 def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assignee: str,
-                    llm, progress=None, max_iterations: int | None = None) -> tuple[TaskId, dict, list[str]]:
+                    llm, progress=None, max_iterations: int | None = None,
+                    child_assignee: str | None = None) -> tuple[TaskId, dict, list[str]]:
     """Build wholesale, then repair-loop: problems → one corrective audit call → wholesale re-build
     (revision semantics). Bounded by REPAIR_ROUNDS; returns the final (root_id, spec, residual problems).
     The dispatcher is QUIESCED for the WHOLE verified cycle (build + repairs): the graph's contract is
@@ -90,7 +92,8 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
     try:
         _progress("builder: wholesale build through the FSM…", progress)
         eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
-                                                 max_iterations=max_iterations)
+                                                 max_iterations=max_iterations,
+                                                 child_assignee=child_assignee)
         problems = _problems(engine, rid, dropped)
         _progress(f"builder: {len(engine.get_active_children(rid))} nodes · {len(dropped)} dropped · "
                   f"{len(problems)} problem(s)", progress)
@@ -102,7 +105,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             _hint(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
             fixed = _audit_fix(llm, request, spec, problems)
             if hasattr(llm, "tag_last"):
-                llm.tag_last(f"audit-fix-{r + 1}")
+                llm.tag_last(f"{Stage.AUDIT_FIX}-{r + 1}")
             if not fixed:
                 break  # repair call failed — return the honest residue
             # PATCH semantics: a re-emitted top-level field replaces the old one wholesale; omitted fields kept.
@@ -110,7 +113,8 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             spec = {**spec, **{k: fixed[k] for k in patched}}
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
             eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
-                                                 max_iterations=max_iterations)
+                                                 max_iterations=max_iterations,
+                                                 child_assignee=child_assignee)
             problems = _problems(engine, rid, dropped)
         # "No problems" over an EMPTY build is vacuous, not clean — the checks had nothing to fail
         # on. Said as "verified clean", it read as a good decomposition to anyone watching the
@@ -174,9 +178,21 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
                          if a.signal == Signal.BLOCK and not a.rejected and a.reason), ""))
                for c in kids if c.state.name == "BLOCKED"]
     contradictions = _dep_contradictions(engine)
+    # …AND WHAT THE LEVEL-2 CHECK SAID, which the fold never saw. A refine run straight after a
+    # review that left eleven findings open returned a projection byte-identical to the one
+    # before it, `holes: []`, and charged for the round — the findings are the plan's known
+    # defects, in the caller's hand at that exact moment, and the one verb whose job is to
+    # repair the plan was the only reader that did not get them (agent door, 2026-08-22).
+    l2_open = engine.open_l2_findings(TaskId(root_id)) or []
     state_view = proj + (("\n\n# CURRENT STRUCTURAL HOLES (unmet checks)\n"
                           + "\n".join(f"- {h['task_id']} / {h['check']}: {h['details']}" for h in cur_holes))
                          if cur_holes else "") \
+        + (("\n\n# OPEN LEVEL-2 FINDINGS on this plan (the causal check, §13.4)\n"
+            "Each is a criterion the children's criteria do not entail, a conflict between "
+            "them, or an obligation of THIS node's goal that none of its own criteria decides. "
+            "They are the plan's known defects: fold them in, or leave them for the issuer to "
+            "dispute in writing — but do not return an unchanged plan while they stand." "\n"
+            + "\n".join(f"- {f}" for f in l2_open)) if l2_open else "") \
         + (("\n\n# COMPLETED SUBTASKS — contracts FROZEN\n"
             "These subtasks are terminal; their contracts cannot change (no update/remove, no coverage "
             "remap — a terminal node admits no revision). Route any NEW obligation to a NEW subtask.\n"
@@ -194,7 +210,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     _progress(f"{label} searcher (over the graph projection)…", progress)
     _hint(llm, f"{label} searcher")
     holes = _search(llm, request, state_view)
-    _tag(llm, "search-refine")
+    _tag(llm, Stage.SEARCH_REFINE)
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     if holes.lstrip().upper().startswith(_COVERED):
         _progress(f"{label} searcher: ALREADY-COVERED — converged", progress)
@@ -203,7 +219,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     _progress(f"{label} auditor (fold into the graph state)…", progress)
     _hint(llm, f"{label} auditor")
     patch = _dens_patch(_audit_fold(llm, request, state_view, holes) or {}, root_id)
-    _tag(llm, "audit-fold-refine")
+    _tag(llm, Stage.AUDIT_FOLD_REFINE)
     new_spec, ops = _fold_merge(spec, patch)
     if not ops:
         _progress(f"{label} auditor {_stat_line(llm)} · empty fold — converged", progress)
@@ -217,7 +233,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     return True, new_spec, problems
 
 
-def refine(engine: Engine, root_id: str = "root", rounds: int = 1, model: str = "sonnet",
+def refine(engine: Engine, root_id: str = ROOT_ID, rounds: int = 1, model: str = MODEL_DEFAULT,
            llm=None, progress=None) -> DecomposeResult:
     """Apply `rounds` refinement operations to an EXISTING decomposition — the graph is the state
     ("+1 итерация над тем, что есть"): each round = search over the real projection → fold-patch →
@@ -240,8 +256,8 @@ def refine(engine: Engine, root_id: str = "root", rounds: int = 1, model: str = 
                            stats=list(getattr(llm, "calls", [])))
 
 
-def decompose(request: str, depth: int = 1, model: str = "sonnet",
-              engine: Engine | None = None, root_id: str = "root",
+def decompose(request: str, depth: int = 1, model: str = MODEL_DEFAULT,
+              engine: Engine | None = None, root_id: str = ROOT_ID,
               llm=None, fast: bool = False) -> DecomposeResult:
     """request -> (init search↔fold -> CORE graph -> verified/repaired [-> refine × (depth−1)]).
     Sonnet, depth 1. Builds THROUGH the FSM (the single build path); if no engine is given, spins a
@@ -255,9 +271,10 @@ def decompose(request: str, depth: int = 1, model: str = "sonnet",
                           llm=llm, fast=fast)
 
 
-def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee: str = "human",
-                   depth: int = 1, model: str = "sonnet", llm=None, progress=None,
-                   fast: bool = False, max_iterations: int | None = None) -> DecomposeResult:
+def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assignee: str = "human",
+                   depth: int = 1, model: str = MODEL_DEFAULT, llm=None, progress=None,
+                   fast: bool = False, max_iterations: int | None = None,
+                   child_assignee: str | None = None) -> DecomposeResult:
     """Agent-facing: run the init search↔fold on `request`, build the result INTO a LIVE engine THROUGH
     the FSM (signals) under `root_id`, verify + repair until `list_holes` is clean (or return the
     residue honestly) — then apply `depth−1` refine operations over the BUILT graph (each verified;
@@ -300,7 +317,8 @@ def decompose_into(engine: Engine, request: str, root_id: str = "root", assignee
     else:
         spec = decompose_spec(request, llm=llm, progress=progress, fast=fast, label=f"1/{depth}")
         rid, spec, holes = _build_verified(spec, request, engine, root_id, assignee, llm,
-                                           progress=progress, max_iterations=max_iterations)
+                                           progress=progress, max_iterations=max_iterations,
+                                           child_assignee=child_assignee)
         for i in range(1, depth):
             changed, spec, holes = _refine_round(engine, request, root_id, assignee, llm,
                                                  progress=progress, label=f"{i + 1}/{depth}")

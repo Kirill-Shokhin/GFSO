@@ -20,6 +20,7 @@ import time
 
 from gfso.core.types import LLMProviderPort
 from .structured import schema_instruction, parse_structured, RETRY_SUFFIX
+from gfso.config import MODEL_DEFAULT
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ def _tool_use_name(ev: dict) -> str | None:
 
 
 class HeadlessClaudeLLM(LLMProviderPort):
-    def __init__(self, model: str = "sonnet", timeout: int = 900, claude_cmd: str = "claude",
+    def __init__(self, model: str = MODEL_DEFAULT, timeout: int = 900, claude_cmd: str = "claude",
                  max_thinking_tokens: int | None = None, keep_api_key: bool = False):
         self._model = model
         self._timeout = timeout
@@ -59,6 +60,10 @@ class HeadlessClaudeLLM(LLMProviderPort):
         # `stage_hint` before each call; both are optional presentation.
         self.on_tick = None
         self.stage_hint = ""
+        # Which work tools the LAST run reached for — a field of this object, not of one call inside
+        # it: the verdict record carries it, and a client whose run never started (or whose result is
+        # merged from concurrent siblings) still has to answer the question.
+        self.last_tool_calls: dict[str, int] = {}
         self._tick_every = 2.0
         if self._cmd is None:
             log.warning("claude CLI not found — headless LLM degraded to stub")
@@ -96,6 +101,53 @@ class HeadlessClaudeLLM(LLMProviderPort):
                           tools_args=["--allowedTools", " ".join(allowed_tools),
                                       "--dangerously-skip-permissions"]
                                      + (["--max-turns", str(max_turns)] if max_turns else []))
+
+    def _read_stream(self, proc, t0: float, cap: float):
+        """Read the CLI's event stream: usage, deltas, tool names, and the ticks a caller sees.
+
+        The subprocess is one concern (build the argv, spawn it, wait, account for the call);
+        reading what it streams is another, and it is where the live progress comes from —
+        real output tokens, never an estimate. Returns (envelope, text, out_tokens)."""
+        envelope, text_acc, out_tokens, last_tick = None, [], 0, t0
+        self.last_tool_calls = {}
+        for line in proc.stdout:
+            if time.monotonic() - t0 > cap:
+                proc.kill()
+                log.warning("headless claude call timed out mid-stream")
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except Exception:
+                continue
+            if ev.get("type") == "result":
+                envelope = ev
+                continue
+            if (tname := _tool_use_name(ev)):
+                self.last_tool_calls[tname] = self.last_tool_calls.get(tname, 0) + 1
+            inner = ev.get("event") or {}
+            usage = inner.get("usage") or ev.get("usage") or {}
+            if usage.get("output_tokens"):
+                out_tokens = usage["output_tokens"]
+            delta = inner.get("delta") or {}
+            if isinstance(delta.get("text"), str):
+                text_acc.append(delta["text"])
+            chunk = delta.get("text") or delta.get("thinking")  # thinking streams tokens too
+            if isinstance(chunk, str):
+                est_chars = getattr(self, "_est_chars", 0) + len(chunk)
+                self._est_chars = est_chars
+            now = time.monotonic()
+            if self.on_tick is not None and now - last_tick >= self._tick_every:
+                last_tick = now
+                tok = out_tokens or (getattr(self, "_est_chars", 0) // 4)
+                try:
+                    self.on_tick(f"{self.stage_hint or 'generating'}: {tok} tokens · {now - t0:.0f}s")
+                except Exception:
+                    pass
+
+        return envelope, text_acc, out_tokens
 
     def _call(self, system: str, user: str, tools_args: list[str] | None = None,
               cwd: str | None = None, timeout: int | None = None) -> str:
@@ -142,44 +194,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
                     pass
             threading.Thread(target=_feed, daemon=True).start()
 
-            envelope, text_acc, out_tokens, last_tick = None, [], 0, t0
-            self.last_tool_calls = {}
-            for line in proc.stdout:
-                if time.monotonic() - t0 > cap:
-                    proc.kill()
-                    log.warning("headless claude call timed out mid-stream")
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    ev = json.loads(line)
-                except Exception:
-                    continue
-                if ev.get("type") == "result":
-                    envelope = ev
-                    continue
-                if (tname := _tool_use_name(ev)):
-                    self.last_tool_calls[tname] = self.last_tool_calls.get(tname, 0) + 1
-                inner = ev.get("event") or {}
-                usage = inner.get("usage") or ev.get("usage") or {}
-                if usage.get("output_tokens"):
-                    out_tokens = usage["output_tokens"]
-                delta = inner.get("delta") or {}
-                if isinstance(delta.get("text"), str):
-                    text_acc.append(delta["text"])
-                chunk = delta.get("text") or delta.get("thinking")  # thinking streams tokens too
-                if isinstance(chunk, str):
-                    est_chars = getattr(self, "_est_chars", 0) + len(chunk)
-                    self._est_chars = est_chars
-                now = time.monotonic()
-                if self.on_tick is not None and now - last_tick >= self._tick_every:
-                    last_tick = now
-                    tok = out_tokens or (getattr(self, "_est_chars", 0) // 4)
-                    try:
-                        self.on_tick(f"{self.stage_hint or 'generating'}: {tok} tokens · {now - t0:.0f}s")
-                    except Exception:
-                        pass
+            envelope, text_acc, out_tokens = self._read_stream(proc, t0, cap)
             proc.wait(timeout=30)
 
             out = envelope or {}

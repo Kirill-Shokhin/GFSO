@@ -23,9 +23,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
+from gfso.config import home as _config_home
+from gfso.config import LOOPBACK, shared_url
 
 def _address() -> tuple[str, int]:
     """THE address of the one server. `GFSO_SHARED_URL` is the single knob — `gfso connect`, `gfso
@@ -33,8 +37,8 @@ def _address() -> tuple[str, int]:
     command whose whole job is reconciliation could reconcile a different server than the one the
     session was talking to."""
     from urllib.parse import urlparse
-    u = urlparse(os.environ.get("GFSO_SHARED_URL", "http://127.0.0.1:8000/mcp"))
-    host, port = u.hostname or "127.0.0.1", u.port or 8000
+    u = urlparse(shared_url())
+    host, port = u.hostname or LOOPBACK, u.port or 8000
     return f"http://{host}:{port}", port
 
 
@@ -58,10 +62,7 @@ def home() -> Path:
     nothing said so. Every other default path in the package now resolves against this function
     (`gfso.runtime.data_dir`), including the doors that used to read the caller's cwd.
     """
-    h = os.environ.get("GFSO_HOME")
-    if h:
-        return Path(h).expanduser().resolve()
-    return ROOT if (ROOT / "pyproject.toml").exists() else Path.home() / ".gfso"
+    return _config_home()
 
 
 def declared_path() -> Path:
@@ -102,7 +103,10 @@ def declared() -> dict:
     # The registry path is derived from `home()` rather than frozen at import: it must be ABSOLUTE
     # (the server is spawned detached and every reader compares the same string) and it must follow
     # the installation, not the package's own location.
-    env = dict(DEFAULTS, GFSO_AGENTS_PATH=str(home() / "data" / "agents.json"))
+    # …through the owner, not composed by hand: this spelling ignored GFSO_DATA_DIR, so a moved
+    # state directory took the graphs with it and left the roster where it had been (D-1).
+    from gfso.config import agents_path as _roster
+    env = dict(DEFAULTS, GFSO_AGENTS_PATH=str(_roster()))
     path = declared_path()
     if path.exists():
         try:
@@ -113,7 +117,7 @@ def declared() -> dict:
     return env
 
 
-def port_open(host: str = "127.0.0.1", port: Optional[int] = None, timeout: float = 0.5) -> bool:
+def port_open(host: str = LOOPBACK, port: Optional[int] = None, timeout: float = 0.5) -> bool:
     """Is anything listening? THE one socket probe — a fact, so it lives with the other facts.
 
     It was implemented twice, and the copies answered for different callers: a test could neutralize
@@ -126,6 +130,50 @@ def port_open(host: str = "127.0.0.1", port: Optional[int] = None, timeout: floa
             return True
     except OSError:
         return False
+
+
+def wait_closed(timeout: float = 20.0, host: str = LOOPBACK) -> bool:
+    """Block until nothing is listening; True if the port closed within `timeout`.
+
+    A stop is asynchronous — the server answers the request and then exits — so every caller that
+    must know it is GONE waits for the socket. The reconciler waited; `gfso down` did not, and
+    `down` followed by `up` raced the exit: the next command read the runtime of a dying process,
+    saw a session that was leaving with it, and declined to restart. Written twice, the two waits
+    would drift the way the socket probe already did once (that is why `port_open` says "THE one").
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    while port_open(host):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+    return True
+
+
+def projects(timeout: float = 10.0) -> Optional[dict]:
+    """{active, projects, last_active} from the live server; None when nothing answers.
+
+    Here rather than in the CLI because this module already owns the one server's address and the
+    HTTP to it — a door that hand-rolls its own request is a second place that has to know both."""
+    try:
+        with urllib.request.urlopen(f"{BASE}/api/projects", timeout=timeout) as r:
+            return json.loads(r.read() or b"null")
+    except Exception:
+        return None
+
+
+def delete_project(name: str, timeout: float = 30.0) -> dict:
+    """Delete one project irreversibly through the live server; the server refuses the ones it must
+    (`default`, and whatever is active). Here for the same reason `projects()` is: this module owns
+    the one server's address and the HTTP to it."""
+    req = urllib.request.Request(f"{BASE}/api/projects/{urllib.parse.quote(name)}", method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as ex:
+        return {"error": (ex.read() or b"").decode("utf-8", "replace")[:400] or str(ex)}
+    except Exception as ex:
+        return {"error": f"no server answered: {ex}"}
 
 
 def runtime(timeout: float = 3.0) -> Optional[dict]:

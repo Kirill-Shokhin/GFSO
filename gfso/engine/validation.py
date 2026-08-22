@@ -5,12 +5,16 @@ import os
 from typing import Optional
 
 
-from gfso.core.types import Signal, SignalData, State, DoneReason
+from gfso.core.types import (Signal, SignalData, State, CriticVerdict, DoneReason, TaskId,
+                             Verdict, passed)
+from gfso.core.protocol.fsm import available_signals, not_admissible_here
 from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import validate_fail_has_criteria
 from gfso.core.handlers.structural import run_structural
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
+from gfso.core.graph.review import finding_keys
+from gfso.core.graph.model import verdict_is_current_pass
 
 
 class ValidationError(Exception):
@@ -68,12 +72,15 @@ def _l2_undischarged(graph: Graph, node) -> Optional[list[str]]:
         return []
     if rec.get("semantic_covered") is not False:
         return None                                 # no/incomplete verdict — fail-closed
-    disputed = set((rec.get("disputes") or {}).keys())
-    gaps = [str(v.get("criterion")) for v in rec.get("criteria_verdicts") or ()
-            if v.get("verdict") != "sufficient" and str(v.get("criterion")) not in disputed]
-    gaps += [k for c in rec.get("conflicts") or ()
-             if (k := "conflict: " + ", ".join(c.get("between") or ())) not in disputed]
-    return gaps
+    # THE NAME OF A FINDING HAS ONE AUTHOR (`core.graph.review.finding_keys`). It had three — this
+    # gate, the verb that accepts a dispute, and the delta baseline — and they had to agree byte for
+    # byte or a dispute would be refused as "not an open finding" while this gate held the node shut
+    # on exactly that finding. Among the kinds named there: the obligations of the node's OWN goal
+    # that none of its OWN criteria decides (FM-1.f) — the checker asks whether the CHILDREN carry
+    # the parent, that one whether the parent carries the GOAL, and until 2026-08-21 no gate asked
+    # it (measured: a regex engine signed off on two root criteria, neither requiring it to match
+    # anything, with 21 hidden tests red).
+    return finding_keys(rec)
 
 
 def _fail_extension_shrank(old_desc: str, new_desc: str) -> bool:
@@ -195,57 +202,124 @@ def _l0_holes(graph: Graph, parent) -> list:
             if not c.passed and not c.skipped and c.check_name.startswith(_EXEC_GATING_CHECKS)]
 
 
-def validate_signal(signal_data: SignalData, graph: Graph) -> None:
-    """Check signal validity: role authorization + protocol invariants.
+def _pass_rules(signal_data: SignalData, graph: Graph) -> None:
+    """PASS: Theorem 1 over the children, and the seam's independent verdict.
 
-    Raises ValidationError if signal is not authorized or violates invariants.
+    One rule family per function: `validate_signal` had grown to seventy statements over
+    four unrelated signals, and a reader looking for what refuses a PASS had to walk the
+    DELIVER and RESOLVE_BLOCK rules to get there. Raises ValidationError, as before.
     """
-    # Invariant 3: FAIL must specify failed criteria
-    if not validate_fail_has_criteria(signal_data):
-        raise ValidationError(
-            f"FAIL signal for {signal_data.task_id} must specify failed_criteria"
-        )
-
-    # Contact-refuted coverage gate (§15.2 q_D made STRUCTURAL). A parent FAIL whose criteria are
-    # COVERED by PASSed children is the q_D event: contact refuted the mapping's claimed entailment
-    # (child passed its own criteria ∧ the parent criterion stayed red) — the DECOMPOSITION is
-    # indicted, not the aggregate artifact. Re-DELIVERing the same aggregate over an UNTOUCHED
-    # subtree would launder the refuted decomposition through a fresh validation, mutating the
-    # artifact while the responsible children sit frozen in DONE (observed live: BCB/93 run 9) —
-    # so the engine REFUSES it, and `_refuted_coverage_refusal` says with what repair (an FM-1
-    # defect is repaired by revising THIS node under Inv-1, not by reworking a child that met its
-    # own criteria) and which same-shaped move is a false close instead.
-    # The check follows the node across the repair route, not just the rework state: a revision
-    # lands the node in OFFERED→EXECUTING, so gating REWORKING alone would let the criterion-lowering
-    # route through unexamined. Attribution source = the recorded verdict of the refuting FAIL
-    # (generation-stamped); a FAIL signaled without a recorded verdict is a named boundary:
-    # unattributable, not gated. `state_entered_at` is not persisted — after a restart both sides
-    # re-arm to load time, which reads as "untouched" (conservative: the gate may ask for one
-    # explicit child touch after a restart, never the reverse).
-    if signal_data.signal == Signal.DELIVER:
+    if signal_data.signal == Signal.PASS and graph.get_state(signal_data.task_id) == State.VALIDATING:
+        # …ONLY WHERE A PASS IS A MOVE AT ALL. These rules are about a DELIVERY — is it judged, do
+        # the children carry it — and they were checked before the FSM had said whether the signal
+        # moves anything here, so a PASS on a node that had delivered NOTHING was answered "no
+        # independent verdict is recorded … `record_verdict(…)` and then signal PASS". Following
+        # that advice records a verdict about work that does not exist, or fails again for the real
+        # reason nobody named: nothing has been delivered (measured on the human door 2026-08-22).
+        # Outside VALIDATING the FSM's own answer is the true one, and it is what the caller gets.
+        unpassed = [c.id for c in graph.get_active_children(signal_data.task_id)
+                    if not passed(c)]
+        if unpassed:
+            raise ValidationError(
+                f"cannot PASS {signal_data.task_id}: not all children have PASSed (V=AND of children): {unpassed}"
+            )
+        # Verifier ≠ executor (§14.5: self-checking violates IC). When the signer IS the node's
+        # executor (collapsed ids — the self-execution regime), the FSM cannot tell an
+        # evidence-based issuer PASS from a self-stamp, so the evidence must come from OUTSIDE
+        # the id: a recorded independent verdict for the CURRENT delivery (a rework stales it).
+        # Distinct ids (source ≠ Del) keep the canon default — the separation already exists.
+        # D6 (§14.5): the gate is a GATE-ON-THE-SEAM — it fires on PUBLIC nodes (a root, or
+        # Del(child) ≠ Del(parent)), not on every node of the graph. An INTERNAL node (same Del
+        # as its parent) is the agent's private decomposition: it legitimately SELF-verifies
+        # (DELIVER carries self_validation) and its guarantee is carried by the validation of the
+        # public result it rolls up into (Thm 1 non-redundancy) — so a same-Del self-PASS passes here.
+        # The ROOT is always a seam: "done" (root DONE/PASS) never completes on a self-stamp.
         task = graph.get_task(signal_data.task_id)
-        # The trigger is "this node has a decomposition", not "it still has mappings": deleting the
-        # refuted criterion also deletes the mapping that pointed at it, so a mapping-keyed trigger
-        # would let exactly the false close through. A leaf is out of scope by the same reading —
-        # its contract belongs to the issuer above, whose CHECK-1 surfaces any hole a rewrite leaves.
-        if (task is not None and task.state in (State.REWORKING, State.EXECUTING)
-                and graph.get_active_children(task.id)):
+        # …and on an INTERNAL node the canon still asks for something. §14.5 D6 says such a node
+        # self-verifies — "DELIVER carries `self_validation`" — and §11.2 says ⊥ is not a pass. With
+        # neither a self-check nor a recorded verdict, its PASS stands on nothing at all: measured on
+        # the human door 2026-08-21, a leaf went DELIVER → PASS by its own executor eight seconds
+        # apart and reached DONE while `get_verdict` answered "it has not been validated" about the
+        # same node. What is required here is the DECIDED self-report the canon names, not
+        # independence (that is owed at the seam, and the branch below is where it is enforced):
+        # deliver with `self_validation`, or record your own verdict — both leave a record.
+        if (task is not None and signal_data.source and signal_data.source == task.assignee
+                and not graph.is_public(task)
+                and not verdict_is_current_pass(graph.exec_verdict_record(signal_data.task_id), task)):
+            raise ValidationError(
+                f"PASS on {signal_data.task_id} by its own executor ({signal_data.source}) carries no "
+                f"self-check for this delivery. An INTERNAL node (same Del as its parent) self-verifies "
+                f"rather than being judged independently (§14.5 D6) — but a verdict with no check behind "
+                f"it is ⊥, not a pass (§11.2). Say what you checked: `record_verdict({signal_data.task_id}, "
+                f"\"PASS\", observed={{<criterion>: <what you ran and what it printed>}})` — that IS the "
+                f"record this node is judged on — and then signal PASS. (From the next delivery on, "
+                f"carrying `self_validation` in the DELIVER packet records it for you.)")
+        # A SEAM NEEDS A VERDICT, NOT A SIGNER WHO IS NOT THE EXECUTOR. This condition used to read
+        # `source == task.assignee` as well, so the requirement fired only against a SELF-stamp —
+        # and §14.5 asks for something else: at a seam the result crosses into an independent scope,
+        # so an independent verdict for THIS delivery must be on the record. Measured on the agent
+        # door 2026-08-22, and then reproduced directly: a delegated child (Del=an executor) was
+        # PASSed by its ISSUER with NO verdict recorded at all — accepted, DONE — and in the wave's
+        # own run with a STALE FAIL standing on the node while its validator was still running. The
+        # identity check passed vacuously because the signer was not the executor, and nothing else
+        # was consulted. That is a false PASS reachable in one call from the ordinary door, in the
+        # one product whose claim is that nothing completes by impression.
+        #
+        # The record can come from either place, which is what keeps a person free to judge by hand:
+        # `validate_result` (the instrument) or `record_verdict` (a person saying what they observed
+        # — refused without evidence). What is refused is a PASS standing on nothing.
+        # …and an AUTHORIZED INSTRUMENT signing directly IS the independent verdict (§14.5: the
+        # issuer's role-V instrument — a registered `llm-validator` or `unittest-checker`, whose
+        # PASS/FAIL the FSM accepts on any node). Its signature is the judgement, not an impression
+        # about one, so it opens the gate without a second record. The false PASS this branch exists
+        # for was signed by the standing agent id, which is not that.
+        _instrument = str(signal_data.source or "") in graph.authorized_validators
+        if task is not None and graph.is_public(task) and not _instrument:
             rec = graph.exec_verdict_record(signal_data.task_id)
-            if (rec and rec.get("verdict") == "FAIL"
-                    and rec.get("reopens", 0) == getattr(task, "reopens", 0)
-                    and rec.get("iteration") == getattr(task, "iteration", 0) - 1):
-                if (refusal := _refuted_coverage_refusal(graph, task, rec)) is not None:
-                    raise ValidationError(refusal)
+            it = getattr(task, "iteration", 0)
+            ro = getattr(task, "reopens", 0)
+            # The question "does a CURRENT pass stand here" now has one owner
+            # (`graph.verdict_is_current_pass`); what stays here is only the WHY, which this
+            # refusal has to say in the caller's own terms.
+            current = verdict_is_current_pass(rec, task)
+            # Generation stamp = (iteration, reopens): a rework stales the verdict, and so does a
+            # REOPEN (§14.3 anti-fake — the pre-reopen PASS must not re-open this gate from the past).
+            stale = bool(rec) and (rec.get("iteration") != it or rec.get("reopens", 0) != ro
+                                   or rec.get("revisions", 0) != getattr(task, "revisions", 0))
+            # …and so does a REVISION, which moves neither counter: §14.3 admits a re-ASSIGN from
+            # VALIDATING and §6.3 voids the pending delivery with it, but a validator still running on
+            # that delivery can land its verdict AFTER the revision — and it would carry the same
+            # (iteration, reopens). The CONTRACT generation is the discriminator, so the record is
+            # stamped with it too. Records written before the stamp existed read as generation 0; a
+            # node that was never revised is also 0, so they agree exactly where they should.
+            if not current:
+                why = ("no independent verdict is recorded" if not rec
+                       else "the recorded verdict is STALE — this delivery was reworked, reopened or "
+                            "its contract was revised under it, re-validate"
+                       if stale
+                       else f"the recorded verdict is {rec.get('verdict')}, not PASS")
+                _self = bool(signal_data.source) and signal_data.source == task.assignee
+                _who = (f"by its own executor ({signal_data.source})" if _self
+                        else f"by {signal_data.source}" if signal_data.source else "")
+                raise ValidationError(
+                    f"PASS on {signal_data.task_id} {_who} needs an independent verdict for THIS "
+                    f"delivery ({why}) — this node is a SEAM (a root, or its Del differs from its "
+                    f"parent's), where the result crosses into another scope and is judged there "
+                    f"(§14.5). Run `validate_result({signal_data.task_id}, workdir=…)`, or put your "
+                    f"own observation on the record with `record_verdict({signal_data.task_id}, "
+                    f"\"PASS\", observed={{<criterion>: <what you ran and what it printed>}})`, and "
+                    f"then signal PASS."
+                    + (" Signing it yourself is not that record: verifier ≠ executor (§14.5)."
+                       if _self else ""))
 
-    # §13.4: "a decomposition that has not passed Level 0 is NOT admitted to execution." Enforced, not
-    # advised: the FIRST execution step of a child (ACCEPT: OFFERED→EXECUTING) is REFUSED while the
-    # PARENT's decomposition has an unresolved L0 hole (uncovered criterion, orphan child, cycle,
-    # empty/malformed ACCEPTED_RISKS, …). This moves "verify the plan before you execute it" from the prompt
-    # into the system: the agent physically cannot start working a flawed plan, so the plan is completed
-    # and checked ONCE, up front — no discover-after-delivery, no edit_accepted_risks-during-rework churn, and a
-    # verified plan means fewer contact-refutations (higher q_D). A root (no parent) is atomic to the
-    # system — nothing to verify — and is unaffected; so is an already-clean parent.
-    if signal_data.signal == Signal.ACCEPT:
+def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
+    """ACCEPT / REJECT_CHALLENGE: the plan gate that admits work (§13.4).
+
+    One rule family per function: `validate_signal` had grown to seventy statements over
+    four unrelated signals, and a reader looking for what refuses a PASS had to walk the
+    DELIVER and RESOLVE_BLOCK rules to get there. Raises ValidationError, as before.
+    """
+    if signal_data.signal in (Signal.ACCEPT, Signal.REJECT_CHALLENGE):
         # How many subtasks a goal splits into is the executor's domain call, NOT set from outside
         # (§10: D is the decomposer's to choose). So the engine does NOT force a leaf to justify being
         # atomic — a taken leaf executes, and the ROOT seam validates the whole result against the
@@ -302,6 +376,125 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
                         f"(dispute_finding({parent.id}, <criterion>, <why>)). Open: " + "; ".join(gaps)
                         + f" — read the reasons with get_review({parent.id})")
 
+def _resolve_block_rules(signal_data: SignalData, graph: Graph) -> None:
+    """RESOLVE_BLOCK: a block clears when its blockers passed (§10 dep order).
+
+    One rule family per function: `validate_signal` had grown to seventy statements over
+    four unrelated signals, and a reader looking for what refuses a PASS had to walk the
+    DELIVER and RESOLVE_BLOCK rules to get there. Raises ValidationError, as before.
+    """
+    if signal_data.signal == Signal.RESOLVE_BLOCK:
+        # A BLOCK ON A NODE THAT HAS NOT DELIVERED IS NOT CLEARED BY SAYING SO. RESOLVE_BLOCK returns
+        # the node to EXECUTING, and the dispatcher then correctly refuses to spawn against an input
+        # that does not exist — so the node sat in EXECUTING with nothing running for eleven minutes,
+        # and the frontier filed it under `waiting` while its state said otherwise (measured on the
+        # human door 2026-08-22). "EXECUTING" has to mean someone can execute.
+        # …unless this resolve RETRACTS the dependency. §14.2 lets RESOLVE_BLOCK adjudicate what the
+        # BLOCK claimed: `external=True` says the issuer worked around the blocker, and a corrected
+        # `blocker_task_ids` re-attributes it. Both are judgements about whether the edge holds at
+        # all; what is refused here is CONFIRMING an edge and resuming anyway.
+        _corrected = signal_data.blocker_task_ids or (
+            (signal_data.blocker_task_id,) if signal_data.blocker_task_id else ())
+        _claimed = ({str(b) for b in _corrected} if _corrected else
+                    {str(e.from_id) for e in graph.dep_edges()
+                     if str(e.to_id) == str(signal_data.task_id)})
+        # A blocker that is not a node at all (a phantom the executor named) is not an unpassed
+        # producer — that case is what the retracting form is for, and reading it as "unpassed"
+        # made the auto-resolve refuse its own signal in a loop.
+        _open = sorted({p for p in _claimed
+                        if (_t := graph.get_task(TaskId(p))) is not None and not passed(_t)})
+        if _open and not signal_data.external:
+            # …AND THE PROMISE IS ONLY MADE WHERE IT IS KEPT. "The block is then resolved for you"
+            # is true when the node's ISSUER is automated — the dispatcher clears it. On a node a
+            # PERSON issues, §14.5 keeps the signal theirs and nothing clears it: a driver whose
+            # blockers all passed sat waiting for an auto-resolve that was never coming, and sent
+            # RESOLVE_BLOCK by hand in the end (measured on the human door 2026-08-22).
+            _auto = str(graph.get_task(signal_data.task_id).assignee or "") in graph.authorized_executors
+            raise ValidationError(
+                f"cannot RESOLVE_BLOCK {signal_data.task_id}: it waits on {', '.join(_open)}, and "
+                f"none of those has passed — the block has not cleared, and returning the node to "
+                f"EXECUTING would leave it there with nothing able to run (§10 dep order). Finish "
+                + (f"them; the block is then resolved for you." if _auto else
+                   f"them, then send this RESOLVE_BLOCK again — on a node you issue, the signal "
+                   f"stays yours (§14.5) and nothing clears it for you."))
+
+def _deliver_rules(signal_data: SignalData, graph: Graph) -> None:
+    """DELIVER: what a delivery must carry to be judged at all.
+
+    One rule family per function: `validate_signal` had grown to seventy statements over
+    four unrelated signals, and a reader looking for what refuses a PASS had to walk the
+    DELIVER and RESOLVE_BLOCK rules to get there. Raises ValidationError, as before.
+    """
+    if signal_data.signal == Signal.DELIVER:
+        task = graph.get_task(signal_data.task_id)
+        # The trigger is "this node has a decomposition", not "it still has mappings": deleting the
+        # refuted criterion also deletes the mapping that pointed at it, so a mapping-keyed trigger
+        # would let exactly the false close through. A leaf is out of scope by the same reading —
+        # its contract belongs to the issuer above, whose CHECK-1 surfaces any hole a rewrite leaves.
+        if (task is not None and task.state in (State.REWORKING, State.EXECUTING)
+                and graph.get_active_children(task.id)):
+            rec = graph.exec_verdict_record(signal_data.task_id)
+            if (rec and rec.get("verdict") == Verdict.FAIL
+                    and rec.get("reopens", 0) == getattr(task, "reopens", 0)
+                    and rec.get("iteration") == getattr(task, "iteration", 0) - 1):
+                if (refusal := _refuted_coverage_refusal(graph, task, rec)) is not None:
+                    raise ValidationError(refusal)
+
+
+def validate_signal(signal_data: SignalData, graph: Graph) -> None:
+    """Check signal validity: role authorization + protocol invariants.
+
+    Raises ValidationError if signal is not authorized or violates invariants.
+    """
+    # THE STATE ANSWERS FIRST, because it is the reason the caller can act on. The role check ran
+    # before it, so a signal that the node's state does not admit AT ALL came back "X is not issuer
+    # for Y" — the caller fixed their identity, sent it again, and only then learnt the state was
+    # wrong all along (measured on the human door 2026-08-22: a second call to find the real
+    # reason). Where the signal moves nothing whoever sends it, that is the honest answer.
+    _st = graph.get_state(signal_data.task_id)
+    if _st is not None and signal_data.signal not in available_signals(_st):
+        raise ValidationError(not_admissible_here(signal_data.signal, _st))
+
+    # Invariant 3: FAIL must specify failed criteria
+    if not validate_fail_has_criteria(signal_data):
+        raise ValidationError(
+            f"FAIL signal for {signal_data.task_id} must specify failed_criteria"
+        )
+
+    # Contact-refuted coverage gate (§15.2 q_D made STRUCTURAL). A parent FAIL whose criteria are
+    # COVERED by PASSed children is the q_D event: contact refuted the mapping's claimed entailment
+    # (child passed its own criteria ∧ the parent criterion stayed red) — the DECOMPOSITION is
+    # indicted, not the aggregate artifact. Re-DELIVERing the same aggregate over an UNTOUCHED
+    # subtree would launder the refuted decomposition through a fresh validation, mutating the
+    # artifact while the responsible children sit frozen in DONE (observed live: BCB/93 run 9) —
+    # so the engine REFUSES it, and `_refuted_coverage_refusal` says with what repair (an FM-1
+    # defect is repaired by revising THIS node under Inv-1, not by reworking a child that met its
+    # own criteria) and which same-shaped move is a false close instead.
+    # The check follows the node across the repair route, not just the rework state: a revision
+    # lands the node in OFFERED→EXECUTING, so gating REWORKING alone would let the criterion-lowering
+    # route through unexamined. Attribution source = the recorded verdict of the refuting FAIL
+    # (generation-stamped); a FAIL signaled without a recorded verdict is a named boundary:
+    # unattributable, not gated. `state_entered_at` is not persisted — after a restart both sides
+    # re-arm to load time, which reads as "untouched" (conservative: the gate may ask for one
+    # explicit child touch after a restart, never the reverse).
+    _deliver_rules(signal_data, graph)
+
+    # §13.4: "a decomposition that has not passed Level 0 is NOT admitted to execution." Enforced, not
+    # advised: the FIRST execution step of a child (ACCEPT: OFFERED→EXECUTING) is REFUSED while the
+    # PARENT's decomposition has an unresolved L0 hole (uncovered criterion, orphan child, cycle,
+    # empty/malformed ACCEPTED_RISKS, …). This moves "verify the plan before you execute it" from the prompt
+    # into the system: the agent physically cannot start working a flawed plan, so the plan is completed
+    # and checked ONCE, up front — no discover-after-delivery, no edit_accepted_risks-during-rework churn, and a
+    # verified plan means fewer contact-refutations (higher q_D). A root (no parent) is atomic to the
+    # system — nothing to verify — and is unaffected; so is an already-clean parent.
+    # EVERY DOOR INTO EXECUTION, not just the front one. The gate asked its question on ACCEPT
+    # alone — and CHALLENGE → REJECT_CHALLENGE lands the node in EXECUTING too (§14.3), so a child
+    # whose parent's plan had no current Level-2 verdict got there by disputing its contract and
+    # being told no. Found by walking the protocol as a person would, 2026-08-21: the gate refused
+    # the ACCEPT and the node was already executing.
+    _resolve_block_rules(signal_data, graph)
+    _accept_rules(signal_data, graph)
+
     # A re-ASSIGN from VALIDATING is CANON (§14.3 lists ASSIGN→OFFERED in VALIDATING's admissible set,
     # and §6.3 leans on it when it grades pre-registration: "before settlement ASSIGN is admissible
     # from VALIDATING, so an issuer may revise criteria with the delivery in hand — at the price of a
@@ -316,50 +509,7 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
     # V(parent) = AND(V(children)). The per-node FSM stays graph-blind (proven closed over single nodes); this
     # cross-node composition invariant is enforced here (the validation layer sees the graph), not just advised
     # by next_step's ordering. A leaf (no children) is unaffected.
-    if signal_data.signal == Signal.PASS:
-        unpassed = [c.id for c in graph.get_active_children(signal_data.task_id)
-                    if not (c.state == State.DONE and c.done_reason == DoneReason.PASS)]
-        if unpassed:
-            raise ValidationError(
-                f"cannot PASS {signal_data.task_id}: not all children have PASSed (V=AND of children): {unpassed}"
-            )
-        # Verifier ≠ executor (§14.5: self-checking violates IC). When the signer IS the node's
-        # executor (collapsed ids — the self-execution regime), the FSM cannot tell an
-        # evidence-based issuer PASS from a self-stamp, so the evidence must come from OUTSIDE
-        # the id: a recorded independent verdict for the CURRENT delivery (a rework stales it).
-        # Distinct ids (source ≠ Del) keep the canon default — the separation already exists.
-        # D6 (§14.5): the gate is a GATE-ON-THE-SEAM — it fires on PUBLIC nodes (a root, or
-        # Del(child) ≠ Del(parent)), not on every node of the graph. An INTERNAL node (same Del
-        # as its parent) is the agent's private decomposition: it legitimately SELF-verifies
-        # (DELIVER carries self_validation) and its guarantee is carried by the validation of the
-        # public result it rolls up into (Thm 1 non-redundancy) — so a same-Del self-PASS passes here.
-        # The ROOT is always a seam: "done" (root DONE/PASS) never completes on a self-stamp.
-        task = graph.get_task(signal_data.task_id)
-        if (task is not None and signal_data.source and signal_data.source == task.assignee
-                and graph.is_public(task)):
-            rec = graph.exec_verdict_record(signal_data.task_id)
-            it = getattr(task, "iteration", 0)
-            ro = getattr(task, "reopens", 0)
-            # Generation stamp = (iteration, reopens): a rework stales the verdict, and so does a
-            # REOPEN (§14.3 anti-fake — the pre-reopen PASS must not re-open this gate from the past).
-            stale = bool(rec) and (rec.get("iteration") != it or rec.get("reopens", 0) != ro
-                                   or rec.get("revisions", 0) != getattr(task, "revisions", 0))
-            # …and so does a REVISION, which moves neither counter: §14.3 admits a re-ASSIGN from
-            # VALIDATING and §6.3 voids the pending delivery with it, but a validator still running on
-            # that delivery can land its verdict AFTER the revision — and it would carry the same
-            # (iteration, reopens). The CONTRACT generation is the discriminator, so the record is
-            # stamped with it too. Records written before the stamp existed read as generation 0; a
-            # node that was never revised is also 0, so they agree exactly where they should.
-            if not rec or stale or rec.get("verdict") != "PASS":
-                why = ("no independent verdict is recorded" if not rec
-                       else "the recorded verdict is STALE — this delivery was reworked, reopened or "
-                            "its contract was revised under it, re-validate"
-                       if stale
-                       else f"the recorded verdict is {rec.get('verdict')}, not PASS")
-                raise ValidationError(
-                    f"PASS on {signal_data.task_id} by its own executor ({signal_data.source}) needs "
-                    f"an independent validator verdict for the current delivery ({why}) — run "
-                    f"validate_result first, or delegate validation; verifier ≠ executor (§14.5)")
+    _pass_rules(signal_data, graph)
 
     role = required_role(signal_data.signal)
 
@@ -390,7 +540,7 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
 
     if role == Role.ISSUER:
         # Issuer = the parent's assignee, or — for a ROOT (no parent) — the task's own assignee
-        # (matches Engine._issuer_of). A root has no parent, so it must fall back to task.assignee;
+        # (matches Engine.issuer_of). A root has no parent, so it must fall back to task.assignee;
         # without it the check was skipped entirely and ANY source could sign an issuer signal on a root.
         # Exception (canon §14.5 — autonomy is per-task per-ROLE): a registered llm-validator is the
         # issuer's AUTHORIZED INSTRUMENT for role V — its PASS/FAIL verdicts are accepted on any node
@@ -399,7 +549,7 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
         issuer = parent.assignee if (parent and parent.assignee) else task.assignee
         if issuer and signal_data.source != issuer:
             if (signal_data.signal in (Signal.PASS, Signal.FAIL)
-                    and signal_data.source in getattr(graph, "_authorized_validators", ())):
+                    and str(signal_data.source) in graph.authorized_validators):
                 return
             raise ValidationError(
                 f"{signal_data.source} is not issuer for {signal_data.task_id} (issuer={issuer})"

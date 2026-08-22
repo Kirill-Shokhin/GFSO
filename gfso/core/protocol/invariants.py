@@ -8,9 +8,11 @@ A `validate_criteria_immutable` helper used to live here, defined but never call
 that read as protection; removed (visibility ≠ enforcement)."""
 from __future__ import annotations
 
+import re
+
 from typing import Mapping, Sequence
 
-from gfso.core.types import SignalData, Signal
+from gfso.core.types import SignalData, Signal, Verdict
 
 
 def validate_fail_has_criteria(signal_data: SignalData) -> bool:
@@ -63,12 +65,12 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
                        f"the entire obligation ({', '.join(names) or 'none'})")
 
     red = {n for n, v in spoken.items() if n in known and v != "pass"}
-    if verdict == "PASS" and red:
+    if verdict == Verdict.PASS and red:
         defects.append(f"verdict PASS contradicts the report's own evidence: {', '.join(sorted(red))} "
                        f"did not pass. A criterion is the obligation (§10) — ACCEPTED_RISKS (§13.1) holds "
                        f"risks of the decomposition and never retires one; to change the contract, "
                        f"CHALLENGE it (spec defect) — a verdict cannot excuse it")
-    if verdict == "FAIL" and not red:
+    if verdict == Verdict.FAIL and not red:
         defects.append("verdict FAIL but every criterion passed in the report's own evidence")
     if red != set(failed_criteria) & known or (set(failed_criteria) - known):
         defects.append(f"failed_criteria {sorted(set(failed_criteria))} ≠ the report's own non-pass "
@@ -88,15 +90,29 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
             raw = e.get("probe")
             probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
                       else [raw] if isinstance(raw, Mapping) else [])
+            # A REFUTATION'S EXPECTED OUTPUT CAN BE NOTHING. `expect` is what makes a probe
+            # re-runnable, and for a criterion the report FAILED the observation is often an
+            # absence — "`grep -r flush tests/` prints nothing" — which has no expected line to
+            # quote. Measured on the human door 2026-08-21: a garbage delivery was caught exactly
+            # right and its FAIL was refused at the report level over empty `expect` fields, so bad
+            # work went back looking accepted. A command with a stated verdict of `fail` and
+            # evidence behind it is a probe; it is only a PASS that needs the expectation spelled.
+            _refuting = e.get("verdict") == "fail" and str(e.get("evidence", "")).strip()
             good = [p for p in probes
-                    if str(p.get("command", "")).strip() and str(p.get("expect", "")).strip()]
+                    if str(p.get("command", "")).strip()
+                    and (str(p.get("expect", "")).strip() or _refuting)]
             behaviours = [b for b in (e.get("behaviours") or []) if str(b).strip()]
             if not good:
                 defects.append(
                     f"criterion '{name}' carries no reproducible probe — a verdict states what it "
                     f"OBSERVED, so every criterion needs `probe: [{{command, expect}}]`: the command "
                     f"to re-run against the delivered artifact, and what its output must show. "
-                    f"Judgment with no re-runnable observation is not evidence")
+                    f"Judgment with no re-runnable observation is not evidence. When the behaviour "
+                    f"IS an absence — nothing printed, no file written, no second line — make the "
+                    f"absence PRINT: pipe through `wc -l` and expect `0`, `echo \"EXIT=$?\"`, or "
+                    f"`test ! -e x && echo ABSENT`. An empty `expect` is not an observation of "
+                    f"silence, it is the absence of an observation, and nothing can tell the two "
+                    f"apart afterwards")
             elif not behaviours:
                 defects.append(
                     f"criterion '{name}' names no behaviours — list what it DEMANDS, one entry per "
@@ -120,9 +136,60 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
         raw = e.get("probe")
         probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
                   else [raw] if isinstance(raw, Mapping) else [])
+        _refuting = e.get("verdict") == "fail" and str(e.get("evidence", "")).strip()
         good = [p for p in probes
-                if str(p.get("command", "")).strip() and str(p.get("expect", "")).strip()]
+                if str(p.get("command", "")).strip()
+                and (str(p.get("expect", "")).strip() or _refuting)]   # an absence has no `expect`
         behaviours = [str(b).strip() for b in (e.get("behaviours") or []) if str(b).strip()]
-        if behaviours and len(good) < len(behaviours):
+        if not behaviours:
+            continue
+        # WHICH behaviours a probe observes, when the report says so. Counting was a proxy for
+        # coverage and it is wrong in both directions: one command can honestly observe two
+        # behaviours (a single test asserting both), and two commands can observe the same one
+        # twice. Measured live on this repository's own graph: five criteria whose evidence was
+        # complete — a named test per behaviour, run and passing — were demoted because the
+        # validator had enumerated more behaviours than commands. A demotion that fires on complete
+        # evidence teaches its reader to route around it, which is how a guard becomes decoration.
+        claimed = {str(p.get("behaviour", "")).strip().lower()
+                   for p in good if str(p.get("behaviour", "")).strip()}
+        if claimed:
+            # Matched by containment either way, because both strings are the validator's own prose
+            # and it paraphrases its own list — "it changes no state" against "lapse handling mutates
+            # no node state". Requiring them identical made the LINK depend on wording, so complete
+            # evidence was demoted over a rewritten label. What must exist is the link; recognising
+            # it is the engine's business, not the writer's.
+            # …and containment ALONE is still too literal, because one command legitimately observes
+            # several behaviours and gets ONE fused label for all of them. Measured 2026-08-20 on a
+            # live run: behaviours ["pytest exits 0", "at least 1 test collected and run"] against
+            # the label "pytest exits 0 with >=1 test collected and run" — the same command, really
+            # observing both. Containment caught the first and missed the second ("at least 1" vs
+            # ">=1"), so a complete report was refused, the validation was re-run, and a second
+            # refusal parked the node. Four of ten validator runs in that hour were spent on this,
+            # and the barrier was the writer's phrasing, never the coverage.
+            # So the fallback is overlap of CONTENT words: a behaviour counts as observed when most
+            # of what it says appears in a label. This must not become "no matching at all" — an
+            # unrelated label still leaves the behaviour unobserved, which is the case the rule
+            # exists for — hence a high bar and a floor under how much must overlap.
+            _NOISE = {"the", "a", "an", "is", "are", "it", "its", "and", "or", "of", "to", "in",
+                      "on", "with", "that", "this", "no", "not", "at", "least", "than", "be"}
+
+            def _words(s: str) -> set:
+                return {w for w in re.findall(r"[a-z0-9_]+", s.lower()) if w not in _NOISE}
+
+            def _covered(b: str) -> bool:
+                bl = b.strip().lower()
+                if any(bl in c or c in bl for c in claimed):
+                    return True
+                bw = _words(bl)
+                if len(bw) < 2:              # too little content to judge overlap on
+                    return False
+                return any(len(bw & _words(c)) / len(bw) >= 0.6 for c in claimed)
+
+            if missing := [b for b in behaviours if not _covered(b)]:
+                out[str(e.get("criterion"))] = missing
+            continue
+        # No labels: cardinality stays the only mechanical proxy available, and the strict reading
+        # is the safe one — the case it was built for is a criterion of three behaviours probed once.
+        if len(good) < len(behaviours):
             out[str(e.get("criterion"))] = behaviours[len(good):]
     return out

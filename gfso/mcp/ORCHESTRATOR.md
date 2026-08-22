@@ -99,6 +99,10 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
    `FAIL(failed_criteria=<copied from the report>)` → the node returns as a `rework` step — fix
    exactly those criteria and re-deliver (max_iterations bounds the cycle). A `verdict: null`
    report is NEVER a pass — read report_text and decide as issuer.
+   `get_verdict(task_id)` reads the RECORDED verdict back, free: the per-criterion probes and what
+   they printed, the judge and its tier, and which criteria came back `undecidable` (the
+   instrument observed nothing — not a failure of the work). Use it before you sign, and whenever
+   the report itself is no longer in front of you.
    **Rework flows DOWN, not around (ENFORCED):** when the FAILed criteria are covered by your
    children, the engine REFUSES a re-DELIVER over the untouched subtree — contact refuted the
    DECOMPOSITION, not the aggregate (§15.2 q_D). `reopen` the covering child (the refused delivery

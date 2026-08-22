@@ -25,6 +25,10 @@ CORE_PACKAGES = (
 # Individual modules/files
 CORE_FILES = (
     "gfso/__init__.py",
+    # The settings vocabulary: one module, no gfso imports, stdlib only. It is in the core dist for
+    # the same reason it is admissible from every layer — the core reads where its data lives and
+    # what a node defaults to, and the alternative is each layer spelling those answers itself.
+    "gfso/config.py",
     "gfso/tools.py",
     "gfso/adapters/__init__.py",
     "gfso/adapters/storage/__init__.py",
@@ -47,4 +51,4 @@ def core_paths(root: pathlib.Path) -> list[pathlib.Path]:
 
 def covered_module_prefixes() -> set[str]:
     """gfso-import prefixes (two dotted segments) the manifest covers — the closure boundary."""
-    return {"gfso.core", "gfso.engine", "gfso.tools", "gfso.adapters"}
+    return {"gfso.core", "gfso.engine", "gfso.tools", "gfso.adapters", "gfso.config"}

@@ -11,8 +11,10 @@ import pytest
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
+import gfso.delegate as D
+from gfso import tools as T
 from gfso.core.types import (AcceptedRiskItem, CriterionMapping, Predictability, State, Signal,
-                             SignalData, TaskId, AgentId, Spec, Criteria)
+                             SignalData, TaskId, AgentId, Spec, Criteria, Verdict)
 
 
 def _spec(desc="goal", crit="c1"):
@@ -29,10 +31,14 @@ def engine():
     e.stop()
 
 
-def _deliver(e, tid, actor):
+def _deliver(e, tid, actor, self_check=Verdict.PASS):
+    """ACCEPT + DELIVER. The delivery carries the executor's own decided self-check by default —
+    §14.5 D6 says an internal node self-verifies THROUGH that field, and a PASS with nothing behind
+    it is ⊥ (§11.2). Pass `self_check=None` for the delivery that checked nothing."""
     for sd in (
         SignalData(signal=Signal.ACCEPT, task_id=TaskId(tid), source=AgentId(actor)),
-        SignalData(signal=Signal.DELIVER, task_id=TaskId(tid), source=AgentId(actor), result="r"),
+        SignalData(signal=Signal.DELIVER, task_id=TaskId(tid), source=AgentId(actor), result="r",
+                   self_validation=self_check),
     ):
         e.send_signal(sd)
         e.wait_idle()
@@ -53,16 +59,41 @@ def test_is_public_classification(engine):
 
 
 def test_internal_same_del_node_may_self_pass(engine):
-    """The agent's own internal node self-verifies — no recorded verdict demanded (§14.5)."""
+    """The agent's own internal node self-verifies — no INDEPENDENT verdict demanded (§14.5 D6);
+    what its delivery must carry is its own decided self-check, which is the record it is judged on.
+    A delivery that checked nothing leaves the node in VALIDATING for its issuer (§11.2)."""
     engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [(TaskId("in1"), _spec("in", "ic"), AgentId("agent"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("in1"))])
     engine.wait_idle()
-    _deliver(engine, "in1", "agent")
+    _deliver(engine, "in1", "agent", self_check=None)          # nothing checked → ⊥, not a pass
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("agent")))
     engine.wait_idle()
-    assert engine.get_state(TaskId("in1")) == State.DONE  # no independent verdict required
+    assert engine.get_state(TaskId("in1")) == State.VALIDATING
+
+    # …saying what was checked settles it, through either door: the executor's own recorded verdict
+    engine.record_reviewer_verdict(TaskId("in1"), Verdict.PASS, [], reviewer="agent",
+                                   observed={"ic": "ran it and read the output"})
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("agent")))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("in1")) == State.DONE        # no independent verdict required
+    assert engine.get_exec_verdict(TaskId("in1"))["verdict"] == Verdict.PASS   # …and it left a record
+
+
+def test_an_internal_delivery_that_carries_its_self_check_needs_nothing_else(engine):
+    """The other door: `self_validation` in the DELIVER packet IS the record (§14.5 D6)."""
+    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.wait_idle()
+    engine.decompose_task(TaskId("root"), [(TaskId("in2"), _spec("in", "ic"), AgentId("agent"))],
+                          criterion_mappings=[CriterionMapping("rc", TaskId("in2"))])
+    engine.wait_idle()
+    _deliver(engine, "in2", "agent")                            # carries self_validation=PASS
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in2"), source=AgentId("agent")))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("in2")) == State.DONE
+    rec = engine.get_exec_verdict(TaskId("in2"))
+    assert rec["verdict"] == Verdict.PASS and rec["validator"] == "agent"
 
 
 def test_root_self_pass_still_gated(engine):
@@ -80,8 +111,12 @@ def test_root_self_pass_still_gated(engine):
 
 
 def test_seam_child_unaffected_by_d6(engine):
-    """A delegated (different-Del) child keeps the full separation: its executor cannot PASS it
-    at all (issuer role), and the issuer's PASS needs no gate change — the seam already exists."""
+    """A delegated (different-Del) child keeps the full separation — and the separation is not the
+    evidence. Its executor cannot PASS it at all (issuer role); the ISSUER's PASS needs a verdict
+    for this delivery on the record, because §14.5 asks for independent VALIDATION at a seam, not
+    for a signer whose name differs from the executor's. This test used to assert the opposite
+    ("the issuer's PASS needs no gate change"), and that belief was the false PASS the agent door
+    walked into on 2026-08-22."""
     engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("pm"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [(TaskId("d1"), _spec("d", "dc"), AgentId("w"))],
@@ -92,7 +127,14 @@ def test_seam_child_unaffected_by_d6(engine):
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("d1"), source=AgentId("w")))
     engine.wait_idle()
     assert engine.get_state(TaskId("d1")) == State.VALIDATING
-    # the issuer PASSes across the seam — canon default separation
+    # the issuer PASSes across the seam — refused while nothing is on the record…
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("d1"), source=AgentId("pm")))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("d1")) == State.VALIDATING
+    # …and accepted once the issuer says what they observed (a person may judge by hand; what is
+    # refused is a PASS standing on nothing)
+    engine.record_reviewer_verdict(TaskId("d1"), Verdict.PASS, [], reviewer="pm",
+                                   observed={"dc": "ran it, printed 42"})
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("d1"), source=AgentId("pm")))
     engine.wait_idle()
     assert engine.get_state(TaskId("d1")) == State.DONE
@@ -149,3 +191,49 @@ def test_empty_accepted_risks_does_not_gate_execution(engine):
     engine.wait_idle()  # mapped but NO ACCEPTED_RISKS authored on root
     r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
     assert not r.rejected and engine.get_state(TaskId("ch")) == State.EXECUTING
+
+
+def test_an_internal_node_completes_on_its_own_self_check(engine):
+    """§14.5 D6, read literally: an internal node self-verifies and is NOT independently validated.
+
+    "DELIVER carries `self_validation`" … "the guarantee for the whole internal decomposition is
+    carried by the validation of the agent's public result" … the agent "stakes all internal work on
+    one public validation". So there is no second party owed a verdict on an internal node — its
+    issuer IS its executor's scope, by the definition that makes it internal.
+
+    Measured 2026-08-20: nothing relayed that self-check, so a subtree delegated to ONE role
+    deadlocked — the delivery landed in 57 seconds and the graph stood still for half an hour. The
+    field was in the report schema and in `SignalData`, and was dropped between them.
+
+    The three conditions are tested together, because each alone would be a different rule:
+    internal only, a DECIDED self-check only (⊥ is not a pass, §11.2), and never when independent
+    validation is going to run anyway.
+    """
+    e = engine
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]},
+                  assignee="exec-1")
+    T.create_task(e, "kid", {"description": "internal child",
+                             "criteria": [{"name": "k", "description": "K"}]},
+                  assignee="exec-1", parent_id="par")          # same Del as its parent → INTERNAL
+    T.map_criterion(e, "par", "kid", "g")
+    T.signal(e, "kid", "ACCEPT", "exec-1")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="built it")
+
+    said = []
+    D._settle_internal(e, TaskId("kid"), "", said.append)       # no self-check → ⊥, not a pass
+    e.wait_idle()
+    assert e.get_state(TaskId("kid")).name == "VALIDATING"
+
+    D._settle_internal(e, TaskId("kid"), "ran its check, it printed what it should", said.append)
+    e.wait_idle()
+    assert e.get_state(TaskId("kid")).name == "DONE"            # …the self-check settles it
+    assert any("§14.5 D6" in m for m in said)
+
+    # …and the PUBLIC node above it is untouched: that is where the independent verdict is owed.
+    T.signal(e, "par", "ACCEPT", "exec-1")
+    T.signal(e, "par", "DELIVER", "exec-1", result="integrated")
+    D._settle_internal(e, TaskId("par"), "I checked it myself", said.append)
+    e.wait_idle()
+    assert e.get_state(TaskId("par")).name == "VALIDATING"      # a seam is never self-signed

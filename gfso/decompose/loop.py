@@ -22,7 +22,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from gfso.core.types import LLMProviderPort
+from gfso.core.types import LLMProviderPort, Stage
+from gfso.config import MODEL_DEFAULT
 
 
 def _progress(msg: str, cb=None) -> None:
@@ -53,7 +54,11 @@ def _stat_line(llm) -> str:
     dicts = [x for x in calls if isinstance(x, dict)]
     total = sum((x.get("output_tokens") or 0) for x in dicts)
     retries = sum(1 for x in dicts if x.get("parse_failed"))
-    secs = (c.get("duration_ms") or 0) / 1000
+    # THE WHOLE CHECK, not its last sub-call. A verb that makes several calls — the checker and its
+    # sufficiency readings — reported the LAST one, so a review costing 57 seconds and 0.18 dollars
+    # was announced as "done in 2s · 0.0k tokens": the sub-call's numbers, under-reporting the work
+    # by thirty times (measured on the human door 2026-08-22).
+    secs = sum((x.get("duration_ms") or 0) for x in dicts) / 1000
     line = (f"done in {secs:.0f}s · {(c.get('output_tokens') or 0) / 1000:.1f}k tokens "
             f"· Σ {total / 1000:.1f}k tokens")
     return line + (f" · ⚠ {retries} parse-retry" if retries else "")
@@ -315,7 +320,7 @@ def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[st
     return llm.complete_structured(AUDIT_PROMPT, user, AUDIT_SCHEMA_PATCH)
 
 
-def decompose_spec(request: str, model: str = "sonnet",
+def decompose_spec(request: str, model: str = MODEL_DEFAULT,
                    llm: LLMProviderPort | None = None, progress=None,
                    fast: bool = False, label: str = "1/1") -> dict:
     """THE INIT ROUND — one search + one fold over the EMPTY state: the exhaustive enumeration reduces
@@ -340,12 +345,12 @@ def decompose_spec(request: str, model: str = "sonnet",
     _progress(f"{label} searcher…", progress)
     _hint(llm, f"{label} searcher")
     holes = _search(llm, request, "", fast=fast)
-    _tag(llm, "search-1")
+    _tag(llm, Stage.SEARCH)
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     _progress(f"{label} auditor (fold, first round)…", progress)
     _hint(llm, f"{label} auditor")
     patch = _audit_fold(llm, request, "", holes, fast=fast) or {}
-    _tag(llm, "audit-fold-1")
+    _tag(llm, Stage.AUDIT_FOLD)
     spec, ops = _fold_merge({}, patch)
     if not ops:
         _progress(f"{label} auditor {_stat_line(llm)} · empty fold — no basis emitted (failed first round)",

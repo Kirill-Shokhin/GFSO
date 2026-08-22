@@ -10,6 +10,8 @@ from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.core.types import TaskId, AgentId
+import json
+
 from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
 from gfso.decompose.loop import SEARCH_PROMPT, FOLD_SCHEMA, _fold_merge, shape
 
@@ -220,7 +222,7 @@ def test_refine_frozen_terminal_children_surface_as_holes():
     for sig in (Signal.ACCEPT, Signal.DELIVER):
         e.send_signal_sync(SignalData(signal=sig, task_id=TaskId("root.a"), source=AgentId("human"),
                                       result="a done" if sig is Signal.DELIVER else None))
-    e._graph._authorized_validators = {"vx"}
+    e._graph.authorized_validators = {"vx"}
     e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root.a"), source=AgentId("vx")))
     e.wait_idle()
     assert e.get_state(TaskId("root.a")) == State.DONE
@@ -246,7 +248,7 @@ def test_refine_on_terminal_target_refused():
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
-    e._graph._authorized_validators = {"vx"}
+    e._graph.authorized_validators = {"vx"}
     for tid in ("root.a", "root.b"):
         for sig in (Signal.ACCEPT, Signal.DELIVER):
             e.send_signal_sync(SignalData(signal=sig, task_id=TaskId(tid), source=AgentId("human"),
@@ -447,3 +449,31 @@ def test_a_silent_provider_is_reported_as_a_provider_fact(monkeypatch):
     assert out["subtasks"] == []
     assert "provider" in out.get("error", "")
     e.stop()
+
+
+def test_refine_sees_the_open_level_2_findings():
+    """A refine straight after a review that left findings open returned the plan unchanged and
+    charged for the round.
+
+    The findings are the plan's known defects, in the caller's hand at that exact moment, and the one
+    verb whose job is to repair the plan was the only reader that did not get them (measured on the
+    agent door 2026-08-22). What the fold DOES with them is its own business — fold them in, or leave
+    them for the issuer to dispute in writing — but it must see them."""
+    fake = FakeLLM(texts=["holes1", "ALREADY-COVERED"], specs=[_init_patch()])
+    e = _eng()
+    res = decompose_into(e, "task", root_id="root", depth=1, llm=fake)
+    eng = res.engine
+    eng._graph._storage.store_critique(TaskId("root"), json.dumps({
+        "node_id": "root", "gate_passed": True, "semantic_covered": False,
+        "criteria_verdicts": [{"criterion": "c1", "verdict": "insufficient",
+                               "why": "the children do not entail it"}],
+        "conflicts": [], "undecided_obligations": [{"obligation": "the package imports"}],
+        "iteration": 0, "reopens": 0, "revisions": 0,
+    }))
+    root = eng.get_task(TaskId("root")); root.verified = True; eng._graph.save_task(root)
+
+    fake2 = FakeLLM(texts=["ALREADY-COVERED"], specs=[])
+    refine(eng, root_id="root", rounds=1, llm=fake2)
+    view = fake2.calls[0][1]
+    assert "OPEN LEVEL-2 FINDINGS" in view
+    assert "- c1" in view and "undecided: the package imports" in view

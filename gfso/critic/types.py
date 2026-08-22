@@ -26,3 +26,9 @@ class NodeCritique:
     semantic_findings: str = ""              # rendered gaps/conflicts (advisory, human-readable)
     criteria_verdicts: tuple[dict, ...] = () # [{criterion, verdict, why}] — one per parent criterion
     conflicts: tuple[dict, ...] = ()         # [{between: [child ids], why}] — FM-2 semantic residue
+    undecided_obligations: tuple[dict, ...] = ()  # [{obligation, admits}] — obligations of the node's
+                                             # OWN goal that none of its OWN criteria decides
+                                             # (FM-1.f). A different question from the checker's:
+                                             # that one asks whether the CHILDREN carry the parent,
+                                             # this one whether the parent carries the GOAL.
+                                             # Nothing asked it before 2026-08-21.

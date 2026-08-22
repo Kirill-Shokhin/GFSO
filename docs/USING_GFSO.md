@@ -113,8 +113,11 @@ is the hole-hunt for content that is missing altogether. They answer different q
 ## 4. Execute, and deliver evidence rather than intent
 
 Work the frontier: `next_steps(root)` returns every actionable node at once, ordered, marking which
-are yours and which the graph is waiting on someone else for. Loop it until it reports complete —
-"done" is the root at `DONE/PASS` in the graph, never a summary in a chat window.
+are yours and which the graph is waiting on someone else for. An empty list is not a dead graph: what
+is being judged or worked on comes back under `in_flight`, what a node waits on and what would open it
+under `waiting`, and `stuck` means what it says — nothing is running and nothing is takeable. Loop it
+until it reports complete — "done" is the root at `DONE/PASS` in the graph, never a summary in a chat
+window.
 
 Before signalling a delivery, run a check for each criterion and read what it actually printed. Then:
 
@@ -154,15 +157,19 @@ working it.
 ## 5. The verdict is not yours to sign
 
 Validation fires at the **seams** — the root, and every node whose executor differs from its parent's
-(§14.5). There, the FSM rejects a `PASS` signed by the node's own executor unless a fresh independent
-verdict for the *current* delivery is on record.
+(§14.5). There, a `PASS` needs a verdict for the delivery that stands, **whoever signs it**: being
+someone other than the executor is a rule about the signature, not evidence about the work. A stale
+verdict does not count — a rework, a reopen or a revision under it makes the record about an earlier
+delivery.
 
 * From an agent session: `validate_result(task_id, workdir=…)` spawns one read-only validator that
   *runs* the criteria and reports per-criterion. You then relay `PASS`, or
   `FAIL(failed_criteria=[…])`. A report with no verdict is never a pass.
 * With a registered `llm-validator`, that happens automatically on every delivery.
-* With people: the reviewer presses Record verdict in the UI (`record_verdict`). The engine refuses a
-  reviewer who is the node's executor.
+* With people: the reviewer presses Record verdict in the UI (`record_verdict`), which is also how you
+  put your OWN observation on the record when you judged by hand — one line per criterion, saying what
+  you ran and what it showed. The engine refuses a reviewer who is the node's executor, and refuses a
+  verdict with nothing observed behind it.
 
 A node whose executor is the same as its parent's is *internal* — your own private decomposition. It
 self-verifies on evidence you put in the delivery, and its guarantee is carried by the seam above it.
@@ -234,6 +241,7 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 | `gfso up [--force]` | Start-or-reconcile the one server: start it if down, restart it if it serves stale code or the wrong switches, do nothing if it is already correct — and leave it alone rather than end someone else's run. `--force` restarts anyway. |
 | `gfso down` | Stop the one server. |
 | `gfso connect` | The MCP stdio door an agent client runs. You do not type this; a client does. |
+| `gfso projects [-n N] [--match S]` | The project graphs this server holds, most recently worked in first — the name is what `project=` takes, and the isolation boundary of the whole product. |
 | `gfso log [-f]` | The observation panel in the terminal: signals, verdicts and dispatches as they land. |
 | `gfso mcp` | A standalone MCP server with an engine of its own, for a client that must not share. Not the normal door; `connect` is. |
 | `gfso serve` | Run the server in *this* process — the primitive `up` calls. |

@@ -75,7 +75,9 @@ def test_list_holes_surfaces_graph_gaps():
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
     holes = T.list_holes(e)
-    assert not any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)  # leaf: not gated (§13.1)
+    # A leaf is not gated on the register (§13.1) — and with no holes at all the verb SAYS so rather
+    # than returning an empty list a reader cannot tell from a broken call.
+    assert not any(h.get("task_id") == "r" and h.get("check", "").startswith("CHECK-4") for h in holes)
     T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
                 [{"criterion_name": "a", "child_id": "k"}])
     holes = T.list_holes(e)                 # decomposed root with no ACCEPTED_RISKS → CHECK-4 is an open hole

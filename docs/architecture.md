@@ -109,8 +109,12 @@ counted — this is what feeds q_Dep's denominator.
 ## Design Decisions
 
 **Validation at the SEAM (§14.5).** A node is PUBLIC ⟺ it is a delegation seam: a root, or
-Del(child) ≠ Del(parent). The verifier≠executor gate (engine/validation.py) demands a recorded
-independent verdict ONLY there; an INTERNAL node (same Del as its parent — the executor's own private
+Del(child) ≠ Del(parent). The gate (engine/validation.py) demands a recorded independent verdict for
+the delivery that stands ONLY there — and it asks about the NODE, not about the name signing: an
+issuer is no more entitled to a bare PASS than the executor is, since §14.5 asks for independent
+validation rather than for a different signature. The record can come from the instrument
+(`validate_result`) or from a person stating what they observed (`record_verdict`), and an authorized
+instrument signing directly IS the verdict. An INTERNAL node (same Del as its parent — the executor's own private
 decomposition) legitimately self-verifies (its DELIVER carries `self_validation`), and its guarantee is
 carried by the validation of the public result it rolls up into (T1 non-redundancy). The dispatcher's
 auto-validation instrument follows the same rule (`GFSO_VALIDATE_INTERNAL=1` = the opt-in
@@ -250,23 +254,33 @@ def timeout_monitor(graph, queue):
 gfso/
   core/                     ← L0: the protocol STANDARD (canon-governed; pure, zero deps)
     types/
-      primitives.py         # Task, Spec, Criteria (full: input/expected/n/timeout), DepEdge, SignalData
+      primitives.py         # Task, Spec, Criteria (full: input/expected/n/timeout), DepEdge, SignalData,
+                            # and the ANSWERS the system gives: SignalOutcome/Refusal (what a refused
+                            # transition says: kind · why · route) and Wait (why a node is not on the
+                            # frontier and what would open it)
       enums.py              # State(12; DONE/ABANDONED quasi-terminal §14.3), Signal(13 = 12 protocol
-                            # + TIMEOUT), Verdict, FM(7), RevisionReason (§24.5 typing)
+                            # + TIMEOUT), Verdict, CriticVerdict, Stage (the ledger's roles),
+                            # FM(7), RevisionReason (§24.5 typing)
       effects.py            # MutateGraph (incl. dep_from/dep_froms), RunChecks, Recommend, Dispatch
       ports.py              # StoragePort (mandatory core incl. the append-only signal log),
                             # LLMProviderPort, AgentPort, VerifierPort, ClockPort, RunnerPort
                             # (+ their stdlib defaults SystemClock/ThreadRunner — zero-dep, live here)
-    protocol/               # fsm.py = THE TABLE · invariants.py · validation.py (role map)
+    protocol/               # fsm.py = THE TABLE (+ `not_admissible_here`: why a signal moves nothing
+                            # here and where the intent goes) · invariants.py · validation.py (role map)
     handlers/               # CHECK-1-6 structural · CHECK-7-8 numeric-bound tier (capability-honest
                             # skips; the formula/solver tier is a declared, unimplemented extension)
-    graph/                  # model · mutations (incl. RECORD_DEP/ADJUDICATE_DEP) · metrics (∅→None) · projection
+    graph/                  # model · mutations (incl. RECORD_DEP/ADJUDICATE_DEP) · metrics (∅→None) ·
+                            # projection · review.py (`finding_keys` — the ONE name a Level-2 finding
+                            # carries, read by the gate, the dispute verb and the delta baseline)
 
   engine/                   ← L1: the reference runtime (imports CORE ONLY — the layer gate)
     loop.py                 # process_signal = the substrate-free protocol step; event_loop = the
                             # default pump; timeout_monitor reads the ClockPort (Inv-5)
-    __init__.py             # Engine facade (takes clock=/runner= ports); audit.py; events.py; validation.py
-                            # (verifier≠executor gate; record_reviewer_verdict refuses reviewer==Del)
+    __init__.py             # Engine facade (takes clock=/runner= ports); audit.py; events.py; verdicts.py
+                            # (one writer of the verdict record); validation.py — the gates, one rule
+                            # family per signal (`_pass_rules` / `_accept_rules` / `_resolve_block_rules`
+                            # / `_deliver_rules`): a SEAM's PASS needs a verdict for the delivery that
+                            # stands, whoever signs; `record_reviewer_verdict` refuses reviewer==Del
 
   tools.py                  ← L1: the STRUCTURAL action surface (core+engine only; ships with the core dist)
   tools_llm.py              ← L2: the LLM verbs (auto_decompose/review_decomposition/validate_result); its TOOLS =
@@ -278,7 +292,11 @@ gfso/
 
   decompose/ · critic/ · delegate.py · runtime.py   ← L2: the AI product (search↔audit monada,
                             # L2 validate, registry+dispatcher, DI/llm_factory/ProjectRegistry)
-  mcp/ · api/ · web/ · cli.py · driver.py · main.py ← binding: the doors (generated from tools_llm.TOOLS)
+  mcp/ · api/ · web/ · cli.py · driver.py · main.py ← binding: the doors (generated from tools_llm.TOOLS).
+                            # api/server.py mounts one concern at a time — pages · reads · acts ·
+                            # ledgers · lifecycle · runtime · events — rather than one body of routes;
+                            # mcp/connect.py is the stdio bridge (it breaks and rebuilds when a call
+                            # goes unanswered, instead of hanging on an orphaned session)
 
 packaging/core_manifest.py  ← THE gfso-core cut line (core + engine + tools.py + neutral stdlib
                             # adapters); closure + zero-deps proven by tests/test_core_dist.py;
@@ -502,6 +520,11 @@ method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-a
 ```
 
 - `runtime.build_engine_from_env` = the shared CORE constructor (one Engine from `GFSO_DB_PATH`).
+  Every setting it reads is owned by `gfso/config.py` — the one module that touches the environment
+  (`GFSO_L2_GATE` stays a direct read at its enforcement point, deliberately): the provider and its
+  billing mode, storage and model tiers, paths, and the measured dials — `GFSO_VALIDATION_BATCH`
+  (how many criteria one validator run judges, and so how much of a judgement runs in parallel) and
+  `GFSO_VALIDATOR_RETRY_MODEL` (`off` refuses the escalation a ⊥ report would otherwise buy).
 - HTTP **reads** stay bespoke typed routes (view-specific shapes for the UI — reads aren't a mutation surface).
 - **Live mirroring:** ONE process (raised by `gfso up`; `gfso serve` is that process in the foreground) hosts MCP + HTTP + UI over ONE Engine, so the
   UI's `/ws/events` reflects the agent's writes live. Separate processes share only SQLite (poll, no live WS).

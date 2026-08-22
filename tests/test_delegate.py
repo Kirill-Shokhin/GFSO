@@ -3,6 +3,7 @@
 FSM signals (consent = the executor's own report); auto-validation with auto-verdict (FAIL →
 FSM REWORKING loop); unparsed reports never signal. All with fake agent-runners — no network."""
 import json
+import threading
 import time
 
 import pytest
@@ -11,8 +12,10 @@ from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
+import gfso.tools_llm as TL
 from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping
 from gfso import tools as T
+from gfso.config import MODEL_VALIDATOR_RETRY
 from gfso.delegate import AgentRegistry, Dispatcher, run_executor, EXECUTOR_SCHEMA
 
 
@@ -78,7 +81,8 @@ def _dispatch_validate(e, agents, verdict_payload):
     from gfso.delegate import Dispatcher, _auto_validate
     llm = _AgentLLM(_fenced(verdict_payload))
     d = Dispatcher(e, agents,
-                   validator_runner=lambda en, t, a: _auto_validate(en, t, a, _llm=llm))
+                   validator_runner=lambda en, t, a, model_override=None, sign=True:
+                   _auto_validate(en, t, a, _llm=llm, model_override=model_override, sign=sign))
     started = d.dispatch_once()
     for _ in range(200):
         if not llm._texts:      # the canned verdict was consumed
@@ -221,10 +225,18 @@ def _child(e, tid, parent="par", assignee="exec-1", crit="c", parent_crit="g"):
 
 
 def _drive_done(e, tid, assignee="exec-1"):
-    """Take a delegated child to DONE. Issuer = parent.assignee = agent ≠ Del, so the issuer's PASS
-    needs no gate verdict (the verifier≠executor gate only bites when source == the node's Del)."""
+    """Take a delegated child to DONE — through the seam, not around it.
+
+    This helper used to sign the issuer's PASS bare, on the belief that "issuer ≠ Del" was itself
+    the separation §14.5 asks for. It is not: a seam needs an independent verdict for THIS delivery
+    whoever signs it (the false PASS the agent door found on 2026-08-22). The verdict here is the
+    issuer's own recorded observation, which is what a person judging by hand does."""
+    t = e.get_task(TaskId(tid))
     T.signal(e, tid, "ACCEPT", assignee)
     T.signal(e, tid, "DELIVER", assignee, result=f"{tid} out")
+    T.record_verdict(e, tid, "PASS", reviewer="agent",
+                     observed={c.name: f"ran {tid} and read its output"
+                               for c in t.spec.criteria if not c.depends_on})
     T.signal(e, tid, "PASS", "agent")
 
 
@@ -411,21 +423,28 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     # (a) the gate: children not settled → no validator spawn at all
     assert not any("par" in s for s in d.dispatch_once())
     assert len(llm._texts) == 2
-    # (b) force past the gate to exercise the rejected path (a race can still produce it)
-    d._children_settled = lambda tid: True
-    assert "validate:par" in d.dispatch_once()
+    # (b) the rejected path itself. The frontier no longer OFFERS a validate step on a parent whose
+    # children are open (a verdict there is refused, and putting it at the head of the frontier is
+    # what left a live run waiting nineteen minutes on a verdict nobody could give), so the race
+    # this covers — a queued run whose graph moved under it — is exercised where it lives: the
+    # guarded validation path, with the round already claimed.
+    vkey = d._round_key(e.get_task(TaskId("par")), "v:")
+    d._seen.add(vkey)
+    threading.Thread(target=d._validate_guarded, args=(TaskId("par"), 0), daemon=True).start()
     for _ in range(300):                              # verdict consumed + guarded postlude done
-        if len(llm._texts) == 1 and "v:par#0" not in d._seen:
+        if len(llm._texts) == 1 and vkey not in d._seen:
             break
         time.sleep(0.01)
     e.wait_idle()
     assert e.get_state(TaskId("par")).name == "VALIDATING"    # the PASS was FSM-rejected
-    assert "v:par#0" not in d._seen                           # key freed for a later revalidation
+    assert vkey not in d._seen                                # key freed for a later revalidation
     assert not d._retried                                     # NOT burned as a no-verdict retry
-    del d.__dict__["_children_settled"]                       # restore the real gate
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="kid out")
-    T.signal(e, "kid", "PASS", "exec-1")                      # issuer ≠ Del → accepted
+    # a seam needs the verdict on the record whoever signs it (§14.5); the issuer records what it
+    # observed and then signs — "issuer ≠ Del" is a rule about the signature, not the evidence
+    T.record_verdict(e, "kid", "PASS", reviewer="exec-1", observed={"c": "ran the child's output"})
+    T.signal(e, "kid", "PASS", "exec-1")
     assert "validate:par" in d.dispatch_once()                # children settled → fresh validation
     for _ in range(300):
         if not llm._texts:
@@ -450,7 +469,7 @@ def test_auto_validate_reuses_fresh_recorded_verdict(tmp_path):
     e.wait_idle()
     assert e.get_state(TaskId("n1")).name == "VALIDATING"
     e.record_exec_verdict(TaskId("n1"), "PASS", [], "validate_result")   # fresh manual verdict
-    e._graph._authorized_validators = {"val-1"}      # the dispatcher syncs this each pass
+    e._graph.authorized_validators = {"val-1"}      # the dispatcher syncs this each pass
     unused = _AgentLLM("never popped")
     assert _auto_validate(e, TaskId("n1"), agents, _llm=unused) == "pass"
     assert unused.packets == []                       # verdict reused, no validator spawned
@@ -539,6 +558,31 @@ def test_stale_queued_run_releases_slot_without_spawning(tmp_path):
     assert not validated and vkey not in d._seen
     d._validate_guarded(TaskId("t1"), 0)                  # fresh: VALIDATING at iteration 0
     assert validated == ["t1"]
+    e.stop()
+
+
+def test_a_reassigned_node_is_not_run_as_its_old_executor(tmp_path):
+    """The queued run acted as the executor it was queued for, after the node had been reassigned.
+
+    Measured on a live E3 run 2026-08-22: `root.matcher` moved from exec-1 to exec-2 between the
+    dispatch decision and the slot, and the run made its signals as exec-1 — two ACCEPTs and a
+    DELIVER refused with "exec-1 is not executor for root.matcher (executor=exec-2)", the agent call
+    paid for, and the graph stalled for ten minutes while the frontier kept offering the same step.
+    Del is part of what goes stale, and freeing the slot has to free the ROUND with it: a
+    reassignment moves no generation counter, so the claim would otherwise be one nobody spends."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("exec-2", "llm-executor"))
+    _node(e, "t1")
+    ran = []
+    d = Dispatcher(e, agents, runner=lambda en, tid, ex, ag: ran.append(f"{tid}:{ex}"))
+    d._claim(d._round_key(e.get_task(TaskId("t1"))))   # the round the old dispatch decision claimed
+    e.reassign(TaskId("t1"), AgentId("exec-2"))
+    e.wait_idle()
+    assert str(e.get_task(TaskId("t1")).assignee) == "exec-2"
+    d._run_guarded(TaskId("t1"), "exec-1", 0)         # …the slot the OLD dispatch won
+    assert ran == [], "a run as the old executor makes signals the FSM refuses"
+    assert d._round_key(e.get_task(TaskId("t1"))) not in d._seen, "the round is freed with the slot"
+    assert "t1" in d.dispatch_once()                  # …and the next pass sends it to exec-2
     e.stop()
 
 
@@ -822,3 +866,340 @@ def test_no_executor_is_spawned_under_a_plan_the_gate_refuses(tmp_path, monkeypa
     time.sleep(0.3)
     assert ran == [], "an executor was paid for under a plan the gate refuses"
     e.stop()
+
+
+def test_a_node_the_plan_gate_holds_back_is_said_out_loud(tmp_path, monkeypatch):
+    """A gate that only refuses is indistinguishable from a dead dispatcher.
+
+    Execution is gated on the parent's plan passing its checks (§13.4), and the dispatcher asks that
+    question before paying for a run — correctly, since the ACCEPT would be refused and the
+    executor's work with it. But it did so in silence: measured 2026-08-20 on the shipped
+    `autonomous_org` demo, whose loop drives only this dispatcher and never the frontier's own
+    review step, two children sat in OFFERED for half an hour over an empty workspace with nothing
+    anywhere saying why. Said once per node, and it names the step that opens the gate."""
+    monkeypatch.setenv("GFSO_L2_GATE", "1")
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]})
+    _child(e, "kid")
+    said = []
+    e.on_info(lambda src, msg: said.append(msg))
+    d = Dispatcher(e, agents, runner=lambda *a: None)
+    assert d.dispatch_once() == []                       # the plan has no Level-2 verdict yet
+    gate = [m for m in said if m.startswith("kid: not started")]
+    assert gate, f"the dispatcher said nothing about holding 'kid' back: {said}"
+    assert "review_decomposition('par')" in gate[0]      # …and names the step that opens it
+    d.dispatch_once()
+    assert len([m for m in said if m.startswith("kid: not started")]) == 1   # once, not per poll
+    e.stop()
+
+
+def test_a_registration_does_not_erase_another_sessions_roles(tmp_path):
+    """The roster is one file shared by every session, and writing it was read-modify-write.
+
+    A process that had loaded the file before someone else's registration wrote that registration
+    away. Measured 2026-08-21: a measurement run staffed three executors, two test sessions
+    registered their own roles minutes later, and when the run's node came back for rework NONE of
+    the three existed — the dispatcher correctly refused to spawn for roles that were not there, the
+    node stood still for twenty-five minutes, and the run ended `graph_stalled`. Nobody withdrew
+    those roles; they were overwritten.
+
+    `unregister` is the other half: taking a role out existed nowhere, so every process that wanted
+    one gone edited the shared file by hand — which is the same defect with a different author."""
+    roster = tmp_path / "roster.json"
+    a = AgentRegistry(path=str(roster))
+    b = AgentRegistry(path=str(roster))                  # a second session, its own snapshot
+
+    a.register("run-exec-1", "llm-executor", workdir=str(tmp_path))
+    b.register("tester-exec-1", "llm-executor", workdir=str(tmp_path))
+    a.register("run-exec-2", "llm-executor", workdir=str(tmp_path))   # `a` has not seen b's write
+
+    on_disk = json.loads(roster.read_text(encoding="utf-8"))
+    assert set(on_disk) == {"run-exec-1", "tester-exec-1", "run-exec-2"}
+
+    # …and a run tidying up after itself removes only what it staffed, in the directory it staffed.
+    assert a.unregister("run-exec-1", workdir=str(tmp_path))["unregistered"] == "run-exec-1"
+    assert a.unregister("tester-exec-1", workdir=str(tmp_path / "elsewhere"))["unregistered"] is None
+    assert set(json.loads(roster.read_text(encoding="utf-8"))) == {"tester-exec-1", "run-exec-2"}
+
+
+def test_a_dispute_the_protocol_cannot_carry_still_reaches_the_issuer(tmp_path):
+    """An executor that disputes its contract mid-rework was answered with silence and a dead node.
+
+    CHALLENGE is admissible from OFFERED only (§14.3) — a contract is disputed before it is taken,
+    not while reworking under it. So when a reworking executor said the spec was wrong, the signal
+    was refused, nothing else happened, and the node stayed exactly where it was with its round
+    already spent: no re-spawn, no step, no line. Measured 2026-08-21 on a measurement run — the
+    leaf contested at 01:27 and the graph never moved again; the run ended `graph_stalled`
+    twenty-five minutes later, and the only trace was a `signal rejected` line in the audit.
+
+    The dispute is not converted into work and the executor is not simply re-run (the same contract
+    reproduces the same dispute, and pays for it). It becomes a step for the ISSUER, who is the only
+    party who can change a contract — and a revision settles it by construction, because the node
+    goes back to OFFERED for its executor to take afresh."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]})
+    _child(e, "kid")
+    T.signal(e, "kid", "ACCEPT", "exec-1")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="first try")
+    T.signal(e, "kid", "FAIL", "agent", failed_criteria=["c"])
+    assert e.get_state(TaskId("kid")).name == "REWORKING"
+
+    llm = _AgentLLM(_fenced({"status": "challenge", "summary": "cannot be done as written",
+                             "reason": "criterion c contradicts the parent's own scope"}))
+    run_executor(e, TaskId("kid"), "exec-1", agents, _llm=llm)
+    e.wait_idle()
+
+    assert e.get_state(TaskId("kid")).name == "REWORKING"        # the refused signal moved nothing
+    step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
+    assert "DISPUTES THE CONTRACT" in step["directive"]
+    assert "contradicts the parent's own scope" in step["directive"]
+    assert "revise" in step["directive"] and "reassign" in step["directive"]
+
+    T.revise(e, "kid", {"description": "kid", "criteria": [{"name": "c", "description": "C, fixed"}]},
+             agent="agent")
+    e.wait_idle()
+    later = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
+    assert "DISPUTES THE CONTRACT" not in later["directive"]     # settled by the revision itself
+    e.stop()
+
+
+def test_a_node_that_already_refused_a_report_starts_at_the_retry_tier(tmp_path, monkeypatch):
+    """Spending the cheap tier again on a node that has already refused once buys the same refusal.
+
+    Measured across the recent runs (2026-08-21): 44 refused reports against 57 recorded verdicts,
+    one node reaching FIVE refusals. A refused report is kept beside the node with a count, and that
+    count survives a restart and a fresh delivery — where the in-process retry key does not. The
+    retry tier is where the coverage discipline actually gets met, so a node with a refusal behind it
+    starts there."""
+    monkeypatch.setenv("GFSO_L2_GATE", "0")
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "solo", {"description": "the work", "criteria": [{"name": "k", "description": "K"}],
+                              "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                  "predictability": "EXTRAORDINARY"}]},
+                  assignee="exec-1")
+    T.signal(e, "solo", "ACCEPT", "exec-1")
+    T.signal(e, "solo", "DELIVER", "exec-1", result="did it")
+    e.record_rejected_report(TaskId("solo"), "criterion k was never decided")
+
+    seen = {}
+
+    def _fake_validate(engine, task_id, agents_, model_override=None):
+        seen["model"] = model_override
+        return "rejected"
+
+    d = Dispatcher(e, agents, runner=lambda *a: None, validator_runner=_fake_validate)
+    d._validate_guarded(TaskId("solo"))
+    assert seen["model"] == MODEL_VALIDATOR_RETRY      # …not the role's cheap default
+    e.stop()
+
+
+def test_a_roster_that_cannot_be_read_is_not_treated_as_an_empty_one(tmp_path):
+    """Two testers' whole rosters vanished in a day, and one spent a run wondering why no validator
+    ever fired.
+
+    The merge in `_write` exists to stop a read-modify-write from erasing other processes'
+    registrations — and it read the file through `_load`, which KEEPS the previous in-memory snapshot
+    when the file cannot be parsed. So a roster caught mid-write by a concurrent process merged onto
+    a stale snapshot and wrote everyone else's roles out of existence, through the one path the merge
+    did not check (measured 2026-08-21). Losing one registration is recoverable; erasing the rest is
+    not, so this refuses."""
+    path = tmp_path / "agents.json"
+    _ROSTER = json.dumps({"other-run-exec": {"kind": "llm-executor"}})
+    path.write_text(_ROSTER, encoding="utf-8")
+    reg = AgentRegistry(str(path))
+    assert "other-run-exec" in reg.list()
+
+    path.write_text(_ROSTER[:30], encoding="utf-8")            # a write caught half-done
+    with pytest.raises(ValueError, match="could not be read"):
+        reg.register("mine-1", "llm-executor", workdir=str(tmp_path))
+    assert path.read_text(encoding="utf-8") == _ROSTER[:30]    # …and nothing was written over it
+
+    path.write_text(_ROSTER, encoding="utf-8")
+    reg.register("mine-1", "llm-executor", workdir=str(tmp_path))
+    assert set(json.loads(path.read_text(encoding="utf-8"))) == {"other-run-exec", "mine-1"}
+
+
+def test_the_executor_can_name_the_sibling_it_is_blocked_on(tmp_path):
+    """A discovered dependency went unrecorded because whoever found it had nothing to point at.
+
+    The packet listed only DECLARED upstream deps, so an executor blocked on work a SIBLING owns had
+    no id for `blocker_task_ids` — the field that records a discovered Dep and feeds q_Dep. Measured
+    twice on 2026-08-21: a README node spawned into an empty directory and blocked in prose, and a
+    packaging node needed a `__main__.py` another child was writing. Both were real edges the plan
+    never declared."""
+    e = _eng()
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]})
+    for kid in ("core", "readme"):
+        T.create_task(e, kid, {"description": kid, "criteria": [{"name": "k", "description": "K"}]},
+                      assignee="exec-1", parent_id="par")
+    packet = run_executor.__globals__["_executor_packet"](e, e.get_task(TaskId("readme")), str(tmp_path))
+    assert "`core`" in packet and "blocker_task_ids" in packet
+    assert "NOT your work" in packet          # …named so it can be waited on, not done
+    e.stop()
+
+
+def test_a_human_issuer_gets_the_judging_and_keeps_the_signature(tmp_path, monkeypatch):
+    """Two testers registered a validator, bound it, and watched nothing happen at all.
+
+    Auto-validation fired only when the ISSUER was automated — the rule that a human's verdict is
+    never taken from them — and it skipped the whole path rather than splitting it at the signature.
+    So a person who had registered an `llm-validator` and bound it to their executor got no judging
+    either, on both doors, while `register_agent` promised it fires "on EVERY delivery" (measured
+    2026-08-21). Registering an instrument IS asking for the judging; §14.5 keeps only the signature
+    theirs — so it runs, it records, and the person signs."""
+    monkeypatch.setenv("GFSO_L2_GATE", "0")
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]},
+                  assignee="a-human")                       # …an unregistered name: a person
+    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+                  assignee="exec-1", parent_id="par")
+    T.map_criterion(e, "par", "kid", "g")
+    T.signal(e, "kid", "ACCEPT", "exec-1")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="did it")
+
+    seen = []
+
+    def _fake(engine, task_id, agents_, model_override=None, sign=True):
+        seen.append((str(task_id), sign))
+        return "recorded"
+
+    d = Dispatcher(e, agents, runner=lambda *a: None, validator_runner=_fake)
+    d.dispatch_once()
+    time.sleep(1.0)
+    assert seen == [("kid", False)]                          # …judged, and NOT signed for them
+    assert e.get_state(TaskId("kid")).name == "VALIDATING"
+    e.stop()
+
+
+def test_a_validator_standing_somewhere_else_is_not_this_works_judge(tmp_path):
+    """"First registered serves everyone" on a server-wide roster means the oldest entry of whoever
+    came first.
+
+    Measured twice (2026-08-20 and 21): a run's node judged by another run's validator standing in a
+    scratch directory, and a tester who avoided it only by reading the help — "if I had registered an
+    executor without an explicit validator, my package would have been judged by an agent standing in
+    an unrelated directory". When an executor HAS a workspace and no instrument stands in it, the
+    honest answer is none: the node waits for its issuer, who is told to register one."""
+    a = AgentRegistry(path=str(tmp_path / "agents.json"))
+    a.register("their-val", "llm-validator", workdir=str(tmp_path / "somewhere-else"))
+    a.register("my-exec", "llm-executor", workdir=str(tmp_path / "my-work"))
+    assert a.validator_for("my-exec") is None                 # …not their-val
+
+    a.register("my-val", "llm-validator", workdir=str(tmp_path / "my-work"))
+    assert a.validator_for("my-exec") == "my-val"             # …the one standing in the work
+    a.register("pinned", "llm-validator", workdir=str(tmp_path / "somewhere-else"))
+    a.register("my-exec", "llm-executor", workdir=str(tmp_path / "my-work"), validator="pinned")
+    assert a.validator_for("my-exec") == "pinned"             # …an explicit binding still wins
+
+
+def test_a_recorded_verdict_is_a_settled_outcome_and_is_not_retried(tmp_path, monkeypatch):
+    """Every judged-for-you verdict was followed by a second paid run over the same delivery.
+
+    A human issuer's node is judged and NOT signed (§14.5), so it stays in VALIDATING by design —
+    and the retry branch read that state as "the validator died", queued a retry and spent another
+    run minutes after the first had already answered (measured on the human door 2026-08-22, ~$1.4 of
+    a $4.38 run went to literal duplicates). A settled outcome is settled whoever signs it."""
+    monkeypatch.setenv("GFSO_L2_GATE", "0")
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]},
+                  assignee="a-human")
+    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+                  assignee="exec-1", parent_id="par")
+    T.map_criterion(e, "par", "kid", "g")
+    T.signal(e, "kid", "ACCEPT", "exec-1")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="did it")
+
+    runs = []
+    d = Dispatcher(e, agents, runner=lambda *a: None,
+                   validator_runner=lambda en, t, a, model_override=None, sign=True:
+                   (runs.append(str(t)) or "recorded"))
+    d.dispatch_once()
+    time.sleep(1.0)
+    d.dispatch_once()
+    time.sleep(1.0)
+    assert runs == ["kid"]                      # …judged once, not once per poll
+    e.stop()
+
+
+def test_another_projects_validator_does_not_judge_this_projects_work(tmp_path):
+    """A person who registered NOTHING had their nodes judged, and billed, by a stranger's role.
+
+    Measured on the human door 2026-08-22: `val-1` — left in the shared roster by an experiment,
+    standing in its scratch directory — auto-validated four nodes of a project that had registered no
+    roles at all, $2.43 of a $4.38 run. The project name is the isolation boundary everywhere else;
+    a role registered under another project is not this project's instrument."""
+    a = AgentRegistry(path=str(tmp_path / "agents.json"))
+    a.register("their-val", "llm-validator", workdir=str(tmp_path / "theirs"), project="their-run")
+    assert a.validator_for(None, project="my-run") is None       # …not theirs
+    assert a.validator_for("nobody", project="my-run") is None
+
+    # …and a role registered with NO project is UNSCOPED, not foreign: the measurement arm registers
+    # through the library and names none, and excluding it left a run with no validator at all
+    # (measured 2026-08-22).
+    a.register("library-val", "llm-validator", workdir=str(tmp_path / "arm"))
+    assert a.validator_for(None, project="my-run") == "library-val"
+
+    a.register("my-val", "llm-validator", workdir=str(tmp_path / "mine"), project="my-run")
+    assert a.validator_for(None, project="my-run") == "my-val"
+    assert a.validator_for(None, project="their-run") == "their-val"
+
+
+def test_a_project_with_no_validator_is_not_a_validator_that_failed(tmp_path):
+    """A graph that never had an instrument was reported as an instrument that failed twice.
+
+    `_auto_validate` returned a bare None when no `llm-validator` is registered, and the caller reads
+    None as "the run died": it queued a retry (a paid model run) and then parked the node for its
+    issuer with "validator produced no verdict twice". An absence and a failure are opposite facts
+    (register 2026-08-22, finding 6)."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))          # …executor only, no judge
+    _node(e, "t1", assignee="exec-1")
+    d = Dispatcher(e, agents, runner=lambda *a: None)
+    T.signal(e, "t1", "ACCEPT", "exec-1")
+    T.signal(e, "t1", "DELIVER", "exec-1", result="out")
+
+    d._validate_guarded(TaskId("t1"), 0)
+    assert not d._retried, "a missing instrument was counted as a failed one"
+    assert e.get_state(TaskId("t1")).name == "VALIDATING"            # …it waits for its issuer
+    assert not e.validation_parked(TaskId("t1")) if hasattr(e, "validation_parked") else True
+
+
+def test_the_roster_can_be_read_without_reading_everyone_elses(tmp_path, monkeypatch):
+    """A caller with two roles was answered with forty-five, ~4.5k tokens of other people's work.
+
+    The roster IS server-wide and stays so — that is the isolation model, and the answer keeps
+    saying it. What was missing is a way to READ it: a filter and a bound (measured on the human
+    door 2026-08-22)."""
+    path = tmp_path / "roster.json"
+    monkeypatch.setenv("GFSO_AGENTS_PATH", str(path))
+    reg = AgentRegistry(path=str(path))
+    for i in range(30):
+        reg.register(f"other-{i}", "llm-executor", workdir=str(tmp_path))
+    reg.register("w17-exec-1", "llm-executor", workdir=str(tmp_path))
+    reg.register("w17-val-1", "llm-validator", workdir=str(tmp_path))
+
+    mine = TL.TOOLS["list_agents"](None, match="w17")
+    assert sorted(mine["agents"]) == ["w17-exec-1", "w17-val-1"] and mine["total"] == 32
+    # …and WHO would judge that executor: `validator: null` means "no override", not "nobody", and
+    # the binding by workspace was unconfirmable from anywhere after registration.
+    assert mine["agents"]["w17-exec-1"]["judged_by"] == "w17-val-1"
+    assert "server-wide" in mine["scope"]                    # …the shared roster still says so
+
+    capped = TL.TOOLS["list_agents"](None)
+    assert len(capped["agents"]) == 25 and "`limit=0` returns all" in capped["note"]
+    assert len(TL.TOOLS["list_agents"](None, limit=0)["agents"]) == 32

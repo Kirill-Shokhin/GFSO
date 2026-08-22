@@ -13,6 +13,7 @@ from gfso.core.types import (
     CheckResult, Recommendation, DepEdge,
     StoragePort, TERMINAL_STATES,
 )
+from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ class SqliteStorage(StoragePort):
                 max_iterations INTEGER DEFAULT 3,
                 deadline TEXT,
                 created_at TEXT NOT NULL,
+                state_entered_at TEXT,
                 done_reason TEXT,
                 autonomy TEXT DEFAULT 'MANUAL',
                 was_challenged INTEGER DEFAULT 0,
@@ -167,7 +169,8 @@ class SqliteStorage(StoragePort):
                 result TEXT,
                 failed_criteria_json TEXT DEFAULT '[]',
                 action TEXT,
-                in_flight TEXT
+                in_flight TEXT,
+                spec_json TEXT
             );
         """)
         # Defensive migrations for DBs created before these columns existed.
@@ -189,6 +192,11 @@ class SqliteStorage(StoragePort):
             self._conn.execute("ALTER TABLE tasks ADD COLUMN reassign_capability_mismatch INTEGER DEFAULT 0")
         if "revisions" not in task_cols:   # contract generation (Inv-1 revisions)
             self._conn.execute("ALTER TABLE tasks ADD COLUMN revisions INTEGER DEFAULT 0")
+        if "state_entered_at" not in task_cols:   # Inv-5's per-state clock (see save/load below)
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN state_entered_at TEXT")
+        audit_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(audit_log)")}
+        if "spec_json" not in audit_cols:   # Inv-7: the contract each ASSIGN installed
+            self._conn.execute("ALTER TABLE audit_log ADD COLUMN spec_json TEXT")
 
     # === Serialization ===
 
@@ -275,6 +283,19 @@ class SqliteStorage(StoragePort):
             done_reason=done_reason,
             autonomy=AutonomyLevel[row["autonomy"]],
         )
+        # Inv-5's per-state clock, RESTORED rather than restarted. It is set on every transition
+        # (`core/graph/mutations.py`) and was stored nowhere, so `default_factory=datetime.now` gave
+        # every node the moment of HYDRATION: after a restart the whole graph claimed to have just
+        # entered its state. Two things ride on that and both were wrong. Inv-5's state age reset to
+        # zero on every restart; and the rework gate compares `child.state_entered_at <=
+        # task.state_entered_at` to decide whether a coverer was touched since the FAIL — with all
+        # values equal that comparison decides by load order, and an agent watched a freshly added
+        # child that had PASSED be called "untouched" (2026-08-20).
+        # A row written before this column exists carries NULL: fall back to `created_at`, which is
+        # wrong in magnitude but right in the property that matters — it is FIXED, so it neither
+        # moves with the process nor collapses the ordering between nodes.
+        _sea = row["state_entered_at"] if "state_entered_at" in row.keys() else None
+        t.state_entered_at = datetime.fromisoformat(_sea) if _sea else t.created_at
         t.was_challenged = bool(row["was_challenged"])
         t.was_reassigned = bool(row["was_reassigned"])
         t.false_positive = bool(row["false_positive"])
@@ -299,12 +320,12 @@ class SqliteStorage(StoragePort):
         self._conn.execute(
             """INSERT OR REPLACE INTO tasks
                (id, spec_json, state, parent_id, assignee, iteration, max_iterations,
-                deadline, created_at, done_reason, autonomy,
+                deadline, created_at, state_entered_at, done_reason, autonomy,
                 was_challenged, was_reassigned, false_positive, criterion_mappings_json, verified,
                 reopens, max_reopens, reopened_from_pass,
                 spec_defect_criteria_change, reassign_reason_typed, reassign_capability_mismatch,
                 revisions)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.id,
                 self._spec_to_json(task.spec),
@@ -315,6 +336,7 @@ class SqliteStorage(StoragePort):
                 task.max_iterations,
                 task.deadline.isoformat() if task.deadline else None,
                 task.created_at.isoformat(),
+                task.state_entered_at.isoformat() if task.state_entered_at else None,
                 task.done_reason.name if task.done_reason else None,
                 task.autonomy.name,
                 int(task.was_challenged),
@@ -441,7 +463,7 @@ class SqliteStorage(StoragePort):
             "DELETE FROM pipeline_log WHERE id <= (SELECT MAX(id) FROM pipeline_log) - 10000")
         self._conn.commit()
 
-    def get_pipeline(self, limit: int = 500) -> list[dict]:
+    def get_pipeline(self, limit: int = PIPELINE_PAGE) -> list[dict]:
         rows = self._conn.execute(
             "SELECT ts, source, message FROM "
             "(SELECT * FROM pipeline_log ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
@@ -458,7 +480,7 @@ class SqliteStorage(StoragePort):
                   for c in self._USAGE_COLS))
         self._conn.commit()
 
-    def get_usage(self, limit: int = 5000) -> list[dict]:
+    def get_usage(self, limit: int = USAGE_PAGE) -> list[dict]:
         rows = self._conn.execute(
             f"SELECT {', '.join(self._USAGE_COLS)} FROM "
             f"(SELECT * FROM llm_usage ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
@@ -470,11 +492,12 @@ class SqliteStorage(StoragePort):
         self._conn.execute(
             "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
             "rejected, error, source, reason, justification, result, failed_criteria_json, "
-            "action, in_flight) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "action, in_flight, spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
              json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
              row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
-             json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight")))
+             json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight"),
+             row.get("spec")))
         self._conn.commit()
 
     def load_audit(self) -> list[dict]:
@@ -487,4 +510,5 @@ class SqliteStorage(StoragePort):
             "justification": r["justification"], "result": r["result"],
             "failed_criteria": json.loads(r["failed_criteria_json"] or "[]"),
             "action": r["action"], "in_flight": r["in_flight"],
+            "spec": (r["spec_json"] if "spec_json" in r.keys() else None),
         } for r in rows]

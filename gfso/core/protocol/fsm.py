@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from gfso.core.protocol.validation import Role, required_role
 from gfso.core.types import (
     State, Signal, DoneReason, MutationType,
     GuardContext, Effect, SignalData,
@@ -397,3 +398,45 @@ def transition(
     if fn is None:
         return None
     return fn(task_id, ctx)
+
+
+#: Where a signal that a state does not admit is ACTUALLY sent from — the route, not the list.
+#: A bare "valid here: [...]" leaves the caller to work out which of five signals carries their
+#: intent, and the one that matters most is not obvious: after ACCEPT the contract is disputed
+#: through BLOCK, because CHALLENGE is the pre-consent channel (§14.3's admissible sets) and Inv-1
+#: makes every contract change the issuer's re-ASSIGN — which is exactly what a RESOLVE_BLOCK that
+#: moves a packet field is (§14.3). Measured: an executor stuck on an unsatisfiable criterion
+#: reached for CHALLENGE, was refused in silence, and re-delivered five times instead.
+_ROUTES = {
+    (Signal.CHALLENGE, State.EXECUTING): (
+        "the contract is disputed BEFORE it is accepted — CHALLENGE is admitted from OFFERED "
+        "(§14.3). You have accepted this one, so a defect found in the work goes out as "
+        "BLOCK(reason=\"…\"): its resolution by the issuer may change a packet field, and that IS "
+        "a revision under Inv-1 — the node returns to OFFERED and you consent to the new contract"),
+    (Signal.CHALLENGE, State.REWORKING): (
+        "the contract is disputed BEFORE it is accepted — CHALLENGE is admitted from OFFERED "
+        "(§14.3). Mid-rework the channel for \"this criterion is wrong\" is BLOCK(reason=\"…\"), "
+        "which is reportable from here exactly so a defect met in the work is not unreportable "
+        "(FM-7): the issuer's RESOLVE_BLOCK that changes the contract is a revision (Inv-1), and "
+        "the node comes back to OFFERED for your consent"),
+    (Signal.CHALLENGE, State.VALIDATING): (
+        "the delivery is already with its issuer — a contract objection now travels with the FAIL "
+        "you expect: put it in the re-DELIVER, or BLOCK from REWORKING once the FAIL lands"),
+}
+
+
+def not_admissible_here(signal: Signal, state: State) -> str:
+    """Why this signal moves nothing here — and where the caller's intent actually goes.
+
+    TWO REFUSALS, NOT ONE. A signal the STATE does not admit and a signal the state admits whose
+    transition GUARD refused it are different facts, and one sentence for both printed "ASSIGN is
+    not valid in state OFFERED — valid here: [… 'ASSIGN']", which contradicts itself and sends the
+    reader looking for the wrong thing."""
+    _valid = [s for s in available_signals(state) if required_role(s) != Role.SYSTEM]
+    if signal in _valid:
+        return (f"{signal.name} is admitted by state {state.name} but its transition GUARD refused "
+                f"it — the precondition does not hold for this node")
+    _route = _ROUTES.get((signal, state))
+    return (f"{signal.name} is not admitted by state {state.name} (§14.3) — admitted here: "
+            + ", ".join(s.name for s in _valid)
+            + (f". {_route}" if _route else ""))

@@ -201,8 +201,108 @@ class SignalData:
 
 
 @dataclass(frozen=True)
+class Wait:
+    """WHY a node is not on the frontier, and what would put it there — one shape, six authors.
+
+    The answer was built in six places: a parent held by Thm 1, a validator already running, the
+    plan gate, the dependency order, a stranded terminal, and `get_task`'s own `blocked_by`. Three
+    of them made `waits_on` a comma-joined STRING and one a LIST, and both kinds were merged into
+    the same `waiting` array; the stranded entry dropped `assignee` and `waits_on` altogether, and
+    the sixth renamed the fields (`what_now` for `opens_with`, `reason` for `why`). It was already
+    live: the dispatcher tells `opens_with` apart to decide whether a wait is dep-order, so a
+    dependency wait was narrated with a list repr and the wrong canon citation.
+
+    `waits_on` is ALWAYS a tuple of ids or plain phrases — never a pre-joined sentence."""
+
+    task_id: str
+    state: str
+    waits_on: tuple[str, ...]
+    why: str
+    opens_with: str
+    assignee: Optional[str] = None
+    kind: str = "dependency"      # dependency | children | validator | plan | stranded | blocker
+
+    def as_dict(self) -> dict:
+        """The wire form the frontier already speaks — `waits_on` always a list, `kind` always present."""
+        return {"task_id": self.task_id, "state": self.state, "assignee": self.assignee,
+                "waits_on": list(self.waits_on), "why": self.why,
+                "opens_with": self.opens_with, "kind": self.kind}
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """WHY a signal moved nothing, in fields rather than in prose.
+
+    Four independent places used to answer that question and each answered differently: the FSM
+    returned a bare `None` (no reason at all — a refusal the log recorded as a fact with no
+    content), the validation layer raised free-form text, the loop wrote whatever it was handed, and
+    the tool layer assembled a dict per branch. So the same act — pressing a transition — could come
+    back as a sentence, as a silence, or as a different sentence depending on which door refused it.
+
+    `kind` says WHICH refusal it is (the reader's first question and the one the old single sentence
+    conflated); `why` is the fact; `route` is where the caller's intent actually goes, when there is
+    somewhere; `opens_with` is the act that would make the same signal land."""
+
+    kind: str                      # "state" | "guard" | "rule" | "payload" | "role"
+    why: str
+    route: Optional[str] = None
+    opens_with: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SignalOutcome:
+    """What the system answers when a transition is attempted — ONE shape, every door.
+
+    The fields are always present: a caller never has to know which branch produced the reply to
+    know where to look. `accepted` with `to_state` is the whole of the happy answer; a refusal
+    carries `refusal` and leaves `to_state` at None (nothing moved)."""
+
+    task_id: TaskId
+    signal: Signal
+    accepted: bool
+    from_state: Optional[State] = None
+    to_state: Optional[State] = None
+    refusal: Optional[Refusal] = None
+
+    def as_dict(self) -> dict:
+        """The wire form the doors already speak — `accepted` / `state` / `error`, unchanged, plus
+        the refusal's own fields for a reader that wants them apart."""
+        out: dict = {"accepted": self.accepted,
+                     "state": (self.to_state or self.from_state).name
+                     if (self.to_state or self.from_state) else None}
+        if self.refusal is not None:
+            out["error"] = " ".join(x for x in (self.refusal.why, self.refusal.route) if x)
+            out["refused_by"] = self.refusal.kind
+            if self.refusal.opens_with:
+                out["opens_with"] = self.refusal.opens_with
+        return out
+
+
+@dataclass(frozen=True)
 class DispatchPayload:
     signal: Signal
     task: Task
     check_results: tuple[CheckResult, ...] = ()
     recommendation: Optional[Recommendation] = None
+
+
+def passed(task: "Task | None") -> bool:
+    """Did this node EARN a pass — DONE with a verdict someone gave it?
+
+    The question was written in nine places and three spellings (an enum compare, a `.name` string
+    compare, a `getattr(…, "name", "")` compare), and they were not equivalent: some counted
+    AUTO_PASS and some did not, which is a difference in MEANING carried by an accident of style.
+    §21 records the timeout close apart from a pass precisely because it is not one — so that is the
+    other predicate, below, and a caller picks which question it is asking.
+    """
+    return task is not None and task.state is State.DONE and task.done_reason is DoneReason.PASS
+
+
+def settled_positive(task: "Task | None") -> bool:
+    """DONE and not refused — an earned PASS *or* the timeout's auto_pass (§21, Ch. 24).
+
+    For populations where the canon counts a node that completed without a refusal, however it got
+    there. Anything that must not accept a verdict nobody gave uses `passed` instead.
+    """
+    return (task is not None and task.state is State.DONE
+            and task.done_reason in (DoneReason.PASS, DoneReason.AUTO_PASS))

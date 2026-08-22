@@ -5,7 +5,10 @@ from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
-from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, Signal, SignalData
+import json
+
+from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, Signal,
+                             SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
 
 
 def _sp(d, *c):
@@ -220,9 +223,29 @@ def test_a_refused_signal_says_which_kind_of_refusal_it_was():
     guard = T.signal(e, "n", "ASSIGN", "human")          # state-valid, guard says no
     assert guard["accepted"] is False
     assert "ASSIGN" in [s.name for s in e.available_actions(TaskId("n"))]
-    assert "GUARD" in guard["error"] and "not valid in state" not in guard["error"]
+    assert "GUARD" in guard["error"] and "not admitted by state" not in guard["error"]
 
     wrong = T.signal(e, "n", "DELIVER", "human")         # OFFERED admits no DELIVER at all
     assert wrong["accepted"] is False
-    assert "not valid in state OFFERED" in wrong["error"] and "ACCEPT" in wrong["error"]
+    assert "not admitted by state OFFERED" in wrong["error"] and "ACCEPT" in wrong["error"]
     e.stop()
+
+
+def test_the_frontier_speaks_the_action_vocabulary_and_the_wire_form_is_unchanged():
+    """Nine words, three lists that had to agree about them, and no owner.
+
+    The frontier authored the action names as bare strings, the dispatcher compared against four of
+    them, and a third list in the tool surface named five — three copies of one vocabulary, each
+    free to drift. They now come from `Action` in `core.types.enums`, with the two subsets named
+    beside it rather than re-spelled at each site.
+
+    The wire form is what makes this safe to do at all: a `StrEnum` serialises to exactly the same
+    bytes, and the measurement arm dispatches on these exact strings — a new spelling would end its
+    runs silently rather than loudly."""
+    assert Action.ACCEPT == "accept"                             # equal to the string it replaced
+    assert json.dumps({"action": Action.ACCEPT}) == json.dumps({"action": "accept"})  # on the wire
+    assert f"{Action.VALIDATE}" == "validate"                    # …and in any directive text
+    assert SPAWNABLE_ACTIONS <= EXECUTOR_ACTIONS                 # the dispatcher's set is a subset
+    assert Action.CONFIRM_CANCEL in EXECUTOR_ACTIONS and Action.CONFIRM_CANCEL not in SPAWNABLE_ACTIONS
+    assert {str(a) for a in Action} == {"accept", "execute", "deliver", "rework", "revise",
+                                        "validate", "review", "resolve", "confirm_cancel"}

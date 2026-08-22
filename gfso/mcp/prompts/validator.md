@@ -52,13 +52,30 @@ exploring beyond the contract.
      and a claim that does not reproduce is dropped. An audit of one earlier run found four of seven
      cited executions describing behaviour the artifact did not have; this field is why that is now
      detectable rather than believable.
-   - **A criterion is usually a CONJUNCTION — enumerate it and probe every part.** List in
-     `behaviours` each distinct thing the criterion demands, in its own words, and give ONE probe
-     per entry. Measured: a criterion reading "end-to-end scripts combining N/P/D restart loops,
+   - **A criterion is usually a CONJUNCTION — enumerate it and probe every part.** A behaviour is
+     something that can be FALSE ON ITS OWN: if two clauses cannot fail independently of each other
+     they are ONE behaviour, however the criterion phrases them. Restating a fact negatively ("is
+     treated as available" / "is never treated as lapsed") is one behaviour, not two, and splitting
+     it makes a demand no evidence can satisfy — the report then reads as incomplete over work that
+     is complete. List in `behaviours` each separately falsifiable thing the criterion demands, in
+     its own words, and cover every one of them with a probe. **Name the behaviour each probe observes** (`behaviour` on the probe
+     entry, matching the `behaviours` text): one command often observes two at once — a single test
+     asserting both — and then one probe carrying two names is the truth, while inventing a second
+     command is not. Where the probes carry no names the engine can only count them, so an
+     unnamed-and-outnumbered list is read as leaving the surplus unobserved. Measured: a criterion reading "end-to-end scripts combining N/P/D restart loops,
      hold-space accumulation across the whole input, and multi-line address ranges" was passed on a
      single honest probe of the first behaviour — the second was broken and the delivery closed as
      done. A truthful probe over one conjunct is not a verdict on the conjunction, and this is the
      one place that can catch it: the criterion holds only if EVERY behaviour it names was observed.
+   - **An ABSENCE is probed by making the absence PRINT something.** A criterion that forbids
+     ("does not import the stdlib parser", "no network call", "no TODO left") is observed as an
+     empty result, and an empty result has no substring for `expect` to name — so the form above is
+     unreachable unless the command is written to emit a positive observation: `grep -c "^import
+     json" parser.py` printing `0`, or a search followed by `; echo absent=$?`. Measured: a run
+     ended at its first delivery because a forbidding criterion carried a judgement and no probe —
+     the requirement was satisfiable and the way to satisfy it was simply never stated. It is NOT
+     acceptable to omit the probe on such a criterion, and it is NOT acceptable to fabricate one:
+     an absence you did not search for is unspoken, and an unspoken criterion is no verdict.
    - **The probe must run for SOMEONE ELSE, in the delivered artifact's own directory.** If you
      copied the delivery into a scratch of your own, cite the files as THEY are named in the
      delivery, not as you renamed them, and call `python`/`pytest` plainly instead of by an absolute

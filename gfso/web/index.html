@@ -186,7 +186,13 @@ async function loadCheckMap() {
         FM_LABEL = m.fm_label || {};
     } catch (e) { /* offline: render the codes bare rather than a wrong name */ }
 }
-const fmOf = (checkName) => CHECK_TO_FM[checkName] || 'FM-?';
+// A check with no failure mode is not a check with an UNKNOWN one. CHECK-1c (anti-mock) is an
+// engineering addition with no row in the canon's battery — deliberately absent from the map, and
+// the guard that compares the map against the canon in both directions would go red if it were
+// added. The page printed `FM-?` at the reader, which reads as a defect in the product rather than
+// as the honest fact that this check answers to no canon mode (measured in the UI 2026-08-23).
+const fmOf = (checkName) => CHECK_TO_FM[checkName] || null;
+const FM_NONE = 'engineering checks (outside the canon battery)';
 
 // Q metric labels per §15. Short name + tooltip for full meaning.
 const Q_META = {
@@ -433,13 +439,17 @@ async function selectTask(taskId) {
         const realChecks = d.checks.filter(c => !c.skipped);
         if (realChecks.length) {
             const byFm = {};
-            realChecks.forEach(c => { const fm = fmOf(c.check_name); (byFm[fm] = byFm[fm] || []).push(c); });
+            realChecks.forEach(c => { const fm = fmOf(c.check_name) || FM_NONE; (byFm[fm] = byFm[fm] || []).push(c); });
             h += `<div class="section"><div class="section-title">Checks by failure mode</div>`;
             Object.keys(byFm).sort().forEach(fm => {
-                h += `<div class="fm-group"><div class="fm-label"><span class="fm-code">${fm}</span>${FM_LABEL[fm] || ''}</div><ul class="item-list">`;
+                const isFm = fm !== FM_NONE;
+                h += `<div class="fm-group"><div class="fm-label">${isFm ? `<span class="fm-code">${fm}</span>${FM_LABEL[fm] || ''}` : fm}</div><ul class="item-list">`;
                 byFm[fm].forEach(c => {
-                    const cls = c.passed?'check-pass':'check-fail';
-                    const icon = c.passed?'✓':'✗';
+                    // A SKIPPED CHECK SAYS NOTHING — it is neither met nor unmet, and reading the
+                    // bool alone painted it green (fail-open, the same defect the doors carried).
+                    const v = c.verdict || (c.skipped ? 'skipped' : (c.passed ? 'met' : 'unmet'));
+                    const cls = v === 'met' ? 'check-pass' : v === 'skipped' ? 'check-skip' : 'check-fail';
+                    const icon = v === 'met' ? '✓' : v === 'skipped' ? '–' : '✗';
                     const shortName = c.check_name.split(':')[1] || c.check_name;
                     h += `<li class="${cls}"><span class="check-icon">${icon}</span>${shortName}${c.details?' — '+c.details:''}</li>`;
                 });
@@ -568,6 +578,11 @@ async function sendAction(taskId, signal, promptField, needsCriteria) {
     if (needsCriteria) { const v = prompt('Failed criteria (comma-separated):'); if (!v) return; body.failed_criteria = v.split(',').map(s=>s.trim()); }
     try {
         const r = await fetch('/api/run/signal', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task_id:taskId, ...body})});
+        // A REFUSAL IS THE ENGINE TALKING TO YOU. The page dropped it on the floor and refreshed:
+        // the node did not move and nothing said why — the same silence the doors were fixed for.
+        // It arrives as a 200 whose body says no (the status is about the call, not the act).
+        const d = await r.json().catch(() => ({}));
+        if (d && (d.error || d.accepted === false)) alert(d.error || 'the engine refused that signal');
         await refreshAll();
         if (selectedTaskId) await selectTask(selectedTaskId);
     } catch(e) { console.error('sendAction:', e); }

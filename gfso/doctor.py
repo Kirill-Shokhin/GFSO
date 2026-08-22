@@ -23,6 +23,9 @@ import sysconfig
 from pathlib import Path
 
 from gfso import __version__
+from gfso import config as _config
+from gfso.config import db_path as _config_db_path
+from gfso.config import LOOPBACK as _LOOPBACK
 
 
 def _address() -> tuple[str, int]:
@@ -40,7 +43,7 @@ def port_state() -> tuple[str, str]:
     """
     from gfso import serverctl
     base, port = _address()
-    if not serverctl.port_open("127.0.0.1", port, timeout=1.0):
+    if not serverctl.port_open(_LOOPBACK, port, timeout=1.0):
         return "free", f"nothing is listening on :{port}"
     if serverctl.runtime() is not None:
         return "gfso", f"a gfso server answers at {base}"
@@ -111,8 +114,14 @@ def mcp_registered() -> tuple[bool | None, str]:
     if exe is None:
         return None, "no claude CLI to ask"
     try:
+        # `claude mcp list` STARTS every configured server to report on it — including this one,
+        # whose entry point reconciles THE one server to the probing process's environment. So a
+        # `gfso doctor` inside a test suite (temporary home) took the live server down and left its
+        # own in its place, twice killing a measurement run. A question may not have that effect;
+        # the child is told so.
         out = subprocess.run([exe, "mcp", "list"], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=30)
+                             encoding="utf-8", errors="replace", timeout=30,
+                             env=_config.child_env(GFSO_NO_RECONCILE="1"))
         if out.returncode != 0:
             return None, f"`claude mcp list` exited {out.returncode}"
         return ("gfso" in out.stdout), ("registered" if "gfso" in out.stdout else
@@ -140,9 +149,9 @@ def _database_path() -> str:
     while the server died on the real one. A diagnostic that composes its own answer is the class
     this module exists to close.
     """
-    import os as _os
+    import os
     from gfso.runtime import data_dir
-    return _os.environ.get("GFSO_DB_PATH") or str(data_dir() / "gfso.db")
+    return str(_config_db_path())
 
 
 def _home_report() -> tuple[bool, str, Path]:
@@ -161,6 +170,33 @@ def _home_report() -> tuple[bool, str, Path]:
         return False, f"{home}  ({why}) — NOT WRITABLE: {ex}", home
 
 
+def _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg_line,
+                  live_notes, live, has_claude, home, script) -> None:
+    """Print what this installation IS — one aligned row per fact.
+
+    `doctor` does two things: it establishes the facts (home, assets, port, CLI, registration,
+    what the live server is serving) and it prints them. The printing is the part a bug report
+    carries, so it is its own function and reads as the report it is."""
+    rows = [
+        ("gfso", f"{__version__}   (canon v4.0 is a separate line and is not this number)"),
+        ("python", f"{platform.python_version()}  {sys.executable}"),
+        ("executable", f"{script}" + ("" if script.exists() else "   MISSING")),
+        ("platform", f"{platform.system()} {platform.release()}"),
+        ("state home", home_line),
+        ("database", _database_path()),
+        ("address", f"{serverctl.BASE}  — {port_line}"),
+        ("live server", "; ".join(live_notes) if live_notes else
+         ("matches this installation" if live else "none running")),
+        ("assets", assets_line),
+        ("claude CLI", claude_line if has_claude else f"NOT USABLE — {claude_line}"),
+        ("agent door", reg_line),
+    ]
+    width = max(len(k) for k, _ in rows)
+    print("gfso doctor")
+    for key, value in rows:
+        print(f"  {key.ljust(width)}  {value}")
+
+
 def doctor() -> int:
     """Print the state of this installation; exit non-zero if something blocks work."""
     try:
@@ -170,6 +206,7 @@ def doctor() -> int:
     from gfso import serverctl
 
     blocking: list[str] = []
+    drift: list[str] = []      # true, and in nobody's way
     home_ok, home_line, home = _home_report()
     assets_ok, assets_line = _assets_ok()
     port, port_line = port_state()
@@ -202,31 +239,24 @@ def doctor() -> int:
         if live.get("with_mcp") is False:
             live_notes.append("it has NO agent door mounted — agent sessions will not reach it")
         if live_notes:
-            blocking.append("the running server is not this installation")
+            # DRIFT IS NOT A BLOCK. A server running older code answers every verb — the product
+            # works — and calling that "blocking" made a first-time user believe nothing would work
+            # and reach for `gfso up`, which restarts a server that may be carrying someone else's
+            # live runs (measured 2026-08-21: "I was wrong — everything worked"). What STOPS the
+            # product and what is merely out of date are two different lines.
+            drift.append("the running server is not this installation (" + "; ".join(live_notes)
+                         + "). Everything still works; `gfso up` reconciles it, and refuses while "
+                           "another session's run is in flight")
 
-    rows = [
-        ("gfso", f"{__version__}   (canon v4.0 is a separate line and is not this number)"),
-        ("python", f"{platform.python_version()}  {sys.executable}"),
-        ("executable", f"{script}" + ("" if script.exists() else "   MISSING")),
-        ("platform", f"{platform.system()} {platform.release()}"),
-        ("state home", home_line),
-        ("database", _database_path()),
-        ("address", f"{serverctl.BASE}  — {port_line}"),
-        ("live server", "; ".join(live_notes) if live_notes else
-         ("matches this installation" if live else "none running")),
-        ("assets", assets_line),
-        ("claude CLI", claude_line if has_claude else f"NOT USABLE — {claude_line}"),
-        ("agent door", reg_line),
-    ]
-    width = max(len(k) for k, _ in rows)
-    print("gfso doctor")
-    for key, value in rows:
-        print(f"  {key.ljust(width)}  {value}")
+    _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg_line,
+                  live_notes, live, has_claude, home, script)
 
     if not has_claude:
         print("\nThe engine, the UI, the gate and `gfso demo human_only` work without any model.")
         print("What needs the Claude Code CLI: auto_decompose, review_decomposition,")
         print("validate_result, and delegation to agent executors.")
+    if drift:
+        print("\nout of date (not blocking): " + "; ".join(drift))
     if blocking:
         print("\nblocking: " + "; ".join(blocking))
         return 1

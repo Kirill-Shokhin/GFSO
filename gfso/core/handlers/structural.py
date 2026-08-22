@@ -285,8 +285,22 @@ def check_accepted_risks(task: Task, children: list[Task]) -> CheckResult:
                 f"it (spec defect) or have the issuer revise it; accepting it as a risk cannot retire it")
         elif n.predictability is None:
             malformed.append(
-                f"'{n.item}' has no predictability verdict (record incomplete, §13.1; "
-                f"no materialization P → it is a scope boundary, not a risk — move to goal criteria/CHECK-1)")
+                # …and HOW to give it one. This said the record was incomplete and never named the
+                # field: a person wrote "Predictable: yes", "unpredictable", "predictability:
+                # predictable" into the item text and stayed red through all of them, because
+                # `accepted_risks` also accepts bare strings and keeps them in a permanently failing
+                # state (measured 2026-08-21, fifteen minutes of blind guessing). The excellent
+                # explanation of the three categories lived on the other side of a key they had to
+                # guess first.
+                f"'{n.item}' has no predictability verdict (record incomplete, §13.1). Write the "
+                f"entry as an OBJECT with the `predictability` key — {{'item': …, "
+                f"'predictability': 'STATISTICAL'|'EXTRAORDINARY', 'justification': …}} — not as a "
+                f"bare string: ORDINARY = occurs regularly in the domain, so it belongs in the "
+                f"DECOMPOSITION and not here · STATISTICAL = P is estimable and the event "
+                f"infrequent, admissible WITH a justification · EXTRAORDINARY = no precedent and "
+                f"not derivable from known models. It is a burden-of-proof scale, not high/medium/"
+                f"low. A capability the goal deliberately EXCLUDES has no P at all — that is "
+                f"`scope`, not a risk")
         elif n.predictability == Predictability.ORDINARY:
             malformed.append(f"'{n.item}' is declared ORDINARY — must be in the decomposition, not accepted_risks")
         elif n.predictability == Predictability.STATISTICAL and not n.justification.strip():

@@ -59,7 +59,12 @@ def test_a_drifted_IDLE_server_is_still_reconciled(monkeypatch):
     import urllib.request as _ur          # the reconciler imports it inside the function
     monkeypatch.setattr(_ur, "urlopen",
                         lambda req, timeout=None: stops.append(req) or _FakeResp())
-    monkeypatch.setattr(C, "_port_open", lambda *a, **k: False)   # the graceful stop took effect
+    # THE one socket probe (gfso.serverctl.port_open), not a module-local alias: the reconciler and
+    # `gfso down` now share one wait for the port to close, and a test that neutralizes a copy leaves
+    # the real one opening a real socket — the failure this probe's own docstring records.
+    import gfso.serverctl as _S
+    monkeypatch.setattr(_S, "port_open", lambda *a, **k: False)   # the graceful stop took effect
+    monkeypatch.setattr(C, "_port_open", lambda *a, **k: False)
     monkeypatch.setattr(C, "foreign_holder", lambda *a, **k: False)
     out = C.ensure_correct(verbose=False)
     assert out["action"] == "restarted" and calls == ["spawn"]
@@ -131,6 +136,88 @@ def test_a_stop_that_did_not_take_is_not_reported_as_a_restart(monkeypatch):
     _stub(monkeypatch, {"code_version": "OLD", "sessions": 0, "busy": []}, calls)
     import urllib.request as _ur
     monkeypatch.setattr(_ur, "urlopen", lambda req, timeout=None: _FakeResp())
+    # BOTH probes, because there are two spellings of one question and only one of them is this
+    # module's: the reconciler waits for the port through `serverctl.port_open`. Patching the alone
+    # alias left the real socket call live, so this test passed on a machine that HAD a server on
+    # :8000 and failed on CI, which has none — a green that was reading the developer's desk.
     monkeypatch.setattr(C, "_port_open", lambda *a, **k: True)      # the server is still there
+    monkeypatch.setattr(serverctl, "port_open", lambda *a, **k: True)
     out = C.ensure_correct(verbose=False)
     assert out["action"] == "left-alone" and calls == [], "it claimed a restart that did not happen"
+
+
+def test_a_dropped_bridge_is_rebuilt_while_the_server_answers(monkeypatch):
+    """A server restart must not cost a session its tools for good.
+
+    The HTTP leg breaks on every restart — an upgrade, a deliberate `up --force`, a crash — and the
+    bridge used to exit on the first break. The client does not respawn it, so the session loses
+    gfso permanently: measured 2026-08-20, an agent's first call after a restart returned
+    `Session terminated` and so did every call after it, while the server was up and serving others.
+    It wrote itself a private HTTP client to finish; a person would have stopped.
+    """
+    import gfso.mcp.connect as C
+
+    calls = {"relay": 0, "slept": 0}
+
+    async def flaky_relay(*_a, **_k):
+        calls["relay"] += 1
+        if calls["relay"] < 3:
+            raise ConnectionError("Session terminated")     # the restart, twice
+
+    monkeypatch.setattr(C, "_relay", flaky_relay)
+    monkeypatch.setattr(C.time, "sleep", lambda s: calls.__setitem__("slept", calls["slept"] + 1))
+    monkeypatch.setattr(C, "_heartbeat", lambda *a, **k: None)
+    monkeypatch.setattr(C, "ensure_correct", lambda **k: {"action": "already-correct", "drift": [], "code_version": "x"})
+    monkeypatch.setattr(C, "foreign_holder", lambda *a: False)
+    import gfso.serverctl as S
+    monkeypatch.setattr(S, "runtime", lambda: {"code_version": "x"})   # the server IS answering
+
+    C.main()
+    assert calls["relay"] == 3, f"the bridge was not rebuilt: {calls}"
+    assert calls["slept"] >= 2, "it retried without waiting between attempts"
+
+
+def test_a_bridge_whose_server_is_gone_stops_and_says_so(monkeypatch, capsys):
+    """The other direction: when the server really is gone, retrying is pointless — stop, and say
+    what to do instead of naming an exception class."""
+    import gfso.mcp.connect as C
+
+    async def dead_relay(*_a, **_k):
+        raise ConnectionError("Session terminated")
+
+    monkeypatch.setattr(C, "_relay", dead_relay)
+    monkeypatch.setattr(C.time, "sleep", lambda s: None)
+    monkeypatch.setattr(C, "_heartbeat", lambda *a, **k: None)
+    monkeypatch.setattr(C, "ensure_correct", lambda **k: {"action": "already-correct", "drift": [], "code_version": "x"})
+    monkeypatch.setattr(C, "foreign_holder", lambda *a: False)
+    import gfso.serverctl as S
+    monkeypatch.setattr(S, "runtime", lambda: None)                    # the server is NOT answering
+
+    C.main()
+    err = capsys.readouterr().err
+    assert "gfso up" in err, f"the exit line does not say what to do: {err}"
+
+
+def test_a_reply_saying_the_session_is_gone_counts_as_a_break():
+    """A restarted server does not break the pipe — it ANSWERS.
+
+    Its new process knows nothing of this session id, so every call returns a normal JSON-RPC error
+    reading `Session terminated` while the transport stays healthy. Measured 2026-08-20: an agent
+    ran a whole task through a bridge in that state — tools listed, none working — and finished only
+    by writing itself a private HTTP client. Nothing raised, so the reconnect loop never fired.
+    """
+    import gfso.mcp.connect as C
+
+    class _Err:
+        def __init__(self, m): self.message = m
+
+    class _Root:
+        def __init__(self, m): self.error = _Err(m)
+
+    class _Msg:
+        def __init__(self, m): self.root = _Root(m)
+
+    assert C._is_dead_session(_Msg("Session terminated")), "the restart signature is not recognised"
+    assert C._is_dead_session(_Msg("session not found"))
+    assert not C._is_dead_session(_Msg("unknown task 'x'")), "an ordinary error must pass through"
+    assert not C._is_dead_session(object()), "a shape it cannot read must not be called dead"

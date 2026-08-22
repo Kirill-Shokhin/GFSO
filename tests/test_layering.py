@@ -20,11 +20,17 @@ import gfso
 ROOT = pathlib.Path(gfso.__file__).parent
 
 # module prefix → allowed gfso-internal import prefixes (first two dotted segments)
+# `gfso.config` is admissible EVERYWHERE: it is the settings vocabulary — one module, no gfso
+# imports at all (os and pathlib), read at call time. A layer rule exists so a lower layer cannot
+# reach into a higher one; a leaf that answers "where does this product keep its data, which model
+# does it run by default" inverts nothing. Without this row every layer keeps its own spelling of
+# those answers, which is the defect the config owner exists to remove.
+_CONFIG = {"gfso.config"}
 RULES = {
-    "gfso.core": {"gfso.core"},
-    "gfso.engine": {"gfso.core", "gfso.engine"},
-    "gfso.tools": {"gfso.core", "gfso.engine"},
-    "gfso.adapters": {"gfso.core", "gfso.adapters"},
+    "gfso.core": {"gfso.core"} | _CONFIG,
+    "gfso.engine": {"gfso.core", "gfso.engine"} | _CONFIG,
+    "gfso.tools": {"gfso.core", "gfso.engine"} | _CONFIG,
+    "gfso.adapters": {"gfso.core", "gfso.adapters"} | _CONFIG,
 }
 
 # gfso.doctor is binding: it reports on the doors, and `setup` drives them (it imports gfso.mcp).

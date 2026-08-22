@@ -7,6 +7,7 @@ from .primitives import (
     TaskId, AgentId, Task, CheckResult, Recommendation,
     DispatchPayload, SignalData, DepEdge, Spec,
 )
+from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 
 
 class StoragePort(ABC):
@@ -119,7 +120,7 @@ class StoragePort(ABC):
         they update in place and are WS-only noise). Default no-op so existing storages stay valid."""
         ...
 
-    def get_pipeline(self, limit: int = 500) -> list[dict]:
+    def get_pipeline(self, limit: int = PIPELINE_PAGE) -> list[dict]:
         """The most recent pipeline lines, oldest-first: [{ts, source, message}]."""
         return []
 
@@ -134,7 +135,7 @@ class StoragePort(ABC):
         only for the calls that side makes. Default no-op so existing storages stay valid."""
         ...
 
-    def get_usage(self, limit: int = 5000) -> list[dict]:
+    def get_usage(self, limit: int = USAGE_PAGE) -> list[dict]:
         """The recorded model calls, oldest-first."""
         return []
 

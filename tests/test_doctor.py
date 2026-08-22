@@ -9,6 +9,11 @@ import json
 import pathlib
 import sys
 
+import pytest
+
+from gfso import serverctl
+from gfso.mcp import connect
+
 from gfso import __version__
 from gfso import doctor as D
 
@@ -129,3 +134,34 @@ def test_the_core_wheel_builder_still_finds_the_version():
         assert build_core._main_version() == __version__
     finally:
         sys.path.pop(0)
+
+
+def test_asking_whether_the_door_is_registered_cannot_restart_the_server(monkeypatch):
+    """`gfso doctor` took the live server down and put its own in its place.
+
+    `claude mcp list` STARTS every configured server to report on it, and this product's entry point
+    reconciles THE one server to the probing process's environment — which inside the test suite is
+    a temporary home. Measured 2026-08-22: every full suite run replaced the live server with one
+    homed in a tempdir, and twice that killed a paid measurement run mid-flight. A question may not
+    have that effect."""
+    seen = {}
+
+    class _Out:
+        returncode, stdout = 0, "gfso: ..."
+
+    monkeypatch.setattr(D.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(D.subprocess, "run",
+                        lambda argv, **kw: seen.update(env=kw.get("env") or {}) or _Out())
+    assert D.mcp_registered()[0] is True
+    assert seen["env"].get("GFSO_NO_RECONCILE") == "1", "the probe was allowed to reconcile"
+
+
+def test_a_process_told_not_to_reconcile_reports_instead(monkeypatch):
+    """…and the flag is honoured where the reconciling happens, not only where it is set."""
+    monkeypatch.setenv("GFSO_NO_RECONCILE", "1")
+    monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: {"code_version": "OLD", "sessions": 0})
+    monkeypatch.setattr(serverctl, "source_fingerprint", lambda *a, **k: "NEW")
+    monkeypatch.setattr(connect, "ensure_server",
+                        lambda *a, **k: pytest.fail("it started a server anyway"))
+    out = connect.ensure_correct(verbose=False)
+    assert out["action"] == "left-alone" and "NO_RECONCILE" in out["why"]

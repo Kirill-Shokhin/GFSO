@@ -1,4 +1,4 @@
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
 
 
 class State(Enum):
@@ -32,6 +32,41 @@ REASSIGNABLE_STATES = frozenset({
 })
 
 
+class Action(StrEnum):
+    """What the frontier asks of whoever holds a node — the nine directives it can issue.
+
+    A vocabulary, not a protocol alphabet: `Signal` is what the FSM accepts, this is what a step
+    TELLS someone to do, and the two are different sizes on purpose (`review` and `revise` move no
+    signal of their own; `execute` is work, not a transition). It lived as bare strings in three
+    places that had to agree and did not: the frontier authored them, the dispatcher compared
+    against four of them, and a third list in the tool surface named five.
+
+    A `StrEnum`, so the wire form is unchanged down to the byte — the measurement arm dispatches on
+    these exact strings and a new spelling would end its runs silently. Two members are therefore
+    named for what the directive DOES rather than after their own value: `FIX` ("rework") and
+    `CHECK_PLAN` ("review"). Those two words are retired STATE names in v4 (v3.9 spelled OFFERED and
+    REWORKING that way), and an identifier carrying them re-creates the verb-against-state collision
+    the naming guard exists to catch — it caught this one."""
+    ACCEPT = "accept"
+    EXECUTE = "execute"
+    DELIVER = "deliver"
+    FIX = "rework"
+    REVISE = "revise"
+    VALIDATE = "validate"
+    CHECK_PLAN = "review"
+    RESOLVE = "resolve"
+    CONFIRM_CANCEL = "confirm_cancel"
+
+
+# The three SUBSETS, named where the vocabulary is — and deliberately NOT collapsed into one. They
+# answer different questions and the arm's own dispatch depends on the difference (run sheet, hard
+# constraint on the action vocabulary): what an EXECUTOR is asked to do, what the dispatcher can
+# spawn work for, and what a step means when it belongs to someone else.
+EXECUTOR_ACTIONS = frozenset({Action.ACCEPT, Action.EXECUTE, Action.DELIVER, Action.FIX,
+                              Action.CONFIRM_CANCEL})
+SPAWNABLE_ACTIONS = frozenset({Action.ACCEPT, Action.EXECUTE, Action.FIX, Action.DELIVER})
+
+
 class Signal(Enum):
     # Executor → Issuer
     ACCEPT = auto()
@@ -58,9 +93,56 @@ class DoneReason(Enum):
     CANCELLED = auto()  # legacy only (pre-v3.7 DBs stored cancellation as DONE(cancelled)); new cancellations end in State.ABANDONED
 
 
-class Verdict(Enum):
-    PASS = auto()
-    FAIL = auto()
+class Verdict(StrEnum):
+    """V's two values, §11.2 — the WORD, owned once.
+
+    A `StrEnum`: the wire form is the same byte string every record, report and signal already
+    carries ("PASS" / "FAIL"), so nothing serialized changes and a comparison against a stored
+    verdict works unchanged. It was an `auto()` Enum, which is why eleven modules spelled the word
+    themselves instead — and an `== Verdict.FAIL` against a stored record silently meant `== 2`."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+class CriticVerdict(StrEnum):
+    """What the Level-2 checker says about ONE criterion of a plan (§13.4) — the word, owned once.
+
+    Only `SUFFICIENT` closes a finding; both other values leave it open, and that asymmetry was
+    written as `!= "sufficient"` in four modules — the checker, the gate, the frontier and the
+    read surface — each of which would have had to be found and changed together. The values are
+    the enum of the schema the model answers in, so nothing on the wire moves."""
+
+    SUFFICIENT = "sufficient"
+    INSUFFICIENT = "insufficient"
+    UNCERTAIN = "uncertain"
+
+
+class Stage(StrEnum):
+    """The ROLE a paid call played, as the spend ledger records it — the word, owned once.
+
+    Two sides of one accounting already disagreed about the same spend (`validate_result` against
+    `validator`), and a stage nobody spelled at the recording site never appeared in the ledger at
+    all — which is how the sufficiency check looked like it had never run. The values are the exact
+    strings already in every database and every measurement script; a `StrEnum` changes no byte.
+    Stages that repeat per round carry the round number appended (`audit-fix-1`)."""
+
+    SEARCH = "search-1"
+    AUDIT_FOLD = "audit-fold-1"
+    AUDIT_FIX = "audit-fix"                # + "-<round>"
+    SEARCH_REFINE = "search-refine"
+    AUDIT_FOLD_REFINE = "audit-fold-refine"
+    DECOMPOSER = "decomposer"
+    EXECUTOR = "executor"
+    # …named for what it does, like `Action.CHECK_PLAN`: the identifier may not carry a word
+    # v4 retired (the naming guard catches it), while the VALUE is the byte string already
+    # in every database and measurement script and must not move.
+    L2_CHECK_PLAN = "l2_review"
+    L2_CHECKER = "l2-checker"
+    L2_ATOMICITY = "l2-atomicity"
+    UNDECIDED_OBLIGATIONS = "undecided-obligations"
+    VALIDATE_RESULT = "validate_result"
+    VALIDATOR = "validator"
 
 
 class RevisionReason(Enum):

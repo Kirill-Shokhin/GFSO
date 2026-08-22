@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from gfso.core.types import Task, CheckResult, DepEdge, Predictability
+from gfso.core.types import Task, CheckResult, DepEdge, Predictability, Verdict
 
 
 # === Sentinel markers — typed values, not bare string literals at use-sites ===
@@ -186,28 +186,12 @@ def build(
 
 # === Render: NodeProjection → markdown (the LLM-prompt boundary) ===
 
-def render(projection: NodeProjection) -> str:
-    """Pure DATA → markdown for the critic. The one place strings are built."""
-    p = projection
-    out: list[str] = []
-    out.append(f"# Decomposition under review — node `{p.node_id}`")
-    out.append("")
-    out.append("## Goal — what this node must achieve")
-    out.append(p.goal or "(no description)")
-    out.append("")
-    out.append('## Acceptance criteria (V) — what "done" means for this node')
-    if p.criteria:
-        for c in p.criteria:
-            out.append(f"- **{c.name}**: {c.description or '(no description)'}")
-    else:
-        out.append("- (none declared)")
-    out.append("")
+def _render_split(p, out: list) -> None:
+    """The two sections that describe the SPLIT: the subtasks, and the seams between them.
 
-    if p.is_leaf:
-        out.append("## Subtasks (D)")
-        out.append("- (leaf node — no decomposition to review)")
-        return "\n".join(out)
-
+    `render` is the one place a projection becomes prose, and it read as one long ribbon of
+    appends. The split is what the critic is actually asked about, so it is its own
+    paragraph — the node's own contract and the checks already run stay with the caller."""
     out.append("## Subtasks (D) — the proposed breakdown")
     for s in p.subtasks:
         who = f" · assignee: {s.assignee}" if s.assignee else ""
@@ -246,6 +230,31 @@ def render(projection: NodeProjection) -> str:
             out.append(f"  - glue (what must match / what breaks): {glue}")
     else:
         out.append("- (none declared)")
+
+
+def render(projection: NodeProjection) -> str:
+    """Pure DATA → markdown for the critic. The one place strings are built."""
+    p = projection
+    out: list[str] = []
+    out.append(f"# Decomposition under review — node `{p.node_id}`")
+    out.append("")
+    out.append("## Goal — what this node must achieve")
+    out.append(p.goal or "(no description)")
+    out.append("")
+    out.append('## Acceptance criteria (V) — what "done" means for this node')
+    if p.criteria:
+        for c in p.criteria:
+            out.append(f"- **{c.name}**: {c.description or '(no description)'}")
+    else:
+        out.append("- (none declared)")
+    out.append("")
+
+    if p.is_leaf:
+        out.append("## Subtasks (D)")
+        out.append("- (leaf node — no decomposition to review)")
+        return "\n".join(out)
+
+    _render_split(p, out)
     out.append("")
 
     out.append("## ACCEPTED_RISKS — declared scope-exclusions for this node")
@@ -271,7 +280,7 @@ def render(projection: NodeProjection) -> str:
     out.append("## Structural checks already run (Solver, L0–L1) — verified, do not re-derive")
     if p.checks:
         for r in p.checks:
-            status = "SKIPPED" if r.skipped else ("PASS" if r.passed else "FAIL")
+            status = "SKIPPED" if r.skipped else (Verdict.PASS if r.passed else Verdict.FAIL)
             detail = f" — {r.details}" if r.details else ""
             out.append(f"- {r.check_name}: {status}{detail}")
     else:

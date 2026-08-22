@@ -28,7 +28,12 @@ def main() -> None:
     blocked = T.signal(e, "report", "PASS", "ann")
     print("ann's self-PASS accepted?", blocked["accepted"], "—", blocked.get("error", "")[:80])
 
-    print(T.record_verdict(e, "report", "PASS", reviewer="bob"))        # the independent record
+    # Bob says WHAT HE CHECKED, one line per criterion. A verdict is a claim about the world, and
+    # the human door asks for the same thing as the machine one — at human grade: a sentence rather
+    # than a re-runnable command. With no independent seam this record IS the guarantee (§14.5).
+    print(T.record_verdict(e, "report", "PASS", reviewer="bob", observed={
+        "numbers": "totals tie to the ledger export, row by row",
+        "sent": "board thread shows it delivered at 09:02"}))
     print("after bob's record:", T.signal(e, "report", "PASS", "ann"))  # now the PASS lands
 
     print("final:", e.get_state(T.TaskId("report")).name)

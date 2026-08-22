@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from gfso.core.types import AgentId, DispatchPayload, SignalData, AgentPort
+from gfso.core.types import AgentId, DispatchPayload, SignalData, AgentPort, Verdict
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class HumanAgent(AgentPort):
         )
         if payload.check_results:
             for r in payload.check_results:
-                status = "PASS" if r.passed else ("SKIP" if r.skipped else "FAIL")
+                status = Verdict.PASS if r.passed else ("SKIP" if r.skipped else Verdict.FAIL)
                 log.info(f"  {r.check_name}: {status} {r.details}")
         if payload.recommendation and payload.recommendation.suggestions:
             for s in payload.recommendation.suggestions:

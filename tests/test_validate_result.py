@@ -2,6 +2,7 @@
 INSTRUMENT produces per-criterion evidence; the ISSUER signals PASS/FAIL. Logic tested with a fake
 agent-runner (the live run is a headless subprocess)."""
 import json
+import threading
 
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
@@ -218,7 +219,10 @@ def test_validate_result_noops_on_internal_node():
     assert out.get("internal") is True and out["verdict"] is None
     assert llm.seen is None                         # the validator was NEVER spawned
     assert e.get_exec_verdict(T.TaskId("kid")) is None
-    # the internal node still PASSes directly (no gate on a same-Del node)
+    # the internal node still PASSes directly (no INDEPENDENT verdict on a same-Del node) — once its
+    # own decided self-check is on the record, which is what §14.5 D6 asks it to carry
+    e.record_reviewer_verdict(T.TaskId("kid"), "PASS", [], reviewer="alice",
+                              observed={"k": "ran it, read the output"})
     assert T.signal(e, "kid", "PASS", "alice")["state"] == "DONE"
     e.stop()
 
@@ -301,9 +305,15 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     e.stop()
 
 
-def test_distinct_issuer_pass_needs_no_verdict_record():
-    """source ≠ Del = the separation already exists (canon default): a parent-issuer passes the
-    executor's delivered node without the gate."""
+def test_a_distinct_issuer_still_needs_the_verdict_on_the_record():
+    """The separation of ids is not the evidence — §14.5 asks for independent VALIDATION at a seam.
+
+    This test asserted the opposite ("a parent-issuer passes the executor's delivered node without
+    the gate"), and that is exactly the false PASS the agent door walked into on 2026-08-22: a
+    delegated child signed PASS by its issuer while a STALE FAIL stood on it and its validator was
+    still running — accepted, DONE. Reproduced with nothing on the record at all. What opens the
+    gate is a verdict for THIS delivery, from the instrument or from a person saying what they
+    observed; who signs is a separate rule (the executor may not)."""
     e = _eng()
     T.create_task(e, "par", {"description": "parent",
                              "criteria": [{"name": "g", "description": "G"}],
@@ -315,8 +325,17 @@ def test_distinct_issuer_pass_needs_no_verdict_record():
     T.map_criterion(e, "par", "kid", "g")   # §13.4: L0-complete plan before executing
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="done")
-    assert T.signal(e, "kid", "PASS", "boss")["state"] == "DONE"   # issuer=boss ≠ Del=worker
+    bare = T.signal(e, "kid", "PASS", "boss")                      # issuer=boss ≠ Del=worker…
+    assert bare["accepted"] is False and "independent verdict" in bare["error"]
+    T.record_verdict(e, "kid", "PASS", reviewer="boss", observed={"k": "ran it, printed 42"})
+    assert T.signal(e, "kid", "PASS", "boss")["state"] == "DONE"   # …once the record exists
     e.stop()
+
+
+def _seen(e, tid):
+    """What a human reviewer says they observed — one line per criterion (the door now asks)."""
+    t = e.get_task(T.TaskId(tid))
+    return {c.name: f"checked {c.name} by hand" for c in t.spec.criteria if not c.depends_on}
 
 
 def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gate():
@@ -331,12 +350,13 @@ def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gat
     assert e.get_state(T.TaskId("n9")).name == "VALIDATING"
     assert T.signal(e, "n9", "PASS", "h1")["accepted"] is False      # gate: no recorded verdict
 
-    out = T.record_verdict(e, "n9", "PASS", reviewer="h1")           # executor tries to self-record
+    out = T.record_verdict(e, "n9", "PASS", reviewer="h1", observed=_seen(e, "n9"))  # self-record
     assert out["recorded"] is False and "executor" in out["error"]   # the ENGINE refused
 
     assert T.record_verdict(e, "n9", "FAIL", reviewer="h2")["recorded"] is False  # Inv-3: criteria-less FAIL
 
-    assert T.record_verdict(e, "n9", "PASS", reviewer="h2")["recorded"] is True   # independent human
+    assert T.record_verdict(e, "n9", "PASS", reviewer="h2",
+                            observed=_seen(e, "n9"))["recorded"] is True   # independent human
     assert T.signal(e, "n9", "PASS", "h1")["accepted"] is True       # gate opens on the RECORD
     assert e.get_state(T.TaskId("n9")).name == "DONE"
     e.stop()
@@ -433,7 +453,10 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
 
     assert llm.seen["cwd"] == str(project), "the validator was opened away from the delivery"
     assert (project / "sum.py").exists()
-    scratch = list((project / ".gfso-scratch").iterdir())
+    # BESIDE the delivery, not inside it: a criterion like "every file under the target dir belongs
+    # to this package" is otherwise false because of us (measured on the human door 2026-08-22).
+    assert not (project / ".gfso-scratch").exists()
+    scratch = list((project.parent / f".gfso-scratch-{project.name}").iterdir())
     assert len(scratch) == 1, "a fresh scratch per validation is still made"
     assert str(scratch[0]) in llm.seen["user"], "…and the validator is told where it is"
     assert str(project) in llm.seen["user"]
@@ -493,3 +516,246 @@ def test_internal_model_calls_start_no_mcp_server(monkeypatch):
         "no process was started at all: the argv this test judges was never built"
     assert "--strict-mcp-config" in seen["args"], \
         "an internal call would inherit the user's MCP servers and spawn the gfso bridge"
+
+
+def test_the_record_names_the_model_that_judged():
+    """A verdict's row named the instrument's ROLE and not its tier.
+
+    Two runs judged by different models produced the same-looking record, and the tier of a role has
+    already been silently wrong twice in this project (a checker defaulting to sonnet under a haiku
+    worker; the plan repair running on the executor's model). A reader of the record should not have
+    to reconstruct who judged from what happened to be configured that day.
+    """
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS",
+                                 "per_criterion": [
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "ok",
+                                      "behaviours": ["nail head is flush"],
+                                      "probe": [{"command": "pytest -q", "expect": "passed"}]},
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "ok",
+                                      "behaviours": ["picture hangs on it"],
+                                      "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                 "failed_criteria": []}))
+    TL.validate_result(e, "n1", model="haiku", _llm=llm)
+    rec = e.get_exec_verdict(T.TaskId("n1"))
+    assert rec["verdict"] == "PASS"
+    assert rec.get("validator_model") == "haiku", "the record does not say which model judged"
+    e.stop()
+
+
+def test_what_the_validator_leaves_in_the_delivery_is_named(tmp_path):
+    """A judge that writes into the tree it judges is reported, by name.
+
+    Measured live across several runs: validators left fixtures in the delivery — `t1.csv`, a
+    `_fixtures/` directory, once a 120 MB `big.txt` — and the next judge then saw them as part of
+    the work. The packet now says to write only into the offered scratch; a prompt is not
+    enforcement, so the difference is measured too. Nothing is deleted: the executor's tree is not
+    this code's to prune, and a named stray is a fact its owner can act on."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sum.py").write_text("print(42)", encoding="utf-8")
+
+    e = _eng()
+    _delivered_node(e)
+
+    class _Littering(_ValidatorLLM):
+        def run_agent(self, system, user, allowed_tools, cwd=None):
+            (project / "t1.csv").write_text("a,b\n", encoding="utf-8")
+            (project / "_fixtures").mkdir()
+            return super().run_agent(system, user, allowed_tools, cwd)
+
+    llm = _Littering(_fenced({"verdict": "PASS", "per_criterion": [
+        {"criterion": "flush", "verdict": "pass", "evidence": "ran it",
+         "probe": {"command": "python sum.py", "expect": "42"}},
+        {"criterion": "holds", "verdict": "pass", "evidence": "ran it",
+         "probe": {"command": "python sum.py", "expect": "42"}}]}))
+    out = TL.validate_result(e, "n1", workdir=str(project), _llm=llm)
+
+    assert out["validator_strays"] == ["_fixtures", "t1.csv"]
+    assert (project / "t1.csv").exists()          # reported, never deleted
+    assert "WRITE NOTHING INTO THE DELIVERY" in llm.seen["user"]
+    e.stop()
+
+
+def test_an_empty_working_directory_is_refused_not_failed(tmp_path, monkeypatch):
+    """A judge opened where the work is not reports what it honestly sees — and that lands as a FAIL.
+
+    Measured 2026-08-21 on a measurement run: a stale roster entry pointed the instrument at another
+    experiment's scratch directory, its report read "no implementation exists", and the root took a
+    false FAIL over SEVENTEEN criteria — on code that was sitting, complete, in the snapshot taken at
+    that same delivery. The rework loop that followed ended the run.
+
+    Refusing costs one comparison. The alternative costs a run, and it costs it in the direction
+    that looks like a working instrument (§11.2: ⊥ is not a verdict, and it is not a FAIL either)."""
+    e = _eng()
+    _delivered_node(e)
+    empty = tmp_path / "nothing"
+    (empty / ".gfso-scratch").mkdir(parents=True)          # the scratch it makes itself does not count
+
+    out = TL.validate_result(e, "n1", workdir=str(empty))
+    assert out["verdict"] is None
+    assert "empty" in out["error"] and "not the work" in out["error"]
+    assert "do not send the node to rework" in out["error"]
+
+    # …and with work present, whatever happens next, it is no longer THIS refusal. What it is
+    # depends on the transport, which is not what this test is about — every other test here uses
+    # a fake runner for exactly that reason, and so does this one.
+    (empty / "sum.py").write_text("print(42)", encoding="utf-8")
+    ok = _fenced({"verdict": "PASS", "per_criterion": [
+        {"criterion": "flush", "verdict": "pass", "evidence": "ran it",
+         "probe": {"command": "python sum.py", "expect": "42"}},
+        {"criterion": "holds", "verdict": "pass", "evidence": "ran it",
+         "probe": {"command": "python sum.py", "expect": "42"}}]})
+    out2 = TL.validate_result(e, "n1", workdir=str(empty), _llm=_ValidatorLLM(ok))
+    assert "empty" not in (out2.get("error") or "")
+    e.stop()
+
+
+def test_a_refused_report_reaches_the_issuer_who_has_to_decide():
+    """A parked node asks a person to decide, and handed them nothing to decide with.
+
+    ⊥ is not a pass (§11.2), so a report the engine refuses ends the node's automatic progress and
+    the issuer takes over. The observations that report DID contain lived in the tool's return value
+    — which under delegation nobody reads — and in a text file whose path scrolled past in a log
+    line. Measured 2026-08-21: with a 25-criterion contract the validator returned no verdict twice,
+    the node parked, and seeing what it had managed to check meant going to find that file.
+
+    It is stored beside the node under its own key, so nothing can mistake it for a verdict, and
+    `get_verdict` shows it to whoever has to act."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
+        {"criterion": "flush", "verdict": "pass", "evidence": "read it",
+         "behaviours": ["the head sits flush", "and stays flush under load"],
+         "probe": {"command": "python -c \"print('flush')\"", "expect": "flush"}},
+        {"criterion": "holds", "verdict": "pass", "evidence": "looked at it"}],
+        "failed_criteria": []}))
+    out = TL.validate_result(e, "n1", workdir=".", _llm=llm)
+    assert out["verdict"] is None                       # refused: a criterion with no probe at all
+
+    back = T.get_verdict(e, "n1")
+    assert back["verdict"] is None                      # …still not a verdict, and says so
+    assert "not a verdict" in back["refused_report"]["note"]
+    seen = [p["criterion"] for p in back["refused_report"]["observed_anyway"]]
+    assert "flush" in seen                              # …and what it DID observe is there
+    assert back["refused_report"]["why_it_is_not_a_verdict"]
+    e.stop()
+
+
+def test_a_long_contract_is_judged_in_batches_whose_conjunction_is_the_verdict(monkeypatch):
+    """The coverage discipline is what a report fails on a rich contract.
+
+    Measured 2026-08-21: the engine refuses a report that leaves any criterion unspoken or any named
+    behaviour unobserved (§11.2), and on long contracts that is what reports do — 44 refused reports
+    against 57 recorded verdicts, one node refused five times, and two E3 runs stalled at 25 and 42
+    root criteria. V(t) = ⋀ cᵢ (§10), so judging the contract in disjoint batches and taking the
+    conjunction is the SAME verdict: every criterion is judged exactly once, by a run that had room
+    to probe it, and the merged report is refused on the same terms as any other."""
+    monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
+    e = _eng()
+    crits = [{"name": f"c{i}", "description": f"criterion {i}"} for i in range(5)]
+    T.create_task(e, "big", {"description": "a rich contract", "criteria": crits}, "alice")
+    T.signal(e, "big", "ACCEPT", "alice")
+    T.signal(e, "big", "DELIVER", "alice", result="built it; see notes")
+
+    seen = []
+
+    class _Batched:
+        calls = []
+
+        def run_agent(self, system, user, allowed_tools, cwd=None):
+            judged = [c["name"] for c in crits if f"**{c['name']}**" in user]
+            seen.append(judged)
+            self.calls.append({"duration_ms": 1, "input_tokens": 1, "output_tokens": 1})
+            return _fenced({"verdict": "PASS", "failed_criteria": [],
+                            "per_criterion": [{"criterion": n, "verdict": "pass", "evidence": "ran it",
+                                               "behaviours": ["the criterion holds"],
+                                               "probe": [{"command": "pytest -q", "expect": "passed"}]}
+                                              for n in judged]})
+
+        def tag_last(self, stage):
+            self.calls[-1]["stage"] = stage
+
+    out = TL.validate_result(e, "big", _llm=_Batched(), workdir=".")
+    assert [len(b) for b in seen] == [2, 2, 1]                  # …three runs, disjoint
+    assert sorted(sum(seen, [])) == sorted(c["name"] for c in crits)   # …every criterion once
+    assert out["verdict"] == "PASS" and len(out["per_criterion"]) == 5
+    e.stop()
+
+
+def test_the_batches_of_one_verdict_run_at_the_same_time(monkeypatch, tmp_path):
+    """Batching unblocked acceptance on a rich contract and left its LATENCY additive.
+
+    Measured over 170 recorded validations (2026-08-22): a judgement takes a median 46 s at ≤5
+    criteria, 90 s at 6–12, 132 s at 13–24 and 312 s beyond — and a 25-minute wait for one is what
+    ended the last `spreadsheet_engine` segment. The batches judge DISJOINT criteria over the same
+    unchanging delivery, so the conjunction is the same whichever order they finish in; only the
+    client and the scratch may not be shared."""
+    monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
+    e = _eng()
+    crits = [{"name": f"c{i}", "description": f"criterion {i}"} for i in range(5)]
+    T.create_task(e, "big", {"description": "a rich contract", "criteria": crits}, "alice")
+    T.signal(e, "big", "ACCEPT", "alice")
+    T.signal(e, "big", "DELIVER", "alice", result="built it")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sum.py").write_text("x = 1" + chr(10), encoding="utf-8")
+
+    at_once = threading.Barrier(3, timeout=20)   # serial runs cannot clear it, and that IS the test
+    places = []
+
+    class _Slow:
+        def __init__(self):
+            self.calls, self.last_tool_calls, self.on_tick, self.stage_hint = [], {}, None, ""
+
+        def run_agent(self, system, user, allowed_tools, cwd=None):
+            judged = [c["name"] for c in crits if f"**{c['name']}**" in user]
+            places.append([ln for ln in user.splitlines() if "batch" in ln])
+            at_once.wait()                          # …all three batches are inside at the same moment
+            self.calls.append({"duration_ms": 1, "input_tokens": 1, "output_tokens": 1})
+            self.last_tool_calls["Bash"] = 1
+            return _fenced({"verdict": "PASS", "failed_criteria": [],
+                            "per_criterion": [{"criterion": n, "verdict": "pass", "evidence": "ran it",
+                                               "behaviours": ["the criterion holds"],
+                                               "probe": [{"command": "pytest -q", "expect": "passed"}]}
+                                              for n in judged]})
+
+        def tag_last(self, stage):
+            self.calls[-1]["stage"] = stage
+
+    primary = _Slow()
+    out = TL.validate_result(e, "big", _llm=primary, workdir=str(project), _spawn=_Slow)
+    assert out["verdict"] == "PASS" and len(out["per_criterion"]) == 5
+    assert len(primary.calls) == 3, "every batch's spend is on the judgement's own record"
+    assert primary.last_tool_calls["Bash"] == 3
+    assert all(p for p in places), "each batch gets its own scratch"
+    e.stop()
+
+
+def test_a_refuted_criterion_survives_the_under_probing_rule():
+    """A rule against false passes threw away a true negative.
+
+    Measured on the human door 2026-08-21: a deliberately garbage delivery — two tests, one of them
+    `assert True`, no CLI coverage — was caught exactly right by the validator, and the engine
+    discarded the FAIL because the probes behind it carried empty `expect` fields. The evidence for
+    "this test does not exist" IS an absence; it has no expected output to show. Under-probing means
+    an unobserved conjunct cannot carry a PASS (§11.2) and says nothing against a criterion the
+    report refuted with evidence — a refutation is a decision, and suppressing it sent bad work back
+    looking accepted."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM(_fenced({
+        "verdict": "FAIL", "failed_criteria": ["flush"],
+        "per_criterion": [
+            {"criterion": "flush", "verdict": "fail",
+             "evidence": "there is no test for it: `grep -r flush tests/` prints nothing",
+             "behaviours": ["nail head is flush", "measured after driving"],
+             "probe": [{"command": "grep -r flush tests/", "expect": ""}]},
+            {"criterion": "holds", "verdict": "pass", "evidence": "held 2kg",
+             "behaviours": ["picture hangs"],
+             "probe": [{"command": "pytest -q", "expect": "passed", "behaviour": "picture hangs"}]}]}))
+    out = TL.validate_result(e, "n1", _llm=llm)
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
+    assert T.get_verdict(e, "n1")["verdict"] == "FAIL"      # …and it is on the record, not discarded
+    e.stop()

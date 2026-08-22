@@ -7,6 +7,7 @@ from gfso.core.types import (
     TaskId, Task, CheckResult, Recommendation, DepEdge,
     StoragePort, TERMINAL_STATES,
 )
+from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 
 
 class MemoryStorage(StoragePort):
@@ -85,14 +86,14 @@ class MemoryStorage(StoragePort):
         self._pipeline.append({"ts": ts, "source": source, "message": message})
         del self._pipeline[:-10000]  # same pragmatic cap as sqlite
 
-    def get_pipeline(self, limit: int = 500) -> list[dict]:
+    def get_pipeline(self, limit: int = PIPELINE_PAGE) -> list[dict]:
         return list(self._pipeline[-limit:])
 
     def log_usage(self, row: dict) -> None:
         self._usage.append(dict(row))
         del self._usage[:-20000]
 
-    def get_usage(self, limit: int = 5000) -> list[dict]:
+    def get_usage(self, limit: int = USAGE_PAGE) -> list[dict]:
         return list(self._usage[-limit:])
 
     def add_dep_edge(self, edge: DepEdge) -> None:

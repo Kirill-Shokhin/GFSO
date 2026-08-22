@@ -209,7 +209,7 @@ def test_state_lives_where_it_can_be_written(tmp_path, monkeypatch):
     pieces of work is what projects are, and there is only one server to serve them, so a second
     directory got a second database that nothing could reach — silently.
     """
-    from gfso import serverctl
+    from gfso import config, serverctl        # one derivation lives in `config`; `serverctl` calls it
 
     monkeypatch.delenv("GFSO_HOME", raising=False)
     checkout, installed = tmp_path / "checkout", tmp_path / "site-packages"
@@ -217,10 +217,10 @@ def test_state_lives_where_it_can_be_written(tmp_path, monkeypatch):
         d.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\nname='gfso'\n", encoding="utf-8")
 
-    monkeypatch.setattr(serverctl, "ROOT", checkout)
+    monkeypatch.setattr(config, "ROOT", checkout)
     assert serverctl.home() == checkout                        # a source tree keeps its own state
 
-    monkeypatch.setattr(serverctl, "ROOT", installed)
+    monkeypatch.setattr(config, "ROOT", installed)
     monkeypatch.chdir(tmp_path)
     home = pathlib.Path.home() / ".gfso"
     assert serverctl.home() == home                            # never inside site-packages…

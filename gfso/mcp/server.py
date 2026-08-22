@@ -57,7 +57,25 @@ _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
 # The verbs an agent calls when it ENTERS a graph — the moment a human would want to look at it.
 # The address lived only in the agent's instructions, so no tool RESULT carried it and the link was
 # offered only if the model happened to remember one; here it rides back with the act itself.
-_UI_LINK_VERBS = frozenset({"use_project", "create_task", "project", "auto_decompose"})
+from gfso import tools as _T                      # UI_LINK_VERBS / ui_link live on the verb surface
+from gfso.config import MODEL_DEFAULT, ROOT_ID, ui_enabled, ui_address
+_UI_LINK_VERBS = _T.UI_LINK_VERBS                 # ONE list, both doors
+
+
+def _brief(listing: dict, active: str, keep: int = 12) -> dict:
+    """A project listing sized for a tool RESULT rather than for an inventory.
+
+    An agent's context is the scarce thing here: this server holds hundreds of projects (every probe
+    and every measured run leaves one), and returning all of them — plus a timestamp per project —
+    spends thousands of tokens to answer "which project am I in". The trim is stated, not silent:
+    `projects_total` says how many exist, and `list_projects` still returns the whole registry.
+    """
+    names = list(listing.get("projects") or [])
+    last = listing.get("last_active") or {}
+    recent = sorted(names, key=lambda n: last.get(n, 0), reverse=True)[:keep]
+    if active in names and active not in recent:
+        recent = [active] + recent[:keep - 1]
+    return {"active": active, "projects_recent": recent, "projects_total": len(names)}
 
 
 def _with_ui_link(name: str, out, project=None, ctx=None):
@@ -70,7 +88,7 @@ def _with_ui_link(name: str, out, project=None, ctx=None):
         from gfso import serverctl
         name_ = project or out.get("active") or _SESSION_PROJECTS.get(_session_key(ctx) or 0)
         from urllib.parse import quote
-        out["ui"] = f"{serverctl.BASE}/" + (f"?project={quote(str(name_))}" if name_ else "")
+        out["ui"] = _T.ui_link(name_)
     except Exception:
         pass
     return out
@@ -154,8 +172,9 @@ def _bind_auto_decompose(engine_or_registry):  # pragma: no cover — exercised 
     from mcp.server.fastmcp import Context
     resolve = _resolver(engine_or_registry)
 
-    async def auto_decompose(request: str, root_id: str = "root", assignee: str = None,
-                             depth: int = 1, model: str = "sonnet", fast: bool = False,
+    async def auto_decompose(request: str, root_id: str = ROOT_ID, assignee: str = None,
+                             executor: str = None,
+                             depth: int = 1, model: str = MODEL_DEFAULT, fast: bool = False,
                              project: str = None, ctx: Context = None) -> dict:
         loop = asyncio.get_running_loop()
         step = {"n": 0}
@@ -171,13 +190,14 @@ def _bind_auto_decompose(engine_or_registry):  # pragma: no cover — exercised 
 
         out = await loop.run_in_executor(None, functools.partial(
             T.TOOLS["auto_decompose"], resolve(project, ctx), request, root_id=root_id, assignee=assignee,
-            depth=depth, model=model, fast=fast, _progress=prog))
+            executor=executor, depth=depth, model=model, fast=fast, _progress=prog))
         return _with_ui_link("auto_decompose", out, project, ctx)
 
     auto_decompose.__doc__ = T.auto_decompose.__doc__
     # `from __future__ import annotations` stringifies hints and Context is imported locally — hand the
     # SDK real types so its schema introspection can evaluate the signature.
     auto_decompose.__annotations__ = {"request": str, "root_id": str, "assignee": Optional[str],
+                                      "executor": Optional[str],
                                       "depth": int, "model": str, "fast": bool,
                                       "project": Optional[str], "ctx": Context, "return": dict}
     return auto_decompose
@@ -191,7 +211,7 @@ def _bind_validate_result(engine_or_registry):  # pragma: no cover — exercised
     from mcp.server.fastmcp import Context
     resolve = _resolver(engine_or_registry)
 
-    async def validate_result(task_id: str, deliverable: str = None, model: str = "sonnet",
+    async def validate_result(task_id: str, deliverable: str = None, model: str = MODEL_DEFAULT,
                             workdir: str = None, project: str = None, ctx: Context = None) -> dict:
         loop = asyncio.get_running_loop()
         step = {"n": 0}
@@ -250,27 +270,54 @@ def create_server(engine_or_registry):
         reg = engine_or_registry
         from mcp.server.fastmcp import Context as _Ctx
 
-        def use_project(name: str, ctx: _Ctx = None) -> dict:
+        def use_project(name: str = "", project: str = "", ctx: _Ctx = None) -> dict:
             """Switch YOUR SESSION's project (a separate GRAPH in its own DB file; created on first
             use). Several agent sessions share this server — each holds its own current project, so
             switching never affects the others; all your verbs default to it (`project` on any verb
             overrides per-call). A Dep across projects is not representable — if two goals need a Dep
-            edge, they belong in ONE project."""
+            edge, they belong in ONE project.
+
+            Takes `name` or `project` — every OTHER verb spells it `project`, and this one alone
+            wanted `name`, which cost a caller a failed call for no reason anyone could infer."""
+            name = name or project
+            if not name:
+                return {"error": "use_project needs the project's name: use_project(project='…') "
+                                 "(or `name=`, the older spelling — both work)"}
             reg.engine(name)                              # validates the name + creates lazily
             key = _session_key(ctx)
             if key is not None:
                 _SESSION_PROJECTS[key] = name
             else:                                         # no session (bare transport) → global active
                 reg.use(name)
-            return _with_ui_link("use_project", {**reg.list(), "active": name})
+            # Switching projects answers "which one am I in now", so it returns that and a short
+            # recent list — not the whole registry. Measured on this server: 270 projects plus a
+            # full last-active map, several thousand tokens of noise into the caller's context on
+            # every switch, for a one-line action. The count is kept so the trim is visible rather
+            # than silent, and `list_projects` remains the verb for the full inventory.
+            return _with_ui_link("use_project", _brief(reg.list(), name))
 
-        def list_projects(ctx: _Ctx = None) -> dict:
-            """{active, projects}: the isolated project graphs this server owns (one DB file each);
-            `active` = YOUR session's current project."""
+        def list_projects(limit: int = 25, match: str = "", ctx: _Ctx = None) -> dict:
+            """{active, projects, total}: the isolated project graphs this server owns (one DB file
+            each), MOST RECENTLY WORKED IN FIRST; `active` = YOUR session's current project.
+            `limit` (default 25, 0 = all) and `match` (substring) trim it.
+
+            The full list used to come back whole, with a name→timestamp map beside it: measured
+            2026-08-20, ~300 ids and ~15KB into a caller's context for a question that wanted a
+            handful of recent names. An installation with a history has hundreds of finished runs
+            and probes in it, and none of them are deleted — they are the provenance of past
+            measurements — so the answer trims instead."""
             out = reg.list()
             key = _session_key(ctx)
             if key is not None and key in _SESSION_PROJECTS:
                 out["active"] = _SESSION_PROJECTS[key]
+            names = [n for n in out["projects"] if not match or match in n]
+            out["total"] = len(names)
+            if limit and len(names) > limit:
+                out["note"] = (f"{len(names)} projects; showing the {limit} most recently worked in. "
+                               f"`limit=0` for all, `match=<substring>` to filter.")
+                names = names[:limit]
+            out["projects"] = names
+            out["last_active"] = {n: out["last_active"][n] for n in names if n in out["last_active"]}
             return out
 
         def delete_project(name: str, ctx: _Ctx = None) -> dict:
@@ -287,8 +334,8 @@ def create_server(engine_or_registry):
                     del _SESSION_PROJECTS[k]
             return out
 
-        use_project.__annotations__ = {"name": str, "ctx": _Ctx, "return": dict}
-        list_projects.__annotations__ = {"ctx": _Ctx, "return": dict}
+        use_project.__annotations__ = {"name": str, "project": str, "ctx": _Ctx, "return": dict}
+        list_projects.__annotations__ = {"limit": int, "match": str, "ctx": _Ctx, "return": dict}
         delete_project.__annotations__ = {"name": str, "ctx": _Ctx, "return": dict}
         server.add_tool(use_project, name="use_project", description=(use_project.__doc__ or "").strip())
         server.add_tool(list_projects, name="list_projects", description=(list_projects.__doc__ or "").strip())
@@ -305,40 +352,38 @@ def _add_agent_verbs(server, engine_or_registry) -> None:
     verdict escalates)."""
     from typing import Optional
     from gfso.delegate import default_agents, ensure_dispatcher
-    agents = default_agents()
+    resolve = _resolver(engine_or_registry)
     # ProjectRegistry engines attach their dispatchers at creation (runtime); a BARE engine
     # (tests / single-project embedding) gets one here.
     if not hasattr(engine_or_registry, "engine"):
-        ensure_dispatcher(engine_or_registry, agents)
+        ensure_dispatcher(engine_or_registry, default_agents())
 
-    def register_agent(agent_id: str, kind: str, model: str = "sonnet",
+    def register_agent(agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                        workdir: str = None, validator: str = None,
-                       oracle_map: str = None, max_turns: int = None) -> dict:
-        """Register a NON-human participant (humans need no registration — an unregistered Del = human,
-        the system stays passive). kind: `llm-executor` (nodes assigned to this id AUTOSTART: headless
-        executor with work tools in `workdir`, its report wrapped into ACCEPT/DELIVER/BLOCK/CHALLENGE) ·
-        `llm-validator` (the auto-validation instrument fired on EVERY delivery — delegated or
-        self-executed; its verdict auto-signals PASS/FAIL) · `external` (a system that sends its own
-        signals; nothing spawns). `validator` on an executor entry = a per-executor instrument override
-        (else the first registered llm-validator serves everyone). To delegate work after this: just
-        assign/reassign nodes to the registered id.
+                       oracle_map: str = None, max_turns: int = None,
+                       client: str = None, project: str = None, ctx=None) -> dict:
+        """Register a non-human participant — the shared verb, presented on this door."""
+        return T.TOOLS["register_agent"](
+            resolve(project, ctx), agent_id, kind, model=model, workdir=workdir,
+            validator=validator, oracle_map=oracle_map, max_turns=max_turns, client=client)
 
-        `workdir` is REQUIRED for `llm-executor` and `llm-validator`: the directory of the project
-        the agent works in or judges. Without it the agent would be spawned where the SERVER stands
-        — the gfso state home — which holds none of the work, and both ways that failed were silent
-        (a node never dispatched again; a node left in VALIDATING with the cause discarded)."""
-        return agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
-                               oracle_map=oracle_map, max_turns=max_turns)
+    def list_agents(project: str = None, match: str = "", limit: int = 25, ctx=None) -> dict:
+        """The delegation roster — the shared verb, presented on this door."""
+        return T.TOOLS["list_agents"](resolve(project, ctx), match=match, limit=limit)
 
-    def list_agents() -> dict:
-        """The delegation roster {agent_id → kind/model/workdir}. Unlisted ids = humans."""
-        return agents.list()
-
+    # One implementation, four doors: the verbs live in the shared registry (`gfso.tools_llm`) and
+    # this binding only presents them. They used to live HERE and nowhere else, so a person on the
+    # CLI or the HTTP API could not register a role at all — while the log told them to reassign
+    # work to one (measured 2026-08-21).
+    register_agent.__doc__ = T.TOOLS["register_agent"].__doc__ or T.register_agent.__doc__
+    list_agents.__doc__ = T.list_agents.__doc__
     register_agent.__annotations__ = {"agent_id": str, "kind": str, "model": str,
                                       "workdir": Optional[str], "validator": Optional[str],
                                       "oracle_map": Optional[str], "max_turns": Optional[int],
+                                      "client": Optional[str], "project": Optional[str],
                                       "return": dict}
-    list_agents.__annotations__ = {"return": dict}
+    list_agents.__annotations__ = {"project": Optional[str], "match": str, "limit": int,
+                                   "return": dict}
     server.add_tool(register_agent, name="register_agent", description=(register_agent.__doc__ or "").strip())
     server.add_tool(list_agents, name="list_agents", description=(list_agents.__doc__ or "").strip())
 
@@ -361,10 +406,9 @@ def main() -> None:  # pragma: no cover
     from gfso.runtime import ProjectRegistry
     registry = ProjectRegistry()
     registry.engine()  # materialize the default project up front
-    if os.environ.get("GFSO_MCP_UI", "1") != "0":
+    if ui_enabled():
         try:
-            _serve_ui(registry, os.environ.get("GFSO_UI_HOST", "127.0.0.1"),
-                      int(os.environ.get("GFSO_UI_PORT", "8000")))
+            _serve_ui(registry, *ui_address())
         except Exception as e:
             import sys
             print(f"[gfso mcp] UI not started ({e}) — MCP tools still work", file=sys.stderr)

@@ -4,15 +4,45 @@ from __future__ import annotations
 from typing import Optional
 
 from gfso.core.types import (
-    TaskId, AgentId, Task, State, Signal,
+    TaskId, AgentId, Task, State, Signal, Verdict,
     GuardContext, GraphContext, CheckResult, Recommendation,
     DispatchPayload, StoragePort,
 )
 
 
+def verdict_is_current_pass(rec: dict | None, task) -> bool:
+    """Is this recorded verdict a PASS that belongs to the node's CURRENT delivery?
+
+    The question — "does a fresh independent verdict stand here" — was asked in four places with
+    three different arities and three different notions of "fresh": one compared reopens only, one
+    compared iteration and reopens, one added revisions, and one asked nothing about generation at
+    all. They gate a self-PASS at the seam, void a verdict on revision, and feed q_V, so a
+    disagreement between them is a disagreement about whether work is accepted.
+
+    The generation is (iteration, reopens, revisions) — the contract-and-delivery stamp §14.3 needs:
+    a rework moves the first, a REOPEN the second (the pre-reopen pass must not re-open the gate
+    from the past), and a revision the third, because a validator still running on a voided delivery
+    can land its verdict afterwards carrying the same first two.
+    """
+    if not rec or rec.get("verdict") != Verdict.PASS:
+        return False
+    return all(rec.get(k, 0) == getattr(task, k, 0) for k in ("iteration", "reopens", "revisions"))
+
+
 class Graph:
     def __init__(self, storage: StoragePort):
         self._storage = storage
+        # WHO MAY SPEAK AS THE ISSUER'S ROLE-V INSTRUMENT (§14.5): the registered `llm-validator` /
+        # `unittest-checker` ids, published downward by the dispatcher each round. Declared here
+        # because two validation rules read it — who may sign PASS/FAIL at all, and whether a seam's
+        # PASS still needs a recorded verdict — and a field born outside `__init__` had both of them
+        # reading it defensively, which is how a rule silently becomes "empty set" on any graph the
+        # dispatcher never touched.
+        self.authorized_validators: set[str] = set()
+        # …and who the dispatcher will DRIVE. A promise like "the block is then resolved for you" is
+        # true only where something automated holds the node; on a person's node the signal stays
+        # theirs (§14.5). Published downward by the dispatcher, beside the validators.
+        self.authorized_executors: set[str] = set()
 
     def get_state(self, task_id: TaskId) -> Optional[State]:
         task = self._storage.get_task(task_id)
@@ -190,6 +220,19 @@ class Graph:
             recommendation=recommendation,
         )
 
+    def generation_of(self, task_id: TaskId) -> tuple:
+        """The node's CONTRACT-AND-DELIVERY generation: (iteration, reopens, revisions).
+
+        A verdict is about the delivery a validator READ, so it must be stamped with the generation
+        that stood when the run STARTED — stamping at record time makes a late verdict describe
+        whatever the node has become since (a rework, a reopen, or a revision under §14.3), which is
+        exactly the state the self-PASS gate then reads as current. A graph fact, owned here: the
+        engine asks it, the signal pump asks it, and `verdict_is_current_pass` compares against it."""
+        t = self.get_task(task_id)
+        # A node that is not there has no generation; the fields themselves are declared, so they
+        # are read as declared.
+        return (t.iteration, t.reopens, t.revisions) if t is not None else (0, 0, 0)
+
     def exec_verdict_record(self, task_id: TaskId) -> Optional[dict]:
         """THE one reader of the stored independent-validation record ({verdict, failed_criteria,
         validator, iteration, ts} or None) — the self-PASS gate, q_V and false_fail_share all
@@ -214,9 +257,9 @@ class Graph:
         the event itself stays in the log (Inv-7)."""
         import json
         rec = self.exec_verdict_record(task_id)
-        if not rec or rec.get("verdict") != "PASS":
+        if not rec or rec.get("verdict") != Verdict.PASS:
             return
-        rec = dict(rec, verdict="VOID", superseded_verdict="PASS", voided_because=reason)
+        rec = dict(rec, verdict="VOID", superseded_verdict=Verdict.PASS, voided_because=reason)
         self._storage.store_exec_verdict(task_id, json.dumps(rec))
 
     def store_check_results(self, task_id: TaskId, results: list[CheckResult]) -> None:
