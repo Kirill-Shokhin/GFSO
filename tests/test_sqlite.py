@@ -5,6 +5,8 @@ from gfso.core.types import (
     CriterionMapping, CheckResult, Recommendation, DepEdge,
 )
 from gfso.adapters.storage.sqlite import SqliteStorage
+import pytest
+import sqlite3
 
 
 def _storage() -> SqliteStorage:
@@ -159,10 +161,6 @@ def test_v4_migration_mark_is_not_read_as_a_newer_schema(tmp_path):
     databases — including the default one and the E3 run DBs — became unopenable and the server
     would not start at all. The mark is recognised and normalised; a genuinely newer schema is still
     refused, which is the control on the same code path."""
-    import sqlite3
-    import pytest
-    from gfso.adapters.storage.sqlite import SqliteStorage
-
     marked = tmp_path / "v4.db"
     sqlite3.connect(marked).execute("PRAGMA user_version = 40").connection.close()
     s = SqliteStorage(str(marked))

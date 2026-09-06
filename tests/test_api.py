@@ -1,16 +1,19 @@
 """Tests for HTTP API endpoints."""
+import json
+from datetime import datetime
+
 from fastapi.testclient import TestClient
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.llm.stub import StubLLM
-from gfso.adapters.agents.human import HumanAgent
 from gfso.api.server import create_app
 from gfso.api.models import CheckResultOut
 import gfso.tools as T
+import gfso.tools_llm as TL
+from tests.support import make_engine
+from gfso import tools as T
 
 
 def _client() -> TestClient:
-    engine = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    engine = make_engine(llm=StubLLM(), validate_signals=False)
     engine.start()
     app = create_app(engine)
     return TestClient(app)
@@ -184,8 +187,7 @@ def test_unified_app_shares_one_engine_with_mcp_tools():
     """UI (HTTP) and the agent (MCP tool layer) operate ONE Engine: a write through the MCP tools is
     read back via HTTP. `with_mcp=True` degrades gracefully when the MCP SDK is absent (mount skipped,
     no crash) — the /mcp transport mount itself is verified by the MCP suite."""
-    from gfso import tools as T
-    engine = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    engine = make_engine(llm=StubLLM(), validate_signals=True)
     engine.start()
     app = create_app(engine, with_mcp=True)          # SDK absent here → no /mcp mount, must not raise
     assert app.state.engine is engine                # HTTP surface holds the shared engine
@@ -234,14 +236,14 @@ def test_a_skipped_check_is_not_reported_passed_on_the_http_door():
 
     The tool door had been fixed to send None there; this one had not, so the same check answered
     differently depending on which door you came in by (register 2026-08-22, finding 7)."""
-    class _Skipped:
-        check_name, details, skipped, passed = "CHECK-7", "no composition declared", True, True
+    class _Skipped:   # a stand-in for CheckResult — it carries the whole record, `vacuous` included
+        check_name, details, skipped, passed, vacuous = "CHECK-7", "no composition declared", True, True, False
 
     row = CheckResultOut.of(_Skipped())
     assert row.passed is None and row.verdict == "skipped"
 
     class _Unmet:
-        check_name, details, skipped, passed = "CHECK-1", "criterion c1 uncovered", False, False
+        check_name, details, skipped, passed, vacuous = "CHECK-1", "criterion c1 uncovered", False, False, False
 
     assert CheckResultOut.of(_Unmet()).verdict == "unmet"
 
@@ -263,3 +265,88 @@ def test_a_refusal_is_a_refusal_over_both_doors():
     r = _client().post("/api/run/record_verdict",
                        json={"task_id": "nope", "verdict": "PASS", "reviewer": "someone"})
     assert r.status_code == 200 and T.is_refusal(r.json())
+
+
+def test_the_audit_door_answers_with_the_time_it_stored():
+    """WHEN a signal happened is the audit's first column (Thm 11), and a reader has no other source
+    for it: the entries come back in one array, so order-in-the-array is all that is left if the
+    stamp is missing. Reported from a live door as `ts: null` on every event; the stamp is in fact
+    carried end to end — `AuditLog._to_row` writes `ts`, `_from_row` parses it back, and
+    `audit_to_out` renames it to `timestamp` for the wire — so this pins the property rather than
+    repairing it. The field the reporter looked for (`ts`) is the STORAGE spelling; the door's is
+    `timestamp`, and nothing on this door has ever been called `ts`."""
+    c = _client()
+    c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "x"},
+                                         "assignee": "dev"})
+    c.post("/api/run/signal", json={"task_id": "n", "signal": "ACCEPT", "source": "dev"})
+    events = c.get("/api/audit").json()
+    assert len(events) >= 2
+    assert all(e.get("timestamp") for e in events)                 # not null, not absent
+    assert "ts" not in events[0]                                   # one spelling on this door
+    stamps = [datetime.fromisoformat(e["timestamp"]) for e in events]
+    assert stamps == sorted(stamps)                                # the order is IN the data now
+
+
+def test_every_act_names_the_project_it_acted_on():
+    """A verb's answer that does not name its scope lets a typo mutate a stranger's graph in silence.
+
+    `project` is optional on this door and falls back to the server-wide ACTIVE project — deliberate
+    for single-project use, and invisible: measured on the human door, a `next_step` with no project
+    returned a node from somebody else's graph, and a refused call answered about that graph too,
+    with nothing in either body saying whose. Same defect the money total had (`/api/usage`), same
+    owner for the answer (`_scope_name`)."""
+    c = _client()
+    acted = c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "x"},
+                                                 "assignee": "dev"})
+    assert acted.json()["project"] == "default"
+    # A REFUSAL IS AN ANSWER ABOUT A GRAPH TOO — it is the one a typo produces, so it needs the
+    # scope most of all.
+    refused = c.post("/api/run/edit_criteria", json={"task_id": "nope", "criteria": [],
+                                                     "agent": "dev"})
+    assert refused.status_code == 422 and refused.json()["project"] == "default"
+
+
+def test_the_roster_verbs_name_no_project_because_they_are_about_none():
+    """The roster is ONE server-wide file (`PROJECTLESS_VERBS`). Stamping a project onto its answer
+    would be a scope claim about a graph the call never touched — the same lie in the other
+    direction."""
+    c = _client()
+    assert "project" not in c.post("/api/run/list_agents", json={}).json()
+
+
+def test_the_audit_door_carries_the_contract_each_assign_installed():
+    """The one field `audit_to_out` DID drop.
+
+    Inv-1/Inv-7: "every re-ASSIGN appends a VERSION to the append-only log … past versions live in
+    the log". The entry carries that version (`AuditEntry.spec`, written because one session's
+    `create_task` replaced another's live root and nothing anywhere could say what the original
+    had been) — and this door's row never listed the field, so the version was reachable only from
+    inside the process. A revision is exactly the event a reader comes to the audit for."""
+    c = _client()
+    c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "first"},
+                                         "assignee": "dev"})
+    c.post("/api/run/revise", json={"task_id": "n", "spec": {"description": "revised"},
+                                    "agent": "dev"})
+    assigns = [e for e in c.get("/api/audit?task_id=n").json() if e["signal"] == "ASSIGN"]
+    assert [json.loads(e["spec"])["description"] for e in assigns] == ["first", "revised"]
+
+
+def test_the_http_door_lists_the_verbs_it_takes():
+    """The door is ONE generated route, so an OpenAPI reader sees an untyped passthrough.
+
+    A person arriving at this port with curl had to guess every verb name and every parameter from
+    error strings (HTTP door, 2026-09-02) — the registry knew all of it and served none of it.
+    """
+    c = _client()
+    d = c.get("/api/tools").json()
+    assert d["count"] == len(TL.TOOLS)
+    sig = next(t for t in d["tools"] if t["tool"] == "signal")
+    assert sig["required"] == ["task_id", "signal", "source"]   # the one a tester found by trial
+    assert sig["post"] == "/api/run/signal" and sig["project"] is True
+    roster = next(t for t in d["tools"] if t["tool"] == "list_agents")
+    assert roster["project"] is False, "the roster is server-wide and says so"
+    # …and the WHOLE contract, because the closed enums a verb takes were otherwise discoverable
+    # only by being refused — two round trips per verb (HTTP door, 2026-09-02).
+    reg = next(t for t in d["tools"] if t["tool"] == "register_agent")
+    assert "llm-validator" in reg["doc"], "the legal `kind` values are in the catalogue"
+    assert len(reg["doc"]) > len(reg["what"]), "`what` is the first line; `doc` is the contract"

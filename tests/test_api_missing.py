@@ -5,15 +5,16 @@ from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 
 from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.llm.stub import StubLLM
-from gfso.adapters.agents.human import HumanAgent
 from gfso.api.server import create_app
-from gfso.core.types import TaskId, AgentId, Spec, Signal
+from gfso.core.types import (TaskId, AgentId, Spec, Signal, Criteria, CriterionMapping,
+                             AcceptedRiskItem, Predictability)
+from tests.support import make_engine
+from gfso.core.handlers.structural import check_anti_mock
 
 
 def _engine() -> Engine:
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     return e
 
@@ -159,8 +160,6 @@ def test_actions_endpoint():
 # === Dep glue (anti-mock truth-maker) + ACCEPTED_RISKS invalidation ===
 
 def test_dep_glue_persists_and_checks():
-    from gfso.core.types import Criteria, CriterionMapping
-    from gfso.core.handlers.structural import check_anti_mock
     e = _engine()
     e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x"),)), AgentId("pm"))
     e.wait_idle()
@@ -181,7 +180,6 @@ def test_dep_glue_persists_and_checks():
 
 
 def test_projection_shows_glue_and_invalidation():
-    from gfso.core.types import Criteria, CriterionMapping, AcceptedRiskItem, Predictability
     e = _engine()
     e.assign_task(
         TaskId("p"),
@@ -205,7 +203,6 @@ def test_projection_shows_glue_and_invalidation():
 # === Read-projection (critic input contract) ===
 
 def test_projection_renders_decomposition():
-    from gfso.core.types import Criteria, CriterionMapping
     e = _engine()
     e.assign_task(
         TaskId("p"),

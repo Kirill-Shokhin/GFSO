@@ -1,4 +1,4 @@
-"""Delegation — the registry-driven autostart machinery (designs doc §3.1-7 + §7, author-confirmed).
+﻿"""Delegation — the registry-driven autostart machinery (designs doc §3.1-7 + §7, author-confirmed).
 
 The issuer's ONLY act is setting Del: a node whose assignee is a REGISTERED llm-executor is picked up
 from the frontier by the DISPATCHER, which spawns a headless executor (work tools, scoped cwd), wraps
@@ -18,13 +18,22 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
+from gfso import tools_llm as T
 from gfso.config import LABEL_CHARS, MODEL_DEFAULT, agents_path, validator_retry_model
+from gfso.runtime import llm_factory
+from gfso.tools import _agent_id
+from gfso.tools_llm import _inflight, _last_deliver_result
 from gfso.tools_llm import validate_internal_on as _validate_internal_on
-from gfso.decompose.loop import _stat_line
-from gfso.core.types import (TaskId, AgentId, Signal, SignalData, Stage, Verdict, Action,
+from gfso.adapters.llm.stats import _stat_line
+from gfso.adapters.llm.structured import schema_instruction, parse_structured
+from gfso.adapters.verifiers import evaluate_unittest
+from gfso.core.graph.model import generation_of_task
+from gfso.core.types import (TaskId, AgentId, Signal, SignalData, Stage, State, Verdict, Action,
                              SPAWNABLE_ACTIONS, passed)
+from gfso.engine.events import emit_cb
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +45,12 @@ EXECUTOR_SCHEMA = {
     "properties": {
         "status": {"type": "string", "enum": ["delivered", "blocked", "challenge"]},
         "summary": {"type": "string"},
-        "self_validation": {"type": "string"},
+        # THE WORD, not a report. §14.2 puts the executor's OWN verdict in this field, and the
+        # human door has always refused anything else (`_self_check_verdict`). Here it was a
+        # free string, and §14.5 D6 rests an internal node's completion on it — so the two
+        # doors held one field to two contracts, which is this codebase's most expensive class.
+        "self_validation": {"type": "string", "enum": [Verdict.PASS, Verdict.FAIL],
+                            "description": "your OWN verdict on this delivery (§14.2). The evidence goes in `summary`; this is what you conclude from it."},
         "reason": {"type": "string"},
         "blocker_task_id": {"type": "string"},
         "blocker_task_ids": {"type": "array", "items": {"type": "string"}},
@@ -98,6 +112,12 @@ class AgentRegistry:
                  workdir: str | None = None, validator: str | None = None,
                  oracle_map: str | None = None, max_turns: int | None = None,
                  client: str | None = None, project: str | None = None) -> dict:
+        """Put a role on the server-wide roster: its kind, model tier, workdir and bindings.
+
+        Registration is what makes a role addressable by Del — the dispatcher picks a node up
+        because its Del names a registered executor, so a mis-registration is silent until a
+        node never starts. What can be checked here is checked here.
+        """
         if kind not in ("llm-executor", "llm-validator", "unittest-checker", "external"):
             raise ValueError(f"unknown kind {kind!r} (llm-executor | llm-validator | unittest-checker "
                              f"| external; a human needs no registration — unregistered = human)")
@@ -264,51 +284,85 @@ class AgentRegistry:
         at registration still wins over everything.
         """
         cfg = self.get(executor_id or "") or {}
-        if cfg.get("validator"):
+        if cfg.get("validator") and str(cfg["validator"]) != str(executor_id or ""):
             return cfg["validator"]
         self._load()
+        # NEVER THE NODE'S OWN EXECUTOR — the selection rule, one layer above the gate that already
+        # refuses such a signature. An id can hold both kinds on this roster, and a stranger did
+        # exactly that: registered `w24cli-judge` as an llm-validator and made the SAME id the
+        # executor of a root. The dispatcher then bound the instrument to the work it had done
+        # itself, recorded the verdict as `provenance: self`, and the root closed — with the
+        # engine's own disclosure deferring the guarantee to "the independent validation of the
+        # public result ABOVE it", which for a root does not exist (CLI door, wave 24, 2026-09-04).
+        # Verifier ≠ executor is a property of the PAIR, so it belongs wherever the pair is chosen:
+        # refusing the signature and then handing out the same pairing again is a rule enforced at
+        # one door and offered at the next. With no other judge the honest answer is none — the node
+        # waits for its issuer, who is told to register one.
+        judges = {aid: c for aid, c in self._agents.items()
+                  if c.get("kind") in ("llm-validator", "unittest-checker")
+                  and str(aid) != str(executor_id or "")}
+        # SCOPE FIRST, THEN PLACE — two independent coordinates of ONE choice, in that order.
         # THE PROJECT IS THE ISOLATION BOUNDARY, and the roster is one shared file. A person who
         # registered NOTHING had their nodes judged — and billed — by a validator another run had
         # left in the roster, standing in an experiment's scratch directory: $2.43 of a $4.38 run,
         # four validations nobody asked for (measured on the human door 2026-08-22). A role
-        # registered under another project is not this project's instrument.
+        # registered under another project is not this project's instrument. But a role with NO
+        # project is UNSCOPED, not foreign: excluding it left the measurement arm — which registers
+        # through the library, without one — with no validator at all, and the run ended
+        # `validation_stalled` (measured the same day, by my own rule from an hour before).
+        candidates = list(judges)
         if project:
-            _judges = {aid: c for aid, c in self._agents.items()
-                       if c.get("kind") in ("llm-validator", "unittest-checker")}
-            mine = [aid for aid, c in _judges.items() if c.get("project") == project]
-            if mine:
-                return sorted(mine)[0]
-            # A role with NO project is UNSCOPED, not foreign. Excluding it because somebody else's
-            # role carried a project left the measurement arm — which registers its roles through
-            # the library, without one — with no validator at all: its nodes were never judged and
-            # the run ended `validation_stalled` (measured 2026-08-22, my own rule from an hour
-            # before). What the project boundary refuses is a role belonging to ANOTHER project.
-            unscoped = [aid for aid, c in _judges.items() if not c.get("project")]
-            if unscoped:
-                return sorted(unscoped)[0]
-            if _judges:
+            candidates = [aid for aid in judges if judges[aid].get("project") == project]                 or [aid for aid in judges if not judges[aid].get("project")]
+            if not candidates:
                 return None      # every judge here belongs to some other project
         wd = cfg.get("workdir")
         if wd:
-            same = [aid for aid, c in self._agents.items()
-                    if c.get("kind") in ("llm-validator", "unittest-checker") and c.get("workdir") == wd]
-            if same:
-                return sorted(same)[0]
             # A ROLE THAT WORKS SOMEWHERE ELSE IS NOT THIS WORK'S JUDGE. "First registered" on a
             # server-wide roster means the oldest entry of whoever came first — measured twice on
             # 2026-08-20/21: a run's node judged by another run's validator standing in a scratch
             # directory, and a tester who avoided it only by reading the help. When this executor
             # HAS a workspace and no instrument stands in it, the honest answer is none: the node
             # waits for its issuer, who is told to register one, instead of being judged from a tree
-            # that holds none of the work.
-            return None
+            # that holds none of the work. Choosing INSIDE the scoped set is what keeps the two
+            # rules orthogonal: the project branch used to answer before this one was consulted, so
+            # an unscoped judge standing elsewhere beat the judge standing in the work.
+            # …A PREFERENCE, NOT A REQUIREMENT — and this is where I got it wrong. A judge's
+            # REGISTERED workdir is where it works, not where the work is: `_judge_with` points it at
+            # the delivery at call time (the executor's workdir first). Requiring equality therefore
+            # measured the wrong thing, and it refused the measurement arm's own validator — which
+            # stands in a private scratch on purpose, so one run cannot judge another's leftovers.
+            # Cost, measured 2026-09-02: auto-validation never fired, the arm waited 25 minutes for a
+            # verdict nobody was going to give, and a $20 run ended `validation_stalled`. What keeps
+            # a stranger's judge out is the PROJECT scope above; place is how we break a tie.
+            same = [aid for aid in candidates if judges[aid].get("workdir") == wd]
+            if same:
+                return sorted(same)[0]
+            # WITH NO PROJECT there is nothing else keeping a stranger out, so place is the whole
+            # rule and the honest answer is none (measured 2026-08-20/21, twice). WITH a project the
+            # scope above has already excluded other runs, and insisting on place as well refused a
+            # legitimate judge — the arm's own, which stands in a private scratch by design.
+            return None if not project else sorted(candidates)[0] if candidates else None
+        if project:
+            # An UNSCOPED role stays usable here — the measurement arm registers through the library
+            # without a project, and excluding it once left a run with no validator at all. What the
+            # fallback cannot do is tell a stranger's leftover from a legitimate library role, and on
+            # the CLI door 2026-09-02 a tester who registered NOTHING had every node signed by
+            # `val-1`, whose registered workdir points into another run's scratch directory. It only
+            # worked because they wrote absolute paths into every delivery. The choice stands; what
+            # must not is its silence — `unscoped_judge` below is what the surfaces say about it.
+            _mine = [aid for aid in candidates if judges[aid].get("project") == project]
+            return sorted(_mine or candidates)[0]
         return self.default_validator()
 
     def get(self, agent_id: str) -> dict | None:
+        """One role's config, or `None` for an id the roster does not know — which is what a HUMAN is
+        (§14.5: an unregistered Del is a person, and nothing is dispatched to them)."""
         self._load()
         return self._agents.get(str(agent_id))
 
     def list(self) -> dict:
+        """The whole roster as {id: config}. A copy: a caller that mutated it would be editing the
+        registry behind the file's back."""
         self._load()
         return dict(self._agents)
 
@@ -351,7 +405,6 @@ class AgentRegistry:
 def _executor_packet(engine, task, workdir: str | None) -> str:
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
     inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any."""
-    from gfso.tools_llm import _last_deliver_result
     tid = str(task.id)
     crits = "\n".join(f"- **{c.name}**: {c.description}" for c in task.spec.criteria) or "- (none)"
     ups = []
@@ -395,16 +448,41 @@ def _executor_packet(engine, task, workdir: str | None) -> str:
             f"Working directory: {workdir or os.getcwd()}\n")
 
 
-def _signal(engine, task_id: TaskId, sig: Signal, source: str, **kw) -> bool:
+def _signal(engine, task_id: TaskId, sig: Signal, source: str, _why: "list | None" = None,
+            **kw) -> bool:
+    """Send one signal; True when the FSM took it. `_why` collects the refusal, when a caller
+    intends to SAY it rather than only log it — the reason existed and reached the log alone."""
     entry = engine.send_signal_sync(SignalData(signal=sig, task_id=task_id,
                                                source=AgentId(source), **kw))
     ok = bool(entry and not entry.rejected)
     if not ok:
         log.warning(f"delegate: {sig.name} on {task_id} rejected: {entry.error if entry else '?'}")
+        if _why is not None:
+            _why.append(str(entry.error) if entry is not None and entry.error else "no reason given")
     return ok
 
 
-def _settle_internal(engine, task_id: TaskId, self_check: str, _cb) -> None:
+def _decided_self_check(raw) -> "Verdict | None":
+    """The executor's OWN verdict from its report — PASS, FAIL, or nothing decided.
+
+    §14.2 puts a WORD here and the human door has always insisted on it (`_self_check_verdict` in
+    `gfso/tools.py` raises on anything else). The delegated door took a free string and asked only
+    whether it was empty, which is not the same question and gave the opposite answer: probed
+    2026-09-05, an executor whose `self_validation` read `FAIL` reached DONE with a recorded verdict
+    of PASS, and so did `checked`.
+
+    Prose that decides nothing is ⊥, not a pass (§11.2): the node waits for its issuer, exactly as an
+    empty field already did. A leading verdict word with a reason after it (`PASS — all green`) is a
+    decision and is read as one; anything else is not guessed at.
+    """
+    word = str(raw or "").strip().upper()
+    if not word:
+        return None
+    head = word.replace("—", " ").replace("-", " ").replace(":", " ").split()[0].strip(".,;")
+    return Verdict[head] if head in (Verdict.PASS, Verdict.FAIL) else None
+
+
+def _settle_internal(engine, task_id: TaskId, self_check, _cb) -> None:
     """An INTERNAL node completes on its own self-check — §14.5 D6, read literally.
 
     The canon does not leave this open. An internal node is one whose Del equals its parent's, and
@@ -429,13 +507,12 @@ def _settle_internal(engine, task_id: TaskId, self_check: str, _cb) -> None:
       · Not when independent validation IS going to run anyway (`GFSO_VALIDATE_INTERNAL=1`, the
         measurement dial) — there the verdict comes from the instrument, and relaying would race it.
     """
-    import os
     task = engine.get_task(task_id)
     if task is None or engine._graph.is_public(task):
         return
     if _validate_internal_on():
         return
-    if not self_check:
+    if self_check is None:
         return
     issuer = str(engine.issuer_of(task_id))
     # …AND IT GOES ON THE RECORD, because a verdict nobody can read afterwards is not evidence that
@@ -451,10 +528,25 @@ def _settle_internal(engine, task_id: TaskId, self_check: str, _cb) -> None:
     # writes only when nothing is on the record for this delivery.
     if engine.current_exec_verdict(task_id) is None:
         try:
-            engine.record_reviewer_verdict(task_id, Verdict.PASS, [], reviewer=str(task.assignee),
-                                           observed={c.name: self_check for c in task.spec.criteria})
+            engine.record_reviewer_verdict(task_id, self_check, [], reviewer=str(task.assignee),
+                                           observed={c.name: str(self_check)
+                                                     for c in task.spec.criteria})
         except Exception:
             log.warning(f"could not record the internal self-check on {task_id}", exc_info=True)
+    # BOTH DECISIONS, or this is not a relay of the executor's verdict but a filter on it. §14.5 D6
+    # rests an internal node's completion on the self-check; reading only the affirmative half meant
+    # a node whose executor said its own work had FAILED was closed DONE anyway (probed 2026-09-05).
+    if self_check != Verdict.PASS:
+        # AND THE NEGATIVE HALF STOPS HERE, DELIBERATELY. A self-FAIL is one word about the delivery
+        # as a whole and names no criteria, while Inv-3 (§14.4) requires a FAIL to say WHICH — so
+        # relaying it would mean inventing that set on the executor's behalf, which is the same
+        # manufacture-a-verdict move in the other direction. The refusal is on the record and the
+        # node waits for the party who can name them.
+        _cb(f"{task_id}: its executor FAILED its own delivery (§14.2 self_validation). The node "
+            f"stays in VALIDATING and its ISSUER decides: a FAIL must name the criteria it is "
+            f"about (Inv-3), and a one-word self-check names none. The report is on the record "
+            f"(`get_verdict {task_id}`).")
+        return
     if _signal(engine, task_id, Signal.PASS, issuer):
         _cb(f"{task_id}: internal node — PASSED on its own self-check (§14.5 D6: its guarantee is "
             f"carried by the validation of the public result above it)")
@@ -508,9 +600,14 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         # `self_validation`. The field was asked for in the report schema, typed in `SignalData`,
         # and then dropped on the floor here — so the one thing §14.5 D6 makes an internal node's
         # completion rest on never reached the graph at all.
-        _self = (report.get("self_validation") or "").strip()
+        # WHAT IT SAID, not whether it said anything. This read the field for EMPTINESS and mapped
+        # every non-empty string to PASS — so an executor reporting "FAIL" on its own work closed the
+        # node DONE with a recorded verdict of PASS. Probed directly 2026-09-05: `FAIL`, `the tests
+        # do not pass` and `checked` all reached DONE/PASS; only the empty string was refused. A
+        # gate that accepts the good news and cannot hear the bad one is not a gate.
+        _self = _decided_self_check(report.get("self_validation"))
         _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
-                self_validation=Verdict.PASS if _self else None)
+                self_validation=_self)
         _cb(f"{task_id}: executor DELIVERED · {_stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb)
 
@@ -520,16 +617,11 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     """ONE delegated execution round: spawn the headless executor with the packet, translate its report
     into FSM signals (its consent = its own report, Inv-1), then auto-validate + auto-verdict if a
     validator instrument is registered. Returns a summary dict (also emitted to the observation field)."""
-    from gfso.runtime import llm_factory
-    from gfso.adapters.llm.structured import schema_instruction, parse_structured
-    from gfso.decompose.loop import _stat_line
-
     cfg = agents.get(executor_id) or {}
     task = engine.get_task(task_id)
     if task is None:
         return {"error": f"unknown task {task_id}"}
 
-    from gfso.engine.events import emit_cb
     _cb = emit_cb(engine, "delegate")
     llm = _llm or llm_factory(cfg.get("model", MODEL_DEFAULT))
     llm.on_tick = _cb
@@ -537,15 +629,13 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     # Process cap = the node's deadline when set (§3.5: no second clock — on expiry the process is
     # killed, NO signal forged, the FSM timeout monitor escalates), else the adapter default (15 min).
     cap = None
-    if getattr(task, "deadline", None):
-        from datetime import datetime
+    if task.deadline:
         cap = max(60, int((task.deadline - datetime.now()).total_seconds()))
     _cb(f"{task_id}: executor {executor_id} spawned (workdir={cfg.get('workdir') or 'cwd'}"
         + (f", cap {cap}s" if cap else "") + ")…")
     # The dispatcher's own spawn is the LONGEST thing this server does — up to a fifteen-minute
     # `claude -p` — and it was the one path that never appeared in `busy`, so a reconcile arriving
     # from another session read the server as idle and restarted it mid-run.
-    from gfso.tools_llm import _inflight
     system = (_PROMPTS / "executor.md").read_text(encoding="utf-8")
     packet = _executor_packet(engine, task, cfg.get("workdir"))
     with _inflight("delegated_execution"):
@@ -577,8 +667,6 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
 def _oracle_workdir(engine, vcfg: dict):
     """The workspace for this project from the issuer-side oracle map (same map the unittest-checker
     uses), so a criteria-judge validator runs the code where the executor delivered it. None if absent."""
-    import json
-    from pathlib import Path
     project = getattr(engine, "_project_name", None) or "default"
     try:
         entry = json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
@@ -594,9 +682,6 @@ def _checker_validate(engine, task_id: TaskId, vcfg: dict) -> dict:
     false-PASS. The oracle map (config: `oracle_map`) is issuer-side; the agent has no path to it.
     It has NO default: a shipped default pointed every install at one experiment's map file, which
     on any other machine simply did not exist — a registration that names no map now says so."""
-    import json
-    from pathlib import Path
-    from gfso.adapters.verifiers import evaluate_unittest
     project = getattr(engine, "_project_name", None) or "default"
     try:
         entry = json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
@@ -681,18 +766,15 @@ def _judge_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
     return out
 
 
-def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
-                   model_override: str | None = None, sign: bool = True) -> str | None:
-    """DELIVER→VALIDATING auto-fires the registered validator instrument; the verdict AUTO_PASS-SIGNALS
-    (PASS → DONE; FAIL(failed_criteria) → REWORKING — the rework loop lives in the FSM, max_iterations
-    bounds it). verdict:null NEVER auto-signals — the one escalation to the issuer. Returns the
-    outcome for the dispatcher: 'pass'/'fail' (signed), 'rejected' (the FSM refused the verdict —
-    ≠ no-verdict: the graph wasn't ready, revalidate on its next change), 'no-verdict'."""
-    from gfso import tools_llm as T
+def _which_instrument_judges(engine, task, task_id: TaskId, agents: AgentRegistry,
+                             project: str | None) -> str | None:
+    """Which registered validator judges this node — and a sentence when it is nobody's.
 
-    task = engine.get_task(task_id)
-    _proj = engine.project_name
-    validator_id = agents.validator_for(task.assignee if task else None, project=_proj)
+    Two corrections live here, both bought on live runs, and they are one question: the
+    roster is shared by every project on the server, so "the first registered role" is
+    somebody else's instrument standing in somebody else's directory.
+    """
+    validator_id = agents.validator_for(task.assignee if task else None, project=project)
     # A node whose executor is the UNREGISTERED user-agent (the root, and every node the agent keeps
     # for itself) has no workdir of its own, so the workspace-matching rule above has nothing to
     # match on and falls back to "first registered" — which is another run's judge. Measured
@@ -701,10 +783,86 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
     # CHILDREN are delegated to registered executors, and their workdir is where the work lives.
     if task is not None and not (agents.get(task.assignee or "") or {}).get("workdir"):
         for kid in engine._graph.get_active_children(task_id):
-            if (wd := (agents.get(kid.assignee or "") or {}).get("workdir")):
-                if (near := agents.validator_for(kid.assignee, project=_proj)):
+            if (agents.get(kid.assignee or "") or {}).get("workdir"):
+                if (near := agents.validator_for(kid.assignee, project=project)):
                     validator_id = near
                 break
+    # …AND WHOSE INSTRUMENT IT IS, when it is nobody's in particular. The roster is one shared file,
+    # so a project that registered nothing gets whichever unscoped role came first — on the CLI door
+    # 2026-09-02 that was `val-1`, a leftover of a measurement run whose registered workdir points
+    # into that run's scratch directory, and it signed every node of a stranger's graph. The choice
+    # is deliberate (the arm's library roles carry no project either), so what is owed is not a
+    # refusal but a sentence: said ONCE per node, where the person driving the graph reads it.
+    if validator_id is not None:
+        _vcfg = agents.get(validator_id) or {}
+        if not _vcfg.get("project") and project:
+            if engine.say_once(f"unscoped:{task_id}:{validator_id}"):
+                engine.emit_info(
+                    "delegate",
+                    f"{task_id}: judged by '{validator_id}', which belongs to NO project — the roster "
+                    f"is shared by every project of this server, and this role"
+                    + (f" works in {_vcfg['workdir']}" if _vcfg.get("workdir") else " has no workdir")
+                    + f". Register your own (`register_agent('<id>', 'llm-validator', workdir=…)`) to "
+                      f"be judged by an instrument standing in YOUR work.")
+    return validator_id
+
+
+def _replay_a_standing_verdict(engine, task_id: TaskId, rec: dict, validator_id,
+                               _vkind, _gen_ok: bool, _prov: str, sign: bool):
+    """Reuse a judge's ruling on THIS delivery instead of paying for a second one.
+
+    Returns the outcome string, or None meaning "nothing to reuse — run the instrument".
+    What may be reused is an INSTRUMENT's verdict: a self-report and a hand-asserted one
+    are the executor's and the issuer's own words, and replaying either under the
+    registered validator's name is how a fabricated verdict got into the log as a pass by
+    an instrument that judged nothing.
+    """
+    if (_vkind != "unittest-checker" and _gen_ok and _prov == "instrument"
+            and rec.get("verdict") in (Verdict.PASS, Verdict.FAIL)):
+        if not sign:
+            # A verdict for THIS delivery already stands and the signature is not ours to give, so
+            # there is nothing left to do — and certainly not another paid run over the same
+            # delivery, which is what happened while this path went on to signal (measured on the
+            # human door 2026-08-22).
+            engine.emit_info("delegate", f"{task_id}: already judged for this delivery — verdict "
+                                         f"{rec['verdict']} stands on the record; signing is yours.")
+            return "recorded"
+        engine.emit_info("delegate", f"{task_id}: fresh recorded verdict {rec['verdict']} reused — "
+                                     f"no duplicate validator run")
+        sig = Signal.PASS if rec["verdict"] == Verdict.PASS else Signal.FAIL
+        if _signal(engine, task_id, sig, validator_id,
+                   **({"failed_criteria": tuple(rec.get("failed_criteria") or ())}
+                      if sig == Signal.FAIL else {})):
+            return "pass" if sig == Signal.PASS else "fail"
+        engine.emit_info("delegate", f"{task_id}: reused verdict {rec['verdict']} REJECTED by the "
+                                     f"FSM — the node revalidates on the graph's next change")
+        return "rejected"
+    return None
+
+
+def _say_it_is_hand_asserted(engine, task_id: TaskId, rec: dict) -> None:
+    """Why a standing verdict is not being replayed: a person asserted it, and that is theirs to sign.
+
+    Said where the reuse would have happened, because from outside the two are indistinguishable —
+    the node simply sits there while an instrument runs that "already had a verdict".
+    """
+    engine.emit_info("delegate",
+                     f"{task_id}: a verdict is on the record for this delivery but it was ASSERTED "
+                     f"BY HAND ({rec.get('validator')}) — that is the issuer's own word, not a "
+                     f"judgement this dispatcher may replay under an instrument's name. Sign it "
+                     f"yourself, or let the instrument run.")
+
+
+def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
+                   model_override: str | None = None, sign: bool = True) -> str | None:
+    """DELIVER→VALIDATING auto-fires the registered validator instrument; the verdict AUTO_PASS-SIGNALS
+    (PASS → DONE; FAIL(failed_criteria) → REWORKING — the rework loop lives in the FSM, max_iterations
+    bounds it). verdict:null NEVER auto-signals — the one escalation to the issuer. Returns the
+    outcome for the dispatcher: 'pass'/'fail' (signed), 'rejected' (the FSM refused the verdict —
+    ≠ no-verdict: the graph wasn't ready, revalidate on its next change), 'no-verdict'."""
+    task = engine.get_task(task_id)
+    _proj = engine.project_name
+    validator_id = _which_instrument_judges(engine, task, task_id, agents, _proj)
     if validator_id is None:
         engine.emit_info("delegate", f"{task_id}: no llm-validator registered — validation stays manual")
         # …AND SAID AS ITSELF, not as a failure. This returned a bare None, which the caller reads as
@@ -730,26 +888,29 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
     _gen_ok = (rec is not None and task is not None
                and all(rec.get(k, 0) == getattr(task, k, 0)
                        for k in ("iteration", "reopens", "revisions")))
-    if (_vkind != "unittest-checker" and _gen_ok
-            and rec.get("verdict") in (Verdict.PASS, Verdict.FAIL)):
-        if not sign:
-            # A verdict for THIS delivery already stands and the signature is not ours to give, so
-            # there is nothing left to do — and certainly not another paid run over the same
-            # delivery, which is what happened while this path went on to signal (measured on the
-            # human door 2026-08-22).
-            engine.emit_info("delegate", f"{task_id}: already judged for this delivery — verdict "
-                                         f"{rec['verdict']} stands on the record; signing is yours.")
-            return "recorded"
-        engine.emit_info("delegate", f"{task_id}: fresh recorded verdict {rec['verdict']} reused — "
-                                     f"no duplicate validator run")
-        sig = Signal.PASS if rec["verdict"] == Verdict.PASS else Signal.FAIL
-        if _signal(engine, task_id, sig, validator_id,
-                   **({"failed_criteria": tuple(rec.get("failed_criteria") or ())}
-                      if sig == Signal.FAIL else {})):
-            return "pass" if sig == Signal.PASS else "fail"
-        engine.emit_info("delegate", f"{task_id}: reused verdict {rec['verdict']} REJECTED by the "
-                                     f"FSM — the node revalidates on the graph's next change")
-        return "rejected"
+    # …AND A SELF-REPORT IS NOT A VERDICT THIS MAY REUSE. An internal node's DELIVER carries
+    # `self_validation`, and §14.5 D6 makes that its record — legal, and stored by the protocol step.
+    # Reuse exists for a different fact ("someone already judged this delivery, do not pay twice"),
+    # and it read the executor's own word as that. Measured on the HTTP door 2026-09-02: the
+    # instrument never ran on four nodes of a deployment that asks for it, and every one of those
+    # PASSes went into the audit trail under the registered validator's name — which had judged
+    # nothing, while `get_verdict` said SELF-REPORTED in the same breath. The record names who
+    # produced it, so the test is decidable: the executor's own signature is not an independent one.
+    # The engine owns "what kind of party produced this" — `get_verdict` reads the same answer, and
+    # a second spelling here is how the two came to disagree about one record in the first place.
+    # REUSE IS FOR AN INSTRUMENT'S VERDICT, and for nothing else. This existed to avoid paying twice
+    # when a judge has already ruled on this delivery — so what it may reuse is a judge's ruling. It
+    # was reusing ANY standing record and then signing the signal under the registered validator's
+    # NAME, so a verdict a person asserted by hand, under a reviewer they invented on the spot, was
+    # replayed into the log as `PASS by w22cli-validator` — an instrument that judged nothing
+    # (measured on both stranger doors, 2026-09-02). A self-report was already excluded here for the
+    # same reason; the engine now names all three kinds, so ask it for the one that qualifies.
+    _prov = engine.verdict_provenance(task_id)
+    if _gen_ok and _prov == "by_hand":
+        _say_it_is_hand_asserted(engine, task_id, rec)
+    if (out := _replay_a_standing_verdict(engine, task_id, rec, validator_id,
+                                         _vkind, _gen_ok, _prov, sign)) is not None:
+        return out
     vcfg = agents.get(validator_id) or {}
     out = _judge_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
                       model_override, _llm)
@@ -780,11 +941,12 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
                 f"(`get_verdict {task_id}`). Signing is yours: `signal {task_id} {verdict} <you>` "
                 f"when you agree with it.")
         return "recorded" if verdict else "no-verdict"
+    _why: list = []
     if verdict == Verdict.PASS:
-        if _signal(engine, task_id, Signal.PASS, validator_id):
+        if _signal(engine, task_id, Signal.PASS, validator_id, _why=_why):
             return "pass"
     elif verdict == Verdict.FAIL:
-        if _signal(engine, task_id, Signal.FAIL, validator_id,
+        if _signal(engine, task_id, Signal.FAIL, validator_id, _why=_why,
                    failed_criteria=tuple(out.get("failed_criteria") or ())):
             return "fail"
     else:  # null/error — never auto-signal an unparsed verdict
@@ -792,13 +954,40 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
         # caller is this dispatcher, which reads a verdict and nothing else, so the old wording named
         # a place no one could look — and the evidence for why a validator could not state a verdict
         # was gone by the time anyone asked.
+        # …AND WHETHER IT COST ANYTHING, because otherwise the reader has to infer it and two of
+        # them inferred it wrong. A judge that never made a model call — refused at the preflight
+        # because its registered directory holds none of this delivery, which is what a foreign
+        # unscoped role does — and a judge that spent a paid run and came back unreadable are the
+        # same line here, and they are opposite facts about the money. Two doors reported "failed
+        # validator runs are billed and appear in no stage" from exactly this ambiguity (wave 25,
+        # 2026-09-05); probed afterwards, the spend of a real unreadable run IS recorded, so what
+        # was actually missing is this sentence.
+        # WHAT THE TOOL OBSERVED, BEFORE ANYTHING THIS LAYER INFERS. `validate_result` returns an
+        # `error` when the judging never got as far as a model — an observation, with the reason in
+        # it — and this line threw it away and reconstructed a cause from a cost of zero instead
+        # ("it was refused before it started"). On 2026-09-05 that sentence stood over three dead
+        # runs, and the arm reading the log then wrote a THIRD invented cause on top of it. Zero
+        # spend is a fact about the money and about nothing else.
+        _spent = sum(float(c.get("cost_usd") or 0) for c in (out.get("stats") or ()))
+        _why = str(out.get("error") or "").strip()
         engine.emit_info("delegate",
                          f"{task_id}: validator verdict UNPARSED/error — issuer must decide"
+                         + (f" · {_why}" if _why else "")
+                         + (f" · this run cost ${_spent:.4f} (recorded in `usage`)" if _spent
+                            else " · no model call is recorded for it, so `usage` will not show it")
                          + (f" (report: {out['report_kept_at']})" if out.get("report_kept_at")
-                            else " (report not kept — see the validate_result output)"))
-        return "no-verdict"
-    engine.emit_info("delegate", f"{task_id}: validator verdict {verdict} REJECTED by the FSM — "
-                     f"the node revalidates on the graph's next change")
+                            else " (report not kept)"))
+        return "no-verdict" if (out.get("stats") or _spent) else "no-verdict:never-ran"
+    # WITH THE FSM'S OWN REASON. "The node revalidates on the graph's next change" is true and
+    # useless on its own: some refusals are transient (children not settled yet — the graph WILL
+    # change) and some are standing (the node's plan no longer passes the Syntactic level — nothing
+    # will change it but a person). Told apart only by the reason, which existed and went to the log
+    # alone, so an unattended run waited out its whole ceiling on a refusal nobody could read.
+    engine.emit_info("delegate", f"{task_id}: validator verdict {verdict} REJECTED by the FSM"
+                     + (f" — {_why[0]}" if _why else "")
+                     + ". The node revalidates on the graph's next change; if that refusal is about "
+                       "the node's own plan rather than about its children, nothing will change it "
+                       "on its own — `list_holes` names what to repair.")
     return "rejected"
 
 
@@ -854,7 +1043,6 @@ class Dispatcher:
         set = the real sources (SET semantics drops only the bogus edges, never the real ones); all
         phantom → external=True. External blocks stay for a human. The unblocked node's spawn-dedup
         key is dropped so a FRESH executor run picks it up."""
-        from gfso.core.types import State
         for t in self._engine.tasks_by_state(State.BLOCKED):
             if not self._issuer_is_automated(t.id):
                 continue
@@ -868,12 +1056,12 @@ class Dispatcher:
                 # second signal inside one episode, and a node may block twice under the same
                 # contract — with `#iteration` the second block found the key spent and was never
                 # auto-resolved at all.
-                key = f"rb:{t.id}#{getattr(t, 'state_entered_at', None)}"
+                key = f"rb:{t.id}#{t.state_entered_at}"
                 if key in self._seen:
                     continue
                 self._seen.add(key)
                 issuer = str(self._engine.issuer_of(t.id))
-                prov = [e.from_id for e in deps_in if getattr(e, "provisional", False)]
+                prov = [e.from_id for e in deps_in if e.provisional]
                 prov_real = [x for x in prov
                              if self._engine.get_task(TaskId(x)) is not None]
                 if len(prov_real) == len(prov):
@@ -894,7 +1082,6 @@ class Dispatcher:
         carried by the public result's validation (Thm 1). NOT validate-every-node — per-node
         instrumenting stays available as an OPT-IN dial: GFSO_VALIDATE_INTERNAL=1 restores the
         every-delivery behavior (useful for measurement runs, harmless for correctness)."""
-        import os
         if task is None:
             return True
         if _validate_internal_on():
@@ -912,7 +1099,6 @@ class Dispatcher:
         watched six of six nodes signed for them while the roster's own help promised the opposite.
         Naming yourself (`source=<your name>`, and an `assignee` of your own) is what makes you a
         person here."""
-        from gfso.tools import _agent_id
         issuer = str(self._engine.issuer_of(task_id))
         return issuer == _agent_id() or self._agents.get(issuer) is not None
 
@@ -940,8 +1126,7 @@ class Dispatcher:
         moments after its first claim and the node was executed TWICE (two paid runs, one contract —
         measured live). Putting the generation IN the key removes both: a revision is a new round by
         construction, and nothing has to be un-remembered."""
-        return (f"{prefix}{task.id}#{getattr(task, 'iteration', 0)}"
-                f"#{getattr(task, 'reopens', 0)}#{getattr(task, 'revisions', 0)}")
+        return f"{prefix}{task.id}#" + "#".join(str(g) for g in generation_of_task(task))
 
     def _admissible(self, task_id: TaskId) -> bool:
         """Would the node's first execution step be ADMITTED? Asked before paying for it.
@@ -966,6 +1151,113 @@ class Dispatcher:
             self._seen.add(key)
             return True
 
+    def _say_once(self, key: str, msg: str) -> bool:
+        """Put one explanation of a non-event on the record, and only one. True when it was said.
+
+        Every line built through here answers the same question — why did nothing happen to this
+        node — and the dispatcher asks it again on every poll round, so the same sentence would
+        land in the log for as long as the project sits. The KEY is what the sentence is about (a
+        node, a role, a particular open set of children); it changes when the situation does, which
+        is what keeps the next round's silence honest instead of lost. Seven sites wrote this rule
+        out by hand before it had an owner."""
+        if key in self._lapsed_said:
+            return False
+        self._lapsed_said.add(key)
+        self._engine.emit_info("delegate", msg)
+        return True
+
+    def _say_it_self_verifies(self, s: dict, task) -> None:
+        """Say, once per delivery, that no validator is coming and why (§14.5 D6)."""
+        self._say_once(
+                f"internal:{self._round_key(task, 'v:')}",
+                f"{s['task_id']}: delivered and NOT auto-validated — it is an internal "
+                f"node (its Del is its parent's), which §14.5 D6 lets self-verify: its "
+                f"guarantee is carried by the validation of the public result above it. "
+                f"It waits for its issuer ({self._engine.issuer_of(TaskId(s['task_id']))}) "
+                f"to signal PASS/FAIL. To have every node independently judged instead, "
+                f"set GFSO_VALIDATE_INTERNAL=1; to make it a seam, give it a different "
+                f"executor from its parent's.")
+
+    def _say_it_waits_for_its_children(self, s: dict, task) -> None:
+        """Say, once per open set, which children a delivered parent is still aggregating."""
+        _open = [f"'{k.id}' is {k.state.name}"
+                 for k in self._engine.get_active_children(TaskId(s["task_id"]))
+                 if not passed(k)]
+        if _open:
+            self._say_once(
+                f"kids:{s['task_id']}#{','.join(sorted(_open))}",
+                f"{s['task_id']}: delivered, but not validated yet — it aggregates "
+                f"children that have not settled ({'; '.join(_open)}). A verdict now "
+                f"would be refused at the gate, so none is spent. Drive those nodes; "
+                f"validation follows by itself.")
+
+    def _dispatch_validation(self, s: dict, task, it: int, started: list) -> bool:
+        """Act on a delivery that is waiting to be judged. True when this step is done with.
+
+        Three of the four ways out are a SENTENCE and no thread: the issuer keeps the
+        signature, the node self-verifies, or it is still the AND over children that have
+        not passed. Only the fourth spends money.
+        """
+        _proj = self._engine.project_name
+        _judge = self._agents.validator_for(s.get("assignee"), project=_proj)
+        # PUBLISHED FOR THE DOORS, the way the roster already is. The doors announce "an independent
+        # validator is bound to this node" and could not say WHICH — the layer gate forbids them the
+        # registry, and rightly — so five strangers went to the log to discover that the judge
+        # belonged to another project and stood in a directory holding none of their work.
+        if _judge:
+            _cfg = self._agents.get(str(_judge)) or {}
+            self._engine.publish_bound_judge(
+                TaskId(s["task_id"]),
+                {"id": str(_judge), "project": _cfg.get("project"), "workdir": _cfg.get("workdir")})
+        if s.get("action") == Action.VALIDATE and _judge is not None:
+            # A HUMAN ISSUER KEEPS THEIR VERDICT — and not the judging. Skipping the whole path
+            # meant a person who had registered an `llm-validator` and bound it to their executor
+            # got nothing at all: the node sat in VALIDATING with the instrument idle, on both
+            # doors, while `register_agent` promised it fires "on EVERY delivery" (measured
+            # 2026-08-21). Registering an instrument IS asking for the judging; §14.5 keeps only
+            # the signature theirs. So it runs and RECORDS, and the person signs.
+            _sign = self._issuer_is_automated(TaskId(s["task_id"]))
+            if not self._validate_here(task):
+                # D6 (§14.5): an INTERNAL node (its Del is its parent's) self-verifies, and no
+                # independent validator is spawned — but nothing then SIGNS it either, so the
+                # node sits in VALIDATING until its issuer acts. Measured 2026-08-20 on the
+                # shipped autonomous demo, whose whole subtree is delegated to ONE executor:
+                # every child is internal by construction, the delivery landed in 57 seconds,
+                # and the graph then stood still for half an hour with nothing to read. Said
+                # once per delivery; the decision itself stays the issuer's.
+                self._say_it_self_verifies(s, task)
+                return True
+            if not self._children_settled(TaskId(s["task_id"])):
+                # …and say which children, once. Skipping is right — the verdict would be
+                # rejected at the gate (Thm 1: the parent is the AND over its children) — but in
+                # silence a delivered parent looks like a validator that never came. Measured
+                # 2026-08-20 on a live run: a root sat in VALIDATING for nineteen minutes after
+                # its own repair added a child, with `busy: []` and nothing to read.
+                self._say_it_waits_for_its_children(s, task)
+                return True
+            # …AND NOTHING IS SPENT JUDGING A CONTRACT THAT IS EMPTY. V is the conjunction over the
+            # node's criteria (§10); over the empty set it is vacuously true, which is not a
+            # judgement — and the engine refuses to RECORD such a verdict, by name, at the register.
+            # The refusal sat downstream of the spend: a stranger's criteria-less node burned TWO
+            # paid validator dispatches before "AUTOMATIC VALIDATION GAVE UP", while
+            # `record_verdict` on the same node answered instantly and correctly (MCP door, wave 24,
+            # 2026-09-04). Deciding not to pay is the same question, asked before the money.
+            if not task.spec.criteria:
+                self._say_once(
+                    f"nocriteria:{self._round_key(task, 'v:')}",
+                    f"{s['task_id']}: delivered and NOT judged — it has no criteria, so there is "
+                    f"nothing a verdict could be ABOUT (V is the conjunction over a node's "
+                    f"criteria, §10, and over an empty set it is vacuously true). No instrument is "
+                    f"spent on it. Give it criteria (`edit_criteria`) and it is judged on the next "
+                    f"delivery.")
+                return True
+            if self._claim(self._round_key(task, "v:")):
+                started.append(f"validate:{s['task_id']}")
+                threading.Thread(target=self._validate_guarded,
+                                 args=(TaskId(s["task_id"]), it, _sign), daemon=True).start()
+            return True
+        return False
+
     def _dispatch_steps(self, out: dict, started: list) -> None:
         """Act on each frontier step: fire the instrument on a delivery, or spawn work.
 
@@ -974,61 +1266,8 @@ class Dispatcher:
         round's own shape was invisible. This is the acting; the round is what calls it."""
         for s in out.get("steps", []):
             task = self._engine.get_task(TaskId(s["task_id"]))
-            it = getattr(task, "iteration", 0)
-            _proj = self._engine.project_name
-            if (s.get("action") == Action.VALIDATE
-                    and self._agents.validator_for(s.get("assignee"), project=_proj) is not None):
-                # A HUMAN ISSUER KEEPS THEIR VERDICT — and not the judging. Skipping the whole path
-                # meant a person who had registered an `llm-validator` and bound it to their executor
-                # got nothing at all: the node sat in VALIDATING with the instrument idle, on both
-                # doors, while `register_agent` promised it fires "on EVERY delivery" (measured
-                # 2026-08-21). Registering an instrument IS asking for the judging; §14.5 keeps only
-                # the signature theirs. So it runs and RECORDS, and the person signs.
-                _sign = self._issuer_is_automated(TaskId(s["task_id"]))
-                if not self._validate_here(task):
-                    # D6 (§14.5): an INTERNAL node (its Del is its parent's) self-verifies, and no
-                    # independent validator is spawned — but nothing then SIGNS it either, so the
-                    # node sits in VALIDATING until its issuer acts. Measured 2026-08-20 on the
-                    # shipped autonomous demo, whose whole subtree is delegated to ONE executor:
-                    # every child is internal by construction, the delivery landed in 57 seconds,
-                    # and the graph then stood still for half an hour with nothing to read. Said
-                    # once per delivery; the decision itself stays the issuer's.
-                    _key = f"internal:{self._round_key(task, 'v:')}"
-                    if _key not in self._lapsed_said:
-                        self._lapsed_said.add(_key)
-                        self._engine.emit_info(
-                            "delegate",
-                            f"{s['task_id']}: delivered and NOT auto-validated — it is an internal "
-                            f"node (its Del is its parent's), which §14.5 D6 lets self-verify: its "
-                            f"guarantee is carried by the validation of the public result above it. "
-                            f"It waits for its issuer ({self._engine.issuer_of(TaskId(s['task_id']))}) "
-                            f"to signal PASS/FAIL. To have every node independently judged instead, "
-                            f"set GFSO_VALIDATE_INTERNAL=1; to make it a seam, give it a different "
-                            f"executor from its parent's.")
-                    continue
-                if not self._children_settled(TaskId(s["task_id"])):
-                    # …and say which children, once. Skipping is right — the verdict would be
-                    # rejected at the gate (Thm 1: the parent is the AND over its children) — but in
-                    # silence a delivered parent looks like a validator that never came. Measured
-                    # 2026-08-20 on a live run: a root sat in VALIDATING for nineteen minutes after
-                    # its own repair added a child, with `busy: []` and nothing to read.
-                    _open = [f"'{k.id}' is {k.state.name}"
-                             for k in self._engine.get_active_children(TaskId(s["task_id"]))
-                             if not passed(k)]
-                    _key = f"kids:{s['task_id']}#{','.join(sorted(_open))}"
-                    if _open and _key not in self._lapsed_said:
-                        self._lapsed_said.add(_key)
-                        self._engine.emit_info(
-                            "delegate",
-                            f"{s['task_id']}: delivered, but not validated yet — it aggregates "
-                            f"children that have not settled ({'; '.join(_open)}). A verdict now "
-                            f"would be refused at the gate, so none is spent. Drive those nodes; "
-                            f"validation follows by itself.")
-                    continue
-                if self._claim(self._round_key(task, "v:")):
-                    started.append(f"validate:{s['task_id']}")
-                    threading.Thread(target=self._validate_guarded,
-                                     args=(TaskId(s["task_id"]), it, _sign), daemon=True).start()
+            it = task.iteration
+            if self._dispatch_validation(s, task, it, started):
                 continue
             if s.get("action") not in SPAWNABLE_ACTIONS:
                 continue
@@ -1041,6 +1280,22 @@ class Dispatcher:
                                            # spawned against an input that does not exist yet, and
                                            # blocked itself on arrival. A paid run whose only possible
                                            # outcome is the BLOCK it already reported.
+            # A PARENT IS NOT A LEAF, AND ITS WORK IS ITS CHILDREN'S. The dispatcher spawned an
+            # executor on a node with children that had never run: the run re-did at the parent what
+            # the children were about to do, and the node then sat in VALIDATING for 24 minutes while
+            # they caught up (HTTP door, 2026-09-02). `next_steps` never offered it — it said
+            # `review`, the plan step — so the two rules disagreed about what is actionable, and the
+            # frontier was right: a non-leaf aggregates (Thm 1), it does not execute. Delivering the
+            # aggregate is still the parent's own act, so DELIVER stays spawnable; what is refused is
+            # starting the WORK of a node whose children have not settled.
+            if (s.get("action") in (Action.ACCEPT, Action.EXECUTE)
+                    and (_kids := self._engine.get_active_children(TaskId(s["task_id"])))):
+                self._say_once(
+                        f"parent:{s['task_id']}",
+                        f"{s['task_id']}: not spawned — it has children ({', '.join(str(k.id) for k in _kids)}) "
+                        f"and a parent's result is the AND over them (Thm 1). Its executor runs when "
+                        f"they have passed and there is an aggregate to deliver.")
+                continue
             if s.get("action") == Action.ACCEPT and not self._admissible(TaskId(s["task_id"])):
                 # …and SAY SO, once per node. The gate is right (§13.4: a plan that has not passed
                 # its checks does not start, and the ACCEPT would be refused with the executor's
@@ -1049,11 +1304,9 @@ class Dispatcher:
                 # frontier's own review step: two children sat in OFFERED for half an hour over an
                 # empty workspace, with nothing anywhere saying why.
                 _p = self._engine._graph.get_parent(TaskId(s["task_id"]))
-                _key = f"gate:{s['task_id']}"
-                if _p is not None and _key not in self._lapsed_said:
-                    self._lapsed_said.add(_key)
-                    self._engine.emit_info(
-                        "delegate",
+                if _p is not None:
+                    self._say_once(
+                        f"gate:{s['task_id']}",
                         f"{s['task_id']}: not started — its parent's plan ('{_p.id}') is not "
                         f"admitted to execution yet (§13.4). `next_steps` names the step that opens "
                         f"it: review_decomposition('{_p.id}'), or closing the holes it lists. "
@@ -1066,11 +1319,8 @@ class Dispatcher:
                 # broken dispatcher. The live case that made this matter: a plan repair ADDED a
                 # child, which was created with its author's own id rather than a registered
                 # executor's, and in a delegated run it landed on nobody at all.
-                _key = f"unowned:{s['task_id']}#{s.get('assignee')}"
-                if _key not in self._lapsed_said:
-                    self._lapsed_said.add(_key)
-                    self._engine.emit_info(
-                        "delegate",
+                self._say_once(
+                        f"unowned:{s['task_id']}#{s.get('assignee')}",
                         f"{s['task_id']}: not started — Del is '{s.get('assignee')}', which is not a "
                         f"registered executor, so this node waits for THAT party's own signals. "
                         f"If it was meant to be delegated, `reassign` it to a registered role; if "
@@ -1086,10 +1336,8 @@ class Dispatcher:
                 # moves — the node keeps its place and resumes the moment the owner returns; what
                 # stops is the spawning of work nobody is waiting for. Said ONCE per role, because
                 # the alternative is a line per dispatch cycle for as long as the project sits.
-                if (s.get("assignee") or "") not in self._lapsed_said:
-                    self._lapsed_said.add(s.get("assignee") or "")
-                    self._engine.emit_info(
-                        "delegate",
+                self._say_once(
+                        s.get("assignee") or "",
                         f"{s['task_id']}: {s['assignee']}'s owner ({cfg.get('client')}) is gone — "
                         f"dispatch for that role stops here; nothing is cancelled, and it resumes "
                         f"when the same owner returns")
@@ -1116,6 +1364,18 @@ class Dispatcher:
         self._engine._graph.authorized_validators = {
             aid for aid, cfg in _roster.items()
             if cfg.get("kind") in ("llm-validator", "unittest-checker")}
+        # …AND WHOSE EACH ONE IS. The set above says an instrument EXISTS on this server; it cannot
+        # answer whether one will judge a given node, and the surfaces asked it as though it could:
+        # a user whose project had registered nothing was told on every delivery that "an
+        # independent validator is bound to this node — wait for it", because twenty-five roles
+        # belonging to seventeen other projects were on the shared roster (HTTP door, wave 26,
+        # 2026-09-06). They waited for a judge that could never come, and the same sentence warned
+        # them off the one action that would have worked. The scope rule already exists in
+        # `validator_for` (this project's roles first, then UNSCOPED ones, never another project's);
+        # published here so the read surfaces can ask the same question.
+        self._engine.publish_validator_projects({
+            aid: cfg.get("project") for aid, cfg in _roster.items()
+            if cfg.get("kind") in ("llm-validator", "unittest-checker")})
         # …and WHO ELSE is registered, published downward for the read surfaces. `gfso.tools` is the
         # layer below this one (core+engine only, held by `test_layering`) and must not import the
         # dispatcher to find out that a node's Del is a machine — but it is the difference between
@@ -1137,12 +1397,8 @@ class Dispatcher:
             # canon citation (register 2026-08-22, finding 1).
             if w.get("kind") == "dependency" or not (_opens := w.get("opens_with")):
                 continue                       # dep-order waits are read from `waits_on` instead
-            _key = f"gate:{w['task_id']}"
-            if _key in self._lapsed_said:
-                continue
-            self._lapsed_said.add(_key)
-            self._engine.emit_info(
-                "delegate",
+            self._say_once(
+                f"gate:{w['task_id']}",
                 f"{w['task_id']}: not started — {', '.join(w['waits_on'])} is not admitted to "
                 f"execution yet "
                 f"(§13.4): {w['why']}. The step that opens it: {_opens}. Nothing is lost; dispatch "
@@ -1166,7 +1422,7 @@ class Dispatcher:
         the run paid for, and the graph stalled for ten minutes with the frontier repeating a step
         the dispatcher could not take."""
         t = self._engine.get_task(task_id)
-        if t is None or t.state.name not in states or getattr(t, "iteration", 0) != expect_iter:
+        if t is None or t.state.name not in states or t.iteration != expect_iter:
             self._engine.emit_info("delegate",
                                    f"{task_id}: queued run is stale (state {t.state.name if t else '?'}"
                                    f") — slot released")
@@ -1229,6 +1485,8 @@ class Dispatcher:
                 log.warning(f"delegate run failed on {task_id}: {e}")
                 try:
                     self._engine.emit_info("delegate", f"{task_id}: dispatch failed — {e}")
+                # the log line above already carries the failure; the observation strip must not be
+                # able to mask the dispatch error it is reporting
                 except Exception:
                     pass
 
@@ -1299,7 +1557,14 @@ class Dispatcher:
                     # was also unrefusable: `GFSO_VALIDATOR_RETRY_MODEL=off` runs the retry on the
                     # node's own tier, and the tier is named in the log either way, because a bill
                     # nobody announced is how this was found.
-                    _tier = validator_retry_model()
+                    # …AND ONLY WHEN A MODEL ACTUALLY RAN. The escalation answers a report that
+                    # came back thin, which is a model-quality problem. When the instrument never
+                    # reached a model at all — its registered directory holds none of this delivery,
+                    # say — a bigger model changes nothing except the price, and the log's own
+                    # sentence ("a fuller report is usually a coverage-discipline gap") is then a
+                    # wrong diagnosis printed with confidence. Measured 2026-09-05: three runs died
+                    # here, each having spent its two attempts on a judge that never started.
+                    _tier = validator_retry_model() if ret != "no-verdict:never-ran" else None
                     if _tier:
                         self._retry_model[key] = _tier
                     self._engine.emit_info(
@@ -1307,8 +1572,10 @@ class Dispatcher:
                                     + (f"on {_tier} (a fuller report is usually a coverage-discipline "
                                        f"gap; GFSO_VALIDATOR_RETRY_MODEL=off keeps its own tier)"
                                        if _tier else
-                                       "on its OWN tier — the escalation is off "
-                                       "(GFSO_VALIDATOR_RETRY_MODEL)"))
+                                       "on its OWN tier — " + (
+                                           "no model ran, so a bigger one would only cost more"
+                                           if ret == "no-verdict:never-ran" else
+                                           "the escalation is off (GFSO_VALIDATOR_RETRY_MODEL)")))
                 else:
                     # The retry produced no verdict either, and ⊥ is not pass (§2.2): the node cannot
                     # complete, and until now nothing said so — it simply stayed in VALIDATING. That
@@ -1354,6 +1621,8 @@ class Dispatcher:
         self._dirty.set()
 
     def start(self) -> None:
+        """Begin the dispatch loop for this engine — event-driven off the transition bus, with a
+        bounded safety-net poll behind it."""
         # (the transition bus is subscribed in __init__ — the callback is load-bearing, not a wake)
         # the quiesce-end poke: a wholesale build clears engine._dispatch_quiesce and calls this
         self._engine._dispatch_wake = self._dirty.set
@@ -1369,6 +1638,7 @@ class Dispatcher:
         threading.Thread(target=_loop, daemon=True).start()
 
     def stop(self) -> None:
+        """Stop the loop and wait briefly for it to settle. Idempotent."""
         self._stop.set()
         self._dirty.set()                              # wake the loop so it exits promptly
 

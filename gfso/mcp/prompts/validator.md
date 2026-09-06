@@ -2,7 +2,12 @@
 
 > System artifact: the SYSTEM (the `validate_result` tool) spawns this role headless
 > (claude -p --system-prompt <this> --allowedTools "Read Bash Glob Grep") - never the user-agent
-> (single entry point). Read-only by construction: no write tools, no graph access at all — the node's
+> (single entry point). No graph access at all, BY CONSTRUCTION (`--strict-mcp-config` with no server:
+> this role cannot touch the graph it judges, §14.5). Read-only on the WORKSPACE is not construction and
+> must not be read as one: `Write`/`Edit` are withheld, but `Bash` is granted because a probe has to RUN,
+> and a shell writes. So it is an instruction (below), and what a judging run leaves behind is MEASURED
+> instead of assumed (`validator_strays` in the record). The claim used to read "read-only by
+> construction: no write tools", which was false about a load-bearing property — the node's
 > contract (criteria/dependencies/ACCEPTED_RISKS) and the executor's DELIVER report are EMBEDDED in the user
 > message by the system. The issuer (user-agent) signals PASS/FAIL from the returned report.
 

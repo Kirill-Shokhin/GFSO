@@ -16,6 +16,7 @@ its point of enforcement on purpose, where the code that obeys it is the code th
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -105,9 +106,42 @@ def agent_id() -> str:
     return os.environ.get("GFSO_AGENT_ID") or "agent"
 
 
+#: where the server remembers which project it was pointed at, so a RESTART does not silently
+#: move everyone back to `default` (measured on the MCP door, wave 26, 2026-09-06: "use_project
+#: falls back to default after a server restart" — the session map lives in memory and the session
+#: object is new, so the fallback was the registry's active, and the registry started at default).
+ACTIVE_PROJECT_FILE = "active_project"
+
+
 def active_project() -> str:
-    """The project a session starts in when it names none."""
-    return os.environ.get("GFSO_PROJECT", DEFAULT_PROJECT)
+    """The project a session starts in when it names none.
+
+    `GFSO_PROJECT` wins — an explicit environment is a deployment saying where it points. Otherwise
+    the last project this installation was SWITCHED to, which survives a restart; and `default` when
+    nothing has been chosen yet.
+    """
+    if named := os.environ.get("GFSO_PROJECT"):
+        return named
+    try:
+        remembered = (data_dir() / ACTIVE_PROJECT_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return DEFAULT_PROJECT
+    return remembered or DEFAULT_PROJECT
+
+
+def remember_active_project(name: str) -> None:
+    """Write down which project was switched to. Best-effort: a read-only data dir must not make
+    `use_project` fail — what is lost then is only the memory of it across a restart."""
+    try:
+        d = data_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ACTIVE_PROJECT_FILE).write_text(str(name), encoding="utf-8")
+    except OSError as ex:
+        # SAID, not swallowed: the switch still happened, and what was lost is only its memory
+        # across a restart — which is exactly the thing whose absence was reported as silent.
+        logging.getLogger(__name__).warning(
+            "could not remember the active project %r (%s) — this session is switched, but a "
+            "restart will start where it started before", name, ex)
 
 
 def state_timeout() -> float:
@@ -272,3 +306,133 @@ def narrate() -> bool:
 # (E3, 2026-08-22). A doubt raised by any reading is a doubt to answer; later rounds read once,
 # because by then the plan has changed and what they judge is the change. 1 = the old behaviour.
 CHECKER_READINGS = 3
+
+
+def fill_env_gaps(declared: dict) -> dict:
+    """The declared server configuration, with anything the operator EXPORTED left standing.
+
+    A declaration (`data/serve.json`) says what this installation's server should be; an export says
+    what THIS run means. `gfso serve` has always let the export win — the measurement arm sets
+    `GFSO_L2_GATE=0` deliberately, and the gate is the mechanism it measures — while the reconciler's
+    spawn path applied the same declaration with `update`, so a session that had exported the switch
+    could still be handed a server with it back on. One rule, two spellings, and the louder one
+    overruled the operator; this is the one place it is spelled.
+    """
+    return {k: os.environ.get(k, v) for k, v in declared.items()}
+
+
+# HOW OFTEN A LONG VERB SAYS IT IS STILL THERE, over a transport with a per-message timeout. A
+# decomposition is several model calls and one of them can outlast any ceiling a client sets; an MCP
+# session aborted `auto_decompose` at 1800 s after thirty minutes of silence, and the graph had been
+# changed by then. Not progress about the work — evidence that the work is still running.
+HEARTBEAT_SECONDS = 30
+
+
+# HOW LONG A VALIDATION CLAIM IS HONOURED WITH NOBODY BEHIND IT. The claim that stops two validators
+# judging one delivery is released in a `finally`, so an orderly end always frees it — and a run that
+# dies without unwinding cannot. The node then reads as "being judged" everywhere while nothing runs,
+# and `validate_result` refuses the re-run its own refusal advises (agent door, 2026-09-02: fifteen
+# minutes of dead polling on each of two nodes). Longer than any single judging run this product
+# waits for, so a live run is never reclaimed out from under itself.
+VALIDATION_CLAIM_TTL = 1800.0
+
+
+def sufficiency_at_authoring() -> bool:
+    """Does the decomposer close its own goal's undecided obligations before handing the plan over?
+
+    ON by default. The check is the same one the Level-2 review runs; asking it at authoring costs
+    one call and saves the caller the review rounds that repair what the previous call just wrote.
+    `GFSO_SUFFICIENCY_AT_AUTHORING=0` turns it off — the measurement arm needs to be able to author a
+    plan the gate has NOT already pre-repaired, or the two halves of the experiment collapse.
+    """
+    return os.environ.get("GFSO_SUFFICIENCY_AT_AUTHORING", "1") not in ("0", "false", "no")
+
+
+# THE BLOCKING WAIT on the frontier verb. Every tester of waves 18-19 wrote the same poll loop by
+# hand and spent 8-15 minutes of their run inside it: a graph that is working looks exactly like one
+# that is stuck from a single call away. The ceiling exists because a call that never returns is a
+# worse surface than one that says "nothing yet", and because every transport has a ceiling of its
+# own that would cut it less politely.
+WAIT_MAX_SECONDS = 600.0
+WAIT_POLL_SECONDS = 2.0
+
+
+def select_project(name: str) -> None:
+    """Point this PROCESS at one project's graph — the door's choice, written where env lives.
+
+    `GFSO_PROJECT` is read here like every other setting; two doors were setting it by hand, which is
+    how a setting acquires a second owner and then a second meaning.
+    """
+    os.environ["GFSO_PROJECT"] = str(name)
+
+def install_serve_env(declared: dict, *, storage: str, db_path: str | None, llm: str, model: str,
+                      seed: bool, with_mcp: bool, on_declaration_error=None) -> None:
+    """Put the environment a `serve` process runs under in place — the ONE owner of that act.
+
+    `gfso serve` turns its arguments into the variables the app reads, and it was doing so by hand:
+    eight `os.environ[...]` writes in the command, beside a ninth in the bridge and two more in the
+    headless runner. That is a setting acquiring a second owner and then a second meaning — the
+    class this module exists to close, and the reason `select_project` moved here before it.
+
+    The DECLARATION fills gaps only: an explicitly exported value still wins, because the
+    measurement arm sets `GFSO_L2_GATE=0` deliberately and the gate is the mechanism it measures.
+    A declaration that cannot be read must never stop the server, so the caller is handed the error
+    rather than raised at.
+    """
+    try:
+        os.environ.update(fill_env_gaps(declared))
+    except Exception as ex:                       # never let the declaration stop the server
+        if on_declaration_error is not None:
+            on_declaration_error(ex)
+    os.environ["GFSO_STORAGE"] = storage
+    os.environ["GFSO_DB_PATH"] = db_path or str(data_dir() / "gfso.db")
+    os.environ["GFSO_LLM"] = llm
+    os.environ["GFSO_MODEL"] = model
+    os.environ["GFSO_SEED"] = "1" if seed else ""   # the name the app actually reads
+    os.environ["GFSO_WITH_MCP"] = "" if with_mcp is False else "1"
+
+
+def install_spawned_server_env(declared: dict) -> None:
+    """The environment THE shared server is spawned under, when a bridge has to raise one.
+
+    Same act as `install_serve_env` from a different door, and it was spelled separately there.
+    `GFSO_AUTOEXIT=0` is the one difference and it is deliberate: a server raised to serve somebody
+    else's session outlives the session that happened to raise it.
+    """
+    os.environ.update(fill_env_gaps(declared))     # the spawn inherits THIS process's environment
+    os.environ["GFSO_AUTOEXIT"] = "0"              # up until it is stale or stopped, not until we go
+
+
+def subprocess_env(*, keep_key: bool, extra: dict | None = None) -> dict:
+    """The environment a MODEL subprocess inherits — a fresh dict, nothing installed here.
+
+    The API key is stripped unless the caller asks to keep it, because with it present the runner
+    bills the paid API while the operator believes they are on the subscription. That is a money
+    fact, not a style one, and it is the reason the measurement layer patches the same thing at its
+    own boundary (P1) — one question, and until now two places answering it.
+    """
+    env = (dict(os.environ) if keep_key else
+           {k: v for k, v in os.environ.items()
+            if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")})
+    if extra:
+        env.update({k: str(v) for k, v in extra.items() if v is not None})
+    return env
+
+
+def install_mcp_env(*, db_path: str | None, llm: str, model: str) -> None:
+    """The environment the stdio MCP door runs under — the same act as `install_serve_env`.
+
+    A third door turning its arguments into the variables the app reads, spelled a third time.
+    """
+    os.environ["GFSO_DB_PATH"] = db_path or str(data_dir() / "gfso.db")
+    os.environ["GFSO_LLM"] = llm
+    os.environ["GFSO_MODEL"] = model
+
+
+def spawned_server_popen_env() -> dict:
+    """The env dict handed to the SPAWN of the shared server — a fresh dict, nothing installed.
+
+    `GFSO_AUTOEXIT` defaults to off for the same reason as `install_spawned_server_env`: a server
+    raised for somebody's session is a background service, not that session's property.
+    """
+    return dict(os.environ, GFSO_AUTOEXIT=os.environ.get("GFSO_AUTOEXIT", "0"))

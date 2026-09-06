@@ -15,12 +15,16 @@ from gfso.config import ROOT_ID
 
 
 def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
+    """The live graph read back as the spec shape the fold consumes — the exact DATA inverse of
+    `build_graph_live`, so a refine round starts from what the graph really holds rather than from
+    what the last round thought it wrote."""
     root = engine.get_task(TaskId(root_id))
     if root is None:
         raise ValueError(f"no node {root_id!r} to extract")
     p = f"{root_id}."
 
     def dens(nid: str) -> str:
+        """The inverse of `ns` — a live id read back as the spec id the fold speaks in."""
         return str(nid).removeprefix(p)
 
     subtasks, deps = [], []

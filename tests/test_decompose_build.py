@@ -4,13 +4,12 @@ offline `_graph.save_task` bypass. The canon-faithful build path E3 wires the ag
 Child ids are NAMESPACED under the root (`{root_id}.{spec_id}`): spec ids are LLM-chosen domain words in a
 flat global TaskId namespace, so two decompositions of similar domains WOULD collide — and a colliding
 ASSIGN is a same-id REVISION of the other tree's node (observed live as cross-tree corruption)."""
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
-from gfso.core.types import TaskId, Signal, State
+from gfso.core.types import TaskId, Signal, State, Spec, Criteria, AgentId
 from gfso.decompose.build import build_graph_live
 from gfso import tools as T
+from tests.support import make_engine
+from gfso.decompose.loop import AUDIT_SCHEMA
 
 SPEC = {
     "name": "Build the thing",
@@ -28,7 +27,7 @@ SPEC = {
 
 
 def _eng():
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     return e
 
@@ -73,7 +72,6 @@ def test_build_graph_live_into_existing_root_reauthors_it():
     derived V-set — an issuer's criteria are untrusted; keeping them would strand the child `covers` mappings
     (CHECK-1 fail). The subtree is retained (revise ≠ abandon)."""
     e = _eng()
-    from gfso.core.types import Spec, Criteria, AgentId
     e.assign_task(TaskId("root"), Spec("build the thing",
                   (Criteria("issuer_made_up", "not the real criteria"),)), AgentId("human"))
     e.wait_idle()
@@ -91,7 +89,6 @@ def test_build_graph_live_reauthors_a_root_owned_by_another_agent():
     and ACCEPTing the root must be done by the root's OWN owner (its issuer), not by the children's assignee —
     else the issuer/executor guards (correctly) reject a foreign actor acting on someone else's root."""
     e = _eng()
-    from gfso.core.types import Spec, Criteria, AgentId
     e.assign_task(TaskId("root"), Spec("build the thing",
                   (Criteria("issuer_made_up", "not the real criteria"),)), AgentId("owner"))
     e.wait_idle()
@@ -143,7 +140,6 @@ def test_rebuild_reuses_hand_built_bare_ids_no_duplicates():
     """Refine over a HAND-built graph (bare child ids, no root. namespace): the rebuild must REVISE
     those nodes in place, never create namespaced duplicates (observed live in the L2 gate
     experiment: C1..C9 + root.C1..C9 doubled the subtree and orphaned every mapping)."""
-    from gfso import tools as T
     e = _eng()
     T.create_task(e, "root", {"description": "goal", "criteria": [{"name": "rc1", "description": "A"}]}, "human")
     T.decompose(e, "root", [
@@ -171,8 +167,6 @@ def test_the_register_key_the_schema_asks_for_is_the_key_the_parser_reads():
     key. When they drift, the register comes back EMPTY with nothing raised, and CHECK-4 reports a
     hole the plan never had — the failure is silent at exactly the layer that cannot see it.
     """
-    from gfso.decompose.loop import AUDIT_SCHEMA
-
     assert "accepted_risks" in AUDIT_SCHEMA["properties"]
     assert "accepted_risks" in AUDIT_SCHEMA["required"]
 

@@ -11,12 +11,14 @@ Two rules the tests pin, because both are ways a money column lies:
   * a provider that reports no price contributes zero AND is counted apart (`costed_calls`), so a
     total can never present "not reported" as "free" (the ⊥-as-zero error, §21 conventions).
 """
-from gfso.adapters.storage.memory import MemoryStorage
+from fastapi.testclient import TestClient
+
 from gfso.adapters.storage.sqlite import SqliteStorage
-from gfso.adapters.agents.human import HumanAgent
+from gfso.api.server import create_app
+from gfso.runtime import ProjectRegistry
 from gfso.adapters.llm.stub import StubLLM
-from gfso.engine import Engine
 from gfso.core.types import TaskId
+from tests.support import make_engine
 
 
 class _Provider:
@@ -27,7 +29,7 @@ class _Provider:
 
 
 def _engine(storage=None):
-    e = Engine(storage or MemoryStorage(), HumanAgent(), llm=StubLLM(), check_interval=10_000)
+    e = make_engine(storage, llm=StubLLM(), check_interval=10_000)
     return e
 
 
@@ -90,12 +92,41 @@ def test_usage_survives_a_restart(tmp_path):
 
 
 def test_the_endpoint_serves_totals_and_detail():
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
-
     e = _engine()
     e.record_llm_usage("executor", _Provider([{"output_tokens": 3, "cost_usd": 0.4}]), TaskId("n"))
     with TestClient(create_app(e)) as c:
         body = c.get("/api/usage").json()
         assert body["cost_usd"] == 0.4 and "calls" not in body.get("by_stage", {})
         assert c.get("/api/usage?detail=true").json()["calls"][0]["stage"] == "executor"
+
+
+def test_the_money_total_names_its_scope_on_a_multi_project_server(monkeypatch, tmp_path):
+    """The endpoint has to answer WHOSE money it is — and on the real server it stopped answering at all.
+
+    A money total that cannot name its scope was already a measured defect (a person read $0.54 for a
+    run that had spent $7.08, 2026-08-21), which is why `project` is in the body. The naming step
+    reads the per-request `?project=` scope, and that lookup is only reached when a REGISTRY exists —
+    so a single-engine app takes the other branch and the endpoint stayed green in the suite while
+    `/api/usage` returned 500 on every real server for a week. The scope is the point of the field;
+    the test has to exercise the path that computes it.
+    """
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    monkeypatch.setenv("GFSO_STORAGE", "memory")
+    reg = ProjectRegistry()
+    reg.engine().record_llm_usage("executor", _Provider([{"output_tokens": 3, "cost_usd": 0.4}]),
+                                  TaskId("n"))
+    with TestClient(create_app(reg.engine(), registry=reg)) as c:
+        body = c.get("/api/usage")
+        assert body.status_code == 200, body.text
+        assert body.json()["project"] == "default"
+        # `beta` is AUTHORED first, because a read no longer creates the project it names: asking
+        # about money on a name that does not exist is a typo, and answering $0.00 for it is the
+        # same confusion as reporting another project's total. The point here is unchanged — the
+        # answer is scoped to the tab, not to the server-wide active project.
+        reg.engine("beta", create=True)
+        named = c.get("/api/usage?project=beta").json()
+        assert named["project"] == "beta"          # the tab's scope, not the server-wide active one
+        assert c.get("/api/usage?project=nosuchproject").status_code == 404
+    for e in list(reg._engines.values()):
+        e.stop()

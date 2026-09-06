@@ -16,13 +16,12 @@ import time
 import pytest
 
 from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.core.types import (
     AcceptedRiskItem, Predictability,
     State, Signal, SignalData, TaskId, AgentId, Spec, Criteria, CriterionMapping,
 )
 from gfso.engine.validation import ValidationError, validate_signal
+from tests.support import make_engine
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +34,7 @@ def _l2_gate_on(monkeypatch):
 
 @pytest.fixture
 def engine():
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(llm=None, check_interval=10_000)
     e.start()
     yield e
     e.stop()
@@ -184,7 +183,7 @@ def test_explore_branch_opts_out_of_the_level2_half(monkeypatch):
     """`GFSO_L2_GATE=0` is the canon's EXPLORE branch (§13.5) — it drops the L2 requirement and
     nothing else: the two false closes stay refused (they are decided, not reviewed)."""
     monkeypatch.setenv("GFSO_L2_GATE", "0")
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(llm=None, check_interval=10_000)
     e.start()
     try:
         _refuted(e)
@@ -196,7 +195,7 @@ def test_explore_branch_opts_out_of_the_level2_half(monkeypatch):
 
 def test_explore_branch_still_refuses_a_dropped_criterion(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "0")
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(llm=None, check_interval=10_000)
     e.start()
     try:
         _refuted(e)

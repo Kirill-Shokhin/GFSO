@@ -19,7 +19,9 @@ the schema rather than transcribe it, and a hand-copied field list is the mirror
 from __future__ import annotations
 
 import dataclasses
+import gfso.core.types.primitives as P
 import json
+import time
 import typing
 from datetime import datetime
 from enum import Enum
@@ -34,6 +36,8 @@ from gfso.core.types.primitives import (
 from gfso.engine.audit import AuditLog
 from gfso.engine.events import EventBus
 from gfso.engine.loop import process_signal
+from gfso.core.types.enums import TERMINAL_STATES
+from gfso.core.types.primitives import Signal
 
 
 # ----------------------------------------------------------------- generic dataclass codec
@@ -63,7 +67,6 @@ def _strip_optional(tp: Any) -> Any:
 
 def _decode(raw: Any, tp: Any = None) -> Any:
     if isinstance(raw, dict) and "__enum__" in raw:
-        import gfso.core.types.primitives as P
         return getattr(P, raw["__enum__"])[raw["name"]]
     if isinstance(raw, dict) and "__dt__" in raw:
         return datetime.fromisoformat(raw["__dt__"])
@@ -146,7 +149,6 @@ class JsonlStorage(StoragePort):
         return self.get_task(t.parent_id) if t and t.parent_id else None
 
     def get_active_tasks(self) -> list[Task]:
-        from gfso.core.types.enums import TERMINAL_STATES
         return [t for t in self._tasks.values() if t.state not in TERMINAL_STATES]
 
     def get_check_results(self, task_id: TaskId) -> list[CheckResult]:
@@ -214,7 +216,6 @@ class VirtualClock(ClockPort):
         # Anchored on the wall clock at construction: the engine stamps created_at /
         # state_entered_at with real datetimes, so virtual time must start beside them or every
         # age comparison is off by years.
-        import time
         self._t = time.time() if start is None else start
 
     def now(self) -> float:
@@ -287,8 +288,6 @@ class Host:
     def advance_clock(self, seconds: float) -> None:
         """Move virtual time and let the timeout machinery run exactly one pass."""
         self.clock.advance(seconds)
-        from gfso.core.types.enums import TERMINAL_STATES
-        from gfso.core.types.primitives import Signal
         now = self.clock.now()
         for task in list(self.storage.get_active_tasks()):
             if task.state in TERMINAL_STATES:

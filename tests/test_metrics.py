@@ -1,7 +1,11 @@
 """Tests for graph/metrics.py — all 5 metrics from paper §15.2."""
+import json
+
 from gfso.core.types import TaskId, AgentId, Task, Spec, Criteria, State, DoneReason, DepEdge
-from gfso.core.graph import Graph, q_T, q_D, q_V, q_Dep, q_Del
+from gfso.core.graph import Graph, q_T, q_D, q_V, q_Dep, q_Del, false_fail_share
 from gfso.adapters.storage.memory import MemoryStorage
+from gfso import tools as T
+from tests.support import make_engine
 
 
 def _task(tid, state=State.EXECUTING, assignee="a1", done_reason=None, was_challenged=False, parent_id=None):
@@ -160,7 +164,6 @@ def test_q_V_ignores_fail():
 def test_q_V_posthoc_fail_verdict_is_the_discovery_carrier():
     # A validate_result FAIL recorded over an already-DONE(pass) node = "pass → later found wrong":
     # the metric derives it from the verdict store (no flag write needed).
-    import json
     g = _graph(
         _task("t1", State.DONE, done_reason=DoneReason.PASS),
         _task("t2", State.DONE, done_reason=DoneReason.PASS),
@@ -170,7 +173,6 @@ def test_q_V_posthoc_fail_verdict_is_the_discovery_carrier():
     assert q_V(g) == 0.5
 
 def test_q_V_acceptance_time_pass_verdict_not_counted():
-    import json
     g = _graph(_task("t1", State.DONE, done_reason=DoneReason.PASS))
     g._storage.store_exec_verdict(TaskId("t1"), json.dumps(
         {"verdict": "PASS", "failed_criteria": [], "validator": "val", "iteration": 0}))
@@ -182,8 +184,6 @@ def test_q_V_acceptance_time_pass_verdict_not_counted():
 def test_false_fail_share_posthoc_pass_overturns_standing_fail():
     # Mirror of q_V's carrier: an independent PASS recorded over DONE(fail) = "fail → later
     # found wrong". One of two standing FAILs overturned → share 0.5. HIGH = bad.
-    import json
-    from gfso.core.graph import false_fail_share
     g = _graph(
         _task("t1", State.DONE, done_reason=DoneReason.FAIL),
         _task("t2", State.DONE, done_reason=DoneReason.FAIL),
@@ -195,8 +195,6 @@ def test_false_fail_share_posthoc_pass_overturns_standing_fail():
 
 def test_false_fail_share_fail_verdict_is_not_an_overturn():
     # The validator AGREEING with the standing FAIL is the ordinary case, not a discovery.
-    import json
-    from gfso.core.graph import false_fail_share
     g = _graph(_task("t1", State.DONE, done_reason=DoneReason.FAIL))
     g._storage.store_exec_verdict(TaskId("t1"), json.dumps(
         {"verdict": "FAIL", "failed_criteria": ["c1"], "validator": "val", "iteration": 3}))
@@ -205,7 +203,6 @@ def test_false_fail_share_fail_verdict_is_not_an_overturn():
 
 def test_false_fail_share_population_is_standing_fails_only():
     # DONE(pass)/mid-flow nodes are out: a reworked FAIL is unknowable (the work changed).
-    from gfso.core.graph import false_fail_share
     g = _graph(
         _task("t1", State.DONE, done_reason=DoneReason.PASS),
         _task("t2", State.REWORKING),
@@ -215,9 +212,7 @@ def test_false_fail_share_population_is_standing_fails_only():
 
 def test_false_fail_share_stays_out_of_Q():
     # §24.5: a diagnostic key rides NEXT TO Q in engine.metrics(), never as a 6th q_*.
-    from gfso.engine import Engine
-    from gfso.adapters.agents.human import HumanAgent
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None)
+    e = make_engine(llm=None)
     m = e.metrics()
     assert set(k for k in m if k.startswith("q_")) == {"q_T", "q_D", "q_V", "q_Dep", "q_Del"}
     assert "false_fail_share" in m
@@ -276,3 +271,30 @@ def test_q_Del_reassign_counts_at_the_event():
     t1.was_reassigned = True
     g = _graph(t1, _task("t2", State.EXECUTING))
     assert q_Del(g) == 0.5
+
+
+def test_q_T_says_which_kind_of_spec_defect_each_node_carried():
+    """Both members of the canon's numerator are spec defects, found at opposite ends.
+
+    A CHALLENGE is an executor meeting a broken contract while working under it; a criteria change is
+    one caught BEFORE the work — often by this product's own plan gate. A user who had just closed
+    nine gate findings correctly read the resulting q_T as a grade on themselves (agent door,
+    2026-09-02). The number is the canon's and does not move; what it is made of is now legible.
+    """
+    e = make_engine(check_interval=10_000)
+    e.start()
+    T.create_task(e, "a", {"description": "a", "criteria": [{"name": "c", "description": "C"}]},
+                  assignee="worker")
+    T.create_task(e, "b", {"description": "b", "criteria": [{"name": "c", "description": "C"}]},
+                  assignee="worker")
+    T.signal(e, "a", "CHALLENGE", "worker", reason="this criterion cannot be met as written")
+    # the issuer revises: a root's issuer is its own Del (§14.2)
+    T.edit_criteria(e, "b", [{"name": "c", "description": "sharper"}], agent="worker",
+                    reason="spec_defect")
+    e.wait_idle()
+
+    m = T.metrics(e)["q_T_from"]
+    assert m["disputed_by_an_executor"] == ["a"]
+    assert m["repaired_before_the_work"] == ["b"]
+    assert sorted(m["counted_against"]) == ["a", "b"], "both still count — the canon's numerator"
+    e.stop()

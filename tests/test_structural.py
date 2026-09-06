@@ -1,15 +1,20 @@
-"""Tests for handlers/structural.py — CHECK-1 through CHECK-6."""
+﻿"""Tests for handlers/structural.py — CHECK-1 through CHECK-6."""
 from datetime import datetime, timedelta
 from gfso.core.types import (
     Task, TaskId, AgentId, Spec, Criteria, CriterionMapping,
     AcceptedRiskItem, Predictability,
 )
-from gfso.core.handlers.structural import (
+from gfso.core.handlers.structural import (check_vertical_deadlines,
+                                            
     check_coverage, check_dag, check_deadlines,
     check_accepted_risks, check_risk_nodes, check_delegation,
     check_non_redundancy,
     run_structural,
 )
+from gfso.core.handlers.constraint import _parse_numeric_bound, check_sufficiency, check_consistency
+from gfso.engine.validation import _EXEC_GATING_CHECKS
+from gfso import tools as T
+from tests.support import make_engine
 
 
 def _task(tid: str, desc: str = "", criteria=(), accepted_risks=(), assignee=None, deadline=None, mappings=(), risk_components=()) -> Task:
@@ -29,15 +34,17 @@ def test_coverage_pass():
         CriterionMapping("perf", TaskId("c1")),
         CriterionMapping("security", TaskId("c2")),
     ])
-    c1 = _task("c1", desc="perf optimization")
-    c2 = _task("c2", desc="security audit")
+    # A COVERER CARRIES CRITERIA. A child with none decides nothing, so it cannot secure a
+    # parent criterion (A1, §10) — these fixtures used to assert the opposite by accident.
+    c1 = _task("c1", desc="perf optimization", criteria=["p1"])
+    c2 = _task("c2", desc="security audit", criteria=["s1"])
     assert check_coverage(parent, [c1, c2]).passed
 
 def test_coverage_fail_uncovered():
     parent = _task("p", criteria=["perf", "security"], mappings=[
         CriterionMapping("perf", TaskId("c1")),
     ])
-    c1 = _task("c1", desc="perf optimization")
+    c1 = _task("c1", desc="perf optimization", criteria=["p1"])
     result = check_coverage(parent, [c1])
     assert not result.passed
     assert "security" in result.details
@@ -268,11 +275,13 @@ def test_run_structural_returns_all_checks():
     child = _task("c1", desc="perf work", assignee="a1")
     results = run_structural(parent, [child])
     names = [r.check_name for r in results]
-    assert len(results) == 7
+    # Seven canon rows plus §3.4(6), which is a canon RULE with no canon CHECK and therefore
+    # reported under its own name rather than folded into CHECK-3's (see the gate-level test).
+    assert len(results) == 8
     for expected in (
         "CHECK-1:coverage", "CHECK-1b:no_orphan", "CHECK-2:dag",
         "CHECK-3:deadlines", "CHECK-4:accepted_risks",
-        "CHECK-5:risk_nodes", "CHECK-6:delegation",
+        "CHECK-5:risk_nodes", "CHECK-6:delegation", "§3.4(6):vertical_deadlines",
     ):
         assert expected in names
 
@@ -283,7 +292,6 @@ def test_numeric_bound_ignores_non_numbers():
     r"""`[\d.]+` also matched a run of dots: a markdown criterion ("`> ...` renders as a
     blockquote") reached float('...') and threw, taking a whole auto_decompose down with a 422.
     A tier that cannot machine-check something reports it — it does not raise."""
-    from gfso.core.handlers.constraint import _parse_numeric_bound
     assert _parse_numeric_bound("`> ...` renders as a blockquote") is None
     assert _parse_numeric_bound("a line starting with > ... is quoted") is None
     assert _parse_numeric_bound("response_time < 200ms") == ("response_time", "<", 200.0)
@@ -293,7 +301,6 @@ def test_numeric_bound_ignores_non_numbers():
 def test_check7_survives_markdown_criteria():
     """End to end at the check level: the parent's markdown criterion must come back skipped
     (beyond tier), not blow up the caller."""
-    from gfso.core.handlers.constraint import check_sufficiency, check_consistency
     parent = _task("p", criteria=["`> ...` renders as a blockquote"], mappings=[
         CriterionMapping("`> ...` renders as a blockquote", TaskId("c1"))])
     child = _task("c1", criteria=["emits <blockquote> for a quoted line"])
@@ -301,22 +308,26 @@ def test_check7_survives_markdown_criteria():
     assert check_consistency([child]).passed
 
 
-def test_check3_catches_a_child_outliving_its_parent():
-    """The VERTICAL deadline rule (§3.4 item 6), which had no pre-exec check until now (§26.5-bis).
+def test_a_child_outliving_its_parent_is_reported_under_its_own_rule():
+    """The VERTICAL deadline rule (§3.4 item 6) — a canon RULE with no canon CHECK.
 
     A child whose deadline is not before its parent's cannot compose into it in time: the plan
-    promises a passage the clock denies, and nothing before execution said so. CHECK-3 now carries
-    both rules — the horizontal Dep one it always had, and this one.
+    promises a passage the clock denies. It used to be reported inside CHECK-3's own result, tagged
+    only in the details — and the execution gate matches on the NAME, so a rule §13.4 does not carry
+    refused execution citing §13.4, which `formal/README.md` #6 forbids in prose and the gate's own
+    comment forbids in principle. It now has its own name and is not in the gate.
     """
-    from datetime import datetime, timedelta
     now = datetime(2026, 1, 1)
     parent = _task("p", criteria=["c1"], deadline=now + timedelta(days=5))
     late = _task("late", criteria=["k"], deadline=now + timedelta(days=9))
     ok = _task("ok", criteria=["k"], deadline=now + timedelta(days=2))
 
-    bad = check_deadlines(parent, [late], [])
+    bad = check_vertical_deadlines(parent, [late])
     assert not bad.passed and "child late" in bad.details
-    assert check_deadlines(parent, [ok], []).passed
+    assert bad.check_name.startswith("§3.4(6)")
+    assert check_vertical_deadlines(parent, [ok]).passed
+    # …and CHECK-3 keeps to the row it actually is: the horizontal Dep rule.
+    assert check_deadlines(parent, [late], []).passed
 
 
 def test_check3_stays_silent_when_no_deadlines_are_set():
@@ -336,14 +347,20 @@ def test_the_execution_gate_is_exactly_the_canons_syntactic_level():
     without one is incomplete by definition. This pins both directions: every canon row gates, and
     CHECK-1c — an engineering addition with no canon row — does not.
     """
-    from gfso.engine.validation import _EXEC_GATING_CHECKS
-
     canon_level_0 = {"CHECK-1", "CHECK-1b", "CHECK-2", "CHECK-3", "CHECK-4", "CHECK-5", "CHECK-6"}
     gated = {p.rstrip(":") for p in _EXEC_GATING_CHECKS}
     assert gated == canon_level_0
 
+    # THE BATTERY MAY SAY MORE THAN THE GATE ENFORCES, and what it adds must be NAMED. Two extras,
+    # for two different reasons: `CHECK-1c` is an engineering addition with no canon rule behind it,
+    # and `§3.4(6)` is a canon RULE the canon gives no CHECK for (`formal/README.md` #6). Neither
+    # gates. The vertical deadline rule used to ride inside CHECK-3's own result, tagged only in the
+    # details — and since the gate matches on the NAME, it refused execution under a canon check's
+    # name, which is the one thing this test exists to forbid (audited 2026-09-05, F4).
     produced = {r.check_name.split(":")[0] for r in run_structural(_task_neg(()), [])}
-    assert produced - {"CHECK-1c"} <= canon_level_0        # the battery adds only the anti-mock check
+    assert produced - {"CHECK-1c", "§3.4(6)"} <= canon_level_0
+    assert "§3.4(6)" in produced, "the vertical rule must still be SAID, just not enforced here"
+    assert not any(p.startswith("§3.4") for p in _EXEC_GATING_CHECKS)
     assert "CHECK-1c" not in gated                          # …and it stays out of the gate
 
 
@@ -355,12 +372,7 @@ def test_the_agent_door_can_declare_a_scope_boundary():
     level gating execution, a door that could not set `scope` left the agent nowhere legal to put
     one: the register the gate demands would have had to hold what the register forbids.
     """
-    from gfso.adapters.agents.human import HumanAgent
-    from gfso.adapters.storage.memory import MemoryStorage
-    from gfso.engine import Engine
-    from gfso import tools as T
-
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None)
+    e = make_engine(llm=None)
     e.start()
     out = T.create_task(e, "goal", {"description": "billing computation",
                                     "criteria": [{"name": "c", "description": "totals are right"}],

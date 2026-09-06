@@ -48,11 +48,14 @@ class AuditLog:
             self._entries = [self._from_row(r) for r in self._storage.load_audit()]
 
     def record(self, entry: AuditEntry) -> None:
+        """Append one entry — the only way this log grows. History is never rewritten (Inv-7); a
+        correction is a new entry, which is what makes `state = fold(log)` checkable."""
         self._entries.append(entry)
         if self._storage is not None:
             self._storage.append_audit(self._to_row(entry))
 
     def get_entries(self, task_id: TaskId | None = None) -> list[AuditEntry]:
+        """The log, whole or for one node, oldest first."""
         if task_id is None:
             return list(self._entries)
         return [e for e in self._entries if e.task_id == task_id]

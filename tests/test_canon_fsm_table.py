@@ -139,7 +139,7 @@ def test_control_a_missing_engine_edge_is_caught(monkeypatch):
 
 
 def test_control_b_an_invented_engine_edge_is_caught(monkeypatch):
-    import tests.test_canon_fsm_table as mod
+    import tests.test_canon_fsm_table as mod   # itself, by name — never the import block
     monkeypatch.setattr(mod, "_engine",
                         lambda state, signal, **kw: State.DONE
                         if (state is State.BLOCKED and signal is Signal.PASS) else None)
@@ -151,7 +151,7 @@ def test_control_c_a_silent_parser_is_caught(monkeypatch):
     """The vacuity control: if §14.3 is reformatted and the parser reads nothing, everything above
     passes trivially. That is the failure mode this project has hit repeatedly (a falsely green
     guard), so the parse itself is asserted."""
-    import tests.test_canon_fsm_table as mod
+    import tests.test_canon_fsm_table as mod   # itself, by name — never the import block
 
     class _Empty:                     # a canon whose table header survives but whose rows do not
         def read_text(self, **kw):

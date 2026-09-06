@@ -1,4 +1,4 @@
-"""The pre-execution causal gate — an ENGINEERING corner (`formal/README.md` #10), not a canon row.
+﻿"""The pre-execution causal gate — an ENGINEERING corner (`formal/README.md` #10), not a canon row.
 
 The canon gates execution on the SYNTACTIC level (§13.4) and files the Pragmatic level as runtime
 detection; what is mechanised here is its verify-vs-explore decision (§13.5) taken once: the causal
@@ -27,19 +27,17 @@ from gfso import tools_llm as TL
 from gfso.critic.runner import (_goal_changed, _obligation_words, _same_obligation, critique_node,
                                 _still_undecided, _undecided_obligations)
 from gfso.core.types import Spec, Criteria, TaskId
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 from dataclasses import dataclass
+from tests.support import make_engine, spec
 
 from gfso.critic import runner as _runner
 from gfso.core.graph.model import verdict_is_current_pass
-from gfso.engine.validation import _l2_undischarged
+from gfso.engine.validation import _l2_undischarged, _l0_holes
 import gfso.tools as T
-from gfso.critic.runner import _already_decided, _plan_generation
+from gfso.critic import runner as R
+from gfso.critic.runner import _already_decided, _criterion_stamps, _plan_generation
 from gfso.core.graph.review import finding_keys
-from gfso.core.types import (AcceptedRiskItem, AgentId, Criteria, CriterionMapping, Predictability,
-                             Signal, SignalData, Spec, State, TaskId)
+from gfso.core.types import AgentId, CriterionMapping, Signal, SignalData, State, TaskId
 
 
 @pytest.fixture(autouse=True)
@@ -53,27 +51,20 @@ def _gate_on():
 
 @pytest.fixture
 def engine():
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(llm=None, check_interval=10_000)
     e.start()
     yield e
     e.stop()
 
 
-def _spec(desc, *crits, risks=True):
-    return Spec(description=desc, criteria=tuple(Criteria(c, f"{c} description") for c in crits),
-                accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
-                                                 Predictability.EXTRAORDINARY),) if risks else ())
-
-
 def _plan(e, risks=True):
     """root(c1,c2) → child covering both. L0-clean; nothing reviewed yet."""
-    e.assign_task(TaskId("root"), _spec("goal", "c1", "c2", risks=risks), AgentId("agent"))
+    e.assign_task(TaskId("root"), spec("goal", "c1", "c2", risks=risks), AgentId("agent"))
     e.wait_idle()
-    e.decompose_task(TaskId("root"), [(TaskId("kid"), _spec("part", "k1"), AgentId("agent"))],
+    e.decompose_task(TaskId("root"), [(TaskId("kid"), spec("part", "k1"), AgentId("agent"))],
                      criterion_mappings=[CriterionMapping("c1", TaskId("kid")),
                                          CriterionMapping("c2", TaskId("kid"))])
     e.wait_idle()
-    from gfso.engine.validation import _l0_holes
     holes = _l0_holes(e._graph, e.get_task(TaskId("root")))
     assert holes == ([] if risks else holes)      # clean with the register; without it, CHECK-4 alone
     assert risks or [h.check_name for h in holes] == ["CHECK-4:accepted_risks"]
@@ -148,7 +139,7 @@ def test_a_leaf_executes_freely_the_shape_is_the_executors_call(engine):
     root seam still validates the whole result against the issuer's criteria. (Removed: an earlier gate
     made a leaf justify being atomic — that set the subtask count from outside and deadlocked
     auto_decompose's own builder.)"""
-    engine.assign_task(TaskId("solo"), _spec("goal", "c1", "c2"), AgentId("agent"))
+    engine.assign_task(TaskId("solo"), spec("goal", "c1", "c2"), AgentId("agent"))
     engine.wait_idle()
     step = tools.next_step(engine, "solo")          # before taking it, the frontier leaves the shape open
     assert step["action"] == "accept" and "YOUR call" in step["directive"]
@@ -182,13 +173,17 @@ def test_dispute_discharges_its_own_finding_only(engine):
 
 
 def test_dispute_needs_a_current_verdict_naming_that_finding(engine):
+    # A WRITTEN reason throughout: this test is about the ENGINE's two refusals, and the door now
+    # refuses a dispute that only restates the conclusion — which a placeholder "…" is. The
+    # placeholder became meaningful, so it is replaced rather than the rule relaxed.
+    _why = "k1's contract already entails c1, so the checker's reading of the mapping is the gap"
     _plan(engine)
     with pytest.raises(ValueError, match="no current Level-2 verdict"):
-        tools.dispute_finding(engine, "root", "c1", "…")
+        tools.dispute_finding(engine, "root", "c1", _why)
     _review(engine, covered=False,
             verdicts=[{"criterion": "c2", "verdict": "insufficient", "why": "gap"}])
     with pytest.raises(ValueError, match="not an open Level-2 finding"):
-        tools.dispute_finding(engine, "root", "c1", "…")   # not flagged — nothing to dispute
+        tools.dispute_finding(engine, "root", "c1", _why)   # not flagged — nothing to dispute
 
 
 def test_editing_the_plan_stales_the_review_and_its_disputes(engine):
@@ -248,14 +243,13 @@ def test_an_empty_register_is_an_incomplete_plan_and_the_engine_says_which_hole(
     register is incomplete BY DEFINITION, so the escape is to write the register the plan was always
     missing, and the engine names exactly that hole rather than a generic refusal. What would make it
     a deadlock is a hole the operator cannot see; what makes it a step is `list_holes`."""
-    from gfso.critic.runner import critique_node
     _plan(engine, risks=False)                      # decomposed, register empty
     assert any(c.check_name.startswith("CHECK-4") and not c.passed
                for c in engine.get_checks(TaskId("root")))
     assert _accept(engine) == State.OFFERED         # execution refused: the level is not clean
     crit = critique_node(engine, TaskId("root"))
     assert not crit.gate_passed and any("CHECK-4" in f for f in crit.l0l1_failures)
-    assert any("CHECK-4" in h["check"] for h in tools.list_holes(engine, "root"))   # named, not opaque
+    assert any("CHECK-4" in h["check"] for h in tools.list_holes(engine, "root")["holes"])   # named, not opaque
 
     tools.edit_accepted_risks(engine, "root", [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}], agent="agent")
@@ -266,13 +260,13 @@ def test_an_empty_register_is_an_incomplete_plan_and_the_engine_says_which_hole(
 
 def test_l0_is_checked_before_l2(engine):
     """Staging: the structural hole is named first — L2 presupposes a complete plan."""
-    engine.assign_task(TaskId("root"), _spec("goal", "c1", "c2"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("kid"), _spec("part", "k1"), AgentId("agent"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("kid"), spec("part", "k1"), AgentId("agent"))],
                           criterion_mappings=[CriterionMapping("c1", TaskId("kid"))])  # c2 uncovered
     engine.wait_idle()
     assert _accept(engine) == State.OFFERED
-    holes = [h["check"] for h in tools.list_holes(engine, "root")]
+    holes = [h["check"] for h in tools.list_holes(engine, "root")["holes"]]
     assert any("CHECK-1" in h for h in holes)
 
 
@@ -327,7 +321,7 @@ def test_a_current_pass_means_the_same_thing_everywhere(engine):
     revision the third, because a validator still running on a voided delivery lands its verdict
     afterwards carrying the same first two."""
     e = engine
-    e.assign_task(TaskId("n"), _spec("goal", "c"), AgentId("agent"))
+    e.assign_task(TaskId("n"), spec("goal", "c"), AgentId("agent"))
     e.wait_idle()
     t = e.get_task(TaskId("n"))
 
@@ -591,11 +585,18 @@ def test_a_finding_is_named_the_same_way_by_every_surface():
     rec = {"semantic_covered": False,
            "criteria_verdicts": [{"criterion": "c1", "verdict": "insufficient", "why": "…"},
                                  {"criterion": "c2", "verdict": "sufficient", "why": "…"}],
-           "conflicts": [{"between": ["kid-a", "kid-b"], "why": "…"}],
+           "conflicts": [{"between": ["kid-a", "kid-b"],
+                          "why": "kid-a must leave the file untouched while kid-b rewrites it"}],
            "undecided_obligations": [{"obligation": "the package imports", "why": "…"}],
            "disputes": {"c1": {"why": "answered in writing"}}}
 
-    assert finding_keys(rec) == ["conflict: kid-a, kid-b", "undecided: the package imports"]
+    # …AND A CONFLICT CARRIES ITS REASON IN ITS NAME. Keyed on the participants alone, two
+    # separately reasoned conflicts between the same pair were one finding, and one dispute closed
+    # both (adversary, wave 25). The reason is what tells them apart, so it is in the key — handed
+    # back verbatim under `dispute_keys`, never typed from memory.
+    assert finding_keys(rec) == [
+        "conflict: kid-a, kid-b — kid-a must leave the file untouched while kid-b rewrites it",
+        "undecided: the package imports"]
     # …and the same names WITHOUT the dispute filter, which is what a delta baseline reads
     assert finding_keys(rec, exclude_disputed=False)[0] == "c1"
 
@@ -640,3 +641,167 @@ def test_the_checker_does_not_relitigate_a_plan_it_already_judged(engine, monkey
                                      {"name": "c2", "description": "two"},
                                      {"name": "c3", "description": "three"}], agent="agent")
     assert _already_decided(prior, engine.get_task(TaskId("root"))) == {}
+
+
+def test_a_criterion_untouched_by_an_edit_elsewhere_is_not_re_litigated(engine):
+    """Rounds 3 and 4 reopened what rounds 2 and 3 had certified — five rounds and ~$1.30 on one plan.
+
+    Keyed on a WHOLE-plan stamp, any edit anywhere threw away every earlier decision, so closing one
+    finding re-opened the question about criteria nobody had touched. Whether the children mapped to
+    `c` entail `c` depends on `c`'s text and on those children's criteria and on nothing else, so
+    that is what the stamp is made of. (FM-2 conflicts stay out of the carry-forward: mutual
+    satisfiability is a property of ALL the children together, and a criterion added elsewhere really
+    can create one.)"""
+    _plan(engine)
+    task = engine.get_task(TaskId("root"))
+    prior = {"plan_generation": list(_plan_generation(task)),
+             "criteria_stamps": _criterion_stamps(engine, task),
+             "criteria_verdicts": [{"criterion": "c1", "verdict": "sufficient", "why": "carried"},
+                                   {"criterion": "c2", "verdict": "sufficient", "why": "carried"}]}
+
+    # an edit that adds a THIRD criterion — c1 and c2 keep their text and their coverage
+    T.edit_criteria(engine, "root", [{"name": "c1", "description": "c1 description"},
+                                     {"name": "c2", "description": "c2 description"},
+                                     {"name": "c3", "description": "the new obligation"}],
+                    agent="agent")
+    after = engine.get_task(TaskId("root"))
+    assert _already_decided(prior, after) == {}, "the OLD whole-plan rule threw both away — the control"
+    assert sorted(_already_decided(prior, after, engine)) == ["c1", "c2"]
+
+    # …but a criterion whose OWN text changed is a different question, and is asked again
+    T.edit_criteria(engine, "root", [{"name": "c1", "description": "something else entirely"},
+                                     {"name": "c2", "description": "c2 description"}],
+                    agent="agent")
+    assert sorted(_already_decided(prior, engine.get_task(TaskId("root")), engine)) == ["c2"]
+
+
+def test_one_reason_can_answer_several_findings_in_one_call(engine):
+    """A checker that names one obligation in three wordings cost three calls to answer.
+
+    The paraphrase-fold catches most of them and keeps the other wordings under `also_phrased`, but
+    the threshold is a heuristic and testers of both doors paid for the ones it missed — one call per
+    duplicate, each carrying the same sentence they had already written (2026-09-02).
+    """
+    _plan(engine)
+    _review(engine, covered=False,
+            verdicts=[{"criterion": "c1", "verdict": "insufficient", "why": "gap A"},
+                      {"criterion": "c2", "verdict": "uncertain", "why": "gap B"}])
+    out = tools.dispute_finding(engine, "root", ["c1", "c2"],
+                                "both name the same obligation, which k1's contract already carries")
+    assert out["open_findings"] == [] and out["disputed"] == ["c1", "c2"]
+    assert _accept(engine) == State.EXECUTING
+
+    stored = engine.get_critique(TaskId("root"))["disputes"]
+    assert set(stored) == {"c1", "c2"}, "each is recorded separately, with the same reason"
+
+
+def test_a_key_that_names_no_finding_stops_the_batch_and_says_where(engine):
+    """…and does not bury the caller's mistake under the ones that did land."""
+    _plan(engine)
+    _review(engine, covered=False,
+            verdicts=[{"criterion": "c1", "verdict": "insufficient", "why": "gap A"},
+                      {"criterion": "c2", "verdict": "uncertain", "why": "gap B"}])
+    # A REAL reason, not a placeholder: the dispute floor now asks for three content words, so
+    # "one reason" is refused before the batch ever reaches the key check this test is about — and a
+    # test that dies on the guard in front of its subject tests the guard (2026-09-05).
+    out = tools.dispute_finding(engine, "root", ["c1", "not-a-finding", "c2"],
+                                "kid's own criteria already carry both c1 and c2")
+    assert out.get("error") or out.get("refused")
+    assert out["disputed_before_this"] == ["c1"]
+
+
+def test_a_carried_finding_does_not_carry_its_old_argument(engine, monkeypatch):
+    """The DECISION is current; the ARGUMENT was written against an earlier contract.
+
+    A tester was told "No criterion mentions tests at all" while a criterion named
+    `pytest_suite_runs_green` was in the set, because the finding's own text enumerated the pre-edit
+    criteria (CLI door, 2026-09-02). The user acts on the text, so the text may not assert a state of
+    the graph it has not re-read.
+    """
+    _plan(engine)
+    task = engine.get_task(TaskId("root"))
+    prior = ({"obligation": "it must actually sort",
+              "admits": "no criterion mentions sorting at all"},)
+    monkeypatch.setattr(R, "parse_structured", lambda *a, **k: {"decided": []})
+
+    class _LLM:
+        def complete(self, prompt, context=""):
+            return "{}"
+
+    out = R._still_undecided(engine, task, _LLM(), prior)
+    assert out[0]["carried"] is True
+    assert "FIRST reading" in out[0]["admits"], "the stale argument is labelled as one"
+    assert "no criterion mentions sorting" in out[0]["admits"], "…and is still shown, not dropped"
+
+def test_a_silence_is_not_a_finding_that_your_fix_failed(engine, monkeypatch):
+    """⊥ ≠ "still open". When the re-judgement cannot run, the list stands — and says that it does.
+
+    Two doors reported these obligations as "frozen at the first reading: fixing the plan does not
+    close them" (wave 26, 2026-09-06). Fixing them IS what closes them — each round re-judges the
+    named list against the criteria as they stand — but a round whose checker did not answer kept
+    every finding with no mark at all, so the two cases read identically to the person who had just
+    done the work.
+    """
+    _plan(engine)
+    task = engine.get_task(TaskId("root"))
+    prior = ({"obligation": "it must actually sort", "admits": "no criterion mentions sorting"},)
+
+    class _Silent:
+        def complete(self, prompt, context=""):
+            raise RuntimeError("no checker on this machine")
+
+    out = R._still_undecided(engine, task, _Silent(), prior)
+
+    assert len(out) == 1, "a check that could not run closes nothing"
+    assert out[0]["rejudged"] is False
+    assert "NOT RE-JUDGED" in out[0]["admits"] and "not a finding that your fix failed" in out[0]["admits"]
+
+
+def test_a_re_judged_carry_over_says_the_fix_is_what_closes_it(engine, monkeypatch):
+    """The other half: the round DID judge, the obligation is still open, and the exit is named."""
+    _plan(engine)
+    task = engine.get_task(TaskId("root"))
+    prior = ({"obligation": "it must actually sort", "admits": "no criterion mentions sorting"},)
+    monkeypatch.setattr(R, "parse_structured", lambda *a, **k: {"decided": []})
+
+    class _LLM:
+        def complete(self, prompt, context=""):
+            return "{}"
+
+    out = R._still_undecided(engine, task, _LLM(), prior)
+
+    assert out[0]["rejudged"] is True
+    assert "RE-JUDGED" in out[0]["admits"] and "fixing the criteria IS what closes it" in out[0]["admits"]
+
+
+
+def test_adding_a_criterion_to_a_covering_child_does_not_reopen_what_was_certified():
+    """Adding is not changing: a conjunction only gets stronger when a conjunct is added.
+
+    An integrator watched one criterion go sufficient → insufficient → sufficient over four rounds
+    while the only edit was ADDING a criterion to the child that covers it, at ~4 minutes and ~$0.25
+    each (HTTP door, wave 27, 2026-09-06: "I would not promise a CI budget on it"). If the children
+    entailed the parent criterion before, they entail it with an extra criterion on one of them
+    (§13.4 CHECK-7), so the certified verdict carries.
+    """
+    then = ["parent text", ["kid"], [["kid", [["c1", "does X"]]]]]
+    grown = ["parent text", ["kid"], [["kid", [["c1", "does X"], ["c2", "also does Y"]]]]]
+
+    assert R._still_entailed(then, then), "identity, the case that always held"
+    assert R._still_entailed(then, grown)
+
+
+def test_a_weakened_plan_is_re_derived():
+    """The negative controls — each of these can make an earlier `sufficient` wrong."""
+    then = ["parent text", ["kid"], [["kid", [["c1", "does X"], ["c2", "does Y"]]]]]
+
+    reworded_child = ["parent text", ["kid"], [["kid", [["c1", "merely mentions X"], ["c2", "does Y"]]]]]
+    dropped_child_criterion = ["parent text", ["kid"], [["kid", [["c1", "does X"]]]]]
+    reworded_parent = ["parent text, weakened", ["kid"], [["kid", [["c1", "does X"], ["c2", "does Y"]]]]]
+    coverer_removed = ["parent text", [], []]
+
+    assert not R._still_entailed(then, reworded_child)
+    assert not R._still_entailed(then, dropped_child_criterion)
+    assert not R._still_entailed(then, reworded_parent)
+    assert not R._still_entailed(then, coverer_removed)
+    assert not R._still_entailed(then, None), "a criterion that no longer exists carries nothing"

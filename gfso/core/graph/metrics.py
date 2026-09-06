@@ -27,6 +27,44 @@ from .model import Graph
 _STANDING_FAIL_STATES = (State.ESCALATED, State.DONE)
 
 
+#: What each number is ABOUT — in the module that computes it, so every door reads ONE writing.
+#: (The UI carried its own copy until 2026-09-02 and it had DRIFTED: it defined q_D as "joint
+#: sufficiency + non-redundancy" — not what the formula above counts — and gave q_Del an
+#: "iteration overflow" term that is in no formula. A second writing of a rule is a defect.)
+#: What each number is ABOUT — because two independent readers took a true number for a defect.
+#: `q_T = 0.0` after fixing every criterion the plan gate flagged is CORRECT (§15.2 counts a
+#: criteria change for a spec defect against the contracts AS ISSUED, not against whoever fixed
+#: them), and `q_V = 1.0` on a graph with one unverified node is correct too (it counts pass→fail
+#: reversals, and there were none). A right number read as a wrong one is a defect of the surface.
+#: Not a Q member (§24.5) and served with them anyway, because the canon says to read a low q_D
+#: TOGETHER with it — and unlike every q_*, HIGH is the bad direction here. A reader given six
+#: numbers of which one runs the other way, unlabelled, reads it backwards.
+DIAGNOSTIC_MEANS = {
+    "false_fail_share": "over-strict validation, NOT a quality score and read the OPPOSITE way to "
+                        "the q_* above: HIGH is bad. It is the share of standing FAILs that a "
+                        "recorded independent PASS contradicts. A low q_D beside a high share here "
+                        "means the validator, not the decomposition (§24.5).",
+}
+
+Q_MEANS = {
+    "q_T": "the criteria AS ISSUED: 1 − (contracts challenged or changed for a spec defect) / "
+           "(contracts issued). Fixing bad criteria is what LOWERS it — the score is about the "
+           "authoring, never about the fixer (§15.2). So a plan repaired on the Level-2 gate's "
+           "findings drives it DOWN, and 0.0 after obeying the gate is the expected reading, not a "
+           "verdict on the person obeying: it measures what the DECOMPOSER issued, and the gate's "
+           "whole job is to find that the issued contract was thin.",
+    "q_D": "decomposition faithfulness: parents that failed while every child passed (the q_D event, "
+           "§15.2). ⊥ until some parent reaches its own verdict with all children passed.",
+    "q_V": "verdicts that held: 1 − (passes later REFUTED) / (passes still standing). A pass is "
+           "refuted when a later independent check contradicts it; a `reopen` is not that — it "
+           "retires a verdict deliberately and takes the node OUT of the population rather than "
+           "counting against it, so reopening every node leaves ⊥ here, not 0.0. 1.0 therefore "
+           "means nothing standing has been contradicted — NOT that everything was independently "
+           "verified, and NOT that no verdict was ever withdrawn.",
+    "q_Dep": "dependencies declared up front vs discovered at runtime through BLOCK.",
+    "q_Del": "delegation correctness: nodes reassigned for capability mismatch.",
+}
+
 def q_T(graph: Graph) -> Optional[float]:
     """Task quality (canon §15.2/§21, v3.8): 1 − (contested contracts) / (issued contracts).
 
@@ -85,12 +123,19 @@ def q_D(graph: Graph) -> Optional[float]:
     return 1.0 - defects / denom
 
 
-def _q_V_later_failed(graph: Graph, t) -> bool:
+def pass_was_refuted(graph: Graph, t) -> bool:
     """"This pass was later found wrong" — the q_V event, with one owner.
+
+    Exported because it is not only a metric: a node in this state is a node whose surfaces say PASS
+    while its own current record says FAIL, and until 2026-09-02 the ONLY place that fact was said
+    was inside q_V. Measured on the CLI door: a signed PASS, an instrument returning FAIL four
+    seconds later, the FSM correctly refusing that signal on a terminal node — and `status` printing
+    `[x] DONE` and the frontier answering COMPLETE for good. The engine knew, by name.
 
     A record from a SUPERSEDED reopen generation is a verdict on the old cycle, not on this pass
     (R′ §14.3: the reopen already dropped that verdict; the refuted-old-pass case is carried by the
-    `false_positive` flag, set at the fresh run's first FAIL)."""
+    `false_positive` flag, set at the fresh run's first FAIL).
+    """
     if t.false_positive:
         return True
     rec = graph.exec_verdict_record(t.id)
@@ -117,7 +162,7 @@ def q_V(graph: Graph) -> Optional[float]:
         return None  # empty population → ⊥ (§21)
 
     def _later_failed(t) -> bool:
-        return _q_V_later_failed(graph, t)
+        return pass_was_refuted(graph, t)
 
     return 1.0 - len([t for t in positives if _later_failed(t)]) / len(positives)
 
@@ -130,7 +175,7 @@ def q_V_reversed(graph: Graph) -> list[str]:
     does name its nodes). Derived from the same predicate q_V counts with, so the list and the
     number can never disagree."""
     return [str(t.id) for t in graph._storage.get_all_tasks()
-            if settled_positive(t) and _q_V_later_failed(graph, t)]
+            if settled_positive(t) and pass_was_refuted(graph, t)]
 
 
 def false_fail_share(graph: Graph) -> Optional[float]:

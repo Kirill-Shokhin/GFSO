@@ -14,7 +14,9 @@ import py_compile
 import subprocess
 import sys
 
+import ast
 import gfso.examples
+import importlib.util
 from gfso.examples import DEMOS, NEEDS_MODEL
 
 HERE = pathlib.Path(gfso.examples.__file__).parent
@@ -63,8 +65,6 @@ def test_every_agent_the_examples_register_names_its_working_directory():
     run-based test above cannot reach that line (with no CLI they exit before it) and compiling
     never could, so the registration itself is what gets read: every such call, in every shipped
     example, must name a directory."""
-    import ast
-
     for name in DEMOS:
         tree = ast.parse((HERE / f"{name}.py").read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -83,7 +83,6 @@ def test_the_demo_command_reaches_every_listed_example():
     """`gfso demo <name>` is how an installed user runs these, so what the listing advertises and
     what the package carries must be the same set — a demo named and missing is the failure with no
     symptom, which is the class this whole file exists to close."""
-    import importlib.util
     for name in DEMOS:
         assert importlib.util.find_spec(f"gfso.examples.{name}") is not None, name
     out = subprocess.run([sys.executable, "-m", "gfso.cli", "demo"],

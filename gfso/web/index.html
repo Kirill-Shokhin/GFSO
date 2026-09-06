@@ -7,9 +7,15 @@
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="gfso.css">
-<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
-<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
-<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+<!-- DEFERRED, so the page paints before a remote script answers: these three tags sat in <head>
+     parser-blocking, and a slow or unreachable unpkg held the whole interface — including the
+     banner that would have explained it — behind them (wave 26, 2026-09-06). `defer` keeps their
+     order and runs them before DOMContentLoaded, which is what `init()` now waits for. Vendoring
+     them is a separate decision, parked with a reason in the internal plan; not blocking on them
+     is not. -->
+<script defer src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script defer src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script defer src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 </head>
 <body>
 <div class="header">
@@ -113,17 +119,39 @@ const T_INK_FAINT = tok('--ink-faint');
 const T_PAPER     = tok('--paper');
 const T_BG        = tok('--bg');
 const T_ACC       = tok('--acc');
-const T_FONT_BODY = tok('--font-body');
+// …NORMALISED for the canvas. The token is a CSS font STACK with the run of spaces it is written
+// with in `tokens.css`, and cytoscape refuses it whole ("The style property `font-family: …` is
+// invalid", seen in the console on every load, 2026-09-06) — so every node label fell back to the
+// renderer's default face while the rest of the page carried the brand's. Probed in the live page,
+// not guessed: the stack is accepted UNQUOTED and refused with the quotes CSS itself requires
+// (`'Hanken Grotesk', …` invalid · `Hanken Grotesk, …` fine).
+const T_FONT_BODY = tok('--font-body').replace(/['"]/g, '').replace(/\s+/g, ' ').trim();
 
 // Five buckets — a direct translation of canon §11.2 + §12. See gfso.css.
+// WHAT IS RUNNING MUST NOT LOOK LIKE WHAT IS DEAD. `EXECUTING` — the one state that means an agent
+// is working right now — shared the palest style with IDLE and ABANDONED, while an untouched OFFERED
+// node was drawn MORE prominently: the question "what is being worked on" was the one the colours
+// answered wrong (read as a user, 2026-09-02). Working is `busy`; waiting to be taken is `attend`.
 const BUCKET = {
     DONE: 'done', ABANDONED: 'quiet',
-    IDLE: 'quiet', EXECUTING: 'quiet',
-    OFFERED: 'attend', VALIDATING: 'attend',
+    IDLE: 'quiet', EXECUTING: 'busy',
+    OFFERED: 'attend', VALIDATING: 'busy',
     REWORKING: 'fail', CHALLENGED: 'fail',
     BLOCKED: 'pathology', OVERDUE: 'pathology', ESCALATED: 'pathology', CANCELLING: 'pathology',
 };
 const bucketOf = (s) => BUCKET[s] || 'quiet';
+
+// A NAME CUT MID-WORD IS A NAME YOU HAVE TO GUESS AT. The server hands 40 characters of the
+// description when a node has no name, and the canvas drew exactly that — "implement the tokeni".
+// Cut at the last word that fits and say so with an ellipsis (wave 26, 2026-09-06).
+const LABEL_MAX = 38;
+function readableLabel(text) {
+    const t = String(text || '').trim();
+    if (t.length <= LABEL_MAX) return t;
+    const cut = t.slice(0, LABEL_MAX);
+    const lastSpace = cut.lastIndexOf(' ');
+    return (lastSpace > LABEL_MAX * 0.5 ? cut.slice(0, lastSpace) : cut).replace(/[ ,;:.-]+$/, '') + '…';
+}
 
 // Bucket → cytoscape node style props. CSS classes (.b-*) carry the same map
 // for badges/chips; cy needs concrete values per node.
@@ -133,16 +161,40 @@ const NODE_STYLE = {
     attend:    { bg: T_INK_SOFT, fg: T_BG, bw: 0,   bc: T_INK_SOFT, bs: 'solid',  bo: 1 },
     fail:      { bg: T_ACC,      fg: T_BG, bw: 0,   bc: T_ACC,      bs: 'solid',  bo: 1 },
     pathology: { bg: T_INK_SOFT, fg: T_BG, bw: 1.5, bc: T_INK,      bs: 'dashed', bo: 1 },
+    // in flight: the accent border says "alive" without claiming the attention `attend` asks for
+    busy:      { bg: T_BG,       fg: T_INK, bw: 2,   bc: T_ACC,      bs: 'solid',  bo: 1 },
 };
 const styleOf = (s) => NODE_STYLE[bucketOf(s)];
 
+// A CLOSED NODE IS NOT ONE KIND OF THING. Three doors said the same in wave 26 (2026-09-06): the
+// page drew a node judged by an instrument against reproducible probes exactly like a node closed
+// on a name invented in the same command, and a hand verdict that DISPLACED an instrument's
+// opposite one was not visible anywhere at all. The drawing carries what the record carries.
+//   contradicted (refuted ∨ overruled) → the accent, ringed: something here is owed an answer
+//   asserted by hand                   → dashed in paper: closed, and on somebody's word (§13.6)
+const closureStyle = (st, cl) => !cl ? st
+    : (cl.refuted || cl.overruled) ? { ...st, bw: 3, bc: T_ACC,   bs: 'solid',  bo: 1 }
+    : cl.by_hand                   ? { ...st, bw: 2, bc: T_PAPER, bs: 'dotted', bo: 1 }
+    : st;
+// What the drawing above is saying, in words, for the reader who has to weigh it (§13.6).
+const closureNote = (cl) => !cl ? ''
+    : cl.refuted  ? 'PASS CONTRADICTED by its own current record'
+    : cl.overruled ? `asserted by hand over an instrument's ${cl.overruled_verdict || 'opposite'}`
+    : cl.by_hand  ? `asserted by hand — ${cl.validator || 'someone'}, not an instrument`
+    : cl.provenance === 'self' ? 'self-reported by its own executor (§14.5 internal node)'
+    : '';
+
 // Stats-bar dot lives on dark chrome — done needs cream override since ink-on-ink disappears.
 const DOT_ON_CHROME = {
-    done: T_BG, quiet: T_INK_FAINT, attend: T_PAPER, fail: T_ACC, pathology: T_PAPER,
+    done: T_BG, quiet: T_INK_FAINT, attend: T_PAPER, fail: T_ACC, pathology: T_PAPER, busy: T_ACC,
 };
 
 const STATE_LABEL = {
-    IDLE:'Waiting', OFFERED:'In Review', CHALLENGED:'Challenged', EXECUTING:'In Progress',
+    // `OFFERED` is ASSIGNED AND NOT YET TAKEN — nobody has touched it. It was labelled "In Review",
+    // the opposite of what it means, while VALIDATING (where a judge really is reviewing) got
+    // "Validating": a user watched a node blocked on a dependency for 25 minutes believing someone
+    // was reviewing it (2026-09-02).
+    IDLE:'Waiting', OFFERED:'Not started', CHALLENGED:'Challenged', EXECUTING:'In Progress',
     BLOCKED:'Blocked', VALIDATING:'Validating', REWORKING:'Rework', DONE:'Done',
     CANCELLING:'Cancelling', ABANDONED:'Cancelled',
     OVERDUE:'Timeout', ESCALATED:'Escalated'
@@ -150,6 +202,10 @@ const STATE_LABEL = {
 // A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO_PASS — canon §14): show it directly.
 const statusLabel = (state, done_reason) =>
     (state === 'DONE' && done_reason) ? done_reason : (STATE_LABEL[state] || state);
+// §14.3: a re-ASSIGN (a revision, Inv-1) is admitted from every non-terminal state except IDLE,
+// CANCELLING and OVERDUE. Editing a contract IS that signal, so this is the set the Edit control
+// belongs on — one list, read from the canon's own table rather than guessed per button.
+const REASSIGNABLE = ['OFFERED', 'CHALLENGED', 'EXECUTING', 'BLOCKED', 'VALIDATING', 'REWORKING'];
 const ACTIONS = {
     OFFERED:     [{s:'ACCEPT',cls:'btn-green',label:'Accept'},{s:'CHALLENGE',cls:'btn-orange',label:'Challenge',prompt:'reason'}],
     CHALLENGED: [{s:'ACCEPT_CHALLENGE',cls:'btn-green',label:'Accept Challenge'},{s:'REJECT_CHALLENGE',cls:'btn-muted',label:'Reject Challenge',prompt:'justification'}],
@@ -162,6 +218,7 @@ const ACTIONS = {
 };
 
 let cy, selectedTaskId = null, decomposeTaskId = null, allTasksCache = [];
+let graphClosures = [];   // the closed nodes a reader must weigh (§13.6), from the last graph read
 let mineOnly = false;
 // Cache parent task's criteria for decompose modal (drives mapping UI).
 let decomposeParentCriteria = [];
@@ -194,14 +251,10 @@ async function loadCheckMap() {
 const fmOf = (checkName) => CHECK_TO_FM[checkName] || null;
 const FM_NONE = 'engineering checks (outside the canon battery)';
 
-// Q metric labels per §15. Short name + tooltip for full meaning.
-const Q_META = {
-    q_T:   { short: 'task',  full: 'q_T — task quality: criteria resolvability + completeness' },
-    q_D:   { short: 'decomp',full: 'q_D — decomposition quality: joint sufficiency + non-redundancy' },
-    q_V:   { short: 'valid', full: 'q_V — validation quality: false-positive rate (pass-then-wrong)' },
-    q_Dep: { short: 'dep',   full: 'q_Dep — dependency quality: declared vs discovered Dep edges' },
-    q_Del: { short: 'del',   full: 'q_Del — delegation quality: reassignment / iteration overflow' },
-};
+// Short names for the stats bar. What each metric MEANS is NOT written here: the server sends it
+// with the numbers (`means`), from the module that computes them. This block held its own copy until
+// 2026-09-02 and it had drifted — it defined q_D as something the formula does not count.
+const Q_SHORT = { q_T: 'task', q_D: 'decomp', q_V: 'valid', q_Dep: 'dep', q_Del: 'del' };
 
 // Deadline formatting + overdue check
 function fmtDeadline(iso) {
@@ -220,6 +273,36 @@ function inkAlpha(a) { /* cytoscape needs concrete rgba, not color-mix */
 }
 
 async function init() {
+    // THE PAGE MUST FAIL LOUDLY, NOT BLANKLY. The graph library is a remote script, and the first
+    // statement below calls it: with the CDN unreachable — an offline laptop, a proxy, unpkg down —
+    // that throws and NOTHING after it runs, including the "connection lost" banner wired further
+    // down. A first-time user then sees a toolbar over an empty page and no error at all, which is
+    // the most likely way this product's first impression is nothing (read as a user, 2026-09-02).
+    // Vendoring the library is a separate, parked decision; saying so is not.
+    if (!window.cytoscape || !window.dagre) {
+        document.getElementById('cy').innerHTML =
+            '<div style="padding:24px;max-width:60ch">' +
+            '<b>The graph library did not load.</b><br><br>This page fetches cytoscape and dagre from ' +
+            'unpkg.com, so it needs the network the first time. Everything else works: the API is ' +
+            'local (<code>/api/tasks</code>, <code>/api/graph</code>), and <code>gfso status</code> ' +
+            'prints the same graph in a terminal with no browser at all.</div>';
+        await refreshStats();      // …and the counts still come, because they are a local read
+        return;
+    }
+    // …AND YOUR OWN ID IS THE SERVER'S, not a placeholder. The box shipped with `pm` — an id
+    // registered nowhere — so a first click signed as a stranger and was refused, correctly and
+    // uselessly. The same identity the frontier computes `mine` against is the one it now shows.
+    try {
+        const rt = await (await fetch('/api/runtime')).json();
+        const box = document.getElementById('current-role');
+        if (rt && rt.agent_id && (!box.value || box.value === 'pm')) box.value = rt.agent_id;
+        // …AND WHAT YOU TYPED SURVIVES A RELOAD. This box SIGNS every signal the page sends, and it
+        // reset to the server's own id on every refresh — so a person who had named themselves went
+        // on driving the graph under another name without noticing (wave 26, 2026-09-06). Stored
+        // per browser, restored before anything is sent; the engine still refuses a stranger.
+        const kept = rememberedRole();
+        if (kept) box.value = kept;
+    } catch (e) { /* a read that fails leaves whatever the box had; the engine still refuses a stranger */ }
     await loadCheckMap();          // the routing is the product's, fetched once
     cy = cytoscape({
         container: document.getElementById('cy'),
@@ -235,12 +318,15 @@ async function init() {
                 'font-family': T_FONT_BODY,
                 'text-valign': 'center', 'text-halign': 'center',
                 'font-size': '11px', 'font-weight': '500',
+                // `width: label` is deprecated (warned on every load); the same result is the
+                // content width with the padding below.
                 'width': 'label', 'height': 30, 'padding': '8px',
                 'shape': 'round-rectangle', 'text-wrap': 'wrap', 'text-max-width': '140px',
             }},
             { selector: 'node:selected', style: {
+                // `shadow-*` is not a cytoscape node property (it warned on every load); selection
+                // is the border, which is what the rest of this stylesheet already says.
                 'border-width': 2, 'border-color': T_INK, 'border-style': 'solid',
-                'shadow-blur': 0, 'shadow-opacity': 0,
             }},
             { selector: 'edge', style: {
                 'width': 1, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
@@ -286,6 +372,12 @@ async function init() {
     cy.on('mouseout', 'node', function() { tt.classList.remove('visible'); });
 
     await refreshAll();
+    // …AND A NODE NAMED IN THE URL IS OPENED. `?task=<id>` alongside `?project=` makes one node
+    // linkable: a person telling a colleague "look at this one" had only "open the page, find it,
+    // click it", and an automated look at the page could not reach the panel at all — the whole
+    // detail surface was unreachable except by a mouse (2026-09-06).
+    const TAB_TASK = new URLSearchParams(location.search).get('task') || '';
+    if (TAB_TASK) await selectTask(TAB_TASK);
     connectWS();
     plEnsure();     // the observation window is always present (history visible even when idle)
     refreshProjects();
@@ -296,7 +388,12 @@ async function init() {
 const TAB_PROJECT = new URLSearchParams(location.search).get('project') || '';
 const _rawFetch = window.fetch.bind(window);
 window.fetch = (url, opts) => {                      // tab scope rides every same-origin API call
-    if (TAB_PROJECT && typeof url === 'string' && url.startsWith('/api')) {
+    // …ONCE. A caller that had already written `?project=` got it appended a second time
+    // (`…?project=w27page&project=w27page`, seen by a tester reading the network tab, wave 27):
+    // harmless to the server, and a reader who sees a doubled parameter reasonably wonders which
+    // one won.
+    if (TAB_PROJECT && typeof url === 'string' && url.startsWith('/api')
+            && !url.includes('project=')) {
         url += (url.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(TAB_PROJECT);
     }
     return _rawFetch(url, opts);
@@ -310,9 +407,12 @@ async function refreshProjects() {
         // installation with a history had 271 entries here, alphabetical, with the live project 69th —
         // a picker that cannot show you what you are on. The rest stay reachable by name: the current
         // one is always in the list, and `?project=<name>` opens any of them directly.
-        const recent = d.projects.slice(0, 25);
+        const recent = d.projects.slice(0, 25);  // the page IS the endpoint's page now
         if (cur && !recent.includes(cur)) recent.unshift(cur);
-        const hidden = d.projects.length - recent.length;
+        // …COUNTED AGAINST THE TOTAL, not against the page. The endpoint pages now (a full list was
+        // 19KB for a question that wanted a handful of names), so `d.projects` IS the page and
+        // subtracting from its length would report "25 older" on an installation with 354.
+        const hidden = (d.total ?? d.projects.length) - recent.length;
         sel.innerHTML = recent.map(p =>
             `<option value="${p}"${p === cur ? ' selected' : ''}>${p}</option>`).join('')
             + (hidden > 0 ? `<option value="" disabled>… ${hidden} older (open by ?project=)</option>` : '')
@@ -320,38 +420,138 @@ async function refreshProjects() {
     } catch (e) { /* single-project server */ }
 }
 async function switchProject(name) {
+    // A NAME IS REQUIRED, and the function must be total. The "… N older" row is already `disabled`,
+    // so a person cannot pick it; a caller that sets the value programmatically can, and an empty
+    // name navigated to `?project=` and landed silently in `default`, abandoning the project the
+    // user was in (wave 26 UI pass, 2026-09-06 — reached that way, not by clicking).
+    if (!name) { await refreshProjects(); return; }
     if (name === '__new__') {
-        name = prompt('New project name ([A-Za-z0-9_-]):');
-        if (!name) { await refreshProjects(); return; }
+        // In the page, not in a native dialog: the picker sits in the header, so the field goes
+        // beside it. A modal `prompt()` blocks every other event until it is answered, which is
+        // why the rest of these were replaced (wave 26).
+        await refreshProjects();
+        const sel = document.getElementById('project-select');
+        if (document.getElementById('new-project-name')) return;
+        const box = document.createElement('span');
+        box.id = 'new-project-box';
+        box.style.cssText = 'display:inline-flex;gap:4px;margin-left:6px';
+        box.innerHTML = '<input id="new-project-name" placeholder="new project name" '
+            + 'style="width:150px" pattern="[A-Za-z0-9_-]+">'
+            + '<button class="btn btn-sm" id="new-project-go">Open</button>';
+        sel.parentNode.insertBefore(box, sel.nextSibling);
+        const go = () => {
+            const v = (document.getElementById('new-project-name').value || '').trim();
+            if (!/^[A-Za-z0-9_-]+$/.test(v)) { notice('a project name is [A-Za-z0-9_-]', 'bad'); return; }
+            location.search = '?project=' + encodeURIComponent(v);
+        };
+        document.getElementById('new-project-go').onclick = go;
+        document.getElementById('new-project-name').onkeydown = ev => { if (ev.key === 'Enter') go(); };
+        document.getElementById('new-project-name').focus();
+        return;
     }
     location.search = '?project=' + encodeURIComponent(name);   // TAB-local switch (open more tabs freely)
 }
 
 async function refreshAll() { await refreshGraph(); await refreshMetrics(); await refreshStats(); }
 
+let _graphInFlight = null;
 async function refreshGraph() {
+    // SERIALISED. A WebSocket transition and the ordinary refresh both call this, and two runs
+    // interleaving cleared the canvas under each other's `cy.add` — `Can not create second element
+    // with ID` in the console, a heap of overlapping nodes on the screen, and a header counting
+    // states that no longer existed (page door, wave 27, 2026-09-06). One at a time; a caller that
+    // arrives mid-run waits for the run that is already doing its work.
+    if (_graphInFlight) return _graphInFlight;
+    _graphInFlight = _refreshGraph().finally(() => { _graphInFlight = null; });
+    return _graphInFlight;
+}
+
+async function _refreshGraph() {
     try {
         const [gr, tr] = await Promise.all([fetch('/api/graph'), fetch('/api/tasks')]);
+        // A REFUSAL HAS TO REACH THE PERSON. A read no longer creates the project it names, so a
+        // mistyped `?project=` comes back 404 — and swallowing that into an empty canvas would put
+        // the viewer back where the old behaviour left them, staring at nothing under their own
+        // project name and concluding their work is gone. Say the name and where the real list is.
+        if (gr.status === 404) {
+            const why = ((await gr.json().catch(() => ({}))).detail) || 'no such project';
+            document.getElementById('stats-bar').innerHTML =
+                `<span class="stat" style="color:var(--acc)">${String(why).replace(/</g,'&lt;')}</span>`;
+            cy.elements().remove();
+            allTasksCache = [];
+            return;
+        }
         const g = await gr.json();
         allTasksCache = await tr.json();
         cy.elements().remove();
         const cancelled = new Set();
+        graphClosures = [];
         for (const n of g.nodes) {
-            const st = styleOf(n.state);
+            const st = closureStyle(styleOf(n.state), n.closure);
             const isCancelled = n.state === 'ABANDONED' || n.done_reason === 'CANCELLED';  // the state (+ the legacy DoneReason of pre-v3.7 rows)
             if (isCancelled) cancelled.add(n.id);
-            cy.add({ data: { id: n.id, label: n.label, state: n.state, bucket: bucketOf(n.state),
+            if (n.closure && (n.closure.by_hand || n.closure.refuted || n.closure.overruled))
+                graphClosures.push({ id: n.id, ...n.closure });
+            cy.add({ data: { id: n.id, label: readableLabel(n.label), state: n.state, bucket: bucketOf(n.state),
                              bg: st.bg, fg: st.fg, bw: st.bw, bc: st.bc, bs: st.bs, bo: st.bo },
                      classes: isCancelled ? 'cancelled' : undefined });
         }
-        for (const e of g.edges) cy.add({ data: { source: e.source, target: e.target, type: e.type },
+        // ONE BAD EDGE MUST NOT COST THE WHOLE PICTURE. The catch below is real, and it turned a
+        // single dangling edge into a BLANK page: the nodes were already added, the renderer threw
+        // on an edge whose source is not a node, and the layout never ran — so fifteen nodes sat
+        // stacked at the origin under a header that counted them. Nothing was said outside the
+        // console. Found by opening the page (2026-09-06); the dangling edge itself came from a
+        // node whose `parent_id` named nobody, which the engine now refuses.
+        // Draw what can be drawn, and SAY what could not: an inconsistency in the graph is worth
+        // reporting, and it is not worth hiding the other fourteen nodes over.
+        const ids = new Set(g.nodes.map(n => n.id));
+        const undrawable = [];
+        for (const e of g.edges) {
+            if (!ids.has(e.source) || !ids.has(e.target)) { undrawable.push(e); continue; }
+            cy.add({ data: { source: e.source, target: e.target, type: e.type },
                      classes: cancelled.has(e.source) ? 'fromCancelled' : undefined });
-        if (cy.nodes().length) cy.layout({ name:'dagre', rankDir:'TB', spacingFactor:1.4, nodeSep:35, rankSep:55, animate:true, animationDuration:200 }).run();
+        }
+        if (cy.nodes().length) {
+            const lay = cy.layout({ name:'dagre', rankDir:'TB', spacingFactor:1.4, nodeSep:35,
+                                    rankSep:55, animate:true, animationDuration:200 });
+            // …AND THE GRAPH IS FRAMED ONCE THE LAYOUT KNOWS WHERE THINGS ARE. It was drawn at
+            // whatever zoom the previous graph left behind, so a wide plan ran off the canvas and
+            // the viewer scrolled to find the nodes the header was counting (wave 26, 2026-09-06).
+            lay.one('layoutstop', () => cy.fit(undefined, 45));
+            lay.run();
+        }
         applyMineDim();
+        reportUndrawable(undrawable);
     } catch(e) { console.error('refreshGraph:', e); }
 }
 
+function reportUndrawable(edges) {
+    // Said ON THE PAGE, not only in the console: the person looking at the graph is the one who
+    // needs to know a piece of it is missing, and they are not reading devtools.
+    let el = document.getElementById('undrawable');
+    if (!edges.length) { if (el) el.remove(); return; }
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'undrawable';
+        el.style.cssText = 'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:20;'
+            + 'padding:6px 12px;border-radius:6px;font:12px/1.4 var(--mono,monospace);'
+            + 'background:var(--warn-bg,#5a3a1a);color:var(--warn-fg,#ffe9c9);'
+            + 'box-shadow:0 1px 6px rgba(0,0,0,.35);max-width:70%';
+        (document.getElementById('cy') || document.body).appendChild(el);
+    }
+    const one = edges[0];
+    el.textContent = edges.length + ' edge(s) not drawn \u2014 they name a node this graph does not '
+        + 'contain (e.g. ' + one.source + ' \u2192 ' + one.target + '). The rest of the graph is shown.';
+}
+
+let _statsInFlight = null;
 async function refreshStats() {
+    if (_statsInFlight) return _statsInFlight;
+    _statsInFlight = _refreshStats().finally(() => { _statsInFlight = null; });
+    return _statsInFlight;
+}
+
+async function _refreshStats() {
     const el = document.getElementById('stats-bar');
     if (!allTasksCache.length) { el.innerHTML = ''; return; }
     const counts = {};
@@ -360,23 +560,79 @@ async function refreshStats() {
     el.innerHTML = order.filter(s => counts[s]).map(s =>
         `<span class="stat"><span class="stat-dot" style="background:${DOT_ON_CHROME[bucketOf(s)]}"></span>${counts[s]} ${STATE_LABEL[s]||s}</span>`
     ).join('');
+    // …AND ON WHAT THOSE DONES REST. `12 Done` counts a node an instrument proved and a node
+    // somebody signed for as one number, which is the one number this product must not print.
+    const contested = graphClosures.filter(c => c.refuted || c.overruled);
+    const byHand = graphClosures.filter(c => c.by_hand && !c.refuted && !c.overruled);
+    if (contested.length)
+        el.innerHTML += `<span class="stat" title="${contested.map(c => c.id + ' — ' + closureNote(c)).join(' · ').replace(/"/g,'&quot;')}">`
+            + `<span class="stat-dot" style="background:var(--acc)"></span>${contested.length} contested</span>`;
+    if (byHand.length)
+        el.innerHTML += `<span class="stat" title="${byHand.map(c => c.id + ' — ' + closureNote(c)).join(' · ').replace(/"/g,'&quot;')}">`
+            + `<span class="stat-dot" style="background:${T_PAPER}"></span>${byHand.length} closed by hand</span>`;
+    // …AND WHAT THE GRAPH IS WAITING FOR, which the counts cannot say. A watcher seeing VALIDATING 3
+    // cannot tell "three judges are running" from "three nodes nobody will ever judge", and that is
+    // the difference between a graph that is working and one that is stuck — the frontier knows it
+    // and every driver of this product had to ask it from a terminal (measured on all four doors,
+    // waves 18-19). Same three lists the agent door reads, in the place a person is already looking.
+    try {
+        const f = await (await fetch('/api/run/next_steps',
+                                     {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json();
+        if (f && f.complete) {
+            el.innerHTML += `<span class="stat"><span class="stat-dot" style="background:var(--acc)"></span>root DONE — the goal is met</span>`;
+        } else if (f) {
+            const mine = (f.steps || []).filter(x => x.mine).length;
+            const bits = [];
+            if (mine) bits.push(`${mine} step(s) for you — first: ${f.steps.find(x => x.mine).action} `
+                                + `${f.steps.find(x => x.mine).task_id}`);
+            if ((f.in_flight || []).length) bits.push(`${f.in_flight.length} being worked on`);
+            if ((f.waiting || []).length) bits.push(`${f.waiting.length} waiting — ${f.waiting[0].why}`);
+            if (bits.length) {
+                const line = bits.join(' · ');
+                el.innerHTML += `<span class="stat stat--wide" title="${line.replace(/"/g,'&quot;')}">${line}</span>`;
+            }
+        }
+    } catch (e) { /* the frontier is a read; a page that cannot get it still shows the counts */ }
 }
 
 async function refreshMetrics() {
     try {
         const m = await (await fetch('/api/metrics')).json();
-        document.getElementById('metrics').innerHTML = Object.entries(m).map(([k,v]) => {
-            const meta = Q_META[k] || { short: k, full: k };
+        const means = m.means || {};
+        // §24.5: a low q_D is read TOGETHER with the false-FAIL share — an over-strict validator
+        // inflates q_D's numerator, so the same red number means different things depending on it.
+        // The page showed q_D in red with no way to ask, because the door was not serving the share.
+        const ffs = m.false_fail_share;
+        if (ffs !== null && ffs !== undefined && means.q_D)
+            means.q_D += `
+
+false-FAIL share: ${(ffs*100).toFixed(0)}% — ${means.false_fail_share || ''}`;
+        document.getElementById('metrics').innerHTML = Object.keys(Q_SHORT).map((k) => {
+            const v = m[k], short = Q_SHORT[k];
+            const full = (means[k] || k).replace(/"/g, '&quot;');
             if (v === null || v === undefined) // ⊥: empty population (canon §21) — a dash, not a fake 100%
-                return `<div class="metric" title="${meta.full} — no observations yet"><div class="metric-val" style="color:var(--ink-faint)">—</div><div class="metric-label">${meta.short}</div></div>`;
+                return `<div class="metric" title="${full}
+
+No observations yet — this is ⊥, not a score of zero."><div class="metric-val" style="color:var(--ink-faint)">—</div><div class="metric-label">${short}</div></div>`;
             const pct = (v*100).toFixed(0);
             const color = v >= 0.8 ? 'var(--ui-on-chrome)' : v >= 0.5 ? 'var(--paper)' : 'var(--acc)';
-            return `<div class="metric" title="${meta.full}"><div class="metric-val" style="color:${color}">${pct}%</div><div class="metric-label">${meta.short}</div></div>`;
+            return `<div class="metric" title="${full}"><div class="metric-val" style="color:${color}">${pct}%</div><div class="metric-label">${short}</div></div>`;
         }).join('');
     } catch(e) {}
 }
 
 function myRole() { return document.getElementById('current-role').value.trim(); }
+// The identity this page signs with, kept per browser. Wrapped because a browser with site data
+// blocked THROWS on the accessor, and losing the name is not worth losing the page over.
+function rememberedRole() { try { return localStorage.getItem('gfso.role') || ''; } catch (e) { return ''; } }
+function rememberRole(v) { try { localStorage.setItem('gfso.role', v); } catch (e) {} }
+
+function refit() {
+    // The panel is a flex SIBLING of the canvas: opening it makes the canvas narrower, and
+    // cytoscape keeps the viewport it was built with until it is told otherwise — so a node sat
+    // half-hidden under the panel with no way to reach it (looked at the page, 2026-09-06).
+    try { cy.resize(); cy.fit(undefined, 45); } catch (e) {}
+}
 
 async function selectTask(taskId) {
     selectedTaskId = taskId;
@@ -397,6 +653,14 @@ async function selectTask(taskId) {
         if (dl) h += `<span class="deadline-chip${dl.overdue ? ' overdue':''}" title="deadline">⏱ ${dl.text}</span>`;
         h += `</div>`;
         h += `<div class="meta">ID: ${d.id} · Assignee: ${d.assignee||'—'} · Iter: ${d.iteration}/${d.max_iterations}</div>`;
+        // HOW IT CLOSED, on the node itself. `closure` rides with the node now, so this says the
+        // same thing the drawing says and neither has its own copy of the rule.
+        const note = closureNote(d.closure);
+        if (note) {
+            const bad = d.closure.refuted || d.closure.overruled;
+            h += `<div class="${bad ? 'check-fail' : 'check-skip'}" style="margin:-2px 0 8px">${bad ? '⚠ ' : ''}${note}`
+               + `${bad ? ' — legitimate (§14.5) and nothing can check it (§13.6); read the verdict below.' : ''}</div>`;
+        }
 
         if (d.criteria.length) {
             h += `<div class="section"><div class="section-title">Criteria</div><ul class="item-list">`;
@@ -448,8 +712,14 @@ async function selectTask(taskId) {
                     // A SKIPPED CHECK SAYS NOTHING — it is neither met nor unmet, and reading the
                     // bool alone painted it green (fail-open, the same defect the doors carried).
                     const v = c.verdict || (c.skipped ? 'skipped' : (c.passed ? 'met' : 'unmet'));
-                    const cls = v === 'met' ? 'check-pass' : v === 'skipped' ? 'check-skip' : 'check-fail';
-                    const icon = v === 'met' ? '✓' : v === 'skipped' ? '–' : '✗';
+                    // TRUE OVER NOTHING IS NOT THE SAME GREEN. `CHECK-2: D acyclic; no dependency
+                    // edges` held over an empty set and drew the same ✓ as a check that ordered
+                    // real edges — so a leaf showed four ticks that verified nothing (looked at the
+                    // page, 2026-09-06). `∅` says which is which without calling a true thing false.
+                    const cls = (v === 'met' || v === 'met_vacuously') ? 'check-pass'
+                              : v === 'skipped' ? 'check-skip' : 'check-fail';
+                    const icon = v === 'met' ? '✓' : v === 'met_vacuously' ? '∅'
+                               : v === 'skipped' ? '–' : '✗';
                     const shortName = c.check_name.split(':')[1] || c.check_name;
                     h += `<li class="${cls}"><span class="check-icon">${icon}</span>${shortName}${c.details?' — '+c.details:''}</li>`;
                 });
@@ -467,22 +737,81 @@ async function selectTask(taskId) {
             h += `</ul></div></div>`;
         }
 
+        // THE EXECUTION VERDICT, AND WHAT KIND OF PARTY PRODUCED IT. The one thing this product
+        // promises is that nothing closes on impression — and the page that a person watches said
+        // nothing about who judged a node or on what. A tester answering "did anything close without
+        // proof" had to read `/api/tasks/{id}/verdict` by hand to find `by_hand`, `validator` and the
+        // per-criterion probe commands (HTTP door, 2026-09-02). If it is legible there it belongs here.
+        try {
+            const vr = await (await fetch(`/api/tasks/${d.id}/verdict`)).json();
+            if (vr && vr.verdict) {
+                const who = vr.by_hand
+                    ? `asserted by hand — ${vr.validator || 'someone'}, not an instrument`
+                    : `judged by ${vr.validator || 'an instrument'}${vr.validator_model ? ' · ' + vr.validator_model : ''}`;
+                const stale = vr.current === false ? ' <span class="check-fail">(judged an EARLIER delivery)</span>' : '';
+                h += `<div class="section"><div class="section-title">Verdict on the work</div>`;
+                h += `<div class="${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${vr.verdict} — ${who}${stale}</div>`;
+                if ((vr.failed_criteria || []).length)
+                    h += `<div class="check-fail">failed: ${vr.failed_criteria.join(', ')}</div>`;
+                if ((vr.undecidable || []).length)
+                    h += `<div class="check-skip">undecidable (never observed): ${vr.undecidable.join(', ')}</div>`;
+                h += `<ul class="item-list">`;
+                (vr.per_criterion || []).forEach(c => {
+                    const probes = (c.probe || []).map(pr => pr.command).filter(Boolean);
+                    h += `<li>${c.verdict === 'pass' ? '✓' : c.verdict === 'fail' ? '✗' : '?'} ${c.criterion}`
+                       + (c.evidence ? ` — ${String(c.evidence).slice(0, 300)}` : '')
+                       + (probes.length ? `<br><code>${probes.join('</code> <code>')}</code>` : '')
+                       + `</li>`;
+                });
+                h += `</ul></div>`;
+            } else if (vr && vr.refused_report) {
+                // ⊥ IS NOT "NOT VALIDATED". A judge ran, reported, and the engine refused the report:
+                // that is a decision the issuer owes, and it used to be invisible on this page.
+                h += `<div class="section"><div class="section-title">Verdict on the work</div>`
+                   + `<div class="check-fail">a validator reported and the report was REFUSED as ⊥ —`
+                   + ` ${vr.note || 'the issuer decides'}</div></div>`;
+            }
+        } catch (e) { /* a node with no verdict yet is the ordinary case, not an error */ }
+
         // L2 review — the STORED checker verdict + freshness (alerts vanish; the record must not)
         try {
             const cr = await (await fetch(`/api/tasks/${d.id}/critique`)).json();
             if (cr && cr.critique && cr.critique.criteria_verdicts !== undefined) {
                 const rev = cr.critique;
                 const mark = v => v === 'sufficient' ? '✓' : v === 'insufficient' ? '✗' : '?';
+                // THE FINDINGS THAT BLOCK ARE THE ONES THIS PANEL DID NOT KNOW ABOUT. A review can
+                // name gaps in THREE places — a criterion the children do not carry, a conflict
+                // between them, and an obligation of the node's OWN goal that none of its own
+                // criteria decides — and this counted only the first two. Measured on the page door
+                // (wave 27, 2026-09-06): `semantic_covered: false` with NINE undecided obligations
+                // rendered as "0 gap(s) — advisory ✓", eight inches from the activity strip saying
+                // "9 finding(s) OPEN — children may NOT start", both stamped the same second. A page
+                // whose green ticks do not survive contact with its own log converts a legible
+                // refusal into an inexplicable one — the exact false green this product exists to
+                // refuse, on its own surface.
+                const undecided = rev.undecided_obligations || [];
                 const gaps = (rev.criteria_verdicts || []).filter(v => v.verdict !== 'sufficient').length
-                           + (rev.conflicts || []).length;
+                           + (rev.conflicts || []).length + undecided.length;
+                // …AND THE VERDICT IS THE ENGINE'S, NOT A COUNT OF ITS OWN. `semantic_covered:false`
+                // means NOT covered whatever this page manages to enumerate.
                 const status = !rev.gate_passed ? 'gate failed (L0/L1)'
                     : rev.semantic_covered === true ? 'no gaps (advisory)'
-                    : rev.semantic_covered === false ? `${gaps} gap(s) — advisory`
+                    : rev.semantic_covered === false
+                        ? `NOT COVERED — ${gaps || 'unlisted'} finding(s) open; the children may not start`
                     : 'no verdict';
+                const bad = rev.semantic_covered === false || !rev.gate_passed;
                 h += `<div class="section"><div class="section-title">L2 review${cr.verified ? '' : ' — STALE (decomposition changed)'}</div><ul class="item-list">`;
-                h += `<li style="color:var(--ui-text-faint)">${status}${rev.model ? ' · ' + rev.model : ''}${rev.ts ? ' · ' + rev.ts : ''}</li>`;
+                h += `<li class="${bad ? 'check-fail' : ''}">${status}${rev.model ? ' · ' + rev.model : ''}${rev.ts ? ' · ' + rev.ts : ''}</li>`;
                 (rev.criteria_verdicts || []).forEach(v => { h += `<li>${mark(v.verdict)} ${v.criterion} — ${v.why || ''}</li>`; });
                 (rev.conflicts || []).forEach(c => { h += `<li>⚡ [${(c.between || []).join(', ')}] ${c.why || ''}</li>`; });
+                undecided.forEach(u => {
+                    h += `<li class="check-fail">✗ this node's OWN criteria do not decide: `
+                       + `${u.obligation || u.gap || ''}${u.admits ? ` — <span style="color:var(--ui-text-faint)">${String(u.admits).slice(0, 300)}</span>` : ''}</li>`;
+                });
+                if (bad)
+                    h += `<li style="color:var(--ui-text-faint)">Two ways out: EDIT the criteria this `
+                       + `names (the fix retires this verdict — run the review again after it), or `
+                       + `record why a finding is wrong (<code>dispute_finding</code>).</li>`;
                 h += `</ul></div>`;
             }
         } catch(e) {}
@@ -491,6 +820,12 @@ async function selectTask(taskId) {
         const noCancel = ['DONE','ESCALATED','ABANDONED','CANCELLING'];  // §14.3: no re-CANCEL from CANCELLING; terminals reject all
         if (acts.length || !noCancel.includes(d.state)) {
             h += `<div class="section"><div class="section-title">Actions</div><div class="actions">`;
+            // …and a place for the forms those actions need. The page asked for a delivery report
+            // and for a verdict through native `prompt()`, which is one line of plain text and no
+            // structure — so `record_verdict` went out with NO observations and the engine refused
+            // every PASS it could ever send: "a PASS needs to say what was OBSERVED, one line per
+            // criterion". The one human path to an independent verdict, on the door built for
+            // humans, could not produce one (wave 26, 2026-09-06).
             acts.forEach(a => {
                 h += `<button class="btn btn-sm ${a.cls}" onclick="sendAction('${d.id}','${a.s}','${a.prompt||''}',${!!a.needsCriteria})">${a.label}</button>`;
             });
@@ -499,7 +834,7 @@ async function selectTask(taskId) {
                 h += `<button class="btn btn-sm btn-muted" onclick="recordVerdict('${d.id}')">Record verdict</button>`;
             if (!noCancel.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="sendAction('${d.id}','CANCEL','reason',false)">Cancel</button>`;
-            if (['EXECUTING','OFFERED'].includes(d.state)) {
+            if (['EXECUTING','OFFERED','REWORKING','BLOCKED','CHALLENGED'].includes(d.state)) {
                 h += `<button class="btn btn-sm btn-purple" onclick="openDecompose('${d.id}')">Decompose</button>`;
                 // ONE AI verb, dispatched by the node's state (auto_decompose): undecomposed → author
                 // the subtree; already-decomposed → one refine round over what exists.
@@ -510,9 +845,15 @@ async function selectTask(taskId) {
                 if (hasKids)
                     h += `<button class="btn btn-sm btn-purple" onclick="aiReview('${d.id}')">AI review</button>`;
             }
-            if (d.state === 'OFFERED')
+            // …AND THE ONE CONTROL THAT REPAIRS A PLAN IS OFFERED WHEREVER THE ENGINE TAKES ONE.
+            // It was drawn on OFFERED alone, so a Level-2 review that says "fix the criteria this
+            // names" arrived on an EXECUTING root whose panel had no way to fix anything: the page
+            // stated the remedy and withheld the control (page door, wave 27, 2026-09-06 — the
+            // tester was trapped there and the run ended). §14.3 admits a re-ASSIGN from every
+            // reassignable state; those are the states this button belongs on.
+            if (REASSIGNABLE.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="openEdit('${d.id}')">Edit</button>`;
-            h += `</div></div>`;
+            h += `</div><div id="inline-form"></div></div>`;
         }
 
         if (d.audit.length) {
@@ -525,37 +866,57 @@ async function selectTask(taskId) {
         }
 
         sb.innerHTML = h;
+        refit();
     } catch(e) { console.error('selectTask:', e); }
 }
 
-function closeSidebar() { selectedTaskId=null; document.getElementById('sidebar').classList.add('hidden'); }
+function closeSidebar() {
+    selectedTaskId = null;
+    document.getElementById('sidebar').classList.add('hidden');
+    refit();
+}
 
 async function aiDecompose(id) {
     const t = allTasksCache.find(x => x.id === id) || {};
     const hasKids = allTasksCache.some(x => x.parent_id === id && x.state !== 'ABANDONED');
-    if (!confirm(`${hasKids ? 'Refine the existing decomposition (one search↔audit round over the graph)'
-                            : 'Auto-decompose this node (search↔audit → verified subtree)'}?\nRuns ~2–6 min; progress streams in the activity strip.`)) return;
+    if (!(await askInPage(`${hasKids ? 'Refine the existing decomposition (one search↔audit round over the graph)'
+                            : 'Auto-decompose this node (search↔audit → verified subtree)'}? Runs ~2–6 min and spends model calls; progress streams in the activity strip.`))) return;
+    // WHAT IT DID TO YOUR CONTRACT, SAID. Authoring a subtree REWRITES the node's own criteria, and
+    // a tester who had just written four criteria by hand found one in their place afterwards, with
+    // no warning, no diff and no undo — and it was that replacement that then failed the semantic
+    // check (page door, wave 27, 2026-09-06). The old set is in the log (Inv-7); this at least says
+    // that it moved, in the moment it moves.
+    const before = (t.criteria || []).map(c => c.name || c);
     try {
-        await fetch('/api/run/auto_decompose', {method:'POST', headers:{'Content-Type':'application/json'},
+        const r = await fetch('/api/run/auto_decompose', {method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({request: t.description || '', root_id: id, depth: 1})});
+        if (!r.ok) {
+            const e = await r.json().catch(() => ({}));
+            notice('Decomposition refused: ' + (e.detail || e.error || r.status), 'bad');
+        }
         await refreshAll();
+        const after = ((allTasksCache.find(x => x.id === id) || {}).criteria || []).map(c => c.name || c);
+        const gone = before.filter(n => !after.includes(n));
+        if (gone.length)
+            notice(`This rewrote ${id}'s own criteria: ${gone.join(', ')} ${gone.length > 1 ? 'are' : 'is'} `
+                   + `no longer in the set (the previous contract is in the node's history). `
+                   + `Edit restores anything you meant to keep.`, 'bad');
+        if (selectedTaskId === id) await selectTask(id);
     } catch(e) { console.error('aiDecompose:', e); }
 }
 
 async function aiReview(id) {
-    if (!confirm('Run the L2 checker over this decomposition (L0/L1 gate + one causal-entailment call)?\n'
-               + 'Advisory; re-run any time — the verdict below refreshes. For a stronger second opinion: '
-               + "review_decomposition(model='opus') over MCP/HTTP.\n~1 min; progress streams in the activity strip.")) return;
+    if (!(await askInPage('Run the L2 checker over this decomposition (L0/L1 gate + one causal-entailment call)? It spends one model call.'))) return;
     try {
         const r = await fetch('/api/run/review_decomposition', {method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({task_id: id})});
         const d = await r.json();
-        if (!d.gate_passed) alert('Gate FAILED — fix L0/L1 first:\n' + (d.l0l1_failures||[]).join('\n'));
+        if (!d.gate_passed) notice('Gate FAILED — fix L0/L1 first:\n' + (d.l0l1_failures||[]).join('\n'), 'bad');
         else if (d.criteria_verdicts && d.criteria_verdicts.length) {
             const mark = v => v === 'sufficient' ? '✓' : v === 'insufficient' ? '✗' : '?';
             const lines = d.criteria_verdicts.map(v => `${mark(v.verdict)} ${v.criterion} — ${v.why}`);
             (d.conflicts||[]).forEach(c => lines.push(`⚡ conflict [${(c.between||[]).join(', ')}]: ${c.why}`));
-            alert((d.semantic_covered ? 'L2 checker: no gaps found (advisory — the real Level-2 verdict is execution; q_D watches it).\n\n'
+            notice((d.semantic_covered ? 'L2 checker: no gaps found (advisory — the real Level-2 verdict is execution; q_D watches it).\n\n'
                                       // Two discharges — and the register is NOT one of them: a parent
                                       // criterion the children's criteria do not carry is FM-1.d, repaired
                                       // on the PLAN or refuted in writing. §13.1's register holds risk
@@ -564,43 +925,183 @@ async function aiReview(id) {
                                       : 'L2 verdicts (advisory — repair the PLAN (edit criteria / map or add a child), or record why the finding is wrong (dispute_finding). NOT the risk register — §13.1 holds risk events, not uncovered entailment):\n\n')
                   + lines.join('\n').slice(0, 1800));
         }
-        else if (d.semantic_findings) alert('L2 (advisory):\n\n' + d.semantic_findings.slice(0, 1500));
-        else alert('Structurally clean; checker not run (no LLM on this server).');
+        else if (d.semantic_findings) notice('L2 (advisory):\n\n' + d.semantic_findings.slice(0, 1500));
+        else notice('Structurally clean; checker not run (no LLM on this server).');
         await refreshAll();
         await selectTask(id);   // the sidebar's stored L2-review section shows the fresh verdict
     } catch(e) { console.error('aiReview:', e); }
 }
 
-async function sendAction(taskId, signal, promptField, needsCriteria) {
+//: EVERY SIGNAL THAT CARRIES TEXT ASKS FOR IT IN THE PANEL, not in a native dialog. `prompt()` is
+//: one line, unstylable, and it BLOCKS the page: a delivery report cannot be pasted into it, and a
+//: browser sitting on one answers nothing at all until it is dismissed (wave 26, 2026-09-06 — a
+//: tester's whole tab froze on `Deliver` and the delivery was lost). `Fail` is worse than the
+//: others: it asked for failed criteria as comma-separated free text, and a name outside the
+//: contract is refused by the engine (Inv-3) — so the field invited exactly the answer that cannot
+//: work. Here they are the node's own criteria, as checkboxes.
+function sendAction(taskId, signal, promptField, needsCriteria) {
+    if (!promptField && !needsCriteria) return submitAction(taskId, signal, {});
+    const d = (allTasksCache || []).find(t => t.id === taskId) || {};
+    const crits = (d.criteria || []).map(c => c.name || c);
+    let body = '';
+    if (promptField) {
+        body += `<label style="display:block;font-size:12px;color:var(--ui-text-faint)">${promptField}</label>
+                 <textarea id="sa-text" rows="4" style="width:100%;box-sizing:border-box"
+                           placeholder="${promptField === 'result' ? 'what you delivered, and what you checked about it' : promptField}"></textarea>`;
+    }
+    if (needsCriteria) {
+        body += `<div style="font-size:12px;color:var(--ui-text-faint);margin-top:6px">Which criteria failed \u2014 a FAIL must name at least one, and only this node's own (Inv-3).</div>`
+              + crits.map((c, i) => `<label style="display:block;font-size:13px"><input type="checkbox" id="sa-fail-${i}"> ${c}</label>`).join('');
+    }
+    inlineForm(`<div class="section-title">${signal}</div>${body}
+        <div class="actions" style="margin-top:8px">
+          <button class="btn btn-sm" onclick="submitActionForm('${taskId}','${signal}','${promptField || ''}',${!!needsCriteria})">Send ${signal}</button>
+          <button class="btn btn-sm btn-muted" onclick="document.getElementById('inline-form').innerHTML=''">Cancel</button>
+        </div>`);
+}
+
+function submitActionForm(taskId, signal, promptField, needsCriteria) {
+    const d = (allTasksCache || []).find(t => t.id === taskId) || {};
+    const crits = (d.criteria || []).map(c => c.name || c);
+    const body = {};
+    if (promptField) {
+        const v = (document.getElementById('sa-text') || {}).value || '';
+        if (!v.trim()) { notice(`${promptField} is required`, 'bad'); return; }
+        body[promptField] = v;
+    }
+    if (needsCriteria) {
+        body.failed_criteria = crits.filter((c, i) => (document.getElementById('sa-fail-' + i) || {}).checked);
+        if (!body.failed_criteria.length) { notice('a FAIL must name at least one failed criterion (Inv-3)', 'bad'); return; }
+    }
+    return submitAction(taskId, signal, body);
+}
+
+async function submitAction(taskId, signal, extra) {
+    { const n = document.getElementById('page-notice'); if (n) n.remove(); }
     const source = myRole();
-    const body = { signal, source };
-    if (promptField) { const v = prompt(`${promptField}:`); if (v===null) return; body[promptField] = v; }
-    if (needsCriteria) { const v = prompt('Failed criteria (comma-separated):'); if (!v) return; body.failed_criteria = v.split(',').map(s=>s.trim()); }
+    const body = { signal, source, ...extra };
     try {
         const r = await fetch('/api/run/signal', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task_id:taskId, ...body})});
         // A REFUSAL IS THE ENGINE TALKING TO YOU. The page dropped it on the floor and refreshed:
         // the node did not move and nothing said why — the same silence the doors were fixed for.
         // It arrives as a 200 whose body says no (the status is about the call, not the act).
         const d = await r.json().catch(() => ({}));
-        if (d && (d.error || d.accepted === false)) alert(d.error || 'the engine refused that signal');
+        if (d && (d.error || d.accepted === false)) { notice(d.error || 'the engine refused that signal', 'bad'); return; }
+        const f = document.getElementById('inline-form'); if (f) f.innerHTML = '';
         await refreshAll();
         if (selectedTaskId) await selectTask(selectedTaskId);
     } catch(e) { console.error('sendAction:', e); }
 }
 
-async function recordVerdict(taskId) {
-    const reviewer = prompt("Reviewer name (must NOT be the node's executor):", myRole());
-    if (!reviewer) return;
-    const failed = prompt('Failed criteria (comma-separated; EMPTY = PASS):');
-    if (failed === null) return;
-    const body = { task_id: taskId, reviewer,
-                   verdict: failed.trim() ? 'FAIL' : 'PASS',
-                   failed_criteria: failed.trim() ? failed.split(',').map(s=>s.trim()) : [] };
+//: A CONFIRMATION THAT DOES NOT STOP THE PAGE. `confirm()` blocks every event in the tab until it
+//: is answered \u2014 fine for a person, fatal for anything driving the page, and the reason a whole
+//: browser session sat frozen on one button (wave 26, 2026-09-06). This asks the same question in
+//: the document and resolves when the person answers.
+function askInPage(question) {
+    return new Promise(resolve => {
+        const prev = document.getElementById('ask-box');
+        if (prev) prev.remove();
+        const box = document.createElement('div');
+        box.id = 'ask-box';
+        box.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:60;'
+            + 'max-width:520px;padding:14px 16px;border-radius:8px;font:13px/1.5 var(--mono,monospace);'
+            + 'background:var(--ui-panel,#2b2622);color:var(--ui-text,#efe7dd);'
+            + 'box-shadow:0 6px 28px rgba(0,0,0,.5)';
+        box.innerHTML = `<div style="margin-bottom:10px">${question}</div>`
+            + '<div class="actions"><button class="btn btn-sm" id="ask-yes">Run it</button>'
+            + '<button class="btn btn-sm btn-muted" id="ask-no">Cancel</button></div>';
+        document.body.appendChild(box);
+        const done = v => { box.remove(); resolve(v); };
+        document.getElementById('ask-yes').onclick = () => done(true);
+        document.getElementById('ask-no').onclick = () => done(false);
+    });
+}
+
+//: WHAT THE PAGE SAYS BACK. `alert()` blocks every event in the tab until it is dismissed, and the
+//: most common thing this page has to say is a REFUSAL — the engine refuses by design, with a
+//: reason worth reading. So the one message a user sees most often was the one that froze the page,
+//: and no automated pass over the interface could get past its own first refusal (found by driving
+//: the page 2026-09-06, immediately after the same fix was made for `prompt()` and `confirm()`).
+//: Long text is kept: a refusal here names the rule, the section and the way out, and truncating it
+//: would be trading one defect for another.
+function notice(text, kind) {
+    const prev = document.getElementById('page-notice');
+    if (prev) prev.remove();
+    const box = document.createElement('div');
+    box.id = 'page-notice';
+    box.style.cssText = 'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:70;'
+        + 'max-width:min(760px,90vw);max-height:40vh;overflow:auto;padding:10px 14px;border-radius:8px;'
+        + 'white-space:pre-wrap;font:12px/1.5 var(--mono,monospace);cursor:pointer;'
+        + 'box-shadow:0 4px 20px rgba(0,0,0,.45);'
+        + (kind === 'bad' ? 'background:var(--warn-bg,#5a2a2a);color:var(--warn-fg,#ffdcdc)'
+                          : 'background:var(--ui-panel,#2b2622);color:var(--ui-text,#efe7dd)');
+    box.textContent = text;
+    box.title = 'click to dismiss';
+    box.onclick = () => box.remove();
+    document.body.appendChild(box);
+    // A REFUSAL MUST NOT OUTLIVE THE ACT IT REFUSED. The bad kind had no timeout and was replaced
+    // only by the NEXT notice, so one stale refusal sat through a recorded verdict, a CHALLENGE, an
+    // ACCEPT_CHALLENGE, a 3.5-minute decompose and a whole cancel handshake — beside the successes
+    // it contradicted, and covering the buttons underneath it (wave 26 UI pass, 2026-09-06). It
+    // lasts longer than the neutral kind, because it says more; it does not last forever.
+    setTimeout(() => { if (box.isConnected) box.remove(); }, kind === 'bad' ? 45000 : 12000);
+}
+
+function inlineForm(html) {
+    const f = document.getElementById('inline-form');
+    if (!f) return null;
+    f.innerHTML = `<div class="section" style="border-top:1px solid var(--ui-line,#3334);padding-top:8px">${html}</div>`;
+    return f;
+}
+
+//: WHAT THE VERDICT FORM IS FOR. A verdict is per CRITERION — the engine refuses a PASS that says
+//: nothing about one ("an unobserved conjunct cannot carry a pass"), and it refuses text that only
+//: restates the verdict ("ok", "looks green"). A single-line `prompt` can express neither, so the
+//: button that exists to record a human's independent verdict could not produce an accepted one.
+function recordVerdict(taskId) {
+    const d = (allTasksCache || []).find(t => t.id === taskId) || {};
+    const crits = (d.criteria || []).map(c => c.name || c);
+    const rows = crits.map((c, i) => `
+        <div style="margin:6px 0">
+          <label style="display:block;font-size:12px;color:var(--ui-text-faint)">${c}</label>
+          <input id="obs-${i}" style="width:100%;box-sizing:border-box" placeholder="what you ran and what it printed">
+          <label style="font-size:12px"><input type="checkbox" id="fail-${i}"> this criterion FAILED</label>
+        </div>`).join('');
+    inlineForm(`
+        <div class="section-title">Record a verdict</div>
+        <div style="font-size:12px;color:var(--ui-text-faint);margin-bottom:6px">
+          One line per criterion, naming what you ran and what it showed. "ok" is refused: it
+          restates the verdict instead of recording a check.</div>
+        <input id="rv-reviewer" style="width:100%;box-sizing:border-box"
+               value="${(d.assignee && myRole() === d.assignee) ? '' : myRole()}"
+               placeholder="reviewer — must NOT be this node's executor (${d.assignee || '?'})">
+        ${rows || '<div style="font-size:12px">This node has no criteria, so there is nothing a verdict could be about.</div>'}
+        <div class="actions" style="margin-top:8px">
+          <button class="btn btn-sm" onclick="submitVerdict('${taskId}')">Record</button>
+          <button class="btn btn-sm btn-muted" onclick="document.getElementById('inline-form').innerHTML=''">Cancel</button>
+        </div>`);
+}
+
+async function submitVerdict(taskId) {
+    { const n = document.getElementById('page-notice'); if (n) n.remove(); }
+    const d = (allTasksCache || []).find(t => t.id === taskId) || {};
+    const crits = (d.criteria || []).map(c => c.name || c);
+    const reviewer = (document.getElementById('rv-reviewer') || {}).value || '';
+    if (!reviewer.trim()) { notice('name the reviewer', 'bad'); return; }
+    const observed = {}, failed = [];
+    crits.forEach((c, i) => {
+        observed[c] = (document.getElementById('obs-' + i) || {}).value || '';
+        if ((document.getElementById('fail-' + i) || {}).checked) failed.push(c);
+    });
+    const body = { task_id: taskId, reviewer: reviewer.trim(), observed,
+                   verdict: failed.length ? 'FAIL' : 'PASS', failed_criteria: failed };
     try {
         const r = await fetch('/api/run/record_verdict', {method:'POST',
             headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
         const out = await r.json();
-        if (out.error) alert(out.error);           // e.g. reviewer == executor — the engine refused
+        if (out.error) { notice(out.error, 'bad'); return; }   // e.g. reviewer == executor — the engine refused
+        const f = document.getElementById('inline-form'); if (f) f.innerHTML = '';
+        await refreshAll();
         if (selectedTaskId) await selectTask(selectedTaskId);
     } catch(e) { console.error('recordVerdict:', e); }
 }
@@ -664,7 +1165,7 @@ function toggleMineOnly() {
     document.getElementById('queue-toggle').classList.toggle('active', mineOnly);
     applyMineDim();
 }
-function onRoleChange() { if (mineOnly) applyMineDim(); }
+function onRoleChange() { rememberRole(myRole()); if (mineOnly) applyMineDim(); }
 function applyMineDim() {
     if (!cy) return;
     const me = myRole();
@@ -680,7 +1181,13 @@ function applyMineDim() {
 async function createTask() {
     const desc = document.getElementById('new-desc').value.trim();
     const assignee = document.getElementById('new-assignee').value.trim();
-    if (!desc || !assignee) return;
+    if (!desc || !assignee) {
+        notice(!desc ? 'Describe the task first — a node is its contract, and this is its goal.'
+                     : 'Name an assignee: every task has exactly one accountable executor (Del, §10). '
+                       + 'Put your own name here if it is yours.', 'bad');
+        (document.getElementById(!desc ? 'new-desc' : 'new-assignee')).focus();
+        return;
+    }
     const criteria = getCriteria();
     const accepted_risks = getListItems('accepted_risks-list');
     const risk_components = getListItems('risk-list');
@@ -715,11 +1222,13 @@ async function openDecompose(id) {
 function closeModal() { document.getElementById('decompose-modal').classList.remove('active'); }
 
 // === Edit node (upper-layer authoring: RMW over revise/edit_accepted_risks/reassign endpoints) ===
-let editTaskId = null, editOrigAssignee = '';
+let editTaskId = null, editOrigAssignee = '', editOrigCriteria = [], editOrigRisks = [];
 async function openEdit(id) {
     editTaskId = id;
     const d = await (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json();
     editOrigAssignee = d.assignee || '';
+    editOrigCriteria = (d.criteria || []).map(c => ({name: c.name, description: c.description}));
+    editOrigRisks = (d.accepted_risks || []).slice();
     const cr = document.getElementById('edit-criteria-rows'); cr.innerHTML = '';
     (d.criteria || []).forEach(c => addEditCriterion(c.name, c.description));
     const nl = document.getElementById('edit-accepted_risks-list'); nl.innerHTML = '';
@@ -739,18 +1248,26 @@ function addEditAcceptedRisk(value='') {
 }
 async function submitEdit() {
     const agent = myRole();
-    if (!agent) { alert('Set your role (agent) above first — only the self-owner may edit.'); return; }
+    if (!agent) { notice('Set your role (agent) above first — only the self-owner may edit.', 'bad'); return; }
     const criteria = Array.from(document.querySelectorAll('#edit-criteria-rows .criterion-row')).map(r => ({
         name: r.querySelector('.ec-name').value.trim(), description: r.querySelector('.ec-desc').value.trim(),
     })).filter(c => c.name && c.description);
     const accepted_risks = Array.from(document.querySelectorAll('#edit-accepted_risks-list .list-item input')).map(i => i.value.trim()).filter(Boolean);
     const newAssignee = document.getElementById('edit-assignee').value.trim();
     const post = (tool, body) => fetch(`/api/run/${tool}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task_id:editTaskId, ...body})});
+    // ONE ACT, ONE REVISION. Each of these verbs is a re-ASSIGN (Inv-1), and the form posted all of
+    // them every time — so editing a description sent the node back to OFFERED twice and wrote two
+    // identical ASSIGNs into the log (wave 26, 2026-09-06). Only what CHANGED is sent.
+    const critsMoved = JSON.stringify(criteria) !== JSON.stringify(editOrigCriteria);
+    const risksMoved = JSON.stringify(accepted_risks) !== JSON.stringify(editOrigRisks);
     try {
-        let r = await post('edit_criteria', {criteria, agent});
-        if (r.ok) r = await post('edit_accepted_risks', {accepted_risks, agent});
+        let r = {ok: true};
+        if (critsMoved) r = await post('edit_criteria', {criteria, agent});
+        if (r.ok && risksMoved) r = await post('edit_accepted_risks', {accepted_risks, agent});
         if (r.ok && newAssignee && newAssignee !== editOrigAssignee) r = await post('reassign', {assignee:newAssignee});
-        if (!r.ok) { const e = await r.json().catch(()=>({})); alert('Edit rejected: ' + (e.detail || r.status) + '\n(a delegated/committed node → cancel + re-assign)'); }
+        if (r.ok && !critsMoved && !risksMoved && newAssignee === editOrigAssignee)
+            notice('Nothing changed — no revision sent.', 'ok');
+        if (!r.ok) { const e = await r.json().catch(()=>({})); notice('Edit rejected: ' + (e.detail || r.status) + '\n(a delegated/committed node → cancel + re-assign)', 'bad'); }
     } catch(e) { console.error('edit:', e); }
     document.getElementById('edit-modal').classList.remove('active');
     await refreshAll();
@@ -844,11 +1361,37 @@ async function submitDecompose() {
         .filter(m => m.idx !== '')
         .map(m => ({ criterion_name: m.criterion_name, child_id: children[+m.idx].task_id }));
 
-    await fetch('/api/run/decompose', {
+    // WHAT THE ENGINE WILL REFUSE, REFUSED HERE, WHILE THE FORM IS STILL OPEN. The modal sent a plan
+    // with every criterion left `— unmapped —`, closed, created the children, and only then did the
+    // header say the decomposition fails the Syntactic level (CHECK-1: no criterion mappings;
+    // CHECK-4: ACCEPTED_RISKS empty). By that point every child's Accept is refused, and re-opening
+    // Decompose shows an EMPTY form — it does not load the children that exist — so the only repair
+    // the page offers would duplicate the plan. The tester's project became unrecoverable through
+    // the page (wave 26 UI pass, 2026-09-06). A form that can only be got wrong once is worse than
+    // one that refuses: the same client-side check the DELIVER textarea already does.
+    const unmapped = Array.from(document.querySelectorAll('#decompose-mappings select'))
+        .filter(sel => sel.value === '').map(sel => sel.dataset.crit);
+    if (unmapped.length) {
+        notice(`every criterion of this node must be mapped to the child that delivers it `
+             + `(CHECK-1, joint sufficiency). Still unmapped: ${unmapped.join(', ')}.`, 'bad');
+        return;
+    }
+    const noRisks = children.filter(c => !(c.spec.accepted_risks || []).length);
+    if (noRisks.length === children.length) {
+        notice('a decomposition needs its ACCEPTED_RISKS register (CHECK-4, §13.1: a decomposition '
+             + 'without one is incomplete by definition). Add at least one factor — `+ accepted_risks` '
+             + 'on a subtask — or say in it that none is known.', 'bad');
+        return;
+    }
+    const r = await fetch('/api/run/decompose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parent_id: decomposeTaskId, children, mappings: criterion_mappings }),
     });
+    // …AND THE ENGINE'S OWN REFUSAL REACHES THE USER. This dropped the response on the floor: a plan
+    // the server rejected closed the modal exactly like one it accepted.
+    const out = await r.json().catch(() => ({}));
+    if (out && (out.error || out.refused)) { notice(out.error || 'the engine refused that plan', 'bad'); return; }
     closeModal(); await refreshAll();
 }
 
@@ -933,7 +1476,7 @@ function plLine(source, msg, tsShow, isToday) {        // one persisted (non-tic
 }
 async function plEnsure() {
     if (plS) return;
-    plS = {active: new Map(), groups: {}, dayTok: 0, runs: 0, manual: false};
+    plS = {active: new Map(), groups: {}, dayTok: 0, runs: 0, manual: false, autoOpened: false};
     const panel = document.createElement('div');
     panel.id = 'pipeline-log';                          // styled in gfso.css (brand tokens)
     panel.innerHTML =
@@ -993,7 +1536,10 @@ function connectWS() {
                 plRenderActive();
             } else {
                 plLine(d.source, d.msg, new Date().toLocaleTimeString(), true);
-                if (!plS.manual) plShow(true);         // default: expanded while a process is active
+                // …ONCE, and never again after the reader closes it. It re-opened on every line, so
+                // closing it did nothing and it sat over the lower-left third of the graph for the
+                // rest of the session (page door, wave 27, 2026-09-06).
+                if (!plS.manual && !plS.autoOpened) { plS.autoOpened = true; plShow(true); }
             }
             return;
         }
@@ -1010,8 +1556,16 @@ function connectWS() {
                 node.data('bw', st.bw); node.data('bc', st.bc);
                 node.data('bs', st.bs); node.data('bo', st.bo);
             } else await refreshGraph();
+            // A NODE THAT SETTLES CHANGES MORE THAN ITS COLOUR: how it closed is drawn on it, and a
+            // state patch alone would repaint it as an ordinary green. Terminal transitions go the
+            // long way round, which is one read.
+            if (['DONE','ABANDONED','ESCALATED'].includes(d.new_state)) await refreshGraph();
             await refreshMetrics(); await refreshStats();
-            if (selectedTaskId===d.task_id) await selectTask(d.task_id);
+            // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION, not only on its own node's. Its
+            // checks are computed from the node's CHILDREN, so a child moving turns them red while
+            // the panel kept showing the green it was opened with (wave 26, 2026-09-06: "green
+            // checks minutes after they had gone red").
+            if (selectedTaskId) await selectTask(selectedTaskId);
         }
     };
     ws.onopen = () => setLive(true);
@@ -1019,7 +1573,11 @@ function connectWS() {
     ws.onclose = () => { setLive(false, 'connection lost'); setTimeout(connectWS, 2000); };
 }
 
-init();
+// …AFTER the deferred graph libraries have run. This file's script is inline and would otherwise
+// execute while they are still loading, and every load would report "the graph library did not
+// load" — the banner telling the truth about the wrong moment.
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();
 </script>
 </body>
 </html>

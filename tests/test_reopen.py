@@ -1,4 +1,4 @@
-"""R′ (canon §14.3 "Финальность") — the gated quasi-terminal exit.
+﻿"""R′ (canon §14.3 "Финальность") — the gated quasi-terminal exit.
 
 DONE→OFFERED and ABANDONED→OFFERED are ONE re-ASSIGN mechanism (not a 13th signal) under a
 double gate: (i) the finality-gate — the terminal is not CONSUMED in the graph (positive:
@@ -11,27 +11,22 @@ a fresh run that FAILs after a same-criteria pass-reopen is q_V's pass→later-f
 from datetime import datetime, timedelta
 
 import pytest
+import time
 
 from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.storage.sqlite import SqliteStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.core.types import (
-    AcceptedRiskItem, State, Signal, SignalData, TaskId, AgentId, Spec, Criteria, DoneReason,
-    Predictability,
+    State, Signal, SignalData, TaskId, AgentId, Spec, Criteria, DoneReason,
 )
 from gfso.core.graph.metrics import q_V
-
-
-def _spec(desc="goal", crit="c1"):
-    return Spec(description=desc, criteria=(Criteria(crit, f"{crit} description"),),
-                accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
-                                                 Predictability.EXTRAORDINARY),))
+from gfso import tools as T
+from tests.support import make_engine, spec
+from gfso.core.types import CriterionMapping
 
 
 @pytest.fixture
 def engine():
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(llm=None, check_interval=10_000)
     e.start()
     yield e
     e.stop()
@@ -39,7 +34,7 @@ def engine():
 
 def _drive_to_done(e: Engine, tid="n1", issuer="boss", worker="w"):
     """ASSIGN→ACCEPT→DELIVER→PASS a standalone root (issuer = its own creator context)."""
-    e.assign_task(TaskId(tid), _spec(), AgentId(issuer))
+    e.assign_task(TaskId(tid), spec(), AgentId(issuer))
     e.wait_idle()
     for sd in (
         SignalData(signal=Signal.ACCEPT, task_id=TaskId(tid), source=AgentId(issuer)),
@@ -76,7 +71,7 @@ def test_reopen_done_to_review_spends_counter_and_drops_verdict(engine):
 
 
 def test_reopen_cancelled_to_review(engine):
-    engine.assign_task(TaskId("c1"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("c1"), spec(), AgentId("boss"))
     engine.wait_idle()
     _cancel(engine, "c1", "boss")
     assert engine.get_state(TaskId("c1")) == State.ABANDONED
@@ -87,7 +82,7 @@ def test_reopen_cancelled_to_review(engine):
 
 
 def test_escalated_stays_fully_terminal(engine):
-    engine.assign_task(TaskId("e1"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("e1"), spec(), AgentId("boss"))
     engine.wait_idle()
     for _ in range(2):  # OFFERED → OVERDUE → ESCALATED
         engine.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("e1")))
@@ -113,10 +108,9 @@ def test_max_reopens_exhaustion_locks_the_node(engine):
 
 def _parent_child(e: Engine, deliver_parent=False):
     """root(boss→pm) with child(pm→w); child driven to DONE(pass)."""
-    from gfso.core.types import CriterionMapping
-    e.assign_task(TaskId("root"), _spec("root goal", "rc"), AgentId("pm"))
+    e.assign_task(TaskId("root"), spec("root goal", "rc"), AgentId("pm"))
     e.wait_idle()
-    e.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child goal", "cc"), AgentId("w"))],
+    e.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child goal", "cc"), AgentId("w"))],
                      criterion_mappings=[CriterionMapping("rc", TaskId("ch"))])  # §13.4: L0-complete before exec
     e.wait_idle()
     for sd in (
@@ -157,11 +151,9 @@ def test_refuted_coverage_gates_parent_redeliver(engine):
     the mapping's entailment — re-DELIVERing the same aggregate over the untouched subtree is
     REFUSED (the decomposition is indicted, not the artifact); touching the child (reopen) re-opens
     the gate. Removing any prompt line changes nothing — the engine enforces it."""
-    import time as _t
-    from gfso.core.types import CriterionMapping
-    engine.assign_task(TaskId("root"), _spec("root goal", "rc"), AgentId("pm"))
+    engine.assign_task(TaskId("root"), spec("root goal", "rc"), AgentId("pm"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child goal", "cc"), AgentId("w"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child goal", "cc"), AgentId("w"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("ch"))])
     engine.wait_idle()
     for sd in (
@@ -180,7 +172,7 @@ def test_refuted_coverage_gates_parent_redeliver(engine):
         engine.send_signal(sd)
         engine.wait_idle()
     engine.record_exec_verdict(TaskId("root"), "FAIL", ["rc"], "validate_result")
-    _t.sleep(0.01)                                   # the FAIL restamps root AFTER ch's DONE stamp
+    time.sleep(0.01)                                   # the FAIL restamps root AFTER ch's DONE stamp
     engine.send_signal(SignalData(signal=Signal.FAIL, task_id=TaskId("root"),
                                   source=AgentId("pm"), failed_criteria=("rc",)))
     engine.wait_idle()
@@ -234,9 +226,9 @@ def test_dep_consumer_built_on_result_locks_producer(engine):
 
 def test_cancelled_consumed_only_when_settled_and_replanned(engine):
     """Negative finality: consumed ⟺ cascade settled ∧ the hole replanned around (FM-1.e)."""
-    engine.assign_task(TaskId("root"), _spec("root goal", "rc"), AgentId("pm"))
+    engine.assign_task(TaskId("root"), spec("root goal", "rc"), AgentId("pm"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("a"), _spec("a", "ac"), AgentId("w"))])
+    engine.decompose_task(TaskId("root"), [(TaskId("a"), spec("a", "ac"), AgentId("w"))])
     engine.wait_idle()
     engine.map_criterion(TaskId("root"), TaskId("a"), "rc")
     _cancel(engine, "a", "pm", executor="w")
@@ -244,7 +236,7 @@ def test_cancelled_consumed_only_when_settled_and_replanned(engine):
     # settled (leaf, no descendants) but NOT replanned → still reopenable
     assert not engine._graph.is_consumed(engine.get_task(TaskId("a")))
     # the parent replans around the hole: a replacement child covering the same criterion
-    engine.decompose_task(TaskId("root"), [(TaskId("b"), _spec("b", "bc"), AgentId("w"))])
+    engine.decompose_task(TaskId("root"), [(TaskId("b"), spec("b", "bc"), AgentId("w"))])
     engine.wait_idle()
     engine.map_criterion(TaskId("root"), TaskId("b"), "rc")
     assert engine._graph.is_consumed(engine.get_task(TaskId("a")))  # revival = double coverage
@@ -257,7 +249,7 @@ def test_cancelled_consumed_only_when_settled_and_replanned(engine):
 def test_stale_verdict_cannot_pass_self_pass_gate_after_reopen(engine):
     """The pre-reopen PASS verdict must not re-open the verifier≠executor gate (§14.3 anti-fake)."""
     e = engine
-    e.assign_task(TaskId("s1"), _spec(), AgentId("me"))
+    e.assign_task(TaskId("s1"), spec(), AgentId("me"))
     e.wait_idle()
     for sd in (
         SignalData(signal=Signal.ACCEPT, task_id=TaskId("s1"), source=AgentId("me")),
@@ -311,7 +303,7 @@ def test_fresh_fail_after_pass_reopen_is_qv_member(engine):
 
 def test_reopen_fields_roundtrip_sqlite(tmp_path):
     st = SqliteStorage(str(tmp_path / "r.db"))
-    e = Engine(st, HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(st, llm=None, check_interval=10_000)
     e.start()
     try:
         _drive_to_done(e, tid="p1", issuer="boss")
@@ -335,3 +327,30 @@ def test_reopen_is_offered_and_audited(engine):
         engine.reopen(TaskId("n1"), AgentId("boss"))  # exhausted → FSM guard rejects
     rejected = [a for a in engine.audit_log(TaskId("n1")) if a.rejected and a.signal == Signal.ASSIGN]
     assert rejected, "the refused reopen must be audit-visible (Thm 11)"
+
+
+def test_passing_a_leaf_says_what_it_freezes():
+    """The finality rule is right and it was learnt at the wrong moment.
+
+    Once a parent stakes its aggregate on a child, that child is CONSUMED and cannot be reopened
+    (§14.3) — so a defect later found in the code that leaf's contract owns is repaired by
+    re-decomposing AROUND it. A tester met that rule only when the root's validator refuted a shared
+    function, four round trips after the leaf had passed (CLI door, 2026-09-02). Said at the PASS it
+    is something to plan around; said at the reopen it is only a wall.
+    """
+    e = make_engine(check_interval=10_000)
+    e.start()
+    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+                              "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                  "predictability": "EXTRAORDINARY"}]},
+                  assignee="boss")
+    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
+                  assignee="boss", parent_id="root")
+    T.map_criterion(e, "root", "kid", "c")
+    T.signal(e, "kid", "ACCEPT", "boss")
+    T.signal(e, "kid", "DELIVER", "boss", result="wrote the leaf; ran its check, it printed OK", self_validation="PASS")
+
+    out = T.signal(e, "kid", "PASS", "boss")
+    assert out["state"] == "DONE"
+    assert "CONSUMED" in out["frozen_now"] and "re-decomposing around it" in out["frozen_now"]
+    e.stop()

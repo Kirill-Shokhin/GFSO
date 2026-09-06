@@ -1,13 +1,23 @@
 """Multi-project registry: a project = one GRAPH (forest) in its OWN DB file — physical isolation
 (cross-project Dep unrepresentable by construction); verbs route per-call via `project` or follow
 the ACTIVE project; back-compat: default project = the env-configured engine, nothing changes."""
+import asyncio
 import inspect
+import os
+import time
 
+import anyio
 import pytest
 
-from gfso.mcp.server import create_server
+from fastapi.testclient import TestClient
+
+from gfso.api.server import create_app, _start_reaper
+from gfso.mcp.server import create_server, _bind
 from gfso.runtime import ProjectRegistry
 from gfso import tools as T
+from gfso.adapters.llm.stub import StubLLM
+from tests.support import make_engine
+from gfso.mcp import server as S
 
 
 def _reg(monkeypatch, tmp_path):
@@ -67,12 +77,10 @@ def test_bad_project_name_rejected(monkeypatch, tmp_path):
 def _call(w, *a, **kw):
     """Drive a bound MCP tool the way the SDK does: it is a coroutine now, because a synchronous
     tool is awaited INLINE on the event loop and one blocking verb froze the whole server."""
-    import anyio
     return anyio.run(lambda: w(*a, **kw))
 
 
 def test_mcp_bind_gains_project_param_and_routes(monkeypatch, tmp_path):
-    from gfso.mcp.server import _bind
     reg = _reg(monkeypatch, tmp_path)
     w = _bind(reg, T.get_task)
     params = inspect.signature(w).parameters
@@ -91,7 +99,6 @@ def test_mcp_bind_project_param_with_var_keyword(monkeypatch, tmp_path):
     (this crashed the whole MCP server on startup with -32000, live 2026-07-03; `signal` has since
     moved to explicit params — a transport bug: **payload never decodes over the MCP schema — but the
     binding invariant stays locked here on a synthetic tool)."""
-    from gfso.mcp.server import _bind
     reg = _reg(monkeypatch, tmp_path)
 
     def varkw_tool(engine, task_id: str, **payload) -> dict:
@@ -117,10 +124,7 @@ def test_mcp_bind_project_param_with_var_keyword(monkeypatch, tmp_path):
 
 def test_create_server_with_registry_builds_all_tools(monkeypatch, tmp_path):
     """The whole-server smoke that would have caught the -32000 startup crash."""
-    import pytest
     pytest.importorskip("mcp")
-    import asyncio
-    from gfso.mcp.server import create_server
     reg = _reg(monkeypatch, tmp_path)
     listed = asyncio.run(create_server(reg).list_tools())
     tools = {t.name for t in listed}
@@ -137,8 +141,6 @@ def test_create_server_with_registry_builds_all_tools(monkeypatch, tmp_path):
 
 
 def test_api_projects_endpoints(monkeypatch, tmp_path):
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
     reg = _reg(monkeypatch, tmp_path)
     app = create_app(reg.engine(), registry=reg)
     with TestClient(app) as c:
@@ -184,8 +186,6 @@ def test_delete_project_full_cycle(monkeypatch, tmp_path):
 
 
 def test_api_delete_project(monkeypatch, tmp_path):
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
     reg = _reg(monkeypatch, tmp_path)
     app = create_app(reg.engine(), registry=reg)
     with TestClient(app) as c:
@@ -200,19 +200,14 @@ def test_api_delete_project(monkeypatch, tmp_path):
 
 def test_single_project_backcompat(monkeypatch):
     """A bare Engine (no registry): /api/projects degrades gracefully, MCP _bind adds no param."""
-    from gfso.engine import Engine
-    from gfso.adapters.storage.memory import MemoryStorage
-    from gfso.adapters.agents.human import HumanAgent
-    from gfso.adapters.llm.stub import StubLLM
-    from gfso.mcp.server import _bind
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
-
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     assert "project" not in inspect.signature(_bind(e, T.get_task)).parameters
     with TestClient(create_app(e)) as c:
-        assert c.get("/api/projects").json() == {"active": "default", "projects": ["default"]}
+        # `total` rides along on the single-project answer too: one shape for one question, whether
+        # or not there is a registry behind it (the filter arrived with the ~350-name blob).
+        assert c.get("/api/projects").json() == {"active": "default", "projects": ["default"],
+                                                 "total": 1}
         assert c.post("/api/projects/use", json={"name": "x"}).status_code == 400
     e.stop()
 
@@ -220,8 +215,6 @@ def test_single_project_backcompat(monkeypatch):
 def test_api_per_tab_project_scope(monkeypatch, tmp_path):
     """Two browser TABS = two projects at once: ?project= on any /api call (and the WS url) scopes THAT
     request to that project's engine — no global switching needed."""
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
     reg = _reg(monkeypatch, tmp_path)
     _mk(reg.engine("tab_a"), "in_a")
     _mk(reg.engine("tab_b"), "in_b")
@@ -238,7 +231,6 @@ def test_api_per_tab_project_scope(monkeypatch, tmp_path):
 def test_mcp_session_scoped_project_resolution(monkeypatch, tmp_path):
     """One shared server, several agent sessions: each session's use_project sets ITS default —
     resolution precedence = explicit `project` param → the session's project → the global active."""
-    from gfso.mcp import server as S
     reg = _reg(monkeypatch, tmp_path)
     res = S._resolver(reg)
 
@@ -260,9 +252,6 @@ def test_mcp_session_scoped_project_resolution(monkeypatch, tmp_path):
 def test_lease_lifecycle_and_reaper(monkeypatch, tmp_path):
     """The shared server mirrors its sessions: leases renew via heartbeats; once ANY lease existed
     and the last one expires/drops, the reaper fires the exit; /api/shutdown = the manual `gfso down`."""
-    import time
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app, _start_reaper
     reg = _reg(monkeypatch, tmp_path)
     app = create_app(reg.engine(), registry=reg)
     exited = []
@@ -300,9 +289,6 @@ def test_projects_are_listed_newest_first_with_their_stamps(tmp_path, monkeypatc
     you are working on. Recency is the fact a picker needs, and the database's own mtime already
     carries it, so nothing new is tracked and nothing has to be DELETED to make the list readable
     (those files are the provenance of past measurements)."""
-    import os
-    import time
-
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     for name in ("old_run", "middle_run", "new_run"):
         (tmp_path / f"{name}.db").write_bytes(b"")
@@ -311,7 +297,6 @@ def test_projects_are_listed_newest_first_with_their_stamps(tmp_path, monkeypatc
     os.utime(tmp_path / "old_run.db", (now - 900, now - 900))
     os.utime(tmp_path / "middle_run.db", (now - 300, now - 300))
 
-    from gfso.runtime import ProjectRegistry
     listing = ProjectRegistry(data_dir=str(tmp_path)).list()
     assert listing["projects"][:3] == ["new_run", "middle_run", "old_run"]
     assert listing["last_active"]["new_run"] >= listing["last_active"]["old_run"]
@@ -328,3 +313,45 @@ def test_use_project_takes_the_word_every_other_verb_uses():
     use = next(t for t in srv._tool_manager.list_tools() if t.name == "use_project")
     params = set(use.parameters.get("properties", {}))
     assert {"name", "project"} <= params
+
+
+def test_the_project_list_can_be_asked_a_question_instead_of_downloaded(monkeypatch, tmp_path):
+    """"Does my project exist" cost ~350 names and a full `last_active` map — several thousand tokens
+    for a yes/no. The list is the picker's data AND an agent's lookup, and only the picker wants all
+    of it: nothing here deleted a name (those files are the provenance of past measurements), the
+    door just learned to answer the narrow question narrowly. `active` survives every filter — a
+    caller must always be able to see where it is standing, including when the filter excludes it."""
+    reg = _reg(monkeypatch, tmp_path)
+    for n in ("alpha_one", "alpha_two", "beta_one"):
+        reg.engine(n)
+    app = create_app(reg.engine(), registry=reg)
+    with TestClient(app) as c:
+        d = c.get("/api/projects?prefix=alpha").json()
+        assert set(d["projects"]) == {"alpha_one", "alpha_two"}
+        assert set(d["last_active"]) == set(d["projects"])       # the map follows the page, not the disk
+        assert d["active"] == "default"                          # present though `default` was filtered out
+        assert d["total"] == 2                                   # what MATCHED, before any cap
+        capped = c.get("/api/projects?limit=2").json()
+        assert len(capped["projects"]) == 2 and capped["total"] == 4   # …so "2 of 4" is sayable
+        assert len(c.get("/api/projects?limit=0").json()["projects"]) == 4   # the cap is liftable
+    for e in list(reg._engines.values()):
+        e.stop()
+
+
+def test_a_scoped_act_names_the_scope_it_was_given(monkeypatch, tmp_path):
+    """The `?project=` a caller passes is echoed back by the act, so a typo is visible in the answer
+    rather than in somebody else's graph a day later (see `test_every_act_names_the_project_it_acted_on`
+    for the ambient-fallback half of the same defect)."""
+    reg = _reg(monkeypatch, tmp_path)
+    app = create_app(reg.engine(), registry=reg)
+    with TestClient(app) as c:
+        out = c.post("/api/run/create_task?project=tab_a",
+                     json={"task_id": "n", "spec": {"description": "x"}, "assignee": "dev"}).json()
+        assert out["project"] == "tab_a"
+        # the body spelling of the same parameter answers the same way
+        out = c.post("/api/run/create_task",
+                     json={"project": "tab_b", "task_id": "n", "spec": {"description": "x"},
+                           "assignee": "dev"}).json()
+        assert out["project"] == "tab_b"
+    for e in list(reg._engines.values()):
+        e.stop()

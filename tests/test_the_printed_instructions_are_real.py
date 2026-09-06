@@ -93,7 +93,6 @@ def test_a_person_can_list_their_own_projects():
     real = _subcommands()
     assert "projects" in real
 
-    from gfso.cli import build_parser
     parser = build_parser()
     args = parser.parse_args(["projects", "-n", "5", "--match", "demo"])
     assert args.n == 5 and args.match == "demo"

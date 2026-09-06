@@ -14,12 +14,11 @@ import re
 from pathlib import Path
 
 from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.core.protocol.fsm import transition
-from gfso.core.types import State, Signal, SignalData, GuardContext, TaskId, AgentId
+from gfso.core.types import State, Signal, SignalData, GuardContext, TaskId, AgentId, TERMINAL_STATES
 from gfso import tools as T
 from gfso.tools import _spec_from
+from tests.support import make_engine
 
 TLA_TABLE = Path(__file__).resolve().parent.parent / "formal" / "tla" / "FsmTable.tla"
 
@@ -103,7 +102,6 @@ def test_table_equivalence_exhaustive():
 
 
 def test_model_terminals_match_code():
-    from gfso.core.types import TERMINAL_STATES
     assert MODEL_TERMINAL == {s.name for s in TERMINAL_STATES}
 
 
@@ -150,8 +148,8 @@ def test_trace_replay_through_live_engine():
     model step-for-step on random walks. Signal validation off = the FSM-core is the
     object (role/issuer checks are a stricter outer filter, not table semantics);
     monitor idle (huge interval) so trajectories are deterministic."""
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=False,
-               check_interval=10_000)
+    e = make_engine(llm=None, validate_signals=False,
+                     check_interval=10_000)
     e.start()
     try:
         for i, seed in enumerate((11, 22, 33, 44, 55)):

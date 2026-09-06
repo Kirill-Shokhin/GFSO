@@ -102,6 +102,8 @@ def _run_suite(model_code: str, test_code: str, timeout: float = 60.0) -> list[d
     finally:
         try:
             os.unlink(path)
+        # the results are already parsed; a temp file still held by the OS must not turn a finished
+        # run into a crash
         except OSError:
             pass
 

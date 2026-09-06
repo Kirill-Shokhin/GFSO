@@ -18,6 +18,11 @@ from gfso.config import MODEL_DEFAULT
 
 
 def main() -> None:
+    """Run the demo: a human issuer with one node delegated to a registered LLM executor.
+
+    Shows that assignment IS delegation — nothing beyond Del tells the dispatcher to pick it up.
+    SPAWNS A REAL MODEL RUN.
+    """
     if not shutil.which("claude"):
         sys.exit("needs the Claude Code CLI on PATH (the executor/validator transport)")
 

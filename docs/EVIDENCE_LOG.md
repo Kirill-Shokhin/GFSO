@@ -715,7 +715,7 @@ in the prompt; checker gaps 3→5, non-convergent) — an experiment-harness wea
 checker's. The ±3 bar is formally still missed by 1 item beyond it (n=1 per arm); follow-up = a
 structured fix step (patch addressed by index, not free-typed ids) before the next measure.
 
-## 13. E3 on SpecBench — calibration tier, 2026-08-03/16
+## 13. E3 on SpecBench — calibration tier, 2026-08-03 → 09-06
 
 Substrate: **SpecBench** (Weco AI, Apache-2.0, pinned `08607352adc8abd78be2193dd9f725f1f032b8f0`).
 Task, spec, visible and held-out suites, reference implementation and the baseline outer strategies
@@ -1097,3 +1097,48 @@ the substrate is clean, and C2 on it does not rest on contested exclusions.
 critic-round narratives, session state, next-steps/plans, my own error-corrections, "what's done /
 what remains" — does **NOT** belong here; it lives in agent memory. The E1 empirical study is
 §9/§9.1 above. Keep this log a public empirical artifact, not a working log.
+
+### 13.8 The judge stops burning rounds — before and after, on two tasks (2026-09-05/06)
+
+Still the calibration tier: `E3_PREREG.md` is **not frozen**, so none of this counts toward a
+campaign. What it carries is a before/after pair whose comparison was written down before any result
+was seen, and one number that went the other way.
+
+**What was changed.** Judging was 56.5% of all model spend, and 140 of 151 wasted judging rounds were
+one class: a report naming behaviours it never probed. The engine now demotes an under-probed
+criterion at the record rather than refusing the report, a report introduced by prose still parses,
+and a criterion whose probe names a command is refused a pass when the run's tool ledger shows no
+shell at all.
+
+**The runs.** Arm G, Sonnet throughout, validation batch 12, rework bound 3. Every number below is
+read from the runs' own `result.json`, not from a summary.
+
+| batch | task | closed | held_out | ⊥ per run | claims reproduced / refuted |
+|---|---|---|---|---|---|
+| C | `regex_engine` ×3 | **3/3** | 0.920 · 0.920 · 0.824 | 0 · 0 · 0 | 115/3 · 114/1 · 104/3 |
+| D | `markdown_renderer` ×3 | 1/3 † | 0.984 · 0.984 · 0.968 | 0 · 0 · 2 ‡ | 287/29 · 279/5 · 71/9 |
+| E | `regex_engine` ×2 | **2/2** | 0.888 · 0.920 | 0 · 0 | 111/0 · 101/3 |
+
+Against the runs already on disk for the same two tasks: `regex_engine` n = 15, held-out median
+0.888, closed 6/15, ⊥ 0.47 per verdict; `markdown_renderer` n = 15, held-out median 0.880, closed
+3/15, ⊥ 0.11.
+
+† Two runs stopped on the DEFAULT $8 ceiling — a pause with the graph and workspace intact, not a
+failure; one, resumed with a higher ceiling, then escalated a node that had spent its bounded
+reworks (§14.3). `false_fail_share` on that run is 0.0: the judge was not over-strict.
+
+‡ **Those two ⊥ are an artefact of the measuring instrument, and are published as such.** The
+verdict↔delivery pairing lives in the arm's process, so a RESUMED run started with none: every
+verdict standing from the earlier segment was written against a snapshot directory that does not
+exist, every probe "failed to run" against nothing, and the replay called the verdict ⊥. Recomputed
+over the same 14 stored verdicts once the pairing is rebuilt from the frozen deliveries on disk:
+⊥ 2 → **0**, `not_portable` 144 → **0**. The stored record keeps its original number — a result is
+not rewritten after the fact — and this is what it means.
+
+**What the comparison does NOT show.** The judge's share of spend went UP, not down: 68% / 71% / 78%
+of each run's server-side total, against a median of 51% before. The change removed rounds that were
+being burned, not the price of judging; once the wasted rounds stop, judging is simply what a run
+mostly is. Server-side totals were $3.44–$6.87 per closed run.
+
+**Boundary.** Two tasks, n = 3 + 3 + 2, one dataset, one substrate, one model tier. These are points,
+not a curve, and the ⊥ column is the only one the change was aimed at.

@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import time
 
+import gfso.delegate as D
 import gfso.tools as T
-from gfso.adapters.agents.human import HumanAgent
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.delegate import AgentRegistry, Dispatcher
-from gfso.engine import Engine
+from gfso.delegate import AgentRegistry, Dispatcher, default_agents
+from tests.support import make_engine
+from fastapi.testclient import TestClient
+from gfso.api.server import create_app
+from tests.test_integration import _engine
 
 
 def _graph_with_one_leaf(e) -> None:
@@ -53,7 +55,7 @@ def _settle(e, spawned, secs: float = 2.5):
 
 
 def _setup(tmp_path, live: set):
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
+    e = make_engine(llm=None, validate_signals=True, state_timeout=0)
     e.start()
     _graph_with_one_leaf(e)
     reg = AgentRegistry(path=str(tmp_path / "agents.json"))
@@ -105,7 +107,7 @@ def test_a_role_naming_no_owner_stays_available(tmp_path):
     """Absence of a declared lifetime is not a lapsed one — otherwise installing this feature would
     stop every registration made before it and every door that carries no lease."""
     live: set = set()
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
+    e = make_engine(llm=None, validate_signals=True, state_timeout=0)
     e.start()
     _graph_with_one_leaf(e)
     reg = AgentRegistry(path=str(tmp_path / "agents.json"))
@@ -147,13 +149,7 @@ def test_the_server_hands_the_dispatcher_its_own_lease_answer(tmp_path, monkeypa
     stops installing it — the failure mode where a rule holds in the layer that states it and is
     never applied by the layer that acts.
     """
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
-    from gfso.delegate import default_agents
-    from tests.test_integration import _engine
-
     monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
-    import gfso.delegate as D
     D._DEFAULT_AGENTS = None                       # a roster for this test, not the machine's
     app = create_app(_engine())
     with TestClient(app) as c:

@@ -1,16 +1,17 @@
 """MCP tool layer — logic tested directly (no MCP transport needed)."""
 import inspect
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
+import pytest
 from gfso.adapters.llm.stub import StubLLM
 from gfso import tools as T
-from gfso import tools_llm as TL
-from gfso.mcp.server import _bind
+from gfso import tools_llm as TL, serverctl
+from gfso.mcp.server import _bind, _with_ui_link
+from tests.support import make_engine
+from fastapi.testclient import TestClient
+from gfso.api.server import create_app
 
 
 def _eng():
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     return e
 
@@ -22,7 +23,10 @@ def test_agent_loop_through_tools():
     assert root["state"] == "OFFERED" and root["id"] == "r"
 
     proj = T.project(e, "r")
-    assert isinstance(proj, str) and "root" in proj
+    # An OBJECT like every other verb — the text under `markdown`. It answered a bare string, the
+    # only verb in the registry that did, and a client written against any other one crashed on it
+    # (HTTP door, wave 27, 2026-09-06).
+    assert isinstance(proj, dict) and "root" in proj["markdown"] and proj["task_id"] == "r"
 
     kids = T.decompose(e, "r",
                        [{"task_id": "c1", "spec": {"description": "c1", "criteria": [{"name": "x", "description": "X"}]}, "assignee": "alice"},
@@ -74,13 +78,13 @@ def test_list_holes_surfaces_graph_gaps():
     BEFORE driving signals (a decomposed graph can come back with holes)."""
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
-    holes = T.list_holes(e)
+    holes = T.list_holes(e)["holes"]
     # A leaf is not gated on the register (§13.1) — and with no holes at all the verb SAYS so rather
     # than returning an empty list a reader cannot tell from a broken call.
     assert not any(h.get("task_id") == "r" and h.get("check", "").startswith("CHECK-4") for h in holes)
     T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
                 [{"criterion_name": "a", "child_id": "k"}])
-    holes = T.list_holes(e)                 # decomposed root with no ACCEPTED_RISKS → CHECK-4 is an open hole
+    holes = T.list_holes(e)["holes"]                 # decomposed root with no ACCEPTED_RISKS → CHECK-4 is an open hole
     assert any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)
     e.stop()
 
@@ -123,10 +127,7 @@ def test_unified_mcp_transport_mounts_and_handshakes():
     and an `initialize` handshake succeeds. Locks the two integration bugs: `_bind` must resolve string
     annotations (tools.py uses `from __future__ import annotations`) so the SDK can build tool schemas, and
     streamable_http_path must be "/" so the mount lands at /mcp (not /mcp/mcp)."""
-    import pytest
     pytest.importorskip("mcp")
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
 
     e = _eng()
     T.create_task(e, "shared", {"description": "s", "criteria": [{"name": "a", "description": "A"}]}, "alice")
@@ -170,9 +171,6 @@ def test_entry_verbs_carry_the_local_ui_link():
     "I am entering this graph" now answer with it, pointed at the project just acted on (the UI is
     tab-per-project, `?project=`). A link is a convenience, so it never fails a call and never
     reshapes a non-dict result."""
-    from gfso.mcp.server import _with_ui_link
-    from gfso import serverctl
-
     out = _with_ui_link("use_project", {"active": "e3"})
     assert out["ui"] == f"{serverctl.BASE}/?project=e3"
     assert _with_ui_link("create_task", {"id": "root"}, project="demo")["ui"].endswith("?project=demo")

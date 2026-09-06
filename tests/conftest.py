@@ -31,6 +31,38 @@ def _own_state_home():
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _the_suite_does_not_reconcile_the_one_server():
+    """…AND IT NEVER RESTARTS THE INSTALLATION'S SERVER, unless a run asks for it in as many words.
+
+    Reconciling is right for the verbs that mean it (`gfso up`, the MCP door after an upgrade) and
+    wrong for everything incidental — a health probe, an import, this suite. It was neither: the
+    suite reconciled by DEFAULT, with the suite's own temporary home, and twice took down a live
+    server and killed a paid measurement run mid-flight (2026-08-22).
+
+    What was done about it then was `GFSO_NO_RECONCILE=1` in front of the command — a guard the
+    person running the suite has to remember, which is to say a guard that protects the invocations
+    that did not need protecting. Every session since has typed it, this one included, and the four
+    tests that DO exercise reconciling have been failing under it all day, which is how a habit
+    turns into a blind spot. Here the dangerous path requires an affirmative act (`GFSO_RECONCILE=1`)
+    and the tests that want it say so themselves.
+    """
+    prior = os.environ.get("GFSO_NO_RECONCILE")
+    if not os.environ.get("GFSO_RECONCILE"):
+        os.environ["GFSO_NO_RECONCILE"] = "1"
+    yield
+    if prior is None:
+        os.environ.pop("GFSO_NO_RECONCILE", None)
+    else:
+        os.environ["GFSO_NO_RECONCILE"] = prior
+
+
+@pytest.fixture
+def reconciling(monkeypatch):
+    """For the tests whose SUBJECT is the reconciler. Everything else stays behind the default."""
+    monkeypatch.delenv("GFSO_NO_RECONCILE", raising=False)
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _l2_gate_off():
     prior = os.environ.get("GFSO_L2_GATE")
     os.environ["GFSO_L2_GATE"] = "0"

@@ -14,22 +14,24 @@ because a setup that cannot say what it achieved is the same silence one layer u
 """
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
 import sysconfig
+import webbrowser
 from pathlib import Path
 
 from gfso import __version__
+from gfso import serverctl
 from gfso import config as _config
 from gfso.config import db_path as _config_db_path
 from gfso.config import LOOPBACK as _LOOPBACK
 
 
 def _address() -> tuple[str, int]:
-    from gfso import serverctl
     return serverctl.BASE, serverctl.PORT
 
 
@@ -41,7 +43,6 @@ def port_state() -> tuple[str, str]:
     started — measured: 114 seconds of silence and then a success line quoting a code fingerprint
     for a process that does not exist.
     """
-    from gfso import serverctl
     base, port = _address()
     if not serverctl.port_open(_LOOPBACK, port, timeout=1.0):
         return "free", f"nothing is listening on :{port}"
@@ -76,6 +77,8 @@ def _port_holder(port: int) -> str:
                                  errors="replace", timeout=10).stdout.split()
             if pid:
                 return f"pid {pid[0]}"
+    # who holds the port is a DIAGNOSTIC FIELD — no tasklist/lsof, or one that refuses, gives "pid
+    # unknown" below; it must not stop the report the user ran this for
     except Exception:
         pass
     return "pid unknown"
@@ -149,13 +152,10 @@ def _database_path() -> str:
     while the server died on the real one. A diagnostic that composes its own answer is the class
     this module exists to close.
     """
-    import os
-    from gfso.runtime import data_dir
     return str(_config_db_path())
 
 
 def _home_report() -> tuple[bool, str, Path]:
-    from gfso import serverctl
     home = serverctl.home()
     why = ("GFSO_HOME" if os.environ.get("GFSO_HOME") else
            "a source checkout — state stays in the tree" if (home / "pyproject.toml").exists() else
@@ -197,13 +197,43 @@ def _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg
         print(f"  {key.ljust(width)}  {value}")
 
 
+def _live_server_report(serverctl, home) -> tuple[dict, list[str], list[str]]:
+    """What the LIVE server is, when it is not what this installation would start.
+
+    Not the same question as "what would this process do": a server started from a different
+    installation serves a different database, and a diagnostic that prints its own paths as if they
+    were the server's asserts a lie with a straight face. Returns (runtime, the notes, the drift line).
+    """
+    live = serverctl.runtime() or {}
+    notes: list[str] = []
+    if not live:
+        return live, notes, []
+    if live.get("version") and live["version"] != __version__:
+        notes.append(f"it is version {live['version']}, this is {__version__}")
+    if live.get("home") and Path(live["home"]) != home:
+        notes.append(f"its state home is {live['home']}, not this one")
+    if live.get("code_version") and live["code_version"] != serverctl.source_fingerprint():
+        notes.append("it is running older code than is installed — `gfso up` reconciles it")
+    if live.get("with_mcp") is False:
+        notes.append("it has NO agent door mounted — agent sessions will not reach it")
+    if not notes:
+        return live, notes, []
+    # DRIFT IS NOT A BLOCK. A server running older code answers every verb — the product works — and
+    # calling that "blocking" made a first-time user believe nothing would work and reach for
+    # `gfso up`, which restarts a server that may be carrying someone else's live runs (measured
+    # 2026-08-21: "I was wrong — everything worked"). What STOPS the product and what is merely out
+    # of date are two different lines.
+    return live, notes, ["the running server is not this installation (" + "; ".join(notes)
+                         + "). Everything still works; `gfso up` reconciles it, and refuses while "
+                           "another session's run is in flight"]
+
+
 def doctor() -> int:
     """Print the state of this installation; exit non-zero if something blocks work."""
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
-        pass
-    from gfso import serverctl
+        pass  # a non-console host has nothing to reconfigure — the report below prints either way
 
     blocking: list[str] = []
     drift: list[str] = []      # true, and in nobody's way
@@ -224,29 +254,8 @@ def doctor() -> int:
     if not script.exists():
         blocking.append("the gfso executable is not where this installation says it is")
 
-    # What the LIVE server is doing, which is not the same question as what this process would do.
-    # A server started from a different installation serves a different database, and a diagnostic
-    # that prints its own paths as if they were the server's asserts a lie with a straight face.
-    live = serverctl.runtime() or {}
-    live_notes = []
-    if live:
-        if live.get("version") and live["version"] != __version__:
-            live_notes.append(f"it is version {live['version']}, this is {__version__}")
-        if live.get("home") and Path(live["home"]) != home:
-            live_notes.append(f"its state home is {live['home']}, not this one")
-        if live.get("code_version") and live["code_version"] != serverctl.source_fingerprint():
-            live_notes.append("it is running older code than is installed — `gfso up` reconciles it")
-        if live.get("with_mcp") is False:
-            live_notes.append("it has NO agent door mounted — agent sessions will not reach it")
-        if live_notes:
-            # DRIFT IS NOT A BLOCK. A server running older code answers every verb — the product
-            # works — and calling that "blocking" made a first-time user believe nothing would work
-            # and reach for `gfso up`, which restarts a server that may be carrying someone else's
-            # live runs (measured 2026-08-21: "I was wrong — everything worked"). What STOPS the
-            # product and what is merely out of date are two different lines.
-            drift.append("the running server is not this installation (" + "; ".join(live_notes)
-                         + "). Everything still works; `gfso up` reconciles it, and refuses while "
-                           "another session's run is in flight")
+    live, live_notes, live_drift = _live_server_report(serverctl, home)
+    drift += live_drift
 
     _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg_line,
                   live_notes, live, has_claude, home, script)
@@ -282,7 +291,6 @@ def desktop_entry() -> dict:
     ours. Built as a dict and rendered by a JSON encoder — interpolated by hand, a Windows path is
     not JSON, and the block offered for pasting could not be parsed by the application it was for.
     """
-    from gfso import serverctl
     env = {"GFSO_HOME": str(serverctl.home())}
     if os.environ.get("GFSO_SHARED_URL"):
         # Desktop inherits no shell environment, so an address that is not the default has to be
@@ -320,7 +328,6 @@ def install_desktop() -> str:
     touched, and the previous file is kept beside it as `.gfso-backup`. Claude Desktop reads the
     file at start, so it has to be restarted afterwards.
     """
-    import json
     base = desktop_config_path()
     if base is None:
         return "Claude Desktop does not appear to be installed for this user — nothing written."
@@ -353,7 +360,7 @@ def setup(desktop: bool = False) -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
-        pass
+        pass  # as in `doctor`: nothing to reconfigure is not a failed setup
 
     port, port_line = port_state()
     if port == "foreign":                      # refuse rather than spend two minutes proving it
@@ -390,8 +397,6 @@ def setup(desktop: bool = False) -> int:
 
     # Claude Desktop is a separate application with a configuration file of its own, so it is
     # written ONLY when named: `--desktop`. Otherwise the block is printed and the user decides.
-    import json
-    from gfso import serverctl
     if desktop:
         print("\n" + install_desktop())
     elif desktop_config_path() is not None:
@@ -399,11 +404,15 @@ def setup(desktop: bool = False) -> int:
               "\nclaude_desktop_config.json (keeping a backup), or paste it yourself:")
         print(json.dumps({"mcpServers": {"gfso": desktop_entry()}}, indent=2))
 
+    # LEFT: `gfso.mcp.connect` imports the third-party `mcp` SDK at module level, and doctor is
+    # the command that must still run on an installation where that dependency is missing.
     from gfso.mcp.connect import ensure_correct
     ensure_correct()
     print(f"\nThe UI is at {serverctl.BASE} — the same graphs, whichever door you came in by.")
     try:
         webbrowser_open(serverctl.BASE)
+    # the UI address is printed above; a box with no browser to open is a missing convenience, not a
+    # broken install
     except Exception:
         pass
     print()
@@ -411,5 +420,5 @@ def setup(desktop: bool = False) -> int:
 
 
 def webbrowser_open(url: str) -> None:
-    import webbrowser
+    """Open the UI in the machine's browser, if this machine has one to open."""
     webbrowser.open(url)

@@ -33,6 +33,7 @@ class GenericLLM(LLMProviderPort):
         self.calls: list[dict] = []   # same stats shape as the headless adapter
 
     def tag_last(self, stage: str) -> None:
+        """Label the last call with the stage that made it — the provenance a cost report reads."""
         if self.calls:
             self.calls[-1]["stage"] = stage
 

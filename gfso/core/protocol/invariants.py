@@ -16,10 +16,33 @@ from gfso.core.types import SignalData, Signal, Verdict
 
 
 def validate_fail_has_criteria(signal_data: SignalData) -> bool:
-    """Invariant 3: FAIL must specify failed criteria."""
+    """Invariant 3, the arity half: FAIL must specify failed criteria.
+
+    `fail_names_this_contract` is the other half. They are separate because a caller that named
+    nothing and a caller that named the wrong thing need different sentences.
+    """
     if signal_data.signal != Signal.FAIL:
         return True
     return len(signal_data.failed_criteria) > 0
+
+
+def fail_names_this_contract(failed_criteria: Sequence[str],
+                             criteria: Sequence[str]) -> list[str]:
+    """The names in a FAIL payload that are not criteria of this node.
+
+    Inv-3 was `len(failed_criteria) > 0` and nothing else, so ANY string satisfied it: a FAIL naming
+    `"the tests"` or a typo was admitted, sent the node to REWORKING, and burnt one of its bounded
+    iterations (§14.3) against an obligation that does not exist — while the executor read a list it
+    could not act on. The identical rule is already binding one file over for the machine
+    validator's report ("'X' is not a criterion of this node — the contract's criteria are the
+    entire obligation"), so this was one rule enforced for the instrument and advisory for the
+    person: the class this codebase keeps finding in itself.
+
+    Empty when the payload is clean, so an absent contract (no criteria known) refuses nothing here
+    — that is the empty-criteria rule's job, and it owns it at the record.
+    """
+    known = {str(c) for c in criteria}
+    return [n for n in (str(f) for f in failed_criteria) if n not in known] if known else []
 
 
 def verdict_report_defects(criteria: Sequence[str], verdict: str,
@@ -121,6 +144,65 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
     return defects
 
 
+def probes_that_expected_nothing(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
+    """{criterion: commands} whose probe was DISCARDED because its `expect` was empty.
+
+    The discard is right: a command that prints nothing cannot tell "there are no matches" from
+    "the command never ran", so a probe expecting no output proves nothing. But from the caller's
+    side that is invisible — the report HAS a probe for the behaviour, labelled and run, and the
+    refusal said "unobserved", which reads as "you wrote no probe". Three honest reports in a row
+    were sent back over it at a paid round each, and the same instrument then passed the identical
+    check written to print something (MCP door, wave 23, 2026-09-03). The rule keeps its teeth; what
+    it now does is say WHICH of the two gaps a report has, because they need opposite repairs.
+    """
+    out: dict[str, list[str]] = {}
+    for e in per_criterion or ():
+        raw = e.get("probe")
+        probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
+                  else [raw] if isinstance(raw, Mapping) else [])
+        empty = [str(p.get("command", "")).strip() for p in probes
+                 if str(p.get("command", "")).strip() and not str(p.get("expect", "")).strip()]
+        if empty:
+            out[str(e.get("criterion"))] = empty
+    return out
+
+
+def unrun_probes(per_criterion: Sequence[Mapping], tools_used: Mapping | None) -> list[str]:
+    """PASSING criteria whose probe names a command, in a run whose ledger shows no shell at all.
+
+    The ledger is written beside every verdict (`tools_used`, from the transport's own event stream)
+    and the record has said since it was added that "a FAIL whose evidence cites runs while `Bash` is
+    absent is refuted structurally, without parsing a word of its prose". That sentence described
+    something nothing did: the field had exactly one reader in the whole tree — a test asserting the
+    contradiction is STORED. A promise with no mechanism is the shape this project keeps finding in
+    itself, and a test that pins the false belief is part of the defect, not a check on it.
+
+    Two guards, both load-bearing:
+
+    • ONLY A PASS. A rule against false passes that suppresses a true NEGATIVE is worse than the hole
+      it guards — this repository has paid for that once already (2026-08-21: a correct FAIL over
+      garbage work was thrown away and the work went back looking accepted). A refutation is a
+      decision; it is left alone.
+    • ONLY WHEN THE LEDGER IS KNOWN. An EMPTY ledger is ⊥ about the ledger, not evidence that nothing
+      ran: transports that do not report tool events would otherwise refute every verdict they carry.
+      ⊥ ≠ 0 (§11.2) applies to the instrument's own instruments too.
+    """
+    if not isinstance(tools_used, Mapping) or not tools_used:
+        return []
+    if any(str(k).split("(")[0].strip() == "Bash" for k in tools_used):
+        return []
+    out: list[str] = []
+    for e in per_criterion or ():
+        if e.get("verdict") != "pass":
+            continue
+        raw = e.get("probe")
+        probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
+                  else [raw] if isinstance(raw, Mapping) else [])
+        if any(str(p.get("command", "")).strip() for p in probes):
+            out.append(str(e.get("criterion")))
+    return out
+
+
 def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
     """Criteria whose named behaviours outnumber their probes → {criterion: untested behaviours}.
 
@@ -176,6 +258,18 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
             def _words(s: str) -> set:
                 return {w for w in re.findall(r"[a-z0-9_]+", s.lower()) if w not in _NOISE}
 
+            # …AND THE OVERLAP IS MEASURED AGAINST THE SHORTER SIDE, not always against the
+            # behaviour. A behaviour that carries a literal — an absolute path, a command, a number
+            # — has a long word set, so a label that names the same fact in ordinary words scores
+            # against a denominator inflated by the literal and is refused. Measured on the HTTP
+            # door (wave 27, 2026-09-06): behaviour "ratelimit.py exists at exactly
+            # C:/…/gfso-wave27/http/ratelimit.py" against the probe label "ratelimit.py exists at
+            # exactly the target path" — the SAME fact, the probe present and run, four words shared
+            # out of six on the label and thirteen on the behaviour. The report was refused as
+            # "names behaviours it never observed", which was false about it, and the caller paid a
+            # wasted run plus a three-times-costlier retry.
+            # The floor keeps the loosened arm honest: a label of one or two words would otherwise
+            # match anything, so it must carry at least three content words to be judged this way.
             def _covered(b: str) -> bool:
                 bl = b.strip().lower()
                 if any(bl in c or c in bl for c in claimed):
@@ -183,7 +277,16 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
                 bw = _words(bl)
                 if len(bw) < 2:              # too little content to judge overlap on
                     return False
-                return any(len(bw & _words(c)) / len(bw) >= 0.6 for c in claimed)
+                for c in claimed:
+                    cw = _words(c)
+                    if not cw:
+                        continue
+                    shared = len(bw & cw)
+                    if shared / len(bw) >= 0.6:
+                        return True
+                    if len(cw) >= 3 and shared / len(cw) >= 0.6:
+                        return True
+                return False
 
             if missing := [b for b in behaviours if not _covered(b)]:
                 out[str(e.get("criterion"))] = missing
@@ -192,4 +295,93 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
         # is the safe one — the case it was built for is a criterion of three behaviours probed once.
         if len(good) < len(behaviours):
             out[str(e.get("criterion"))] = behaviours[len(good):]
+    return out
+
+
+PURE_ASSENT = frozenset("""
+ok okay k fine good great yes yep yeah y true done complete completed pass passed passes passing
+correct right works working worked verified checked confirmed confirm reviewed approved
+looksgood looksright looksgreen looksfine seemsright seemsfine seemsgood allgood alldone
+nochange nochanges na n/a - -- ... . !
+nah nope no not wrong disagree bogus spurious irrelevant whatever
+entailment entailed entails hold holds held does do did still indeed obviously clearly actually
+simply just applicable applies apply applied incorrect invalid mistaken misunderstood misreading
+finding findings claim point objection here there case it this that they them so and but
+the a an of to in on at is are was were be been am as by or if then than with without
+this that it its it's is are was were be i we trust me us just still already anyway
+correctly properly successfully expected fine's fully completely entirely perfectly nicely well
+everything all both each every any none sure absolutely definitely totally obviously clearly
+""".split())
+
+
+def is_pure_assent(text: str) -> bool:
+    """True when an observation records no observation — only another way of saying "pass".
+
+    Compared on letters alone, so "Looks good!", "LGTM.", "ok :)" and "all good" are one answer.
+    A real observation names a command, a file, a number or an output, and cannot survive this.
+
+    THE LIMIT, stated rather than papered over. This is a floor on ASSERTION, not a test for
+    EVIDENCE: it refuses text that says "it passed" in other words, and it cannot refuse text that
+    says something false. "dave says it works" passes, and so does any invented sentence naming a
+    command — because separating a short true observation from a short false one means judging
+    content, and no decidable rule does that.
+
+    A tester put it precisely (MCP door, 2026-09-02): the check is keyed on whether the text asserts
+    rather than on whether it names a command, a file or a number — which is what its own refusal
+    message asks for. That gap is real and is not closed here, because the positive form would refuse
+    honest observations ("no output, exit 0" names nothing but is a true report of a run). What is
+    closed is the case where nothing was written down; what remains is a person choosing to write a
+    false sentence, which the record then carries under their name (§14.5).
+    """
+    words = [w.strip(".-/") for w in "".join(ch if ch.isalnum() or ch in "/-. " else " "
+                                              for ch in str(text).lower()).split()]
+    words = [w for w in words if w]
+    if not words:
+        return True
+    # …AND LENGTH IS NOT WHAT SEPARATES A REASON FROM A RESTATEMENT. This returned False for
+    # anything over six words, so the restatement the refusal message names — "the entailment does
+    # hold" — sailed through, as did "this finding does not apply here" and a paragraph of Lorem
+    # ipsum. Three independent doors bisected it and all three landed on the same place: `"no"` was
+    # refused and `"xy"` accepted, both two characters, because the rule asked whether every WORD is
+    # in a list and length only decided whether it bothered to ask (waves 23–25).
+    # What replaces it is the same question over the whole text: a sentence built ENTIRELY out of
+    # the vocabulary of assent, negation and restatement says nothing about the plan, at any length.
+    # An honest short observation survives it — "no output, exit 0" carries `output` and `exit`,
+    # which are not in that vocabulary, and that is exactly the case the strict form must not break.
+    joined = "".join(words)
+    return joined in PURE_ASSENT or all(w in PURE_ASSENT or w == "lgtm" for w in words)
+
+
+def content_words(text: str) -> set:
+    """The words in `text` that are neither assent, negation, nor a restatement of the conclusion.
+
+    The floor `is_pure_assent` cannot supply: that rule asks whether EVERY word is vocabulary, and
+    has nothing to say about two characters of noise. Three doors bisected the pair — `"no"` refused,
+    `"xy"` accepted, both two characters — and one of them discharged thirteen findings with about
+    sixty characters of `"Blue kettle."` and `"zz"` (waves 23-25). Callers set their own floor on the
+    size of this set; three is the number measured to keep honest work passing.
+    """
+    return {w for w in ("".join(ch if ch.isalnum() or ch in "/-._ " else " "
+                                for ch in str(text).lower()).split())
+            if w.strip("._-/") and w.strip("._-/") not in PURE_ASSENT}
+
+
+def probe_labels(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
+    """Per criterion, the behaviour LABELS its probes carried — what a coverage miss was sought in.
+
+    "It names behaviours it never observed" is the right sentence when a probe is absent and the
+    wrong one when a probe is present under another wording, and the reader could not tell which
+    they had: an integrator lost a run and paid for a three-times-costlier retry over a paraphrase
+    (HTTP door, wave 27, 2026-09-06 — "the refusal text is factually wrong about this report").
+    So the demotion says what it compared against, and a wording gap is visible as one.
+    """
+    out: dict[str, list[str]] = {}
+    for e in per_criterion or ():
+        raw = e.get("probe")
+        probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
+                  else [raw] if isinstance(raw, Mapping) else [])
+        labels = sorted({str(p.get("behaviour", "")).strip() for p in probes
+                         if str(p.get("behaviour", "")).strip()})
+        if labels:
+            out[str(e.get("criterion"))] = labels
     return out

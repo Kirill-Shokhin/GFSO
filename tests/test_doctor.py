@@ -5,17 +5,21 @@ correct, and this exists to be BELIEVED. A doctor that prints a path the live se
 or a setup that writes a Claude Desktop entry naming an executable that does not exist, is worse
 than no diagnostic at all — it ends the search that would have found the real problem.
 """
+import inspect
 import json
 import pathlib
+import sqlite3
 import sys
+import sysconfig
 
 import pytest
 
-from gfso import serverctl
-from gfso.mcp import connect
-
 from gfso import __version__
 from gfso import doctor as D
+from gfso import serverctl
+from gfso.adapters.storage.sqlite import SqliteStorage
+from gfso.mcp import connect
+from tests import test_distribution as TD
 
 
 def test_the_console_script_it_names_is_the_one_that_exists():
@@ -26,8 +30,6 @@ def test_the_console_script_it_names_is_the_one_that_exists():
     does not exist, and Claude Desktop, handed it, showed a server that failed to start with no
     diagnosis. The test asserts existence, because the shape of the path is what looked right.
     """
-    import sysconfig
-
     script = D.console_script()
     assert script.is_absolute()
     assert script.exists(), f"{script} does not exist — a Desktop entry naming it would not start"
@@ -50,8 +52,6 @@ def test_port_state_calls_a_closed_port_free_and_never_guesses(monkeypatch):
     """`free` and `foreign` are different facts, and the launcher used to conflate both with
     `gfso`. Driven here through a port nothing serves; the foreign branch is covered where its fix
     lives, in tests/test_ports_runtime.py."""
-    from gfso import serverctl
-
     monkeypatch.setattr(serverctl, "PORT", 1)                 # nothing listens on :1
     monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: None)
     state, detail = D.port_state()
@@ -61,10 +61,6 @@ def test_port_state_calls_a_closed_port_free_and_never_guesses(monkeypatch):
 def test_assets_the_doctor_checks_are_the_assets_the_packaging_test_checks():
     """Two hand-maintained lists of the same eleven files is one list too many: the day they differ,
     one of them is wrong and nothing says which."""
-    import inspect
-
-    from tests import test_distribution as TD
-
     ok, line = D._assets_ok()
     assert ok, line
     src = inspect.getsource(D._assets_ok)
@@ -86,7 +82,6 @@ def test_doctor_runs_and_reports_this_installation(tmp_path, monkeypatch, capsys
 
 
 def test_doctor_refuses_to_call_a_foreign_holder_a_server(monkeypatch, capsys):
-    from gfso import serverctl
     monkeypatch.setattr(D, "port_state", lambda: ("foreign", ":8000 is held by another process"))
     assert D.doctor() == 1                            # a blocked installation exits non-zero
     assert "blocking" in capsys.readouterr().out
@@ -103,12 +98,6 @@ def test_setup_refuses_a_foreign_holder_instead_of_waiting_it_out(monkeypatch, c
 def test_a_database_from_a_newer_gfso_is_refused_by_name(tmp_path):
     """The silent direction of an upgrade. A newer schema used to surface as a KeyError deep inside
     a read — a blank UI — rather than as a sentence naming the cause."""
-    import sqlite3
-
-    import pytest
-
-    from gfso.adapters.storage.sqlite import SqliteStorage
-
     db = tmp_path / "future.db"
     conn = sqlite3.connect(db)
     conn.execute(f"PRAGMA user_version = {SqliteStorage.SCHEMA_VERSION + 1}")
@@ -130,7 +119,7 @@ def test_the_core_wheel_builder_still_finds_the_version():
     core wheel could not be built at all."""
     sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "packaging"))
     try:
-        import build_core
+        import build_core          # late by necessity: `packaging/` is on sys.path only from the line above
         assert build_core._main_version() == __version__
     finally:
         sys.path.pop(0)

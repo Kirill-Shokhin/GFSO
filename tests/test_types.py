@@ -1,4 +1,6 @@
 """Tests for types/ module."""
+import pytest
+
 from gfso.core.types import (
     State, Signal, DoneReason, Verdict, FM, AutonomyLevel, MutationType,
     TERMINAL_STATES, NON_TERMINAL_STATES,
@@ -44,21 +46,14 @@ def test_task_defaults():
 
 def test_spec_frozen():
     spec = Spec("test", (Criteria("c1", "desc"),), ("risk1",))
-    # frozen dataclass — should not be mutable
-    try:
+    with pytest.raises(AttributeError):
         spec.description = "changed"
-        assert False, "should be frozen"
-    except AttributeError:
-        pass
 
 
 def test_effects_frozen():
     mg = MutateGraph(TaskId("t1"), MutationType.SET_STATE, new_state=State.OFFERED)
-    try:
+    with pytest.raises(AttributeError):
         mg.task_id = TaskId("t2")
-        assert False, "should be frozen"
-    except AttributeError:
-        pass
 
 
 def test_guard_context():

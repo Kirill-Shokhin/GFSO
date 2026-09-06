@@ -1,3 +1,9 @@
+"""The closed vocabularies: states, signals, verdicts, failure modes, actions, stages.
+
+Closed on purpose. A word that can be spelled two ways is how one rule becomes two rules that
+disagree — this package holds each of them exactly once, and the canon's own tables are checked
+against these names by a test.
+"""
 from enum import Enum, StrEnum, auto
 
 
@@ -141,6 +147,11 @@ class Stage(StrEnum):
     L2_CHECKER = "l2-checker"
     L2_ATOMICITY = "l2-atomicity"
     UNDECIDED_OBLIGATIONS = "undecided-obligations"
+    # The SAME question asked at authoring time, before the plan is handed over — a different act
+    # with a different payer, so it gets a different name. It shared the tag above until 2026-09-02,
+    # which made the authoring pass unmeasurable: it was justified as the most expensive open item
+    # and its cost was indistinguishable in the ledger from the gate's own check.
+    AUTHORING_OBLIGATIONS = "authoring-obligations"
     VALIDATE_RESULT = "validate_result"
     VALIDATOR = "validator"
 

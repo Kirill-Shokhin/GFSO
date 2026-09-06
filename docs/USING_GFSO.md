@@ -81,11 +81,14 @@ not know simply waits for that person — which is the honest state of the graph
 Two levels, and the engine will not let a child start executing until both are clear for its
 parent's decomposition.
 
-**Level 0 — structure.** `list_holes()` returns every unmet structural check across the graph at
-once: an uncovered criterion, an orphan child, a cycle, incoherent deadlines, a missing risk
+**Level 0 — structure.** `list_holes()` answers `{holes, count}` — every unmet structural check
+across the graph at once: an uncovered criterion, an orphan child, a cycle, incoherent deadlines, a missing risk
 register. Fix them or declare them consciously, up front, rather than meeting them one rejected
 `PASS` at a time. (`get_checks(node)` is the per-node view; the UI groups the same checks by the
-failure mode each one guards.)
+failure mode each one guards.) A check answers one of four words, not two: `met`, `unmet`, `skipped`
+(it did not run — never read that as passed), and `met_vacuously` — it held over an EMPTY subject,
+such as deadline coherence on a plan with no dependency edges. True, and true of nothing; the page
+draws it `∅` rather than a tick, because a row of ticks that verified nothing is not a checked plan.
 
 **Level 2 — causality (§13.4).** `review_decomposition(node)` asks, per parent criterion, whether
 the mapped children's criteria — taken as facts about the world — actually *carry* it, and names the
@@ -103,6 +106,22 @@ dispute_finding("api", "<criterion>", "<why the entailment does hold>")
 
 The checker is an a-priori approximation, not an oracle; contact keeps the last word. What the engine
 enforces is that you *ran* it and dispositioned what it said — never that it was right.
+
+**If you have no checker.** The review needs a model — the Claude CLI on your `PATH`, signed in. With
+none, `review_decomposition` answers with no verdict, and no verdict is never read as clean: the gate
+stays shut and nothing executes. That is deliberate and it is not the only supported way to run. The
+canon's other branch (§13.5, EXPLORE) buys the plan's verification with *contact* instead of with a
+checker, and it is a deployment setting rather than a skipped step:
+
+```jsonc
+// data/serve.json — the switches the one server is raised with; then `gfso up` reconciles it
+{ "GFSO_VALIDATE_INTERNAL": "1", "GFSO_L2_GATE": "0" }
+```
+
+Under it the Syntactic level (Level 0) still gates every start, so the plan is still refused for an
+uncovered criterion, an orphan, a cycle or a missing register — what you give up is the causal
+pre-check, and you meet those gaps at the delivery instead. Choose it knowingly; the reason it is a
+switch and not a default is that an agent must never be able to reach it by skipping a step.
 `get_review(node)` is a free read: it returns the stored verdict and whether it is still fresh for
 the current shape of the decomposition.
 
@@ -154,6 +173,23 @@ window, beside the runs it is made of — and a graph worked by people has no ca
 there, which is the point: the quality metrics describe the graph, the spend describes one way of
 working it.
 
+### Who you are at each door
+
+The actor a signal is signed as is decided by the door, not guessed:
+
+* **MCP (the agent door)** pins it: everything arriving over MCP *is* the calling agent, so `source`
+  on `signal`, `agent` on the authoring verbs and `reviewer` on `record_verdict` are not in the
+  schema at all — you cannot sign as somebody else.
+* **CLI** is the unpinned door: you name yourself (`source=<your name>`), and the FSM checks that
+  name against the node's Del.
+* **HTTP** is the same as the CLI — the parameters are yours to fill, and nothing infers them for
+  you. The standing agent identity of the server is `agent` (`GET /api/runtime` says it under
+  `agent_id`), which is what `auto_decompose` assigns nodes to unless you pass `assignee`. So a
+  graph you build over HTTP and then drive as yourself needs either your own name on the nodes
+  (`create_task assignee=…`, `reassign`) or your signals sent as `agent`; the automatic paths — the
+  dispatcher running an executor, an `llm-validator` role relaying its verdict — only ever act for
+  the identities registered on the roster, never for a name you use once in a call.
+
 ## 5. The verdict is not yours to sign
 
 Validation fires at the **seams** — the root, and every node whose executor differs from its parent's
@@ -168,12 +204,35 @@ delivery.
 * With a registered `llm-validator`, that happens automatically on every delivery.
 * With people: the reviewer presses Record verdict in the UI (`record_verdict`), which is also how you
   put your OWN observation on the record when you judged by hand — one line per criterion, saying what
-  you ran and what it showed. The engine refuses a reviewer who is the node's executor, and refuses a
-  verdict with nothing observed behind it.
+  you ran and what it showed. At a seam the engine refuses a reviewer who is the node's executor, and
+  it refuses a verdict with nothing observed behind it. What it cannot check is whether the party who
+  named themselves is independent of the work, so it does not pretend to: a record made this way
+  carries `by_hand`, and `get_verdict` says it was asserted rather than produced by an instrument.
+  Observations that name no criterion of the node are kept out of the verdict and named back to you.
 
 A node whose executor is the same as its parent's is *internal* — your own private decomposition. It
 self-verifies on evidence you put in the delivery, and its guarantee is carried by the seam above it.
 Independent validation is for the seams, and the root is always one.
+
+**A green that is not green does not stay quiet.** A signature can land before the instrument's
+verdict does — you sign, and the judge that was already running reports `FAIL` a few seconds later at
+a node the protocol has closed. That verdict is refused as a signal, correctly, because the node is
+terminal; it is not discarded. `next_steps` then refuses to call the graph complete and names the node
+under `refuted_passes`; `gfso status` marks it `[X] … PASS CONTRADICTED by its own current verdict`
+instead of the tick an earned node gets; and `get_verdict` says the state and the record disagree.
+Recovery is `reopen` while the node is not consumed, and re-decomposition around it once it is.
+
+Two things follow from that, and both are deliberate. A verdict arriving after a node closed is kept
+BESIDE the one it closed on rather than replacing it (`closed_on`) — a later record is evidence about
+the same delivery, never a substitute for the one that was acted on. And a report the engine refused
+as ⊥ is named beside a completion rather than withholding it: a judge that could not decide is not a
+judge that decided against you (§11.2).
+
+**What is asked of an observation, and what is not.** A `PASS` whose text per criterion only restates
+the verdict — `"ok"`, `"looks green"` — is refused the way a `PASS` with no text at all already was;
+so is a Level-2 finding discharged with `"nah"`. This is a floor on ASSERTION, not a test of evidence.
+It cannot refuse a sentence naming a command that was never run, and it does not pretend to: at a door
+where you name yourself, the explicit record IS the guarantee (§14.5), and it carries your name.
 
 **When a criterion fails, the rework flows down, not around.** If the failed criteria are covered by
 children, the engine refuses a re-delivery over an untouched subtree: contact refuted the split, not

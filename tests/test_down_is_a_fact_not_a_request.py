@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import gfso.cli as C
 import gfso.serverctl as S
+import urllib.request as _ur
+from gfso.mcp import connect
 
 
 def test_down_waits_for_the_port_to_close(monkeypatch, capsys):
@@ -18,7 +20,6 @@ def test_down_waits_for_the_port_to_close(monkeypatch, capsys):
 
     monkeypatch.setattr(C.__dict__.get("urllib", __import__("urllib.request", fromlist=["request"])),
                         "urlopen", lambda *a, **k: _Resp(), raising=False)
-    import urllib.request as _ur
     monkeypatch.setattr(_ur, "urlopen", lambda *a, **k: _Resp())
 
     # open for the first few probes, then gone — the shape of a graceful exit
@@ -43,14 +44,14 @@ def test_a_server_that_will_not_die_is_reported(monkeypatch, capsys):
         def read(self):
             return b'{"ok": true}'
 
-    import urllib.request as _ur
     monkeypatch.setattr(_ur, "urlopen", lambda *a, **k: _Resp())
     monkeypatch.setattr(S, "port_open", lambda host="127.0.0.1", port=None, timeout=0.5: True)
     C._down()
     assert "still answering" in capsys.readouterr().out
 
 
-def test_a_server_that_died_between_the_read_and_the_decision_does_not_veto_its_replacement(monkeypatch):
+def test_a_server_that_died_between_the_read_and_the_decision_does_not_veto_its_replacement(
+        monkeypatch, reconciling):
     """The load-bearing half — and it is not in `down` at all.
 
     The reconciler reads `/api/runtime` ONCE and decides from that snapshot, so a server that was
@@ -58,7 +59,6 @@ def test_a_server_that_died_between_the_read_and_the_decision_does_not_veto_its_
     Waiting inside `down` hides the case it was measured on and leaves every other one: a crash, a
     kill, an operator closing the window between the read and the decision have the same shape.
     """
-    import gfso.mcp.connect as C
 
     reads = {"n": 0}
 
@@ -73,11 +73,11 @@ def test_a_server_that_died_between_the_read_and_the_decision_does_not_veto_its_
     monkeypatch.setattr(S, "declared", lambda *a, **k: {})
     monkeypatch.setattr(S, "drift", lambda *a, **k: ["code OLD != tree NEW"])
     monkeypatch.setattr(S, "port_open", lambda *a, **k: False)
-    monkeypatch.setattr(C, "_port_open", lambda *a, **k: False)
-    monkeypatch.setattr(C, "foreign_holder", lambda *a, **k: False)
+    monkeypatch.setattr(connect, "_port_open", lambda *a, **k: False)
+    monkeypatch.setattr(connect, "foreign_holder", lambda *a, **k: False)
     spawned: list = []
-    monkeypatch.setattr(C, "ensure_server", lambda *a, **k: spawned.append("spawn") or True)
+    monkeypatch.setattr(connect, "ensure_server", lambda *a, **k: spawned.append("spawn") or True)
 
-    out = C.ensure_correct(verbose=False)
+    out = connect.ensure_correct(verbose=False)
     assert out["action"] != "left-alone", "a departed server still vetoed the reconcile"
     assert spawned == ["spawn"], "nothing was started in its place"

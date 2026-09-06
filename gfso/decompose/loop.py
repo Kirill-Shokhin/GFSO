@@ -22,8 +22,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from gfso.adapters.llm.stats import _hint, _stat_line, _tag
 from gfso.core.types import LLMProviderPort, Stage
 from gfso.config import MODEL_DEFAULT
+from gfso.runtime import llm_factory
 
 
 def _progress(msg: str, cb=None) -> None:
@@ -36,38 +38,6 @@ def _progress(msg: str, cb=None) -> None:
             cb(msg)
         except Exception:
             pass  # progress is presentation — it must never break the pipeline
-
-
-def _tag(llm, stage: str) -> None:
-    """Label the llm's last call with its stage (duck-typed: only stat-collecting adapters have tag_last)."""
-    if hasattr(llm, "tag_last"):
-        llm.tag_last(stage)
-
-
-def _stat_line(llm) -> str:
-    """One-line cost readout of the llm's LAST call + the running total. Duck-typed on `calls`
-    holding stat DICTS (the headless adapter); anything else (fakes, API adapter) → plain 'done'."""
-    calls = getattr(llm, "calls", None)
-    if not calls or not isinstance(calls[-1], dict):
-        return "done"
-    c = calls[-1]
-    dicts = [x for x in calls if isinstance(x, dict)]
-    total = sum((x.get("output_tokens") or 0) for x in dicts)
-    retries = sum(1 for x in dicts if x.get("parse_failed"))
-    # THE WHOLE CHECK, not its last sub-call. A verb that makes several calls — the checker and its
-    # sufficiency readings — reported the LAST one, so a review costing 57 seconds and 0.18 dollars
-    # was announced as "done in 2s · 0.0k tokens": the sub-call's numbers, under-reporting the work
-    # by thirty times (measured on the human door 2026-08-22).
-    secs = sum((x.get("duration_ms") or 0) for x in dicts) / 1000
-    line = (f"done in {secs:.0f}s · {(c.get('output_tokens') or 0) / 1000:.1f}k tokens "
-            f"· Σ {total / 1000:.1f}k tokens")
-    return line + (f" · ⚠ {retries} parse-retry" if retries else "")
-
-
-def _hint(llm, stage: str) -> None:
-    """Tell the adapter which stage is about to run, so its live token ticks carry the stage name."""
-    if hasattr(llm, "stage_hint"):
-        llm.stage_hint = stage
 
 
 def _spec_line(spec: dict) -> str:
@@ -236,19 +206,13 @@ def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
     return llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
 
 
-def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
-    """Deterministic merge of a fold-patch into the carried spec: removals → updates → adds (deduped).
-    Removing a subtask cleans its mappings and seams (referential integrity by construction). Returns
-    (new spec, human-readable op summary); an empty summary ⟺ the patch changed nothing (converged)."""
-    s = {k: (list(v) if isinstance(v, list) else v) for k, v in spec.items()}
-    for key in ("subtasks", "root_criteria", "mappings", "deps", "accepted_risks", "scope"):
-        s.setdefault(key, [])
-    ops: list[str] = []
+def _apply_removals(s: dict, patch: dict, ops: list) -> None:
+    """The removal phase of a fold, in place: subtasks, root criteria, mappings, risks.
 
-    if patch.get("name") and patch["name"] != s.get("name"):
-        s["name"] = patch["name"]
-        ops.append("name")
-
+    Removals run FIRST and clean what referenced them (a removed subtask takes its mappings
+    and seams with it — referential integrity by construction). Split out because the merge
+    is three phases and only the first one is about taking things away.
+    """
     rm_ids = {str(x) for x in patch.get("remove_subtask_ids", [])} & {str(c.get("id")) for c in s["subtasks"]}
     if rm_ids:
         s["subtasks"] = [c for c in s["subtasks"] if str(c.get("id")) not in rm_ids]
@@ -277,6 +241,23 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
         if len(kept) != len(s[tgt]):
             ops.append(f"-{tgt} {len(s[tgt]) - len(kept)}")
             s[tgt] = kept
+
+
+
+def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
+    """Deterministic merge of a fold-patch into the carried spec: removals → updates → adds (deduped).
+    Removing a subtask cleans its mappings and seams (referential integrity by construction). Returns
+    (new spec, human-readable op summary); an empty summary ⟺ the patch changed nothing (converged)."""
+    s = {k: (list(v) if isinstance(v, list) else v) for k, v in spec.items()}
+    for key in ("subtasks", "root_criteria", "mappings", "deps", "accepted_risks", "scope"):
+        s.setdefault(key, [])
+    ops: list[str] = []
+
+    if patch.get("name") and patch["name"] != s.get("name"):
+        s["name"] = patch["name"]
+        ops.append("name")
+
+    _apply_removals(s, patch, ops)
 
     upd = {str(c.get("id")): c for c in patch.get("update_subtasks", [])}
     changed = [str(c.get("id")) for c in s["subtasks"] if str(c.get("id")) in upd and upd[str(c.get("id"))] != c]
@@ -338,7 +319,6 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     (runs/v2_speed/). Content quality vs the frozen judge is UNMEASURED — the author's Pareto call;
     default stays False."""
     if llm is None:
-        from gfso.runtime import llm_factory
         llm = llm_factory(model)
     if getattr(llm, "on_tick", "absent") is None:  # adapter streams live ticks and none wired yet
         llm.on_tick = lambda msg: _progress(msg, progress)

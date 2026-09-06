@@ -81,11 +81,10 @@ pipx install gfso        # or: uv tool install gfso — pip install gfso also wo
 gfso setup               # registers the agent door, brings the one server up, opens the UI
 ```
 
-<sub>**Before the first release is tagged**, `gfso` is not on PyPI yet — install from a checkout
-instead: `git clone … && cd GFSO && pip install -e .`, then the same `gfso setup`. This note comes
-out with the release.</sub>
+<sub>Working on GFSO itself, rather than with it: `git clone https://github.com/Kirill-Shokhin/GFSO
+&& cd GFSO && pip install -e .`, then the same `gfso setup`.</sub>
 
-`gfso setup` is idempotent. It registers the door with Claude Code for your user — by the console script's absolute path, so it resolves from every directory and survives your leaving a virtualenv — and `--desktop` also writes the entry into Claude Desktop's configuration, keeping a backup. When something is wrong later, `gfso doctor` says what — and its output is what a bug report should carry. From a source checkout, `pip install -e .` and the same two commands.
+`gfso setup` is idempotent. It registers the door with Claude Code for your user — by the console script's absolute path, so it resolves from every directory and survives your leaving a virtualenv — and `--desktop` also writes the entry into Claude Desktop's configuration, keeping a backup. When something is wrong later, `gfso doctor` says what — and its output is what a bug report should carry.
 
 The engine, the UI and the gate cost nothing to run: no API key, no model. The four verbs that do call one — `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, so they need no key of their own and spend the usage of whatever account that CLI is signed in to. Without it on your `PATH` they report that the provider answered nothing, and everything else still works.
 
@@ -104,7 +103,7 @@ The verifier ≠ executor gate from the opening runs in both of the system's reg
 - **Sequential** — one agent session structures a goal (`auto_decompose` runs the search↔audit method in one call), executes the frontier itself, and after each delivery gets a verdict from a fresh read-only validator that *runs* the criteria. The gate is on the node, not on the name signing it: at a seam a `PASS` needs a verdict for the delivery that stands, from the instrument or from a person recording what they observed.
 - **Delegated** — register executor and validator roles once, and assignment *is* delegation: a node assigned to a registered executor is picked up automatically, its report wrapped into the canonical signals, the validator auto-runs on delivery, and a failed criterion re-enters a bounded rework loop with the failure as feedback. Humans are never registered — a node assigned to a person simply waits for *their* signals. Mixed human/agent graphs are the normal case.
 
-The UI (shown at the top) surfaces every write live; visual design and role workflows are out of scope at this stage.
+The UI (shown at the top) surfaces every write live, and draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different greens, and the page tells them apart. Visual design beyond that is out of scope at this stage.
 
 ---
 
@@ -114,7 +113,7 @@ This is a preliminary release. The theory is complete at v4.0; the thing that wi
 
 **Theory.** Formal framework (6 theorems + 8 further results), the binary scale (sourced in A1) and the uniqueness of `AND` and the 7-mode basis (complete modulo one named covering axiom), the agent-free ontology of the five links (§4), and a falsifiability register are in place. The canon is English (v4.0); the Russian working draft it was re-authored from stays frozen as the provenance record. **v4.0 is the final statement of the theory**: what remains open in it is not unfinished work but named boundaries — results about what the axioms cannot deliver — and open problems filed as such, the two kept apart by a criterion the document states and applies entry by entry (§8). Its every load-bearing claim carries what would refute it in [`falsifiability.md`][fals]; that register, not a roadmap, is what would reopen the canon. The formal spine is a Lean 4 development on the language kernel — no mathlib, no `sorry` — that audits the axiomatic surface rather than standing in for the arguments: exactly three covering axioms carry the "no further kind" results, every other postulate's placement is disclosed, and a fail-closed CI guard rejects any axiom outside that whitelist ([`formal/README.md`][formal]). Three TLA+ models are model-checked, and of the four guards CI runs, that whitelist is one — the other three hold this README, the mirrors and the code to the canon's sections, names and counts.
 
-**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, the Level-2 review of a decomposition before code exists, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, across 829 tests (6 of them exercise embedding the core into a foreign host, against a reference host carried in the suite; 6 more build the distribution, install the wheel into a fresh environment and drive it from a directory that is not this repository).
+**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, the Level-2 review of a decomposition before code exists, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, across 1132 tests (6 of them exercise embedding the core into a foreign host, against a reference host carried in the suite; 6 more build the distribution, install the wheel into a fresh environment and drive it from a directory that is not this repository).
 
 **Empirical.**
 - **E0** — on 148 BCB-Hard tasks, explicit unit-test criteria raise Haiku 4.5's zero-shot solve rate from 29.1% to 63.5% — one attempt each, no rework loop; the spec-carrying prompt costs ×1.85 the tokens.

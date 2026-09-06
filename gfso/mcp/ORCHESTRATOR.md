@@ -109,8 +109,11 @@ moves on THEIR signals — the FSM rejects yours. Never work around that; it is 
    released it), rework it THERE — or revise its contract / remap / add a covering child — then
    re-aggregate.
    An INTERNAL node (same executor as its parent — your own private decomposition) self-verifies:
-   RUN its check yourself (for code, actually run the tests), put the evidence in the DELIVER
-   `self_validation`, and PASS it directly. Do NOT spend a `validate_result` on an internal node —
+   RUN its check yourself (for code, actually run the tests), put WHAT YOU RAN AND WHAT IT PRINTED
+   in the DELIVER's `result` — one line per criterion — put the WORD you conclude from it
+   (`"PASS"` / `"FAIL"`, nothing else) in `self_validation`, and PASS it directly. The two fields
+   are not interchangeable: `self_validation` is a verdict, `result` is the evidence for it, and a
+   report written into the verdict field is refused. Do NOT spend a `validate_result` on an internal node —
    that instrument is for the SEAM (the root and real delegation seams); an internal node's
    guarantee is already carried by the validation of the public node that encloses it (Thm 1), so a
    per-node validator there is pure overhead. Independent validation happens once PER SEAM — in a

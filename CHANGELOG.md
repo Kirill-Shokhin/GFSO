@@ -10,13 +10,9 @@ below. Nothing in this file states a measured effect of using GFSO on real work:
 would establish one (E3) is open, and what has been run so far is a calibration tier with its own
 stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earlier ones.
 
-## [Unreleased] — the first release, not yet cut
+## [0.1.0] — 2026-09-06
 
-Everything below is what `0.1.0` will carry. It stays under `Unreleased` until the tag exists,
-because the date of a release is the day it is published, not the day the work stopped — moving these
-entries into a dated section is step 1 of cutting one (`.github/workflows/release.yml`).
-
-Nothing before this was published — there was no 0.1 and no 0.2 to install — so the public line
+The first published version. Nothing before this was published — there was no 0.1 and no 0.2 to install — so the public line
 starts here, at the number that says so rather than at one implying a history that does not exist.
 Earlier work lives in the git log.
 
@@ -34,6 +30,37 @@ comments at the top of `.github/workflows/release.yml`.
   delegation seam — and at the root — until an independent verdict for the current delivery is on
   record (§14.5). `record_verdict` is the human counterpart; `validate_result` spawns a read-only
   validator that runs the criteria.
+- **A green that is not green does not stay quiet.** A node can stand at `PASS` while its own current
+  record says `FAIL` — the signature landed, and the instrument's verdict arrived seconds later at a
+  node the state machine had already closed. The engine had always detected this (it is `q_V`'s
+  numerator) and only a metric said so. Now `next_steps` refuses to answer *complete* over such a
+  node and names it under `refuted_passes`, `gfso status` renders it as `[X] … PASS CONTRADICTED by
+  its own current verdict` rather than the tick an earned node gets, and `get_verdict` carries
+  `contradicts_state`. A verdict that lands after a node closed is kept beside the one it closed on
+  (`closed_on`) instead of replacing it: a later record is evidence about the same delivery, never a
+  replacement for the one that was acted on.
+- **A verdict says which of three kinds of party produced it.** Asserted by hand, self-reported by the
+  node's own executor (§14.5 D6), or produced by a registered instrument that is not the executor —
+  three different weights of evidence, where the read used to collapse the middle into the last. The
+  dispatcher will not replay a hand-asserted verdict under an instrument's name.
+- **An observation has to observe, and a dispute has to give a reason.** A `PASS` whose per-criterion
+  text only restates the verdict (`"ok"`, `"looks green"`) is refused the way a `PASS` with no text
+  already was — over an empty conjunction of criteria too, where the rule was otherwise vacuously
+  satisfied — and a Level-2 finding cannot be discharged by `"nah"`. `get_review` now says which
+  findings were closed by argument rather than by changing the plan. The floor is on ASSERTION, not
+  on evidence: it cannot refuse a sentence that names a command nobody ran, and it says so.
+- **Every metric arrives with what it means.** `/api/metrics` and the `metrics` verb serve `means`
+  from the module that computes the formulas, so a number and its explanation cannot drift apart, and
+  they carry `false_fail_share` — the diagnostic the canon says to read beside a low `q_D`, which the
+  door had documented and silently dropped. `⊥` renders as a dash, never as a score of zero.
+- **Replacing a node's criteria says what coverage that destroyed**, and whether the loss is final —
+  a mapping to a child that has already finished cannot be re-made, because adding a coverage to a
+  terminal contract is a revision of it.
+- **The bridge survives a server restart under it.** The client's side of the stdio bridge is opened
+  once and outlives every rebuild of the HTTP leg; a call in flight when the leg breaks is answered
+  rather than left waiting, including the one whose failure discovered the break. Before this, the
+  first call after a restart sat silent until the client's own idle ceiling — thirty minutes — while
+  the server was up and serving others.
 - **Level-2 review of a decomposition (§13.4).** `review_decomposition` judges, per parent criterion,
   whether the mapped children's criteria causally carry it, and the engine will not let a child begin
   executing until the parent's review is current and its findings are dispositioned —
@@ -77,6 +104,41 @@ comments at the top of `.github/workflows/release.yml`.
   which refuses it, correctly, for having no materialization probability (§13.1).
 - **This documentation surface**: `README.md`, `docs/USING_GFSO.md`, `docs/TASK_PACKET.md`, `docs/architecture.md`,
   `gfso/examples/`, `SECURITY.md`, and this file.
+
+- **A closed node says HOW it closed, on every surface that draws it.** One record answers who
+  produced the standing verdict — an instrument, the node's own executor, or a person who named
+  themselves — whether a hand verdict displaced an instrument's opposite one, and whether the node
+  stands at `PASS` over its own current `FAIL`. It rides on the node reads and on the graph the UI
+  draws, so a contested closure is ringed, a hand-asserted one is dotted, and the header counts them
+  apart from the plain tally of finished nodes. `gfso status` reads the same field, so the marks no
+  longer disappear while a project still has work in it.
+- **A check answers four words, not two.** `met`, `unmet`, `skipped` — and `met_vacuously` for a
+  check whose subject set is empty: deadline coherence on a plan with no dependency edges is true,
+  and true of nothing. The page draws it `∅`.
+- **A wholesale contract replacement can refuse to land on a contract that moved.** `revise` and
+  `edit_criteria` take `expect_criteria` — the criterion names the caller read — and refuse, naming
+  what was added or removed since, instead of silently dropping a concurrent author's work.
+- **A self-reported `PASS` has to say what it checked.** A `DELIVER` carrying `self_validation=PASS`
+  over a report that records nothing does not become the record an internal node is judged on
+  (§14.5 D6): the floor is the one already applied to a reviewer's observations, in one place that
+  both doors read. Reporting your own failure is never gated.
+- **The plan gate stops re-litigating what a stronger plan already settled.** A criterion ruled
+  sufficient carries forward when its own text is unchanged and the children covering it have only
+  GAINED criteria — a conjunction that entailed the parent still entails it with a conjunct added
+  (§13.4 CHECK-7). Rewording or removing one re-derives it, as it must.
+- **An unobserved conjunct still cannot carry a `PASS` — but a paraphrase is not an unobserved
+  conjunct.** The link between a named behaviour and the probe that observed it is matched against
+  the shorter of the two descriptions, so a probe that ran and reported under different words is no
+  longer thrown away, and a demotion names the labels it compared.
+- **The project you chose survives a restart.** The switch is remembered, so a new server process
+  starts where the last one was pointed instead of moving every reconnecting session to `default`.
+  An explicit `GFSO_PROJECT` still wins.
+- **The web UI is a door, not a picture.** A node is linkable (`?task=<id>`); the identity the page
+  signs with survives a reload; one edit sends one revision; the Level-2 findings that block a graph
+  are rendered where the review is read, instead of a green tick counted from the wrong fields; the
+  control that repairs a plan is offered wherever the engine admits a revision; the graph is
+  refreshed one call at a time, so a live update cannot leave it half-drawn; and the canvas is
+  framed and resized around the detail panel.
 
 ### Changed
 
@@ -242,4 +304,4 @@ comments at the top of `.github/workflows/release.yml`.
 - The shipped default pointing the hidden-test validator at one experiment's oracle map. A
   registration that names no map now says so instead of silently finding nothing.
 
-[Unreleased]: https://github.com/Kirill-Shokhin/GFSO/commits/main
+[0.1.0]: https://github.com/Kirill-Shokhin/GFSO/releases/tag/v0.1.0

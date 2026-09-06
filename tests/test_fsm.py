@@ -86,7 +86,6 @@ def test_challenged_accept_challenge():
 def test_challenged_accept_challenge_with_new_spec_applies():
     """The sanctioned spec-revision channel (§14.2/§14.6): ACCEPT_CHALLENGE(new_spec) must APPLY the
     renegotiated spec (may change criteria) — emits an APPLY_SPEC mutation, not a guarded SET_STATE."""
-    from gfso.core.types import MutationType, Spec, Criteria
     new = Spec("revised", (Criteria("c2", "tighter"),))
     new_state, effects = _transition(State.CHALLENGED, Signal.ACCEPT_CHALLENGE, new_spec=new)
     assert new_state == State.OFFERED

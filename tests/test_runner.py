@@ -1,18 +1,21 @@
-"""L2 critic runner — the STRUCTURAL gate + the causal-correctness CHECKER + validate storage/dirty-flag.
+﻿"""L2 critic runner — the STRUCTURAL gate + the causal-correctness CHECKER + validate storage/dirty-flag.
 The gate blocks the checker; a clean node with no usable LLM produces NO verdict (never read as clean);
 with an LLM, ONE zero-tool call yields per-parent-criterion sufficient/insufficient/uncertain + FM-2
 conflicts; an INCOMPLETE verdict (a parent criterion unjudged) is treated as NO verdict."""
+import json
+
 import pytest
+
 from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, AcceptedRiskItem, Predictability
 from gfso.critic.runner import critique_node, review_decomposition
+from tests.support import make_engine
+from gfso import tools as T, driver, serverctl
 
 
 def _engine() -> Engine:
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     return e
 
@@ -28,8 +31,8 @@ def _decompose_clean(e: Engine):
     )
     e.wait_idle()
     e.decompose_task(TaskId("p"), [
-        (TaskId("a"), Spec("a", ()), AgentId("d1")),
-        (TaskId("b"), Spec("b", ()), AgentId("d2")),
+        (TaskId("a"), Spec("a", (Criteria("a1", "A1"),)), AgentId("d1")),
+        (TaskId("b"), Spec("b", (Criteria("b1", "B1"),)), AgentId("d2")),
     ], criterion_mappings=[CriterionMapping("c1", TaskId("a")), CriterionMapping("c2", TaskId("b"))])
     e.wait_idle()
     e.add_dependency(TaskId("a"), TaskId("b"), glue="b reads a's total")
@@ -51,7 +54,7 @@ def test_gate_blocks_on_l0l1_failure():
     # parent with a criterion but NO mapping → CHECK-1 coverage FAIL
     e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x"),)), AgentId("pm"))
     e.wait_idle()
-    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", ()), AgentId("d1"))])
+    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", (Criteria("a1", "A1"),)), AgentId("d1"))])
     e.wait_idle()
     crit = critique_node(e, TaskId("p"))
     assert not crit.gate_passed
@@ -79,7 +82,6 @@ class _CheckerLLM:
 
 
 def _verdict_json(criteria, conflicts=()):
-    import json
     return "```json\n" + json.dumps({"criteria": list(criteria), "conflicts": list(conflicts)}) + "\n```"
 
 
@@ -135,7 +137,7 @@ def test_checker_gated_by_structure():
     e = _engine()
     e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x"),)), AgentId("pm"))
     e.wait_idle()
-    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", ()), AgentId("d1"))])
+    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", (Criteria("a1", "A1"),)), AgentId("d1"))])
     e.wait_idle()
     llm = _CheckerLLM("should never be called")
     crit = critique_node(e, TaskId("p"), llm=llm)
@@ -158,7 +160,6 @@ def test_review_record_carries_provenance_and_get_review_reads_it():
     """Re-validation UX: the stored record says WHO judged (model) and WHEN (ts); get_review is the
     free read (no LLM) agents/UI consume; a shape change stales freshness but KEEPS the record
     (so a re-run has something to be compared against)."""
-    from gfso import tools as T
     e = _engine()
     _decompose_clean(e)
     llm = _CheckerLLM(_verdict_json([
@@ -179,7 +180,6 @@ def test_review_record_carries_provenance_and_get_review_reads_it():
 def test_edit_criteria_on_child_stales_parent_review():
     """The freshness contract: ANY shape change — including a CHILD's criteria edit — stales the
     parent's stored review (the checker judged a mapping that no longer exists)."""
-    from gfso import tools as T
     e = _engine()
     _decompose_clean(e)
     review_decomposition(e, TaskId("p"))
@@ -210,10 +210,6 @@ def test_gfso_run_goes_through_the_live_server_when_there_is_one(monkeypatch):
     and still wrong: a CLI write reached neither the UI, nor the dispatcher, nor the observation
     panel until something reloaded.
     """
-    import json as _json
-
-    from gfso import driver, serverctl
-
     sent = {}
 
     class _Resp:
@@ -223,7 +219,7 @@ def test_gfso_run_goes_through_the_live_server_when_there_is_one(monkeypatch):
 
     def _urlopen(req, timeout=None):
         sent["url"] = req.full_url
-        sent["body"] = _json.loads(req.data)
+        sent["body"] = json.loads(req.data)
         return _Resp()
 
     monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: {"code_version": "x"})
@@ -241,8 +237,6 @@ def test_gfso_run_goes_through_the_live_server_when_there_is_one(monkeypatch):
 
 def test_gfso_run_still_works_with_no_server(monkeypatch, tmp_path):
     """…and with nothing listening, the direct path is correct and is the only one there is."""
-    from gfso import driver, serverctl
-
     monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: None)
     monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "g.db"))
     driver.run(["create_task", "n1", '{"description": "x", "criteria": [{"name": "a", "description": "A"}]}'])

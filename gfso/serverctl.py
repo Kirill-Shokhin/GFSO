@@ -23,11 +23,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
+
+from gfso import __version__
+from gfso.config import agents_path as _roster
 from gfso.config import home as _config_home
 from gfso.config import LOOPBACK, shared_url
 
@@ -36,7 +42,6 @@ def _address() -> tuple[str, int]:
     down` and `gfso log` already read it, and `up` reading a hardcoded 8000 instead meant the one
     command whose whole job is reconciliation could reconcile a different server than the one the
     session was talking to."""
-    from urllib.parse import urlparse
     u = urlparse(shared_url())
     host, port = u.hostname or LOOPBACK, u.port or 8000
     return f"http://{host}:{port}", port
@@ -66,6 +71,7 @@ def home() -> Path:
 
 
 def declared_path() -> Path:
+    """Where the installation writes what its server should be (`data/serve.json`)."""
     return home() / "data" / "serve.json"
 
 
@@ -100,12 +106,15 @@ def source_fingerprint() -> str:
 
 
 def declared() -> dict:
+    """The declared configuration: the shipped defaults, with `data/serve.json` over them.
+
+    A fact of the INSTALLATION rather than of whoever last typed a command — which is what lets
+    `gfso up` decide whether a running server is the right one instead of merely a live one."""
     # The registry path is derived from `home()` rather than frozen at import: it must be ABSOLUTE
     # (the server is spawned detached and every reader compares the same string) and it must follow
     # the installation, not the package's own location.
     # …through the owner, not composed by hand: this spelling ignored GFSO_DATA_DIR, so a moved
     # state directory took the graphs with it and left the roster where it had been (D-1).
-    from gfso.config import agents_path as _roster
     env = dict(DEFAULTS, GFSO_AGENTS_PATH=str(_roster()))
     path = declared_path()
     if path.exists():
@@ -124,7 +133,6 @@ def port_open(host: str = LOOPBACK, port: Optional[int] = None, timeout: float =
     one while the other still opened a real socket, so the case it was written for passed only when
     an unrelated server happened to be running on the machine.
     """
-    import socket
     try:
         with socket.create_connection((host, PORT if port is None else port), timeout=timeout):
             return True
@@ -141,7 +149,6 @@ def wait_closed(timeout: float = 20.0, host: str = LOOPBACK) -> bool:
     saw a session that was leaving with it, and declined to restart. Written twice, the two waits
     would drift the way the socket probe already did once (that is why `port_open` says "THE one").
     """
-    import time
     deadline = time.monotonic() + timeout
     while port_open(host):
         if time.monotonic() >= deadline:
@@ -188,7 +195,6 @@ def runtime(timeout: float = 3.0) -> Optional[dict]:
 def drift(rt: dict, env: dict, fingerprint: str) -> list[str]:
     """Why the live server is not the declared one — empty means it is."""
     out = []
-    from gfso import __version__
     if rt.get("version") not in (None, __version__):
         out.append(f"version {rt.get('version')} != installed {__version__}")
     if rt.get("code_version") != fingerprint:
@@ -215,6 +221,8 @@ def drift(rt: dict, env: dict, fingerprint: str) -> list[str]:
 
 
 def agents_fingerprint(path: str) -> str:
+    """A stamp over the roster FILE, so a reconcile can tell "the same roster" from "a roster with
+    the same path" — a run measured against another registry is a different measurement."""
     if not path:
         return ""
     try:

@@ -1,13 +1,18 @@
 """Integration tests: full flows through Engine (L2)."""
+import pytest
+
+from gfso import tools
 from gfso.core.types import (
-    AcceptedRiskItem, Predictability,
+    AcceptedRiskItem, Predictability, DoneReason,
     State, Signal, TaskId, AgentId, SignalData,
     Spec, Criteria, Task, CriterionMapping, DepEdge,
     DispatchPayload, AgentPort, Verdict,
 )
+from gfso.core.graph.metrics import false_fail_share
+from gfso.decompose import _dep_contradictions
 from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.llm.stub import StubLLM
+from tests.support import make_engine
 
 
 class AutoAgent(AgentPort):
@@ -29,12 +34,7 @@ class AutoAgent(AgentPort):
 
 
 def _engine(agent=None, validate=False) -> Engine:
-    return Engine(
-        storage=MemoryStorage(),
-        agents=agent or AutoAgent(),
-        llm=StubLLM(),
-        validate_signals=validate,
-    )
+    return make_engine(agents=agent or AutoAgent(), llm=StubLLM(), validate_signals=validate)
 
 
 def test_revise_is_reassign_same_id_no_cascade():
@@ -42,11 +42,8 @@ def test_revise_is_reassign_same_id_no_cascade():
     no CANCELLING pass), each version appended to the log (Inv-7). The subtree is RETAINED (revision ≠
     abandonment): no cascade. Coverage staleness from a criteria change SURFACES via CHECK-1
     (surface-don't-destroy). The gate is the FSM's: ASSIGN needs the issuer role."""
-    from gfso.adapters.agents.human import HumanAgent
-    from gfso.core.types import AcceptedRiskItem
-    import pytest
     A, B = AgentId("alice"), AgentId("bob")
-    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
 
     def sp(d, *c, neg=()):
@@ -92,10 +89,8 @@ def test_revise_is_reassign_same_id_no_cascade():
 def test_rmw_preserves_name_clears_done_reason_and_map_criterion():
     """RMW re-author must carry `name` (BUG: dropped) and clear the ABANDONED tombstone flag; map_criterion
     binds an existing child to repair coverage that a decompose/re-author left dangling (the covers blocker)."""
-    from gfso.adapters.agents.human import HumanAgent
-    from gfso.core.types import AcceptedRiskItem, State, DoneReason
     A = AgentId("alice")
-    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
     eng.assign_task(TaskId("n"), Spec("desc", (Criteria("k", "keep"),), name="Human Label"), A); eng.wait_idle()
     eng.edit_accepted_risks(TaskId("n"), (AcceptedRiskItem("x"),), A); eng.wait_idle()
@@ -119,10 +114,8 @@ def test_rmw_preserves_name_clears_done_reason_and_map_criterion():
 def test_pass_requires_all_children_passed_theorem1():
     """Theorem 1 at runtime (§15.1): a decomposed parent cannot PASS until every active child has PASSed —
     enforced at the validation layer, not just advised by next_step."""
-    from gfso.adapters.agents.human import HumanAgent
-    from gfso.core.types import State
     A = AgentId("alice")
-    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
     eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g"),),
                     accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
@@ -140,7 +133,8 @@ def test_pass_requires_all_children_passed_theorem1():
     # the ROOT = the public seam "done" must cross — ITS self-PASS still requires the recorded
     # verdict (verifier ≠ executor gate fires ON the seam, not on every node).
     eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("c"), source=A)); eng.wait_idle()
-    eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("c"), source=A, result="ok",
+    eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("c"), source=A,
+                                    result="ran the child check, it printed OK",
                                     self_validation=Verdict.PASS)); eng.wait_idle()   # D6: the self-check IS its record
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
     assert eng.get_state(TaskId("c")) == State.DONE               # internal self-validation (D6)
@@ -155,10 +149,8 @@ def test_pass_requires_all_children_passed_theorem1():
 def test_upper_convenience_edit_accepted_risks_and_edit_criteria():
     """UPPER layer = RMW over REVISE: edit_accepted_risks / edit_criteria change one field, carry the rest, and
     desugar to the logged signal path (no bypass)."""
-    from gfso.adapters.agents.human import HumanAgent
-    from gfso.core.types import AcceptedRiskItem
     A = AgentId("alice")
-    eng = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
     eng.assign_task(TaskId("n"), Spec("node", (Criteria("k", "keep"),), accepted_risks=(AcceptedRiskItem("old"),),
                                       scope=("payments — deliberately out",)), A)
@@ -418,7 +410,6 @@ def test_discovered_edge_contradicting_declared_seam_surfaces_named_cycle_hole()
     assert dag and "x" in dag[0]["details"] and "y" in dag[0]["details"]
     # and the refine/repair instruments receive the DIRECTION, not just the cycle: the declared
     # seam is named as refuted by the discovered (contact) edge
-    from gfso.decompose import _dep_contradictions
     contr = _dep_contradictions(engine)
     assert len(contr) == 1 and "`x` depends on `y`" in contr[0] and "refuted" in contr[0]
     engine.stop()
@@ -464,9 +455,6 @@ def test_exhausted_rework_escalates_and_stays_a_verdict():
     node ends in an attention terminal carrying its verdict — so a Dep consumer cannot read-and-build
     on it as a DONE result (§14.3 R′), and the standing-FAIL metric populations still see it.
     """
-    from gfso.core.types import DoneReason
-    from gfso.core.graph.metrics import false_fail_share
-
     class AlwaysFailAgent(AgentPort):
         def dispatch(self, agent_id, payload):
             match payload.signal:
@@ -729,11 +717,7 @@ def test_agent_cannot_sign_the_clock():
     the executor itself walked to VALIDATING, where (VALIDATING, TIMEOUT) routes to DONE(auto_pass):
     a terminal reached around the AND gate (Thm 1), around verifier ≠ executor (§14.5) and around
     Inv-3, none of which a system signal ever meets (validation returns early for Role.SYSTEM)."""
-    import pytest
-    from gfso import tools
-    from gfso.adapters.agents.human import HumanAgent
-
-    engine = Engine(MemoryStorage(), HumanAgent(), llm=StubLLM(), validate_signals=True)
+    engine = make_engine(llm=StubLLM(), validate_signals=True)
     engine.start()
     A = AgentId("alice")
     engine.assign_task(TaskId("root"), Spec("root", (Criteria("c1", "c1"),)), A); engine.wait_idle()

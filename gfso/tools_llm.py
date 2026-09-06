@@ -1,4 +1,4 @@
-"""The LLM half of the action surface — the verbs that SPAWN model runs.
+﻿"""The LLM half of the action surface — the verbs that SPAWN model runs.
 
 Split from `gfso.tools` (the structural half, L1: core+engine only) so the structural surface
 carries zero LLM/adapter dependencies — this module is L2 and pulls decompose/critic/runtime
@@ -10,9 +10,13 @@ structural subset.
 """
 from __future__ import annotations
 
+import contextlib
+import functools
+import inspect
 import json
 import logging
 import os
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -20,8 +24,14 @@ from datetime import datetime
 from dataclasses import asdict
 from typing import Optional
 
+from gfso import runtime
+from gfso.runtime import llm_factory
 from gfso.core.types import TaskId, Signal, Stage, Verdict, passed
-from gfso.decompose.loop import _stat_line
+from gfso.critic import runner as _critic_runner
+from gfso.decompose import decompose_into
+from gfso.engine.events import emit_cb
+from gfso.engine.validation import _l0_holes, _l2_undischarged, l2_gate_on
+from gfso.adapters.llm.stats import _stat_line
 from gfso.engine import Engine
 from gfso import tools as _tools
 from gfso.tools import _agent_id
@@ -42,7 +52,6 @@ INFLIGHT: "collections.Counter[str]" = __import__("collections").Counter()
 
 
 def _inflight(name: str):
-    import contextlib
     lock = _INFLIGHT_LOCK
 
     @contextlib.contextmanager
@@ -73,6 +82,80 @@ def validate_internal_on() -> bool:
     return validate_internal()
 
 
+def _how_many_are_open(gate_passed: bool, open_findings, a_model_ran: bool) -> dict:
+    """ONE NUMBER FOR "HOW MANY ARE OPEN", and ⊥ wherever it was not measured.
+
+    The findings live in three fields — per-criterion verdicts, conflicts, undecided obligations —
+    and a round could read `undecided: 0` while the gate was still shut on the other two, so a
+    caller's own summary genuinely missed them (agent door, 2026-08-21). The gate's own list is the
+    count. Both ways it can be UNMEASURED carry a reason instead of a zero, because a number that
+    cannot tell "none" from "not measured" must not be a number: the Syntactic level gating the
+    checker out, and the checker being admitted and answering nothing.
+    """
+    if not gate_passed:
+        return {"open_count": None,
+                "open_count_note": ("not measured: the Level-2 checker did not run, because the "
+                                    "Syntactic level (§13.4) is not clean — `list_holes` names "
+                                    "those, and they are what to fix first.")}
+    if open_findings is None:
+        return {"open_count": None, "open_count_note": _nothing_was_judged(a_model_ran)}
+    return {"open_count": len(open_findings)}
+
+
+def _nothing_was_judged(a_model_ran: bool) -> str:
+    """Why the open-finding count is ⊥ when the checker was ADMITTED and still said nothing.
+
+    The branch beside this one already knows the lesson — a number that cannot tell "none" from "not
+    measured" must not be a number — and it covers only the case where the Syntactic level gated the
+    checker out. The other case is the one a fresh install lives in: the structure is clean, the
+    checker runs, and no readable verdict comes back because no model is available at all. Probed
+    2026-09-05 with the Claude CLI off the PATH: `gate_passed: true`, `open_count: 0`,
+    `execution_admitted: false`, and the engine's own refusal then said "run review_decomposition
+    first" — the verb that had just answered. Zero findings, execution refused, and the cure is the
+    thing you did: a loop with no exit named, for everyone without the CLI.
+    """
+    return ("not measured: the checker was admitted and returned no readable verdict"
+            + (" — it made NO model call, so most likely no provider is available (the Claude CLI "
+               "on PATH, signed in)" if not a_model_ran else "")
+            + ". No verdict is never read as clean (§13.4 fail-closed), so execution stays shut. Two "
+              "supported ways on: make a checker available and run this again, or take the canon's "
+              "EXPLORE branch — `GFSO_L2_GATE=0` on the server, where the plan's causal check is "
+              "bought with contact instead of with the checker (§13.5). The second is a deployment "
+              "decision, not a workaround: it is what a system with no checker honestly is.")
+
+
+def _delta_since_the_last_review(out: dict, prev_open, prev_ts) -> None:
+    """What changed since the last check of the SAME plan — and the SAME KEYS every time.
+
+    The checker is an approximation (§13.5) and may legitimately differ between runs: on a plan whose
+    criteria were byte-identical, one finding vanished and another appeared. A reader who sees which
+    findings are NEW can tell a plan that is converging from one that is being re-read.
+
+    Its own owner because the answer's shape is its own contract: `delta_note` was present on a
+    node's first review and ABSENT on the second, replaced by `compared_with`, and a client reading
+    it raised KeyError on its second call (HTTP door, wave 27, 2026-09-06). Every branch below sets
+    all four keys.
+    """
+    if prev_open is not None and out.get("gate_passed"):
+        out["new_since_last_review"] = [f for f in out["open_findings"] if f not in prev_open]
+        out["closed_since_last_review"] = [f for f in prev_open if f not in out["open_findings"]]
+        # …AND WHICH CHECK IT IS COMPARED WITH. A round that fails Level-0 records no findings, so a
+        # later round measured its closures against a round that had measured nothing — eight
+        # genuinely closed findings reported as zero closed (measured on the human door 2026-08-22).
+        out["compared_with"] = prev_ts or "the previous review"
+        out["delta_note"] = (f"compared with the review of {out['compared_with']}: "
+                             f"{len(out['new_since_last_review'])} new, "
+                             f"{len(out['closed_since_last_review'])} closed.")
+        return
+    out["new_since_last_review"] = None
+    out["closed_since_last_review"] = None
+    out["compared_with"] = None
+    out["delta_note"] = ("no earlier review to compare with — this is the first on this node."
+                         if prev_open is None else
+                         "not compared: the checker did not run this round (see `open_count_note`), "
+                         "so nothing here is new or closed.")
+
+
 def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAULT) -> dict:
     """Validate a node's decomposition: the STRUCTURAL gate (L0/L1: coverage, DAG, glue, non-redundancy —
     fails ⇒ fix those first) + the L2 CHECKER (canon §13.4 Level 2): one zero-tool call judging, per
@@ -82,18 +165,13 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
     declare ACCEPTED_RISKS. The hole-hunt («what's missing from the space») is NOT this verb — that is the
     DECOMPOSER's question: run auto_decompose (refine). Use this on externally-authored or hand-edited
     graphs; the UI's «AI review» button is this verb."""
-    from gfso.runtime import llm_factory
-    from gfso.decompose.loop import _stat_line
-    from gfso.critic.runner import review_decomposition
-    from gfso.engine.events import emit_cb
-
     _cb = emit_cb(engine, "review")
     # ONE CHECK PER VERSION OF THE PLAN. The verb spends a model run, and nothing stopped a second
     # caller (or the frontier's own directive) from starting another over the same unchanged plan —
     # which `validate_result` has refused to do for a while (measured on the human door 2026-08-22).
     _slot = engine.begin_review(TaskId(task_id))
     if _slot is None:
-        return {"task_id": task_id, "inflight": True,
+        return {"task_id": task_id, "inflight": True, "verdict": None,
                 "note": "a Level-2 check is already running over this version of the plan — "
                         "duplicate spawn suppressed; its verdict lands by itself (`get_review` "
                         "reads it when it does)."}
@@ -110,7 +188,7 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
     _prev_open = engine.stored_review_findings(TaskId(task_id))
     _prev_ts = (engine.get_critique(TaskId(task_id)) or {}).get("ts")
     try:
-        out = asdict(review_decomposition(engine, TaskId(task_id), llm=llm))
+        out = asdict(_critic_runner.review_decomposition(engine, TaskId(task_id), llm=llm))
     finally:                      # the slot is released whether the check answers or dies
         engine.end_review(_slot)
     out["stats"] = list(llm.calls)
@@ -127,7 +205,6 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
     # reader took `gate_passed: true` for "the plan is good" while the checker was saying a criterion
     # is not carried (measured 2026-08-20). The question anyone actually has is whether the children
     # may start, so the answer carries it.
-    from gfso.engine.validation import _l0_holes, _l2_undischarged, l2_gate_on
     _t = engine.get_task(TaskId(task_id))
     _open = _l2_undischarged(engine._graph, _t) if _t is not None else None
     out["execution_admitted"] = bool(
@@ -150,33 +227,8 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
     # is gated out and names nothing — and the count then read `open_count: 0` beside six hard L0
     # failures, which a reader glancing at it takes for a clean plan (measured on the human door
     # 2026-08-22). A number that cannot distinguish "none" from "unmeasured" must not be a number.
-    if not out.get("gate_passed"):
-        out["open_count"] = None
-        out["open_count_note"] = ("not measured: the Level-2 checker did not run, because the "
-                                  "Syntactic level (§13.4) is not clean — `list_holes` names those, "
-                                  "and they are what to fix first.")
-    else:
-        out["open_count"] = len(out["open_findings"])
-    # …AND WHAT CHANGED SINCE THE LAST CHECK OF THE SAME PLAN. The checker is an approximation
-    # (§13.5) and may legitimately differ between runs — measured on a plan whose criteria were
-    # byte-identical, one finding vanished and another appeared. That is not hidden: a reader who
-    # sees which findings are NEW can tell a plan that is converging from one that is being re-read.
-    if _prev_open is not None and out.get("gate_passed"):
-        out["new_since_last_review"] = [f for f in out["open_findings"] if f not in _prev_open]
-        out["closed_since_last_review"] = [f for f in _prev_open if f not in out["open_findings"]]
-        # …AND WHICH CHECK IT IS COMPARED WITH. A round that fails Level-0 records no findings, so a
-        # later round measured its closures against a round that had measured nothing — eight
-        # genuinely closed findings reported as zero closed (measured on the human door 2026-08-22).
-        # `stored_review_findings` reads the last review that actually ran; naming its timestamp is
-        # what makes the delta readable.
-        out["compared_with"] = _prev_ts or "the previous review"
-    elif _prev_open is None:
-        out["new_since_last_review"] = None
-        out["closed_since_last_review"] = None
-        out["delta_note"] = "no earlier review to compare with — this is the first on this node."
-    else:
-        out["delta_note"] = ("not compared: the checker did not run this round (see "
-                             "`open_count_note`), so nothing here is new or closed.")
+    out.update(_how_many_are_open(bool(out.get("gate_passed")), _open, bool(llm.calls)))
+    _delta_since_the_last_review(out, _prev_open, _prev_ts)
     out["what_this_means"] = (
         "the children may start" if out["execution_admitted"] else
         "the children may NOT start yet: Level-0 checks are open (`list_holes`)"
@@ -184,7 +236,14 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
         "the children may NOT start yet: no CURRENT Level-2 verdict covers this decomposition"
         if _open is None else
         "the children may NOT start yet: the Level-2 review left findings open — "
-        + ", ".join(_open) + " (fix the plan, or `dispute_finding` in writing)")
+        + ", ".join(_open) + " (fix the plan AND re-run this review — a fix retires the verdict "
+                              "rather than discharging it — or `dispute_finding` in writing)")
+    # …AND HAND BACK THE KEYS IT JUST TOLD THEM TO COPY. `dispute_finding`'s own help says the review
+    # returns the exact open strings under `dispute_keys`, and this verb answered `null` for it while
+    # naming those same strings in the sentence above (MCP door, 2026-09-02). The reader was told to
+    # copy one from a field that was empty, with the values sitting in prose a line away.
+    if _open:
+        out["dispute_keys"] = list(_open)
     # WHAT THE LINE SAYS MUST MATCH WHAT THE GATE DID. "advisory" was written when the checker only
     # advised; it now GATES, and a reader took "gaps/conflicts returned (advisory)" for something
     # they could ignore while the same call was answering `execution_admitted: false` (measured on
@@ -246,7 +305,18 @@ _VALIDATOR_SCHEMA = {
                                            "print(md.parse_blocks('a\\n\\nb'))\"`)"},
                                "expect": {"type": "string", "description":
                                           "what its output must show for this verdict to hold — a "
-                                          "substring of the real output, not a paraphrase"},
+                                          "substring of the real output, not a paraphrase. It must "
+                                          "not be EMPTY, and an absence is where that bites: a "
+                                          "command that prints nothing cannot tell 'there are no "
+                                          "matches' from 'the command never ran', so a probe "
+                                          "expecting no output proves nothing and its behaviour is "
+                                          "counted unobserved. Write the absence so it SHOWS: "
+                                          "`grep -rc configparser iniq/ | grep -v ':0' | wc -l` "
+                                          "expecting `0`, or append `; echo exit=$?` and expect the "
+                                          "code. (Three honest reports in a row were sent back over "
+                                          "exactly this, at a paid round each — the rule was right "
+                                          "and was written down nowhere the writer of the probe "
+                                          "could read it: MCP door, wave 23, 2026-09-03.)"},
                                # WHICH behaviour this command observes. Counting probes against
                                # behaviours was a proxy for coverage and wrong in both directions:
                                # one command can honestly observe two behaviours, and two commands
@@ -283,7 +353,6 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
     `criteria` names the SUBSET this run judges (all of them by default). A rich contract is judged
     in batches whose conjunction is the same verdict (§10 V = ⋀ cᵢ), because the coverage discipline
     is what one report fails when the contract is long."""
-    import os
     tid = str(task.id)
     _crits = tuple(criteria if criteria is not None else task.spec.criteria)
     crits = "\n".join(f"- **{c.name}**: {c.description}" for c in _crits) or "- (none)"
@@ -295,8 +364,28 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
             state = prod.state.name if prod else "?"
             ups.append(f"- consumes `{e.from_id}` ({name}, state {state})"
                        + (f" — glue: {e.glue}" if e.glue else ""))
+    # WHAT THE LAST ATTEMPT ON THIS DELIVERY WAS MISSING. Measured across every run this
+    # installation has recorded (2026-09-05): the judge is 56.5% of all spend — $441.77 of
+    # $782.10 over 904 calls — and 151 of its reports decided NOTHING, of which **140 named
+    # behaviours they never probed**. The rule that refuses them is load-bearing (an unobserved
+    # conjunct cannot carry a pass, §11.2) and the failure is not capability: the report was
+    # well-formed and its commands were real, it simply did not run one per behaviour it had
+    # listed. So the retry re-judged the whole node from scratch at a HIGHER tier — paying twice
+    # for a bookkeeping gap — while the one thing that would close it, the list of what went
+    # unobserved, sat in the record and reached nobody. An ordinary user had all three of their
+    # nodes refused on the first report, at a paid round each, and called the validation loop the
+    # worst part of the honest path (wave 25).
+    _gap = engine.refused_report_for_this_delivery(TaskId(tid)) or {}
+    prior = (f"\n## YOUR PREVIOUS REPORT ON THIS DELIVERY WAS REFUSED — read this first\n"
+             f"{_gap.get('defects')}\n\n"
+             f"Nothing about the work has changed since; what was missing is the EVIDENCE. "
+             f"Judge the same delivery again and give a labelled probe — a command, what its "
+             f"output must show, and the `behaviour` it observes — for every behaviour you "
+             f"name. Naming three behaviours and probing one is refused; naming one behaviour "
+             f"and probing it is not. This is attempt {int(_gap.get('refusals', 1)) + 1}.\n"
+             if _gap else "")
     negl = "\n".join(f"- {n.item}" for n in task.spec.accepted_risks)
-    return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n\n"
+    return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n{prior}\n"
             + (f"## Contract — the criteria (the ENTIRE obligation; use these EXACT names in your "
                f"report)\n" if len(_crits) == len(task.spec.criteria) else
                f"## Contract — the criteria THIS RUN JUDGES ({len(_crits)} of "
@@ -322,6 +411,24 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
 
 
 
+def _keep_a_report_that_decided_nothing(engine, task_id: str, defects: str, text: str) -> dict:
+    """Store a report that produced no verdict — on disk AND on the node — and say so to the caller.
+
+    Both places, because they answer different readers: the file is the evidence, the node's record
+    is what `get_verdict` is built from, and under delegation the tool's caller is the dispatcher,
+    which reads a verdict and nothing else. Keeping only the first is how an ordinary user came to
+    poll `get_verdict` for four minutes on a node whose judging had already died."""
+    kept = _keep_rejected_report(task_id, defects, text)
+    try:
+        engine.record_rejected_report(TaskId(task_id), defects, None)
+    except Exception:
+        log.warning(f"could not keep the unreadable report on {task_id}", exc_info=True)
+    return {"verdict": None, "report_text": text, "report_kept_at": kept,
+            "verdict_defects": defects,
+            "refusals_on_this_node":
+                int((engine.rejected_report(TaskId(task_id)) or {}).get("refusals", 1))}
+
+
 def _keep_rejected_report(task_id: str, defects: str, text: str) -> "Optional[str]":
     """Persist a report the engine refused to record as a verdict, and return its path.
 
@@ -333,7 +440,6 @@ def _keep_rejected_report(task_id: str, defects: str, text: str) -> "Optional[st
     report is, beside the state, with its path named in the log.
     """
     try:
-        from gfso import runtime
         d = runtime.data_dir() / "rejected_verdicts"
         d.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -428,10 +534,6 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     an empty room; a delivery that was never made; and no workdir at all. Returns
     `(reply_or_None, task, deliverable)` — resolving which delivery is being judged belongs
     to the same question."""
-    from gfso.runtime import llm_factory
-    from gfso.decompose.loop import _stat_line
-    from pathlib import Path
-
     task = engine.get_task(TaskId(task_id))
     if task is None:
         return {"error": f"unknown task {task_id}"}, None, None
@@ -462,7 +564,6 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     # in the engine, not the prompt (measured live: a Haiku agent ran a validator on every internal
     # child despite the protocol telling it not to — visibility ≠ enforcement). The GFSO_VALIDATE_INTERNAL
     # dial restores every-node validation for measurement runs.
-    import os
     if not validate_internal_on() and not engine._graph.is_public(task):
         return {"task_id": task_id, "state": task.state.name, "internal": True, "verdict": None,
                 "note": "internal node (same Del as its parent) — no independent validation needed "
@@ -479,11 +580,18 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     if _llm is None and (_wd is None or not _wd.is_dir()
                          or not any(q.name not in ("__pycache__", ".gfso-scratch")
                                     for q in _wd.iterdir())):
+        # …and the way OUT of the refusal depends on whether the roster was able to answer. It used
+        # to read "`list_agents` shows where this node's executor works" in both cases — advice that
+        # is a dead end for a node held by a person, and homework the server has already done for a
+        # registered one (the caller reaches here only after `_registered_workdir` came back empty).
+        _out = ("Point `workdir` at the delivery and run it again." if workdir else
+                f"{task.assignee or 'this node'} has no registered workdir (the roster was asked "
+                f"first), so name the delivery's directory yourself: "
+                f"validate_result('{task_id}', workdir='…').")
         return {"task_id": task_id, "state": task.state.name, "verdict": None,
                 "error": f"nothing to judge: the working directory {workdir!r} is empty (or absent), "
                          f"so any verdict from here would be about the DIRECTORY, not the work. "
-                         f"Point `workdir` at the delivery — `list_agents` shows where this node's "
-                         f"executor works — and run it again. This is the instrument's gap, not the "
+                         f"{_out} This is the instrument's gap, not the "
                          f"executor's: do not send the node to rework over it (§11.2, ⊥ is not a "
                          f"verdict)."}, None, None
     deliverable = deliverable or _last_deliver_result(engine, TaskId(task_id))
@@ -529,7 +637,6 @@ def _judging_place(task_id: str, workdir):
         # Keep the recent ones (a verdict's evidence is worth reading after the fact) and drop
         # the rest: one directory per validation, inside the repository being judged, otherwise
         # accumulates for the life of the project — a rework loop alone makes several.
-        import shutil
         for old_dir in sorted(root.iterdir(), key=lambda d: d.name)[:-20]:
             if old_dir.is_dir():
                 shutil.rmtree(old_dir, ignore_errors=True)
@@ -537,12 +644,18 @@ def _judging_place(task_id: str, workdir):
     # a prompt is not enforcement (the lesson this project keeps relearning), so the difference is
     # MEASURED rather than assumed. Nothing is deleted: the executor's tree is not this code's to
     # prune, and a stray named in the record is a fact its owner can act on.
-    _before = set()
+    # …AND `None` MEANS UNKNOWN, WHICH IS NOT "IT WAS EMPTY". An unreadable directory left this an
+    # empty SET, and every pre-existing file in the delivery was then named as something the judge
+    # had left behind — the exact false accusation the comparison exists to prevent, inverted.
+    # ⊥ is not zero here either (§11.2): with no pre-image there is nothing to subtract, so the
+    # honest answer about strays is silence.
+    _before = None
     if workdir:
         try:
             _before = {q.name for q in Path(workdir).iterdir()}
-        except OSError:
-            pass
+        except OSError as e:
+            log.warning(f"the delivery could not be listed before validation ({e}) — this run can "
+                        f"say NOTHING about what the judge left behind, and says nothing")
 
     return scratch, _before
 
@@ -554,7 +667,7 @@ def _strays_left_behind(engine, task_id: str, workdir, _before, out: dict, _cb) 
     the lesson this project keeps relearning — so the difference is MEASURED rather than
     assumed. Nothing is deleted: the executor's tree is not this code's to prune, and a
     stray named in the record is a fact its owner can act on."""
-    if workdir:
+    if workdir and _before is not None:
         try:
             strays = sorted({q.name for q in Path(workdir).iterdir()}
                             - _before - {".gfso-scratch"})
@@ -574,6 +687,154 @@ def _strays_left_behind(engine, task_id: str, workdir, _before, out: dict, _cb) 
                 f"validator is read-only, so these are either its own leavings or another "
                 f"node's executor working in the same directory.")
 
+
+def _registered_workdir(engine: Engine, task_id: str, validator: Optional[str]) -> Optional[str]:
+    """Where the work is, asked of the roster instead of the caller.
+
+    Both halves were measured as refusals the server could have answered itself. `validator=w-val`
+    was passed with the role registered against the delivery's directory and the run refused with
+    "the working directory None is empty" — the roster held it and nobody asked. Then the same
+    refusal met a plain `validate_result(<node>)` whose Del is a registered role, and told the caller
+    to go read `list_agents`: the answer the server was already holding, handed back as homework
+    (measured on the human door 2026-08-22 — the tester passed the directory by hand, and the
+    hand-passed argument is what then crashed). The Del is the role that DID the work, so its
+    registered workdir is the delivery's; a name the roster does not know is a person, and there the
+    refusal is the honest answer."""
+    reg = _roster()
+    task = engine.get_task(TaskId(task_id))
+    # …AND THE BOUND JUDGE IS THE THIRD PLACE TO ASK. A ROOT is normally held by the caller
+    # themselves — an unregistered id, so the first two questions come back empty — while the
+    # project's registered validator stands exactly in the delivery. The refusal then said "agent has
+    # no registered workdir (the roster was asked first)" while a judge with the right directory was
+    # in the same roster, and the same call went on to produce the verdict anyway (HTTP door,
+    # 2026-09-02: "had I trusted the error and stopped, I would have reported the run as stalled
+    # while it was in fact passing").
+    _bound = reg.validator_for(task.assignee if task else None, project=engine.project_name)
+    for who in (validator, task.assignee if task else None, _bound):
+        if who and (wd := (reg.get(str(who)) or {}).get("workdir")):
+            return wd
+    return None
+
+
+def _the_validators_answer(engine, task_id, out, parsed, recorded, _cb, llm) -> dict:
+    """Assemble what the caller reads from what was RECORDED — never from what was claimed.
+
+    The record is the verdict: the engine demotes an under-probed criterion at the record,
+    and a reply built from the report's own `verdict` field would hand back the claim the
+    engine had just refused to store. Split out because the run and the answer are two
+    things, and the second had grown to half the verb.
+    """
+    verdict = recorded.get("verdict") or parsed["verdict"]
+    failed = list(recorded.get("failed_criteria") or parsed["failed_criteria"])
+    out.update({"verdict": verdict, "per_criterion": parsed["per_criterion"],
+                "failed_criteria": failed, "seams": parsed.get("seams", ""),
+                # WHO IT WAS RECORDED UNDER, read off the record. The reply echoed the `validator`
+                # PARAMETER, so a run that named none answered `"validator": null` beside twelve
+                # per-criterion verdicts and twenty Bash calls — while the docstring says
+                # `get_verdict` names which validator judged (CLI door, wave 27, 2026-09-06).
+                "validator": recorded.get("validator"),
+                "tools_used": dict(getattr(llm, "last_tool_calls", None) or {})})
+    if failed:
+        # WHY IT FAILED, at the top of the answer. A FAIL came back as a list of criterion names
+        # and a `per_criterion` array whose reason lives under `evidence`; the first read of a
+        # refusal was "csv_parsing_robustness -> fail" and nothing else, and the person went
+        # looking through the whole object for the sentence (measured on the human door
+        # 2026-08-21). The verdict's reason is the point of reading a verdict.
+        _ev = {p.get("criterion"): p.get("evidence", "") for p in parsed["per_criterion"]
+               if p.get("criterion") in set(failed)}
+        out["why_failed"] = _ev
+    if verdict != parsed["verdict"]:
+        # Say it out loud: the difference between what a validator claimed and what its evidence
+        # earned is exactly the thing this instrument exists to surface.
+        out["verdict_demoted_from"] = parsed["verdict"]
+    # Tell the issuer the ONE signal this verdict calls for — the evidence tool never signals, and a
+    # bare verdict left agents guessing (observed live: after a FAIL an agent sent PASS from REWORKING,
+    # which the FSM refused, and it hung). The directive rides where the agent looks: this reply.
+    # …and say it against the node's CURRENT state, not against the verdict alone. A verdict can
+    # be read after the graph has already moved — the dispatcher's own validator signs on
+    # delivery, so by the time a caller asks, the node may be DONE. Measured live (2026-08-20):
+    # `validate_result` told an agent to `signal FAIL` on a node already DONE/PASS, and on
+    # another to `signal PASS`, which the FSM refused ("PASS is not valid in state DONE"). One
+    # of those obeyed would have dropped accepted work. A directive is an instruction to act,
+    # so it must be about the graph as it stands.
+    _node = engine.get_task(TaskId(task_id))
+    _state = _node.state.name if _node is not None else None
+    if _state != "VALIDATING":
+        out["next"] = (
+            f"Nothing to sign: '{task_id}' is {_state}, not VALIDATING — this verdict was read "
+            f"after the graph moved on (a registered validator signs on delivery, so the node "
+            f"may already be settled). Read it as a RECORD, not as an instruction; check the "
+            f"node before acting.")
+    elif verdict == Verdict.PASS:
+        out["next"] = (f"Now sign it: signal('{task_id}','PASS'). This recorded verdict is what "
+                       f"unlocks your PASS at the seam (verifier ≠ executor, §14.5).")
+    else:
+        out["next"] = (f"Now sign it: signal('{task_id}','FAIL', failed_criteria={failed}). "
+                       f"The node returns to REWORKING; then fix EXACTLY those criteria and DELIVER again "
+                       f"(do NOT send PASS from REWORKING — re-deliver, and the next validation decides).")
+    _cb(f"{task_id}: validator verdict {verdict}"
+        + (" (demoted from PASS — a criterion's behaviours were never observed)"
+           if verdict != parsed["verdict"] else "")
+        + (f" — failed: {', '.join(failed)}" if failed else "")
+        + f" · {_stat_line(llm)}")
+    return out
+
+
+def _ready_to_judge(engine, task_id, deliverable, workdir, validator, model, _llm, _progress):
+    """Everything that can refuse BEFORE a judge is paid for, and the claim on the slot.
+
+    Returns `(refusal, ctx)`: a refusal dict and None, or None and everything the run needs.
+    Separate because `validate_result` answers two questions — may this run at all, and what did
+    the judge say — and the first had grown into the body of the second.
+    """
+    workdir = workdir or _registered_workdir(engine, task_id, validator)
+    _stop, task, deliverable = _refuse_validation(engine, task_id, deliverable, workdir, _llm)
+    if _stop is not None:
+        return _stop, None
+    _cb = emit_cb(engine, "validate_result", _progress)
+    llm = _llm or llm_factory(model)
+    if not hasattr(llm, "run_agent"):
+        return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
+                         "GFSO_PROVIDER=generic covers zero-tool one-shots only"}, None
+    generation = engine.generation_of(TaskId(task_id))   # the delivery THIS run reads (§14.5 gate)
+    inflight_key = engine.begin_validation(TaskId(task_id))
+    if inflight_key is None:
+        # `verdict: None` EXPLICITLY, and said. The reply had no `verdict` key at all, so a caller
+        # doing the obvious `.get("verdict")` got exactly the value this verb's own help says must
+        # never be read as a pass — indistinguishable from "the report did not parse" (CLI door,
+        # 2026-09-02). Suppressing the duplicate spawn is right; answering in a shape that reads as
+        # ⊥ to a naive caller is not.
+        return {"task_id": task_id, "state": task.state.name, "inflight": True, "verdict": None,
+                "note": "a validator run is already in flight for this node generation "
+                        "(node, iteration, reopens) — duplicate spawn suppressed. This is NOT a "
+                        "verdict and not a failure to produce one: the running judge's verdict "
+                        "lands by itself, and `get_verdict` reads it when it does. "
+                        # …AND THE ARGUMENTS OF THIS CALL WENT NOWHERE, WHICH IS THE HALF THAT
+                        # MATTERED. A caller escalating the tier reads "suppressed", waits, and gets
+                        # a verdict from whatever was already running — so a `model` they chose
+                        # deliberately silently did not apply, and nothing in the reply said which
+                        # model would actually answer. Measured on the MCP door (wave 23,
+                        # 2026-09-03): "I could never tell whether my escalation had taken effect."
+                        "NOTE — this call started NOTHING, so any `model` or `workdir` you passed "
+                        "was not applied: the verdict that lands is the running judge's, on its own "
+                        "settings. "
+                        # …AND THE ADVICE THAT FOLLOWED WAS WRONG IN PRACTICE, which is worse than
+                        # none. It said "wait for that verdict — it frees the slot — then re-run
+                        # with the model you want", and a stranger tried exactly that twice: where
+                        # an instrument is BOUND to the node, the dispatcher takes the freed slot
+                        # again immediately, so a hand escalation can never win it (MCP door, wave
+                        # 24, 2026-09-04). The bound instrument does its own escalating — its retry
+                        # runs on GFSO_VALIDATOR_RETRY_MODEL — and what a person actually has is the
+                        # other door.
+                        "If an instrument is BOUND to this node it will take the slot again as soon "
+                        "as it frees, so a hand-run escalation cannot win the race: the retry it "
+                        "does itself is the escalation (`GFSO_VALIDATOR_RETRY_MODEL`), and after "
+                        "two reports it cannot decide, it parks the node and says so. Judging it "
+                        "yourself — `record_verdict` with what you observed — is the door that does "
+                        "not queue behind it."}, None
+    return None, (task, deliverable, llm, _cb, generation, inflight_key, workdir)
+
+
 def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = None,
                   model: str = MODEL_DEFAULT, workdir: Optional[str] = None,
                   validator: Optional[str] = None,
@@ -591,30 +852,14 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
     signal — so a node can reach DONE with no signal from you. That is the registered instrument
     acting, not this verb; `get_verdict` names which validator judged. (Said here because an agent
     read the old sentence and waited to be asked for a PASS that was never coming.) `deliverable` defaults to the node's last DELIVER result from the audit log —
-    pass it explicitly if the server restarted since delivery. `verdict: null` = the validator's report
+    pass it explicitly if the server restarted since delivery. `workdir` defaults to the registered
+    workdir of the node's Del (or of `validator`) — pass it only when the work is somewhere the roster does not say. `verdict: null` = the validator's report
     did not parse; NEVER read that as pass — the raw report_text is attached for your own judgment."""
-    _stop, task, deliverable = _refuse_validation(engine, task_id, deliverable, workdir, _llm)
+    _stop, _ctx = _ready_to_judge(engine, task_id, deliverable, workdir, validator, model,
+                                 _llm, _progress)
     if _stop is not None:
         return _stop
-    from gfso.engine.events import emit_cb
-    _cb = emit_cb(engine, "validate_result", _progress)
-    llm = _llm or llm_factory(model)
-    if not hasattr(llm, "run_agent"):
-        return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
-                         "GFSO_PROVIDER=generic covers zero-tool one-shots only"}
-    # A NAMED VALIDATOR BRINGS ITS WORKSPACE. `validator=w-val` was passed with the role registered
-    # against the delivery's directory, and the run refused with "the working directory None is
-    # empty" — the roster had the answer and nobody asked it. Worse, the escape it named
-    # (`list_agents` shows where this node's executor works) is a dead end when the node is held by a
-    # person (measured on the human door 2026-08-22).
-    if validator and not workdir:
-        workdir = (_roster().get(validator) or {}).get("workdir") or workdir
-    generation = engine.generation_of(TaskId(task_id))   # the delivery THIS run reads (§14.5 gate)
-    inflight_key = engine.begin_validation(TaskId(task_id))
-    if inflight_key is None:
-        return {"task_id": task_id, "state": task.state.name, "inflight": True,
-                "note": "a validator run is already in flight for this node generation "
-                        "(node, iteration, reopens) — duplicate spawn suppressed"}
+    task, deliverable, llm, _cb, generation, inflight_key, workdir = _ctx
     try:
         llm.on_tick = _cb
         llm.stage_hint = f"{task_id} node-validator"
@@ -654,8 +899,20 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
             # No retry: an agent run is minutes-long; the raw report is still evidence for the issuer.
             if getattr(llm, "calls", None):
                 llm.calls[-1]["parse_failed"] = True
-            out.update({"verdict": None, "report_text": text})
-            _cb(f"{task_id}: validator report did not parse (verdict=null) · {_stat_line(llm)}")
+            # …AND KEPT, exactly as a report the ENGINE refuses is kept. This branch returned the raw
+            # text to its caller and stored nothing — which is invisible under delegation, where the
+            # caller is the dispatcher and it reads a verdict and nothing else. Two doors measured
+            # the same consequence from opposite ends (wave 25, 2026-09-05): the log said "report not
+            # kept — see the validate_result output" for a run whose output no person ever saw, and
+            # an ordinary user polled `get_verdict` for four minutes on a node whose automatic
+            # judging had already died, because the one surface the DELIVER reply had pointed them at
+            # is built from this record and there was no record. A judge ran, produced something, and
+            # it was gone: against the one promise the audit trail is sold on.
+            out.update(_keep_a_report_that_decided_nothing(
+                engine, task_id,
+                "the validator's report did not parse — no verdict could be read from it", text))
+            _cb(f"{task_id}: validator report did not parse (verdict=null) · {_stat_line(llm)}"
+                + (f" · report kept: {out.get('report_kept_at')}" if out.get("report_kept_at") else ""))
             return out
         # RECORD FIRST, THEN SPEAK. What is recorded is not always what was claimed: a criterion
         # whose named behaviours were never observed is demoted at the record (an unobserved conjunct
@@ -725,54 +982,7 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
             recorded = {}
         # An engine that recorded nothing (an older storage path, a swallowed error) leaves the claim
         # standing — the fallback is the claim, never a silent pass invented here.
-        verdict = recorded.get("verdict") or parsed["verdict"]
-        failed = list(recorded.get("failed_criteria") or parsed["failed_criteria"])
-        out.update({"verdict": verdict, "per_criterion": parsed["per_criterion"],
-                    "failed_criteria": failed, "seams": parsed.get("seams", ""),
-                    "tools_used": dict(getattr(llm, "last_tool_calls", None) or {})})
-        if failed:
-            # WHY IT FAILED, at the top of the answer. A FAIL came back as a list of criterion names
-            # and a `per_criterion` array whose reason lives under `evidence`; the first read of a
-            # refusal was "csv_parsing_robustness -> fail" and nothing else, and the person went
-            # looking through the whole object for the sentence (measured on the human door
-            # 2026-08-21). The verdict's reason is the point of reading a verdict.
-            _ev = {p.get("criterion"): p.get("evidence", "") for p in parsed["per_criterion"]
-                   if p.get("criterion") in set(failed)}
-            out["why_failed"] = _ev
-        if verdict != parsed["verdict"]:
-            # Say it out loud: the difference between what a validator claimed and what its evidence
-            # earned is exactly the thing this instrument exists to surface.
-            out["verdict_demoted_from"] = parsed["verdict"]
-        # Tell the issuer the ONE signal this verdict calls for — the evidence tool never signals, and a
-        # bare verdict left agents guessing (observed live: after a FAIL an agent sent PASS from REWORKING,
-        # which the FSM refused, and it hung). The directive rides where the agent looks: this reply.
-        # …and say it against the node's CURRENT state, not against the verdict alone. A verdict can
-        # be read after the graph has already moved — the dispatcher's own validator signs on
-        # delivery, so by the time a caller asks, the node may be DONE. Measured live (2026-08-20):
-        # `validate_result` told an agent to `signal FAIL` on a node already DONE/PASS, and on
-        # another to `signal PASS`, which the FSM refused ("PASS is not valid in state DONE"). One
-        # of those obeyed would have dropped accepted work. A directive is an instruction to act,
-        # so it must be about the graph as it stands.
-        _state = getattr(getattr(engine.get_task(TaskId(task_id)), "state", None), "name", None)
-        if _state != "VALIDATING":
-            out["next"] = (
-                f"Nothing to sign: '{task_id}' is {_state}, not VALIDATING — this verdict was read "
-                f"after the graph moved on (a registered validator signs on delivery, so the node "
-                f"may already be settled). Read it as a RECORD, not as an instruction; check the "
-                f"node before acting.")
-        elif verdict == Verdict.PASS:
-            out["next"] = (f"Now sign it: signal('{task_id}','PASS'). This recorded verdict is what "
-                           f"unlocks your PASS at the seam (verifier ≠ executor, §14.5).")
-        else:
-            out["next"] = (f"Now sign it: signal('{task_id}','FAIL', failed_criteria={failed}). "
-                           f"The node returns to REWORKING; then fix EXACTLY those criteria and DELIVER again "
-                           f"(do NOT send PASS from REWORKING — re-deliver, and the next validation decides).")
-        _cb(f"{task_id}: validator verdict {verdict}"
-            + (" (demoted from PASS — a criterion's behaviours were never observed)"
-               if verdict != parsed["verdict"] else "")
-            + (f" — failed: {', '.join(failed)}" if failed else "")
-            + f" · {_stat_line(llm)}")
-        return out
+        return _the_validators_answer(engine, task_id, out, parsed, recorded, _cb, llm)
     finally:
         engine.record_llm_usage(Stage.VALIDATOR, llm, TaskId(task_id))   # the judge's own spend, recorded
         engine.end_validation(inflight_key)
@@ -807,9 +1017,6 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     with you — you keep your issuer rights over the whole plan — and the work goes to them, which is
     what "delegate it to X" means everywhere else. Both may be passed; they answer different
     questions (whose the goal is, whose the work is)."""
-    from gfso.decompose import decompose_into
-    from gfso.engine.events import emit_cb
-
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
     # every child, which is the opposite of what "delegate the work" usually means to the caller.
@@ -840,6 +1047,13 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
            "holes": res.holes,
            "stats": res.stats,
            "projection": res.d_md}  # the built root's projection markdown — the one canonical read
+    # WHAT AN EMPTY `holes` DOES NOT MEAN. It answers the STRUCTURAL checks and nothing else, and a
+    # caller who read it as "the plan is clean" walked into a twelve-finding gate with eight
+    # obligations this same reply had already named in prose (HTTP door, wave 27, 2026-09-06: "two
+    # fields of the same reply disagree about whether the plan is ready"). The obligations ride as
+    # DATA now, and the note is attached whether or not the structural list is empty.
+    if res.undecided_obligations:
+        out["undecided_obligations"] = list(res.undecided_obligations)
     if res.holes:
         # TWO SURFACES, ONE WORD, DIFFERENT SETS. This residue is everything structurally wrong —
         # unplaced spec items and refuted seams as well as unmet checks — while `list_holes` returns
@@ -851,6 +1065,15 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
             f"{len(res.holes)} residual problem(s): unmet structural checks AND spec items no node "
             f"carries AND seams contact refuted. `list_holes` shows the {len(_checks)} unmet CHECK(s) "
             f"only — an empty `list_holes` does NOT mean this list is empty.")
+    else:
+        out["holes_note"] = (
+            f"no residual STRUCTURAL problem (L0/L1). That is not a verdict on the plan: "
+            + (f"{len(res.undecided_obligations)} obligation(s) of the goal are decided by no "
+               f"criterion (`undecided_obligations`), so the gate will refuse execution — fix the "
+               f"criteria they name and run `review_decomposition('{res.root_id}')`."
+               if res.undecided_obligations else
+               f"whether the criteria DECIDE the goal is the Level-2 question, and "
+               f"`review_decomposition('{res.root_id}')` is what answers it."))
     if res.note:
         out["note"] = res.note     # e.g. refine over a decomposed node IGNORED the request text
     # No children AND not one completed model call: the provider never answered — unreachable, or
@@ -869,10 +1092,9 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
 def _tracked(name, fn):
     """The three verbs that spawn a model and run for minutes announce themselves in INFLIGHT, so a
     reconcile from another session can see the server is busy and decline to restart it."""
-    import functools
-
     @functools.wraps(fn)
     def wrapper(*a, **kw):
+        """Run the verb while its name is marked in flight, so a second call can be refused."""
         with _inflight(name):
             return fn(*a, **kw)
     return wrapper
@@ -892,9 +1114,6 @@ def _answering(fn):
     door already knows how to carry. Anything else is still answered rather than thrown, and marked
     `unexpected: true`: a defect in here must be visible as a defect, not disguised as a refusal.
     """
-    import functools
-    import inspect
-
     sig = inspect.signature(fn)
 
     @functools.wraps(fn)
@@ -933,6 +1152,8 @@ def _roster(engine: Engine = None):
     Imported here rather than at module scope because `gfso.delegate` imports THIS module (the
     dispatcher asks it whether internal nodes are being validated), and one lazy accessor is the
     whole of that cycle rather than one import inside each verb that needs the roster."""
+    # LEFT: import cycle gfso.tools_llm ↔ gfso.delegate — `gfso.delegate` imports this module at
+    # module level, so the roster is reached from here only at call time.
     from gfso.delegate import default_agents, ensure_dispatcher
     agents = default_agents()
     if engine is not None:
@@ -970,6 +1191,26 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     by the log to `reassign` a node to a registered role and had no verb anywhere to make one —
     so delegation, parallel execution and an independent validator were unreachable from the human
     door entirely (measured 2026-08-21). The roster is one server-wide fact; every door asks it."""
+    # THE STANDING AGENT ID IS NOT A ROLE, AND REGISTERING IT MAKES EVERY UNNAMED CALLER ONE.
+    # `agent` is what every door hands a caller who does not name themselves — on this server, in
+    # every project — so a roster entry under that id is not a participant, it is a redefinition of
+    # the default identity. Both halves of that were measured within a day. As a VALIDATOR it made
+    # the executing identity the one whose signature closes the seam (closed at the gate: a
+    # registration cannot make an id independent of itself). And its registered `workdir` then
+    # became the place auto-validation judged in — a stranger on the MCP door watched their delivery
+    # judged against ANOTHER session's project, the temp directory a different tester had registered
+    # hours earlier, and it caught their fabrication for entirely the wrong reason (wave 23,
+    # 2026-09-03). Refused here rather than patched downstream: every consumer of the roster would
+    # otherwise need to know that one id means something else.
+    if str(agent_id) == _agent_id():
+        return {"refused": True, "error":
+                f"'{agent_id}' is the STANDING identity this door gives every caller who does not "
+                f"name themselves — it is not a participant that can be registered. A role under "
+                f"that id would redefine the default identity for every session and project on this "
+                f"server: its workdir would become the place unattended validations judge in, and "
+                f"its kind would attach to whoever simply omitted a name. Register the role under "
+                f"its own id (`{agent_id}-val`, `{agent_id}-exec`, or anything else) and assign "
+                f"nodes to THAT id — which is also what makes the delegation visible in the graph."}
     agents = _roster(engine)
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
                           oracle_map=oracle_map, max_turns=max_turns, client=client,
@@ -981,6 +1222,17 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     if kind == "llm-executor":
         who = agents.validator_for(agent_id)
         cfg = agents.get(who) if who else None
+        # …AND SAY SO IF THAT NAME IS NOT A ROLE YET. `validator=` is taken at its word, so naming a
+        # judge that has not been registered came back as a confident `will_be_judged_by: <name>` —
+        # a binding to nothing, and a typo would have read exactly the same (agent door, 2026-09-02).
+        # The binding is kept: registering the judge afterwards is the normal order. What changes is
+        # that the answer stops asserting a party that does not exist.
+        if who and cfg is None:
+            out["will_be_judged_by"] = (
+                f"{who} — NOT REGISTERED YET, so nothing will judge this role's work until it is. "
+                f"`register_agent('{who}', 'llm-validator', workdir='{workdir}')` completes the "
+                f"binding; the name is kept either way.")
+            return out
         out["will_be_judged_by"] = who or (
             f"nobody YET — no validator stands in {workdir} at this moment. Register one there "
             f"(`register_agent(<id>, 'llm-validator', workdir='{workdir}')`) and it binds to this "
@@ -993,6 +1245,20 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
                            + (f" (working in {cfg.get('workdir')})" if cfg else "")
                            + ". Pass `validator=` to bind your own instrument — the roster is "
                              "shared by every session of this server.")
+    # …AND A VALIDATOR CLOSES THE LOOP THE EXECUTOR OPENED. Registering the executor first answers
+    # "nobody YET — register one in this workdir and it binds, in either order"; registering the
+    # validator second answered nothing at all, so the promised binding was unconfirmable until an
+    # execution was judged 25 minutes later (HTTP door, 2026-09-02). The question is symmetric and
+    # so is the answer.
+    if kind in ("llm-validator", "unittest-checker"):
+        _bound = sorted(a for a, c in agents.list().items()
+                        if c.get("kind") == "llm-executor"
+                        and (c.get("validator") == agent_id
+                             or (not c.get("validator") and agents.validator_for(a) == agent_id)))
+        out["will_judge"] = _bound or (
+            f"nothing yet — no executor is registered"
+            + (f" in {workdir}" if workdir else "")
+            + ". An executor registered there binds to this instrument by workspace, in either order.")
     return out
 
 
@@ -1024,11 +1290,28 @@ def list_agents(engine: Engine, match: str = "", limit: int = 25) -> dict:
     _all = {a: ({**c, "judged_by": _reg.validator_for(a)} if c.get("kind") == "llm-executor" else c)
             for a, c in _all.items()}
     _kept = {a: c for a, c in _all.items() if not match or match in a}
-    out = {"agents": dict(sorted(_kept.items())[:limit]) if limit else _kept,
+    # YOURS FIRST, and counted. The roster being server-wide is the design and the answer says so;
+    # what it did not do is let a reader SEE which of the twenty-five rows are theirs. Two doors in
+    # wave 26 (2026-09-06) passed `project=` and read the other seventeen projects' roles — with
+    # their absolute workdirs — as a leak. It is not one, but "you can filter by `match` if you
+    # happened to name your roles with a prefix" is not an answer either. Roles carry their project,
+    # so the ordering can.
+    # The roster is readable WITHOUT a graph — it is a server fact, not a project one, and one
+    # caller reads it with no engine at all. Then nothing is "yours", which is the truth.
+    _mine = engine.project_name if engine is not None else None
+    # "Yours" means REGISTERED UNDER THIS PROJECT. An unscoped role belongs to nobody in particular
+    # (the scope text says so) and must not be counted as yours — with no project at all, `None ==
+    # None` made every unscoped row "mine", which is the reading this field exists to prevent.
+    _is_mine = (lambda c: bool(_mine) and c.get("project") == _mine)
+    _ordered = sorted(_kept.items(), key=lambda kv: (not _is_mine(kv[1]), kv[0]))
+    out = {"agents": dict(_ordered[:limit]) if limit else dict(_ordered),
            "total": len(_all),
+           "yours": [a for a, c in _ordered if _is_mine(c)],
            "scope": "server-wide: this roster is shared by every session and project of the one "
                     "server. `project=` selects the GRAPH, never the roster — the ids you see "
-                    "include other people's roles."}
+                    "include other people's roles. Yours (registered under this project) are listed "
+                    "in `yours` and sorted first; an UNSCOPED role belongs to nobody in particular "
+                    "and is shared by design."}
     if len(out["agents"]) < len(_all):
         out["note"] = (f"{len(_all)} roles registered; showing {len(out['agents'])}"
                        + (f" matching {match!r}" if match else "")

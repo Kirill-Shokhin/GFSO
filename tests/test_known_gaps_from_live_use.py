@@ -11,34 +11,37 @@ validator returned ⊥ — it reads a RECORDED verdict, and a hand-signalled FAI
 """
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
 import tempfile
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 import gfso.tools as T
-from gfso.runtime import ProjectRegistry
 import gfso.tools_llm as TL
-from gfso.decompose.build import build_graph_live
-from gfso.adapters.agents.human import HumanAgent
-from gfso.adapters.storage.memory import MemoryStorage
+from gfso import driver, runtime as _rt
 from gfso.adapters.storage.sqlite import SqliteStorage
-from datetime import datetime, timedelta
-
+from gfso.config import validator_retry_model
 from gfso.core.types import (DoneReason, Signal, SignalData, State, TaskId, passed,
                              settled_positive)
-from gfso.config import validator_retry_model
-from gfso.driver import run as _cli_run
+from gfso.critic import runner as _runner
+from gfso.decompose.build import build_graph_live
+from gfso.delegate import AgentRegistry, Dispatcher
+from gfso.driver import _as_list, _wants_list, run, run as _cli_run
 from gfso.engine.loop import _CANCELLING_GRACE_S
-from gfso import tools_llm as TL
-from gfso.engine import Engine
+from gfso.runtime import ProjectRegistry
+from tests.support import make_engine
+from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
 
 
 def _engine(storage=None):
-    e = Engine(storage or MemoryStorage(), HumanAgent(), llm=None,
-               validate_signals=True, state_timeout=0)
+    e = make_engine(storage, llm=None,
+                     validate_signals=True, state_timeout=0)
     e.start()
     return e
 
@@ -198,8 +201,6 @@ def test_a_delegated_node_is_visibly_executing_while_its_executor_works():
     This is what 'trust, but see' costs: no view, UI included, can ever show work in progress,
     because there is no interval in which the graph holds that fact.
     """
-    from gfso.delegate import AgentRegistry, Dispatcher
-
     e = _engine()
     _root(e)
     T.create_task(e, "leaf", {"name": "leaf", "description": "part",
@@ -223,8 +224,7 @@ def test_a_delegated_node_is_visibly_executing_while_its_executor_works():
         for _ in range(50):
             if seen:
                 break
-            import time as _t
-            _t.sleep(0.1)
+            time.sleep(0.1)
     e.stop()
     assert seen and seen[0] == "EXECUTING", (
         f"while the executor worked the graph showed {seen or ['nothing']}, not EXECUTING")
@@ -260,9 +260,6 @@ def test_the_verdict_directive_is_read_against_the_current_state():
     the verdict afterwards is reading a record of something already settled. Obeying it drops
     accepted work.
     """
-    import gfso.tools_llm as TL
-    from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
-
     e = _eng()
     _delivered_node(e)
     honest = _fenced({
@@ -311,8 +308,6 @@ def test_a_bare_word_where_a_list_is_expected_is_one_item():
     """`failed_criteria=exact_duplicate_grouping` from the CLI arrived as a string, the engine
     iterated it, and the node came back failed on 24 one-letter "criteria". A person driving from
     the human door could not fail a node by its criterion name at all."""
-    from gfso.driver import _as_list, _wants_list
-    import inspect
     sig = inspect.signature(T.signal).parameters
     assert _wants_list(sig.get("failed_criteria")), "the parameter is not seen as a list"
     assert _as_list("exact_duplicate_grouping") == ["exact_duplicate_grouping"]
@@ -358,8 +353,6 @@ def test_a_validator_in_the_same_workspace_beats_a_stranger_registered_earlier()
     2026-08-20 — once by a judge whose `workdir` was an experiment's scratch directory. Naming
     `validator=` at registration still wins; this only fixes the DEFAULT.
     """
-    from gfso.delegate import AgentRegistry
-
     reg = AgentRegistry(path=str(Path(tempfile.mkdtemp()) / "agents.json"))
     reg.register("old-val", "llm-validator", workdir="C:/somebody/elses/run")
     reg.register("mine-exec", "llm-executor", workdir="C:/my/project")
@@ -376,7 +369,6 @@ def test_a_typo_in_a_parameter_name_is_refused_not_swallowed(capsys):
     """`key=value` whose key is not a parameter fell through as a POSITIONAL argument, so a typo
     silently filled the next slot with the literal text. Measured: three typos in a row, no warning
     of any kind, and no way to tell "no such parameter" from "the parameter did not work"."""
-    from gfso.driver import run
     run(["get_task", "assigne=kirill"])
     out = capsys.readouterr().out
     assert "has no parameter 'assigne'" in out, f"the typo was swallowed: {out}"
@@ -404,11 +396,8 @@ def test_the_human_door_hands_out_the_ui_link_too(capsys):
     """The agent door attaches `ui` to its entry verbs and repeats it; the CLI/HTTP door never did,
     so the person the UI exists for was the one never told its address (measured: fourteen calls,
     no link anywhere). One list of verbs now serves both doors."""
-    import gfso.tools as GT
-    from gfso.driver import run
-
-    assert "use_project" in GT.UI_LINK_VERBS and "create_task" in GT.UI_LINK_VERBS
-    assert "?project=demo" in GT.ui_link("demo"), GT.ui_link("demo")
+    assert "use_project" in T.UI_LINK_VERBS and "create_task" in T.UI_LINK_VERBS
+    assert "?project=demo" in T.ui_link("demo"), T.ui_link("demo")
 
     run(["create_task", "ui-probe-node",
          '{"name":"p","description":"d","criteria":[{"name":"k","description":"d"}]}',
@@ -434,9 +423,6 @@ def test_a_hand_resolved_block_puts_the_executor_back_in_the_queue(tmp_path):
     spent. The guard exists to stop a double signal inside ONE blocked episode, so it is keyed on the
     episode, not on the round.
     """
-    from gfso.core.types import TaskId
-    from gfso.delegate import AgentRegistry, Dispatcher
-
     e = _engine()
     _root(e)
     T.create_task(e, "prod", {"description": "producer", "criteria": [{"name": "p", "description": "P"}]},
@@ -490,8 +476,6 @@ def test_the_recorded_verdict_can_be_read_back():
     they printed, the judge and its tier, and — the part a summary always loses — which criteria
     were UNDECIDABLE rather than failed.
     """
-    from gfso.core.types import TaskId
-
     e = _engine()
     _root(e)
     T.signal(e, "root", "ACCEPT", "agent")
@@ -521,8 +505,6 @@ def test_a_refused_reopen_says_which_gate_refused_it():
     are cheap to ask directly, and each has a different recovery — a consumed terminal is locked for
     good and re-decomposition is the only way past it, while a spent counter is about this node
     alone."""
-    from gfso.core.types import TaskId
-
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "kid", "criteria": [{"name": "k", "description": "K"}]},
@@ -532,7 +514,7 @@ def test_a_refused_reopen_says_which_gate_refused_it():
     assert "is OFFERED" in T.reopen(e, "kid", "agent")["error"]        # not finished at all
 
     T.signal(e, "kid", "ACCEPT", "agent")
-    T.signal(e, "kid", "DELIVER", "agent", result="done it", self_validation="PASS")
+    T.signal(e, "kid", "DELIVER", "agent", result="wrote kid.py; ran its check, it printed OK", self_validation="PASS")
     T.signal(e, "kid", "PASS", "agent")
     assert e.get_state(TaskId("kid")).name == "DONE"
     assert T.reopen(e, "kid", "agent")["state"] == "OFFERED"           # first reopen is granted
@@ -552,8 +534,6 @@ def test_the_human_door_prints_prose_as_prose(capsys):
     meant to ACT on arrived as `\n`-separated text to decode by eye. A pipe still gets exact JSON
     (scripts and `jq` keep working); only an interactive terminal gets the rendering, which is why
     the renderer is tested directly here rather than through a fake tty."""
-    from gfso import driver
-
     text = driver._render({"task_id": "root", "state": "EXECUTING",
                            "directive": "EXECUTE leaf 'root':\ndo the work, then DELIVER.",
                            "steps": [{"task_id": "kid", "action": "accept"}]})
@@ -595,7 +575,6 @@ def test_a_spec_that_is_a_sentence_is_refused_in_the_verbs_own_terms():
     e = _engine()
     out = T.create_task(e, "x", spec="build me a parser")
     assert "criteria" in out["error"] and "not str" in out["error"]
-    from gfso.core.types import TaskId
     assert e.get_task(TaskId("x")) is None                        # …and nothing was created
     e.stop()
 
@@ -664,8 +643,6 @@ def test_the_rework_directive_does_not_ask_for_a_delivery_the_gate_refuses():
     wall — an executor call each, ~13 minutes — and the run ended `redelivery_refused` with the
     graph exactly where it had started. The engine already computes the repair; the directive now
     carries it, before the work rather than after."""
-    from gfso.core.types import TaskId
-
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "the covering child",
@@ -709,8 +686,6 @@ def test_the_affordance_surface_agrees_with_the_machine_in_both_directions():
     The other direction has to hold too: on a PUBLIC node PASS must NOT be listed, because the gate
     would refuse it. An affordance surface that disagrees with the machine either way is worse than
     none — the person believes it."""
-    from gfso.core.types import TaskId
-
     e = _engine()
     T.create_task(e, "root", {
         "name": "root", "description": "a goal",
@@ -754,8 +729,6 @@ def test_reopen_says_what_it_destroyed():
     DONE/PASS root reopened, one of its reopens spent, with nothing in the reply saying so — they
     read `"state": "OFFERED"` out of the middle of a node dump. Dropping the verdict is correct
     (§14.3: it is re-earned by fresh contact); saying nothing about it is not."""
-    from gfso.core.types import TaskId
-
     e = _engine()
     _root(e)
     T.signal(e, "root", "ACCEPT", "agent")
@@ -852,7 +825,6 @@ def test_a_refused_revision_names_the_branch_that_refused_it():
     T.map_criterion(e, "root", "kid", "c1")
 
     # Through the DOOR surface (the registry), where a refusal is data rather than an exception.
-    from gfso import tools_llm as TL
     out = TL.TOOLS["edit_criteria"](e, "kid", [{"name": "k", "description": "K, sharper"}],
                                     agent="stranger")
     err = out["error"]
@@ -895,8 +867,6 @@ def test_the_plan_review_says_whether_the_children_may_start(monkeypatch):
     `semantic_covered: false`, and the caller took the plan as passed. The question anyone actually
     has is whether the children may start, so the answer carries it — in words, not in a field name
     the reader has to already understand."""
-    from gfso import tools_llm as TL
-
     monkeypatch.setenv("GFSO_L2_GATE", "1")      # the suite runs with the gate off by default
     e = _engine()
     _root(e)
@@ -905,8 +875,6 @@ def test_the_plan_review_says_whether_the_children_may_start(monkeypatch):
     T.map_criterion(e, "root", "kid", "c1")
 
     # The checker itself is an LLM; what is under test is the REPLY the verb builds around it.
-    from gfso.critic import runner as _runner
-    from dataclasses import dataclass
 
     @dataclass
     class _Out:
@@ -914,7 +882,6 @@ def test_the_plan_review_says_whether_the_children_may_start(monkeypatch):
         semantic_covered: bool = False
         findings: tuple = ()
 
-    from gfso import runtime as _rt
     monkeypatch.setattr(_rt, "llm_factory", lambda m: type("L", (), {"calls": [], "on_tick": None,
                                                                      "stage_hint": None})())
     monkeypatch.setattr(_runner, "review_decomposition", lambda *a, **k: _Out())
@@ -933,8 +900,6 @@ def test_declaring_a_dependency_keeps_the_nodes_declared_scope():
     boundary, the thing that tells a user what the goal deliberately does NOT include (§13.1),
     vanished the moment anyone drew an edge into it. Nothing failed; the field just defaulted to
     empty. Found by the code-orthogonality sweep as D-23 and confirmed here."""
-    from gfso.core.types import TaskId
-
     e = _engine()
     _root(e)
     T.create_task(e, "prod", {"description": "producer", "criteria": [{"name": "p", "description": "P"}]},
@@ -1142,7 +1107,6 @@ def test_a_parent_with_an_escalated_child_does_not_buy_a_validator_run():
 
     T.signal(e, "root", "ACCEPT", "agent")
     T.signal(e, "root", "DELIVER", "agent", result="aggregated")
-    from gfso import tools_llm as TL
     out = TL.validate_result(e, "root")
     assert out["waiting_on"] == ["kid"]                  # refused BEFORE any model is spawned
     assert "would be refused at the gate" in out["error"]
@@ -1199,7 +1163,7 @@ def test_an_internal_node_can_carry_its_own_recorded_verdict():
                   assignee="sam", parent_id="root")            # same Del as its parent → INTERNAL
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "sam")
-    T.signal(e, "kid", "DELIVER", "sam", result="did it", self_validation="PASS")
+    T.signal(e, "kid", "DELIVER", "sam", result="wrote kid.py; ran its check, it printed OK", self_validation="PASS")
 
     rec = T.record_verdict(e, "kid", "PASS", reviewer="sam",
                            observed={"k": "ran it and read the output: K holds"})
@@ -1688,7 +1652,7 @@ def test_a_locked_terminal_does_not_offer_the_signal_that_would_reopen_it():
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
-    T.signal(e, "kid", "DELIVER", "agent", result="did it", self_validation="PASS")
+    T.signal(e, "kid", "DELIVER", "agent", result="wrote kid.py; ran its check, it printed OK", self_validation="PASS")
     T.signal(e, "kid", "PASS", "agent")
     T.signal(e, "root", "ACCEPT", "agent")
     T.signal(e, "root", "DELIVER", "agent", result="integrated")      # …the parent stakes on it
@@ -1841,13 +1805,13 @@ def test_a_cancelled_childs_coverage_mapping_does_not_lock_the_parent_forever():
         T.map_criterion(e, "root", kid, crit)
     T.signal(e, "kid", "CANCEL", "agent", reason="the goal changed")
     T.signal(e, "kid", "CONFIRM_CANCEL", "worker")
-    assert [h for h in T.list_holes(e, "root") if "invalid mappings" in h["details"]]   # …a hole
+    assert [h for h in T.list_holes(e, "root")["holes"] if "invalid mappings" in h["details"]]   # …a hole
 
     T.edit_criteria(e, "root", [{"name": "c1", "description": "one, restated"},
                                 {"name": "c2", "description": "two"}])
-    assert not [h for h in T.list_holes(e, "root")
+    assert not [h for h in T.list_holes(e, "root")["holes"]
                 if "invalid mappings" in h["details"]]              # …and a re-author clears it
-    assert [h for h in T.list_holes(e, "root") if "uncovered criteria" in h["details"]]
+    assert [h for h in T.list_holes(e, "root")["holes"] if "uncovered criteria" in h["details"]]
     e.stop()
 
 

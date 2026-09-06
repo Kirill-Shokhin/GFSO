@@ -113,8 +113,16 @@ Del(child) ≠ Del(parent). The gate (engine/validation.py) demands a recorded i
 the delivery that stands ONLY there — and it asks about the NODE, not about the name signing: an
 issuer is no more entitled to a bare PASS than the executor is, since §14.5 asks for independent
 validation rather than for a different signature. The record can come from the instrument
-(`validate_result`) or from a person stating what they observed (`record_verdict`), and an authorized
-instrument signing directly IS the verdict. An INTERNAL node (same Del as its parent — the executor's own private
+(`validate_result`) or from a person stating what they observed (`record_verdict`, whose records carry
+`by_hand` so nothing downstream reads a self-named party as an instrument). An authorized instrument
+opens the gate by what it RECORDED, not by whose name is on the signal: the rule used to step aside
+for any id on the validator roster, and `source` is caller-supplied on the CLI and HTTP doors, so
+`register_agent(<any id>, "llm-validator")` plus one `signal ... PASS <that id>` closed a root that
+had delivered nothing — no verdict on the record at all (2026-09-05). Every instrument path in the
+product already writes its verdict before signing it, so what the narrowing removed is a signature
+standing on nothing. What the dispatcher may NOT do is reuse an executor's own
+self-report as that verdict: the record names who produced it, and the executor's signature is not an
+independent one. An INTERNAL node (same Del as its parent — the executor's own private
 decomposition) legitimately self-verifies (its DELIVER carries `self_validation`), and its guarantee is
 carried by the validation of the public result it rolls up into (T1 non-redundancy). The dispatcher's
 auto-validation instrument follows the same rule (`GFSO_VALIDATE_INTERNAL=1` = the opt-in
@@ -524,7 +532,10 @@ method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-a
   (`GFSO_L2_GATE` stays a direct read at its enforcement point, deliberately): the provider and its
   billing mode, storage and model tiers, paths, and the measured dials — `GFSO_VALIDATION_BATCH`
   (how many criteria one validator run judges, and so how much of a judgement runs in parallel) and
-  `GFSO_VALIDATOR_RETRY_MODEL` (`off` refuses the escalation a ⊥ report would otherwise buy).
+  `GFSO_VALIDATOR_RETRY_MODEL` (`off` refuses the escalation a ⊥ report would otherwise buy). The
+  declaration in `data/serve.json` is applied through `config.fill_env_gaps` wherever a server is
+  started — it fills what nobody said and never overrules an explicit export, which is what lets a
+  measurement run turn a switch off and keep it off.
 - HTTP **reads** stay bespoke typed routes (view-specific shapes for the UI — reads aren't a mutation surface).
 - **Live mirroring:** ONE process (raised by `gfso up`; `gfso serve` is that process in the foreground) hosts MCP + HTTP + UI over ONE Engine, so the
   UI's `/ws/events` reflects the agent's writes live. Separate processes share only SQLite (poll, no live WS).

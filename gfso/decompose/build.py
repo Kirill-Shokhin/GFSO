@@ -122,6 +122,38 @@ def _children_from_spec(engine, d: dict, ns, existing_kids: set, C, max_iteratio
     return children, mappings, deps_by_consumer, dropped
 
 
+def _children_that_changed(engine, rid, children, mappings, dropped: list) -> list:
+    """The children whose contract or coverage actually differs — and which are FROZEN.
+
+    A child already built with the same spec and the same coverage needs no re-ASSIGN, and a
+    terminal one admits none at all: the FSM would reject it, so the unapplied change is
+    surfaced as a problem rather than lost into a refused signal.
+    """
+    parent_now = engine.get_task(rid)
+    have_covers = {(m.criterion_name, m.child_id)
+                   for m in (parent_now.criterion_mappings if parent_now else ())}
+    want_by_child: dict = {}
+    for m in mappings:
+        want_by_child.setdefault(m.child_id, set()).add(m.criterion_name)
+    changed = []
+    for cid_t, spec_c, actor in children:
+        ex = engine.get_task(cid_t)
+        if (ex is not None and ex.spec == spec_c
+                and all((c, cid_t) in have_covers for c in want_by_child.get(cid_t, ()))):
+            continue
+        # COMPLETED work is FROZEN: a terminal node admits no revision (§14.3 — the FSM would reject
+        # the re-ASSIGN anyway; observed live: a refine fold updated DONE children and its intent
+        # vanished into rejected signals). Surface the unapplied change as a problem instead — the
+        # repair loop (or the honest holes residue) routes the new obligation to a NEW subtask.
+        if ex is not None and ex.state in (State.DONE, State.ABANDONED, State.ESCALATED):
+            dropped.append(f"child {cid_t}: {ex.state.name} is terminal — completed work is frozen, "
+                           f"the intended contract/coverage change was NOT applied; route new "
+                           f"obligations to a NEW subtask (or leave the child as built)")
+            continue
+        changed.append((cid_t, spec_c, actor))
+    return changed
+
+
 def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
                       A: AgentId, max_iterations: int | None = None,
                       C: AgentId | None = None) -> tuple[Engine, TaskId, list[str]]:
@@ -178,6 +210,8 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     existing_kids = {str(c.id) for c in engine.get_active_children(rid)}
 
     def ns(cid: str) -> str:
+        """Namespace a spec id into the live graph's id space (`<root>.<id>`), so two decompositions
+    of different roots cannot collide on `a`."""
         if cid in existing_kids:   # a HAND-built child carries a bare id — a rebuild must be a REVISION
             return cid             # of that node, never a namespaced duplicate (observed live: refine over
                                    # a manual graph doubled the subtree, C1..C9 + root.C1..C9)
@@ -188,28 +222,7 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     # IDEMPOTENT REBUILD: an untouched child costs ZERO signals — its live state (EXECUTING, a
     # delivered result, its own registers) survives a parent-level refine; only a child whose contract
     # or coverage actually changed is re-ASSIGNed (→ OFFERED: the executor re-consents, Inv-1).
-    parent_now = engine.get_task(rid)
-    have_covers = {(m.criterion_name, m.child_id)
-                   for m in (parent_now.criterion_mappings if parent_now else ())}
-    want_by_child: dict = {}
-    for m in mappings:
-        want_by_child.setdefault(m.child_id, set()).add(m.criterion_name)
-    changed = []
-    for cid_t, spec_c, actor in children:
-        ex = engine.get_task(cid_t)
-        if (ex is not None and ex.spec == spec_c
-                and all((c, cid_t) in have_covers for c in want_by_child.get(cid_t, ()))):
-            continue
-        # COMPLETED work is FROZEN: a terminal node admits no revision (§14.3 — the FSM would reject
-        # the re-ASSIGN anyway; observed live: a refine fold updated DONE children and its intent
-        # vanished into rejected signals). Surface the unapplied change as a problem instead — the
-        # repair loop (or the honest holes residue) routes the new obligation to a NEW subtask.
-        if ex is not None and ex.state in (State.DONE, State.ABANDONED, State.ESCALATED):
-            dropped.append(f"child {cid_t}: {ex.state.name} is terminal — completed work is frozen, "
-                           f"the intended contract/coverage change was NOT applied; route new "
-                           f"obligations to a NEW subtask (or leave the child as built)")
-            continue
-        changed.append((cid_t, spec_c, actor))
+    changed = _children_that_changed(engine, rid, children, mappings, dropped)
     if changed:
         engine.decompose_task(rid, changed, mappings or None, max_iterations); engine.wait_idle()
     elif root_revised:

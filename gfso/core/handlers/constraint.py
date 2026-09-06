@@ -1,4 +1,4 @@
-"""CHECK-7 and CHECK-8 — the NUMERIC-BOUND arithmetic tier of the L1 formal checks.
+﻿"""CHECK-7 and CHECK-8 — the NUMERIC-BOUND arithmetic tier of the L1 formal checks.
 
 Capability honesty (the embedder's contract): what this tier cannot machine-check is reported
 `skipped` with the missing capability NAMED — never silently green. Checked here: parseable
@@ -29,23 +29,17 @@ def _parse_numeric_bound(desc: str) -> tuple[str, str, float] | None:
     return None
 
 
-def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
-    """CHECK-7: children's criteria sufficient for parent's criteria.
+def _weigh_the_numeric_bounds(task, child_by_id) -> tuple[list, int, int]:
+    """The numeric tier of CHECK-7: sum the mapped children's bounds against the parent's.
 
-    For numeric bounds (e.g. response_time < 200ms): sums child bounds
-    and checks against parent bound. For non-numeric: skipped.
+    Returns (violations, how many were actually verified, how many this tier cannot reach).
+    The counts are returned rather than accumulated in the caller because "beyond this tier"
+    is a capability statement about the CHECK, and it is what keeps a skipped criterion from
+    reading as a green one.
     """
-    if not children or not task.spec.criteria:
-        return CheckResult("CHECK-7:sufficiency", True, "leaf task", skipped=True)
-
-    if not task.criterion_mappings:
-        return CheckResult("CHECK-7:sufficiency", True, "no mappings", skipped=True)
-
-    child_by_id = {c.id: c for c in children}
-    violations = []
-    checked = 0        # parent criteria actually verified at this tier
-    beyond_tier = 0    # criteria this tier cannot machine-check (reported, not silently green)
-
+    violations: list = []
+    checked = 0
+    beyond_tier = 0
     for parent_crit in task.spec.criteria:
         parent_bound = _parse_numeric_bound(parent_crit.description)
         if not parent_bound:
@@ -58,6 +52,17 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
             m.child_id for m in task.criterion_mappings
             if m.criterion_name == parent_crit.name
         ]
+
+        # NOTHING TO SUM IS NOT A SUM OF ZERO. With no child mapped to this criterion the loop below
+        # adds nothing, and `0.0 < 2.0` was then reported as "children sum 0.0 < parent bound 2.0" —
+        # an arithmetic false positive on a criterion nobody had covered yet, which is CHECK-1's
+        # finding and stated correctly there. An ordinary user met it on their first plan ("output
+        # contains only content-equivalence classes of size >= 2") and reworded a perfectly good
+        # criterion to get around it (wave 25, 2026-09-05). ⊥ is not zero — the same rule this
+        # codebase applies to every metric it publishes, applied to the check that publishes one.
+        if not mapped_children:
+            beyond_tier += 1
+            continue
 
         child_sum = 0.0
         parseable = True
@@ -82,6 +87,23 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
             violations.append(f"{p_metric}: children sum {child_sum} > parent bound {p_val}")
         elif ">" in p_op and child_sum < p_val:
             violations.append(f"{p_metric}: children sum {child_sum} < parent bound {p_val}")
+    return violations, checked, beyond_tier
+
+
+def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
+    """CHECK-7: children's criteria sufficient for parent's criteria.
+
+    For numeric bounds (e.g. response_time < 200ms): sums child bounds
+    and checks against parent bound. For non-numeric: skipped.
+    """
+    if not children or not task.spec.criteria:
+        return CheckResult("CHECK-7:sufficiency", True, "leaf task", skipped=True)
+
+    if not task.criterion_mappings:
+        return CheckResult("CHECK-7:sufficiency", True, "no mappings", skipped=True)
+
+    child_by_id = {c.id: c for c in children}
+    violations, checked, beyond_tier = _weigh_the_numeric_bounds(task, child_by_id)
 
     if violations:
         return CheckResult("CHECK-7:sufficiency", False, "; ".join(violations))
@@ -130,6 +152,7 @@ def check_consistency(children: list[Task]) -> CheckResult:
 
 
 def run_constraints(task: Task, children: list[Task]) -> list[CheckResult]:
+    """The Semantic tier (CHECK-7/8) over one node: formal sufficiency and mutual satisfiability."""
     return [
         check_sufficiency(task, children),
         check_consistency(children),

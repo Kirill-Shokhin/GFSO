@@ -24,6 +24,8 @@ import venv
 import zipfile
 
 import pytest
+import shutil
+from gfso import __version__
 
 ROOT = pathlib.Path(__file__).parent.parent
 
@@ -57,7 +59,6 @@ BUILD_CACHES = ("*.egg-info", "build", "dist", ".git", "__pycache__", ".pytest_c
 def built(tmp_path_factory) -> tuple[pathlib.Path, pathlib.Path]:
     """(wheel, sdist) built from a CLEAN COPY of this tree. Skipped, never faked, without `build`."""
     pytest.importorskip("build", reason="python -m build is the tool under test here")
-    import shutil
     src = tmp_path_factory.mktemp("src") / "tree"
     # The copy is for BUILDING a distribution, so it takes what the build reads and nothing else:
     # the full tree drags in `data/` (hundreds of live databases) and `experiments/*/results` (a
@@ -80,7 +81,6 @@ def built_with_internal_material_planted(tmp_path_factory) -> tuple[pathlib.Path
     from, where `E3_STATUS.md` and `experiments/` sit beside `pyproject.toml`, gitignored and very
     much present on disk."""
     pytest.importorskip("build", reason="python -m build is the tool under test here")
-    import shutil
     src = tmp_path_factory.mktemp("src-planted") / "tree"
     shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(*BUILD_CACHES))
     (src / "E3_STATUS.md").write_text("internal", encoding="utf-8")
@@ -105,7 +105,6 @@ def test_the_wheel_carries_every_runtime_asset(built):
 
 def test_the_wheel_states_the_version_the_package_states(built):
     wheel, _ = built
-    from gfso import __version__
     assert f"-{__version__}-" in wheel.name or wheel.name.startswith(f"gfso-{__version__}"), wheel.name
 
 
@@ -155,7 +154,6 @@ def test_the_installed_wheel_runs_from_a_directory_that_is_not_the_repository(bu
     workdir = tmp_path / "elsewhere"           # deliberately not the repository
     workdir.mkdir()
 
-    from gfso import __version__
     version = subprocess.run([str(exe), "--version"], capture_output=True, text=True,
                              cwd=workdir, timeout=120)
     assert version.returncode == 0 and __version__ in version.stdout, version.stdout + version.stderr

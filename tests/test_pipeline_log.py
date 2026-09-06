@@ -2,15 +2,18 @@
 ticks stay WS-only, history survives an engine/storage restart, /api/pipeline serves it."""
 import os
 
-from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.storage.sqlite import SqliteStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
+from tests.support import make_engine
+from fastapi.testclient import TestClient
+from gfso.api.server import create_app
+from gfso import tools as T
+from gfso.tools_llm import _last_deliver_result
 
 
 def _eng(storage=None):
-    e = Engine(storage or MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(storage, llm=StubLLM(), validate_signals=True)
     e.start()
     return e
 
@@ -46,9 +49,6 @@ def test_pipeline_log_capped():
 
 
 def test_api_pipeline_endpoint():
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
-
     e = _eng()
     e.emit_info("decompose", "builder: 7 subtasks · 8 deps")
     app = create_app(e)
@@ -62,8 +62,6 @@ def test_api_pipeline_endpoint():
 def test_deliver_result_survives_restart(tmp_path):
     """The deliverable pointer (DELIVER result) persists — after `gfso down`/restart validate_result's
     default path still has the validator's input (no explicit `deliverable` needed)."""
-    from gfso import tools as T
-    from gfso.tools_llm import _last_deliver_result
     db = str(tmp_path / "d.db")
     e = _eng(SqliteStorage(db))
     T.create_task(e, "n", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "w")

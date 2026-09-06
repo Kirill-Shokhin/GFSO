@@ -20,16 +20,21 @@ Single-level by definition (one node → its children); recurse by calling it ag
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
-from gfso.core.types import Stage, TaskId
+from gfso.adapters.agents.human import HumanAgent
+from gfso.adapters.storage.memory import MemoryStorage
+from gfso.core.types import Signal, Stage, TaskId
 from gfso.engine import Engine
+from gfso.runtime import llm_factory
 
 from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search,
                    _progress, _stat_line, _hint, _tag, _COVERED, AUDIT_SCHEMA, shape)
 from .build import build_graph_live
 from .extract import extract_spec
-from gfso.config import ROOT_ID, MODEL_DEFAULT
+from gfso.config import ROOT_ID, MODEL_DEFAULT, sufficiency_at_authoring
+from gfso.critic.runner import _undecided_obligations
 
 REPAIR_ROUNDS = 2
 
@@ -43,11 +48,15 @@ class DecomposeResult:
     holes: list = field(default_factory=list)   # [] ⟺ structurally valid; else the honest residue
     stats: list = field(default_factory=list)   # per-call: {stage, duration_ms, input/output/cache tokens}
     note: str | None = None                     # caller-facing caveat (e.g. `request` ignored on refine)
+    #: obligations of the ROOT's own goal that none of its own criteria decides, after the one
+    #: repair round. As DATA beside the prose, because a caller reading `holes: []` — the field
+    #: named after the concept — concluded the plan was clean while the note in the same reply said
+    #: eight obligations were undecided (HTTP door, wave 27, 2026-09-06).
+    undecided_obligations: tuple = ()
 
 
 def _default_llm(model: str):
     """The system-wide provider/billing switch (runtime.llm_factory) — never a hardcoded adapter here."""
-    from gfso.runtime import llm_factory
     return llm_factory(model)
 
 
@@ -121,9 +130,16 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
         # progress line, in exactly the case that matters most: the provider was unreachable or
         # unauthenticated, so nothing was ever proposed.
         built = len(engine.get_active_children(rid))
+        # …AND "CLEAN" NAMES WHAT WAS CHECKED. The word answers the STRUCTURAL checks and nothing
+        # else, and it was read as a verdict on the plan: an ordinary user's first call came back
+        # `holes: []` and `builder: verified clean` in the same payload as "NOTE: 7 obligation(s) of
+        # this goal are still decided by no criterion", and wrote it down as the first surprise of
+        # the session — two readings of one plan disagreeing about whether it was clean (wave 25,
+        # 2026-09-05). Both were true; only one of them was qualified.
         _progress("builder: nothing was built — no verdict to give (the model proposed no subtasks)"
                   if not built else
-                  "builder: verified clean" if not problems else
+                  "builder: structurally clean (L0/L1) — whether the criteria DECIDE the goal is a "
+                  "different question, answered below and by the Level-2 review" if not problems else
                   f"builder: honest residue — {len(problems)} problem(s)", progress)
         return rid, spec, problems
     finally:
@@ -138,6 +154,7 @@ def _dens_patch(patch: dict, root_id: str) -> dict:
     p = f"{root_id}."
 
     def dn(x) -> str:
+        """The node id without the root prefix — what a reader of the plan calls it."""
         return str(x).removeprefix(p)
 
     out = dict(patch)
@@ -165,7 +182,6 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     changed=False ⟺ converged (ALREADY-COVERED or an empty fold). NB a fold REMOVAL leaves the
     removed node live-but-unmapped (the non-redundancy hole surfaces it) — abandoning work is the
     issuer's explicit CANCEL, never an implicit side effect of refinement."""
-    from gfso.core.types import TaskId, Signal
     proj = engine.project(TaskId(root_id))
     cur_holes = engine.graph_holes(TaskId(root_id))
     kids = engine.get_active_children(TaskId(root_id))
@@ -239,7 +255,6 @@ def refine(engine: Engine, root_id: str = ROOT_ID, rounds: int = 1, model: str =
     ("+1 итерация над тем, что есть"): each round = search over the real projection → fold-patch →
     rebuild as a wholesale revision (verified; holes repaired or returned honestly). Stops early on
     convergence (ALREADY-COVERED / empty fold). `decompose(depth=N)` is exactly init + (N−1) of these."""
-    from gfso.core.types import TaskId
     root = engine.get_task(TaskId(root_id))
     if root is None:
         raise ValueError(f"refine: no decomposition at {root_id!r}")
@@ -263,12 +278,50 @@ def decompose(request: str, depth: int = 1, model: str = MODEL_DEFAULT,
     Sonnet, depth 1. Builds THROUGH the FSM (the single build path); if no engine is given, spins a
     fresh started in-memory one. depth>1 = further refine operations over the BUILT graph state."""
     if engine is None:
-        from gfso.adapters.storage.memory import MemoryStorage
-        from gfso.adapters.agents.human import HumanAgent
         engine = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True)
         engine.start()
     return decompose_into(engine, request, root_id=root_id, depth=depth, model=model,
                           llm=llm, fast=fast)
+
+
+def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, holes, progress):
+    """Ask the sufficiency question about the ROOT, fold what it names once, and MEASURE the residue.
+
+    Returns (spec, holes, residue) — the obligations still undecided after the repair round, or `()`.
+    A bottom from the check names nothing and changes nothing: "the check could not run" is not "the
+    goal is covered" (§11.2).
+
+    The first version announced "closing them before the plan is handed over" and then handed over a
+    plan with the same seven open, because it never asked again (CLI door, 2026-09-02). A claim about
+    a result, made before the result exists, is the thing this whole product refuses; the round is
+    worth one extra call precisely so the answer can be a measurement instead.
+    """
+    task = engine.get_task(rid)
+    if task is None:
+        return spec, holes, ()
+    gaps = _undecided_obligations(engine, task, llm, stage=Stage.AUTHORING_OBLIGATIONS)
+    if not gaps:
+        return spec, holes, ()
+    _progress(f"{rid}: the goal has {len(gaps)} obligation(s) no criterion decides — one repair "
+              f"round over them", progress)
+    listed = "\n".join(f"- {g.get('obligation', '')}" for g in gaps)
+    changed, spec2, holes2 = _refine_round(
+        engine,
+        f"{request}\n\n# OBLIGATIONS OF THIS GOAL THAT NO CRITERION OF THE ROOT DECIDES\n"
+        f"Each line is something the goal text requires and the plan does not yet make checkable. "
+        f"Add or sharpen the ROOT's criteria so each becomes decidable, and give the children the "
+        f"criteria that entail them. Do not restate an obligation as a criterion — write the "
+        f"observable that settles it.\n{listed}",
+        str(rid), assignee, llm, progress=progress, label="sufficiency")
+    if not changed:
+        return spec, holes, tuple(g.get("obligation", "") for g in gaps)
+    # …AND ASK AGAIN, because the repair is a model's answer and not a fact until it is checked.
+    _after = _undecided_obligations(engine, engine.get_task(rid), llm)
+    residue = tuple(g.get("obligation", "") for g in _after)
+    _progress(f"{rid}: {len(gaps) - len(residue)} of {len(gaps)} closed"
+              + (f"; still open: {'; '.join(residue)}" if residue else ""), progress)
+    return spec2, holes2, residue
+
 
 
 def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assignee: str = "human",
@@ -282,8 +335,6 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     are declared as `depends_on` criteria at creation. The entry the MCP/API surface calls. `fast` =
     the measured pace-suffixes (init round only; ~1.5× faster on simple tasks, content quality
     unjudged). `progress(msg)` mirrors pipeline stages to a transport channel (stderr always written)."""
-    import time
-    from gfso.core.types import TaskId
     t0 = time.time()
     llm = llm or _default_llm(model)
     depth = max(1, depth)
@@ -324,11 +375,31 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
                                                  progress=progress, label=f"{i + 1}/{depth}")
             if not changed:
                 break
+    # THE QUESTION THE GATE WILL ASK, ASKED BY WHOEVER WRITES THE ANSWER. The sufficiency check —
+    # "what does this goal require that no criterion of this node decides" (FM-1.f) — ran only at
+    # review time, so the verb that AUTHORS the criteria never heard it: two testers watched
+    # `auto_decompose` produce a root whose own gate then named five to twelve undecided obligations
+    # a minute later, and paid two full review rounds to repair what the previous call had just
+    # written (2026-09-02, both agent doors). It is the same question either way; asking it here
+    # costs one call and the repair rides on the fold that already exists. ONCE, never in a loop —
+    # the loop is what cost twenty-six rounds and $19.44 on the E3 arm before it was bounded.
+    _residue: tuple = ()
+    if sufficiency_at_authoring():
+        spec, holes, _residue = _close_the_goals_obligations(engine, request, rid, assignee, llm,
+                                                             spec, holes, progress)
+        if _residue:
+            # …AND THE CALLER LEARNS IT HERE, not one paid review round later. The gate will name
+            # these again; what it must not do is name them for the first time.
+            note = ((note + " ") if note else "") + (
+                f"NOTE: {len(_residue)} obligation(s) of this goal are still decided by no criterion "
+                f"after the repair round — the Level-2 review will name them again: "
+                + "; ".join(_residue))
     calls = list(getattr(llm, "calls", []))
     total_out = sum((c.get("output_tokens") or 0) for c in calls if isinstance(c, dict))
     _progress(f"total: {time.time() - t0:.0f}s wall · {total_out / 1000:.1f}k tokens · "
               f"{len(calls)} LLM calls", progress)
-    return DecomposeResult(engine, rid, engine.project(rid), spec, holes, stats=calls, note=note)
+    return DecomposeResult(engine, rid, engine.project(rid), spec, holes, stats=calls, note=note,
+                           undecided_obligations=tuple(_residue))
 
 
 __all__ = ["decompose", "decompose_into", "decompose_spec", "refine",

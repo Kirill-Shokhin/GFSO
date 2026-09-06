@@ -46,12 +46,29 @@ a risk retires an obligation by writing prose; the canon's path for a criterion 
 ```
 create_task(task_id, spec, assignee=…, parent_id=…, deadline=…)
 decompose(parent_id, children=[{task_id, spec, assignee, covers: [parent criterion names]}],
-          mappings=[{criterion, child_id}])
-edit_criteria(task_id, criteria)        # replaces criteria, carries the rest
-edit_accepted_risks(task_id, items)     # replaces the register
-map_criterion(parent_id, child_id, criterion)
+          mappings=[{criterion_name, child_id}])
+edit_criteria(task_id, criteria, expect_criteria=[…])   # replaces criteria, carries the rest
+edit_accepted_risks(task_id, accepted_risks)     # replaces the register
+map_criterion(parent_id, child_id, criterion_name)
 add_dependency(from_id, to_id, glue=…)
+record_verdict(task_id, verdict, failed_criteria=…, reviewer=…,
+               observed={criterion_name: "what you ran and what it printed"})
 ```
+
+`expect_criteria` (on `edit_criteria` and `revise`) is the set of criterion NAMES you read before
+editing. Both verbs REPLACE the whole set, so a contract that moved between your read and your call
+— a background `auto_decompose` refining it is the ordinary case — would lose whatever you never
+saw. Passing it makes the replacement conditional: the call is refused, naming what was added or
+removed since. Omitted, nothing changes.
+
+`observed` is a MAPPING from criterion name to one line of evidence — not a list, and not a summary
+of the whole delivery. A PASS that says nothing about a criterion is refused, and so is a line that
+only restates the verdict ("ok", "looks green"): an unobserved conjunct cannot carry a pass (§11.2).
+
+These names are pinned against the real signatures by `tests/test_the_packet_doc_names_real_keys.py`.
+They had drifted — `items`, `criterion`, and no `record_verdict` shape at all — and cost a tester
+three round trips on the door whose own page promises "the exact keys the engine reads" (wave 26,
+2026-09-06).
 
 Every parent criterion must be mapped to the child that delivers it — `covers` on the child and the
 flat `mappings` list are the same claim, and either is accepted.

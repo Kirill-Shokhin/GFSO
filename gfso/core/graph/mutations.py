@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from gfso.core.types import (
@@ -93,7 +94,6 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
             task.reopened_from_pass = False
 
     if task.state != new_state:
-        from datetime import datetime
         task.state_entered_at = datetime.now()   # Inv-5: every state carries its own clock
     task.state = new_state
 
@@ -141,7 +141,7 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # The contract generation moves with the revision, and this is what a verdict is stamped against:
     # voiding the RECORD alone loses the race to a validator that is still running on the superseded
     # delivery and lands its PASS afterwards, stamped with unchanged (iteration, reopens).
-    task.revisions = getattr(task, "revisions", 0) + 1
+    task.revisions = task.revisions + 1
     task.spec = effect.spec
     task.done_reason = None  # re-authored → a fresh contract, no longer a ABANDONED tombstone (clears stale flag)
     # a criteria change strands this node's own mappings that point at a now-removed criterion → prune them here

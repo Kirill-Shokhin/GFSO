@@ -1,3 +1,9 @@
+"""The CHECK battery of §13.4 — the a-priori half of correctness, run over the map alone.
+
+Syntactic (topology, coverage, DAG, deadlines) and Semantic (formal entailment, satisfiability).
+What they cannot reach is the Pragmatic level, and a check that cannot decide says `skipped`
+rather than passing: a fail-open check is worse than an absent one.
+"""
 from __future__ import annotations
 
 from gfso.core.types import Task, CheckResult, GraphContext, Recommendation, LLMProviderPort, DepEdge
@@ -28,4 +34,9 @@ def run_all_checks(task: Task, children: list[Task], dep_edges: list[DepEdge],
 
 
 def recommend(ctx: GraphContext, llm: LLMProviderPort | None = None) -> Recommendation:
+    """Criteria suggestions for a node, from the graph alone or with an LLM if one is given.
+
+    The published seam over the private implementation: callers depend on this name, not on where
+    the recommendation is computed.
+    """
     return _recommend(ctx, llm)

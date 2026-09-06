@@ -1,4 +1,4 @@
-"""L2 critic — the STRUCTURAL GATE + the causal-correctness CHECKER (canon §13.4 Level 2).
+﻿"""L2 critic — the STRUCTURAL GATE + the causal-correctness CHECKER (canon §13.4 Level 2).
 
 Level 2's question is a CHECK, not a hunt: per parent criterion — do the mapped children's
 criteria, taken as real-world facts, causally guarantee it? (Plus the semantic FM-2 residue the
@@ -18,13 +18,16 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import CHECKER_READINGS, SUFFICIENCY_READINGS
 from gfso.core.types import CriticVerdict, Stage, TaskId
-from gfso.decompose.loop import _tag
+from gfso.engine.validation import _EXEC_GATING_CHECKS
+from gfso.adapters.llm.stats import _tag
 from .types import NodeCritique
 
 log = logging.getLogger(__name__)
@@ -96,9 +99,6 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     CHECKER. Stores the critique as the validation record + sets verified=True.
     Lives HERE, not on Engine: the critic pulls decompose/adapters, and the engine imports core
     only (the mechanical layer gate) — the engine is an argument, not a host."""
-    import json
-    from dataclasses import asdict
-    from datetime import datetime
     used = llm or engine._llm
     critique = critique_node(engine, node_id, used)
     _node = engine.get_task(node_id)
@@ -111,6 +111,15 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
            # "this is a different one". Without it a criterion already ruled sufficient was
            # re-litigated every round, and the gate answered differently about an unchanged object.
            "plan_generation": list(_plan_generation(_node)) if _node is not None else [],
+           # …AND PER CRITERION, because the plan-wide stamp is too coarse to be fair. Whether the
+           # children mapped to c entail c depends on c's own text and on those children's criteria —
+           # on nothing else in the graph. Keyed on the whole plan, ANY edit anywhere threw away
+           # every decision, so a criterion certified in round 2 came back in round 3 with the plan
+           # around it changed and itself untouched (measured on the CLI door 2026-09-02: five
+           # rounds, ~$1.30, rounds 3 and 4 reopening what 2 and 3 had certified). Conflicts stay
+           # out of this: FM-2 satisfiability is a property of ALL the children together, so a new
+           # criterion elsewhere really can create one, and those are judged afresh every round.
+           "criteria_stamps": (_criterion_stamps(engine, _node) if _node is not None else {}),
            # `_model` is the port's attribute; the public-looking `model` never existed, so every
            # record until now stored an empty string — and provenance you cannot read is no provenance
            # (it hid WHICH model produced a verdict while two runs disagreed about the same plan).
@@ -138,7 +147,19 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
         engine._graph._storage.store_critique(node_id, json.dumps(rec))
     node = engine.get_task(node_id)
     if node is not None:
-        node.verified = True  # critique is now current for this decomposition
+        # …AND ONLY IF THE CHECKER ACTUALLY RAN. This said `True` unconditionally, three lines under
+        # a comment of its own promising that "the node is still marked unverified below" for a round
+        # gated out at Level 0 — the prose was right and the code did the other thing. So a review
+        # that never judged anything, because the structure was too broken to judge, marked the plan
+        # verified: `review_decomposition` answered `gate_passed: false, execution_admitted: false`
+        # and `get_review` answered `verified: true, execution_admitted: true` about the same node in
+        # the same second, with `list_holes` naming the open hole beside them (HTTP door, wave 23,
+        # 2026-09-03; reproduced here with a model that raises if it is called). `execution_admitted`
+        # is the field this product tells an integrator to gate on, and enforcement held — the FSM
+        # still refused the children — so what was broken is the READ, which is the one an outside
+        # system trusts. A leaf and a node with no instrument keep `gate_passed=True`: there is
+        # nothing for the checker to say about them, and that is a current answer, not a missing one.
+        node.verified = bool(critique.gate_passed)
         engine._graph.save_task(node)
     _log_critique(engine, critique)
     return critique
@@ -149,8 +170,6 @@ def _log_critique(engine, critique: NodeCritique) -> None:
     path = getattr(engine, "_critique_log_path", None)
     if not path:
         return
-    import json
-    from datetime import datetime
     rec = {
         "ts": datetime.now().isoformat(),
         "node": critique.node_id,
@@ -181,9 +200,6 @@ def _critique_leaf(engine, node_id: TaskId, llm=None) -> NodeCritique:
     task = engine.get_task(node_id)
     if llm is None or task is None:
         return NodeCritique(nid, gate_passed=True)   # no instrument — no verdict, never read as clean
-
-    from gfso.adapters.llm.structured import schema_instruction, parse_structured
-    from gfso.decompose.loop import _tag
 
     system = (Path(__file__).parent / "prompts" / "atomicity.md").read_text(encoding="utf-8")
     crits = "\n".join(f"- {c.name}: {c.description}" for c in task.spec.criteria)
@@ -243,7 +259,6 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
     real and was measured (gating the register bought fabricated entries and churn), and it is a q_T
     defect with a name and an owner — an argument about incentives, not about whose rule this is.
     One definition of an admissible plan, used by both gates."""
-    from gfso.engine.validation import _EXEC_GATING_CHECKS
     nid = str(node_id)
     children = engine.get_active_children(node_id)  # cancelled tombstones are not part of the decomposition
     if not children:
@@ -259,9 +274,6 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
     if llm is None or task is None:
         return NodeCritique(nid, gate_passed=True)  # structurally clean; checker not run
 
-    from gfso.adapters.llm.structured import schema_instruction, parse_structured
-    from gfso.decompose.loop import _tag
-
     system = (Path(__file__).parent / "prompts" / "checker.md").read_text(encoding="utf-8")
     user = (f"# DECOMPOSITION LEVEL UNDER CHECK\n{engine.project(node_id)}\n\n"
             f"Judge EVERY parent criterion listed above — one entry each.")
@@ -276,7 +288,7 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
     # …AND WHAT THIS SAME PLAN HAS ALREADY SETTLED. A criterion ruled sufficient against a plan that
     # has not changed since is carried forward rather than re-asked (`_already_decided`): the gate
     # was non-monotone, which is what made discharging it feel like whack-a-mole.
-    _decided = _already_decided(_prior, task)
+    _decided = _already_decided(_prior, task, engine)
     parsed, verdicts, conflicts = _read_the_plan(llm, user, system, _prior is None,
                                                  decided=_decided)
     if parsed is None:
@@ -313,7 +325,34 @@ def _plan_generation(task) -> tuple:
                          for m in (task.criterion_mappings or ()))))
 
 
-def _already_decided(prior: Optional[dict], task) -> dict:
+def _criterion_stamps(engine, task) -> dict:
+    """What each parent criterion's sufficiency question is ABOUT: the criterion's own text, the
+    children answering for it, and those children's criteria — NAME AND TEXT BOTH.
+
+    The text half was missing and the docstring promised it. A child's criterion could be rewritten
+    to anything at all while keeping its name, and the stamp did not move: `edit_criteria` honestly
+    staled the review, the caller honestly re-ran it, and the re-run handed back the PREVIOUS
+    verdict — whose stored rationale was then false about the graph it described. Measured on the CLI
+    door (wave 25, 2026-09-05): a child's only criterion was replaced by "parse_kv exists and is
+    callable" against a parent demanding three behaviours including two ValueError paths, and the
+    review answered `sufficient` because "w25cli-kv's criterion is textually identical to the
+    parent". Reproduced with "the developer has thought about parsing and feels reasonably
+    confident" — same verdict, same sentence. Appending " (rev2)" to the PARENT's text forced a real
+    re-derivation, which was immediately correct: the checker was capable, it was simply not asked.
+    A gate that re-runs and returns a lie is worse than one that does not re-run.
+    """
+    kids = {str(k.id): tuple(sorted((c.name, c.description) for c in k.spec.criteria))
+            for k in engine._graph.get_children(task.id)}
+    out = {}
+    for c in task.spec.criteria:
+        covering = tuple(sorted(str(m.child_id) for m in (task.criterion_mappings or ())
+                                if m.criterion_name == c.name))
+        out[c.name] = [c.description, list(covering),
+                       [[k, list(kids.get(k, ()))] for k in covering]]
+    return out
+
+
+def _already_decided(prior: Optional[dict], task, engine=None) -> dict:
     """The criteria a PREVIOUS reading of this SAME plan ruled sufficient, by name.
 
     THE CHECKER WAS NON-MONOTONE, and that is what made the gate feel like whack-a-mole. Measured on
@@ -324,10 +363,57 @@ def _already_decided(prior: Optional[dict], task) -> dict:
     an unchanged plan is not re-litigated; anything else — insufficient, uncertain, newly added, or
     any criterion at all once the plan changes — is judged afresh, which is where a checker's
     judgement belongs."""
-    if not prior or prior.get("plan_generation") != list(_plan_generation(task)):
+    if not prior:
         return {}
-    return {str(v.get("criterion")): v for v in (prior.get("criteria_verdicts") or ())
-            if v.get("verdict") == CriticVerdict.SUFFICIENT}
+    _sufficient = {str(v.get("criterion")): v for v in (prior.get("criteria_verdicts") or ())
+                   if v.get("verdict") == CriticVerdict.SUFFICIENT}
+    if engine is None:      # no graph to ask: fall back to the coarse whole-plan stamp
+        return _sufficient if prior.get("plan_generation") == list(_plan_generation(task)) else {}
+    _then, _now = prior.get("criteria_stamps") or {}, _criterion_stamps(engine, task)
+    if not _then:           # a record written before stamps existed carries the old, coarser rule
+        return _sufficient if prior.get("plan_generation") == list(_plan_generation(task)) else {}
+    return {name: v for name, v in _sufficient.items()
+            if name in _then and _still_entailed(_then[name], _now.get(name))}
+
+
+def _still_entailed(then, now) -> bool:
+    """Does a criterion's stamped `sufficient` still hold — identical stamp, or a STRENGTHENED plan?
+
+    Identity was the whole rule, and it made the gate reopen certified criteria whenever a covering
+    child gained anything: an integrator watched `constructor_input_validation` go sufficient →
+    insufficient → sufficient across four rounds while the only edit was ADDING a criterion to the
+    child that covers it, at ~4 minutes and ~$0.25 a round (HTTP door, wave 27, 2026-09-06 — "I
+    would not promise a CI budget on it").
+
+    Adding is not changing. The sufficiency question is whether ⋀criteria(children) ⊨ cᵢ (§13.4,
+    CHECK-7), and a conjunction only ever gets stronger when a conjunct is added: if the children
+    entailed the parent criterion before, they entail it with an extra criterion on one of them. So
+    a stamp whose parent text is unchanged, whose covering set has not SHRUNK, and whose covering
+    children's criteria are a superset of what was judged, carries its verdict forward.
+
+    Everything else is judged afresh, and that is the point: a criterion REWORDED (same name, new
+    text) or REMOVED weakens the conjunction, so the entailment has to be re-derived. Nothing here
+    is a claim that the checker was right the first time — it is a claim about which edits can make
+    an earlier `sufficient` wrong.
+    """
+    if then == now:
+        return True
+    if not isinstance(then, (list, tuple)) or not isinstance(now, (list, tuple)):
+        return False
+    if len(then) != 3 or len(now) != 3:
+        return False
+    then_desc, then_cov, then_kids = then
+    now_desc, now_cov, now_kids = now
+    if str(then_desc) != str(now_desc):          # the parent criterion itself was rewritten
+        return False
+    if not set(map(str, then_cov or ())) <= set(map(str, now_cov or ())):
+        return False                             # a coverer was removed: fewer conjuncts, re-derive
+    _now_by_kid = {str(k): {tuple(map(str, c)) for c in (cs or ())} for k, cs in (now_kids or ())}
+    for kid, crits in (then_kids or ()):
+        held = {tuple(map(str, c)) for c in (crits or ())}
+        if not held <= _now_by_kid.get(str(kid), set()):
+            return False                         # a child's criterion was reworded or dropped
+    return True
 
 
 def _read_the_plan(llm, user: str, system: str, first_pass: bool, decided: Optional[dict] = None):
@@ -400,7 +486,8 @@ STILL_SCHEMA = {
 }
 
 
-def _still_undecided(engine, task, llm, prior: tuple) -> tuple[dict, ...]:
+def _still_undecided(engine, task, llm, prior: tuple, *,
+                     stage: Stage = Stage.UNDECIDED_OBLIGATIONS) -> tuple[dict, ...]:
     """Which of the obligations already named are STILL not decided by this node's criteria.
 
     A cheap judgement over a fixed list, instead of another open-ended reading of the goal. It
@@ -421,22 +508,47 @@ def _still_undecided(engine, task, llm, prior: tuple) -> tuple[dict, ...]:
             f"the numbers of the obligations that are now decided. Name nothing new: what the goal "
             f"carries was enumerated when it was read, and this round is about what the criteria "
             f"have since covered.")
+    def _not_rejudged(why: str) -> tuple:
+        """⊥ IS NOT "STILL OPEN". The list stands — a check that could not run closes nothing — but
+        the reader must be able to tell a judgement from a silence. Two doors reported these
+        obligations as "frozen at the first reading" (wave 26, 2026-09-06) with no way to see
+        whether the round had re-judged them at all."""
+        log.warning(f"re-judging the undecided obligations on {task.id}: {why} — the list stands "
+                    f"unchanged, and each finding says it was not re-judged")
+        return tuple({**g, "carried": True, "rejudged": False,
+                      "admits": (f"(NOT RE-JUDGED this round — {why}. This obligation stands as it "
+                                 f"was named when the goal was first read; that is a silence, not a "
+                                 f"finding that your fix failed. Run the review again.) "
+                                 + str(g.get("admits", "")))} for g in prior)
+
     try:
         text = llm.complete(prompt=user + schema_instruction(STILL_SCHEMA),
                             context="You judge whether stated criteria decide stated obligations. "
                                     "Nothing else.")
-        _tag(llm, Stage.UNDECIDED_OBLIGATIONS)
+        _tag(llm, stage)
         parsed = parse_structured(text or "", STILL_SCHEMA)
     except Exception:
         log.warning(f"re-judging the undecided obligations failed on {task.id}", exc_info=True)
-        return tuple(prior)
+        return _not_rejudged("the checker did not answer")
     if parsed is None:
-        return tuple(prior)
+        return _not_rejudged("the checker's answer could not be read")
     done = {str(n).strip() for n in (parsed.get("decided") or ())}
-    return tuple(g for i, g in enumerate(prior, 1) if str(i) not in done)
+    # …AND A CARRIED FINDING DOES NOT CARRY ITS OLD ARGUMENT. The DECISION here is current — these
+    # obligations are still undecided by the criteria as they now stand — but the `why`/`admits`
+    # text was written against the criteria as they stood when the goal was first read. A tester was
+    # told "No criterion mentions tests at all" while a criterion named `pytest_suite_runs_green` was
+    # in the set, because the argument enumerated the pre-edit contract (CLI door, 2026-09-02). The
+    # user acts on the text, so the text may not assert a state of the graph it has not re-read.
+    _kept = tuple(g for i, g in enumerate(prior, 1) if str(i) not in done)
+    return tuple({**g, "carried": True, "rejudged": True,
+                  "admits": ("(RE-JUDGED against the criteria as they stand now and still not "
+                             "decided by them — so fixing the criteria IS what closes it, and the "
+                             "next review will drop it; the argument below is the FIRST reading of "
+                             "the goal and does not describe the contract as it stands) "
+                             + str(g.get("admits", "")))} for g in _kept)
 
 
-def _undecided_obligations(engine, task, llm) -> tuple[dict, ...]:
+def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_OBLIGATIONS) -> tuple[dict, ...]:
     """Obligations of the node's OWN goal that none of its OWN criteria decides (FM-1.f).
 
     A separate call against its own prompt rather than a question bolted onto the checker's,
@@ -471,14 +583,15 @@ def _undecided_obligations(engine, task, llm) -> tuple[dict, ...]:
         # THE GOAL HAS NOT MOVED, so the obligations it carries have not either. What CAN have
         # changed is whether the node's criteria now decide them, and that is what this round asks —
         # about the list already on record, not about the text again.
-        return _still_undecided(engine, task, llm, tuple(prior.get("undecided_obligations") or ()))
+        return _still_undecided(engine, task, llm, tuple(prior.get("undecided_obligations") or ()),
+                                stage=stage)
     prompt = user + schema_instruction(UNDECIDED_SCHEMA)
     out, seen = [], []
     readings = max(1, SUFFICIENCY_READINGS)
     for _ in range(readings):
         try:
             text = llm.complete(prompt=prompt, context=system)
-            _tag(llm, Stage.UNDECIDED_OBLIGATIONS)
+            _tag(llm, stage)
             parsed = parse_structured(text or "", UNDECIDED_SCHEMA)
         except Exception:
             log.warning(f"undecided-obligations check failed on {task.id}", exc_info=True)

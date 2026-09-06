@@ -31,6 +31,7 @@ _TABLE: list[tuple] = []
 def _row(state: State, signal: Signal):
     """Decorator to register a transition row."""
     def decorator(fn):
+        """Register `fn` as the handler for this (state, signal) pair and return it unchanged."""
         _TABLE.append((state, signal, fn))
         return fn
     return decorator

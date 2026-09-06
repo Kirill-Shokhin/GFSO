@@ -19,7 +19,8 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
                   validator_id: str, generation: tuple,
                   per_criterion: Optional[list] = None,
                   tools_used: Optional[dict] = None,
-                  model: Optional[str] = None, workdir: Optional[str] = None) -> None:
+                  model: Optional[str] = None, workdir: Optional[str] = None,
+                  by_hand: bool = False) -> None:
     """Write the record for THIS delivery — `storage` is the port, handed in by the caller that owns it. `generation` = (iteration, reopens, revisions) as it stood
     when the verdict was earned — a rework, a reopen or a revision under it makes the record stale,
     which is what every reader checks before trusting it."""
@@ -30,6 +31,15 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # verdict from a cheap judge and one from an expensive judge were the same row — and the
         # tier of a role has already been wrong twice without anything saying so.
         "validator_model": model,
+        # WHAT KIND OF PARTY STOOD BEHIND THIS. The seam gate compares the reviewer's NAME to the
+        # executor's, so a name invented in the same breath satisfies it — the canon's named
+        # boundary (§13.6: no structural CHECK guards FM-3's false PASS), not something a check can
+        # close. What must not happen is laundering: a verdict a person asserted at a door where
+        # identity is self-declared read back exactly like an instrument's report (measured on the
+        # CLI door 2026-09-02, with the observation "x" against every criterion). Stored at write
+        # time, because "is this reviewer a registered role" is a fact about the moment of judging,
+        # and the roster is server-wide and mutable.
+        "by_hand": bool(by_hand),
         **dict(zip(("iteration", "reopens", "revisions"), generation)),
         "per_criterion": list(per_criterion or ()),
         # The criteria AS THEY STOOD when contact refuted them. Without this snapshot a later
@@ -37,7 +47,7 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # the children already deliver" have the same shape at the re-delivery, and the second is a
         # false close (corner #5, `formal/README.md`). Records written before this field exist read
         # as "text unknown", which the disposition treats as unchanged — the conservative direction.
-        "criteria_text": {c.name: c.description for c in getattr(task, "spec", None).criteria}
+        "criteria_text": {c.name: c.description for c in task.spec.criteria}
         if task is not None else {},
         # What the validator actually DID, by tool. Its report may claim an execution; this says
         # whether one happened. A FAIL whose evidence cites runs while `Bash` is absent is refuted

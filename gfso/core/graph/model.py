@@ -1,12 +1,13 @@
 """G = (N, E_D, E_Dep, sigma). Wraps StoragePort."""
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from gfso.core.types import (
     TaskId, AgentId, Task, State, Signal, Verdict,
     GuardContext, GraphContext, CheckResult, Recommendation,
-    DispatchPayload, StoragePort,
+    DispatchPayload, DepEdge, StoragePort,
 )
 
 
@@ -29,6 +30,18 @@ def verdict_is_current_pass(rec: dict | None, task) -> bool:
     return all(rec.get(k, 0) == getattr(task, k, 0) for k in ("iteration", "reopens", "revisions"))
 
 
+def generation_of_task(t) -> tuple:
+    """The generation of a node you already HOLD: (iteration, reopens, revisions).
+
+    Same fact as `Graph.generation_of`, for callers that have the object rather than its id — and
+    the reason it exists is that they were each spelling it as three defensive `getattr` reads with
+    their own defaults. The fields are DECLARED, so they are read as declared: a `getattr` with a
+    default over a declared field says the field might not be there, which is a false statement
+    about this type and the thing the coupling instrument counts.
+    """
+    return (t.iteration, t.reopens, t.revisions) if t is not None else (0, 0, 0)
+
+
 class Graph:
     def __init__(self, storage: StoragePort):
         self._storage = storage
@@ -45,6 +58,8 @@ class Graph:
         self.authorized_executors: set[str] = set()
 
     def get_state(self, task_id: TaskId) -> Optional[State]:
+        """The node's current state, or `None` if this id is not in the graph. `None` is what the
+        protocol step reads as "unknown node" — it is not a state."""
         task = self._storage.get_task(task_id)
         return task.state if task else None
 
@@ -84,7 +99,6 @@ class Graph:
         glue (anti-mock truth-maker) — Dep is criteria-content, not a standalone stored record.
         DISCOVERED edges (surfaced at runtime via BLOCK) remain stored. This is the single read path
         for every Dep consumer (checks / projection / q_Dep / cycle-check)."""
-        from gfso.core.types import DepEdge
         edges = [
             DepEdge(from_id=c.depends_on, to_id=t.id, discovered=False, glue=c.description)
             for t in self._storage.get_all_tasks()
@@ -96,6 +110,11 @@ class Graph:
         return edges
 
     def get_guard_context(self, task_id: TaskId) -> GuardContext:
+        """What the FSM needs to decide a transition beyond the state itself: the rework counter and
+        its cap, the reopen counter and its cap, and whether this terminal is consumed (§14.3).
+
+        Assembled here because a guard that read the graph itself would make the transition depend on
+        storage, and the point of the FSM is that it does not."""
         task = self._storage.get_task(task_id)
         if task is None:
             return GuardContext(iteration=0, max_iterations=3)
@@ -182,16 +201,20 @@ class Graph:
         return True  # non-quasi-terminal states have no reopen question — fail-closed
 
     def get_assignee(self, task_id: TaskId) -> Optional[AgentId]:
+        """Who holds this node (Del) — the only party whose signals it moves on."""
         task = self._storage.get_task(task_id)
         return task.assignee if task else None
 
     def active_tasks(self) -> list[Task]:
+        """Every node not in a terminal state. What "settled" means is the graph's to say, and it says
+        it once: two spellings of it disagreed about an ESCALATED child and cost a paid run."""
         return self._storage.get_active_tasks()
 
     def save_task(self, task: Task) -> None:
         self._storage.save_task(task)
 
     def build_context(self, task_id: TaskId) -> GraphContext:
+        """The node plus its neighbourhood — parent, children, dep edges — as the AI layer reads it."""
         task = self._storage.get_task(task_id)
         if task is None:
             raise ValueError(f"task {task_id} not found")
@@ -208,6 +231,9 @@ class Graph:
         )
 
     def build_dispatch_payload(self, task_id: TaskId, signal: Signal) -> DispatchPayload:
+        """The packet handed to a participant on ASSIGN: the contract, and nothing about how it was
+        derived. What is NOT here is deliberate — an executor that could read the plan around it
+        would be judged on a contract it did not consent to (Inv-1)."""
         task = self._storage.get_task(task_id)
         if task is None:
             raise ValueError(f"task {task_id} not found")
@@ -231,13 +257,12 @@ class Graph:
         t = self.get_task(task_id)
         # A node that is not there has no generation; the fields themselves are declared, so they
         # are read as declared.
-        return (t.iteration, t.reopens, t.revisions) if t is not None else (0, 0, 0)
+        return generation_of_task(t)
 
     def exec_verdict_record(self, task_id: TaskId) -> Optional[dict]:
         """THE one reader of the stored independent-validation record ({verdict, failed_criteria,
         validator, iteration, ts} or None) — the self-PASS gate, q_V and false_fail_share all
         consume it; parsing lived in three copies before."""
-        import json
         raw = self._storage.get_exec_verdict(task_id)
         if not raw:
             return None
@@ -255,7 +280,6 @@ class Graph:
         repair from a lowered criterion). The record is rewritten in place — this store holds the
         CURRENT verdict and always did ("the superseded record is replaced, never trusted forward");
         the event itself stays in the log (Inv-7)."""
-        import json
         rec = self.exec_verdict_record(task_id)
         if not rec or rec.get("verdict") != Verdict.PASS:
             return

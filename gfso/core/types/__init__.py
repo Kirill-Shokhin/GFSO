@@ -1,3 +1,8 @@
+"""The vocabulary the whole system speaks: primitives, enums, effects, ports.
+
+One spelling per notion, on purpose — a word with two definitions is how two halves of a rule
+come to disagree, which this package exists to prevent.
+"""
 from .enums import (
     State, Signal, Action, CriticVerdict, DoneReason, Verdict, Stage, FM,
     AutonomyLevel, MutationType, Predictability, RevisionReason,

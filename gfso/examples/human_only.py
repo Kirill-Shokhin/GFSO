@@ -11,6 +11,11 @@ from gfso import tools as T
 
 
 def main() -> None:
+    """Run the demo: the whole protocol with zero AI, including the refusal that makes it honest.
+
+    The load-bearing moment is the engine REJECTING the issuer's PASS on her own work until an
+    independent verdict is on the record.
+    """
     db = scratch("demo.db")
     store = SqliteStorage(db)
     e = Engine(store, HumanAgent(), llm=None, validate_signals=True, state_timeout=0)

@@ -1,14 +1,13 @@
 """Thm 11/Inv-7 survives a restart: the audit log is APPEND-ONLY in SQLite — a fresh engine on the
 same DB hydrates the full signal history (it was in-memory only: a restarted server had NO trail,
 so state=fold(log) could not be claimed across the process boundary)."""
-from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.core.types import TaskId, AgentId, Spec, Criteria, SignalData, Signal
+from tests.support import make_engine
 
 
 def _mk(db):
-    e = Engine(SqliteStorage(str(db)), HumanAgent(), llm=None, validate_signals=True,
+    e = make_engine(SqliteStorage(str(db)), llm=None, validate_signals=True,
                state_timeout=0)
     e.start()
     return e
@@ -43,8 +42,7 @@ def test_audit_log_survives_restart(tmp_path):
 
 
 def test_memory_storage_keeps_inmemory_audit(tmp_path):
-    from gfso.adapters.storage.memory import MemoryStorage
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
+    e = make_engine(llm=None, validate_signals=True, state_timeout=0)
     e.start()
     e.assign_task(TaskId("m"), Spec("work", (Criteria("c", "C"),)), AgentId("human"))
     assert len(e.audit_log()) == 1                           # old behavior intact (ephemeral storage)

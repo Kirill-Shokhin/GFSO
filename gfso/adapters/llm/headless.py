@@ -20,7 +20,7 @@ import time
 
 from gfso.core.types import LLMProviderPort
 from .structured import schema_instruction, parse_structured, RETRY_SUFFIX
-from gfso.config import MODEL_DEFAULT
+from gfso.config import MODEL_DEFAULT, subprocess_env
 
 log = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 try:
                     self.on_tick(f"{self.stage_hint or 'generating'}: {tok} tokens · {now - t0:.0f}s")
                 except Exception:
-                    pass
+                    pass  # a token tick is presentation — never break the generation it is reporting on
 
         return envelope, text_acc, out_tokens
 
@@ -158,8 +158,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         Default = a zero-tool one-shot (Port A); `tools_args`/`cwd` = an agent run (Port B)."""
         if self._cmd is None:
             return ""
-        env = dict(os.environ) if self._keep_key else \
-            {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        env = subprocess_env(keep_key=self._keep_key)
         if self._max_thinking is not None:
             env["MAX_THINKING_TOKENS"] = str(self._max_thinking)
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
@@ -190,8 +189,8 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 try:
                     proc.stdin.write(user)
                     proc.stdin.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning(f"headless claude call: the prompt was never written to the child ({e})")
             threading.Thread(target=_feed, daemon=True).start()
 
             envelope, text_acc, out_tokens = self._read_stream(proc, t0, cap)

@@ -8,24 +8,17 @@ The root always stays gated: "done" never completes on a self-stamp.
 """
 import pytest
 
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 import gfso.delegate as D
 from gfso import tools as T
-from gfso.core.types import (AcceptedRiskItem, CriterionMapping, Predictability, State, Signal,
-                             SignalData, TaskId, AgentId, Spec, Criteria, Verdict)
-
-
-def _spec(desc="goal", crit="c1"):
-    return Spec(description=desc, criteria=(Criteria(crit, f"{crit} description"),),
-                accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
-                                                 Predictability.EXTRAORDINARY),))
+from gfso.core.types import (CriterionMapping, State, Signal,
+                             SignalData, TaskId, AgentId, Verdict)
+from tests.support import make_engine, spec
+from gfso.delegate import Dispatcher, AgentRegistry
 
 
 @pytest.fixture
 def engine():
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(llm=None, check_interval=10_000)
     e.start()
     yield e
     e.stop()
@@ -37,7 +30,8 @@ def _deliver(e, tid, actor, self_check=Verdict.PASS):
     it is ⊥ (§11.2). Pass `self_check=None` for the delivery that checked nothing."""
     for sd in (
         SignalData(signal=Signal.ACCEPT, task_id=TaskId(tid), source=AgentId(actor)),
-        SignalData(signal=Signal.DELIVER, task_id=TaskId(tid), source=AgentId(actor), result="r",
+        SignalData(signal=Signal.DELIVER, task_id=TaskId(tid), source=AgentId(actor),
+                   result="ran the leaf's check, it printed OK",
                    self_validation=self_check),
     ):
         e.send_signal(sd)
@@ -45,11 +39,11 @@ def _deliver(e, tid, actor, self_check=Verdict.PASS):
 
 
 def test_is_public_classification(engine):
-    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [
-        (TaskId("mine"), _spec("mine", "mc"), AgentId("agent")),      # same Del → internal
-        (TaskId("theirs"), _spec("theirs", "tc"), AgentId("worker")),  # Del seam → public
+        (TaskId("mine"), spec("mine", "mc"), AgentId("agent")),      # same Del → internal
+        (TaskId("theirs"), spec("theirs", "tc"), AgentId("worker")),  # Del seam → public
     ])
     engine.wait_idle()
     g = engine._graph
@@ -62,9 +56,9 @@ def test_internal_same_del_node_may_self_pass(engine):
     """The agent's own internal node self-verifies — no INDEPENDENT verdict demanded (§14.5 D6);
     what its delivery must carry is its own decided self-check, which is the record it is judged on.
     A delivery that checked nothing leaves the node in VALIDATING for its issuer (§11.2)."""
-    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("in1"), _spec("in", "ic"), AgentId("agent"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("in1"), spec("in", "ic"), AgentId("agent"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("in1"))])
     engine.wait_idle()
     _deliver(engine, "in1", "agent", self_check=None)          # nothing checked → ⊥, not a pass
@@ -83,9 +77,9 @@ def test_internal_same_del_node_may_self_pass(engine):
 
 def test_an_internal_delivery_that_carries_its_self_check_needs_nothing_else(engine):
     """The other door: `self_validation` in the DELIVER packet IS the record (§14.5 D6)."""
-    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("in2"), _spec("in", "ic"), AgentId("agent"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("in2"), spec("in", "ic"), AgentId("agent"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("in2"))])
     engine.wait_idle()
     _deliver(engine, "in2", "agent")                            # carries self_validation=PASS
@@ -98,7 +92,7 @@ def test_an_internal_delivery_that_carries_its_self_check_needs_nothing_else(eng
 
 def test_root_self_pass_still_gated(engine):
     """The root is the one seam "done" must cross — a self-stamp never completes it."""
-    engine.assign_task(TaskId("solo"), _spec(), AgentId("agent"))
+    engine.assign_task(TaskId("solo"), spec(), AgentId("agent"))
     engine.wait_idle()
     _deliver(engine, "solo", "agent")
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("solo"), source=AgentId("agent")))
@@ -117,9 +111,9 @@ def test_seam_child_unaffected_by_d6(engine):
     for a signer whose name differs from the executor's. This test used to assert the opposite
     ("the issuer's PASS needs no gate change"), and that belief was the false PASS the agent door
     walked into on 2026-08-22."""
-    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("pm"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("pm"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("d1"), _spec("d", "dc"), AgentId("w"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("d1"), spec("d", "dc"), AgentId("w"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("d1"))])
     engine.wait_idle()
     _deliver(engine, "d1", "w")
@@ -142,16 +136,15 @@ def test_seam_child_unaffected_by_d6(engine):
 
 def test_dispatcher_validates_seams_only_by_default(engine, monkeypatch):
     """The auto-validation instrument fires at seams; internal nodes are the opt-in dial."""
-    from gfso.delegate import Dispatcher, AgentRegistry
     monkeypatch.delenv("GFSO_VALIDATE_INTERNAL", raising=False)
     reg = AgentRegistry.__new__(AgentRegistry)
     reg._agents = {}
     d = Dispatcher(engine, reg)
-    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [
-        (TaskId("mine"), _spec("m", "mc"), AgentId("agent")),
-        (TaskId("theirs"), _spec("t", "tc"), AgentId("worker")),
+        (TaskId("mine"), spec("m", "mc"), AgentId("agent")),
+        (TaskId("theirs"), spec("t", "tc"), AgentId("worker")),
     ])
     engine.wait_idle()
     assert not d._validate_here(engine.get_task(TaskId("mine")))   # internal → self-validation
@@ -166,9 +159,9 @@ def test_execution_gated_on_plan_verification(engine):
     parent's plan fails a CORRECTNESS check — here an uncovered parent criterion (CHECK-1). This is
     the systemic 'verify before you execute' — the agent physically cannot work a flawed plan, so the
     plan is completed and checked ONCE up front (no discover-after-delivery, no rework churn)."""
-    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child", "cc"), AgentId("agent"))])
+    engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child", "cc"), AgentId("agent"))])
     engine.wait_idle()
     # unmapped child → parent CHECK-1 fails → ACCEPT is REFUSED (cannot execute an unverified plan)
     r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
@@ -184,9 +177,9 @@ def test_execution_gated_on_plan_verification(engine):
 def test_empty_accepted_risks_does_not_gate_execution(engine):
     """CHECK-4 (ACCEPTED_RISKS) is completeness DOCUMENTATION, not a correctness gate — an empty ACCEPTED_RISKS
     must NOT block execution (gating it forced a fake ACCEPTED_RISKS and drove edit_accepted_risks churn, live)."""
-    engine.assign_task(TaskId("root"), _spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("ch"), _spec("child", "cc"), AgentId("agent"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child", "cc"), AgentId("agent"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("ch"))])
     engine.wait_idle()  # mapped but NO ACCEPTED_RISKS authored on root
     r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
@@ -222,11 +215,16 @@ def test_an_internal_node_completes_on_its_own_self_check(engine):
     T.signal(e, "kid", "DELIVER", "exec-1", result="built it")
 
     said = []
-    D._settle_internal(e, TaskId("kid"), "", said.append)       # no self-check → ⊥, not a pass
+    D._settle_internal(e, TaskId("kid"), None, said.append)     # no self-check → ⊥, not a pass
     e.wait_idle()
     assert e.get_state(TaskId("kid")).name == "VALIDATING"
 
-    D._settle_internal(e, TaskId("kid"), "ran its check, it printed what it should", said.append)
+    # THE WORD, not any text. This passed prose here and the node closed, because the caller mapped
+    # every non-empty string to PASS — which also turned an executor's own `FAIL` into a pass
+    # (probed 2026-09-05). §14.2 puts a VERDICT in this field; prose that decides nothing is ⊥ and
+    # leaves the node exactly where an empty field leaves it. See
+    # `test_the_self_check_is_read_not_counted.py` for the reading itself.
+    D._settle_internal(e, TaskId("kid"), Verdict.PASS, said.append)
     e.wait_idle()
     assert e.get_state(TaskId("kid")).name == "DONE"            # …the self-check settles it
     assert any("§14.5 D6" in m for m in said)
@@ -234,6 +232,6 @@ def test_an_internal_node_completes_on_its_own_self_check(engine):
     # …and the PUBLIC node above it is untouched: that is where the independent verdict is owed.
     T.signal(e, "par", "ACCEPT", "exec-1")
     T.signal(e, "par", "DELIVER", "exec-1", result="integrated")
-    D._settle_internal(e, TaskId("par"), "I checked it myself", said.append)
+    D._settle_internal(e, TaskId("par"), Verdict.PASS, said.append)
     e.wait_idle()
     assert e.get_state(TaskId("par")).name == "VALIDATING"      # a seam is never self-signed

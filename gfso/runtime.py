@@ -5,13 +5,24 @@ browser client of the HTTP mirror). Keeping the factory here means the mirrors d
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
+import sys
 
 from gfso.engine import Engine
 from gfso.adapters.agents.human import HumanAgent
+from gfso.adapters.llm.generic import GenericLLM
+from gfso.adapters.llm.headless import HeadlessClaudeLLM
+from gfso.adapters.llm.stub import StubLLM
+from gfso.adapters.storage.memory import MemoryStorage
+from gfso.adapters.storage.sqlite import SqliteStorage
+from gfso.demo import seed_demo
 from gfso import config as _config
 from gfso.config import (data_dir as _config_data_dir, MODEL_DEFAULT, active_project,
-                         DEFAULT_PROJECT)
+                         remember_active_project, DEFAULT_PROJECT)
+
+log = logging.getLogger(__name__)
 
 
 def llm_factory(model: str = MODEL_DEFAULT):
@@ -29,13 +40,11 @@ def llm_factory(model: str = MODEL_DEFAULT):
 
     Flipping the whole system to a foreign provider and seamlessly back IS these two variables."""
     if _config.provider() == "generic":
-        from gfso.adapters.llm.generic import GenericLLM
         _g = _config.generic_provider()
         if not _g["base_url"]:
             raise ValueError("GFSO_PROVIDER=generic needs GFSO_GENERIC_BASE_URL — the OpenAI-compatible "
                              "endpoint to talk to")
         return GenericLLM(base_url=_g["base_url"], model=_g["model"] or model, api_key=_g["api_key"])
-    from gfso.adapters.llm.headless import HeadlessClaudeLLM
     return HeadlessClaudeLLM(model=model, keep_api_key=_config.api_billing())
 
 
@@ -61,17 +70,14 @@ def build_engine_from_env(*, validate_signals: bool = True, default_storage: str
     `db_path` overrides the sqlite file (the ProjectRegistry's per-project isolation).
     Returns a STARTED engine."""
     if _config.storage_kind(default_storage) == "sqlite":
-        from gfso.adapters.storage.sqlite import SqliteStorage
         storage = SqliteStorage(str(db_path or _config.db_path()))
     else:
-        from gfso.adapters.storage.memory import MemoryStorage
         storage = MemoryStorage()
 
     llm_kind = _config.llm_kind(default_llm)
     if llm_kind in ("llm", "claude"):   # "claude" = the legacy alias for the real-provider path
         llm = llm_factory(model=_config.engine_model())
     elif llm_kind == "stub":
-        from gfso.adapters.llm.stub import StubLLM
         llm = StubLLM()
     else:
         llm = None
@@ -79,7 +85,6 @@ def build_engine_from_env(*, validate_signals: bool = True, default_storage: str
     engine = Engine(storage, HumanAgent(), llm=llm, validate_signals=validate_signals)
     engine.start()
     if seed and not engine.all_tasks():
-        from gfso.demo import seed_demo
         seed_demo(engine)
     return engine
 
@@ -94,7 +99,6 @@ class ProjectRegistry:
     _NAME_RE = None  # compiled lazily
 
     def __init__(self, **engine_kwargs):
-        import re
         self._kw = engine_kwargs
         self._dir = str(data_dir())
         self._engines: dict[str, Engine] = {}
@@ -103,6 +107,7 @@ class ProjectRegistry:
 
     @property
     def active(self) -> str:
+        """The project this process is pointed at right now."""
         return self._active
 
     def engine(self, project: str | None = None, create: bool = True) -> Engine:
@@ -129,29 +134,36 @@ class ProjectRegistry:
             self._engines[name].project_name = name    # per-project instruments key off it
             self._engines[name]._project_name = name    # (the older spelling, still read downstream)
             try:  # delegation autostart rides with the engine (works under every entry point)
+                # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm →
+                # gfso.runtime), so delegation is reached from here only at call time.
                 from gfso.delegate import ensure_dispatcher
                 ensure_dispatcher(self._engines[name])
             except Exception as ex:
                 # Swallowed, this left a project that never auto-executes and never auto-validates
                 # anything for the life of the process — indistinguishable, from outside, from an
                 # executor that is merely slow.
-                import sys as _sys      # stderr: stdout is `gfso mcp`'s JSON-RPC channel
+                # stderr: stdout is `gfso mcp`'s JSON-RPC channel
                 print(f"gfso: delegation dispatcher failed to start for project {name!r} ({ex}) — "
                       f"nothing will be dispatched or auto-validated there",
-                      file=_sys.stderr, flush=True)
+                      file=sys.stderr, flush=True)
             cb = getattr(self, "_on_create", None)   # notify listeners (e.g. UI project list) that a project appeared
             if cb:
                 try:
                     cb(name)
+                # a listener refresh is presentation — a UI that misses one project appearing must
+                # not break the door that created it
                 except Exception:
                     pass
         return self._engines[name]
 
     def use(self, name: str) -> Engine:
         """Switch the ACTIVE project (creates it on first use). Every interface consulting the registry
-        (MCP verbs' default, UI) follows — one shared registry per server process."""
+        (MCP verbs' default, UI) follows — one shared registry per server process, and the choice is
+        REMEMBERED: a restart used to put every session that had not re-chosen back into `default`
+        without saying so (MCP door, wave 26, 2026-09-06)."""
         eng = self.engine(name)   # validates + creates
         self._active = name
+        remember_active_project(name)
         return eng
 
     def delete(self, name: str) -> dict:
@@ -170,12 +182,20 @@ class ProjectRegistry:
         eng = self._engines.pop(name, None)
         if eng is not None:
             try:
+                # LEFT: import cycle gfso.runtime ↔ gfso.delegate (see `engine` above).
                 from gfso.delegate import _DISPATCHERS
                 d = _DISPATCHERS.pop(id(eng), None)
                 if d:
                     d.stop()
-            except Exception:
-                pass
+            # A stop that raises must not leave the project HALF-deleted — the files go next.
+            # …BUT IT IS NOT NOTHING: the dispatcher is out of the registry and may still be running,
+            # polling a database that is deleted three lines below. Nothing owns it any more, so this
+            # is the last place that can say so — and a poll against a removed file is what a reader
+            # of the log will otherwise be trying to explain (found while naming the swallowed
+            # failures, 2026-09-02).
+            except Exception as _ex:
+                log.warning(f"the dispatcher of {name!r} did not stop ({_ex}); it is unregistered and "
+                            f"may still be polling a database this call is about to delete")
             eng.stop()
             close = getattr(eng._graph._storage, "close", None)
             if close:
@@ -184,12 +204,16 @@ class ProjectRegistry:
         for suffix in ("", "-wal", "-shm"):
             try:
                 os.remove(base + suffix)
+            # -wal/-shm exist only if SQLite made them; their absence is the normal case, not a
+            # failure
             except FileNotFoundError:
                 pass
         cb = getattr(self, "_on_create", None)   # registry-list listeners (UI) refresh on delete too
         if cb:
             try:
                 cb(name)
+            # a listener refresh is presentation — a UI that misses one deletion must not break the
+            # door that performed it
             except Exception:
                 pass
         return self.list()
@@ -200,6 +224,8 @@ class ProjectRegistry:
         try:
             names |= {f[:-3] for f in os.listdir(self._dir)
                       if f.endswith(".db") and self._NAME_RE.match(f[:-3])}
+        # a data dir that cannot be listed holds no stored projects, and the loaded names above
+        # already say so
         except OSError:
             pass
         names.discard("gfso")  # the default project's own file — not a separate project

@@ -1,6 +1,7 @@
 """Signal validation enforcement — L2 wrapper around L1 role rules."""
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
@@ -9,12 +10,13 @@ from gfso.core.types import (Signal, SignalData, State, CriticVerdict, DoneReaso
                              Verdict, passed)
 from gfso.core.protocol.fsm import available_signals, not_admissible_here
 from gfso.core.protocol.validation import Role, required_role
-from gfso.core.protocol.invariants import validate_fail_has_criteria
+from gfso.core.protocol.invariants import (validate_fail_has_criteria,
+                                           fail_names_this_contract)
 from gfso.core.handlers.structural import run_structural
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import verdict_is_current_pass
+from gfso.core.graph.model import generation_of_task, verdict_is_current_pass
 
 
 class ValidationError(Exception):
@@ -57,11 +59,14 @@ def _l2_undischarged(graph: Graph, node) -> Optional[list[str]]:
 
     What is gated is that the check HAPPENED and its findings were DISPOSITIONED — never that the
     checker is right. L2 is an LLM-review APPROXIMATION over the faithfulness axis (§13.5); the
-    real Level-2 verdict belongs to contact (q_D). So a named gap is discharged either by CHANGING
-    the plan (any edit stales the review — the record and its disputes die with it, forcing a fresh
-    one) or by the issuer RECORDING why the finding is wrong (`dispute_finding`): an explicit,
-    logged, falsifiable claim instead of a silent skip (§6.2 making-explicit)."""
-    import json
+    real Level-2 verdict belongs to contact (q_D). Two exits, and they are NOT symmetric — which is
+    what two doors reported as "the obligations are frozen at first reading" (wave 26, 2026-09-06):
+    RECORDING why the finding is wrong (`dispute_finding`) discharges it where it stands, while
+    CHANGING the plan RETIRES the verdict instead (any edit stales the review — the record and its
+    disputes die with it), so a fix leaves `None` here and execution stays shut until a fresh review
+    speaks. That is fail-closed and deliberate — a lowered criterion and an added coverage look
+    alike until the checker reads them — but the doors used to promise discharge and deliver a
+    re-run, and the refusals now say the two-step shape out loud."""
     if not getattr(node, "verified", False):
         return None                                 # no review current for THIS version of the plan
     raw = graph._storage.get_critique(node.id)
@@ -177,8 +182,12 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict) -> Optional[str]:
         if gaps:
             return (f"cannot re-DELIVER {task.id}: the Level-2 review of the revised plan names gaps "
                     f"that are still open — the mapped children's criteria do not carry these parent "
-                    f"criteria (§13.4). Fix the plan or record why the finding is wrong "
-                    f"(dispute_finding({task.id}, <criterion>, <why>)). Open: " + "; ".join(gaps))
+                    f"criteria (§13.4). TWO EXITS, and the first one takes two steps: fix the "
+                    f"plan (edit_criteria / map_criterion / add a child) AND re-run "
+                    f"review_decomposition({task.id}) — the fix RETIRES this verdict rather than "
+                    f"discharging it, so until the fresh review speaks there is no current verdict "
+                    f"at all; or record why the finding is wrong (dispute_finding({task.id}, "
+                    f"<criterion>, <why>)), which discharges it in one. Open: " + "; ".join(gaps))
     if unrepaired:
         return (f"cannot re-DELIVER {task.id}: the FAILed criteria are covered by children untouched "
                 f"since that FAIL — contact refuted the DECOMPOSITION, not the aggregate "
@@ -223,6 +232,30 @@ def _pass_rules(signal_data: SignalData, graph: Graph) -> None:
             raise ValidationError(
                 f"cannot PASS {signal_data.task_id}: not all children have PASSed (V=AND of children): {unpassed}"
             )
+        # …AND THE AND MUST STILL BE ABOUT THIS GOAL. Thm 1 (§11.1) makes a parent's PASS the
+        # conjunction over its children, and that conjunction only establishes the PARENT because
+        # the children jointly cover its criteria — which is what L0 checks. The L0 gate fired in
+        # ONE place: a child's ACCEPT, against its parent's plan. So it was a precondition on one
+        # instant rather than a property of the run, and a plan broken AFTERWARDS was never
+        # re-read. Probed 2026-09-05 (audit F2): both children ACCEPT under a clean plan, one is
+        # then CANCELled, `get_active_children` correctly drops it, CHECK-1 goes red — and the root
+        # reached DONE/PASS with its own coverage check unmet and one criterion covered by nothing
+        # at all. `edit_criteria` adding an uncovered criterion does the same without CANCEL, and a
+        # ROOT's own plan was gated nowhere at any point in its life, having no parent to be a child
+        # of. The letter held ("not admitted to execution" — it was admitted under a clean plan);
+        # the purpose did not.
+        #
+        # Childless nodes are unaffected: `_l0_holes` is empty where there is no decomposition.
+        _t0 = graph.get_task(signal_data.task_id)
+        if _t0 is not None and (_holes := _l0_holes(graph, _t0)):
+            raise ValidationError(
+                f"cannot PASS {signal_data.task_id}: its own decomposition does not pass the "
+                f"Syntactic level NOW (§13.4), so the AND over its children is not a verdict about "
+                f"THIS goal (Thm 1): "
+                + "; ".join(f"{h.check_name} — {h.details}" for h in _holes)
+                + ". The plan was admissible when the children started and is not any more — repair "
+                  "it (map the criterion to a child, add a coverer, or revise the contract) and the "
+                  "aggregate can be claimed again. `list_holes` lists the same thing.")
         # Verifier ≠ executor (§14.5: self-checking violates IC). When the signer IS the node's
         # executor (collapsed ids — the self-execution regime), the FSM cannot tell an
         # evidence-based issuer PASS from a self-stamp, so the evidence must come from OUTSIDE
@@ -268,16 +301,43 @@ def _pass_rules(signal_data: SignalData, graph: Graph) -> None:
         # The record can come from either place, which is what keeps a person free to judge by hand:
         # `validate_result` (the instrument) or `record_verdict` (a person saying what they observed
         # — refused without evidence). What is refused is a PASS standing on nothing.
-        # …and an AUTHORIZED INSTRUMENT signing directly IS the independent verdict (§14.5: the
-        # issuer's role-V instrument — a registered `llm-validator` or `unittest-checker`, whose
-        # PASS/FAIL the FSM accepts on any node). Its signature is the judgement, not an impression
-        # about one, so it opens the gate without a second record. The false PASS this branch exists
-        # for was signed by the standing agent id, which is not that.
-        _instrument = str(signal_data.source or "") in graph.authorized_validators
-        if task is not None and graph.is_public(task) and not _instrument:
+        # An AUTHORIZED INSTRUMENT (§14.5: the issuer's role-V instrument — a registered
+        # `llm-validator` or `unittest-checker`) opens this gate BY WHAT IT RECORDED, not by whose
+        # name is on the signal. Until 2026-09-05 the rule read the other way — "its signature is the
+        # judgement, not an impression about one, so it opens the gate without a second record" — and
+        # the two paragraphs below are the two cuts that were taken out of that sentence before the
+        # whole of it went: first the node's own executor, then the class itself.
+        # …NOT WHEN THE INSTRUMENT IS THE NODE'S OWN EXECUTOR. Registration says what an id IS;
+        # it cannot say that an id is independent OF ITSELF. `agent` is the standing identity every
+        # door hands a caller who does not name themselves, so `register_agent("agent",
+        # "llm-validator", …)` — an ordinary documented call — made the executing identity the one
+        # whose signature closes the seam, for every node on the server, in every project (the
+        # roster is one server-wide fact by design). A stranger on the CLI door then delivered a
+        # leaf with "I claim it is done (nothing was written)" and signed it DONE, with no verdict
+        # on the record at all; reproduced with a paired control an hour later — the same shape
+        # signed by an id NOT on the roster was refused (wave 23, 2026-09-03). §14.5 is a statement
+        # about the node's two parties, and no registration satisfies it by collapsing them.
+        # …AND A SIGNATURE IS A JUDGEMENT ONLY WHERE IT CANNOT BE TYPED. This branch used to step
+        # aside for anyone on the validator roster — "an authorized instrument signing directly IS
+        # the independent verdict, so it opens the gate without a second record" — and wave 23
+        # narrowed that to exclude the node's own executor. The narrowing was right and the class
+        # stayed open: `source` is CALLER-SUPPLIED on two of the three doors (`api/server.py`,
+        # `driver.py` pass the body straight through; only MCP derives it from the transport), and
+        # `register_agent` is an ordinary documented verb. So `register_agent("ghost-val",
+        # "llm-validator")` followed by `signal <root> PASS ghost-val` closed a root that had
+        # delivered "nothing was actually written" — DONE/PASS, `verdict record: None`, provenance
+        # `none`, and q_V reporting 1.0 over a seam nothing had judged (audited and probed
+        # 2026-09-05). An id on a roster is a CLAIM about who is signing; the record is the evidence
+        # that judging happened, and ⊥ is not a pass (§11.2) no matter whose name is on it.
+        #
+        # Nothing legitimate is lost: every instrument path in this product RECORDS its verdict and
+        # then signs it (`delegate._judge_with` → `record_exec_verdict` → `_signal`), so the
+        # requirement it now meets is one it already met. What is refused is a signature standing
+        # on nothing — which is what the whole gate is for.
+        _on_roster = str(signal_data.source or "") in graph.authorized_validators
+        if task is not None and graph.is_public(task):
             rec = graph.exec_verdict_record(signal_data.task_id)
-            it = getattr(task, "iteration", 0)
-            ro = getattr(task, "reopens", 0)
+            it, ro, rev = generation_of_task(task)
             # The question "does a CURRENT pass stand here" now has one owner
             # (`graph.verdict_is_current_pass`); what stays here is only the WHY, which this
             # refusal has to say in the caller's own terms.
@@ -285,7 +345,7 @@ def _pass_rules(signal_data: SignalData, graph: Graph) -> None:
             # Generation stamp = (iteration, reopens): a rework stales the verdict, and so does a
             # REOPEN (§14.3 anti-fake — the pre-reopen PASS must not re-open this gate from the past).
             stale = bool(rec) and (rec.get("iteration") != it or rec.get("reopens", 0) != ro
-                                   or rec.get("revisions", 0) != getattr(task, "revisions", 0))
+                                   or rec.get("revisions", 0) != rev)
             # …and so does a REVISION, which moves neither counter: §14.3 admits a re-ASSIGN from
             # VALIDATING and §6.3 voids the pending delivery with it, but a validator still running on
             # that delivery can land its verdict AFTER the revision — and it would carry the same
@@ -305,12 +365,33 @@ def _pass_rules(signal_data: SignalData, graph: Graph) -> None:
                     f"PASS on {signal_data.task_id} {_who} needs an independent verdict for THIS "
                     f"delivery ({why}) — this node is a SEAM (a root, or its Del differs from its "
                     f"parent's), where the result crosses into another scope and is judged there "
-                    f"(§14.5). Run `validate_result({signal_data.task_id}, workdir=…)`, or put your "
-                    f"own observation on the record with `record_verdict({signal_data.task_id}, "
-                    f"\"PASS\", observed={{<criterion>: <what you ran and what it printed>}})`, and "
-                    f"then signal PASS."
-                    + (" Signing it yourself is not that record: verifier ≠ executor (§14.5)."
-                       if _self else ""))
+                    f"(§14.5). Run `validate_result({signal_data.task_id}, workdir=…)`, which spawns "
+                    f"an independent judge and records what it observed"
+                    # …AND ONLY OFFER THE OTHER DOOR TO SOMEONE IT WOULD LET THROUGH. Told to sign,
+                    # the executor was sent to `record_verdict` — which refuses them by the same
+                    # rule, for the same reason, on the same node. Two refusals pointing at each
+                    # other read as a product with no exit at all (agent door, 2026-09-02), when the
+                    # exit is the instrument, or a party who is not the executor.
+                    + (f". Your own observation is not that record here: verifier ≠ executor "
+                       f"(§14.5), so the verdict has to come from the instrument or from someone "
+                       f"else — `register_agent(<id>, \"llm-validator\", workdir=…)` gives this "
+                       f"project a standing one, under an id that is NOT this node's executor."
+                       # …AND SAY IT WHEN THE CALLER HAS ALREADY DONE THE THING THIS ADVICE MEANT.
+                       # The sentence above, unqualified, is what a tester read before registering
+                       # the standing agent id itself as the llm-validator — after which their own
+                       # signature closed every seam they signed. The engine knows which of the two
+                       # situations it is in; a refusal that does not say so reads as a bug, and
+                       # they spent an hour attacking a mechanism that had never run (wave 23).
+                       + (f" NOTE: '{signal_data.source}' IS on the validator roster, and that is "
+                          f"why this looks inconsistent — but it is also this node's executor, and "
+                          f"registration cannot make an id independent of itself. You cannot judge "
+                          f"your own work under either hat; register a different id, or let the "
+                          f"instrument judge this node."
+                          if _on_roster else "")
+                       if _self else
+                       f", or record what YOU observed — `record_verdict({signal_data.task_id}, "
+                       f"\"PASS\", observed={{<criterion>: <what you ran and what it printed>}})` "
+                       f"— and then signal PASS."))
 
 def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
     """ACCEPT / REJECT_CHALLENGE: the plan gate that admits work (§13.4).
@@ -362,18 +443,38 @@ def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
             if l2_gate_on():
                 gaps = _l2_undischarged(graph, parent)
                 if gaps is None:
+                    # …AND WHEN THE ADVICE IS THE THING THAT JUST FAILED, SAY THE OTHER WAY. "Run
+                    # review_decomposition first" is right when no review has been run. It is a loop
+                    # when one HAS been run and came back with nothing readable — which is what
+                    # happens to every user with no checker available: probed 2026-09-05 with the
+                    # Claude CLI off the PATH, the verb answered and the engine sent them straight
+                    # back to it, with no exit named anywhere. The exit is the canon's own EXPLORE
+                    # branch, and the comment above has known it all along; it just never reached
+                    # the person reading the refusal.
+                    _rec = graph._storage.get_critique(parent.id)
+                    _ran_and_said_nothing = bool(_rec) and bool(parent.verified)
                     raise ValidationError(
                         f"cannot execute {signal_data.task_id}: its parent's plan has no CURRENT "
                         f"Level-2 verdict — the causal check has not been run over this version of the "
                         f"decomposition (§13.4). Run review_decomposition({parent.id}) first (any edit "
-                        f"to the plan stales an earlier review; an unreadable verdict is not a verdict)")
+                        f"to the plan stales an earlier review; an unreadable verdict is not a verdict)"
+                        + (f". A review of THIS version was run and returned no readable verdict, so "
+                           f"running it again changes nothing by itself: give the server a checker "
+                           f"(the Claude CLI on PATH, signed in), or take the canon's EXPLORE branch "
+                           f"with `GFSO_L2_GATE=0`, where the plan's verification is bought with "
+                           f"contact instead (§13.5) — a deployment decision, not a skipped step"
+                           if _ran_and_said_nothing else ""))
                 if gaps:
                     raise ValidationError(
                         f"cannot execute {signal_data.task_id}: its parent's Level-2 review named gaps "
                         f"that are still open — the mapped children's criteria do not carry these parent "
-                        f"criteria (§13.4). Fix the plan (edit_criteria / map_criterion / add a child — "
-                        f"which re-opens the review) or record why the finding is wrong "
-                        f"(dispute_finding({parent.id}, <criterion>, <why>)). Open: " + "; ".join(gaps)
+                        f"criteria (§13.4). TWO EXITS, and the first takes two steps: fix the plan "
+                        f"(edit_criteria / map_criterion / add a child) AND re-run "
+                        f"review_decomposition({parent.id}) — a fix RETIRES this verdict rather than "
+                        f"discharging it, so until the fresh review speaks there is no current "
+                        f"verdict and this stays shut; or record why the finding is wrong "
+                        f"(dispute_finding({parent.id}, <criterion>, <why>)), which discharges it "
+                        f"where it stands. Open: " + "; ".join(gaps)
                         + f" — read the reasons with get_review({parent.id})")
 
 def _resolve_block_rules(signal_data: SignalData, graph: Graph) -> None:
@@ -427,6 +528,19 @@ def _deliver_rules(signal_data: SignalData, graph: Graph) -> None:
     """
     if signal_data.signal == Signal.DELIVER:
         task = graph.get_task(signal_data.task_id)
+        # A DELIVERY WITH NOTHING IN IT IS NOT A DELIVERY. `result` is the validator's input — "paths
+        # plus how each criterion is met" — and the empty string was admitted straight to VALIDATING,
+        # where `get_verdict` then showed `delivered: null` on a node that went on to close. Two doors
+        # named the asymmetry in the same words (wave 25, 2026-09-05): the evidence floor guards
+        # VERDICTS and not the thing they are about, so `record_verdict observed="ok"` is refused
+        # while a delivery of "" is not. This is the same floor, at the same grade: what is refused
+        # is nothing written down at all. It cannot refuse a false sentence, and does not pretend to.
+        if not str(signal_data.result or "").strip():
+            raise ValidationError(
+                f"DELIVER on {signal_data.task_id} carries no `result`: it is what the validator "
+                f"reads and what the record keeps — the paths you produced and, per criterion, the "
+                f"check you ran and what it printed. A delivery with nothing in it leaves the judge "
+                f"to guess and the log with nothing about the work. Say what you did.")
         # The trigger is "this node has a decomposition", not "it still has mappings": deleting the
         # refuted criterion also deletes the mapping that pointed at it, so a mapping-keyed trigger
         # would let exactly the false close through. A leaf is out of scope by the same reading —
@@ -435,8 +549,8 @@ def _deliver_rules(signal_data: SignalData, graph: Graph) -> None:
                 and graph.get_active_children(task.id)):
             rec = graph.exec_verdict_record(signal_data.task_id)
             if (rec and rec.get("verdict") == Verdict.FAIL
-                    and rec.get("reopens", 0) == getattr(task, "reopens", 0)
-                    and rec.get("iteration") == getattr(task, "iteration", 0) - 1):
+                    and rec.get("reopens", 0) == task.reopens
+                    and rec.get("iteration") == task.iteration - 1):
                 if (refusal := _refuted_coverage_refusal(graph, task, rec)) is not None:
                     raise ValidationError(refusal)
 
@@ -460,6 +574,22 @@ def validate_signal(signal_data: SignalData, graph: Graph) -> None:
         raise ValidationError(
             f"FAIL signal for {signal_data.task_id} must specify failed_criteria"
         )
+    # …AND THEY MUST BE THIS NODE'S. The rule above counted them; nothing asked what they were, so a
+    # FAIL naming "the tests" or a typo was admitted, moved the node to REWORKING and spent one of
+    # its bounded iterations (§14.3) against an obligation that does not exist — leaving the
+    # executor a list it cannot act on. The same rule already binds the machine validator's report
+    # one file over (`verdict_report_defects`), which made it a rule enforced for the instrument and
+    # advisory for the person (audited 2026-09-05, F5).
+    _t = graph.get_task(signal_data.task_id)
+    if signal_data.signal == Signal.FAIL and _t is not None:
+        _names = [c.name for c in _t.spec.criteria]
+        if _foreign := fail_names_this_contract(signal_data.failed_criteria, _names):
+            raise ValidationError(
+                f"FAIL on {signal_data.task_id} names {_foreign} — not criteria of this node, whose "
+                f"contract is exactly [{', '.join(_names)}]. A FAIL says WHICH obligation was not "
+                f"met (Inv-3), and a name outside the contract names none: the executor would be "
+                f"sent to rework with nothing to fix. If the contract itself is wrong, that is a "
+                f"revision, not a verdict.")
 
     # Contact-refuted coverage gate (§15.2 q_D made STRUCTURAL). A parent FAIL whose criteria are
     # COVERED by PASSed children is the q_D event: contact refuted the mapping's claimed entailment

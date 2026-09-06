@@ -12,6 +12,10 @@ from gfso import tools as T
 
 
 def main() -> None:
+    """Run the demo: apply a structure computed elsewhere, then drive it to root DONE.
+
+    The point it proves is negative — nothing here tells the core the plan was precomputed.
+    """
     # ── somewhere ELSE (another process, another machine, another planner) ──────────────────────
     precomputed = {
         "root": {"description": "Ship the landing page",
@@ -43,7 +47,7 @@ def main() -> None:
     T.create_task(e, "page", precomputed["root"], assignee="host")
     T.decompose(e, "page", precomputed["children"], mappings=precomputed["mappings"])
 
-    holes = T.list_holes(e, "page")
+    holes = T.list_holes(e, "page")["holes"]
     print("holes after applying the precomputed structure:", holes)
     print("deps:", T.get_dependencies(e))
     for c in T.get_graph(e)["nodes"]:

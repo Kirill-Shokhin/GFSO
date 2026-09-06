@@ -7,23 +7,19 @@ re-ASSIGN. Untyped revisions keep each metric's documented bias: q_T under-appro
 """
 import pytest
 
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.storage.sqlite import SqliteStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.core.types import (
-    TaskId, AgentId, Spec, Criteria, RevisionReason, SignalData, Signal,
+    TaskId, AgentId, RevisionReason, SignalData, Signal,
 )
 from gfso.core.graph.metrics import q_T, q_Del
-
-
-def _spec(crit="c1"):
-    return Spec(description="goal", criteria=(Criteria(crit, f"{crit} d"),))
+from tests.support import make_engine, spec
+from gfso import tools as T
+from gfso.engine.validation import ValidationError
 
 
 @pytest.fixture
 def engine():
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(check_interval=10_000)
     e.start()
     yield e
     e.stop()
@@ -39,7 +35,7 @@ def test_revision_from_validating_is_admitted_and_voids_the_delivery(engine):
     the node cannot complete on a verdict about a contract it no longer carries (§14.5 self-PASS
     gate). A recorded FAIL is NOT voided — it opens no gate and carries the criteria snapshot the
     re-delivery disposition reads."""
-    engine.assign_task(TaskId("v1"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("v1"), spec("goal", "c1", risks=False), AgentId("boss"))
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("v1"), source=AgentId("boss")))
     engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v1"),
                                        source=AgentId("boss"), result="done"))
@@ -47,7 +43,7 @@ def test_revision_from_validating_is_admitted_and_voids_the_delivery(engine):
     assert engine.get_state(TaskId("v1")).name == "VALIDATING"
     engine.record_exec_verdict(TaskId("v1"), "PASS", [], "val-1")
 
-    engine.revise(TaskId("v1"), _spec("c1_changed"), AgentId("boss"))
+    engine.revise(TaskId("v1"), spec("goal", "c1_changed", risks=False), AgentId("boss"))
     engine.wait_idle()
     assert engine.get_state(TaskId("v1")).name == "OFFERED"          # re-consent, §14.4 Inv-1
     assert engine.get_task(TaskId("v1")).spec.criteria[0].name == "c1_changed"
@@ -55,31 +51,31 @@ def test_revision_from_validating_is_admitted_and_voids_the_delivery(engine):
     assert rec["verdict"] == "VOID" and rec["superseded_verdict"] == "PASS"
 
     # a FAIL record survives a revision intact (it gates nothing and its snapshot is load-bearing)
-    engine.assign_task(TaskId("v2"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("v2"), spec("goal", "c1", risks=False), AgentId("boss"))
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("v2"), source=AgentId("boss")))
     engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v2"),
                                        source=AgentId("boss"), result="done"))
     engine.wait_idle()
     engine.record_exec_verdict(TaskId("v2"), "FAIL", ["c1"], "val-1")
-    engine.revise(TaskId("v2"), _spec("c1_changed"), AgentId("boss"))
+    engine.revise(TaskId("v2"), spec("goal", "c1_changed", risks=False), AgentId("boss"))
     engine.wait_idle()
     assert engine.get_exec_verdict(TaskId("v2"))["verdict"] == "FAIL"
 
 
 def test_spec_defect_criteria_change_counts_in_qt(engine):
-    engine.assign_task(TaskId("t1"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("t1"), spec("goal", "c1", risks=False), AgentId("boss"))
     engine.wait_idle()
     assert q_T(engine._graph) == 1.0
-    engine.revise(TaskId("t1"), _spec("c1_fixed"), AgentId("boss"),
+    engine.revise(TaskId("t1"), spec("goal", "c1_fixed", risks=False), AgentId("boss"),
                   reason=RevisionReason.SPEC_DEFECT)
     assert engine.get_task(TaskId("t1")).spec_defect_criteria_change
     assert q_T(engine._graph) == 0.0  # the one contract was defective
 
 
 def test_scope_expansion_never_counts(engine):
-    engine.assign_task(TaskId("t1"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("t1"), spec("goal", "c1", risks=False), AgentId("boss"))
     engine.wait_idle()
-    engine.revise(TaskId("t1"), _spec("c1_wider"), AgentId("boss"),
+    engine.revise(TaskId("t1"), spec("goal", "c1_wider", risks=False), AgentId("boss"),
                   reason=RevisionReason.SCOPE_EXPANSION)
     assert not engine.get_task(TaskId("t1")).spec_defect_criteria_change
     assert q_T(engine._graph) == 1.0  # sanctioned §13.1 — not a defect
@@ -87,15 +83,15 @@ def test_scope_expansion_never_counts(engine):
 
 def test_untyped_criteria_change_stays_uncounted(engine):
     """The documented q_T under-approximation, now confined to untyped acts."""
-    engine.assign_task(TaskId("t1"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("t1"), spec("goal", "c1", risks=False), AgentId("boss"))
     engine.wait_idle()
-    engine.revise(TaskId("t1"), _spec("c1_other"), AgentId("boss"))
+    engine.revise(TaskId("t1"), spec("goal", "c1_other", risks=False), AgentId("boss"))
     assert q_T(engine._graph) == 1.0
 
 
 def test_qdel_counts_only_typed_capability_mismatch(engine):
     for tid in ("a", "b", "c"):
-        engine.assign_task(TaskId(tid), _spec(), AgentId("boss"))
+        engine.assign_task(TaskId(tid), spec("goal", "c1", risks=False), AgentId("boss"))
         engine.wait_idle()
     engine.reassign(TaskId("a"), AgentId("w1"), reason=RevisionReason.CAPABILITY_MISMATCH)
     engine.reassign(TaskId("b"), AgentId("w2"), reason=RevisionReason.OTHER)  # handoff — not a defect
@@ -104,7 +100,7 @@ def test_qdel_counts_only_typed_capability_mismatch(engine):
 
 def test_untyped_del_change_keeps_overapproximation(engine):
     """An untyped Del change still counts — the metric never silently improves by omission."""
-    engine.assign_task(TaskId("a"), _spec(), AgentId("boss"))
+    engine.assign_task(TaskId("a"), spec("goal", "c1", risks=False), AgentId("boss"))
     engine.wait_idle()
     engine.reassign(TaskId("a"), AgentId("w1"))
     assert q_Del(engine._graph) == 0.0
@@ -112,12 +108,12 @@ def test_untyped_del_change_keeps_overapproximation(engine):
 
 def test_reason_persists_sqlite(tmp_path):
     st = SqliteStorage(str(tmp_path / "rr.db"))
-    e = Engine(st, HumanAgent(), llm=None, check_interval=10_000)
+    e = make_engine(st, check_interval=10_000)
     e.start()
     try:
-        e.assign_task(TaskId("p1"), _spec(), AgentId("boss"))
+        e.assign_task(TaskId("p1"), spec("goal", "c1", risks=False), AgentId("boss"))
         e.wait_idle()
-        e.revise(TaskId("p1"), _spec("cx"), AgentId("boss"), reason=RevisionReason.SPEC_DEFECT)
+        e.revise(TaskId("p1"), spec("goal", "cx", risks=False), AgentId("boss"), reason=RevisionReason.SPEC_DEFECT)
         e.reassign(TaskId("p1"), AgentId("w"), reason=RevisionReason.CAPABILITY_MISMATCH)
     finally:
         e.stop()
@@ -128,7 +124,6 @@ def test_reason_persists_sqlite(tmp_path):
 
 
 def test_transport_reason_string_mapping(engine):
-    from gfso import tools as T
     T.create_task(engine, "x1", {"description": "g", "criteria": [{"name": "c", "description": "d"}]},
                   assignee="boss")
     engine.wait_idle()
@@ -144,15 +139,13 @@ def test_a_verdict_landing_after_a_revision_does_not_open_the_seam(engine):
     is the rework loop, reopens is R′ — so the generation stamp alone would let that verdict satisfy
     the verifier ≠ executor gate for a contract it never read. The record's own criteria snapshot is
     what settles it."""
-    from gfso.engine.validation import ValidationError
-    import pytest
     A = AgentId("solo")
-    engine.assign_task(TaskId("r1"), _spec(), A)
+    engine.assign_task(TaskId("r1"), spec("goal", "c1", risks=False), A)
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("r1"), source=A))
     engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("r1"), source=A, result="x"))
     engine.wait_idle()
     generation = engine.generation_of(TaskId("r1"))          # the validator starts on THIS delivery
-    engine.revise(TaskId("r1"), _spec("c1_changed"), A)       # contract changes under it
+    engine.revise(TaskId("r1"), spec("goal", "c1_changed", risks=False), A)       # contract changes under it
     engine.wait_idle()
     engine.record_exec_verdict(TaskId("r1"), "PASS", [], "val-1", generation=generation)  # lands late
 

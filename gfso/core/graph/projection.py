@@ -1,4 +1,4 @@
-"""Read-only projection of a node's decomposition — the critic's input contract.
+﻿"""Read-only projection of a node's decomposition — the critic's input contract.
 
 Renders the unit a semantic critic (analyst + judge) reasons over: a node's goal,
 its proposed breakdown (subtasks, their criteria, criterion-coverage, seams,
@@ -232,31 +232,11 @@ def _render_split(p, out: list) -> None:
         out.append("- (none declared)")
 
 
-def render(projection: NodeProjection) -> str:
-    """Pure DATA → markdown for the critic. The one place strings are built."""
-    p = projection
-    out: list[str] = []
-    out.append(f"# Decomposition under review — node `{p.node_id}`")
-    out.append("")
-    out.append("## Goal — what this node must achieve")
-    out.append(p.goal or "(no description)")
-    out.append("")
-    out.append('## Acceptance criteria (V) — what "done" means for this node')
-    if p.criteria:
-        for c in p.criteria:
-            out.append(f"- **{c.name}**: {c.description or '(no description)'}")
-    else:
-        out.append("- (none declared)")
-    out.append("")
-
-    if p.is_leaf:
-        out.append("## Subtasks (D)")
-        out.append("- (leaf node — no decomposition to review)")
-        return "\n".join(out)
-
-    _render_split(p, out)
-    out.append("")
-
+def _render_declared(p, out: list) -> None:
+    """The three DECLARED sections: what was consciously excluded, the scope boundary, and
+    the structural checks already run. Split from the head — goal, criteria, split — because
+    the reader of a projection is asking two different questions and the second half is the
+    one that is about what the plan says it does NOT do."""
     out.append("## ACCEPTED_RISKS — declared scope-exclusions for this node")
     if p.accepted_risks:
         for n in p.accepted_risks:
@@ -286,6 +266,34 @@ def render(projection: NodeProjection) -> str:
     else:
         out.append("- (no checks recorded)")
 
+
+
+def render(projection: NodeProjection) -> str:
+    """Pure DATA → markdown for the critic. The one place strings are built."""
+    p = projection
+    out: list[str] = []
+    out.append(f"# Decomposition under review — node `{p.node_id}`")
+    out.append("")
+    out.append("## Goal — what this node must achieve")
+    out.append(p.goal or "(no description)")
+    out.append("")
+    out.append('## Acceptance criteria (V) — what "done" means for this node')
+    if p.criteria:
+        for c in p.criteria:
+            out.append(f"- **{c.name}**: {c.description or '(no description)'}")
+    else:
+        out.append("- (none declared)")
+    out.append("")
+
+    if p.is_leaf:
+        out.append("## Subtasks (D)")
+        out.append("- (leaf node — no decomposition to review)")
+        return "\n".join(out)
+
+    _render_split(p, out)
+    out.append("")
+
+    _render_declared(p, out)
     return "\n".join(out)
 
 

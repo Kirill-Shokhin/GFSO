@@ -4,15 +4,14 @@ deadline=None had no escape) — the per-state age walks it through the sub-FSM:
 OVERDUE, repeat → ESCALATED; issuer inaction on VALIDATING auto-passes (§14.3/§24.7)."""
 import time
 
-from gfso.engine import Engine
+from gfso.core.types import TaskId, AgentId, Spec, Criteria, SignalData, Signal, Task, State
+from tests.support import make_engine
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
-from gfso.core.types import TaskId, AgentId, Spec, Criteria, SignalData, Signal
 
 
 def _eng(state_timeout):
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True,
-               check_interval=0.05, state_timeout=state_timeout)
+    e = make_engine(llm=None, validate_signals=True,
+                     check_interval=0.05, state_timeout=state_timeout)
     e.start()
     return e
 
@@ -100,14 +99,11 @@ def test_idle_carries_no_clock_and_a_crash_orphan_is_recovered():
     the engine finishes the interrupted transition at startup, so the orphan leaves IDLE by landing
     its own ASSIGN rather than by aging into a timeout it never contracted for.
     """
-    from gfso.core.types import Task, State
-    from gfso.adapters.storage.memory import MemoryStorage
-
     storage = MemoryStorage()
     storage.save_task(Task(id=TaskId("orphan"), spec=Spec("half-created", (Criteria("c", "C"),)),
                            state=State.IDLE, assignee=AgentId("human")))
-    e = Engine(storage, HumanAgent(), llm=None, validate_signals=True,
-               check_interval=0.05, state_timeout=0.25)
+    e = make_engine(storage, llm=None, validate_signals=True,
+                     check_interval=0.05, state_timeout=0.25)
     e.start()
     try:
         assert _wait_state(e, "orphan", "OFFERED")          # the interrupted ASSIGN landed

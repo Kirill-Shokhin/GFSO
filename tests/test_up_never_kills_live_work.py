@@ -7,8 +7,19 @@ connection with hours of paid work behind it. And keeping the rule in the reconc
 enough — a client holds its own code in memory, so an older `gfso up` resident on a long-lived
 session bridge went on restarting the server, and no fix shipped to the client could reach it.
 """
+import os
+import subprocess
+import urllib.request as _ur
+
+import contextlib
+
+import pytest
+from fastapi.testclient import TestClient
+
 import gfso.mcp.connect as C
 from gfso import serverctl
+from gfso.api.server import create_app
+from tests.test_integration import _engine
 
 
 def _stub(monkeypatch, runtime: dict, calls: list):
@@ -41,7 +52,7 @@ def test_work_in_flight_is_enough_on_its_own(monkeypatch):
     assert out["action"] == "left-alone" and calls == []
 
 
-def test_a_drifted_IDLE_server_is_still_reconciled(monkeypatch):
+def test_a_drifted_IDLE_server_is_still_reconciled(monkeypatch, reconciling):
     """The rule protects work, not staleness: with nobody on it, drift is fixed as before."""
     # The reconciler exports the declared switches into ITS OWN process before spawning, so without
     # this the test leaks `GFSO_VALIDATE_INTERNAL=1` into every test that runs after it — which is
@@ -56,27 +67,22 @@ def test_a_drifted_IDLE_server_is_still_reconciled(monkeypatch):
     # measured, on a paid E3 run. A unit test may not reach the network; the call is captured here
     # and asserted on instead.
     stops: list = []
-    import urllib.request as _ur          # the reconciler imports it inside the function
+    # the reconciler imports urllib.request inside the function, so the module is the seam
     monkeypatch.setattr(_ur, "urlopen",
                         lambda req, timeout=None: stops.append(req) or _FakeResp())
     # THE one socket probe (gfso.serverctl.port_open), not a module-local alias: the reconciler and
     # `gfso down` now share one wait for the port to close, and a test that neutralizes a copy leaves
     # the real one opening a real socket — the failure this probe's own docstring records.
-    import gfso.serverctl as _S
-    monkeypatch.setattr(_S, "port_open", lambda *a, **k: False)   # the graceful stop took effect
+    monkeypatch.setattr(serverctl, "port_open", lambda *a, **k: False)   # the graceful stop took effect
     monkeypatch.setattr(C, "_port_open", lambda *a, **k: False)
     monkeypatch.setattr(C, "foreign_holder", lambda *a, **k: False)
     out = C.ensure_correct(verbose=False)
     assert out["action"] == "restarted" and calls == ["spawn"]
-    assert len(stops) == 1 and stops[0].data in (b"{}", b'{}'),         "a routine reconcile must not FORCE a stop — force overrides the server's own refusal"
+    assert len(stops) == 1 and stops[0].data in (b"{}", b"{}"),         "a routine reconcile must not FORCE a stop — force overrides the server's own refusal"
 
 
 def test_the_server_itself_refuses_an_unforced_stop_while_clients_work():
     """The one party that cannot be out of date about itself."""
-    from fastapi.testclient import TestClient
-    from gfso.api.server import create_app
-    from tests.test_integration import _engine
-
     app = create_app(_engine())
     with TestClient(app) as c:
         c.post("/api/lease", json={"id": "arm:run-1"})
@@ -94,14 +100,8 @@ def test_the_server_is_spawned_with_a_hidden_console_not_without_one(monkeypatch
     with a probe over visible top-level windows: console-less parent → 2 new windows per uncontrolled
     grandchild, hidden-console parent → 0. CREATE_NO_WINDOW at our own spawn sites cannot cover it:
     the flag is not inherited, which is why this recurred each time a new spawn appeared."""
-    import os
-    import subprocess
-    import pytest
-
     if os.name != "nt":
         pytest.skip("console semantics are Windows-only")
-
-    from gfso.mcp import connect
 
     seen = {}
 
@@ -110,12 +110,12 @@ def test_the_server_is_spawned_with_a_hidden_console_not_without_one(monkeypatch
             seen["flags"] = kw.get("creationflags")
             seen["si"] = kw.get("startupinfo")
 
-    monkeypatch.setattr(connect.subprocess, "Popen", _P)
-    monkeypatch.setattr(connect, "_port_open", lambda h, p: False)
+    monkeypatch.setattr(C.subprocess, "Popen", _P)
+    monkeypatch.setattr(C, "_port_open", lambda h, p: False)
     # …and into a temp HOME: `ensure_server` opens the installation's `data/server.log` for append,
     # and a unit test has no business writing into the user's live state.
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
-    connect.ensure_server("http://127.0.0.1:8000/mcp", wait_s=0.0)
+    C.ensure_server("http://127.0.0.1:8000/mcp", wait_s=0.0)
 
     CREATE_NEW_CONSOLE, DETACHED_PROCESS = 0x00000010, 0x00000008
     assert seen["flags"] & CREATE_NEW_CONSOLE, "the server needs a console of its own"
@@ -128,13 +128,10 @@ def test_a_stop_that_did_not_take_is_not_reported_as_a_restart(monkeypatch):
     """`restarted` is a claim about an act. When the stop does not take — a client refused it, the
     request never arrived — nothing was restarted and the drift still stands; saying otherwise tells
     the caller it is talking to current code when it is not."""
-    import os
-
     for k in ("GFSO_VALIDATE_INTERNAL", "GFSO_AUTOEXIT"):
         monkeypatch.setenv(k, "0")
     calls: list = []
     _stub(monkeypatch, {"code_version": "OLD", "sessions": 0, "busy": []}, calls)
-    import urllib.request as _ur
     monkeypatch.setattr(_ur, "urlopen", lambda req, timeout=None: _FakeResp())
     # BOTH probes, because there are two spellings of one question and only one of them is this
     # module's: the reconciler waits for the port through `serverctl.port_open`. Patching the alone
@@ -155,8 +152,6 @@ def test_a_dropped_bridge_is_rebuilt_while_the_server_answers(monkeypatch):
     `Session terminated` and so did every call after it, while the server was up and serving others.
     It wrote itself a private HTTP client to finish; a person would have stopped.
     """
-    import gfso.mcp.connect as C
-
     calls = {"relay": 0, "slept": 0}
 
     async def flaky_relay(*_a, **_k):
@@ -164,13 +159,24 @@ def test_a_dropped_bridge_is_rebuilt_while_the_server_answers(monkeypatch):
         if calls["relay"] < 3:
             raise ConnectionError("Session terminated")     # the restart, twice
 
+    # THE CLIENT'S SIDE IS STUBBED, because it is not this test's subject and it is now opened where
+    # the rebuild can no longer tear it down. It used to be opened INSIDE `_relay` — which this test
+    # replaces wholesale — so real stdin was never touched; opening it once, outside the loop, is the
+    # fix for a teardown deadlock (2026-09-03) and it puts an unreadable pytest stdin in the path.
+    @contextlib.asynccontextmanager
+    async def fake_stdio():
+        yield (object(), object())
+
+    monkeypatch.setattr(C, "stdio_server", fake_stdio)
     monkeypatch.setattr(C, "_relay", flaky_relay)
-    monkeypatch.setattr(C.time, "sleep", lambda s: calls.__setitem__("slept", calls["slept"] + 1))
+    # …and the wait between attempts is awaited now, not slept. Same fact, asked where it happens.
+    async def counted_sleep(_s):
+        calls["slept"] += 1
+    monkeypatch.setattr(C.anyio, "sleep", counted_sleep)
     monkeypatch.setattr(C, "_heartbeat", lambda *a, **k: None)
     monkeypatch.setattr(C, "ensure_correct", lambda **k: {"action": "already-correct", "drift": [], "code_version": "x"})
     monkeypatch.setattr(C, "foreign_holder", lambda *a: False)
-    import gfso.serverctl as S
-    monkeypatch.setattr(S, "runtime", lambda: {"code_version": "x"})   # the server IS answering
+    monkeypatch.setattr(serverctl, "runtime", lambda: {"code_version": "x"})   # the server IS answering
 
     C.main()
     assert calls["relay"] == 3, f"the bridge was not rebuilt: {calls}"
@@ -180,8 +186,6 @@ def test_a_dropped_bridge_is_rebuilt_while_the_server_answers(monkeypatch):
 def test_a_bridge_whose_server_is_gone_stops_and_says_so(monkeypatch, capsys):
     """The other direction: when the server really is gone, retrying is pointless — stop, and say
     what to do instead of naming an exception class."""
-    import gfso.mcp.connect as C
-
     async def dead_relay(*_a, **_k):
         raise ConnectionError("Session terminated")
 
@@ -190,8 +194,7 @@ def test_a_bridge_whose_server_is_gone_stops_and_says_so(monkeypatch, capsys):
     monkeypatch.setattr(C, "_heartbeat", lambda *a, **k: None)
     monkeypatch.setattr(C, "ensure_correct", lambda **k: {"action": "already-correct", "drift": [], "code_version": "x"})
     monkeypatch.setattr(C, "foreign_holder", lambda *a: False)
-    import gfso.serverctl as S
-    monkeypatch.setattr(S, "runtime", lambda: None)                    # the server is NOT answering
+    monkeypatch.setattr(serverctl, "runtime", lambda: None)                    # the server is NOT answering
 
     C.main()
     err = capsys.readouterr().err
@@ -206,8 +209,6 @@ def test_a_reply_saying_the_session_is_gone_counts_as_a_break():
     ran a whole task through a bridge in that state — tools listed, none working — and finished only
     by writing itself a private HTTP client. Nothing raised, so the reconnect loop never fired.
     """
-    import gfso.mcp.connect as C
-
     class _Err:
         def __init__(self, m): self.message = m
 

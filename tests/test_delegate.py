@@ -1,4 +1,4 @@
-"""Delegation machinery: registry roundtrip + kind semantics; the dispatcher's autostart-by-Del
+﻿"""Delegation machinery: registry roundtrip + kind semantics; the dispatcher's autostart-by-Del
 (one spawn per node×iteration, unregistered = passive, kind-guard); the executor report → wrapped
 FSM signals (consent = the executor's own report); auto-validation with auto-verdict (FAIL →
 FSM REWORKING loop); unparsed reports never signal. All with fake agent-runners — no network."""
@@ -8,19 +8,21 @@ import time
 
 import pytest
 
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 import gfso.tools_llm as TL
-from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping
+from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, Verdict,
+                             DepEdge, Signal)
 from gfso import tools as T
 from gfso.config import MODEL_VALIDATOR_RETRY
-from gfso.delegate import AgentRegistry, Dispatcher, run_executor, EXECUTOR_SCHEMA
+import gfso.delegate as D
+from gfso.delegate import (AgentRegistry, Dispatcher, run_executor, EXECUTOR_SCHEMA,
+                           _auto_validate, _checker_validate)
+from tests.support import make_engine
+from gfso.decompose.build import build_graph_live
 
 
 def _eng():
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     return e
 
@@ -77,8 +79,6 @@ def test_registry_roundtrip_and_kinds(tmp_path):
 
 def _dispatch_validate(e, agents, verdict_payload):
     """One dispatcher round with a fake validator; waits for the worker thread."""
-    import time
-    from gfso.delegate import Dispatcher, _auto_validate
     llm = _AgentLLM(_fenced(verdict_payload))
     d = Dispatcher(e, agents,
                    validator_runner=lambda en, t, a, model_override=None, sign=True:
@@ -180,7 +180,6 @@ def test_dispatcher_autostarts_only_registered_executors(tmp_path):
     for _ in range(100):                                    # the run happens on a worker thread
         if ran:
             break
-        import time
         time.sleep(0.01)
     assert started == ["a1"] and ran == [("a1", "exec-1")]
     assert d.dispatch_once() == []                          # dedup: one spawn per node×iteration
@@ -191,7 +190,6 @@ def test_dispatcher_event_driven_autostarts_on_transition(tmp_path):
     """The dispatcher is EVENT-DRIVEN, not tight-polling: with a long safety interval (poll=30s), starting
     it and then assigning a node to a registered executor still autostarts within a beat — woken by the
     ASSIGN→OFFERED transition, not by a poll tick."""
-    import time
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
     ran = []
@@ -325,7 +323,6 @@ def test_mixed_phantom_auto_resolve_drops_only_the_bogus_edge(tmp_path):
     """One phantom source among real blockers must not retract the REAL edges (the old all-or-nothing
     external=True did exactly that): the auto-resolver adjudicates the corrected set = the real
     sources, so only the bogus edge goes."""
-    from gfso.core.types import DepEdge
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
@@ -385,7 +382,6 @@ def test_dispatch_quiesced_while_build_bursts(tmp_path):
     assert "q1" in d.dispatch_once()                  # resumed on the settled graph
     woken = []
     e._dispatch_wake = lambda: woken.append(True)
-    from gfso.decompose.build import build_graph_live
     spec = {"name": "goal", "root_criteria": [{"name": "r", "description": "R"}],
             "subtasks": [{"id": "a", "description": "A",
                           "criteria": [{"name": "ca", "description": "CA"}]}],
@@ -403,8 +399,6 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     validate spawn WAITS for the children. (b) If a verdict IS rejected (gate raced), that is NOT
     'no verdict': the dedup key is freed (no retry burned) and the node revalidates once the
     children settle — the same dispatcher, a fresh run."""
-    import time
-    from gfso.delegate import _auto_validate
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     T.create_task(e, "par", {"description": "parent",
@@ -459,7 +453,6 @@ def test_auto_validate_reuses_fresh_recorded_verdict(tmp_path):
     """A fresh recorded verdict for the CURRENT generation (e.g. a manual validate_result already
     ran) is SIGNED directly by the dispatcher — no duplicate validator spawn (observed live:
     one duplicate run per rework cycle, minutes + tokens each)."""
-    from gfso.delegate import _auto_validate
     e = _eng()
     _node(e)
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
@@ -483,11 +476,6 @@ def test_inflight_validator_lock_suppresses_concurrent_duplicates(tmp_path):
     one VALIDATING node): a second spawn on the same node generation (node, iteration, reopens)
     returns inflight=True WITHOUT running an agent; the dispatcher path reads it as 'rejected'
     (dedup key freed, the one no-verdict retry never burned); the lock releases after the run."""
-    import threading
-    import time
-    from gfso import tools_llm as TL
-    from gfso.delegate import _auto_validate
-
     e = _eng()
     _node(e)
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
@@ -589,7 +577,6 @@ def test_a_reassigned_node_is_not_run_as_its_old_executor(tmp_path):
 def test_revision_resets_spawn_key(tmp_path):
     """A REVISED node (re-ASSIGN, same id → OFFERED) is fresh work: its consumed spawn key must not
     block the re-run (observed live: a refined root kept its key and was never re-executed)."""
-    from gfso.core.types import Signal, Spec, AgentId
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
     _node(e, "r1")
@@ -647,7 +634,6 @@ def test_unittest_checker_is_a_deterministic_hidden_test_validator(tmp_path):
     maps each test method to the criterion of the same name, and returns a verdict with per-criterion
     evidence — no LLM, no false-PASS, and the executor never sees the tests. Golden → PASS, naive →
     FAIL with the failing criteria named."""
-    from gfso.delegate import _checker_validate
     test_code = (
         "import unittest\n"
         "class TestCases(unittest.TestCase):\n"
@@ -683,8 +669,6 @@ def test_unittest_checker_kind_registers_and_is_the_default_validator(tmp_path):
     Registered without one it could never produce a verdict — the map is where its hidden tests
     are — while still being the first registered validator, which silently disabled any
     llm-validator registered after it, for the whole server."""
-    import pytest
-
     a = AgentRegistry(path=str(tmp_path / "agents.json"))
     with pytest.raises(ValueError, match="oracle_map"):
         a.register("val-1", "unittest-checker")
@@ -730,9 +714,6 @@ def test_a_roster_edited_on_disk_takes_effect(tmp_path):
     server kept the entry from the run before it, and both agents worked in a directory belonging to
     a different experiment. The graph looked healthy and the verdicts judged the wrong tree, which is
     the worst available failure — a wrong answer rather than a missing one."""
-    import json
-    import time
-
     path = tmp_path / "agents.json"
     path.write_text(json.dumps({"exec-1": {"kind": "llm-executor", "workdir": str(tmp_path / "A")}}),
                     encoding="utf-8")
@@ -757,8 +738,6 @@ def test_one_node_is_never_dispatched_twice_for_the_same_round(tmp_path):
     after its first claim — which is exactly how one node came to be executed twice on its very first
     assign. Both halves are asserted: concurrent rounds claim once, and a revision is a NEW round
     without anything being un-remembered."""
-    import threading
-
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
     ran: list = []
@@ -1203,3 +1182,217 @@ def test_the_roster_can_be_read_without_reading_everyone_elses(tmp_path, monkeyp
     capped = TL.TOOLS["list_agents"](None)
     assert len(capped["agents"]) == 25 and "`limit=0` returns all" in capped["note"]
     assert len(TL.TOOLS["list_agents"](None, limit=0)["agents"]) == 32
+
+
+def test_the_project_rule_does_not_shadow_the_workdir_rule(tmp_path):
+    """Two selection rules met and the newer one won by arriving first, undoing the older one.
+
+    Scoping by project (2026-08-22) and standing in the same directory as the work (2026-08-20) are
+    two INDEPENDENT coordinates of one choice, and the project branch returned before the workdir
+    match was ever consulted: with a project named, the alphabetically-first unscoped judge beat the
+    judge standing exactly where the artifact is — the very failure the workdir rule was built from,
+    restored by the rule that was meant to be orthogonal to it.
+    """
+    a = AgentRegistry(path=str(tmp_path / "agents.json"))
+    a.register("aaa-elsewhere", "llm-validator", workdir=str(tmp_path / "elsewhere"))
+    a.register("zzz-in-the-work", "llm-validator", workdir=str(tmp_path / "work"))
+    a.register("exec-1", "llm-executor", workdir=str(tmp_path / "work"), project="run-7")
+
+    # both judges are unscoped, so both are candidates — and the one standing in the work wins
+    assert a.validator_for("exec-1", project="run-7") == "zzz-in-the-work"
+
+    # scope still comes FIRST: a judge of another project is not a candidate at all, even standing here
+    b = AgentRegistry(path=str(tmp_path / "agents2.json"))
+    b.register("theirs", "llm-validator", workdir=str(tmp_path / "work"), project="other-run")
+    b.register("exec-1", "llm-executor", workdir=str(tmp_path / "work"), project="run-7")
+    assert b.validator_for("exec-1", project="run-7") is None
+
+
+def test_a_self_report_is_not_a_recorded_verdict_the_instrument_may_skip(tmp_path, monkeypatch):
+    """The executor's own self-check was reused as if a validator had produced it — and SIGNED with
+    the validator's name.
+
+    An internal node carries `self_validation` in its DELIVER packet, and §14.5 D6 makes that its
+    record: legal, and stored. The reuse rule below it exists for a different fact — "a fresh
+    recorded verdict for this delivery already stands, so do not pay for a second run" — and it read
+    the self-report as one. Two consequences, measured on the HTTP door 2026-09-02: the instrument
+    never ran on four nodes although this deployment asks it to (`GFSO_VALIDATE_INTERNAL`), and the
+    audit trail attributed every one of those PASSes to the registered validator role, which had
+    judged nothing. `get_verdict` said the opposite in the same breath — SELF-REPORTED by the
+    executor. The provenance surface is the one that may not lie.
+    """
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]},
+                  assignee="exec-1")
+    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+                  assignee="exec-1", parent_id="par")          # same Del as its parent ⟹ INTERNAL
+    T.map_criterion(e, "par", "kid", "g")
+    T.signal(e, "kid", "ACCEPT", "exec-1")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="did it", self_validation="PASS")
+
+    e._graph.authorized_validators = {"val-1"}      # what the dispatcher publishes each round
+    judged = []
+    monkeypatch.setattr(D, "_judge_with",
+                        lambda *a, **k: (judged.append(str(a[2])) or {"verdict": Verdict.PASS}))
+    out = D._auto_validate(e, "kid", agents)
+
+    assert judged == ["kid"], "the instrument must run: a self-report is not an independent verdict"
+    assert out == "pass"
+    e.stop()
+
+
+def test_a_parent_delivered_over_unfinished_children_costs_nothing_to_refuse(tmp_path):
+    """Two testers, two doors, one day: a parent went to VALIDATING while its children were still
+    OFFERED/EXECUTING, and both read that as the validator being pointed at a tree without the work.
+
+    DELIVER stays admissible — §14.3 says so and the engine is not narrower than the canon. What is
+    pinned here is the PRICE: Thm 1 makes the parent's verdict the AND over its children, so there is
+    nothing to decide until they settle, and the refusal must come before any model is touched. This
+    is the regression pin for that guard, written after a wave read the situation as a burned round.
+    """
+    class _Explodes:
+        def run_agent(self, *a, **k):
+            raise AssertionError("a model was spent on a verdict the gate would refuse")
+
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]},
+                  assignee="exec-1")
+    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+                  assignee="exec-1", parent_id="par")
+    T.map_criterion(e, "par", "kid", "g")
+    T.signal(e, "par", "ACCEPT", "exec-1")
+    T.signal(e, "par", "DELIVER", "exec-1", result="claims it is done")   # …while `kid` is OFFERED
+
+    e._graph.authorized_validators = {"val-1"}
+    assert D._auto_validate(e, "par", agents, _llm=_Explodes()) == "rejected"
+    assert e._graph.get_task(TaskId("par")).state.name == "VALIDATING"    # …and it waits, honestly
+    e.stop()
+
+
+def test_a_consumer_is_not_spawned_while_its_producer_is_unfinished(tmp_path):
+    """A tester watched a node enter EXECUTING and BLOCK itself on an input that did not exist yet,
+    while `next_steps` had listed it under `waiting` with the three nodes it waits on.
+
+    The spawn gate is what must hold here: a run started before its producers deliver can only end in
+    the BLOCK it already reported, and it is paid for. This pins the gate itself — what the wave saw
+    around it (six re-ASSIGNs from the plan rounds, then a BLOCK/RESOLVE cycle) is not reproduced
+    here and is recorded as unexplained rather than guessed at.
+    """
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    for tid in ("prod", "cons"):
+        T.create_task(e, tid, {"description": tid,
+                               "criteria": [{"name": "c", "description": "C"}]}, assignee="exec-1")
+    T.add_dependency(e, "prod", "cons", glue="cons reads what prod writes")
+
+    spawned = []
+    d = Dispatcher(e, agents, runner=lambda *a, **k: spawned.append(str(a[1])))
+    d.dispatch_once()
+    time.sleep(0.5)
+    assert "prod" in spawned, "…and the control: the producer IS spawned, so the probe can see one"
+    assert "cons" not in spawned, "a consumer spawned before its producer can only BLOCK"
+    e.stop()
+
+
+def test_a_node_with_children_is_not_spawned_as_if_it_were_a_leaf(tmp_path):
+    """The dispatcher started an executor on a parent whose children had never run.
+
+    The run re-did at the parent what the children were about to do, and the node then sat in
+    VALIDATING for 24 minutes while they caught up (HTTP door, 2026-09-02). `next_steps` never
+    offered it — it said `review`, the plan step — so the two rules disagreed about what is
+    actionable, and the frontier was right: a non-leaf aggregates (Thm 1), it does not execute.
+    """
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+                             "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                 "predictability": "EXTRAORDINARY"}]},
+                  assignee="exec-1")
+    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+                  assignee="exec-1", parent_id="par")
+    T.map_criterion(e, "par", "kid", "g")
+
+    spawned = []
+    d = Dispatcher(e, agents, runner=lambda *a, **k: spawned.append(str(a[1])))
+    d.dispatch_once()
+    time.sleep(0.5)
+    assert "kid" in spawned, "…the control: the leaf IS spawned, so the probe can see one"
+    assert "par" not in spawned, "a parent's work is its children's"
+    e.stop()
+
+
+def test_a_judge_that_belongs_to_no_project_says_so(tmp_path, monkeypatch):
+    """The roster is one shared file, and a project that registered nothing gets whichever unscoped
+    role came first.
+
+    On the CLI door 2026-09-02 that was `val-1`, a leftover of a measurement run whose registered
+    workdir points into that run's scratch directory, and it signed every node of a stranger's graph.
+    The choice is deliberate — the arm's library roles carry no project either — so what is owed is
+    not a refusal but a sentence, said where the person driving the graph reads it.
+    """
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("stranger-val", "llm-validator"))
+    T.create_task(e, "n", {"description": "the work",
+                           "criteria": [{"name": "c", "description": "C"}]}, assignee="exec-1")
+    T.signal(e, "n", "ACCEPT", "exec-1")
+    T.signal(e, "n", "DELIVER", "exec-1", result="did it")
+
+    said = []
+    monkeypatch.setattr(e, "emit_info", lambda src, msg: said.append(msg))
+    monkeypatch.setattr(e, "project_name", "mine", raising=False)
+    monkeypatch.setattr(D, "_judge_with", lambda *a, **k: {"verdict": Verdict.PASS})
+    e._graph.authorized_validators = {"stranger-val"}
+    D._auto_validate(e, "n", agents)
+
+    assert any("belongs to NO project" in m and "stranger-val" in m for m in said), said
+    e.stop()
+
+
+def test_registering_a_validator_says_what_it_will_judge(tmp_path, monkeypatch):
+    """Registering the EXECUTOR first answers "nobody yet — register one here and it binds, in either
+    order". Registering the validator second answered nothing at all, so the promised binding was
+    unconfirmable until an execution was judged 25 minutes later (HTTP door, 2026-09-02). The
+    question is symmetric; the answer is now too."""
+    reg = AgentRegistry(path=str(tmp_path / "agents.json"))
+    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    e = _eng()
+
+    first = TL.register_agent(e, "w-exec", "llm-executor", workdir=str(tmp_path / "work"))
+    assert "nobody YET" in str(first["will_be_judged_by"])
+
+    second = TL.register_agent(e, "w-val", "llm-validator", workdir=str(tmp_path / "work"))
+    assert second["will_judge"] == ["w-exec"], "the loop the first registration opened is closed"
+    e.stop()
+
+
+def test_a_judge_that_works_in_its_own_scratch_is_still_this_projects_judge(tmp_path):
+    """A judge's REGISTERED workdir is where it works, not where the work is.
+
+    `_judge_with` points it at the delivery at call time (the executor's workdir first), so requiring
+    the two to be EQUAL measured the wrong thing — and it refused the measurement arm's own
+    validator, which stands in a private scratch on purpose so one run cannot judge another's
+    leftovers. Cost, measured 2026-09-02: auto-validation never fired, the arm waited 25 minutes for
+    a verdict nobody was going to give, and a $20 run ended `validation_stalled`.
+
+    What keeps a stranger out is the PROJECT scope; place breaks a tie inside it. With NO project
+    there is nothing else, so place is the whole rule and none is the honest answer (the 2026-08-20
+    measurement, unchanged — the test above still pins it).
+    """
+    a = AgentRegistry(path=str(tmp_path / "agents.json"))
+    a.register("arm-exec", "llm-executor", workdir=str(tmp_path / "ws"), project="run-7")
+    a.register("arm-val", "llm-validator", workdir=str(tmp_path / "scratch"), project="run-7")
+    assert a.validator_for("arm-exec", project="run-7") == "arm-val"
+
+    a.register("near", "llm-validator", workdir=str(tmp_path / "ws"), project="run-7")
+    assert a.validator_for("arm-exec", project="run-7") == "near", "place still breaks the tie"
+
+    b = AgentRegistry(path=str(tmp_path / "b.json"))
+    b.register("their-val", "llm-validator", workdir=str(tmp_path / "elsewhere"))
+    b.register("my-exec", "llm-executor", workdir=str(tmp_path / "mine"))
+    assert b.validator_for("my-exec") is None, "with no project, place is the whole rule"

@@ -1,34 +1,42 @@
-"""GFSO Engine — Level 2 framework. Public API for building systems."""
+﻿"""GFSO Engine — Level 2 framework. Public API for building systems."""
 from __future__ import annotations
 
-import logging
-import threading
 import json
+import logging
+import os
+import threading
 from datetime import datetime
 from typing import Optional
 
 from gfso.core.types import (
     Signal, State, Action, CriticVerdict, SignalData, SignalOutcome, Refusal, Wait,
-    TaskId, AgentId, Verdict, passed,
+    TaskId, AgentId, Verdict, passed, settled_positive,
     Spec, Criteria, Task, CheckResult, Recommendation, CriterionMapping, DepEdge,
     LLMProviderPort, AgentPort, StoragePort,
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
     TERMINAL_STATES, DoneReason,
 )
 from gfso.core.graph import Graph
-from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share
+from gfso.core.graph.model import generation_of_task
+from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_was_refuted
 from gfso.core.graph.review import finding_keys
 from gfso.core.graph.projection import build as build_projection, render as render_projection
 from gfso.core.protocol.fsm import available_signals
 from gfso.core.protocol.validation import required_role, Role
-from gfso.core.protocol.invariants import verdict_report_defects, underprobed
+from gfso.core.protocol.invariants import (probes_that_expected_nothing,
+                                          verdict_report_defects, underprobed, probe_labels,
+                                          unrun_probes)
+from gfso.core.handlers import run_all_checks
 from gfso.core.handlers.structural import check_dag
 
-from gfso.config import (MODEL_VALIDATOR_RETRY, PIPELINE_PAGE, USAGE_PAGE,
+from gfso.config import (DEFAULT_PROJECT,
+                         MODEL_VALIDATOR_RETRY, PIPELINE_PAGE, USAGE_PAGE, VALIDATION_CLAIM_TTL,
+                         agent_id as _config_agent_id,
                          state_timeout as _config_state_timeout)
 from .audit import AuditLog, AuditEntry
 from .verdicts import store_verdict
-from .validation import _l0_holes, _l2_undischarged, l2_gate_on
+from .validation import (_l0_holes, _l2_undischarged, l2_gate_on, _refuted_coverage_refusal,
+                         _EXEC_GATING_CHECKS)
 from .events import EventBus, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import event_loop, timeout_monitor
 
@@ -52,6 +60,10 @@ def _loose_key(text: str) -> str:
     out = [ch for ch in str(text).lower()
            if ch.isascii() and (ch.isalnum() or ch in keep)]
     return " ".join("".join(out).split())
+
+
+#: Actions whose signal is the ISSUER's to give (§14.2) — everything else is the executor's.
+_ISSUER_ACTIONS = frozenset({Action.VALIDATE, Action.RESOLVE, Action.REVISE, Action.CHECK_PLAN})
 
 
 class Engine:
@@ -85,6 +97,12 @@ class Engine:
         # wait message) and a field born in the dispatcher had all three reading it defensively —
         # which reads as "nobody is registered" on any engine the dispatcher has not touched yet.
         self._roster: dict[str, str] = {}
+        #: WHOSE each published instrument is — `{validator id: project or None}`, written by
+        #: the dispatcher beside `_roster`. Declared here rather than read defensively, because
+        #: a field a reader has to guess at is a field two readers will guess differently.
+        #: `None` for an entry means UNSCOPED, which is shared by design; an empty dict means
+        #: no dispatcher has published yet, which is not the same as "no instruments".
+        self._validator_projects: dict[str, object] = {}
         self._llm = llm
         self._check_interval = check_interval
         # Inv-5 per-STATE finiteness clock (seconds), GFSO_STATE_TIMEOUT. The MECHANISM is built and
@@ -95,7 +113,6 @@ class Engine:
         # no magic 24h figure silently escalating long-lived graphs): Inv-5 finiteness beyond node
         # deadlines is OPT-IN until the clock question is decided.
         if state_timeout is None:
-            import os
             try:
                 state_timeout = _config_state_timeout()
             except ValueError:
@@ -113,7 +130,10 @@ class Engine:
         self._audit = AuditLog(storage)   # persists + hydrates when the storage carries audit methods
         self._events = EventBus()
         self._started = False
-        self._val_inflight: set = set()   # in-flight validator runs, keyed (node, iteration, reopens)
+        #: in-flight validator runs — {(node, iteration, reopens): when it was claimed}. The
+        #: TIME is what makes an abandoned claim recoverable: a run that dies without
+        #: unwinding cannot release it, and a claim nobody is behind must not park a node.
+        self._val_inflight: dict = {}
         # …and the same for the PLAN's check. `validate_result` has suppressed a duplicate spawn for
         # a while; `review_decomposition` had nothing of the kind, so the frontier went on telling a
         # driver to run it while one was running — a duplicate paid round for the same plan
@@ -129,6 +149,11 @@ class Engine:
         # `validate_result` moved them. In-memory on purpose: a restarted dispatcher re-tries the
         # validation from scratch, so the parking is exactly as durable as the decision behind it.
         self._validation_parked: set = set()
+        #: node id → the instrument bound to it {id, project, workdir}, published by
+        #: the dispatcher each round (see `bound_judge`).
+        self._bound_judges: dict = {}
+        #: keys of notices that must be said once, not once per poll (`say_once`)
+        self._said_once: set = set()
         # Nodes whose EXECUTOR disputes the contract from a state where CHALLENGE is not
         # admissible (§14.3 admits it from OFFERED only). The dispute is real and belongs to
         # the issuer; without somewhere to put it the signal was refused and the node stood
@@ -218,6 +243,22 @@ class Engine:
         # Creation is the ASSIGN effect (CREATE_TASK), logged — no unlogged pre-save. ASSIGN is an
         # issuer signal: source = parent's assignee or self. send_signal_sync so the node exists on return.
         parent = self._graph.get_task(parent_id) if parent_id else None
+        # A PARENT THAT IS NOT A NODE IS NOT A PARENT. This looked the parent up and, finding
+        # nothing, went on: the child was created carrying a `parent_id` that names no node, and
+        # `/api/graph` then emitted an EDGE with an endpoint outside its own node set. Found by
+        # opening the page (2026-09-06): the whole graph rendered EMPTY, because a renderer handed
+        # an edge to a nonexistent source refuses the batch — the header counted fifteen nodes over
+        # a blank canvas, with nothing said. Its own origin is instructive: the CLI door ate
+        # `--assignee me` into the POSITIONAL slot, so `parent_id` became the string "me" (fixed the
+        # same day) — an unnoticed typo silently produced a graph that cannot be drawn.
+        # D is a DAG over NODES (§10), which is the same rule the self-parent and cycle guards
+        # beside this one enforce; an edge to a non-node is not an edge in it.
+        if parent_id and parent is None:
+            raise ValueError(
+                f"parent {parent_id!r} does not exist, so {task_id} cannot hang under it — D is a "
+                f"DAG over NODES (§10), and an edge to something that is not one is not an edge in "
+                f"it. Create the parent first (`create_task {parent_id} …`), or leave `parent_id` "
+                f"out and this node is a root of its own.")
         source = parent.assignee if parent and parent.assignee else assignee
         self.send_signal_sync(SignalData(
             signal=Signal.ASSIGN, task_id=task_id, spec=spec, source=source,
@@ -338,6 +379,7 @@ class Engine:
         return self._graph.get_task(task_id)
 
     def get_state(self, task_id: TaskId) -> Optional[State]:
+        """The node's state, or `None` when this graph has no such id."""
         return self._graph.get_state(task_id)
 
     def get_children(self, task_id: TaskId) -> list[Task]:
@@ -372,7 +414,6 @@ class Engine:
         no CURRENT Level-2 verdict") and the work was thrown away. The gate and the delegation verb
         were destroying each other, and the ordering that avoids it was documented nowhere.
         """
-        from gfso.core.handlers import run_all_checks
         node = self._graph.get_task(node_id)
         if node is None:
             return
@@ -390,14 +431,13 @@ class Engine:
     # The engine keeps the pure storage reads its layer owns.
 
     def get_critique(self, node_id: TaskId) -> Optional[dict]:
-        import json
         raw = self._graph._storage.get_critique(node_id)
         return json.loads(raw) if raw else None
 
     def dispute_review_finding(self, node_id: TaskId, criterion: str, why: str,
                                agent: AgentId) -> dict:
-        """Record the issuer's justified refusal of ONE Level-2 finding — the other way to discharge
-        it (the first being to fix the plan). The checker is an approximation over the faithfulness
+        """Record the issuer's justified refusal of ONE Level-2 finding — the one way to discharge
+        it where it stands (fixing the plan RETIRES the verdict instead, and needs a fresh review). The checker is an approximation over the faithfulness
         axis (§13.5) and can be wrong; what the system refuses is a SILENT skip, so the dispute is
         written into the review record with its author and time (§6.2: an explicit falsifiable claim
         instead of an unstated one). It dies with that record — any edit to the decomposition stales
@@ -406,8 +446,6 @@ class Engine:
 
         Refused when there is no current verdict, or when the named criterion is not one the checker
         actually flagged (nothing to dispute)."""
-        import json
-        from datetime import datetime
         node = self._graph.get_task(node_id)
         if node is None:
             raise ValueError(f"unknown task {node_id}")
@@ -447,11 +485,17 @@ class Engine:
                 "open_findings": sorted(flagged - set(rec["disputes"]))}
 
     def active_tasks(self) -> list[Task]:
+        """Every node not in a terminal state — what the frontier and the metrics both walk."""
         return self._graph.active_tasks()
 
     # === Metrics API ===
 
     def metrics(self) -> dict[str, float | None]:  # None = ⊥, пустая популяция (§21) — рендерится прочерком
+        """The five quality metrics of this graph, plus the false-FAIL diagnostic (§15.2/§24.5).
+
+        A `None` is ⊥ — the population was empty — and never a score of zero: no observation is
+        not a bad result, and rendering it as one is the misreading this whole vector invites.
+        """
         return {
             "q_T": q_T(self._graph),
             "q_D": q_D(self._graph),
@@ -466,15 +510,19 @@ class Engine:
     # === Events API ===
 
     def on_transition(self, callback: TransitionCallback) -> None:
+        """Subscribe to state changes on this engine's bus."""
         self._events.on_transition(callback)
 
     def on_error(self, callback: ErrorCallback) -> None:
+        """Subscribe to errors raised while a signal was handled."""
         self._events.on_error(callback)
 
     def on_reject(self, callback: RejectCallback) -> None:
+        """Subscribe to signals the FSM REFUSED — the refusals are events, not silence."""
         self._events.on_reject(callback)
 
     def on_info(self, callback) -> None:
+        """Subscribe to the observation stream long verbs write while they run."""
         self._events.on_info(callback)
 
     def emit_info(self, source: str, message: str) -> None:
@@ -536,8 +584,8 @@ class Engine:
             })
             try:
                 c["_usage_recorded"] = True
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"usage record could not be marked as counted ({e}) — the next drain may count it again")
             n += 1
         return n
 
@@ -573,6 +621,18 @@ class Engine:
 
     # === Execution-validation record (the validate_result verdict; feeds the self-pass gate) ===
 
+    def validation_in_flight(self, task_id: TaskId) -> bool:
+        """Is an instrument judging THIS generation right now — asked without claiming the slot.
+
+        `begin_validation` answers the same question by taking the slot, which a read must not do.
+        Same TTL rule, so a leaked claim does not make a node permanently "being judged": a claim
+        older than any run this product waits for is not a run.
+        """
+        key = (str(task_id), *self.generation_of(task_id))
+        with self._val_lock:
+            since = self._val_inflight.get(key)
+            return since is not None and self._clock.now() - since <= VALIDATION_CLAIM_TTL
+
     def begin_validation(self, task_id: TaskId):
         """Claim the in-flight validator slot for the node's CURRENT generation (node, iteration,
         reopens). Returns the claimed key, or None if a run is already in flight — concurrent
@@ -581,9 +641,19 @@ class Engine:
         verdict the FSM rejects anyway. Release with end_validation(key)."""
         key = (str(task_id), *self.generation_of(task_id))
         with self._val_lock:
-            if key in self._val_inflight:
-                return None
-            self._val_inflight.add(key)
+            if (since := self._val_inflight.get(key)) is not None:
+                # …UNLESS NOBODY IS BEHIND IT ANY MORE. The claim is released in a `finally`, so an
+                # ORDERLY end always frees it — and a run that dies without unwinding (a killed
+                # subprocess, a torn-down thread) left it set forever. The node then reads as "being
+                # judged" on every surface while nothing is running, `validate_result` refuses the
+                # re-run its own refusal advises, and polling never ends: measured on the agent door
+                # 2026-09-02, ~15 minutes on each of two nodes with the reports already refused.
+                # A claim older than any run this product will wait for is not a run; it is a leak.
+                if self._clock.now() - since <= VALIDATION_CLAIM_TTL:
+                    return None
+                log.warning(f"the validation claim on {task_id} is older than "
+                            f"{VALIDATION_CLAIM_TTL:.0f}s with nothing behind it — reclaiming")
+            self._val_inflight[key] = self._clock.now()
             return key
 
     def generation_of(self, task_id: TaskId) -> tuple:
@@ -597,8 +667,10 @@ class Engine:
         return self._graph.generation_of(task_id)
 
     def end_validation(self, key) -> None:
+        """Release the in-flight validator claim taken by `begin_validation`. Idempotent: a key that is
+        no longer held (reclaimed after its run died without unwinding) simply has nothing to drop."""
         with self._val_lock:
-            self._val_inflight.discard(key)
+            self._val_inflight.pop(key, None)
 
     def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
                             validator_id: str, per_criterion: Optional[list] = None,
@@ -606,7 +678,8 @@ class Engine:
                             require_probe: bool = False,
                             generation: Optional[tuple] = None,
                             model: Optional[str] = None,
-                            workdir: Optional[str] = None) -> dict:
+                            workdir: Optional[str] = None,
+                            by_hand: bool = False) -> dict:
         """Store the independent validator's verdict for the node's CURRENT delivery (stamped with the
         node's GENERATION (iteration, reopens) — a rework OR a reopen invalidates it: the next
         delivery needs a fresh verdict; the superseded record is replaced, never trusted forward).
@@ -625,8 +698,22 @@ class Engine:
         claiming PASS over two criteria whose behaviours were never observed was stored as FAIL,
         logged as PASS, and signed PASS — the node closed DONE on evidence the engine had already
         refused to let carry a pass. The demotion is only a guarantee if it reaches the signal."""
-        import json
         task = self.get_task(task_id)
+        # A NODE WITH NO CRITERIA HAS NOTHING A VERDICT COULD BE ABOUT, whichever door produced it.
+        # V is the conjunction over the node's criteria (§10), and over the empty set that is
+        # vacuously TRUE — which is not a judgement. `record_verdict` refused this by name from
+        # 2026-09-02; `validate_result` did not, so a stranger on the HTTP door delivered a
+        # criteria-less root with "nothing to do here", had the instrument sign a `PASS` with
+        # `per_criterion: []`, and reached root DONE/PASS with COMPLETE on every surface (wave 23,
+        # 2026-09-03). The rule now lives where every verdict lands, so a second door cannot be
+        # written past it — the guard was one door wide, which is the class this product keeps
+        # finding in itself.
+        if task is not None and not task.spec.criteria:
+            raise ValueError(
+                f"not a verdict on {task_id}: it has no criteria, so there is nothing a verdict "
+                f"could be ABOUT. V is the conjunction over a node's criteria (§10), and over an "
+                f"empty set that is vacuously true — which is not a judgement. Give it criteria "
+                f"(`edit_criteria`) and judge those.")
         if per_criterion is not None and task is not None:
             defects = verdict_report_defects([c.name for c in task.spec.criteria], verdict,
                                              per_criterion, list(failed_criteria or ()),
@@ -639,7 +726,18 @@ class Engine:
             # pass (§11.2). Demoted here rather than refused above, because refusing stalls the node
             # and ends the run over an incomplete proof, while demoting sends it back for rework
             # naming exactly what was never observed — which is the loop this evidence exists for.
+            # …AND A PROBE THAT NAMES A COMMAND IN A RUN WITH NO SHELL IN ITS LEDGER. Same demotion,
+            # different question: `underprobed` asks whether enough was probed, this asks whether the
+            # probing HAPPENED. The record has promised exactly this since `tools_used` was added
+            # ("refuted structurally, without parsing a word of its prose") and nothing did it — one
+            # reader in the tree, a test asserting the contradiction is merely STORED. Folded into
+            # `gaps` so the disposition below (⊥ belongs to the INSTRUMENT, never to the executor's
+            # rework budget) applies unchanged.
             gaps = underprobed(per_criterion)
+            for _c in unrun_probes(per_criterion, tools_used):
+                gaps.setdefault(_c, []).append(
+                    "its probe names a command, and this judging run's tool ledger records no shell "
+                    "at all — the command was not run here")
             # …EXCEPT WHERE THE REPORT REFUTED SOMETHING. Under-probing means an unobserved conjunct
             # cannot carry a PASS — that is the whole of §11.2's asymmetry — and it says nothing
             # against a criterion the report FAILED with evidence: a refutation is a decision, and
@@ -653,9 +751,17 @@ class Engine:
                         if e.get("verdict") == "fail" and str(e.get("evidence", "")).strip()}
             gaps = {c: b for c, b in gaps.items() if c not in _refuted}
             if gaps:
+                # …SAYING WHAT THE LINK WAS SOUGHT IN. A missing probe and a probe under another
+                # wording are different facts, and both used to read "NOT OBSERVED" (HTTP door,
+                # wave 27, 2026-09-06: a present, run probe refused over a paraphrase, at the cost
+                # of a wasted run and a costlier retry).
+                _labels = probe_labels(per_criterion)
                 per_criterion = [dict(e, verdict="undecidable",
                                       evidence=f"{e.get('evidence', '')} | NOT OBSERVED: "
-                                               f"{'; '.join(gaps[str(e.get('criterion'))])}")
+                                               f"{'; '.join(gaps[str(e.get('criterion'))])}"
+                                               + (f" | probes on this criterion were labelled: "
+                                                  f"{'; '.join(_labels[str(e.get('criterion'))])}"
+                                                  if _labels.get(str(e.get("criterion"))) else ""))
                                  if str(e.get("criterion")) in gaps else e
                                  for e in per_criterion]
                 # WHOSE DEFECT IS AN UNOBSERVED CONJUNCT. The behaviours are enumerated and the
@@ -696,12 +802,81 @@ class Engine:
                           "to rework over it. And the probes are the INSTRUMENT's to write: a caller "
                           "cannot fix them by re-running the same tier — validate_result(model="
                           f"'{MODEL_VALIDATOR_RETRY}') is what usually closes a coverage gap, and "
-                          "`record_verdict` with what YOU observed is the other way through.")
+                          "`record_verdict` with what YOU observed is the other way through."
+                        # …AND WHICH OF THE TWO GAPS THIS IS. A probe written, labelled and run, but
+                        # expecting NO output, is discarded — rightly, since empty output cannot tell
+                        # an absence from a command that never ran — and the message above then reads
+                        # "unobserved" to someone who is looking at their probe. That is the whole
+                        # distance between "write a probe" and "make this probe print something", and
+                        # it cost three paid rounds on honest work before it was said out loud.
+                        + (" NOTE — this report DOES carry a probe for some of these, discarded for "
+                           "expecting no output: "
+                           + "; ".join(f"'{c}': {', '.join(cmds)}"
+                                       for c, cmds in sorted(_silent.items()))
+                           + ". An absence has to SHOW: count it (`grep -rc … | grep -v ':0' | wc -l`"
+                             " expecting `0`) or append `; echo exit=$?` and expect the code."
+                           if (_silent := probes_that_expected_nothing(per_criterion)) else ""))
+        # THE VERDICT THAT CLOSED THE NODE IS KEPT. A record may legitimately land on a node that has
+        # already settled — that is q_V's whole discovery carrier, and how a pass is found to have
+        # been wrong — but it OVERWROTE the one that did the closing. Measured on the HTTP door
+        # 2026-09-02: a hand-asserted PASS containing false statements closed a node, an instrument
+        # reported 46 seconds later, its SIGNAL was refused (the node was terminal) and its record
+        # was written anyway, so every surface then said the node had been judged by an instrument
+        # and the record that actually closed it was reachable from nowhere. The two surfaces this
+        # product offers as its guarantee are "the record" and "in writing"; that was both of them.
+        if task is not None and task.state in TERMINAL_STATES:
+            _closing = self._graph._storage.get_critique(TaskId(f"{task_id}#closing-verdict"))
+            if not _closing and (prior := self.get_exec_verdict(task_id)):
+                self._graph._storage.store_critique(TaskId(f"{task_id}#closing-verdict"),
+                                                  json.dumps(prior, default=str))
+        # …AND THE SAME BEFORE THE CLOSE, WHICH THAT RULE DID NOT COVER. The block above keeps the
+        # record a node CLOSED on; a verdict that overwrites a contradicting one while the node is
+        # still being judged left no trace at all. Measured on the CLI door (wave 24, 2026-09-04):
+        # an instrument judged a node on which nothing had been built and recorded FAIL; a
+        # hand-asserted PASS naming a reviewer invented in that same call replaced it; and
+        # `get_verdict` then read PASS with `failed_criteria: []`, `gfso status` showed the tick an
+        # earned node gets, `next_steps` said COMPLETE and `q_V` was 1.0. The instrument's refutation
+        # survived only in the chronological log. `refuted_passes` does not fire here — it is about
+        # verdicts landing AFTER a close — so four of five surfaces reported an earned green.
+        # A person MAY overrule an instrument: §14.5 keeps the verdict the issuer's act, and §13.6
+        # says the engine cannot check a self-named party's independence. What it must not be is
+        # SILENT, which is this product's whole position on the degenerate case.
+        elif (prior := self.get_exec_verdict(task_id)) and prior.get("verdict") != verdict:
+            _gen = tuple(generation or self.generation_of(task_id))
+            if all(prior.get(k, 0) == g
+                   for k, g in zip(("iteration", "reopens", "revisions"), _gen)):
+                self._graph._storage.store_critique(TaskId(f"{task_id}#overruled-verdict"),
+                                                    json.dumps(prior, default=str))
         store_verdict(self._graph._storage, task_id, task, verdict, failed_criteria, validator_id,
                       generation or self.generation_of(task_id),
                       per_criterion=per_criterion, tools_used=tools_used, model=model,
-                      workdir=workdir)
+                      workdir=workdir, by_hand=by_hand)
         return {"verdict": verdict, "failed_criteria": list(failed_criteria or ())}
+
+    def overruled_verdict(self, task_id: TaskId) -> Optional[dict]:
+        """A verdict on THIS delivery that a later, contradicting one replaced before the close.
+
+        Not the same fact as `closing_verdict`, which is about a record landing after the node had
+        already settled. This one is the disagreement inside the judging window: two parties judged
+        one delivery and said opposite things, and only the second was left standing."""
+        raw = self._graph._storage.get_critique(TaskId(f"{task_id}#overruled-verdict"))
+        rec = json.loads(raw) if raw else None
+        if not rec:
+            return None
+        # Only while it is still ABOUT the standing delivery: a rework moves the generation and the
+        # old disagreement is then history, not a contradiction anyone has to weigh.
+        task = self.get_task(task_id)
+        gen = generation_of_task(task) if task is not None else (0, 0, 0)
+        return rec if all(rec.get(k, 0) == g
+                          for k, g in zip(("iteration", "reopens", "revisions"), gen)) else None
+
+    def closing_verdict(self, task_id: TaskId) -> Optional[dict]:
+        """The verdict this node actually CLOSED on, when a later record has landed on top of it.
+
+        None when nothing has overwritten it — then `get_exec_verdict` is the closing one.
+        """
+        raw = self._graph._storage.get_critique(TaskId(f"{task_id}#closing-verdict"))
+        return json.loads(raw) if raw else None
 
     def record_reviewer_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
                                 reviewer: str, observed: Optional[dict] = None) -> None:
@@ -717,6 +892,37 @@ class Engine:
             raise ValueError(f"verdict must be PASS or FAIL, got {verdict!r}")
         if verdict == Verdict.FAIL and not failed_criteria:
             raise ValueError("FAIL requires failed_criteria (Inv-3: a FAIL is never criteria-less)")
+        # A VERDICT IS ABOUT A DELIVERY THAT IS STILL BEING JUDGED. On a settled node this recorded
+        # happily, answered `recorded: true`, changed nothing, and then told the caller to signal —
+        # which the FSM refuses, because a terminal state admits no signal (§14.3). Two false things
+        # in one reply, and the second sends the reader after a move that cannot be made. The only
+        # route back to judging a settled node is REOPEN, and it has its own gate (§14.3 finality).
+        if task.state in TERMINAL_STATES:
+            raise ValueError(
+                f"{task_id} is {task.state.name} — a settled node is not being judged, so a verdict "
+                f"about it changes nothing and no signal follows it (§14.3 admits none from a "
+                f"terminal state). If the result must be re-judged, `reopen` it first — that is the "
+                f"one route back, and it refuses a node the graph has already built on.")
+        # …AND THE SAME SENTENCE APPLIES BEFORE THE DELIVERY, WHICH IT DID NOT COVER. The rule read
+        # "not settled"; what it means is "there is a delivery standing to be judged", and only
+        # VALIDATING is that. A node in REWORKING has had its delivery REFUSED and is redoing the
+        # work: a verdict recorded there is about nothing — and it is stamped with the generation the
+        # rework just moved to, so it reads as CURRENT for the delivery that has not happened yet.
+        # A stranger on the CLI door used exactly that: FAIL → REWORKING → record a PASS naming a
+        # reviewer invented in the same second → re-DELIVER "same delivery, nothing changed" → the
+        # reply announced "an independent verdict for THIS delivery is already on the record", and
+        # the executor's own PASS closed the node (wave 23, 2026-09-03; reproduced in four calls).
+        # The docs promise the opposite in as many words: "a rework, a reopen or a revision under it
+        # makes the record about an earlier delivery". The generation stamp cannot carry that alone —
+        # it moves at the rework, so a verdict written AFTER the move looks fresh.
+        if task.state != State.VALIDATING:
+            raise ValueError(
+                f"{task_id} is {task.state.name} — there is no delivery standing to be judged, so "
+                f"there is nothing this verdict could be ABOUT. A verdict belongs to a DELIVERY "
+                f"(§14.5): it is recorded while the node is VALIDATING, between the DELIVER that "
+                f"offers the work and the PASS/FAIL that settles it. In REWORKING the previous "
+                f"delivery was refused and the work is being redone — wait for the next DELIVER and "
+                f"judge that.")
         # THE SEAM IS WHERE INDEPENDENCE IS OWED — §14.5 D6, and only there. On an INTERNAL node
         # (its Del is its parent's) the canon says the executor self-verifies, and its guarantee is
         # carried by the validation of the public result above it. This refused that everywhere, and
@@ -736,10 +942,21 @@ class Engine:
                              f"record the canon asks for, and this verb takes it.)")
         # The human's own words, stored per criterion exactly where a machine verdict stores its
         # probes — so "who accepted this, and on what" is answerable from the record either way.
+        # WHICH criterion failed, from the payload that says which. This painted EVERY observed
+        # criterion with the OVERALL verdict, so a reviewer who ran two criteria and saw one red and
+        # one green could not record what they saw: the verb built `red = {both}`, the invariant
+        # compared it with `failed_criteria = {one}` and refused the caller for a shape the VERB had
+        # made. Observing only the failing one fails too ("criterion has no verdict" — ⊥ is not
+        # pass), so the human path for a partial FAIL was closed in both directions while the
+        # machine validator's report had always carried per-criterion verdicts (found 2026-09-05
+        # while probing Inv-3). `failed_criteria` is exactly the red set (Inv-3); everything else
+        # the reviewer observed passed.
+        _red = {str(f) for f in (failed_criteria or ())}
         self.record_exec_verdict(
             task_id, verdict, list(failed_criteria or ()), str(reviewer),
-            per_criterion=[{"criterion": k, "verdict": "pass" if verdict == Verdict.PASS else "fail",
-                            "evidence": str(v)} for k, v in (observed or {}).items()] or None)
+            per_criterion=[{"criterion": k, "verdict": "fail" if k in _red else "pass",
+                            "evidence": str(v)} for k, v in (observed or {}).items()] or None,
+            by_hand=True)
 
     def record_rejected_report(self, task_id: TaskId, defects: str,
                                per_criterion: Optional[list] = None) -> None:
@@ -756,11 +973,19 @@ class Engine:
         attempts is normal (measured on the human door 2026-08-21). The count is what lets the caller
         be told, at the second one, that re-running is no longer the move."""
         prev = self.rejected_report(task_id) or {}
+        # …STAMPED WITH THE DELIVERY IT IS ABOUT, and counted per delivery. Without the stamp the
+        # count is a lifetime total: a node that produced two ⊥, was reworked and re-delivered
+        # cleanly still reads "two reports in a row could not decide" — advice about a delivery
+        # nobody attempted. It is the same generation rule every other record here carries, and the
+        # frontier now reads this one, so a stale count would be advice given to a driver.
+        gen = generation_of_task(self.get_task(task_id))
+        _same = all(prev.get(k, 0) == g for k, g in zip(("iteration", "reopens", "revisions"), gen))
         self._graph._storage.store_critique(
             TaskId(f"{task_id}#rejected-report"),
             json.dumps({"defects": defects,
                          "per_criterion": list(per_criterion or ()),
-                         "refusals": int(prev.get("refusals", 0)) + 1,
+                         "refusals": (int(prev.get("refusals", 0)) + 1) if _same else 1,
+                         **dict(zip(("iteration", "reopens", "revisions"), gen)),
                          "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
 
     def get_parent(self, task_id: TaskId):
@@ -879,6 +1104,8 @@ class Engine:
     # === Audit API ===
 
     def audit_log(self, task_id: Optional[TaskId] = None) -> list[AuditEntry]:
+        """The append-only signal log — the whole graph's, or one node's. This is the record Thm 11
+        and Inv-7 rest on: the node's attributes are a projection of it, never the other way round."""
         return self._audit.get_entries(task_id)
 
     # === Decomposition API ===
@@ -1000,7 +1227,7 @@ class Engine:
             new_crits = tuple(c for c in to.spec.criteria if c.depends_on != from_id)
             new_spec = Spec(to.spec.description, new_crits, to.spec.accepted_risks,
                             to.spec.risk_components, scope=to.spec.scope, name=to.spec.name)
-            self._revise(to_id, new_spec, self.issuer_of(to_id))
+            self._revise(to_id, new_spec, self.issuer_of(to_id), severing=(from_id,))
         self._graph._storage.remove_dep_edge(from_id, to_id)
         self._recompute_seam_parents(from_id, to_id)
 
@@ -1055,7 +1282,8 @@ class Engine:
 
         The in-flight set is keyed by generation (node, iteration, reopens), so a run against an
         older delivery does not mask a node that needs judging again."""
-        return (str(task_id), *self.generation_of(task_id)) in self._val_inflight
+        since = self._val_inflight.get((str(task_id), *self.generation_of(task_id)))
+        return since is not None and self._clock.now() - since <= VALIDATION_CLAIM_TTL
 
     def contest(self, task_id: TaskId, why: str) -> None:
         """Record that the node's EXECUTOR disputes its contract from a state where CHALLENGE is not
@@ -1069,7 +1297,7 @@ class Engine:
 
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
                 new_assignee: Optional[AgentId] = None, covers: tuple = (),
-                reason=None) -> Task:
+                reason=None, severing: tuple = ()) -> Task:
         """Canon v3.7 Inv-1 (§14.4): a spec/Del change = REVISION — ONE re-ASSIGN under the SAME id → OFFERED,
         never an in-place mutation and never the CANCEL signal (revision ≠ abandonment; no CANCELLING pass,
         no cascade). The id persists (Inv-7) so references (the parent's mapping, dependents' depends_on)
@@ -1079,6 +1307,30 @@ class Engine:
         old = self._graph.get_task(task_id)
         if old is None:
             raise ValueError(f"task {task_id} not found")
+        # A Dep SEAM RIDES IN `criteria`, AND AN EDGE IS NOT DELETED BY OMISSION. `edit_criteria`
+        # has carried `dep__*` across a replacement since 2026-08-20, with the argument written
+        # out there: nobody editing what a node must ACHIEVE is asking to sever what it WAITS
+        # FOR, and the loss is invisible until a consumer runs against an input nothing connected
+        # it to. That rule sat on ONE door. `revise` — the verb whose whole contract IS wholesale
+        # replacement — went straight past it, so the defect the comment describes happened
+        # through the widest door onto the same edge. Two strangers hit it the same afternoon
+        # (2026-09-05), and the graph then read CLEAN: `list_holes` empty and CHECK-2 answering
+        # "D acyclic; no dependency edges" — a check passing because its subject was destroyed.
+        # Carried here, at the chokepoint every spec change lands on. Removing an edge stays
+        # possible and stays EXPLICIT — `remove_dependency` says WHICH producer it is severing
+        # (`severing`), and nothing else can sever one. Without that the carry became a CAGE:
+        # `remove_dependency` re-authors the consumer WITHOUT the criterion, which is exactly
+        # the shape being defended against, so the edge came straight back and the verb for
+        # deleting edges stopped deleting them (caught by its own test, minutes after the fix).
+        if new_spec is not None and old.spec.criteria:
+            _named = {c.name for c in (new_spec.criteria or ())}
+            _cut = set(severing)
+            _carry = tuple(c for c in old.spec.criteria
+                           if c.depends_on and c.name not in _named and c.depends_on not in _cut)
+            if _carry:
+                new_spec = Spec(new_spec.description, tuple(new_spec.criteria or ()) + _carry,
+                                new_spec.accepted_risks, new_spec.risk_components,
+                                scope=new_spec.scope, name=new_spec.name)
         # Snapshot the CONTENT before the signal: ASSIGN applies the new spec onto the same live
         # object, so reading `old.spec` afterwards compares the new contract with itself.
         _before = (old.spec.description, old.spec.criteria, old.spec.accepted_risks,
@@ -1106,15 +1358,27 @@ class Engine:
                 why = (f"{task_id} is {st.name} and the R′ finality-gate refused it: it is either "
                        f"CONSUMED (the graph built on this result — then it is locked for good and "
                        f"the repair is re-decomposition) or out of reopens "
-                       f"({getattr(cur, 'reopens', '?')}/{getattr(cur, 'max_reopens', '?')} spent). "
+                       f"({cur.reopens}/{cur.max_reopens} spent). "
                        f"`reopen` names which.")
             elif str(agent) != str(issuer):
                 why = (f"'{agent}' is not the issuer of {task_id} — its issuer is '{issuer}' (the "
                        f"parent's Del, or the node's own for a root), and a contract is revised by "
                        f"the side that set it (§14.2).")
             else:
-                why = (f"the FSM refused ASSIGN in {st.name if st else '?'} — see /api/audit for the "
-                       f"recorded rejection.")
+                # …AND ONLY IF IT REALLY DID. This sentence was printed whenever the node had not
+                # moved, whatever the reason — including a step that RAISED and was dropped, which
+                # is a fact about a malformed value and not about the FSM. A tester read it as the
+                # plan-repair verbs being closed in the states nodes actually occupy and worked
+                # around a wall that was not there (agent door, 2026-09-02). §14.3 admits ASSIGN
+                # from every reassignable state, so "the FSM refused" is a claim that has to be
+                # checked against the record before it is made.
+                _rejected = any(a.rejected for a in self.audit_log(task_id)[-4:])
+                why = ((f"the FSM refused ASSIGN in {st.name if st else '?'} — see the audit log for "
+                        f"the recorded rejection.") if _rejected else
+                       (f"the revision did not take, and the FSM recorded no refusal — the step was "
+                        f"dropped before it reached {task_id} (the server log carries the reason). "
+                        f"§14.3 admits ASSIGN from {st.name if st else 'this state'}, so this is not "
+                        f"a rule refusing you: read the log, or re-read the node and try again."))
             raise ValueError(f"revise refused on {task_id}: {why}")
         # Did the CONTRACT change, or only who holds it? A delegation carries the same spec and a
         # new Del; the parent's Level-2 claim is about the children's criteria, not their owners.
@@ -1139,6 +1403,7 @@ class Engine:
                 self._recompute_checks(t.parent_id)
 
     def get_dependencies(self) -> list[DepEdge]:
+        """Every Dep edge in this graph, declared and discovered alike — `q_Dep` is their ratio."""
         return self._graph.dep_edges()
 
     # === Projection API (read-only critic input contract) ===
@@ -1159,6 +1424,271 @@ class Engine:
         return render_projection(build_projection(node, children, deps, checks))
 
     # === Actions API (per-role affordances, §14.2) ===
+
+    def nodes_with_a_refused_report(self) -> list[str]:
+        """Nodes where a judge ran, reported, and the engine refused the report as ⊥ (§11.2).
+
+        NOT a contradiction and NOT a blocker: ⊥ is not fail, and treating it as one is the precise
+        error the canon names. But it must be VISIBLE where completion is announced — measured on
+        the HTTP door 2026-09-02, an instrument returned ⊥ on a root that had closed by hand
+        forty-six seconds earlier, and `next_steps` went on answering "the goal is met" with nothing
+        anywhere saying a judge had tried and failed to decide it.
+        """
+        return [str(t.id) for t in self.all_tasks() if self.rejected_report(t.id)]
+
+    def closed_over_an_open_plan_review(self, root_id: Optional[TaskId] = None) -> list[str]:
+        """Settled nodes whose OWN current Level-2 review still names findings nobody dispositioned.
+
+        The gate holds a parent's CHILDREN until its plan is dispositioned — so on a decomposed node
+        this cannot happen. On a LEAF it can: there are no children to hold, the review is advisory,
+        and nothing consulted it before answering COMPLETE. Two doors closed a leaf root on
+        vacuous-but-true criteria and read the contradiction straight off the database (wave 25,
+        2026-09-05): `get_review` → `execution_admitted: false` and `next_steps` → `complete: true`,
+        same node, same second, and the one that says done is the one that never asks.
+
+        Advisory means advisory: this does not withhold `complete`, because the checker is an
+        a-priori approximation (§13.5) and the real Level-2 verdict is contact's. What it does is
+        stop the two surfaces from disagreeing in silence.
+        """
+        return [str(t.id) for t in self._within(root_id)
+                if settled_positive(t) and (self.open_l2_findings(t.id) or [])]
+
+    def _within(self, root_id: Optional[TaskId] = None) -> list:
+        """The nodes a question scoped to `root_id` is about: that node and its subtree, else all.
+
+        The id-prefix convention was spelled out at four call sites, which is four chances for one
+        of them to scope differently from the rest — the exact shape of "a rule that holds at one
+        door and not at the next".
+        """
+        tasks = self.all_tasks()
+        if root_id is None:
+            return tasks
+        return [t for t in tasks if t.id == root_id or str(t.id).startswith(f"{root_id}.")]
+
+    def closure_of(self, task_id: TaskId) -> Optional[dict]:
+        """How ONE node closed: who produced the standing verdict, and what it displaced or contradicts.
+
+        The per-node owner of the facts `_how_this_closed` reports over a whole graph. It exists
+        because the graph-wide lists were the ONLY place they were said, and a list of ids is a
+        fact about a project, not about the node a reader is looking at: `/api/tasks/<id>` carried
+        no verdict provenance at all, so the page a person watches drew every DONE node the same —
+        the one earned through an instrument's probes and the one asserted by a name invented in
+        the same command (wave 26, 2026-09-06, named by three doors independently).
+
+        None for a node that has not settled positive: there is no closure to describe, and an
+        empty dict there would read as "closed, nothing to weigh". The three list methods below
+        filter on settledness and then read THIS — one predicate per fact, so a surface and a list
+        cannot come to disagree about one node.
+        """
+        t = self.get_task(task_id)
+        if t is None or not settled_positive(t):
+            return None
+        rec = self.get_exec_verdict(task_id) or {}
+        displaced = self.overruled_verdict(task_id) or {}
+        return {
+            # by_hand / self / instrument / none — §13.6's three weights of evidence
+            "provenance": self.verdict_provenance(task_id),
+            "by_hand": bool(rec.get("by_hand")),
+            # a hand verdict that replaced an instrument's OPPOSITE one on the same delivery
+            "overruled": bool(displaced and not displaced.get("by_hand") and rec.get("by_hand")),
+            "overruled_verdict": (str(displaced.get("verdict")) if displaced else None),
+            # standing at PASS while its own current record says FAIL — a green that is not green
+            "refuted": pass_was_refuted(self._graph, t),
+            "validator": rec.get("validator"),
+        }
+
+    def closures_by_hand(self, root_id: Optional[TaskId] = None) -> list[str]:
+        """Settled nodes whose standing verdict was ASSERTED BY HAND, not produced by an instrument.
+
+        The §14.5 degenerate case, and §13.6's named boundary: at a door where a person names
+        themselves, the engine cannot establish that the reviewer is independent or that the
+        observations happened. That is a declared limit, not a defect — what was a defect is that it
+        was declared in one place and invisible in the two a reader consults. THREE doors reported
+        the same thing across two waves (2026-09-04/05): a root closed with zero work through an
+        invented reviewer, and `status`, `next_steps` and `q_V` gave it exactly what an earned root
+        gets, while `get_verdict` and `gfso log` said plainly whose word it rested on.
+
+        Not a reason to withhold `complete`: a person judging their own project by hand is the
+        product's documented solo path. It is the one fact about such a graph a reader must not have
+        to ask a second verb for. `hand_overruled_closures` is the sharper subset — those also
+        displaced an instrument that said the opposite.
+        """
+        return [str(t.id) for t in self._within(root_id)
+                if (self.closure_of(t.id) or {}).get("by_hand")]
+
+    def hand_overruled_closures(self, root_id: Optional[TaskId] = None) -> list[str]:
+        """Settled nodes that closed on a HAND verdict which displaced an instrument's opposite one.
+
+        The sibling of `refuted_passes`, for the other order of events. There, the instrument's
+        refutation lands after the signature and the state is left showing the signature. Here it
+        landed FIRST, on the same delivery, and a self-named party's record replaced it before the
+        close — so the node's current verdict agrees with its state and nothing was contradicted at
+        the moment anyone looked (CLI door, wave 24, 2026-09-04).
+
+        Overruling is legitimate: the verdict is the issuer's act (§14.5), and §13.6 says no
+        structural check can establish that a self-named reviewer is independent. So this is not a
+        reason to withhold `complete` — a run where a person correctly overrode a wrong instrument
+        would never finish. It is the one fact about such a graph that a reader has to weigh, and
+        the surfaces carry it beside the answer instead of instead of it.
+        """
+        return [str(t.id) for t in self._within(root_id)
+                if (self.closure_of(t.id) or {}).get("overruled")]
+
+    def refuted_passes(self, root_id: Optional[TaskId] = None) -> list[str]:
+        """Nodes standing at PASS whose OWN current record says FAIL — a green that is not green.
+
+        The engine has always detected this (it is q_V's numerator, and `q_V_from` names the nodes),
+        but only the metric said so: measured on the CLI door 2026-09-02, a node signed PASS, an
+        instrument returned FAIL four seconds later, the FSM correctly refused that signal because
+        the node was terminal — and from then on `status` printed `[x] DONE` and the frontier
+        answered COMPLETE, permanently, while `get_verdict` on the same node said FAIL. Two sources
+        of truth disagreeing, with every surface a person reads on the wrong side of it.
+
+        One predicate, and the surfaces read it rather than each deciding for themselves.
+        """
+        return [str(t.id) for t in self._within(root_id)
+                if (self.closure_of(t.id) or {}).get("refuted")]
+
+    def verdict_provenance(self, task_id: TaskId) -> str:
+        """WHAT KIND OF PARTY produced this node's standing verdict: by_hand / self / instrument.
+
+        Three kinds, not two. A record a person asserted at a door where identity is self-declared,
+        an INTERNAL node's own executor stamping its DELIVER (§14.5 D6), and a registered instrument
+        that is somebody other than the executor are three different weights of evidence, and the
+        read collapsed the middle one into the last: a self-report came back as "produced by the
+        registered instrument named in `validator`" while the evidence line beside it said
+        SELF-REPORTED (measured on the MCP door 2026-09-02). Anything keying on the summary read a
+        self-stamp as an independent check.
+
+        The dispatcher has decided this correctly since the day it stopped REUSING a self-report as
+        an independent verdict — the same comparison, in the same words. One owner, so the two
+        cannot drift into disagreeing about one record.
+        """
+        rec = self.get_exec_verdict(task_id)
+        if not rec:
+            return "none"
+        if rec.get("by_hand"):
+            return "by_hand"
+        task = self.get_task(task_id)
+        if task is not None and str(rec.get("validator") or "") == str(task.assignee or ""):
+            return "self"
+        return "instrument"
+
+    def parked_validations(self) -> frozenset:
+        """Nodes whose automatic judging has GIVEN UP — read by the doors, written by the dispatcher.
+
+        Asked through a method because a door reaching for the field by `getattr` with a default is
+        the duck-typed private reach the coupling ratchet counts, and because the default silently
+        turns "the engine has no such idea" into "nothing is parked" — the two are not the same
+        answer and only one of them is true."""
+        return frozenset(self._validation_parked)
+
+    def publish_bound_judge(self, task_id: TaskId, judge: Optional[dict]) -> None:
+        """The dispatcher's half of `bound_judge` — who it will send at this node, for the doors.
+
+        A method rather than an attribute the dispatcher writes: the coupling ratchet counts a reach
+        into another module's private field, and it was right to — what the doors need is a fact
+        this object owns, not a dictionary somebody else keeps in it."""
+        if judge and judge.get("id"):
+            self._bound_judges[str(task_id)] = dict(judge)
+        else:
+            self._bound_judges.pop(str(task_id), None)
+
+    def bound_judge(self, task_id: TaskId) -> dict:
+        """The instrument the dispatcher bound to this node, as facts a door may read: id, project,
+        workdir. `{}` when nothing is bound.
+
+        Published FROM the dispatcher, exactly like `_roster` and `authorized_validators`, because
+        the doors may not reach into the delegation layer to ask (the mechanical layer gate) and the
+        answer depends on the roster, which is that layer's. What the doors do with it is say WHOSE
+        judge is about to read their work — a role registered for another project, standing in a
+        directory that holds none of this delivery, was announced as "an independent validator" and
+        five strangers had to read the log to find out (waves 23–25)."""
+        return dict(self._bound_judges.get(str(task_id)) or {})
+
+    def judged_by_instrument(self, task_id: TaskId) -> bool:
+        """Will a registered instrument judge this node's delivery without being asked?
+
+        Two facts, and both live here: an instrument is published to the graph (the dispatcher does
+        it each round), and the node's ISSUER is automated — a person's node is judged FOR them and
+        then waits for their signature, so only an automated issuer makes the instrument's verdict
+        the signal too. Asked as one question because every surface that answers "wait" or "act"
+        needs the same one, and a door that composed it for itself would reach past this object into
+        the graph (and, in its first spelling, into the delegation layer the layer gate forbids it).
+        """
+        task = self.get_task(task_id)
+        if task is None or not self._instrument_for_this_project():
+            return False
+        issuer = str(self.issuer_of(task_id))
+        return issuer == _config_agent_id() or self.kind_of(issuer) is not None
+
+    def _instrument_for_this_project(self) -> bool:
+        """Is any published instrument one that would be given THIS project's nodes?
+
+        The roster is one server-wide file, so "an instrument is registered" and "an instrument will
+        judge you" are different facts, and this asked the first while every caller meant the second.
+        Measured on the HTTP door 2026-09-06: a project that had registered nothing was told on every
+        delivery to wait for a bound validator, because other projects' roles filled the set — and the
+        same sentence told them that recording their own verdict "would race it". There was nothing
+        to race. The scoping is `validator_for`'s, said once more: this project's roles, or UNSCOPED
+        ones (which are shared by design), never another project's.
+        """
+        whose = self._validator_projects
+        if not whose:                          # nothing published yet — the set is all we know
+            return bool(self._graph.authorized_validators)
+        # THE DECLARED SPELLING. This engine carries the project under two names — `project_name`,
+        # which every reader in the product uses, and `_project_name`, which `runtime` also sets
+        # and calls "the older spelling, still read downstream". A third one written here would
+        # be the same defect one turn later.
+        mine = self.project_name or DEFAULT_PROJECT
+        return any(p in (None, "", mine) for aid, p in whose.items()
+                   if aid in self._graph.authorized_validators)
+
+    def publish_validator_projects(self, whose: dict) -> None:
+        """The dispatcher's answer to "whose is each instrument" — `{validator id: project or None}`.
+
+        A setter rather than an attribute the dispatcher writes into, for the same reason
+        `publish_bound_judge` is one: the layer below must not be reached into from the layer above,
+        and a field written from outside is a field with no owner.
+        """
+        self._validator_projects = dict(whose or {})
+
+    def now(self) -> float:
+        """This engine's clock reading — the ClockPort's, never the wall's.
+
+        Published because callers that WAIT need it and were reaching into `_clock` to get it: a
+        fake-clock host must not be made to sit through a real wait just because a door asked the
+        wrong object.
+        """
+        return self._clock.now()
+
+    def unmet_producers(self, task_id: TaskId) -> list[str]:
+        """The nodes this one consumes that have not passed — the reason it cannot start yet.
+
+        §14.3 admits ACCEPT from OFFERED whatever the seams say, and the engine is not narrower than
+        the canon: taking a node is allowed. What the frontier knew and the ACCEPT reply did not was
+        that the work cannot begin — so a graph showed EXECUTING for nodes provably unable to run
+        (CLI door, 2026-09-02). One owner for the question the frontier already asks.
+        """
+        # The id is compared and looked up as a STRING: a malformed edge that carried a list once
+        # reached the DAG check and raised `unhashable type` inside the protocol step (2026-09-02).
+        # The door refuses that value now, and a read is still not the place to fall over it.
+        return sorted({str(e.from_id) for e in self._graph.dep_edges()
+                       if str(e.to_id) == str(task_id)
+                       and not passed(self._graph.get_task(TaskId(str(e.from_id))))})
+
+    def say_once(self, key: str) -> bool:
+        """True the FIRST time this key is asked about, False afterwards — for a line that must be
+        said once per node rather than once per poll.
+
+        Owned here because the callers are not one object: the dispatcher has its own bag for its own
+        notices, and a free function that needed the same thing duck-typed a private attribute onto
+        this engine — which both instruments caught in the same run.
+        """
+        if key in self._said_once:
+            return False
+        self._said_once.add(key)
+        return True
 
     def kind_of(self, agent_id: str) -> Optional[str]:
         """What KIND of participant this id is — `llm-executor` / `llm-validator` / … — or None for
@@ -1246,12 +1776,15 @@ class Engine:
     # === Extended Query API ===
 
     def tasks_by_state(self, state: State) -> list[Task]:
+        """Every node in that state, terminal states included."""
         return [t for t in self._graph._storage.get_all_tasks() if t.state == state]
 
     def tasks_by_assignee(self, assignee: AgentId) -> list[Task]:
+        """Every node held by that participant (Del), whatever state it is in."""
         return [t for t in self._graph._storage.get_all_tasks() if t.assignee == assignee]
 
     def all_tasks(self) -> list[Task]:
+        """Every node of this graph, including the settled ones."""
         return self._graph._storage.get_all_tasks()
 
     # === Execution forcing-point ===
@@ -1344,8 +1877,16 @@ class Engine:
                 # signed on — `get_verdict` reads it in full.
                 _f = _rec.get("failed_criteria") or []
                 cand = (1, t, Action.VALIDATE,
-                        f"SIGN THE VERDICT on '{t.id}' ({nm}): an independent verdict for THIS "
-                        f"delivery is already on the record"
+                        # …AND CALL IT WHAT IT IS. On an internal node the record is legitimately
+                        # the executor's own self-check (§14.5 D6) — and this sentence called that
+                        # "an independent verdict … by agent", where `agent` was the executor who
+                        # had just delivered it (agent door, 2026-09-02). The record says which kind
+                        # of party produced it; the directive has to read the same field.
+                        f"SIGN THE VERDICT on '{t.id}' ({nm}): "
+                        + ("the executor's own self-check for THIS delivery is on the record "
+                           "(§14.5 D6 lets an internal node self-verify)"
+                           if str(_rec.get("validator") or "") == str(t.assignee or "")
+                           else "an independent verdict for THIS delivery is already on the record")
                         + (f" by {_rec['validator']}" if _rec.get("validator") else "")
                         + " — " + (f"{Verdict.FAIL} on {', '.join(map(str, _f))}" if _f
                                     else str(Verdict.PASS))
@@ -1353,7 +1894,6 @@ class Engine:
                         + (f"{Verdict.FAIL} with those criteria." if _f else f"{Verdict.PASS}.")
                         + " Judging it again would judge the same artifact twice.")
                 return cand
-                return None
             # …and the ISSUER's own share of the same fact: a criterion that has failed round
             # after round is a criterion to re-read, not only a delivery to judge. The engine
             # knows the count; whoever holds the verdict was never told it.
@@ -1362,9 +1902,30 @@ class Engine:
                            f"repair is the CONTRACT — `edit_criteria('{t.id}', …)` (a revision, "
                            f"Inv-1) — not another FAIL."
                            if (_st := self.stuck_on(t.id)) else "")
+            # …AND WHETHER AN INSTRUMENT HAS ALREADY TRIED AND COME BACK WITH NOTHING. The engine
+            # stores every refused report on the node, with a count, and tells the CALLER of
+            # `validate_result` what it means — but the caller of a hand-driven validation is not
+            # the person who comes back to the graph later, and the step they read said "VALIDATE
+            # this" as though nothing had happened. Three doors measured the consequence as the same
+            # symptom: a node sitting in VALIDATING for twelve minutes, forty-five minutes, or
+            # "forever", with the frontier cheerfully naming a step that was never going to
+            # complete (wave 23, 2026-09-03). The dispatcher's own path has said this since August
+            # (`_validation_parked`); the hand-driven one had the fact and no reader.
+            _bot = self._bottom_attempts(t)
+            _bot_note = (f" NOTE: {_bot} instrument report(s) on THIS delivery produced no verdict "
+                         f"(⊥ is not a pass, §11.2) — `get_verdict {t.id}` shows what they did "
+                         f"manage to check. "
+                         + ("Re-running the same tier usually returns the same gap: try a stronger "
+                            "model, or record your own verdict with what you observed."
+                            if _bot < 2 else
+                            "Do NOT run the same tier again: repeated ⊥ on one node is about the "
+                            "CONTRACT, not the run — narrow what this node promises "
+                            f"(`edit_criteria('{t.id}', …)`), escalate the model, or record your "
+                            "own verdict.") if _bot else "")
             cand = (1, t, Action.VALIDATE,
                     f"VALIDATE '{t.id}' ({nm}): check the deliverable against criteria {crits}; signal "
                     f"PASS if every criterion holds, else FAIL with the failed criteria."
+                    + _bot_note
                     + _stuck_note
                     + (f" This node is a SEAM, so its own executor ({t.assignee}) cannot sign a "
                        f"PASS until an INDEPENDENT verdict is on the record for this delivery — "
@@ -1393,9 +1954,20 @@ class Engine:
             # After ACCEPT the channel for "this criterion is wrong" is BLOCK (§14.3 admits it
             # from REWORKING precisely so a defect met in the work is not unreportable — FM-7).
             _stuck = self.stuck_on(t.id)
+            # …AND NAME WHAT FAILED, or stop claiming a failure. "Fix exactly what failed" is
+            # unfollowable when nothing on the record says what did — and a wave read exactly that
+            # on a node whose reports carried an empty `failed_criteria` (agent door, 2026-09-02).
+            # Inv-3 makes a FAIL name its criteria, so a rework with none named is a state to
+            # explain, not a verdict to relay.
+            _failed = list((self.current_exec_verdict(t.id) or {}).get("failed_criteria") or ())
             cand = (2, t, Action.FIX,
-                    f"FIX AND RE-DELIVER '{t.id}' ({nm}): the validator FAILED it. Fix exactly what failed, then "
-                    f"DELIVER again.{self._rework_feedback(t.id)}"
+                    (f"FIX AND RE-DELIVER '{t.id}' ({nm}): the validator FAILED it on "
+                     f"{', '.join(map(str, _failed))}. Fix exactly that, then DELIVER again."
+                     if _failed else
+                     f"RE-DELIVER '{t.id}' ({nm}): it is in REWORKING, and no current verdict names "
+                     f"a failed criterion — read `get_verdict {t.id}` before changing anything, "
+                     f"because there may be nothing here to fix.")
+                    + f"{self._rework_feedback(t.id)}"
                     + (f" | {', '.join(_stuck)} has now failed {self.CONTRACT_SUSPECT_ROUNDS} "
                        f"rounds running. If it cannot be met AS WRITTEN, do not deliver against "
                        f"it a fourth time — send BLOCK(reason=\"<why the criterion cannot hold>\"): "
@@ -1458,13 +2030,178 @@ class Engine:
 
         return cand
 
+    def _not_complete_because_refuted(self, refuted: list[str]) -> dict:
+        """The one answer given about nodes standing at PASS over their own FAIL.
+
+        Written twice — once for the whole graph, once for a named root — is how the scoped door came
+        to answer COMPLETE about a node the unscoped one called contradicted."""
+        return {"complete": False,
+                # named as DATA as well as prose: the CLI marks these nodes in its tree, and
+                # parsing them back out of a sentence is a second spelling of one fact.
+                "refuted_passes": refuted,
+                "directive": (f"NOT COMPLETE — {', '.join(refuted)} stand(s) at PASS while the "
+                              f"current recorded verdict for it is FAIL. A signature landed "
+                              f"before the instrument's verdict did, and the graph is showing "
+                              f"the signature. Read `get_verdict` on it; recovery is `reopen` "
+                              f"if it is not consumed, and re-decomposition around it if it is.")}
+
+    def _how_this_closed(self, root_id: "Optional[TaskId]" = None) -> dict:
+        """The facts a reader must weigh about a graph that answers COMPLETE.
+
+        ONE owner, because there are TWO completion answers — the whole-graph one and the per-root
+        one — and only the first carried them. Asking about a root BY NAME is what `next_step(<id>)`
+        does, what every signal reply calls, and what the documentation's own loop runs; it answered
+        a bare `complete: true` while the unscoped call carried the contradiction (HTTP door, wave
+        26, 2026-09-06). The comment on the refutation check ten lines above says the same lesson
+        about the same pair of paths, written when THAT rule was found missing from this one: a rule
+        that holds at one door and not at the next is the class this product keeps finding in itself.
+        None of these withholds COMPLETE. Overruling an instrument is the issuer's act (§14.5) and no
+        check can establish that a self-named reviewer is independent (§13.6) — so a correct override
+        must stay finishable. What must not happen is that it finishes SILENTLY.
+        """
+        extra: dict = {}
+        if _open_plan := self.closed_over_an_open_plan_review(root_id):
+            extra |= {"closed_over_an_open_plan_review": _open_plan,
+                      "closed_over_an_open_plan_review_note":
+                          (f"{', '.join(_open_plan)} passed while its own Level-2 review still "
+                           f"names findings nobody answered \u2014 `get_review` lists them. On a node "
+                           f"with children the gate would have held them; on a leaf there is "
+                           f"nothing to hold, so the review is advice and this is the only place "
+                           f"it is said. The checker is an approximation (\u00a713.5) and contact is "
+                           f"the real verdict \u2014 read both.")}
+        if _byhand := self.closures_by_hand(root_id):
+            extra |= {"closures_by_hand": _byhand,
+                      "closures_by_hand_note":
+                          (f"{', '.join(_byhand)} closed on a verdict ASSERTED BY HAND. That is a "
+                           f"legitimate path \u2014 \u00a714.5 keeps the verdict the issuer's act, and the "
+                           f"solo human door has no one else to ask \u2014 and it is the one thing "
+                           f"here no check can establish (\u00a713.6): the engine cannot tell whether "
+                           f"the reviewer was independent or whether the observations happened. "
+                           f"`get_verdict` carries who asserted it and what they said they saw.")}
+        if _hand := self.hand_overruled_closures(root_id):
+            extra |= {"hand_overruled_closures": _hand,
+                      "hand_overruled_note":
+                          (f"{', '.join(_hand)} closed on a verdict ASSERTED BY HAND that "
+                           f"replaced an instrument's opposite verdict on the same delivery. "
+                           f"That is a legitimate act \u2014 the verdict is the issuer's (\u00a714.5) \u2014 "
+                           f"and it is the one thing here nothing can check (\u00a713.6): read both "
+                           f"with `get_verdict`, which carries the displaced one under "
+                           f"`overruled`.")}
+        return extra
+
+    def _frontier_terminal(self, tasks, root_id):
+        """The whole-graph answers that are not steps: no graph at all, or a finished root.
+
+        Returns (terminal_dict, root). Both answers are about the WHOLE graph rather than about
+        any candidate, and keeping them inside the collecting loop made that loop look as though
+        it might return a terminal from anywhere in its body.
+        """
+        _passed = passed
+        if not tasks:
+            return ({"complete": False,
+                    # The protocol handed to an agent says `auto_decompose` authors the root from
+                    # the request itself, with no hand-made `create_task` — so this directive, the
+                    # first thing a session is told on an empty project, contradicted it.
+                    "directive": "No graph yet — `auto_decompose(request)` authors the root and its "
+                                 "subtree from your goal; `create_task` + `decompose` is the manual "
+                                 "path when you want to build the structure yourself."}, None)
+        if root_id:
+            root = self._graph.get_task(root_id)
+            if root is not None and _passed(root):
+                # …UNLESS THAT ROOT IS A GREEN THAT IS NOT GREEN. The refutation test below was
+                # installed on the WHOLE-GRAPH answer only, so asking about a node BY NAME — which is
+                # what `next_step(<id>)` does, and what every signal reply calls — walked past it:
+                # `gfso status` printed `[X] PASS CONTRADICTED` and `next_steps <id>` answered
+                # `complete: true` about the same node in the same second, with no `refuted_passes`
+                # key at all (CLI door, wave 23, 2026-09-03; reproduced directly). One question, one
+                # predicate, both ways of asking it — a rule that holds at one door and not at the
+                # next is the class this product keeps finding in itself.
+                if refuted := self.refuted_passes(root_id):
+                    return (self._not_complete_because_refuted(refuted), None)
+                return ({"complete": True,
+                         "directive": f"COMPLETE — root '{root.id}' is DONE/PASS. "
+                                      f"Execution finished.",
+                         **self._how_this_closed(root_id)}, None)
+            return None, root
+        # A PROJECT MAY BE A FOREST, and "complete" is a claim about ALL of it. This took the FIRST
+        # parentless node and, if that one had passed, announced that execution was finished — while
+        # another root sat mid-flight with work owed on it (measured on the MCP door 2026-09-02,
+        # where a second root had been created deliberately). Saying a graph is done while it is not
+        # is the one kind of wrong answer this product exists to make impossible.
+        roots = [t for t in tasks if t.parent_id is None] or [tasks[0]]
+        # A GREEN THAT IS NOT GREEN IS NOT COMPLETE. A node can stand at PASS while its own current
+        # record says FAIL — the signature landed first and the instrument's verdict was refused on a
+        # node already terminal. Answering COMPLETE over that is the false green this product exists
+        # to refuse, and it is the one answer a person cannot check for themselves.
+        if refuted := self.refuted_passes():
+            return (self._not_complete_because_refuted(refuted), None)
+        if all(_passed(r) for r in roots):
+            # …AND NOT WHILE ANYTHING IS STILL OPEN. A child can be attached to a node that has
+            # already closed — which the canon's own recovery path needs, since re-decomposition
+            # AROUND a consumed terminal is how a defect found later is repaired — and the roots
+            # stay passed, so this answered COMPLETE over a graph with an unstarted node visibly in
+            # it (HTTP door, 2026-09-02: "5 Done · 1 Not started · root DONE — the goal is met" on
+            # one line). V(parent) is the AND over its children (Thm 1), so a passed parent with an
+            # unsettled child is a claim that no longer holds; the honest answer is what is open.
+            if open_now := [str(t.id) for t in tasks if t.state not in TERMINAL_STATES]:
+                return ({"complete": False,
+                         "open_nodes": open_now,
+                         "directive": (f"NOT COMPLETE — the root(s) passed, but {', '.join(open_now)} "
+                                       f"{'is' if len(open_now) == 1 else 'are'} still open. A "
+                                       f"parent's result is the AND over its children (Thm 1), so a "
+                                       f"node attached after its parent closed leaves that parent's "
+                                       f"verdict standing on work nobody has done.")}, None)
+            # …and a ⊥ that landed anyway is SAID, never used to withhold the answer. A judge that
+            # could not decide is not a judge that decided against: withholding COMPLETE over one
+            # would be reading ⊥ as fail, which §11.2 forbids in those words.
+            unresolved = self.nodes_with_a_refused_report()
+            extra = ({"unresolved_reports": unresolved,
+                      # …AND THE MACHINE-READABLE HALF OF THE SAME SENTENCE. The note below says
+                      # this does not make the graph unfinished; a dashboard keying on the LIST
+                      # still painted a finished root red (HTTP door, wave 27, 2026-09-06). The
+                      # answer to "does this block completion" is a boolean, not a paragraph.
+                      "unresolved_reports_block_completion": False,
+                      "unresolved_reports_note":
+                          (f"a judge ran on {', '.join(unresolved)} and the engine REFUSED its "
+                           f"report as ⊥ — evidence, not a verdict, and NOT a reason this is "
+                           f"unfinished (§11.2: ⊥ is not fail). `get_verdict` shows what it managed "
+                           f"to observe, if you want to decide it yourself.")}
+                     if unresolved else {})
+            # …and a delivery two parties judged in OPPOSITE directions, where the one left standing
+            # was asserted by hand. Beside the answer, never instead of it: overruling an instrument
+            # is the issuer's right (§14.5) and no check can establish that a self-named reviewer is
+            # independent (§13.6), so withholding COMPLETE would make a correct override unfinishable.
+            # What the reader must not be able to miss is that the closure was contested at all —
+            # measured on the CLI door (wave 24, 2026-09-04): a hand PASS displaced an instrument's
+            # FAIL on a node where nothing had been built, and four of the five surfaces a person
+            # reads showed an earned green.
+            # …AND HOW THE PASSED ROOTS WERE JUDGED AT ALL. Three doors asked for this line in two
+            # waves: a hand-asserted verdict and an instrument's produce the same `[x]` and the same
+            # `complete: true`, and the difference is the whole of what this product measures.
+            # SCOPED TO THE ROOT THE CALLER ASKED ABOUT. These three facts were computed over the
+            # WHOLE graph while the answer around them is about one root — so `next_steps(root_id=X)`,
+            # the loop the documentation tells you to run, carried none of them for X. Measured on
+            # the HTTP door (wave 26, 2026-09-06): a hand PASS displaced an instrument's FAIL, and
+            # the per-root call answered a bare `complete: true` while the unscoped one carried the
+            # contradiction. The documented call was the one that hid it.
+            extra = {**extra, **self._how_this_closed(root_id)}
+            if len(roots) == 1:
+                return ({"complete": True,
+                         "directive": f"COMPLETE — root '{roots[0].id}' is DONE/PASS. "
+                                      f"Execution finished.", **extra}, None)
+            named = ", ".join(f"'{r.id}'" for r in roots)
+            return ({"complete": True,
+                     "directive": f"COMPLETE — every root ({named}) is DONE/PASS. "
+                                  f"Execution finished.", **extra}, None)
+        # …and the root handed on is one with work LEFT, never a finished one, or the step search
+        # below starts from a node whose subtree is already closed.
+        return None, next((r for r in roots if not _passed(r)), roots[0])
+
     def _frontier(self, root_id: Optional[TaskId] = None):
         """Collect ALL currently actionable candidates, priority-ordered (children before parents,
         dep order respected). Returns either a terminal dict ({complete}/{stuck}/empty-graph) or a list of
         (priority, task, action, directive) tuples. Shared by next_step (v1 single directive) and
         next_steps (v2 parallel frontier)."""
-        from gfso.engine.validation import _l0_holes, _l2_undischarged, l2_gate_on
-
         _passed = passed          # one owner for "did this node earn a pass" (gfso.core.types)
         # …and the nodes the PLAN GATE holds back: not steps, but not silence either. Kept beside the
         # frontier so `next_steps` can say what they wait on and the dispatcher can say it once per
@@ -1472,19 +2209,9 @@ class Engine:
         self._held_by_plan = held = []
 
         tasks = self.all_tasks()
-        if not tasks:
-            return {"complete": False,
-                    # The protocol handed to an agent says `auto_decompose` authors the root from
-                    # the request itself, with no hand-made `create_task` — so this directive, the
-                    # first thing a session is told on an empty project, contradicted it.
-                    "directive": "No graph yet — `auto_decompose(request)` authors the root and its "
-                                 "subtree from your goal; `create_task` + `decompose` is the manual "
-                                 "path when you want to build the structure yourself."}
-        root = self._graph.get_task(root_id) if root_id else \
-            next((t for t in tasks if t.parent_id is None), tasks[0])
-        if root is not None and _passed(root):
-            return {"complete": True,
-                    "directive": f"COMPLETE — root '{root.id}' is DONE/PASS. Execution finished."}
+        terminal, root = self._frontier_terminal(tasks, root_id)
+        if terminal is not None:
+            return terminal
 
         deps = self._graph.dep_edges()
         def _deps_ready(tid: TaskId) -> bool:
@@ -1505,117 +2232,169 @@ class Engine:
             # 2026-08-22, two round-trips). Following the instruction has to be enough.
             crits = [c.name for c in t.spec.criteria]
             nm = t.spec.name or str(t.id)
-            # A plan whose causal check is not discharged is the actionable step ITSELF, ahead of the
-            # work it gates (§13.4): the engine will refuse those children's ACCEPT, so an agent driving
-            # the frontier must be TOLD to review — a gate that only refuses is a wall to walk into.
-            # Ordered after validate/rework (finishing delivered work is never blocked by a plan check)
-            # and before execute/accept (which it gates). Only while it still gates something: some
-            # active child sitting in OFFERED, waiting to start.
-            # THE PLAN STEP IS ABOUT THE PLAN, NOT ABOUT WHERE THE PARENT STANDS. This asked for
-            # EXECUTING, and a parent that has DELIVERED sits in VALIDATING — so a repair made from
-            # REWORKING (revise the plan, re-open the children, re-deliver) landed in exactly the
-            # state where no step existed at all: the children were held by the gate, the parent's
-            # own validation is skipped while they are unsettled, and the frontier went empty.
-            # Measured on the E3 arm 2026-08-21: 51 minutes of a live run with nothing to do and
-            # nothing said. Any non-terminal parent whose children wait on its plan gets the step.
-            _gating = (kids and self._validate and not _passed(t)
-                       and any(k.state == State.OFFERED for k in kids))
-            if _gating and (_holes := _l0_holes(self._graph, t)):
-                # …and the SYNTACTIC level first, which had no step at all: with an L0 hole open the
-                # engine refuses the children's ACCEPT exactly as it does for L2, but the frontier
-                # named neither the parent nor the repair — it just kept offering the children.
-                cands.append((2.5, t, Action.CHECK_PLAN,
-                              f"FIX THE PLAN of '{t.id}' ({nm}): its children cannot start while its "
-                              f"decomposition fails the Syntactic level (§13.4) — "
-                              + "; ".join(f"{h.check_name}: {h.details}" for h in _holes)
-                              + f". `list_holes` shows them across the graph."))
+            if self._plan_gate_step(t, kids, crits, nm, cands, held, _passed):
                 continue
-            if _gating and l2_gate_on() and self.review_in_flight(t.id):
-                # A CHECK ALREADY RUNNING IS NOT A STEP. The frontier kept saying "call
-                # review_decomposition" while one was mid-flight — a duplicate paid round over a
-                # plan that had not changed, and the other in-flight surface (`validate_result`)
-                # already knew better.
-                held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
-                                 kind="plan", waits_on=("the Level-2 check already running on this "
-                                                        "version of the plan",),
-                                 why=("its causal check is in flight — a second one would judge the "
-                                      "same plan twice and cost twice"),
-                                 opens_with="nothing: its verdict arrives by itself").as_dict())
-                continue
-            if _gating and l2_gate_on() and not _l0_holes(self._graph, t):
-                open_l2 = _l2_undischarged(self._graph, t)
-                if open_l2 is None:
-                    cands.append((2.5, t, Action.CHECK_PLAN,
-                                  f"CHECK THE PLAN of '{t.id}' ({nm}): its children cannot start until the "
-                                  f"decomposition has a current Level-2 verdict — call "
-                                  f"review_decomposition('{t.id}') (do the mapped children's criteria "
-                                  f"causally carry {crits}?)."))
-                    continue
-                if open_l2:
-                    _own = [g for g in open_l2 if str(g).startswith("undecided: ")]
-                    cands.append((2.5, t, Action.CHECK_PLAN,
-                                  f"CLOSE THE PLAN GAPS of '{t.id}' ({nm}): the Level-2 review named "
-                                  f"{open_l2} as not carried by the mapped children. Fix the plan "
-                                  f"(edit_criteria / map_criterion / add a child) and re-run "
-                                  f"review_decomposition('{t.id}'), or record why the finding is wrong "
-                                  f"(dispute_finding). Reasons: get_review('{t.id}')."
-                                  + (f" NOTE — the `undecided` findings ({len(_own)}) are about "
-                                     f"'{t.id}'s OWN criteria, not its children's: a criterion added "
-                                     f"to a CHILD does not close one, and the finding comes back word "
-                                     f"for word. `edit_criteria('{t.id}', …)` is what closes them."
-                                     if _own else "")))
-                    continue
-            if t.state == State.VALIDATING and kids and not all(_passed(k) for k in kids):
-                # …AND SAY WHERE IT WENT. Skipping the parent is right — a verdict on it would be
-                # refused (Thm 1) — but it left the node in NO list at all: a person who delivered a
-                # parent early watched it sit in VALIDATING for an hour, absent from `steps` and from
-                # `waiting`, with the frontier that exists to say what to do never mentioning it
-                # (measured on the human door 2026-08-21).
-                held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
-                                 kind="children",
-                                 waits_on=tuple(str(k.id) for k in kids if not _passed(k)),
-                                 why=("it was delivered while children of its own have not passed, "
-                                      "and a parent's verdict is the AND over them (Thm 1) — so no "
-                                      "verdict can be given here yet"),
-                                 opens_with="finish those children; validation follows by itself").as_dict())
-                # A VERDICT NOW WOULD BE REFUSED, so this is not the step. The parent's result is
-                # the AND over its children (Thm 1) and the PASS gate knows it; offering `validate`
-                # here put the highest-priority step on the one node that cannot move, and whoever
-                # took it waited on a verdict nobody could give. Measured 2026-08-20 on a live run:
-                # a root sat nineteen minutes in VALIDATING after its own plan repair added a child,
-                # while that child's `accept` step sat below it on the same frontier. Skipping the
-                # parent surfaces the children — and if they cannot move either, the stuck branch
-                # below names them.
-                continue
-            if t.state == State.VALIDATING and self.validation_in_flight(t.id):
-                held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
-                                 kind="validator",
-                                 waits_on=("the validator already running on this delivery",),
-                                 why=("an independent validation of THIS generation is in flight — a "
-                                      "second one would judge the same delivery twice and cost twice"),
-                                 opens_with="nothing: its verdict arrives by itself").as_dict())
-                # A VALIDATOR IS ALREADY RUNNING on this delivery. The step said "VALIDATE this" to
-                # whoever asked, so a caller who obeyed either spent a second instrument on the same
-                # generation or waited four minutes not knowing whether silence meant work or
-                # nobody (measured 2026-08-21). It is not an actionable step while the instrument
-                # holds it; the frontier says so and moves on.
+            if self._waits_on_work_in_progress(t, kids, held, _passed):
                 continue
             _c = self._step_for(t, kids, crits, nm, cands, held, _deps_ready, _passed)
             if _c is not None:
                 cands.append(_c)
-            continue
-            cands.append(cand)
 
         if not cands:
             return self._nothing_to_take(tasks, deps, _deps_ready, _passed)
         cands.sort(key=lambda c: (c[0], str(c[1].id)))
         return cands
 
+    def _plan_gate_step(self, t, kids, crits, nm, cands, held, _passed) -> bool:
+        """Whether this node's PLAN, not its own state, decides what happens here (§13.4).
+
+        A parent whose decomposition has an open Syntactic hole or an undischarged Level-2
+        finding gates its children's ACCEPT, so the repair is the step ITSELF; a check already
+        in flight is not a step at all. Appends to `cands`/`held` exactly as the frontier would
+        and answers whether the node is accounted for — the frontier asks nothing else of it.
+        """
+        # A plan whose causal check is not discharged is the actionable step ITSELF, ahead of the
+        # work it gates (§13.4): the engine will refuse those children's ACCEPT, so an agent driving
+        # the frontier must be TOLD to review — a gate that only refuses is a wall to walk into.
+        # Ordered after validate/rework (finishing delivered work is never blocked by a plan check)
+        # and before execute/accept (which it gates). Only while it still gates something: some
+        # active child sitting in OFFERED, waiting to start.
+        # THE PLAN STEP IS ABOUT THE PLAN, NOT ABOUT WHERE THE PARENT STANDS. This asked for
+        # EXECUTING, and a parent that has DELIVERED sits in VALIDATING — so a repair made from
+        # REWORKING (revise the plan, re-open the children, re-deliver) landed in exactly the
+        # state where no step existed at all: the children were held by the gate, the parent's
+        # own validation is skipped while they are unsettled, and the frontier went empty.
+        # Measured on the E3 arm 2026-08-21: 51 minutes of a live run with nothing to do and
+        # nothing said. Any non-terminal parent whose children wait on its plan gets the step.
+        _gating = (kids and self._validate and not _passed(t)
+                   and any(k.state == State.OFFERED for k in kids))
+        if _gating and (_holes := _l0_holes(self._graph, t)):
+            # …and the SYNTACTIC level first, which had no step at all: with an L0 hole open the
+            # engine refuses the children's ACCEPT exactly as it does for L2, but the frontier
+            # named neither the parent nor the repair — it just kept offering the children.
+            cands.append((2.5, t, Action.CHECK_PLAN,
+                          f"FIX THE PLAN of '{t.id}' ({nm}): its children cannot start while its "
+                          f"decomposition fails the Syntactic level (§13.4) — "
+                          + "; ".join(f"{h.check_name}: {h.details}" for h in _holes)
+                          + f". `list_holes` shows them across the graph."))
+            return True
+        if _gating and l2_gate_on() and self.review_in_flight(t.id):
+            # A CHECK ALREADY RUNNING IS NOT A STEP. The frontier kept saying "call
+            # review_decomposition" while one was mid-flight — a duplicate paid round over a
+            # plan that had not changed, and the other in-flight surface (`validate_result`)
+            # already knew better.
+            held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
+                             kind="plan", waits_on=("the Level-2 check already running on this "
+                                                    "version of the plan",),
+                             why=("its causal check is in flight — a second one would judge the "
+                                  "same plan twice and cost twice"),
+                             opens_with="nothing: its verdict arrives by itself").as_dict())
+            return True
+        if _gating and l2_gate_on() and not _l0_holes(self._graph, t):
+            open_l2 = _l2_undischarged(self._graph, t)
+            if open_l2 is None:
+                cands.append((2.5, t, Action.CHECK_PLAN,
+                              f"CHECK THE PLAN of '{t.id}' ({nm}): its children cannot start until the "
+                              f"decomposition has a current Level-2 verdict — call "
+                              f"review_decomposition('{t.id}') (do the mapped children's criteria "
+                              f"causally carry {crits}?)."))
+                return True
+            if open_l2:
+                _own = [g for g in open_l2 if str(g).startswith("undecided: ")]
+                cands.append((2.5, t, Action.CHECK_PLAN,
+                              # …AS A COUNT AND A LIST, not as a paragraph of interpolated
+                              # findings. Eleven were pasted into one wall of text and a reader
+                              # counted eleven problems where there were five — the checker's own
+                              # fold had already marked some as one obligation in several
+                              # wordings (agent door, 2026-09-02).
+                              f"CLOSE THE PLAN GAPS of '{t.id}' ({nm}): the Level-2 review named "
+                              f"{len(open_l2)} finding(s) not carried by the mapped children — "
+                              + "; ".join(f"({i + 1}) {g}" for i, g in enumerate(open_l2))
+                              + f". One reason can answer several: `dispute_finding('{t.id}', "
+                                f"[<keys>], '<why>')`. Fix the plan "
+                              f"(edit_criteria / map_criterion / add a child) and re-run "
+                              f"review_decomposition('{t.id}'), or record why the finding is wrong "
+                              f"(dispute_finding). Reasons: get_review('{t.id}')."
+                              + (f" NOTE — the `undecided` findings ({len(_own)}) are about "
+                                 f"'{t.id}'s OWN criteria, not its children's: a criterion added "
+                                 f"to a CHILD does not close one, and the finding comes back word "
+                                 f"for word. `edit_criteria('{t.id}', …)` is what closes them."
+                                 if _own else "")))
+                return True
+        return False
+
+    def _waits_on_work_in_progress(self, t, kids, held, _passed) -> bool:
+        """Whether this node can take no step because something else must finish first.
+
+        Two cases, both of which a verdict here would be refused for: children of its own have
+        not passed (a parent's result is the AND over them, Thm 1), or an independent validator
+        is already judging THIS delivery. Both are recorded in `held` with what they wait on,
+        because a node in neither list is a node the frontier never mentions."""
+        if t.state == State.VALIDATING and kids and not all(_passed(k) for k in kids):
+            # …AND SAY WHERE IT WENT. Skipping the parent is right — a verdict on it would be
+            # refused (Thm 1) — but it left the node in NO list at all: a person who delivered a
+            # parent early watched it sit in VALIDATING for an hour, absent from `steps` and from
+            # `waiting`, with the frontier that exists to say what to do never mentioning it
+            # (measured on the human door 2026-08-21).
+            held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
+                             kind="children",
+                             waits_on=tuple(str(k.id) for k in kids if not _passed(k)),
+                             why=("it was delivered while children of its own have not passed, "
+                                  "and a parent's verdict is the AND over them (Thm 1) — so no "
+                                  "verdict can be given here yet"),
+                             opens_with="finish those children; validation follows by itself").as_dict())
+            # A VERDICT NOW WOULD BE REFUSED, so this is not the step. The parent's result is
+            # the AND over its children (Thm 1) and the PASS gate knows it; offering `validate`
+            # here put the highest-priority step on the one node that cannot move, and whoever
+            # took it waited on a verdict nobody could give. Measured 2026-08-20 on a live run:
+            # a root sat nineteen minutes in VALIDATING after its own plan repair added a child,
+            # while that child's `accept` step sat below it on the same frontier. Skipping the
+            # parent surfaces the children — and if they cannot move either, the stuck branch
+            # below names them.
+            return True
+        if t.state == State.VALIDATING and self.validation_in_flight(t.id):
+            held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
+                             kind="validator",
+                             waits_on=("the validator already running on this delivery",),
+                             why=("an independent validation of THIS generation is in flight — a "
+                                  "second one would judge the same delivery twice and cost twice"),
+                             opens_with="nothing: its verdict arrives by itself").as_dict())
+            # A VALIDATOR IS ALREADY RUNNING on this delivery. The step said "VALIDATE this" to
+            # whoever asked, so a caller who obeyed either spent a second instrument on the same
+            # generation or waited four minutes not knowing whether silence meant work or
+            # nobody (measured 2026-08-21). It is not an actionable step while the instrument
+            # holds it; the frontier says so and moves on.
+            return True
+        return False
+
+    def refused_report_for_this_delivery(self, task_id: TaskId) -> Optional[dict]:
+        """The refused report standing on the CURRENT delivery of this node, or None.
+
+        One owner for a record three readers need: the frontier's directive, `get_verdict`, and —
+        the one that pays for it — the packet handed to the judge on its next attempt. Scoped to the
+        generation, because a refusal from before a rework is about a delivery nobody made.
+        """
+        rec = self.rejected_report(task_id) or {}
+        task = self.get_task(task_id)
+        if not rec or task is None:
+            return None
+        gen = generation_of_task(task)
+        return rec if all(rec.get(k, 0) == g
+                          for k, g in zip(("iteration", "reopens", "revisions"), gen)) else None
+
+    def _bottom_attempts(self, task) -> int:
+        """How many instrument reports on THIS delivery were refused as ⊥, or 0.
+
+        One reader for a fact three surfaces need: the frontier's directive, `get_verdict`, and
+        whoever comes back to a node that has been sitting in VALIDATING. Scoped to the current
+        generation, because a count carried across a rework is advice about a delivery nobody made.
+        """
+        return int((self.refused_report_for_this_delivery(task.id) or {}).get("refusals", 0))
+
     def _redelivery_refusal(self, task) -> Optional[str]:
         """What the re-delivery gate would say about this node right now, or None if it would pass.
 
         Asked by the frontier so the directive names the repair the engine will actually accept."""
-        from gfso.engine.validation import _refuted_coverage_refusal
         rec = self._graph.exec_verdict_record(task.id)
         if not rec or rec.get("verdict") != Verdict.FAIL:
             return None
@@ -1674,7 +2453,6 @@ class Engine:
         # Syntactic level is not admitted to execution"), which is exactly `_EXEC_GATING_CHECKS` — so
         # those read "resolve first". What stays advisory is what the canon does not put on that level:
         # the anti-mock CHECK-1c, an engineering addition with no canon row (see the gate's own note).
-        from gfso.engine.validation import _EXEC_GATING_CHECKS
         allc = [c for c in self.get_checks(t.id) if not c.passed and not c.skipped]
         unmet = [f"{c.check_name}: {c.details}" for c in allc if c.check_name.startswith(_EXEC_GATING_CHECKS)]
         advisory = [f"{c.check_name}: {c.details}" for c in allc if not c.check_name.startswith(_EXEC_GATING_CHECKS)]
@@ -1700,8 +2478,14 @@ class Engine:
             directive += f" | UNMET plan checks (resolve before executing): {unmet}"
         if advisory:
             directive += f" | advisory (optional): {advisory}"
+        # …AND WHO THE SIGNAL WOULD BE SIGNED BY. A directive names the exact next command — "signal
+        # ACCEPT to put it back to work" — and on a door where `source` is required that command is
+        # incomplete: the caller sent it, got "signal needs source", and had to go read the help
+        # (CLI door, 2026-09-02). The engine knows whose move it is; the step says so, and a door
+        # that takes the signer as an argument can copy it.
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
                 "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
+                "signed_by": str(self.issuer_of(t.id)) if action in _ISSUER_ACTIONS else str(t.assignee or ""),
                 # ALL of them, seams included: a `dep__` criterion is a criterion of this node, V
                 # is the conjunction over the whole contract (§10), and `record_verdict` enforces
                 # that — so a step that lists fewer is a step whose instruction cannot be followed.
@@ -1886,6 +2670,10 @@ class Engine:
 
     @property
     def graph(self) -> Graph:
+        """The Graph object itself — for a host that must read structure this facade does not expose.
+
+        A read handle, deliberately: mutations go through the protocol (a signal), because the log is
+        the single sequencer and a second writer would end the guarantee it carries."""
         return self._graph
 
     def wait_idle(self, timeout: float = 5.0) -> None:

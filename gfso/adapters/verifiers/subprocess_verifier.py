@@ -60,6 +60,8 @@ class ExecutionResult:
 
 
 def run_code(code: str, stdin_input: str, timeout: float = 10.0) -> ExecutionResult:
+    """Run the delivered code in a subprocess and return what it printed — the deterministic half
+    of judging, where a suite decides instead of a model."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         f.write(code)
         tmp = f.name
@@ -101,6 +103,8 @@ def run_code(code: str, stdin_input: str, timeout: float = 10.0) -> ExecutionRes
         for f in [tmp, out_file, err_file, in_file]:
             try:
                 os.unlink(f)
+            # the result is already read and returned above; a temp file the OS still holds cannot
+            # be allowed to fail the verification that produced it
             except OSError:
                 pass
 

@@ -1,6 +1,7 @@
-"""Event loop — processes signal queue via FSM table."""
+﻿"""Event loop — processes signal queue via FSM table."""
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import threading
@@ -14,6 +15,7 @@ from gfso.core.types import (
     TERMINAL_STATES,
 )
 from gfso.core.protocol.fsm import transition, available_signals, not_admissible_here
+from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.validation import Role, required_role
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
@@ -44,10 +46,9 @@ def _spec_json(sd: SignalData) -> Optional[str]:
     with nothing left to restore from. Best-effort by design: a log row is provenance, and failing
     to serialize a spec must never refuse a signal.
     """
-    if sd.signal != Signal.ASSIGN or getattr(sd, "spec", None) is None:
+    if sd.signal != Signal.ASSIGN or sd.spec is None:
         return None
     try:
-        import json
         sp = sd.spec
         return json.dumps({
             "name": sp.name, "description": sp.description,
@@ -81,8 +82,136 @@ def event_loop(
         signal_data = signal_queue.get()
         if signal_data is None:
             break  # poison pill
-        process_signal(signal_data, graph, agents, get_llm(), signal_queue, audit, events, validate)
+        try:
+            process_signal(signal_data, graph, agents, get_llm(), signal_queue, audit, events,
+                           validate)
+        except Exception:
+            # ONE BAD STEP IS NOT THE END OF THE ENGINE. A malformed value that reached the graph
+            # made the DAG check raise, the exception left this pump, and the thread ended — after
+            # which every verb on that engine answered about a rule nobody had consulted ("the FSM
+            # refused ASSIGN in OFFERED") while the real cause sat in a traceback on a stream nobody
+            # was reading (agent door, 2026-09-02: the tester spent the rest of the run working
+            # around a wall that was not there). The step is lost and said so; the protocol keeps
+            # serving, which is what lets the next call report the truth.
+            log.error(f"the step for {signal_data.task_id} raised and was dropped; the engine is "
+                      f"still serving", exc_info=True)
         signal_queue.task_done()
+
+
+def _keep_the_self_check(signal_data, graph, task_id) -> None:
+    """Store what an INTERNAL node's DELIVER said about itself (§14.5 D6).
+
+    Not a verdict on a seam and not stored as one — independence is owed there. Split out of
+    the protocol step because it is a record about ONE signal, while the step around it is
+    the transition every signal makes.
+    """
+    if signal_data.signal == Signal.DELIVER and signal_data.self_validation is not None:
+        # THE SELF-CHECK AN INTERNAL NODE CARRIES IS THE RECORD IT IS JUDGED ON (§14.5 D6). The
+        # field was in the packet, in `SignalData` and in the report schema, and it landed nowhere:
+        # a node whose Del is its parent's could reach DONE/PASS with `get_verdict` answering "it
+        # has not been validated" in the same object (measured on the human door 2026-08-21). On a
+        # SEAM it is not a verdict and is not stored as one — independence is owed there, and the
+        # PASS gate says so.
+        task = graph.get_task(task_id)
+        # …AND NOT ABOUT A NODE WITH NO CRITERIA. `record_exec_verdict` refuses that by name
+        # — V is the conjunction over the node's criteria (§10) and over the empty set it is
+        # vacuously true, which is not a judgement — and the comment there says the rule now
+        # lives "where every verdict lands, so a second door cannot be written past it".
+        # This IS the second door: it calls `store_verdict` directly. An outside audit inferred
+        # the path and a probe walked it end to end (2026-09-05): a child with `criteria: []`
+        # was accepted as the declared coverer of a parent criterion, left L0 clean, took a PASS
+        # record through here, closed DONE on its own self-report, and satisfied its parent's
+        # AND. A conjunct that forbids nothing, standing inside Thm 1.
+        if task is not None and not task.spec.criteria:
+            log.info(f"{task_id}: self-check not recorded — the node has no criteria, so there "
+                     f"is nothing a verdict could be ABOUT (§10). Give it criteria and deliver "
+                     f"again; the self-report is kept in the DELIVER result either way.")
+            return
+        # …AND A SELF-PASS THAT RECORDS NOTHING IS NOT A RECORD. `record_verdict` refuses a PASS
+        # whose observations only restate the verdict — "a PASS needs to say what was OBSERVED" —
+        # while this path, the one the product PUSHES an executor down, took `self_validation=PASS`
+        # with `result="yep"` and closed a node carrying a criterion it did not meet (HTTP door,
+        # wave 26, 2026-09-06: "the door the product pushes you to is weaker than the one it
+        # guards"). §14.5 D6 makes the DELIVER report the record an internal node is judged on, so
+        # the demand is the same demand, at the same grade: the report has to say something. A FAIL
+        # is not gated — an executor reporting their own failure is the honest direction, and §11.2
+        # keeps ⊥ from being a pass anyway.
+        # WHERE THE FLOOR IS SET, and why not higher. `record_verdict`'s three-content-word floor is
+        # calibrated for a PROSE ARGUMENT (a dispute); a delivery report is not prose, and the first
+        # cut at three words here refused "ran it: K holds" — an honest short observation, which is
+        # exactly the case the strict form must never break (measured against this suite, minutes
+        # after writing it; the same over-strict floor was built and reverted once already on
+        # 2026-09-04). What stays is the ASSERTION floor — text that says "it passed" in other words
+        # — plus a hair of substance so that noise ("r", "x") is not a report either.
+        _report = str(signal_data.result or "")
+        if (task is not None and signal_data.self_validation == Verdict.PASS
+                and (is_pure_assent(_report) or len("".join(content_words(_report))) < 3)):
+            log.info(f"{task_id}: self-check not recorded — a PASS on your own delivery has to SAY "
+                     f"what you checked and what it showed, and this report records nothing "
+                     f"({_report!r}). The same demand `record_verdict` makes of a reviewer "
+                     f"(§14.5 D6: the DELIVER report IS this node's record). Deliver again with a "
+                     f"report, or have someone judge it.")
+            return
+        if task is not None and not graph.is_public(task):
+            try:
+                store_verdict(graph._storage, task_id, task, str(signal_data.self_validation), (),
+                              str(signal_data.source or task.assignee or "executor"),
+                              graph.generation_of(task_id),
+                              # ONE self-report, recorded ONCE — not copied into a slot per
+                              # criterion. Writing the delivery's whole prose into every criterion's
+                              # `evidence` made the record READ like a per-criterion attestation
+                              # that nobody made: eight criteria, eight identical blobs, in the
+                              # field a reader trusts to say what was observed for each (measured on
+                              # the human door 2026-08-22 — "that is the shape of a false green").
+                              # What is true is what is stored: the executor said PASS, and this is
+                              # the report they said it from. `get_verdict` shows the delivery
+                              # itself beside it.
+                              per_criterion=[{
+                                  "criterion": "(the delivery as a whole)",
+                                  "verdict": "pass" if signal_data.self_validation == Verdict.PASS
+                                  else "fail",
+                                  "evidence": f"SELF-REPORTED by {signal_data.source or task.assignee}"
+                                              f" — not an independent check (§14.5 D6: an internal "
+                                              f"node self-verifies). Their report: "
+                                              + (signal_data.result or "(no report text)")}])
+            except Exception:
+                log.warning(f"could not record the self-check on {task_id}", exc_info=True)
+
+
+def _log_the_transition(graph, task_id, signal_data, state, new_state) -> None:
+    """Write the human-facing line for this step — the strip a person actually reads.
+
+    Swallowing is deliberate and is the whole reason this is separate: observation is
+    presentation, and a failure to describe a step must never break the step.
+    """
+    try:
+        # …and the INTENT, where the signal's name alone misleads. A reopen is a re-ASSIGN under the
+        # standing contract (§14.3: R′ is restoration, not a 13th signal) — protocol-correct, and it
+        # logged as "ASSIGN … DONE → OFFERED" to a person who had called `reopen` and saw a verb they
+        # never used (measured on the human door 2026-08-21).
+        _intent = (" (reopen: R′ restoration — a re-ASSIGN under the node's standing contract)"
+                   if signal_data.signal == Signal.ASSIGN and state in TERMINAL_STATES else "")
+        # A REVISION THAT MOVES NOTHING IS NOT A TRANSITION. Binding coverage re-ASSIGNs the child
+        # under the same state, and twelve `map_criterion` calls wrote twelve identical
+        # "OFFERED → OFFERED" lines over the ones a reader was watching for (measured 2026-08-22).
+        # The audit keeps every signal; this is the human-facing strip, and it says what happened.
+        # …AND IT SAYS WHICH KIND. A same-state re-ASSIGN is EITHER a revision (a new contract rides
+        # in the packet) or a coverage binding (`map_criterion`, which changes no contract at all) —
+        # and both were logged as "contract revised", so sixteen mapping calls wrote sixteen lines
+        # claiming a revision that never happened, into the strip that IS the human-facing trail
+        # (CLI door, 2026-09-02). The packet decides it: a revision carries a spec, a binding
+        # does not.
+        _same = state == new_state and signal_data.signal == Signal.ASSIGN
+        _what = "coverage bound" if signal_data.covers else "contract revised"
+        _note = " (the contract itself is unchanged)" if signal_data.covers else ""
+        graph._storage.log_pipeline(
+            datetime.now().isoformat(sep=" ", timespec="seconds"), "signal",
+            f"{task_id}: {_what} by {signal_data.source or 'system'}{_note} — still {state.name}"
+            if _same else
+            f"{task_id}: {signal_data.signal.name} by {signal_data.source or 'system'} "
+            f"— {state.name} → {new_state.name}{_intent}")
+    except Exception:
+        pass                      # observation is presentation — never break the protocol step
 
 
 def process_signal(
@@ -182,63 +311,18 @@ def process_signal(
     # a person who drove a whole graph by hand saw two lines about a model and not one of their own
     # fourteen signals. Measured 2026-08-20 on the human door: "the panel shows the one thing he did
     # not do." A transition is the cheapest true line there is — who moved what, and where it went.
-    try:
-        # …and the INTENT, where the signal's name alone misleads. A reopen is a re-ASSIGN under the
-        # standing contract (§14.3: R′ is restoration, not a 13th signal) — protocol-correct, and it
-        # logged as "ASSIGN … DONE → OFFERED" to a person who had called `reopen` and saw a verb they
-        # never used (measured on the human door 2026-08-21).
-        _intent = (" (reopen: R′ restoration — a re-ASSIGN under the node's standing contract)"
-                   if signal_data.signal == Signal.ASSIGN and state in TERMINAL_STATES else "")
-        # A REVISION THAT MOVES NOTHING IS NOT A TRANSITION. Binding coverage re-ASSIGNs the child
-        # under the same state, and twelve `map_criterion` calls wrote twelve identical
-        # "OFFERED → OFFERED" lines over the ones a reader was watching for (measured 2026-08-22).
-        # The audit keeps every signal; this is the human-facing strip, and it says what happened.
-        _same = state == new_state and signal_data.signal == Signal.ASSIGN
-        graph._storage.log_pipeline(
-            datetime.now().isoformat(sep=" ", timespec="seconds"), "signal",
-            f"{task_id}: contract revised by {signal_data.source or 'system'} — still {state.name}"
-            if _same else
-            f"{task_id}: {signal_data.signal.name} by {signal_data.source or 'system'} "
-            f"— {state.name} → {new_state.name}{_intent}")
-    except Exception:
-        pass                      # observation is presentation — never break the protocol step
+    _log_the_transition(graph, task_id, signal_data, state, new_state)
     if signal_data.signal == Signal.DELIVER and signal_data.result:
         try:  # the deliverable pointer must survive a server restart (it is the validator's input)
             graph._storage.store_deliver_result(task_id, signal_data.result)
-        except Exception:
-            pass
-    if signal_data.signal == Signal.DELIVER and signal_data.self_validation is not None:
-        # THE SELF-CHECK AN INTERNAL NODE CARRIES IS THE RECORD IT IS JUDGED ON (§14.5 D6). The
-        # field was in the packet, in `SignalData` and in the report schema, and it landed nowhere:
-        # a node whose Del is its parent's could reach DONE/PASS with `get_verdict` answering "it
-        # has not been validated" in the same object (measured on the human door 2026-08-21). On a
-        # SEAM it is not a verdict and is not stored as one — independence is owed there, and the
-        # PASS gate says so.
-        task = graph.get_task(task_id)
-        if task is not None and not graph.is_public(task):
-            try:
-                store_verdict(graph._storage, task_id, task, str(signal_data.self_validation), (),
-                              str(signal_data.source or task.assignee or "executor"),
-                              graph.generation_of(task_id),
-                              # ONE self-report, recorded ONCE — not copied into a slot per
-                              # criterion. Writing the delivery's whole prose into every criterion's
-                              # `evidence` made the record READ like a per-criterion attestation
-                              # that nobody made: eight criteria, eight identical blobs, in the
-                              # field a reader trusts to say what was observed for each (measured on
-                              # the human door 2026-08-22 — "that is the shape of a false green").
-                              # What is true is what is stored: the executor said PASS, and this is
-                              # the report they said it from. `get_verdict` shows the delivery
-                              # itself beside it.
-                              per_criterion=[{
-                                  "criterion": "(the delivery as a whole)",
-                                  "verdict": "pass" if signal_data.self_validation == Verdict.PASS
-                                  else "fail",
-                                  "evidence": f"SELF-REPORTED by {signal_data.source or task.assignee}"
-                                              f" — not an independent check (§14.5 D6: an internal "
-                                              f"node self-verifies). Their report: "
-                                              + (signal_data.result or "(no report text)")}])
-            except Exception:
-                log.warning(f"could not record the self-check on {task_id}", exc_info=True)
+        except Exception as e:
+            # A WARNING IS NOT A RETRY, and this pointer is load-bearing: it is what a validator reads
+            # after a restart. The fallback below is real (`_last_deliver_result` reads the audit log,
+            # which the same step has already appended), so the delivery is not lost — but if that
+            # log entry is ever the thing that fails, this line is the only trace left.
+            log.warning(f"{task_id}: DELIVER result not persisted ({e}) — validation falls back to "
+                        f"the audit log, which is the only copy left of what was delivered")
+    _keep_the_self_check(signal_data, graph, task_id)
     events.emit_transition(task_id, state, new_state, signal_data.signal)
 
 
@@ -387,9 +471,19 @@ def timeout_monitor(
             break
         clock.wait(check_interval)
         now = clock.now()
-        for task in graph.active_tasks():
+        try:
+            _active = graph.active_tasks()
+        except Exception as e:
+            # THE ENGINE IT WATCHES IS GONE. `stop()` sets the event, but this thread may already be
+            # inside its wait, and the storage can close under it — a `Cannot operate on a closed
+            # database` then surfaces as an unhandled thread exception at the end of an unrelated
+            # test, describing a shutdown as if it were a fault (surfaced by the import sweep,
+            # 2026-09-02). A monitor whose graph has closed has nothing left to monitor: it leaves.
+            log.debug(f"the timeout monitor is stopping: its graph is closed ({e})")
+            break
+        for task in _active:
             overdue = task.deadline and now > task.deadline.timestamp()
-            state_age = now - getattr(task, "state_entered_at", task.created_at).timestamp()
+            state_age = now - (task.state_entered_at or task.created_at).timestamp()
             stale = state_timeout is not None and state_timeout > 0 and state_age > state_timeout
             # CANCELLING IS FINITE WHETHER OR NOT THE AGE CLOCK IS ON. Inv-5 demands finiteness of
             # every non-terminal state, and §14.3 gives this one exactly two exits: CONFIRM_CANCEL,
@@ -402,7 +496,7 @@ def timeout_monitor(
             if task.state == State.CANCELLING and state_age > _CANCELLING_GRACE_S:
                 stale = True
             if (overdue or stale) and task.state not in TERMINAL_STATES:
-                visit = (task.state, getattr(task, "state_entered_at", task.created_at))
+                visit = (task.state, (task.state_entered_at or task.created_at))
                 if last_fired.get(task.id) != visit:
                     last_fired[task.id] = visit
                     signal_queue.put(SignalData(

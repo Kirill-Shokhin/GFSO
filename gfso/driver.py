@@ -19,8 +19,10 @@ from __future__ import annotations
 import sys
 import os
 import json
+import typing
 import threading
 import inspect
+import textwrap
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -28,7 +30,7 @@ from urllib.parse import quote
 
 from gfso.runtime import build_engine_from_env
 from gfso import tools as _T     # the verb surface: UI_LINK_VERBS / ui_link live there
-from gfso.config import narrate
+from gfso.config import agent_id, narrate, select_project
 from gfso import serverctl
 from gfso import tools_llm as T  # the COMPLETE registry (structural + LLM verbs)
 
@@ -47,7 +49,20 @@ def _coerce(v: str):
         if not path.exists():
             raise ValueError(f"no such file: {path} (an argument starting with `@` reads a file — "
                              f"`@criteria.json` passes what that file holds)")
-        return _coerce(path.read_text(encoding="utf-8").strip())
+        text = path.read_text(encoding="utf-8").strip()
+        # A FILE THAT DOES NOT PARSE IS AN ERROR ABOUT THAT FILE. The generic path below falls back
+        # to "then it is a string", which is right for a value typed on the command line and wrong
+        # for one read out of a file the caller wrote as JSON: the string then arrived inside the
+        # verb and came back as `string indices must be integers` — a Python message about a value
+        # whose origin nothing named (wave 26, 2026-09-06).
+        if text[:1] in "{[":
+            try:
+                return json.loads(text)
+            except (ValueError, json.JSONDecodeError) as ex:
+                raise ValueError(f"{path} does not parse as JSON: {ex}. The file begins with "
+                                 f"{text[:1]!r}, so it was read as JSON — fix the file, or pass the "
+                                 f"value inline if it was meant to be text.") from None
+        return _coerce(text)
     try:
         return json.loads(v) if (v[:1] in "{[" or v.lstrip("-").replace(".", "", 1).isdigit()) else v
     except (ValueError, json.JSONDecodeError):
@@ -74,11 +89,42 @@ def _typed(v: str, param):
 
 
 def _wants_list(param) -> bool:
-    """Does this verb parameter take a LIST? (read off the signature, never guessed from the name)"""
+    """Does this verb parameter take a LIST, and ONLY a list? (read off the signature, never the name)
+
+    A parameter that takes either shape — `Union[str, list]`, which `dispute_finding.criterion` is —
+    must not have a bare value split on commas: almost every Level-2 finding key contains one
+    ("conflict: writer, queue", "undecided: the goal requires X, not Y"), so the split made most
+    findings unaddressable from this door and the caller was told their own key "is not an open
+    Level-2 finding". A stranger found the workaround (`criterion=@file`) and reported the door as
+    effectively closed for disputes (CLI door, wave 25, 2026-09-05).
+    A caller who means several still writes JSON, which is what a script sends anyway.
+    """
     if param is None:
         return False
     ann = param.annotation
-    return "list" in str(ann).lower()
+    # RESOLVED HERE, not by the caller. `tools.py` carries `from __future__ import annotations`, so a
+    # signature read straight off it hands out STRINGS — and a rule that answers False for every
+    # string is a rule that silently un-lists every parameter for anyone who did not know to resolve
+    # first. The door does resolve; the suite called it raw and caught exactly that (2026-09-05).
+    if isinstance(ann, str):
+        try:
+            ann = eval(ann, {**vars(typing), "list": list, "dict": dict, "str": str,  # noqa: S307
+                             "int": int, "float": float, "bool": bool, "None": None})
+        except Exception:
+            return "list" in ann.lower() and "str" not in ann.lower()   # degraded, and only here
+    if typing.get_origin(ann) is list or ann is list:
+        return True                # `list[dict]` and bare `list` — a list and nothing else
+    args = typing.get_args(ann)
+    if args:                       # a union — ask its MEMBERS, never its printed form
+        # `Optional[list]` is (list, NoneType) and still means a list; `Union[str, list]` also admits
+        # a plain string, and there a bare value is that string. Read off the type, because the
+        # printed form is a text and reading a rule off a text is how this repository has measured
+        # itself wrong before.
+        _members = [a for a in args if a is not type(None)]
+        if any(a is str for a in _members):
+            return False
+        return any(a is list or typing.get_origin(a) is list for a in _members)
+    return False
 
 
 def _as_list(v: str) -> list:
@@ -102,7 +148,16 @@ def _parse_args(name: str, fn, rest: list) -> tuple[list, dict, dict | None]:
 
     `run` decides WHICH verb runs and where its answer goes; reading the words into arguments is
     its own job, and it was sixty statements of one body away from the decision."""
-    sig = inspect.signature(fn).parameters
+    # RESOLVED, because `tools.py` carries `from __future__ import annotations` and hands this door
+    # STRINGS. The old rule read the printed form (`"list" in str(ann)`) and got the right answer for
+    # the wrong reason; anything sharper than a substring test needs the real objects.
+    _sig = inspect.signature(fn)
+    try:
+        _hints = typing.get_type_hints(fn)
+    except Exception:
+        _hints = {}
+    sig = {n: (p.replace(annotation=_hints[n]) if n in _hints else p)
+           for n, p in _sig.parameters.items()}
     params = set(sig)
     pos, kw = [], {}
     for a in rest:                                # `key=value` (a real param) → kwarg; else positional
@@ -111,8 +166,12 @@ def _parse_args(name: str, fn, rest: list) -> tuple[list, dict, dict | None]:
             try:
                 kw[k] = _as_list(v) if _wants_list(sig.get(k)) else _coerce(v)
             except ValueError as ex:              # an unreadable `@file` is a sentence, not a stack
-                print(json.dumps({"error": f"{k}: {ex}"}, ensure_ascii=False))
-                return 1
+                # …RETURNED IN THIS FUNCTION'S OWN SHAPE. It printed the sentence and returned `1`
+                # out of a function whose contract is a triple, so the caller unpacked an int and
+                # the door answered with a TypeError traceback ABOVE the sentence — every
+                # unreadable `@file`, including a missing one, has done that (found 2026-09-06 by
+                # making a broken JSON file say which file it was).
+                return [], {}, {"error": f"{k}: {ex}"}
         elif "=" in a and a.split("=", 1)[0].isidentifier():
             # A `key=value` whose key is not a parameter used to fall through as a POSITIONAL
             # argument — so a typo did not fail, it silently filled the next slot with the literal
@@ -123,6 +182,23 @@ def _parse_args(name: str, fn, rest: list) -> tuple[list, dict, dict | None]:
             return [], {}, {"error": f"{name} has no parameter '{k}' — it takes: "
                                      f"{', '.join(p for p in params if not p.startswith('_') and p != 'engine')}"
                                      f" (plus `project=` on any verb)"}
+        elif a.startswith("-") and not a.lstrip("-").isdigit() and a.strip("-"):
+            # THE OTHER GRAMMAR A PERSON TRIES. This door reads `key=value`; the flag spelling is
+            # what most CLIs take, and it fell straight through as POSITIONAL DATA — measured here
+            # 2026-09-05: `create_task root '{…}' --assignee me` produced a node whose assignee was
+            # the literal string "--assignee" and whose PARENT was "me", both silently, and the node
+            # then waited forever for signals from a party that does not exist. The `key=value` typo
+            # rule above already refuses by name for exactly this reason; a flag is the same mistake
+            # in the other notation, so it gets the same answer.
+            _k = a.split("=", 1)[0].lstrip("-")
+            _known = _k in params
+            _takes = ", ".join(p for p in params if not p.startswith("_") and p != "engine")
+            return [], {}, {
+                "error": (f"this door reads `key=value`, not flags: write `{_k}=<value>` instead "
+                          f"of `{a}`." if _known else
+                          f"this door reads `key=value`, not flags, and `{_k}` is not a parameter "
+                          f"of {name} — it takes: {_takes} (plus `project=` on any verb)."),
+                "refused": True}
         else:
             # …AND TYPED BY THE SIGNATURE. A positional filling an `int` slot arrived as the STRING
             # "1", and the verb compared it with a number: `'>' not supported between instances of
@@ -135,20 +211,223 @@ def _parse_args(name: str, fn, rest: list) -> tuple[list, dict, dict | None]:
     return pos, kw, None
 
 
+def _params(fn) -> list[str]:
+    """A verb's caller-facing parameters: the leading `engine` and the transport-internal
+    underscore ones are not things anybody types."""
+    return [p for p in list(inspect.signature(fn).parameters)[1:] if not p.startswith("_")]
+
+
+#: Parameters that name WHO is acting. A verb carrying one of these gets the identity block below:
+#: the door's invitation to name yourself is true, and it was read as an invitation to invent a
+#: name. Measured on the human door 2026-09-01: `next_step` answered `"assignee": "agent",
+#: "mine": true`, the tester signed a signal `source=w18c-human`, and the FSM refused them from
+#: their own graph. The refusal is the protocol working; the help that never said what their id
+#: WAS is the defect.
+#: The identity word itself is `gfso.config`'s to spell (one owner per shared literal), so the
+#: parameter named for it is read off that accessor instead of respelled here.
+_WHO_PARAMS = frozenset({"source", "assignee", "new_assignee", agent_id.__name__.removesuffix("_id")})
+
+#: Verb-specific worked examples. The docstrings are shared with the agent door and say what a
+#: verb MEANS; a shape you have to guess is a fact about typing it here.
+_HELP_EXAMPLES = {
+    "edit_criteria": """example — `criteria` is a LIST OF OBJECTS, one per criterion:
+
+  gfso run edit_criteria task_id=D2 criteria='[{"name": "handles_empty_input",
+    "description": "given an empty input file, exits 0 and writes nothing"}]'
+
+  `name` is the identifier the protocol refers to the criterion by (`signal … FAIL
+  failed_criteria=handles_empty_input`); `description` is the decidable test. A list too long
+  for one shell line goes in a file: `criteria=@criteria.json`.
+
+THIS REPLACES THE CONTRACT. The set you pass becomes the whole set — every criterion you do
+not name is dropped. Read what is there first (`gfso run get_task <id>`) and include what you
+mean to keep. One exception, and it is deliberate: the `dep__<producer>` criteria that carry
+the node's dependency edges are carried over unless you name one yourself, so hand-writing the
+list cannot silently sever what this node WAITS FOR — cutting an edge stays explicit
+(`remove_dependency`).""",
+}
+
+
+def _print_listing() -> None:
+    """The command listing — the first thing anyone at this door reads, and therefore where the
+    argument every verb takes has to be visible.
+
+    `project=` was on the per-command `--help` and on none of the thirty listed names, while the
+    rule for a server holding more than one graph is to pass it explicitly (measured on the human
+    door 2026-09-01)."""
+    print("gfso run — headless graph commands (the SAME surface as the MCP tools).")
+    print("`gfso run <command> --help` prints what it DOES and the shape of every argument —")
+    print("the names below are not the shapes: a nested one wants an object, not a word.")
+    print("`project=<name>` rides on EVERY command and names the graph it runs against; without "
+          "it\nthe verb runs against the server's active project, whichever that currently is.\n")
+    for name, fn in T.TOOLS.items():
+        print(f"  {name} {' '.join('<' + p + '>' for p in _params(fn))} [project=<name>]")
+
+
+def _print_verb_help(name: str, fn) -> None:
+    """One verb: what it DOES (its docstring, the same description every door shows), then what
+    only this door can say — who the caller is here, and the shapes that had to be guessed."""
+    print(f"gfso run {name} " + " ".join(f"<{p}>" for p in _params(fn)) + " [project=<name>]\n")
+    print(textwrap.dedent(fn.__doc__ or "(no description)").strip())
+    if (who := [p for p in _params(fn) if p in _WHO_PARAMS]):
+        me = agent_id()
+        print(f"\nYOUR ID AT THIS DOOR IS `{me}`. That is the literal name the engine knows this "
+              f"terminal by, and\nthe name `auto_decompose` writes into every node it builds for "
+              f"you — so a node reported as\n`\"mine\": true` has Del=`{me}`, and `{who[0]}={me}` "
+              f"is what this verb wants for such a node.\nNaming yourself something else is real, "
+              f"and it is for a node you actually gave to that name\n(`create_task "
+              f"assignee=<name>`, `reassign`): the FSM checks the node's Del, not who typed.")
+    if name in _HELP_EXAMPLES:
+        print("\n" + _HELP_EXAMPLES[name])
+
+
+#: How each state renders in the tree a person reads. Module level because the renderer that reads
+#: it is: a table defined inside one function and read from another is a name nothing binds, which
+#: the FORM ratchet counts and which is a real bug waiting for the day the two move apart.
+_MARK = {"DONE": "[x]", "ABANDONED": "[-]", "ESCALATED": "[!]", "BLOCKED": "[b]",
+         "VALIDATING": "[?]", "REWORKING": "[r]", "EXECUTING": "[>]"}
+
+
+def _how_a_node_reads(state: str, closure: dict | None) -> tuple:
+    """The mark and the sentence for ONE node — how it closed, not only that it did.
+
+    Three kinds a bare `[x]` used to hide: a PASS its own current verdict contradicts, a closure by
+    hand OVER an instrument that said otherwise, and a closure on a person's word where no instrument
+    spoke. The last keeps its tick — it is the documented solo path (§14.5's degenerate case) — and
+    the first two do not. Module level rather than nested, because a nested body counts toward its
+    enclosing function and the size rule is measuring the tree, not the indentation.
+
+    READ FROM THE NODE, not out of the completion answer. These three facts used to be scraped from
+    `next_steps`, which reports them only on the branch where a graph is COMPLETE — so the marks
+    vanished exactly while a project still had work in it, which is when someone is looking (CLI and
+    fresh-install doors reported it independently, wave 26, 2026-09-06). The node carries its own
+    closure now (`Engine.closure_of`), so the tree says the same thing at every moment of a run.
+    """
+    cl = closure or {}
+    if cl.get("refuted"):
+        return "[X]", "   <- PASS CONTRADICTED by its own current verdict (get_verdict)"
+    if cl.get("overruled"):
+        return "[!]", "   <- closed BY HAND over an instrument's opposite verdict (get_verdict)"
+    if cl.get("by_hand"):
+        return (_MARK.get(state, "[ ]"),
+                "   <- closed on a verdict ASSERTED BY HAND, not an instrument's (get_verdict)")
+    return _MARK.get(state, "[ ]"), ""
+
+
+def status(argv: list[str]) -> int:
+    """The graph as a person reads it: one line per node, indented by depth.
+
+    `get_graph` answers with the whole object, unindented, and a tester asking "which nodes are done
+    and which are still validating" ended up regexing ids and states out of the raw text with a
+    throwaway one-liner — the one moment in a whole run where they came closest to opening the source
+    (CLI door, 2026-09-02). The data was always there; what was missing was a shape a person reads.
+    """
+    project = next((a.split("=", 1)[1] for a in argv
+                    if a.startswith("project=") or a.startswith("--project=")), None)
+    # …AND A ROOT ID IS A WORD, not any leftover token. `gfso status -- project=x` took `--` for an id
+    # and printed a phantom node rather than refusing it (CLI door, 2026-09-02): a tree that invents a
+    # row is worse than one that says the id is unknown.
+    root = next((a for a in argv if "=" not in a and not a.startswith("-")), None)
+    actor = next((a.split("=", 1)[1] for a in argv
+                  if a.startswith("actor=") or a.startswith("--actor=")), None)
+    g = run_verb("get_graph", project=project)
+    if not isinstance(g, dict) or g.get("error"):
+        print(json.dumps(g, ensure_ascii=False))
+        return 1
+    nodes = {str(n.get("id")): n for n in (g.get("nodes") or ())}
+    kids: dict = {}
+    for n in nodes.values():
+        kids.setdefault(str(n.get("parent_id") or ""), []).append(str(n.get("id")))
+    if root and root not in nodes:
+        print(json.dumps({"error": f"no node {root!r} in this project",
+                          "roots": sorted(kids.get("", []))}, ensure_ascii=False))
+        return 1
+    roots = [root] if root else sorted(kids.get("", []))
+    # A GREEN THAT IS NOT GREEN MUST NOT RENDER AS `[x]`. A node can stand at PASS while its own
+    # current verdict says FAIL, and this tree — the thing a person actually looks at to answer "is
+    # it done" — printed it identically to an evidence-backed one (CLI door, 2026-09-02).
+    # SCOPED WHERE THE TREE IS SCOPED, AND ASKED AS WHOEVER IS ASKING. `status <root>` printed that
+    # root's subtree and then counted the whole project underneath it, and put the whole project's
+    # frontier under the same heading; and `actor=` — which every other frontier verb takes — was
+    # dropped, so a person driving their own graph read "0 step(s) for you" beside a step that was
+    # theirs (CLI and fresh-install doors, wave 26, 2026-09-06).
+    nxt = run_verb("next_steps", project=project, root_id=root, actor=actor)
+
+    shown: list = []
+
+    def _line(nid: str, depth: int) -> None:
+        n = nodes.get(nid) or {}
+        state = str(n.get("state") or "?")
+        shown.append(n)
+        mark, why = _how_a_node_reads(state, n.get("closure"))
+        print(f"{'  ' * depth}{mark} {nid}  {state}  ({str(n.get('assignee') or '-')})"
+              + (f"  {n.get('name')}" if n.get("name") else "") + why)
+        for k in sorted(kids.get(nid, [])):
+            _line(k, depth + 1)
+
+    for r in roots:
+        _line(r, 0)
+    counts: dict = {}
+    for n in shown:
+        counts[str(n.get("state"))] = counts.get(str(n.get("state")), 0) + 1
+    print("\n" + " · ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+          + f" · {len(shown)} nodes"
+          + (f" under {root}" if root else " total"))
+    if isinstance(nxt, dict):
+        if nxt.get("refuted_passes"):
+            print(f"frontier: NOT COMPLETE — {nxt['directive']}")
+        elif nxt.get("complete"):
+            print("frontier: COMPLETE — the root is DONE/PASS")
+        else:
+            mine = [s for s in (nxt.get("steps") or ()) if s.get("mine")]
+            print(f"frontier: {len(mine)} step(s) for you"
+                  + (f", first: {mine[0].get('action')} {mine[0].get('task_id')}" if mine else "")
+                  + f" · {len(nxt.get('in_flight') or ())} in flight"
+                  + f" · {len(nxt.get('waiting') or ())} waiting")
+    return 0
+
+
+def run_verb(name: str, project: str | None = None, *pos, **kw):
+    """Call one verb the way `run` does — through the live server when there is one, else locally.
+
+    THE one place that answers "how does this door reach the engine", so a caller that wants an
+    ANSWER rather than a printed line does not build an argv and parse the output back (`status` is
+    the first such caller) — and so the project-selection rule is not written twice.
+    """
+    fn = T.TOOLS[name]
+    out = _through_server(name, fn, list(pos), kw, project)
+    if out is None:
+        out = _locally(fn, project, list(pos), kw)
+    return out
+
+
+def _locally(fn, project: str | None, pos: list, kw: dict):
+    """Run the verb in this process — the path with no server up.
+
+    With no server the direct path is the only one there is, and it is correct: the second-writer
+    problem it used to create exists only when a server is also holding the file.
+    """
+    if project:
+        select_project(project)
+    engine = build_engine_from_env()
+    out = fn(engine, *pos, **kw)
+    engine.wait_idle()
+    return out
+
+
 def run(argv: list[str]) -> int:
+    """Run one CLI verb from `argv` and return its exit code.
+
+    The exit code is about the ACT, not the transport: a verb the engine understood and refused
+    is a non-zero exit with the refusal in the body.
+    """
     try:  # graph/LLM text carries →/≈/±; keep stdout from crashing on a non-UTF-8 console
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
-        pass
+        pass  # a stream that refuses is one with nothing to reconfigure — the run itself is unaffected
 
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print("gfso run — headless graph commands (the SAME surface as the MCP tools).")
-        print("`gfso run <command> --help` prints what it DOES and the shape of every argument —")
-        print("the names below are not the shapes: a nested one wants an object, not a word." + "\n")
-        for name, fn in T.TOOLS.items():
-            ps = [p for p in list(inspect.signature(fn).parameters)[1:]  # drop the leading `engine`
-                  if not p.startswith("_")]                  # underscore params are transport-internal
-            print(f"  {name} {' '.join('<' + p + '>' for p in ps)}")
+        _print_listing()
         return 0
 
     name, rest = argv[0], argv[1:]
@@ -158,10 +437,7 @@ def run(argv: list[str]) -> int:
     # and had to read the source to learn what belongs in it. The docstring is where every door's
     # description already comes from; this is the human door finally reading it out.
     if fn is not None and any(a in ("-h", "--help", "help") for a in rest):
-        import textwrap
-        ps = [p for p in list(inspect.signature(fn).parameters)[1:] if not p.startswith("_")]
-        print(f"gfso run {name} " + " ".join(f"<{p}>" for p in ps) + " [project=<name>]\n")
-        print(textwrap.dedent(fn.__doc__ or "(no description)").strip())
+        _print_verb_help(name, fn)
         return 0
     if fn is None:
         # A VERB THAT EXISTS SOMEWHERE ELSE IS NOT AN UNKNOWN VERB. The MCP door carries the
@@ -208,16 +484,14 @@ def run(argv: list[str]) -> int:
     # With no server up, the direct path is still correct — and it is the only one there is.
     out = _through_server(name, fn, pos, kw, project)
     if out is None:
-        if project:
-            os.environ["GFSO_PROJECT"] = project
-        engine = build_engine_from_env()
-        out = fn(engine, *pos, **kw)
-        engine.wait_idle()
+        out = _locally(fn, project, pos, kw)
     # …and tell the caller where to LOOK. The agent door attaches this and the human door did not,
     # so the person the UI exists for was the one never given its address.
     if name in _T.UI_LINK_VERBS and isinstance(out, dict) and "ui" not in out:
         try:
             out["ui"] = _T.ui_link(project or out.get("active"))
+        # the link is attached to a result already produced — never a reason to fail the call that
+        # produced it
         except Exception:
             pass
     _emit(out)

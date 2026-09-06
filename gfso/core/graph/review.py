@@ -22,6 +22,17 @@ def finding_keys(rec: dict, exclude_disputed: bool = True) -> list[str]:
     disputed = set((rec.get("disputes") or {}).keys()) if exclude_disputed else set()
     out = [str(v.get("criterion")) for v in rec.get("criteria_verdicts") or ()
            if v.get("verdict") != CriticVerdict.SUFFICIENT]
-    out += ["conflict: " + ", ".join(c.get("between") or ()) for c in rec.get("conflicts") or ()]
+    # A KEY NAMES ONE FINDING. Keyed on the participants alone, three separately reasoned conflicts
+    # between the same two children were one key — and one four-word dispute closed all three at
+    # once, with the record able to show only that a key had been answered (adversary, wave 25,
+    # 2026-09-05: open findings went 13 → 10 on a single call). What distinguishes them is the
+    # REASON, so the reason distinguishes the key; the first words of it are enough to be readable
+    # and are handed back verbatim under `dispute_keys`, so nothing has to be typed from memory.
+    _seen: dict = {}
+    for c in rec.get("conflicts") or ():
+        _base = "conflict: " + ", ".join(c.get("between") or ())
+        _n = _seen[_base] = _seen.get(_base, 0) + 1
+        _why = " ".join(str(c.get("why") or "").split())[:60]
+        out.append(_base if _n == 1 and not _why else f"{_base} — {_why or _n}")
     out += ["undecided: " + str(g.get("obligation", "")) for g in rec.get("undecided_obligations") or ()]
     return [k for k in out if k not in disputed]

@@ -1,3 +1,9 @@
+"""The nouns of the protocol: task, spec, criterion, signal, verdict record, the typed answers a
+transition gives back.
+
+Frozen dataclasses, so a value that crossed a boundary cannot be edited behind the boundary's
+back — the log is the record of change, and a mutable primitive would make it a partial one.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -144,6 +150,13 @@ class CheckResult:
     passed: bool
     details: str = ""
     skipped: bool = False
+    #: TRUE OVER NOTHING. A check whose subject set is empty — no Dep edges to order, no risk
+    #: components to carry, no child deadlines to place — is a conjunction over ∅ and passes
+    #: VACUOUSLY. That is not the same fact as "this was checked and held", and a reader looking at
+    #: a row of green ticks cannot tell them apart: the class this project keeps finding in itself
+    #: is a rule that is vacuously true at zero X (a node closed in four seconds through
+    #: `criteria: []`, 2026-09-02). `skipped` is the third case — the check did not run at all.
+    vacuous: bool = False
 
 
 @dataclass(frozen=True)

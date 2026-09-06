@@ -20,6 +20,11 @@ from gfso.config import MODEL_DEFAULT
 
 
 def main() -> None:
+    """Run the demo: an org with no human in it, from goal to root DONE/PASS.
+
+    Refuses to start without the executor transport on PATH, because a demo that silently does
+    nothing is worse than one that says what it needs. SPAWNS REAL MODEL RUNS.
+    """
     if not shutil.which("claude"):
         sys.exit("needs the Claude Code CLI on PATH (the executor/validator transport)")
 

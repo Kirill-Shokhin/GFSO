@@ -6,12 +6,16 @@ the real spawn seam Engine.start goes through; (3) an asyncio host drives `proce
 directly from its own loop — no engine thread, no blocking queue — and the FSM/mutations
 underneath behave identically.
 """
+import asyncio
+import importlib
+import json
 import os
 import pathlib
+import subprocess
 import sys
 import time
+import unittest.mock as mock
 
-from gfso.engine import Engine
 from gfso.engine.loop import process_signal
 from gfso.engine.audit import AuditLog
 from gfso.engine.events import EventBus
@@ -22,6 +26,14 @@ from gfso.core.types import (
     TaskId, AgentId, Spec, Criteria, Signal, SignalData, ClockPort, ThreadRunner,
 )
 from gfso import tools as T
+from tests.support import make_engine
+from gfso import serverctl, config, doctor, tools_llm as TL
+from gfso.serverctl import drift, declared
+from gfso.mcp import connect
+from gfso.doctor import port_state
+from gfso.cli import build_parser
+from fastapi.testclient import TestClient
+from gfso.api.server import create_app
 
 
 class FakeClock(ClockPort):
@@ -58,8 +70,8 @@ def test_fake_clock_drives_inv5_state_age_in_milliseconds():
     """An HOUR-scale state_timeout enforced through virtual time: the deadline-less node cannot
     sit in OFFERED forever; the sub-FSM escalates (first timeout → OVERDUE, repeat → ESCALATED) —
     all in milliseconds of wall time, because Inv-5 reads the ClockPort, not the wall clock."""
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True,
-               check_interval=1800, state_timeout=3600, clock=FakeClock())
+    e = make_engine(llm=None, validate_signals=True,
+                     check_interval=1800, state_timeout=3600, clock=FakeClock())
     e.start()
     _mk(e)
     got = _await_state(e, "n", {"OVERDUE", "ESCALATED"})
@@ -79,8 +91,8 @@ def test_runner_port_is_the_spawn_seam():
             super().spawn(target, name)
 
     r = RecordingRunner()
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, runner=r,
-               state_timeout=0)
+    e = make_engine(llm=None, validate_signals=True, runner=r,
+                     state_timeout=0)
     e.start()
     assert sorted(r.spawned) == ["gfso-event-loop", "gfso-timeout-monitor"]
     _mk(e)                                             # and the engine WORKS over that substrate
@@ -91,8 +103,6 @@ def test_runner_port_is_the_spawn_seam():
 def test_asyncio_host_drives_process_signal_without_engine_threads():
     """The protocol step is substrate-free: an asyncio host pumps its own queue and calls
     process_signal per item — no Engine.start, no thread, no queue.Queue. Same FSM semantics."""
-    import asyncio
-
     storage = MemoryStorage()
     graph, audit, events = Graph(storage), AuditLog(storage), EventBus()
     agents = HumanAgent()
@@ -131,8 +141,6 @@ def test_asyncio_host_drives_process_signal_without_engine_threads():
 def test_source_fingerprint_moves_with_the_tree(tmp_path, monkeypatch):
     """"Is the server current" has to be decidable, or it gets decided by hope: a process holds its
     code in memory, so an edited tree never reaches it and a health check cannot tell."""
-    from gfso import serverctl
-
     pkg = tmp_path / "gfso"
     pkg.mkdir()
     (pkg / "a.py").write_text("x = 1", encoding="utf-8")
@@ -148,8 +156,6 @@ def test_source_fingerprint_moves_with_the_tree(tmp_path, monkeypatch):
 
 
 def test_drift_names_every_way_the_live_server_can_be_wrong():
-    from gfso.serverctl import drift
-
     env = {"GFSO_VALIDATE_INTERNAL": "1", "GFSO_L2_GATE": "1", "GFSO_AGENTS_PATH": "/reg.json"}
     correct = {"code_version": "abc", "validate_internal": True, "l2_gate": True,
                "agents_path": "/reg.json"}
@@ -173,9 +179,6 @@ def test_declared_switches_fill_gaps_but_never_override(tmp_path, monkeypatch):
     copy of the environment: a test that writes the real one changes what its neighbours measure
     (this one did, and the neighbour went red).
     """
-    from gfso import serverctl
-    from gfso.serverctl import declared
-
     # …and read on a home of its own. It used to read the DEVELOPER's `data/serve.json`, which is
     # untracked and machine-local: green on a fresh clone, red on any machine that had declared a
     # different registry for its own runs — a test whose verdict depends on the environment it
@@ -209,8 +212,6 @@ def test_state_lives_where_it_can_be_written(tmp_path, monkeypatch):
     pieces of work is what projects are, and there is only one server to serve them, so a second
     directory got a second database that nothing could reach — silently.
     """
-    from gfso import config, serverctl        # one derivation lives in `config`; `serverctl` calls it
-
     monkeypatch.delenv("GFSO_HOME", raising=False)
     checkout, installed = tmp_path / "checkout", tmp_path / "site-packages"
     for d in (checkout, installed):
@@ -235,10 +236,6 @@ def test_state_lives_where_it_can_be_written(tmp_path, monkeypatch):
 def test_the_one_server_has_one_address():
     """`connect`, `down` and `log` read GFSO_SHARED_URL; `up` read a literal 8000 — so the command
     whose entire job is reconciliation could reconcile a server nobody was talking to."""
-    import importlib
-
-    from gfso import serverctl
-
     os.environ["GFSO_SHARED_URL"] = "http://127.0.0.1:8123/mcp"
     try:
         reloaded = importlib.reload(serverctl)
@@ -258,10 +255,6 @@ def test_every_door_puts_state_in_the_home_not_in_the_callers_directory(tmp_path
     all against the caller's cwd, then spawned the server with no `cwd=` at all. Measured before the
     fix: with GFSO_HOME set to one directory, the database appeared in another.
     """
-    import subprocess
-
-    from gfso.mcp import connect
-
     home, elsewhere = tmp_path / "home", tmp_path / "elsewhere"
     for d in (home, elsewhere):
         d.mkdir()
@@ -286,7 +279,8 @@ def test_every_door_puts_state_in_the_home_not_in_the_callers_directory(tmp_path
     assert not (elsewhere / "data").exists(), "state landed beside the caller, not in the home"
 
 
-def test_the_first_install_creates_the_home_instead_of_failing_into_it(tmp_path, monkeypatch):
+def test_the_first_install_creates_the_home_instead_of_failing_into_it(tmp_path, monkeypatch,
+                                                                        reconciling):
     """On a machine that has never run gfso, `~/.gfso` does not exist yet.
 
     `ensure_correct` chdirs into the home so the spawned server resolves its db and log paths there,
@@ -295,12 +289,6 @@ def test_the_first_install_creates_the_home_instead_of_failing_into_it(tmp_path,
     print, and `gfso connect` exited — which an agent client shows as a session with no gfso tools at
     all, silently. Invisible from a source checkout, where the home IS the repository and exists.
     """
-    import os
-    import subprocess
-
-    from gfso import serverctl
-    from gfso.mcp import connect
-
     # `ensure_correct` writes the declared switches straight into os.environ (the spawn inherits this
     # process's environment), which monkeypatch cannot undo for it — so calling it from a test
     # EXPORTS those switches into every test that runs afterwards. Unrestored, this one turned the
@@ -340,9 +328,6 @@ def test_a_port_held_by_something_else_is_not_a_running_server(monkeypatch):
     stranger's machine — anything else already on :8000 — spawned nothing and reported success.
     Measured before the fix: 114 seconds of silence, then a started line quoting a code fingerprint
     for a process that did not exist."""
-    from gfso import serverctl
-    from gfso.mcp import connect
-
     # ONE probe for every caller (`serverctl.port_open`): patched here it answers for `connect` and
     # for `doctor` alike. While there were two implementations this test passed only when some
     # unrelated server happened to hold :8000 on the machine running it — green for a reason that
@@ -351,7 +336,6 @@ def test_a_port_held_by_something_else_is_not_a_running_server(monkeypatch):
     monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: None)   # nothing gfso answers there
     assert connect.foreign_holder("127.0.0.1", serverctl.PORT) is True
 
-    from gfso.doctor import port_state
     state, detail = port_state()
     assert state == "foreign" and "not a gfso server" in detail
 
@@ -366,10 +350,6 @@ def test_the_desktop_block_setup_prints_is_json(monkeypatch, capsys, tmp_path):
     Built by string interpolation, it was not: on Windows every backslash in the path is a JSON
     escape, so the thing offered for pasting could not be parsed by the application it was for.
     """
-    import json
-
-    from gfso import doctor
-
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
     monkeypatch.setattr(doctor, "port_state", lambda: ("free", "nothing is listening"))
     monkeypatch.setattr(doctor, "webbrowser_open", lambda url: None)
@@ -389,10 +369,6 @@ def test_the_desktop_block_setup_prints_is_json(monkeypatch, capsys, tmp_path):
 def test_setup_desktop_merges_and_keeps_a_backup(tmp_path, monkeypatch):
     """`--desktop` edits ANOTHER application's file, so what it does has to be exactly this: keep
     every other key, replace only `mcpServers.gfso`, and leave the previous file recoverable."""
-    import json
-
-    from gfso import doctor
-
     monkeypatch.setenv("GFSO_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(doctor, "desktop_config_path", lambda: tmp_path)
     cfg = tmp_path / "claude_desktop_config.json"
@@ -419,10 +395,6 @@ def test_the_argv_the_launcher_spawns_is_argv_the_cli_accepts(tmp_path, monkeypa
     while the launcher reported only that the server had not come up within 25 seconds. The
     reference to the parser is what makes the two sides one fact.
     """
-    import subprocess
-
-    from gfso.mcp import connect
-
     seen = {}
 
     class _Popen:
@@ -442,7 +414,6 @@ def test_the_argv_the_launcher_spawns_is_argv_the_cli_accepts(tmp_path, monkeypa
     # Asked of the parser OBJECT, not of a subprocess with `--help` appended: `--help` fires during
     # parsing and exits 0 before argparse ever reports an unrecognized argument, so that spelling of
     # this check was green against the very defect it was written for.
-    from gfso.cli import build_parser
     try:
         parsed = build_parser().parse_args(parser_args)
     except SystemExit as ex:
@@ -454,13 +425,7 @@ def test_the_argv_the_launcher_spawns_is_argv_the_cli_accepts(tmp_path, monkeypa
 
 def _app_with_leases():
     """A live app object, so the lease bookkeeping is exercised rather than described."""
-    from fastapi.testclient import TestClient
-
-    from gfso.api.server import create_app
-    from gfso.engine import Engine
-    from gfso.adapters.storage.memory import MemoryStorage
-    from gfso.adapters.agents.human import HumanAgent
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
+    e = make_engine(llm=None, validate_signals=True, state_timeout=0)
     e.start()
     return e, TestClient(create_app(e))
 
@@ -474,15 +439,13 @@ def test_a_lease_expires_on_its_own_so_a_dead_session_cannot_block_an_upgrade():
     somebody, so one stale entry made every later upgrade decline to take effect, silently and
     permanently: exactly the defect the reconcile was added to close, one layer up.
     """
-    import time as _t
-
     e, client = _app_with_leases()
     try:
         assert client.post("/api/lease", json={"id": "alive"}).json()["sessions"] == 1
         assert client.get("/api/runtime").json()["sessions"] == 1
 
         app = client.app                       # a session that died without dropping its lease
-        app.state.leases["ghost"] = _t.monotonic() - 60           # past the grace window
+        app.state.leases["ghost"] = time.monotonic() - 60           # past the grace window
         assert client.get("/api/runtime").json()["sessions"] == 1, "the ghost still counts"
         assert "ghost" not in app.state.leases                     # …and was pruned on the way
 
@@ -496,8 +459,6 @@ def test_busy_counts_concurrent_calls_of_one_verb():
     """`busy` decides whether a reconcile leaves the server alone. As a SET, the first of two
     concurrent validations to finish cleared the flag while the second was still running — and
     since every tool now runs in its own thread, concurrent calls of one verb are ordinary."""
-    from gfso import tools_llm as TL
-
     with TL._inflight("validate_result"):
         with TL._inflight("validate_result"):
             assert sorted(TL.INFLIGHT) == ["validate_result"]
@@ -505,18 +466,14 @@ def test_busy_counts_concurrent_calls_of_one_verb():
     assert sorted(TL.INFLIGHT) == []
 
 
-def test_a_reconcile_leaves_an_occupied_server_alone_but_force_does_not():
+def test_a_reconcile_leaves_an_occupied_server_alone_but_force_does_not(reconciling):
     """Restarting the one server ends whatever it is doing for somebody else, and the model
     subprocesses it spawned outlive it. So drift on an occupied server is reported, not acted on —
     unless the caller says otherwise."""
-    from gfso import serverctl
-    from gfso.mcp import connect
-
     stale = {"code_version": "old", "validate_internal": False, "l2_gate": True,
              "agents_path": "", "with_mcp": True, "sessions": 2, "busy": ["auto_decompose"]}
     calls = []
 
-    import unittest.mock as mock
     with mock.patch.object(serverctl, "runtime", lambda *a, **k: stale), \
          mock.patch.object(serverctl, "declared", lambda: {}), \
          mock.patch.object(serverctl, "source_fingerprint", lambda: "new"), \

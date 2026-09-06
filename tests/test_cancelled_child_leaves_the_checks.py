@@ -11,13 +11,12 @@ the protocol's own way to drop planned work was unusable.
 from __future__ import annotations
 
 import gfso.tools as T
-from gfso.adapters.storage.memory import MemoryStorage
 from gfso.engine import Engine
-from gfso.adapters.agents.human import HumanAgent
+from tests.support import make_engine
 
 
 def _eng() -> Engine:
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
+    e = make_engine(llm=None, validate_signals=True, state_timeout=0)
     e.start()                    # signals are applied by the loop thread; without it nothing lands
     return e
 
@@ -36,7 +35,7 @@ def _plan_with_one_orphan(e) -> None:
 
 
 def _orphan_hole(e):
-    return [h for h in T.list_holes(e) if "no_orphan" in h["check"]]
+    return [h for h in T.list_holes(e)["holes"] if "no_orphan" in h["check"]]
 
 
 def test_a_cancelled_child_stops_being_an_orphan():

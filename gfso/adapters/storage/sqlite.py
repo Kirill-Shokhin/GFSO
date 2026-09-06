@@ -5,7 +5,10 @@ import json
 import logging
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
+
+from gfso import __version__
 
 from gfso.core.types import (
     TaskId, AgentId, Task, State, DoneReason, AutonomyLevel, Predictability,
@@ -22,7 +25,6 @@ class SqliteStorage(StoragePort):
     def __init__(self, db_path: str = "data/gfso.db"):
         self._db_path = db_path
         if db_path != ":memory:":
-            from pathlib import Path
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -67,7 +69,6 @@ class SqliteStorage(StoragePort):
             self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             found = self.SCHEMA_VERSION
         if found > self.SCHEMA_VERSION:
-            from gfso import __version__
             raise RuntimeError(
                 f"this database was written by a newer gfso (schema {found}; this build of "
                 f"gfso {__version__} understands {self.SCHEMA_VERSION}). Upgrade with "
@@ -109,7 +110,8 @@ class SqliteStorage(StoragePort):
                 check_name TEXT NOT NULL,
                 passed INTEGER NOT NULL,
                 details TEXT DEFAULT '',
-                skipped INTEGER DEFAULT 0
+                skipped INTEGER DEFAULT 0,
+                vacuous INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS recommendations (
                 task_id TEXT PRIMARY KEY,
@@ -194,6 +196,9 @@ class SqliteStorage(StoragePort):
             self._conn.execute("ALTER TABLE tasks ADD COLUMN revisions INTEGER DEFAULT 0")
         if "state_entered_at" not in task_cols:   # Inv-5's per-state clock (see save/load below)
             self._conn.execute("ALTER TABLE tasks ADD COLUMN state_entered_at TEXT")
+        check_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(check_results)")}
+        if "vacuous" not in check_cols:   # a green over an EMPTY subject is not the same green
+            self._conn.execute("ALTER TABLE check_results ADD COLUMN vacuous INTEGER DEFAULT 0")
         audit_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(audit_log)")}
         if "spec_json" not in audit_cols:   # Inv-7: the contract each ASSIGN installed
             self._conn.execute("ALTER TABLE audit_log ADD COLUMN spec_json TEXT")
@@ -350,7 +355,7 @@ class SqliteStorage(StoragePort):
                 int(task.spec_defect_criteria_change),
                 int(task.reassign_reason_typed),
                 int(task.reassign_capability_mismatch),
-                int(getattr(task, "revisions", 0)),
+                int(task.revisions),
             ),
         )
         self._conn.commit()
@@ -381,13 +386,18 @@ class SqliteStorage(StoragePort):
         rows = self._conn.execute(
             "SELECT * FROM check_results WHERE task_id = ?", (task_id,)
         ).fetchall()
-        return [CheckResult(r["check_name"], bool(r["passed"]), r["details"], bool(r["skipped"])) for r in rows]
+        # `vacuous` rides the round trip: dropping it here would have made the distinction true in
+        # memory and false a moment later, which is the "one field, two doors" defect in miniature.
+        return [CheckResult(r["check_name"], bool(r["passed"]), r["details"], bool(r["skipped"]),
+                            bool(r["vacuous"])) for r in rows]
 
     def store_check_results(self, task_id: TaskId, results: list[CheckResult]) -> None:
         self._conn.execute("DELETE FROM check_results WHERE task_id = ?", (task_id,))
         self._conn.executemany(
-            "INSERT INTO check_results (task_id, check_name, passed, details, skipped) VALUES (?, ?, ?, ?, ?)",
-            [(task_id, r.check_name, int(r.passed), r.details, int(r.skipped)) for r in results],
+            "INSERT INTO check_results (task_id, check_name, passed, details, skipped, vacuous) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [(task_id, r.check_name, int(r.passed), r.details, int(r.skipped), int(r.vacuous))
+             for r in results],
         )
         self._conn.commit()
 

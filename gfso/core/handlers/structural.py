@@ -1,4 +1,4 @@
-"""CHECK-1 through CHECK-6. Pure functions on types. O(n)."""
+﻿"""CHECK-1 through CHECK-6. Pure functions on types. O(n)."""
 from __future__ import annotations
 
 import re
@@ -87,6 +87,15 @@ def check_coverage(task: Task, children: list[Task]) -> CheckResult:
         return CheckResult("CHECK-1:coverage", False, "no criterion mappings declared")
 
     child_ids = {c.id for c in children}
+    # …AND WHAT EACH OF THEM PROMISES. A mapping used to be checked on two things: the
+    # criterion exists on the parent, the child exists. It never asked whether the covering
+    # child DECIDES anything. A child with `criteria: []` therefore satisfied CHECK-1 for a
+    # parent criterion, and — being a leaf — passed its own CHECK-1 as "no criteria defined",
+    # so the whole plan read L0-clean while one conjunct of Thm 1's AND forbade nothing.
+    # Probed end to end 2026-09-05 after an outside audit inferred the path: the child closed
+    # DONE on its own self-report and satisfied its parent's AND. By A1 a task is a goal plus a
+    # decidable predicate; a child that carries none secures nothing for anybody.
+    _empty = {c.id for c in children if not c.spec.criteria}
     crit_names = {c.name for c in task.spec.criteria}
     mapped_criteria = set()
     invalid_mappings = []
@@ -94,6 +103,11 @@ def check_coverage(task: Task, children: list[Task]) -> CheckResult:
     for m in task.criterion_mappings:
         if m.child_id not in child_ids:
             invalid_mappings.append(f"{m.criterion_name} -> {m.child_id} (child not found)")
+        elif m.child_id in _empty:
+            invalid_mappings.append(
+                f"{m.criterion_name} -> {m.child_id} (that child has NO criteria of its own, so"
+                f" it decides nothing: its pass would be vacuous and could not secure this"
+                f" criterion — §10, A1. Give it criteria, or map this criterion elsewhere)")
         elif m.criterion_name not in crit_names:
             # dangling after a criteria re-author: the mapped parent criterion no longer exists (surface-don't-
             # destroy — a revise that removed a covered criterion strands this mapping; the agent must re-map)
@@ -164,7 +178,7 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
             seen.add(str(c.id))
 
     if not dep_edges:
-        return CheckResult("CHECK-2:dag", True, "D acyclic; no dependency edges")
+        return CheckResult("CHECK-2:dag", True, "D acyclic; no dependency edges", vacuous=True)
 
     # Build adjacency and detect cycle via DFS
     adj: dict[str, list[str]] = {}
@@ -176,6 +190,10 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
     stack: list[str] = []
 
     def find_cycle(node: str) -> list[str] | None:
+        """One cycle in the dependency edges, as the path that closes it — or `None`.
+
+    The PATH, not a boolean: CHECK-2 names which nodes make the loop, because "there is a cycle" is
+    not something a caller can act on."""
         if node not in status:
             return None
         if status[node] == IN_PROGRESS:
@@ -206,16 +224,20 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
 
 
 def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str, str]]) -> CheckResult:
-    """CHECK-3: deadline coherence, BOTH rules the canon states.
+    """CHECK-3: deadline coherence along Dep — the HORIZONTAL rule, which is the whole of the row.
 
-    HORIZONTAL (§10, Dep coherence): for every dependency (a, b), deadline(a) < deadline(b).
-    VERTICAL (§3.4 item 6): every child's deadline < its parent's — a child that may finish after
-    its parent's own deadline cannot compose into it, so the plan promises a passage time denies.
+    §10: for every dependency (a, b), deadline(a) < deadline(b).
 
-    The vertical rule was stated and derivable but had **no pre-exec check** — the canon names that
-    gap itself (§26.5-bis, "the un-operationalized form items"), and §15.4's triage tie-break leans
-    on the rule. It is L0 (packet fields, no domain knowledge), so it belongs here, with the
-    horizontal one, rather than in the open-problems list.
+    THE VERTICAL RULE IS NOT THIS CHECK, and used to be reported as though it were. §3.4 item (6)
+    (every child's deadline < its parent's) is stated by the canon and given no CHECK of its own —
+    `formal/README.md` #6 says so in as many words, and adds that "any prose that credits it to
+    CHECK-3 is wrong about the canon". It rode inside this result anyway, tagged only in the details,
+    and `_EXEC_GATING_CHECKS` matches on the NAME — so it acquired authority to refuse execution
+    under a canon check's name, in the gate whose own comment keeps CHECK-1c out on the ground that
+    "the gate is exactly the canon's level, in both directions" (audited 2026-09-05, F4).
+    Now `check_vertical_deadlines` owns it, under its own name, outside the gate: the violation is
+    SURFACED where the plan's checks are read, and refuses nothing — the same treatment CHECK-1c
+    gets, for the same reason.
     """
     deadlines = {t.id: t.deadline for t in children}
     deadlines[task.id] = task.deadline
@@ -229,21 +251,34 @@ def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str,
         if dl_a >= dl_b:
             violations.append(f"Dep {a}(deadline={dl_a}) >= {b}(deadline={dl_b})")
 
-    for c in children:
-        if c.deadline is None or task.deadline is None:
-            continue                      # a deadline is a design decision, not a mandatory field
-        if c.deadline >= task.deadline:
-            # Tagged by the rule it enforces, not by the check it rides in: this is §3.4 item (6),
-            # which the canon states and gives no CHECK of its own (§26.5-bis; corner #6). Crediting
-            # it to CHECK-3 in a failure message would be wrong about the canon.
-            violations.append(f"[§3.4(6) vertical] child {c.id}(deadline={c.deadline}) >= parent "
-                              f"{task.id}(deadline={task.deadline})")
-
     if violations:
         return CheckResult("CHECK-3:deadlines", False, "; ".join(violations))
-    if not dep_edges and not any(c.deadline for c in children):
-        return CheckResult("CHECK-3:deadlines", True, "no dependency edges, no child deadlines")
+    if not dep_edges:
+        return CheckResult("CHECK-3:deadlines", True, "no dependency edges", vacuous=True)
     return CheckResult("CHECK-3:deadlines", True)
+
+
+def check_vertical_deadlines(task: Task, children: list[Task]) -> CheckResult:
+    """§3.4(6): every child's deadline < its parent's — SURFACED, not gating.
+
+    A child that may finish after its parent's own deadline cannot compose into it, so the plan
+    promises what passage of time denies. The canon states the rule and gives it no CHECK
+    (§26.5-bis, the un-operationalized form items), which is exactly why it is reported under its own
+    name and is absent from `_EXEC_GATING_CHECKS`: a rule with no canon row does not acquire the
+    authority to refuse execution by being written inside a result that has one.
+
+    Its silence at zero is real silence. A deadline is a design decision and not a mandatory field
+    (`formal/README.md` #6: absence stays silent), so a plan that declares none says nothing here.
+    """
+    violations = [f"child {c.id}(deadline={c.deadline}) >= parent {task.id}(deadline={task.deadline})"
+                  for c in children
+                  if c.deadline is not None and task.deadline is not None
+                  and c.deadline >= task.deadline]
+    if violations:
+        return CheckResult("§3.4(6):vertical_deadlines", False, "; ".join(violations))
+    if not any(c.deadline for c in children) or task.deadline is None:
+        return CheckResult("§3.4(6):vertical_deadlines", True, "no child deadlines to place", vacuous=True)
+    return CheckResult("§3.4(6):vertical_deadlines", True)
 
 
 def check_accepted_risks(task: Task, children: list[Task]) -> CheckResult:
@@ -317,7 +352,7 @@ def check_risk_nodes(task: Task, children: list[Task]) -> CheckResult:
     Each component must have a corresponding child task addressing it.
     """
     if not task.spec.risk_components:
-        return CheckResult("CHECK-5:risk_nodes", True, "no risk components defined")
+        return CheckResult("CHECK-5:risk_nodes", True, "no risk components defined", vacuous=True)
 
     if not children:
         return CheckResult("CHECK-5:risk_nodes", False,
@@ -371,6 +406,7 @@ def run_structural(task: Task, children: list[Task], dep_edges: list[tuple[str, 
         check_non_redundancy(task, children),
         check_dag(children, edges, task),
         check_deadlines(task, children, edges),
+        check_vertical_deadlines(task, children),
         check_accepted_risks(task, children),
         check_risk_nodes(task, children),
         check_delegation(children, task, non_leaf_ids),

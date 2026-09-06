@@ -6,14 +6,16 @@
 - the ONE textual read of the state is the graph's own projection (Engine.project) — no separate renderer;
 - extract_spec is the exact inverse of build (roundtrip); rebuild preserves existing children's Del;
 - the build is verified: problems → bounded repair → clean list_holes, or an HONEST residue."""
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
-from gfso.core.types import TaskId, AgentId
 import json
 
+import pytest
+
+from gfso import decompose as D, tools_llm as T
+from gfso.core.types import Verdict, TaskId, AgentId, AcceptedRiskItem, SignalData, Signal, State
 from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
-from gfso.decompose.loop import SEARCH_PROMPT, FOLD_SCHEMA, _fold_merge, shape
+from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, _fold_merge, shape,
+                                 SEARCH_FAST, AUDIT_FAST)
+from tests.support import make_engine
 
 
 class FakeLLM:
@@ -32,7 +34,7 @@ class FakeLLM:
         return self.specs.pop(0) if self.specs else {}
 
 
-def _spec(mappings=None, accepted_risks=None):
+def _graph_state(mappings=None, accepted_risks=None):
     """The graph-form state after a successful first fold (also the shape build_graph_live consumes)."""
     return {
         "name": "Thing",
@@ -49,8 +51,8 @@ def _spec(mappings=None, accepted_risks=None):
 
 
 def _init_patch(mappings=None, accepted_risks=None):
-    """The round-1 (empty-state) fold: the same content as _spec(), expressed as adds."""
-    s = _spec(mappings=mappings, accepted_risks=accepted_risks)
+    """The round-1 (empty-state) fold: the same content as _graph_state(), expressed as adds."""
+    s = _graph_state(mappings=mappings, accepted_risks=accepted_risks)
     return {"name": s["name"], "add_root_criteria": s["root_criteria"], "add_subtasks": s["subtasks"],
             "add_mappings": s["mappings"], "add_deps": s["deps"], "add_accepted_risks": s["accepted_risks"]}
 
@@ -62,7 +64,7 @@ _ADD_C = {"add_subtasks": [{"id": "c", "name": "C", "description": "do C",
 
 
 def _eng():
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True)
+    e = make_engine(llm=None, validate_signals=True)
     e.start()
     return e
 
@@ -95,7 +97,6 @@ def test_result_read_artifact_is_the_projection():
 
 
 def test_fast_rides_init_round_user_content_only():
-    from gfso.decompose.loop import SEARCH_FAST, AUDIT_FAST
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     decompose_spec("task", llm=fake, fast=True)
     assert fake.calls[0][1].endswith(SEARCH_FAST) and fake.calls[1][1].endswith(AUDIT_FAST)
@@ -177,7 +178,6 @@ def test_one_verb_dispatches_to_refine_on_decomposed_node():
 def test_rebuild_preserves_child_own_registers():
     """A child's OWN ACCEPTED_RISKS belongs to the CHILD'S decomposer (§13.1) — a parent-level rebuild
     must not wipe it (same class as Del preservation)."""
-    from gfso.core.types import AcceptedRiskItem
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
@@ -192,14 +192,12 @@ def test_refine_leaves_untouched_children_in_place():
     """Idempotent rebuild: a refine that doesn't touch a child emits ZERO signals for it — an
     EXECUTING child keeps executing (a live graph survives a replan; only changed contracts
     re-negotiate per Inv-1)."""
-    from gfso.core.types import SignalData, Signal
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.a"),
                                   source=AgentId("human")))
     e.wait_idle()
-    from gfso.core.types import State
     assert e.get_state(TaskId("root.a")) == State.EXECUTING
     n_signals_a = len(e.audit_log(TaskId("root.a")))
     fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
@@ -214,7 +212,6 @@ def test_refine_frozen_terminal_children_surface_as_holes():
     admits no revision, §14.3) — the intent must NOT vanish into rejected signals (observed live):
     the searcher sees the frozen list, the unapplied change surfaces as an honest hole, and the
     child's state/audit stay untouched."""
-    from gfso.core.types import SignalData, Signal, State
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
@@ -243,20 +240,30 @@ def test_refine_frozen_terminal_children_surface_as_holes():
 def test_refine_on_terminal_target_refused():
     """A completed goal is frozen (terminal admits no revision; REOPEN is parked) — the one verb
     refuses loudly instead of crashing on the root's own re-author."""
-    import pytest
-    from gfso.core.types import SignalData, Signal, State
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
     e._graph.authorized_validators = {"vx"}
+
+    def _judged_pass(tid):
+        """A seam closes on a RECORD, not on a name. This setup signed as a registered id and
+        recorded nothing, which used to be enough — the hole that let two ordinary calls close a
+        root that had delivered nothing (audited 2026-09-05). The subject of this test is the
+        refusal to refine a terminal node; getting there now takes the judging it always implied."""
+        t = e.get_task(TaskId(tid))
+        e.record_reviewer_verdict(TaskId(tid), Verdict.PASS, [], reviewer="vx",
+                                  observed={c.name: "ran it, it printed what it should"
+                                            for c in t.spec.criteria})
+        e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId(tid), source=AgentId("vx")))
+
     for tid in ("root.a", "root.b"):
         for sig in (Signal.ACCEPT, Signal.DELIVER):
             e.send_signal_sync(SignalData(signal=sig, task_id=TaskId(tid), source=AgentId("human"),
                                           result="done" if sig is Signal.DELIVER else None))
-        e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId(tid), source=AgentId("vx")))
+        _judged_pass(tid)
     e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"),
                                   source=AgentId("human"), result="aggregate"))
-    e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root"), source=AgentId("vx")))
+    _judged_pass("root")
     e.wait_idle()
     assert e.get_state(TaskId("root")) == State.DONE
     with pytest.raises(ValueError, match="terminal"):
@@ -267,7 +274,6 @@ def test_refine_state_view_carries_blocked_children_with_reasons():
     """Runtime contact feeds the replan: a BLOCKED child + its BLOCK reason must reach the refine
     searcher/auditor (observed live: an inverted Dep direction deadlocked the graph and the fold,
     blind to the block, re-derived the same structure)."""
-    from gfso.core.types import SignalData, Signal
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
@@ -305,7 +311,6 @@ def test_fold_removal_unmaps_but_never_kills():
     remove drops the child's coverage (reconciled on rebuild) → the node surfaces as an unmapped
     hole (non-redundancy guard) for the ISSUER to CANCEL or re-map — it is never destroyed and its
     state is untouched (surface-don't-destroy, the v3.7 revision guard-set)."""
-    from gfso.core.types import State
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
@@ -326,7 +331,7 @@ def test_extract_spec_roundtrips_build():
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     got = extract_spec(res.engine, "root")
-    want = _spec()
+    want = _graph_state()
     assert got["name"] == want["name"]
     assert {c["id"] for c in got["subtasks"]} == {"a", "b"}
     a = [c for c in got["subtasks"] if c["id"] == "a"][0]
@@ -341,7 +346,7 @@ def test_extract_spec_roundtrips_build():
 # === _fold_merge: deterministic, referentially clean, dedup ===
 
 def test_fold_merge_add_update_remove():
-    spec = _spec()
+    spec = _graph_state()
     patch = {
         "remove_subtask_ids": ["b"],
         "update_subtasks": [{"id": "a", "name": "A+", "description": "do A better",
@@ -362,7 +367,7 @@ def test_fold_merge_add_update_remove():
 
 
 def test_fold_merge_dedup_and_noop():
-    spec = _spec()
+    spec = _graph_state()
     patch = {"add_subtasks": [dict(spec["subtasks"][0])],
              "add_mappings": [dict(spec["mappings"][0])],
              "add_deps": [dict(spec["deps"][0])],
@@ -375,7 +380,7 @@ def test_fold_merge_dedup_and_noop():
 
 
 def test_fold_merge_root_criteria_removal_cleans_mappings():
-    spec = _spec()
+    spec = _graph_state()
     s, ops = _fold_merge(spec, {"remove_root_criteria_names": ["rc1"]})
     assert [c["name"] for c in s["root_criteria"]] == ["rc2"]
     assert all(m["criterion"] != "rc1" for m in s["mappings"])
@@ -383,14 +388,14 @@ def test_fold_merge_root_criteria_removal_cleans_mappings():
 
 
 def test_shape_counts():
-    assert shape(_spec()) == (2, 1, 4)   # 2 subtasks · 1 seam · 2 root + 2 child criteria
+    assert shape(_graph_state()) == (2, 1, 4)   # 2 subtasks · 1 seam · 2 root + 2 child criteria
 
 
 # === build verification (unchanged guarantees) ===
 
 def test_decompose_into_repairs_to_clean():
     bad_mappings = [{"criterion": "rc1_typo", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}]
-    fake = FakeLLM(texts=["holes1"], specs=[_init_patch(mappings=bad_mappings), _spec()])
+    fake = FakeLLM(texts=["holes1"], specs=[_init_patch(mappings=bad_mappings), _graph_state()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     assert res.holes == []
     repair_user = [u for k, u in fake.calls if k == "repair"][0]
@@ -429,9 +434,6 @@ def test_a_silent_provider_is_reported_as_a_provider_fact(monkeypatch):
     The transport is patched at `decompose._default_llm`, not on the Engine: `auto_decompose` builds
     its own from the environment (runtime.llm_factory) and never consults the engine's.
     """
-    from gfso import decompose as D
-    from gfso import tools_llm as T
-
     class Silent:
         """What a dead endpoint looks like through the port: nothing said, nothing recorded."""
         calls = ()
@@ -443,7 +445,7 @@ def test_a_silent_provider_is_reported_as_a_provider_fact(monkeypatch):
             return {}
 
     monkeypatch.setattr(D, "_default_llm", lambda model: Silent())
-    e = Engine(MemoryStorage(), HumanAgent(), Silent(), validate_signals=True)
+    e = make_engine(llm=Silent(), validate_signals=True)
     e.start()
     out = T.auto_decompose(e, "ship a hello world script", root_id="r", assignee="human")
     assert out["subtasks"] == []

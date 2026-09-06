@@ -1,3 +1,9 @@
+"""What a transition DOES, as data rather than as a side effect.
+
+The FSM returns effects; the loop executes them. That split is what lets the protocol step be
+checked without a storage, a clock or a model behind it — and what lets a host drive the same
+step from its own runtime.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

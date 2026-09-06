@@ -6,6 +6,8 @@ IMPLEMENTATIONS stay out of scope (N3) — this proves the seam, not a vendor.""
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from gfso.runtime import llm_factory
+from gfso.adapters.llm.generic import GenericLLM
 
 import pytest
 
@@ -47,8 +49,6 @@ def test_provider_lever_swings_the_factory_to_a_foreign_endpoint(fake_openai, mo
     monkeypatch.setenv("GFSO_PROVIDER", "generic")
     monkeypatch.setenv("GFSO_GENERIC_BASE_URL", base_url)
     monkeypatch.setenv("GFSO_GENERIC_MODEL", "fake-model")
-    from gfso.runtime import llm_factory
-    from gfso.adapters.llm.generic import GenericLLM
 
     llm = llm_factory("sonnet")
     assert isinstance(llm, GenericLLM)                      # the ONE switch moved the system
@@ -65,6 +65,4 @@ def test_provider_lever_swings_the_factory_to_a_foreign_endpoint(fake_openai, mo
 
 def test_lever_swings_back_by_removing_the_env(fake_openai, monkeypatch):
     monkeypatch.delenv("GFSO_PROVIDER", raising=False)
-    from gfso.runtime import llm_factory
-    from gfso.adapters.llm.generic import GenericLLM
     assert not isinstance(llm_factory("sonnet"), GenericLLM)   # default = the Anthropic harness

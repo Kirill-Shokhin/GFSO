@@ -20,9 +20,7 @@ import json
 import pytest
 
 from gfso import tools_llm as TL
-from gfso.adapters.agents.human import HumanAgent
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.engine import Engine
+from tests.support import make_engine
 
 # Verbs whose whole job is to spawn a model run. They are still called (their argument guards are
 # the point), with an id that exists and a state that stops them before any transport is touched.
@@ -33,7 +31,7 @@ _GOOD_SPEC = {"name": "leaf", "description": "a leaf",
 
 
 def _engine():
-    e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
+    e = make_engine(llm=None, validate_signals=True, state_timeout=0)
     e.start()
     return e
 

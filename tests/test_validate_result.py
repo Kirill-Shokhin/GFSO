@@ -1,19 +1,25 @@
 """validate_result — EXECUTION validation (≠ validate, the PLAN's L2): the read-only validator
 INSTRUMENT produces per-criterion evidence; the ISSUER signals PASS/FAIL. Logic tested with a fake
 agent-runner (the live run is a headless subprocess)."""
+import asyncio
 import json
+import pathlib
+import subprocess
 import threading
+from pathlib import Path
 
-from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
-from gfso.adapters.llm.stub import StubLLM
+import pytest
+
+import gfso.adapters.llm.headless as _headless
 from gfso import tools as T
 from gfso import tools_llm as TL
+from gfso.adapters.llm.headless import _tool_use_name, HeadlessClaudeLLM
+from gfso.adapters.llm.stub import StubLLM
+from tests.support import make_engine
 
 
 def _eng():
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     return e
 
@@ -260,10 +266,8 @@ def test_registry_exposes_validate_result():
 def test_mcp_server_binds_validate_result_async():
     """The MCP surface exposes validate_result via the long-running async binding (progress notifications,
     no engine/_-params in the schema)."""
-    import pytest
     pytest.importorskip("mcp")
-    import asyncio
-    from gfso.mcp.server import create_server
+    from gfso.mcp.server import create_server   # behind the skip: the module needs `mcp` installed
 
     e = _eng()
     server = create_server(e)
@@ -371,8 +375,6 @@ def test_validator_tool_use_is_counted_and_recorded():
     all is decidable structurally, from the stream, without parsing a word of the report — so it is
     recorded with the verdict and a claim of execution can be checked against it.
     """
-    from gfso.adapters.llm.headless import _tool_use_name
-
     # the shapes stream-json uses for a tool call, and one that is not a tool call
     assert _tool_use_name({"type": "content_block_start",
                            "content_block": {"type": "tool_use", "name": "Bash"}}) == "Bash"
@@ -390,8 +392,14 @@ def test_validator_tool_use_is_counted_and_recorded():
                           tools_used={"Read": 2})
     rec = e.get_exec_verdict("n1")
     assert rec["tools_used"] == {"Read": 2}
-    # the point of recording it: a cited execution with no Bash in the trace is refuted by the trace
-    assert "Bash" not in rec["tools_used"] and "Executed" in rec["per_criterion"][0]["evidence"]
+    # WHAT THE LEDGER IS FOR, asserted as an effect and not as a stored string. This asked only that
+    # the contradiction be KEPT — "Bash not in tools_used and 'Executed' in the evidence" — which is
+    # true of a system that reads the field and of one that never looks at it, and this one never
+    # did: `tools_used` had exactly one reader in the tree, this line. A test that pins a false
+    # belief is part of the defect. The refutation itself, with its controls, is in
+    # `test_a_probe_that_names_a_command_was_run.py`; here it is enough that the pass over an unrun
+    # probe did not survive the record.
+    assert {c["criterion"]: c["verdict"] for c in rec["per_criterion"]}["holds"] == "undecidable"
 
 
 def test_a_verdict_with_no_reproducible_probe_is_refused():
@@ -436,8 +444,6 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     REWORKING and escalates a finished root at the iteration limit. The scratch still exists and is
     still per-validation; it is offered BY NAME, for copies.
     """
-    import pathlib
-
     project = tmp_path / "project"
     project.mkdir()
     (project / "sum.py").write_text("print(42)", encoding="utf-8")
@@ -472,8 +478,6 @@ def test_internal_model_calls_start_no_mcp_server(monkeypatch):
     The window is the visible half. The other half is why hiding it would have been the wrong fix:
     these calls need no gfso tools, and a VALIDATOR holding them could sign the graph it is judging
     (§14.5 verifier ≠ executor). `--strict-mcp-config` with no `--mcp-config` starts nothing."""
-    from gfso.adapters.llm.headless import HeadlessClaudeLLM
-
     seen = {}
 
     class _P:
@@ -497,15 +501,13 @@ def test_internal_model_calls_start_no_mcp_server(monkeypatch):
         def close(self):
             pass
 
-    import subprocess as _sp
-    monkeypatch.setattr(_sp, "Popen", _P)
+    monkeypatch.setattr(subprocess, "Popen", _P)
     # The CLI's PRESENCE is not what is under test, and its absence must not decide the verdict:
     # `shutil.which` returning None degrades the provider to a stub that starts no process at all,
     # so no argv is ever built and the flag below is read off an empty list — the assertion then
     # reports a missing pin where the real defect is a missing binary. That is how this test read on
     # a machine with `claude` installed (green) and on a CI runner without it (red), for one and the
     # same correct code. Pinning `which` makes the argv real on both.
-    import gfso.adapters.llm.headless as _headless
     monkeypatch.setattr(_headless.shutil, "which", lambda cmd: cmd)
     llm = HeadlessClaudeLLM(model="haiku", claude_cmd="claude")
     try:
@@ -759,3 +761,86 @@ def test_a_refuted_criterion_survives_the_under_probing_rule():
     assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
     assert T.get_verdict(e, "n1")["verdict"] == "FAIL"      # …and it is on the record, not discarded
     e.stop()
+
+
+def _roster_of(monkeypatch, entries: dict):
+    """The server-wide roster, stubbed — the suite never writes roles into a shared file."""
+    class _Reg:
+        """The roster as the instrument uses it — both questions, because a stub that answers only
+        the easy one turns a real call into an AttributeError in the tests and nowhere else."""
+
+        def get(self, agent_id):
+            return entries.get(agent_id)
+
+        def validator_for(self, executor_id, project=None):
+            return next((aid for aid, cfg in entries.items()
+                         if cfg.get("kind") == "llm-validator"), None)
+    monkeypatch.setattr(TL, "_roster", lambda engine=None: _Reg())
+    return _Reg()
+
+
+def test_the_workdir_defaults_to_where_the_nodes_Del_is_registered(tmp_path, monkeypatch):
+    """The instrument asked the CALLER for an answer the server already held.
+
+    Measured on the human door 2026-08-22: `validate_result(<node>)` on a node whose Del is a
+    registered role refused with "the working directory None is empty (or absent)" — and the refusal
+    itself said to go read `list_agents`, i.e. to look up in the roster what the roster would have
+    answered here. The tester copied the directory in by hand, and the hand-passed argument then hit
+    a crash: the seam was unpassable for the length of one lookup nobody made."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sum.py").write_text("print(42)", encoding="utf-8")
+
+    e = _eng()
+    _delivered_node(e)                                     # Del = alice
+    _roster_of(monkeypatch, {"alice": {"kind": "llm-executor", "workdir": str(project)}})
+    llm = _ValidatorLLM(_fenced({"verdict": "PASS", "failed_criteria": [], "per_criterion": [
+        {"criterion": "flush", "verdict": "pass", "evidence": "ran it", "behaviours": ["nail head is flush"],
+         "probe": [{"command": "python sum.py", "expect": "42", "behaviour": "nail head is flush"}]},
+        {"criterion": "holds", "verdict": "pass", "evidence": "ran it", "behaviours": ["picture hangs on it"],
+         "probe": [{"command": "python sum.py", "expect": "42", "behaviour": "picture hangs on it"}]}]}))
+    monkeypatch.setattr(TL, "llm_factory", lambda model: llm)
+
+    out = TL.validate_result(e, "n1")                       # no workdir: the roster has it
+    assert "error" not in out, out.get("error")
+    assert out["verdict"] == "PASS"
+    assert llm.seen["cwd"] == str(project), "the validator was opened away from the delivery"
+    e.stop()
+
+
+def test_the_refusal_stands_when_the_roster_has_no_answer_either(tmp_path, monkeypatch):
+    """Defaulting is a lookup, not a guess: with nothing registered for the Del — or a role holding
+    no workdir — there is genuinely nothing to point the judge at, and the refusal is the answer."""
+    e = _eng()
+    _delivered_node(e)
+    _roster_of(monkeypatch, {})                             # alice is a person: unlisted
+    out = TL.validate_result(e, "n1")
+    assert out["verdict"] is None
+    assert "empty" in out["error"] and "not the work" in out["error"]
+    assert "do not send the node to rework" in out["error"]
+
+    _roster_of(monkeypatch, {"alice": {"kind": "llm-executor"}})   # registered, no workdir
+    assert TL.validate_result(e, "n1")["verdict"] is None
+    e.stop()
+
+
+def test_an_unreadable_delivery_accuses_nobody(monkeypatch, tmp_path):
+    """No pre-image means NOTHING can be said about strays — not that there were none, and certainly
+    not that every file present is one.
+
+    The pre-image was an empty set on failure, so an unreadable directory turned every pre-existing
+    file in the delivery into something "the judge left behind" — the exact false accusation this
+    comparison exists to prevent, inverted (found while naming the swallowed failures, 2026-09-02).
+    """
+    (tmp_path / "already_here.py").write_text("x = 1", encoding="utf-8")
+    _real = Path.iterdir
+    monkeypatch.setattr(Path, "iterdir",
+                        lambda self: (_ for _ in ()).throw(OSError("gone"))
+                        if str(self) == str(tmp_path) else _real(self))
+    scratch, before = TL._judging_place("n1", str(tmp_path))
+    assert before is None, "an unreadable pre-image is UNKNOWN, not empty"
+
+    monkeypatch.undo()
+    out: dict = {}
+    TL._strays_left_behind(None, "n1", str(tmp_path), None, out, lambda *_: None)
+    assert "strays" not in out and not out, "with no pre-image, the honest answer about strays is silence"

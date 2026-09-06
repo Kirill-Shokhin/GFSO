@@ -133,7 +133,13 @@ def _root_name(node) -> str:
 # time the plan runs. S1 re-snaps them: run the file once, read "X -> Y" and set Y.
 BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
               "monkey_patch": 0, "foreign_path": 0,
-              "duck_private": 0, "getattr_declared": 24,
+              "duck_private": 0,
+              # 2 (2026-09-03, S7): a `getattr` with a default over a DECLARED field says the
+              # field might be absent — a false statement about the type, and the reason this
+              # rule exists. The generation triple (iteration/reopens/revisions) was read that
+              # way in six places, each with its own defaults; `generation_of_task` owns it.
+              # The two left guard a task that really can be None, and say so as a None check.
+              "getattr_declared": 2,
               # The SIZE of each allowlist is itself a number. Without it a step that publishes an
               # operation and deletes 21 reach-ins moves nothing the ratchet can see: every one of
               # those sites is ALLOWED, so `found` stays empty before and after (measured — the
@@ -194,7 +200,10 @@ BASE_LITERAL = {# 2 and 1: V's two values are `Verdict`, a StrEnum whose members
                 "root": 2,
                 # 2, not 4: the roster and the database file are derived in `gfso.config` now, and
                 # the two remaining spellings are that owner and the doctor line that reports it.
-                "agents.json": 2, "gfso.db": 2, "default": 3,
+                "agents.json": 2, "gfso.db": 1,
+                # 2: the single-project `/api/projects` answer asked `gfso.config.DEFAULT_PROJECT`
+                # instead of spelling the name a third time (2026-09-02)
+                "default": 2,
                 # 1: the agent's standing identity is `gfso.config.agent_id()`; what is left is the
                 # example that names its own actor in prose.
                 "agent": 1}

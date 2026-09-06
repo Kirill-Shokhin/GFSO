@@ -2,18 +2,31 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import hashlib
+import inspect
 import json
 import os
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from gfso import __version__
+from gfso.core.graph import DIAGNOSTIC_MEANS, Q_MEANS
+from gfso.tools import PARAM_CHOICES
+from gfso.core.handlers import solver_findings
+from gfso.core.handlers.recommend import suggest_criteria
+from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
 from gfso.core.types import TaskId, AgentId, State
+from gfso.delegate import default_agents
+from gfso.runtime import data_dir
+from gfso.serverctl import home as _home
 
 # Stamped ONCE, when this process imports its code — not recomputed per request, because the point
 # is to report what is LOADED, not what is on disk now. `gfso up` compares the two and restarts on
@@ -42,11 +55,59 @@ from .models import (
 
 WEB_DIR = Path(__file__).parent.parent / "web"
 
+#: How many project names `/api/projects` returns when the caller does not cap it. The whole list is
+#: a DOWNLOAD, not an answer: this installation had 354 names plus a `last_active` entry for each —
+#: ~19 KB, several thousand tokens — to settle "does my project exist" (measured 2026-09-01). Fifty
+#: is twice the shipped picker's own window (`web/index.html` shows 25), so the picker is untouched;
+#: `limit=0` lifts the cap for a caller that genuinely wants everything.
+PROJECT_PAGE = 50
+
+
+def _scope_namer(app, req_project):
+    """ONE owner for "which project is this request about" — the `?project=` tab scope, or the
+    registry's server-wide ACTIVE project when the caller named none.
+
+    It was born inside the money total (`/api/usage`) because a person read $0.54 for a run that had
+    spent $7.08 and only found out by passing the parameter. The ACTS have the same hole and it
+    costs more there: the fallback is server-wide, so a `next_step` with no project returns a node
+    from somebody else's graph and a typo mutates a stranger's. Two answers to "whose graph" would
+    be two chances to disagree, so the acts ask this one rather than computing their own."""
+    def _scope_name() -> str:
+        if app.state.registry:
+            return req_project.get() or app.state.registry.active
+        return DEFAULT_PROJECT
+    return _scope_name
+
+
+def _naming_the_scope(out, project: str | None):
+    """Stamp the project an act answered about onto its own body — including a REFUSAL, which is the
+    body a typo produces and therefore the one that needs the scope most. Never overwrites a
+    `project` the verb itself said, and says nothing when there is no graph to name."""
+    if project and isinstance(out, dict) and "project" not in out:
+        return {**out, "project": project}
+    return out
+
+
+def _projects_page(listing: dict, prefix: str, limit: int) -> dict:
+    """The project list as an ANSWER rather than a download: the names matching `prefix`, capped at
+    `limit`, with `last_active` narrowed to the same page. Nothing is deleted here — those DB files
+    are the provenance of past measurements — the door just learned to answer a narrow question
+    narrowly. `active` survives both filters: a caller that cannot see where it is standing cannot
+    tell a scoped answer from an ambient one. `total` counts what MATCHED, before the cap, so a
+    client can still say how many names it did not receive."""
+    matched = [n for n in listing["projects"] if n.startswith(prefix)]
+    page = matched[:limit] if limit > 0 else matched
+    stamps = listing.get("last_active") or {}
+    return {**listing, "projects": page, "total": len(matched),
+            **({"last_active": {n: stamps[n] for n in page if n in stamps}} if stamps else {})}
+
 
 def _build_mcp(engine: Engine):
     """MCP server + its streamable-HTTP ASGI app over the SAME Engine instance.
     Returns (mcp, asgi) or (None, None) if the MCP SDK isn't installed (it is a required dependency — reinstall the package)."""
     try:
+        # LEFT: the MCP SDK is optional at RUNTIME here — this door serves HTTP with or without it,
+        # and the except below is what turns a missing SDK into (None, None) instead of no server.
         from gfso.mcp.server import create_server
         mcp = create_server(engine)  # raises RuntimeError if the SDK is absent
     except (RuntimeError, ImportError):
@@ -60,8 +121,6 @@ def _build_mcp(engine: Engine):
 def _start_reaper(app, grace: float = 12.0, interval: float = 3.0) -> None:
     """Self-shutdown loop: once ANY lease has existed, zero live leases for `grace` seconds ⟹ the
     last Claude session is gone → exit (the next session's connect.py respawns a fresh server)."""
-    import threading, time
-
     def _loop():
         had_any = False
         while True:
@@ -80,15 +139,73 @@ def _start_reaper(app, grace: float = 12.0, interval: float = 3.0) -> None:
     threading.Thread(target=_loop, daemon=True).start()
 
 
-def _mount_acts(app, _e, _req_project) -> None:
+def _tool_index() -> dict:
+    """The verb registry as an answer, not as knowledge a caller has to already have.
+
+    The door is ONE generated route (`POST /api/run/{tool}`), so an OpenAPI reader sees an untyped
+    passthrough and nothing else: a person arriving at this port with curl had to guess every verb
+    name and every parameter from error strings, and said so (HTTP door, 2026-09-02). The registry
+    already knows all of it.
+    """
+    out = []
+    for name, fn in sorted(_tools.TOOLS.items()):
+        params = [p for p in list(inspect.signature(fn).parameters.values())[1:]
+                  if not p.name.startswith("_")]
+        out.append({"tool": name, "post": f"/api/run/{name}",
+                    "required": [p.name for p in params if p.default is inspect.Parameter.empty],
+                    "optional": [p.name for p in params if p.default is not inspect.Parameter.empty],
+                    "project": name not in _tools.PROJECTLESS_VERBS,
+                    "what": ((fn.__doc__ or "").strip().splitlines() or [""])[0][:200],
+                    # …AND THE WHOLE CONTRACT, not its first line. The catalogue truncated mid
+                    # sentence, so the closed enums a verb takes (`kind`, `reason`) were discoverable
+                    # only by being refused — two round trips per verb, where the refusal itself
+                    # names the legal values perfectly (HTTP door, 2026-09-02).
+                    # …AND THE CLOSED SETS AS DATA. A caller building against this catalogue had to
+                    # parse the prose or be refused once per verb to learn them.
+                    "choices": {q.name: v for q, v in
+                                ((q, PARAM_CHOICES.get(name, {}).get(q.name)) for q in params)
+                                if v},
+                    "doc": (fn.__doc__ or "").strip()})
+    return {"tools": out, "count": len(out),
+            "how": "POST /api/run/<tool> with the arguments as a JSON object; `project` rides on "
+                   "every verb that is about a graph."}
+
+
+def _mount_acts(app, _e, _req_project, _scope_name) -> None:
     """The ACTS: the whole verb registry over HTTP, and the criteria suggester.
 
     A read answers about the graph; an act changes it, and they had one body between them.
     This is the door every verb is generated onto — `gfso.tools_llm.TOOLS` — which is why
     it is one mounting rather than a route each."""
+    @app.get("/api/tools")
+    def list_tools():
+        """Every verb this door takes, with its parameters and its first line of documentation."""
+        return _tool_index()
+
     # above; only the action/mutation surface is generated. body = the tool's kwargs as JSON.
     @app.post("/api/run/{tool}")
     def run_tool(tool: str, body: dict = Body(default={})):
+        """Run one verb of the registry — `GET /api/tools` names them all — with the JSON body as
+        its arguments; that body is the whole authoring surface (create, decompose, signal,
+        validate).
+
+        `project` may ride in the body or the query string; without it the scope is the server-wide
+        ACTIVE project, and the answer says which graph it was about.
+
+        STATUS CODES, said as they ARE rather than as this sentence used to claim. A call the verb
+        could not be given AS WRITTEN — a malformed payload, a value of the wrong shape — is a 422
+        carrying the verb's own refusal dict. A call the verb UNDERSTOOD and answered NO to is a
+        **200**, with the no in the body (`accepted: false` on `signal`, `recorded: false` on
+        `record_verdict`, `refused: true` elsewhere): the engine was asked a question and gave its
+        answer, which is a successful call about an unsuccessful act. That is a deliberate position
+        and it is defended; what was NOT true is the promise this docstring made, and four testers
+        across three waves read the promise, wrote `raise_for_status()`, and were right to call the
+        result a contradiction (waves 22–25). 404 is an unknown verb or an absent project, 500 a
+        verb that broke.
+
+        The practical rule for a client: branch on the BODY, never on the status. `accepted`,
+        `recorded` and `refused` are the fields that carry a refusal, and every verb that can refuse
+        sets one of them."""
         # `project` in the BODY as well as the query string — the third spelling of one thing. The
         # CLI takes `project=<name>`, `gfso log` takes `--project`, and this door took it only as a
         # query parameter, so a caller who put it where every other argument goes had it passed to
@@ -98,7 +215,11 @@ def _mount_acts(app, _e, _req_project) -> None:
             _req_project.set(_in_body)      # the middleware resets its own token after the request
         fn = _tools.TOOLS.get(tool)
         if fn is None:
-            raise HTTPException(404, f"unknown tool '{tool}'")
+            raise HTTPException(404, (
+                f"unknown tool '{tool}' — it is not on this door; use {_ELSEWHERE[tool]}"
+                if tool in _ELSEWHERE else
+                f"unknown tool '{tool}'. `GET /api/tools` lists every verb this door takes."))
+        _refuse_bad_arguments(tool, fn, body)
         try:
             # A ROSTER VERB IS NOT ABOUT A GRAPH. It still needs an engine object to be dispatched
             # with, so it takes whichever one is at hand rather than refusing for a project that does
@@ -108,6 +229,12 @@ def _mount_acts(app, _e, _req_project) -> None:
         except KeyError as ex:
             raise HTTPException(404, f"no such project {ex.args[0]!r} — `gfso projects` lists them; "
                                      f"`create_task` or `auto_decompose` starts a new one") from None
+        # WHOSE GRAPH THIS ANSWER IS ABOUT. `project` is optional here and falls back to the
+        # server-wide ACTIVE project — deliberate for single-project use, and silent: measured on the
+        # human door, a `next_step` with no project handed back a node from another session's graph
+        # and a refused call answered about that graph too, with nothing in either body saying whose.
+        # A roster verb names none, because it is about no graph (`PROJECTLESS_VERBS`).
+        scope = None if tool in _tools.PROJECTLESS_VERBS else _scope_name()
         try:
             out = fn(e, **body)
             # A REFUSAL KEEPS ITS STATUS AND ITS SHAPE. The verbs answer rather than raise (one
@@ -124,29 +251,18 @@ def _mount_acts(app, _e, _req_project) -> None:
             # and the two differing here is correct, not a drift (the typed-records register read it
             # as one; the distinction is the reason this branch tests `refused`, not `error`).
             if isinstance(out, dict) and (out.get("refused") or out.get("unexpected")):
-                from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=500 if out.get("unexpected") else 422,
-                                    content=json.loads(json.dumps(out, default=str)))
-            return out
+                                    content=json.loads(json.dumps(_naming_the_scope(out, scope),
+                                                                  default=str)))
+            return _naming_the_scope(out, scope)
         except TypeError as ex:
             # A call that does not fit the verb is answered in the verb's OWN terms. Python says
             # "signal() missing 1 required positional argument: 'source'", which hands a user the
             # interpreter's view of a function they never called and no way to know that `source` is
             # who signs the signal. The door knows the signature; it can say what is missing, what
-            # else the verb takes, and stay silent about the implementation.
-            import inspect
-            sig = inspect.signature(fn)
-            params = [p for p in list(sig.parameters.values())[1:] if not p.name.startswith("_")]
-            required = [p.name for p in params if p.default is inspect.Parameter.empty]
-            missing = [n for n in required if n not in (body or {})]
-            if missing:
-                optional = [p.name for p in params if p.default is not inspect.Parameter.empty]
-                raise HTTPException(422, f"{tool} needs {', '.join(missing)}"
-                                         + (f" (it also takes {', '.join(optional)})" if optional else ""))
-            unknown = [k for k in (body or {}) if k not in {p.name for p in params}]
-            if unknown:
-                raise HTTPException(422, f"{tool} does not take {', '.join(unknown)} — it takes "
-                                         f"{', '.join(p.name for p in params)}")
+            # else the verb takes, and stay silent about the implementation. The shape refusals
+            # themselves now run BEFORE the engine is resolved (`_refuse_bad_arguments`), so what
+            # reaches here is a TypeError from inside the verb rather than from its signature.
             raise HTTPException(422, str(ex))
         except (ValueError, KeyError) as ex:
             raise HTTPException(422, str(ex))
@@ -157,7 +273,7 @@ def _mount_acts(app, _e, _req_project) -> None:
 
     @app.post("/api/suggest-criteria", response_model=SuggestCriteriaResponse)
     def suggest_criteria_endpoint(req: SuggestCriteriaRequest):
-        from gfso.core.handlers.recommend import suggest_criteria
+        """Criteria the engine would suggest for a description — a read, it authors nothing."""
         e: Engine = _e()
         results = suggest_criteria(req.description, e._llm)
         return SuggestCriteriaResponse(
@@ -165,7 +281,7 @@ def _mount_acts(app, _e, _req_project) -> None:
         )
 
 
-def _mount_ledgers(app, _e) -> None:
+def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
     """What the RUN cost and what it did: usage, metrics, the audit and pipeline logs.
 
     A different read from "what does this node look like" — these are about the run rather
@@ -177,7 +293,6 @@ def _mount_ledgers(app, _e) -> None:
         UI renders the product's table instead of a copy of it — the copy drifted (CHECK-6 shown as
         FM-1 where the canon routes it to FM-7). Guarded against the canon in
         `tests/test_canon_check_map.py`."""
-        from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
         return {"check_to_fm": CHECK_TO_FM, "fm_label": FM_LABEL}
 
     @app.get("/api/usage")
@@ -200,22 +315,21 @@ def _mount_ledgers(app, _e) -> None:
             out["calls"] = e._graph._storage.get_usage()
         return out
 
-    def _scope_name() -> str:
-        """The project this request is answering about — the `?project=` tab scope, or the
-        registry's server-wide ACTIVE project when the caller named none."""
-        if app.state.registry:
-            return _req_project.get() or app.state.registry.active
-        return DEFAULT_PROJECT
-
     @app.get("/api/metrics", response_model=MetricsOut)
     def get_metrics():
+        """The five quality metrics of this project's graph — q_T, q_D, q_V, q_Dep, q_Del — beside
+        `false_fail_share`, a diagnostic that is deliberately NOT part of Q (§24.5; high means
+        over-strict validation). A null is ⊥: the population was empty, not a score of zero."""
         m = _e().metrics()
-        return MetricsOut(**m)
+        return MetricsOut(**m, means={k: v for k, v in {**Q_MEANS, **DIAGNOSTIC_MEANS}.items() if k in m})
 
     # === Audit ===
 
     @app.get("/api/audit", response_model=list[AuditEntryOut])
     def get_audit(task_id: Optional[str] = None):
+        """The signal trail, oldest first: what was sent, who signed it, the states it moved between
+        — and the attempts the FSM REFUSED, which appear here with `rejected` set and nowhere
+        else in a read. `task_id` narrows it to one node; without it, the whole project."""
         e: Engine = _e()
         tid = TaskId(task_id) if task_id else None
         return [audit_to_out(a) for a in e.audit_log(tid)]
@@ -224,6 +338,9 @@ def _mount_ledgers(app, _e) -> None:
 
     @app.get("/api/pipeline")
     def get_pipeline(limit: int = _config.PIPELINE_PAGE):
+        """What the long verbs said while they ran — decomposition rounds, review, validation —
+        persisted, oldest first, the last `limit` entries. Live token ticks are dropped at the
+        writer, so this is the durable narrative of a run rather than the WS feed replayed."""
         return _e().pipeline_log(limit)
 
 
@@ -232,6 +349,10 @@ def _mount_plan_reads(app, _e) -> None:
     its holes — as against the nodes and the graph, which are the other kind of read."""
     @app.get("/api/tasks/{task_id}/projection", response_model=ProjectionOut)
     def get_projection(task_id: str):
+        """The node's decomposition as the markdown a critic reads: goal, children with their
+        criteria and coverage, dependency seams, ACCEPTED_RISKS, the structural checks already
+        run. A read about the PLAN, not about the work — nothing here says whether anything was
+        executed."""
         e: Engine = _e()
         if e.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
@@ -241,6 +362,10 @@ def _mount_plan_reads(app, _e) -> None:
 
     @app.get("/api/tasks/{task_id}/critique")
     def get_critique(task_id: str):
+        """The Level-2 review of this node's plan as stored: `verified` is whether the plan
+        currently carries the gate, `critique` the checker's findings. A null critique means no
+        review has run — not a review that found nothing; the two are the same colour to anything
+        that reads only the findings."""
         e: Engine = _e()
         t = e.get_task(TaskId(task_id))
         if t is None:
@@ -251,7 +376,9 @@ def _mount_plan_reads(app, _e) -> None:
 
     @app.get("/api/tasks/{task_id}/solver", response_model=SolverOut)
     def get_solver(task_id: str):
-        from gfso.core.handlers import solver_findings
+        """The DETERMINISTIC half of plan review (§15.3): the structural checks this node fails
+        right now, one finding each, computed without a model call. Empty means every applicable
+        check passed — unlike `critique`, where empty can also mean nobody looked."""
         e: Engine = _e()
         if e.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
@@ -265,7 +392,109 @@ def _mount_plan_reads(app, _e) -> None:
         return e.graph_holes(TaskId(root_id) if root_id else None)
 
 
-def _mount_reads(app, _e, _req_project) -> None:
+def _named(tool: str, p) -> str:
+    """A parameter as the door should print it — with its CHOICES when the set is closed.
+
+    `revise` takes a `reason`, the hint read "(it also takes reason)", and the field looks like free
+    text — so a caller wrote a sentence and was refused by an enum they had no way to know existed
+    (HTTP door, wave 26, 2026-09-06). The words are already owned once, in `gfso.tools.PARAM_CHOICES`,
+    which this door already imports for its schema; the defect was only that the REFUSAL did not use
+    what the schema knows. A second table here would have been the same defect in a new place.
+    """
+    choices = PARAM_CHOICES.get(tool, {}).get(p.name)
+    return f"{p.name}: {'|'.join(choices)}" if choices else p.name
+
+def _refuse_bad_arguments(tool: str, fn, body: dict) -> None:
+    """Refuse a call the verb cannot take — BEFORE anything is created for it.
+
+    This check already existed, in the TypeError handler around the call, which meant it ran after
+    the engine had been resolved and the project brought into existence. Measured 2026-09-02: a
+    malformed `create_task` answered 422 and left the project behind, so a caller getting the payload
+    wrong three times accumulated three projects — the same mechanism that had put 315 of them on
+    this installation. A check that runs after the side effect is not a guard.
+    """
+    sig = inspect.signature(fn)
+    params = [p for p in list(sig.parameters.values())[1:] if not p.name.startswith("_")]
+    required = [p.name for p in params if p.default is inspect.Parameter.empty]
+    if missing := [n for n in required if n not in (body or {})]:
+        optional = [p.name for p in params if p.default is not inspect.Parameter.empty]
+        raise HTTPException(422, f"{tool} needs {', '.join(missing)}"
+                                 + (f" (it also takes {', '.join(_named(tool, p) for p in params if p.default is not inspect.Parameter.empty)})"
+                                    if optional else ""))
+    if unknown := [k for k in (body or {}) if k not in {p.name for p in params}]:
+        raise HTTPException(422, f"{tool} does not take {', '.join(unknown)} — it takes "
+                                 f"{', '.join(p.name for p in params)}")
+
+
+def _engine_for(registry, bound: Engine, project: Optional[str], create: bool) -> Engine:
+    """Resolve a request's engine: the ?project= scope through the registry, or the single bound one.
+
+    A read may not author a graph, so an unknown name comes back as a refusal rather than as an
+    empty graph under that name — which reads as the caller's own work having vanished.
+    """
+    if not registry:
+        return bound
+    try:
+        return registry.engine(project, create=create)
+    except KeyError as unknown:
+        raise _no_such_project(unknown.args[0])
+
+
+#: Verbs that exist on ANOTHER door, and where they are on this one. A bare "unknown tool" for a verb
+#: a caller has genuinely seen elsewhere reads as "this product cannot do that" — measured on the HTTP
+#: door 2026-09-02, where `delete_project` is on the MCP roster and 404s here, while the capability
+#: sits one route away. These verbs are session-scoped by nature (they refuse to delete or switch the
+#: ground the CALLER stands on, which needs a session), so they belong to that binding; what is owed
+#: is not the verb but the sentence that stops the search.
+_ELSEWHERE = {
+    "delete_project": "DELETE /api/projects/{name}",
+    "use_project": "POST /api/projects/use  {\"name\": \"…\"} — or just pass ?project= per call, "
+                   "which is what this door scopes on",
+}
+
+
+def _no_such_project(name: str) -> HTTPException:
+    """The refusal for a project this server does not have — named, with where the real list is.
+
+    A read may not author a graph, so a mistyped name has to come back as a refusal rather than as
+    an empty graph under that name, which reads as the caller's own work having vanished.
+    """
+    return HTTPException(
+        404, f"no project named '{name}' on this server. A read does not create one — check the "
+             f"name against `GET /api/projects`, or author it with a verb that builds a graph "
+             f"(`create_task`, `auto_decompose`).")
+
+
+def _graph_for_drawing(e: Engine) -> GraphOut:
+    """The project shaped for a picture: nodes with state and Del, parent edges, Dep edges.
+
+    Shaping, not mounting — it sat inside the read that serves it, which is why the
+    function that registers the reads was the size of the reads themselves.
+    """
+    all_tasks = e.all_tasks()
+    nodes = []
+    edges = []
+    children_set = set()
+    for t in all_tasks:
+        if t.parent_id:
+            children_set.add(t.parent_id)
+    for t in all_tasks:
+        has_children = t.id in children_set or bool(e.get_children(t.id))
+        nodes.append(GraphNode(
+            id=t.id, label=(t.spec.name or t.spec.description[:_config.LABEL_CHARS]),
+            state=t.state.name, assignee=t.assignee,
+            parent_id=t.parent_id, has_children=has_children,
+            done_reason=t.done_reason.name if t.done_reason else None,
+            closure=e.closure_of(t.id),
+        ))
+        if t.parent_id:
+            edges.append(GraphEdge(source=t.parent_id, target=t.id, type="parent-child"))
+    for dep in e.get_dependencies():
+        edges.append(GraphEdge(source=dep.from_id, target=dep.to_id, type="dependency", discovered=dep.discovered))
+    return GraphOut(nodes=nodes, edges=edges)
+
+
+def _mount_reads(app, _e, _req_project, _scope_name) -> None:
     """Every READ of a graph: nodes, checks, review, holes, metrics, the two ledgers.
 
     `create_app` answered six different questions in one body of 270 statements — pages,
@@ -276,6 +505,9 @@ def _mount_reads(app, _e, _req_project) -> None:
 
     @app.get("/api/tasks", response_model=list[TaskOut])
     def list_tasks(state: Optional[str] = None, assignee: Optional[str] = None):
+        """The project's nodes, flat: all of them, or those in one `state` (a State name, e.g.
+        `EXECUTING`) or held by one `assignee`. `state` wins when both are given. Summary shape —
+        criteria, checks, audit and children come from the per-node read."""
         e: Engine = _e()
         if state:
             tasks = e.tasks_by_state(State[state])
@@ -287,6 +519,9 @@ def _mount_reads(app, _e, _req_project) -> None:
 
     @app.get("/api/tasks/{task_id}", response_model=TaskDetailOut)
     def get_task(task_id: str):
+        """One node with everything that hangs off it: its structural checks, the stored
+        recommendation, its full audit trail, its direct children. The read the UI's detail panel
+        is built from; an unknown id is a 404, never an empty body."""
         e: Engine = _e()
         t = e.get_task(TaskId(task_id))
         if t is None:
@@ -298,6 +533,7 @@ def _mount_reads(app, _e, _req_project) -> None:
         out = task_to_out(t)
         return TaskDetailOut(
             **out.model_dump(),
+            closure=e.closure_of(TaskId(task_id)),
             checks=[CheckResultOut.of(c) for c in checks],
             recommendation=RecommendationOut(suggestions=list(rec.suggestions)) if rec else None,
             audit=[audit_to_out(a) for a in audit],
@@ -307,15 +543,19 @@ def _mount_reads(app, _e, _req_project) -> None:
     # === Unified authoring surface: every gfso tool over HTTP (the SAME gfso.tools.TOOLS that MCP + CLI bind) ===
     # Adding an authoring verb = ONE Engine method + ONE gfso.tools entry → it appears HERE, on MCP, and on the
     # CLI with zero per-adapter edits (no duplicate route to keep in sync). Reads keep their bespoke typed routes
-    _mount_acts(app, _e, _req_project)
+    _mount_acts(app, _e, _req_project, _scope_name)
 
     # === Metrics ===
 
-    _mount_ledgers(app, _e)
+    _mount_ledgers(app, _e, _req_project, _scope_name)
 
 
     @app.get("/api/tasks/{task_id}/actions", response_model=list[ActionOut])
     def get_actions(task_id: str, role: Optional[str] = None):
+        """Which signals this node admits in the state it is in — narrowed, when `role` is given, to
+        the ones that role may send (executor = the node's assignee, issuer = its parent's).
+        Empty is an answer, not a gap: a settled node admits nothing. System signals (TIMEOUT)
+        are never offered."""
         e: Engine = _e()
         if e.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
@@ -330,27 +570,11 @@ def _mount_reads(app, _e, _req_project) -> None:
 
     @app.get("/api/graph", response_model=GraphOut)
     def get_graph():
-        e: Engine = _e()
-        all_tasks = e.all_tasks()
-        nodes = []
-        edges = []
-        children_set = set()
-        for t in all_tasks:
-            if t.parent_id:
-                children_set.add(t.parent_id)
-        for t in all_tasks:
-            has_children = t.id in children_set or bool(e.get_children(t.id))
-            nodes.append(GraphNode(
-                id=t.id, label=(t.spec.name or t.spec.description[:_config.LABEL_CHARS]),
-                state=t.state.name, assignee=t.assignee,
-                parent_id=t.parent_id, has_children=has_children,
-                done_reason=t.done_reason.name if t.done_reason else None,
-            ))
-            if t.parent_id:
-                edges.append(GraphEdge(source=t.parent_id, target=t.id, type="parent-child"))
-        for dep in e.get_dependencies():
-            edges.append(GraphEdge(source=dep.from_id, target=dep.to_id, type="dependency", discovered=dep.discovered))
-        return GraphOut(nodes=nodes, edges=edges)
+        """The whole project shaped for drawing: every node with its state and Del, parent-child
+        edges, and dependency edges — `discovered` marking the ones execution found rather than
+        the plan declaring. `has_children` separates a leaf from a node whose children merely are
+        not drawn yet."""
+        return _graph_for_drawing(_e())
 
 def _mount_pages(app) -> None:
     """The page and its assets — the human door's own surface.
@@ -363,18 +587,26 @@ def _mount_pages(app) -> None:
 
     @app.get("/")
     async def index():
+        """The human door itself: the single page, which drives this same API and watches
+        `/ws/events`."""
         return FileResponse(WEB_DIR / "index.html")
 
     @app.get("/tokens.css")
     async def tokens_css():
+        """The brand tokens — palette, type scale, fonts — that the UI's stylesheet is written
+        against. The single source of truth for colour: `gfso.css` requires this loaded first."""
         return FileResponse(WEB_DIR / "tokens.css", media_type="text/css")
 
     @app.get("/gfso.css")
     async def gfso_css():
+        """The UI's own styles, expressed entirely in the tokens above, so recolouring the product
+        is an edit to `tokens.css` and never to this."""
         return FileResponse(WEB_DIR / "gfso.css", media_type="text/css")
 
     @app.get("/icon.svg")
     async def icon_svg():
+        """The page's icon, served from this origin like every other asset — the door depends on no
+        external host."""
         return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml")
 
 
@@ -388,6 +620,11 @@ def _mount_events(app) -> None:
 
     @app.websocket("/ws/events")
     async def websocket_events(websocket: WebSocket):
+        """Live push of every write the engine makes to the graph this socket named (`?project=`,
+        the same tab scope the HTTP calls carry — the middleware covers HTTP only, so it is read
+        here by hand): `transition` for an accepted signal, `reject` for a refused one,
+        `pipeline` for what a running verb reports. The callbacks are unregistered on disconnect,
+        so a dropped tab leaves nothing subscribed."""
         await websocket.accept()
         # the tab's project rides the WS url too (middleware covers HTTP only)
         proj = websocket.query_params.get("project") or None
@@ -398,18 +635,25 @@ def _mount_events(app) -> None:
         app.state.ws_clients.add(q)          # join the global broadcast set (project-list events)
 
         def on_transition(tid, old, new, sig):
+            """An accepted signal as the frame the page redraws from: the node, both states, and
+            what moved it."""
             loop.call_soon_threadsafe(q.put_nowait, {
                 "type": "transition", "task_id": str(tid),
                 "old_state": old.name, "new_state": new.name, "signal": sig.name,
             })
 
         def on_reject(tid, sig, state):
+            """A signal the FSM refused — pushed as an event of its own, because the state that
+            refused it is the whole answer to why nothing happened, and a watcher would otherwise
+            see only silence."""
             loop.call_soon_threadsafe(q.put_nowait, {
                 "type": "reject", "task_id": str(tid),
                 "signal": sig.name, "state": state.name,
             })
 
         def on_info(source, message):
+            """What a running verb reports about its own progress, tagged with the stage that said
+            it. Not a graph change: nothing here means the graph moved."""
             loop.call_soon_threadsafe(q.put_nowait, {
                 "type": "pipeline", "source": source, "msg": message,
             })
@@ -441,12 +685,20 @@ def _mount_projects(app, _e) -> None:
     # === Projects (multi-project registry; single-project servers report just "default") ===
 
     @app.get("/api/projects")
-    def get_projects():
+    def get_projects(prefix: str = "", limit: int = PROJECT_PAGE):
+        """The projects a caller can stand in — filtered, because the full list is a download
+        (`_projects_page` carries the measurement and the meaning of `total`)."""
         reg = app.state.registry
-        return reg.list() if reg else {"active": "default", "projects": ["default"]}
+        return _projects_page(reg.list() if reg else
+                              {"active": DEFAULT_PROJECT, "projects": [DEFAULT_PROJECT]},
+                              prefix, limit)
 
     @app.post("/api/projects/use")
     def use_project(body: dict = Body(...)):
+        """Move the SERVER-WIDE active project — the fallback scope of every call that names no
+        `?project=`, so this changes what other sessions on this server get too, and a tab that
+        passes the parameter is unaffected. Creates the project on first use; answers with the
+        registry listing. 400 on a single-project server, 422 on a name the registry refuses."""
         reg = app.state.registry
         if reg is None:
             raise HTTPException(400, "single-project server (no registry)")
@@ -458,6 +710,9 @@ def _mount_projects(app, _e) -> None:
 
     @app.delete("/api/projects/{name}")
     def delete_project(name: str):
+        """Destroy a project irreversibly: its engine is stopped and its database file removed with
+        the whole history in it. Refused for `default` and for the ACTIVE project — switch away
+        first; deleting the ground you stand on is the misclick that refusal exists for."""
         reg = app.state.registry
         if reg is None:
             raise HTTPException(400, "single-project server (no registry)")
@@ -466,7 +721,7 @@ def _mount_projects(app, _e) -> None:
         except ValueError as ex:
             raise HTTPException(422, str(ex))
 
-def _mount_runtime(app, _e, _live_leases) -> None:
+def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
     """What THIS process is serving: its roster, a node's verdict, and the runtime panel.
 
     The panel is the measurement arm's only preflight — code fingerprint, switches, roster
@@ -474,10 +729,13 @@ def _mount_runtime(app, _e, _live_leases) -> None:
     keeps the process alive."""
     @app.get("/api/agents")
     def get_agents():
+        """The delegation roster: the executor roles registered on this server and what each may be
+        given. SERVER-WIDE — one file shared by every session and project, which is why the
+        answer carries its own `scope` line and why `project=` selects nothing here. Registration
+        is a verb, not this read."""
         # …and SAY that `project=` selects nothing here: the roster is one server-wide file, and a
         # caller who passed the parameter every other verb takes got other projects' roles back with
         # no way to tell an ignored argument from a shared registry (measured 2026-08-22).
-        from gfso.delegate import default_agents
         return {"agents": default_agents().list(),
                 "scope": "server-wide: this roster is shared by every session and project of the "
                          "one server. `project=` selects the GRAPH, never the roster."}
@@ -499,13 +757,15 @@ def _mount_runtime(app, _e, _live_leases) -> None:
         e: Engine = _e()
         if e.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
-        return _tools.TOOLS["get_verdict"](e, task_id)
+        # …and the scope rides with it, because ONE SHAPE means one shape: the verb's answer over
+        # `/api/run` now names the graph it read, and a read door that dropped that would be the
+        # same two-schemas defect this endpoint exists to have closed.
+        return _naming_the_scope(_tools.TOOLS["get_verdict"](e, task_id), _scope_name())
 
     def _hash_registry_file() -> str:
-        import hashlib as _h, os as _os
         path = str(_config.agents_path())
         try:
-            return _h.sha256(open(path, "rb").read()).hexdigest()[:12] if path else ""
+            return hashlib.sha256(open(path, "rb").read()).hexdigest()[:12] if path else ""
         except OSError:
             return "missing"
 
@@ -532,9 +792,6 @@ def _mount_runtime(app, _e, _live_leases) -> None:
         one — which is exactly how a measurement run stalled for 25 minutes waiting on a verdict
         that was never going to come.
         """
-        import os
-        from gfso.runtime import data_dir
-        from gfso.serverctl import home as _home
         return {"version": __version__,   # the RELEASE; `code_version` below is the source hash
                 # WHERE this process keeps state, and WHETHER the agent door is mounted. Both were
                 # invisible, and both are ways the live server can differ from the installation
@@ -564,6 +821,16 @@ def _mount_runtime(app, _e, _live_leases) -> None:
                 # inseparable by construction.
                 "validate_internal": _validate_internal_on(),
                 "l2_gate": _l2_gate_on(),
+                # …AND HOW MUCH OF ONE VERDICT RUNS AT ONCE. Acceptance is 65-70% of a run's spend on
+                # every measurement taken, and this dial is what decides how much of it happens in
+                # parallel — so a cost measured without it recorded is a cost measured against an
+                # unknown setting. Read from the owner, like the two switches above.
+                "validation_batch": _config.validation_batch(),
+                # …AND WHO THIS DOOR'S CALLER IS BY DEFAULT. The page shipped a box reading `pm` — an
+                # id registered nowhere — so a person's first Pass/Fail was signed as a stranger and
+                # refused, correctly and uselessly (read as a user, 2026-09-02). The identity the
+                # frontier computes `mine` against is the one a surface should offer.
+                "agent_id": _config.agent_id(),
                 # What CODE is actually serving: a running process holds its sources in memory, so an
                 # edited tree does not reach it and nothing about the port or the health check says so.
                 # Stamped once at startup — comparing it with the tree's is the whole staleness test.
@@ -576,7 +843,7 @@ def _mount_runtime(app, _e, _live_leases) -> None:
                 "agents_version": _agents_fingerprint()}
 
 
-def _mount_lifecycle(app, _e, engine) -> None:
+def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     """The server's own life: leases, shutdown, the roster and what this process is serving.
 
     One of the six questions `create_app` used to answer in a single body of 270
@@ -596,7 +863,6 @@ def _mount_lifecycle(app, _e, engine) -> None:
         whether a reconcile would interrupt somebody, so one stale entry made every later upgrade
         decline to take effect, permanently and silently.
         """
-        import time
         now = time.monotonic()
         for k, ts in list(app.state.leases.items()):
             if now - ts > LEASE_GRACE:
@@ -605,12 +871,18 @@ def _mount_lifecycle(app, _e, engine) -> None:
 
     @app.post("/api/lease")
     def renew_lease(body: dict = Body(...)):
-        import time
+        """Heartbeat one session's claim on this process (`id` in the body), good for about twelve
+        seconds. Everything that could interrupt somebody — `/api/shutdown`, the reaper, a
+        reconcile — counts these leases, so a client that stops calling is what makes the server
+        free to restart."""
         app.state.leases[str(body.get("id", "?"))] = time.monotonic()
         return {"ok": True, "sessions": len(_live_leases())}
 
     @app.delete("/api/lease/{lease_id}")
     def drop_lease(lease_id: str):
+        """Give up a session's claim now instead of waiting out its expiry, so the next reconcile is
+        not told the server is busy by a client that has already gone. Unknown ids are `ok`: this
+        says the lease is not held, not that it once was."""
         app.state.leases.pop(lease_id, None)
         return {"ok": True, "sessions": len(_live_leases())}
 
@@ -619,7 +891,6 @@ def _mount_lifecycle(app, _e, engine) -> None:
     # import this module, so the answer is handed down as a function. Same expiry as everything else
     # reads — one liveness computation, not a second one that can disagree with the 409 above.
     try:
-        from gfso.delegate import default_agents
         default_agents().set_owner_liveness(lambda client: client in _live_leases())
     except Exception:                       # a liveness probe is an improvement, never a boot blocker
         pass
@@ -636,7 +907,6 @@ def _mount_lifecycle(app, _e, engine) -> None:
         `gfso down` and a deliberate restart pass `force`; a routine reconcile does not, and gets
         told who is on it. A newly declared state applies to the NEXT start.
         """
-        import threading
         # ONE definition of "someone is on it": `_live_leases()` also prunes, so a killed client
         # cannot hold the server hostage forever. Two windows here meant two answers to the same
         # question — the endpoint said 90s while everything else said 12.
@@ -653,16 +923,23 @@ def _mount_lifecycle(app, _e, engine) -> None:
 
     # === Delegation roster (read view; registration = the MCP verb) ===
 
-    _mount_runtime(app, _e, _live_leases)
+    _mount_runtime(app, _e, _live_leases, _scope_name)
 
 
 def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI:
+    """Assemble the HTTP door: the pages, the reads, the acts, the ledgers, the lifecycle, the events.
+
+    An assembly and nothing else — every route lives in one of the mountings below, so this function
+    reads as the list of questions this door answers. `registry` turns on multi-project mode, which is
+    the isolation boundary: one port, one server, a graph per project.
+    """
     mcp, mcp_asgi = _build_mcp(registry or engine) if with_mcp else (None, None)
 
     lifespan = None
     if mcp is not None:
         @asynccontextmanager
         async def lifespan(_app):  # the streamable transport needs its session manager running
+            """Hold the MCP session manager open for as long as the sub-app is mounted."""
             async with mcp.session_manager.run():
                 yield
 
@@ -684,7 +961,6 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
 
     # Per-TAB project view: every request may carry ?project=<name> (the UI appends its tab's project
     # to all /api calls and the WS url) — two browser tabs can watch two projects simultaneously.
-    import contextvars
     _req_project: contextvars.ContextVar = contextvars.ContextVar("gfso_project", default=None)
 
     @app.middleware("http")
@@ -695,13 +971,18 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
         finally:
             _req_project.reset(token)
 
-    def _e(create: bool = True) -> Engine:
+    def _e(create: bool = False) -> Engine:
         """The request-time engine: the ?project= tab scope → the registry's ACTIVE project → the
-        single bound engine. `create=False` refuses a project that does not exist rather than
-        making one — a read may not author a graph."""
-        if app.state.registry:
-            return app.state.registry.engine(_req_project.get(), create=create)
-        return app.state.engine
+        single bound engine. A read may not author a graph, so this REFUSES an unknown project by
+        default and only the verbs that author pass `create=True`.
+
+        The registry has owned that rule since 315 projects accumulated out of typos, but every read
+        on this door called this with the old permissive default, so the rule protected the agent
+        door alone. Measured 2026-09-02: `GET /api/graph?project=<typo>` answered 200 with an empty
+        graph and left the project behind — which reads, to the person who made the typo, exactly
+        like their work having vanished. An unknown project is now a 404 that says so.
+        """
+        return _engine_for(app.state.registry, app.state.engine, _req_project.get(), create)
 
     # LOOPBACK ONLY. The shipped UI is served from this same origin, so a wildcard bought nothing —
     # and it cost everything: this server has no authentication (SECURITY.md), and `/api/run/{tool}`
@@ -722,7 +1003,11 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     _mount_pages(app)
 
     # === Task CRUD (create/mutate = /api/run/<tool>; reads stay bespoke) ===
-    _mount_reads(app, _e, _req_project)
+    # ONE owner for "whose graph is this about", built here and handed down: the acts stamp it on
+    # their answers, the ledgers scope their totals by it, and two of them would be two chances to
+    # disagree about which project a caller is standing in.
+    _scope_name = _scope_namer(app, _req_project)
+    _mount_reads(app, _e, _req_project, _scope_name)
 
     # === Lifecycle: session leases + self-shutdown (the shared-server automation) ===
     # Every connect.py bridge (one per Claude session) heartbeats a lease. Under GFSO_AUTOEXIT=1 the
@@ -731,7 +1016,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     # open kept showing the last graph it had seen, with no indication that the process behind it was
     # gone (the page only retries its socket), and an in-flight delegated executor was orphaned
     # rather than stopped. The server is a background service now: it stays until `gfso down`.
-    _mount_lifecycle(app, _e, engine)
+    _mount_lifecycle(app, _e, engine, _scope_name)
 
     _mount_projects(app, _e)
 

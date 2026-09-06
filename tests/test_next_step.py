@@ -2,13 +2,13 @@
 exactly what each directive says via real signals, and the graph must reach COMPLETE with children fully
 done before the parent aggregates. Proves the linearization + the completion gate — not a mock."""
 from gfso.engine import Engine
-from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 import json
 
 from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, Signal,
                              SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
+from tests.support import make_engine
+from gfso import tools as T
 
 
 def _sp(d, *c):
@@ -38,7 +38,7 @@ def _drive(e: Engine, root: TaskId, agent: AgentId, max_steps: int = 50):
 
 def test_next_step_drives_to_completion_children_before_parent():
     A = AgentId("exec")
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     # root accepted + decomposed into two leaf children
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b")), A); e.wait_idle()
@@ -63,7 +63,7 @@ def test_next_step_drives_to_completion_children_before_parent():
 def test_next_step_gate_blocks_early_completion():
     """While any node is unfinished, next_step never reports complete (the agent cannot stop early)."""
     A = AgentId("exec")
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
@@ -79,7 +79,7 @@ def test_next_step_respects_dependency_order():
     """A consumer leaf is not offered for EXECUTE until its producer has PASSED — next_step linearizes by the
     Dep edges, not just by tree position (BUG-5)."""
     A = AgentId("exec")
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
@@ -100,7 +100,7 @@ def test_next_step_re_accepts_reauthored_parent_first():
     """A re-authored parent drops back to OFFERED with its subtree retained → next_step RE-ACCEPTs it before
     driving the children (obs: else the graph finished all children while the root still showed 'accept')."""
     A = AgentId("exec")
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
@@ -113,7 +113,7 @@ def test_next_step_re_accepts_reauthored_parent_first():
 
 
 def test_next_step_no_graph_and_complete():
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     assert e.next_step()["complete"] is False                         # empty → not complete, asks to build
     A = AgentId("exec")
@@ -126,7 +126,7 @@ def test_next_steps_parallel_frontier():
     """v2: next_steps returns the FULL frontier; independent execute-leaves are marked parallel_ok, a
     dep-gated consumer is NOT offered, and the frontier shrinks/unblocks as producers PASS."""
     A = AgentId("exec")
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b"), ("rc", "c")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
@@ -159,7 +159,7 @@ def test_next_steps_parallel_frontier():
 def test_next_steps_orders_issuer_actions_before_executes():
     """Non-execute steps (validate) come ahead of execute-leaves in the frontier ordering (priority)."""
     A = AgentId("exec")
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=False)
+    e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
@@ -180,13 +180,7 @@ def test_frontier_is_del_aware(monkeypatch):
     """Del is REAL on the frontier: with GFSO_AGENT_ID set, my nodes carry mine=true; a node assigned to
     someone else is VISIBLE but its executor-step directive is hands-off — and the FSM would reject my
     executor signal on it anyway (source ≠ Del)."""
-    from gfso import tools as T
-    from gfso.engine import Engine
-    from gfso.adapters.storage.memory import MemoryStorage
-    from gfso.adapters.agents.human import HumanAgent
-    from gfso.adapters.llm.stub import StubLLM
-
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")
     T.create_task(e, "mine1", {"description": "agent node",
@@ -213,9 +207,7 @@ def test_a_refused_signal_says_which_kind_of_refusal_it_was():
     sentence, built from the state's own action list — so the first thing a new operator saw was
     "ASSIGN is not valid in state OFFERED — valid here: [… 'ASSIGN']", which contradicts itself.
     """
-    from gfso import tools as T
-
-    e = Engine(MemoryStorage(), HumanAgent(), StubLLM(), validate_signals=True)
+    e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     T.create_task(e, "n", {"description": "node", "criteria": [{"name": "c", "description": "C"}]},
                   assignee="human")
@@ -249,3 +241,28 @@ def test_the_frontier_speaks_the_action_vocabulary_and_the_wire_form_is_unchange
     assert Action.CONFIRM_CANCEL in EXECUTOR_ACTIONS and Action.CONFIRM_CANCEL not in SPAWNABLE_ACTIONS
     assert {str(a) for a in Action} == {"accept", "execute", "deliver", "rework", "revise",
                                         "validate", "review", "resolve", "confirm_cancel"}
+
+
+def test_a_step_names_who_would_sign_it():
+    """A directive names the exact next command, and on a door that requires a signer it was
+    incomplete: "signal ACCEPT to put it back to work" → `signal needs source` (CLI door,
+    2026-09-02). The engine knows whose move it is (§14.2: a validate is the issuer's, work is the
+    executor's), so the step says so and a door that takes the signer can copy it."""
+    e = make_engine(check_interval=10_000)
+    e.start()
+    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+                              "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                  "predictability": "EXTRAORDINARY"}]},
+                  assignee="boss")
+    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
+                  assignee="worker", parent_id="root")
+    T.map_criterion(e, "root", "kid", "c")
+
+    step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
+    assert step["signed_by"] == "worker", "taking and doing the work is the executor's signature"
+
+    T.signal(e, "kid", "ACCEPT", "worker")
+    T.signal(e, "kid", "DELIVER", "worker", result="did it")
+    val = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
+    assert val["action"] == "validate" and val["signed_by"] == "boss", "the verdict is the issuer's"
+    e.stop()

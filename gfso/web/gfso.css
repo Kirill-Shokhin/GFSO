@@ -73,8 +73,15 @@ body {
     letter-spacing: var(--tr-heading);
     color: var(--ui-on-chrome);
 }
+/* The frontier line is a SENTENCE ("1 waiting — it consumes what those nodes produce…"), not a
+   count, and it had no width bound: rendered live 2026-09-02 it wrapped to two lines and ran into
+   the metrics with no gap, so "…this node's" and "100%" collided into one word. The bar takes the
+   slack and gives none away; the long line truncates and keeps its full text in the tooltip. */
 .stats-bar {
     display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
     gap: 18px;
     font-family: var(--font-mono);
     font-size: 11px;
@@ -82,9 +89,11 @@ body {
     opacity: 0.75;
     letter-spacing: 0.02em;
 }
-.stat { display: flex; align-items: center; gap: 6px; }
+.stat { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.stat--wide { flex: 0 1 auto; min-width: 0; display: block; white-space: nowrap;
+              overflow: hidden; text-overflow: ellipsis; }
 .stat-dot { width: 7px; height: 7px; border-radius: 50%; }
-.metrics { display: flex; gap: 18px; }
+.metrics { display: flex; gap: 18px; flex: 0 0 auto; margin-left: 18px; }
 .metric { text-align: center; min-width: 46px; }
 .metric-val {
     font-family: var(--font-display);
@@ -484,6 +493,18 @@ body {
     outline: none;
 }
 .criterion-row input:focus { border-color: var(--acc); }
+
+/* …AND ON THE MODAL'S OWN GROUND, WHERE THEY ARE NOT ON THE CHROME. The rule above dresses these
+   inputs for the dark toolbar (`--ui-on-chrome`, a background mixed from `--bg`); the Edit modal
+   reuses the same rows on a LIGHT panel, so every criterion name and description rendered cream on
+   cream — invisible, values and placeholders and all. Editing criteria by hand was impossible: you
+   could not see what was there or what you typed (wave 26 UI pass, 2026-09-06). The same markup in
+   the Decompose modal looked right only because it sits on a different surface. */
+.modal .criterion-row input {
+    background: var(--ui-input);
+    color: var(--ui-text);
+    border-color: var(--hair);
+}
 .criterion-row .cr-name { width: 130px; }
 .criterion-row .cr-desc { flex: 1; }
 .criterion-row .cr-del {
@@ -581,10 +602,14 @@ body {
     opacity: 0.6;
 }
 .expand-form .hint {
+    /* READABLE, MEASURED. Cream at 0.45 over the near-black chrome computes to about 4.3:1 at 10px
+       italic — under the 4.5:1 floor for small text, and a tester reading the page called these
+       lines "near-black italic on black", i.e. unreadable in practice (page door, wave 27,
+       2026-09-06). The colour was never the problem; the opacity was. 0.72 at 11px measures ~9:1. */
     font-family: var(--font-body);
-    font-size: 10px;
+    font-size: 11px;
     color: var(--ui-on-chrome);
-    opacity: 0.45;
+    opacity: 0.72;
     font-style: italic;
     margin-top: 2px;
 }
