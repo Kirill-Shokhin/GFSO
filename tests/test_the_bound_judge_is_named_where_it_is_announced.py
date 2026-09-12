@@ -24,7 +24,7 @@ import pytest
 from gfso import tools as T
 from gfso.core.types import TaskId
 from gfso.delegate import AgentRegistry, Dispatcher
-from tests.support import UNMODELLED_FAULT, make_engine, workdir as workdir_
+from tests.support import criterion, make_engine, UNMODELLED_FAULT, workdir as workdir_
 
 
 @pytest.fixture(autouse=True)
@@ -49,12 +49,12 @@ def _delivered_with_a_judge_on_the_roster(e, tmp_path, judge_project=None):
                  workdir=workdir_(tmp_path, "someone-elses-tree"), project=judge_project)
     e._graph.authorized_validators = {"stranger-val"}      # what the dispatcher publishes each round
     T.create_task(e, "root", {"description": "the parent",
-                              "criteria": [{"name": "g", "description": "G"}],
+                              "criteria": [criterion("g", "G")],
                               "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
     T.create_task(e, "root.kid", {"description": "an internal child — same Del as its parent",
-                                  "criteria": [{"name": "c", "description": "C"}]},
+                                  "criteria": [criterion("c", "C")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "root.kid", "g")
     e.wait_idle()

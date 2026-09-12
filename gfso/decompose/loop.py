@@ -57,7 +57,31 @@ SEARCH_PROMPT = (_PROMPTS / "search.md").read_text(encoding="utf-8")
 AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8")
 
 _NAME_DESC = {"type": "object", "properties": {
-    "name": {"type": "string"}, "description": {"type": "string"}}, "required": ["name", "description"]}
+    "name": {"type": "string"}, "description": {"type": "string"},
+    # THE PROCEDURE, WRITTEN WITH THE CRITERION AND BEFORE ANY WORK. A criterion is a DECIDABLE
+    # predicate (§10, A1); "for any accepted program the output matches gcc" decides nothing on its
+    # own, and what used to close that gap was the validator inventing a probe set at judging time —
+    # a different one each round, so a PASS said only what the judge felt like checking. Authoring
+    # it here is the issuer side's job and nobody else's: the user writes the requirement, the
+    # system writes the procedure that makes it decidable, and it is fixed before the executor
+    # starts (Inv-1, §14.4). Measured on `c_compiler` (2026-09-19/20): the root closed PASS by an
+    # independent judge and 205 probes written from the same contract found 34 real divergences.
+    "check": {"type": "array", "description":
+        "THE DECISION PROCEDURE for this criterion — what will actually be run to decide it, written "
+        "NOW, before the work exists. Each item: {behaviour: the conjunct it observes, command: how "
+        "to observe it, runnable as written by someone who was not the executor, expect: what the "
+        "output must show}. A criterion quantified over an infinite domain ('for ANY input …') is "
+        "not decidable as text: pin the finite, representative set that decides it — including the "
+        "edge cases the requirement implies — and let the residue be visible rather than pretended "
+        "away. Refer to the promised interface (the binary, the endpoint, the file) even though it "
+        "does not exist yet; that is exactly what makes the check a pre-registered claim. Never "
+        "write a command that only restates the criterion ('review the code') — it must produce an "
+        "observation someone else can compare with `expect`.",
+        "items": {"type": "object", "properties": {
+            "behaviour": {"type": "string"}, "command": {"type": "string"},
+            "expect": {"type": "string"}},
+            "required": ["behaviour", "command", "expect"]}}},
+    "required": ["name", "description", "check"]}
 
 # AUDIT structured output: the decomposition as graph spec (the graph is the artifact; its one
 # textual read is Engine.project — the model never emits prose).

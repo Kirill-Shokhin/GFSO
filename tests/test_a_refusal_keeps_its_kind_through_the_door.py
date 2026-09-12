@@ -22,7 +22,7 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.types import Signal, TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -31,7 +31,7 @@ def _root(state: str):
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [{"name": "g", "description": "G holds"}]},
+                              "criteria": [criterion("g", "G holds")]},
                   assignee="agent")
     if state != "OFFERED":
         T.signal(e, "root", "ACCEPT", "agent")

@@ -22,7 +22,7 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 @pytest.fixture(autouse=True)
 def _l2_gate_on(monkeypatch):
@@ -41,9 +41,9 @@ def _reviewed_plan():
     """A root with one mapped child and a CURRENT Level-2 verdict naming one open finding."""
     e = make_engine()
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c1", "description": "C1"}],
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c1", "C1")],
                               "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K1"}]},
+    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K1")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     e.wait_idle()
@@ -58,8 +58,8 @@ def _reviewed_plan():
 def test_fixing_the_parents_own_criteria_retires_the_verdict():
     e = _reviewed_plan()
 
-    assert not T.edit_criteria(e, "root", [{"name": "c1",
-                                            "description": "C1, narrowed to what kid delivers"}]
+    assert not T.edit_criteria(e, "root",
+                               [criterion("c1", "C1, narrowed to what kid delivers")]
                                ).get("error")
     e.wait_idle()
 
@@ -73,14 +73,14 @@ def test_fixing_the_parents_own_criteria_retires_the_verdict():
 def test_fixing_a_child_or_adding_one_retires_it_too():
     """The other two shapes of the same fix — neither was frozen, both retire."""
     e = _reviewed_plan()
-    assert not T.edit_criteria(e, "kid", [{"name": "k1", "description": "K1 and it carries C1"}]
+    assert not T.edit_criteria(e, "kid", [criterion("k1", "K1 and it carries C1")]
                                ).get("error")
     e.wait_idle()
     assert e.open_l2_findings(TaskId("root")) is None
     e.stop()
 
     e = _reviewed_plan()
-    T.create_task(e, "kid2", {"description": "k2", "criteria": [{"name": "k2", "description": "K2"}]},
+    T.create_task(e, "kid2", {"description": "k2", "criteria": [criterion("k2", "K2")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid2", "c1")
     e.wait_idle()

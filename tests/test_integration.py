@@ -12,7 +12,7 @@ from gfso.core.graph.metrics import false_fail_share
 from gfso.decompose import _dep_contradictions
 from gfso.engine import Engine
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import make_engine, instrument_passes
+from tests.support import make_engine, instrument_passes, pinned
 
 
 class AutoAgent(AgentPort):
@@ -117,11 +117,11 @@ def test_pass_requires_all_children_passed_theorem1():
     A = AgentId("alice")
     eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
-    eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g"),),
+    eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g", check=pinned("g")),),
                     accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
                                                      Predictability.EXTRAORDINARY),)), A); eng.wait_idle()
     eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("p"), source=A)); eng.wait_idle()
-    eng.decompose_task(TaskId("p"), [(TaskId("c"), Spec("c", (Criteria("z", "z"),)), A)],
+    eng.decompose_task(TaskId("p"), [(TaskId("c"), Spec("c", (Criteria("z", "z", check=pinned("z")),)), A)],
                        [CriterionMapping("g", TaskId("c"))]); eng.wait_idle()
     eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("p"), source=A, result="x")); eng.wait_idle()
     e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
@@ -720,7 +720,7 @@ def test_agent_cannot_sign_the_clock():
     engine = make_engine(llm=StubLLM(), validate_signals=True)
     engine.start()
     A = AgentId("alice")
-    engine.assign_task(TaskId("root"), Spec("root", (Criteria("c1", "c1"),)), A); engine.wait_idle()
+    engine.assign_task(TaskId("root"), Spec("root", (Criteria("c1", "c1", check=pinned("c1")),)), A); engine.wait_idle()
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); engine.wait_idle()
     engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"), source=A, result="x"))
     engine.wait_idle()

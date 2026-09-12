@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, UNMODELLED_FAULT
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -36,15 +36,15 @@ def _two_children():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "r", {"description": "goal",
-                           "criteria": [{"name": "c1", "description": "C1"},
-                                        {"name": "c2", "description": "C2"}],
+                           "criteria": [criterion("c1", "C1"),
+                                        criterion("c2", "C2")],
                            "accepted_risks": _RISK}, assignee="me")
     T.decompose(e, "r", [
         {"task_id": "r.a", "spec": {"description": "a",
-                                    "criteria": [{"name": "k", "description": "K"}]},
+                                    "criteria": [criterion("k", "K")]},
          "assignee": "w", "covers": ["c1"]},
         {"task_id": "r.b", "spec": {"description": "b",
-                                    "criteria": [{"name": "k", "description": "K"}]},
+                                    "criteria": [criterion("k", "K")]},
          "assignee": "w", "covers": ["c2"]}])
     e.wait_idle()
     for n in ("r.a", "r.b"):
@@ -53,7 +53,13 @@ def _two_children():
 
 
 def _pass(e, node, signer, observed):
-    e.record_reviewer_verdict(node, "PASS", [], reviewer=signer, observed=observed)
+    # what a person says they saw, criterion by criterion — including which of the commands the
+    # contract pinned they ran by hand, since a PASS that sweeps none of them is not one
+    pinned = {c.name: [p.command for p in (c.check or ())]
+              for c in e.get_task(node).spec.criteria}
+    e.record_reviewer_verdict(
+        node, "PASS", [], reviewer=signer,
+        observed={k: {"note": v, "ran": pinned.get(k, [])} for k, v in observed.items()})
     return T.signal(e, node, "PASS", "me" if node != "r" else "me")
 
 
@@ -90,9 +96,9 @@ def test_an_uncovered_criterion_added_later_stops_it_too():
         T.signal(e, n, "DELIVER", "w", result="x")
         _pass(e, n, "me", {"k": "ran it, green"})
     e.wait_idle()
-    T.edit_criteria(e, "r", [{"name": "c1", "description": "C1"},
-                             {"name": "c2", "description": "C2"},
-                             {"name": "c3", "description": "C3, covered by nobody"}], "me")
+    T.edit_criteria(e, "r", [criterion("c1", "C1"),
+                             criterion("c2", "C2"),
+                             criterion("c3", "C3, covered by nobody")], "me")
     e.wait_idle()
     T.signal(e, "r", "ACCEPT", "me")
     T.signal(e, "r", "DELIVER", "me", result="aggregate")
@@ -119,11 +125,12 @@ def test_a_childless_node_has_no_plan_to_read():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "leaf", {"description": "the work",
-                              "criteria": [{"name": "k", "description": "K"}],
+                              "criteria": [criterion("k", "K")],
                               "accepted_risks": _RISK}, assignee="w")
     T.signal(e, "leaf", "ACCEPT", "w")
     T.signal(e, "leaf", "DELIVER", "w", result="did it")
-    e.record_reviewer_verdict("leaf", "PASS", [], reviewer="me", observed={"k": "ran it, green"})
+    e.record_reviewer_verdict("leaf", "PASS", [], reviewer="me",
+                              observed={"k": {"note": "ran it, green", "ran": ["check k"]}})
     assert T.signal(e, "leaf", "PASS", "w").get("accepted") is True
     assert e.get_state("leaf").name == "DONE"
     e.stop()

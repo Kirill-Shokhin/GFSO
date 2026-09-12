@@ -20,7 +20,7 @@ from gfso.core.types import (
 )
 from gfso.core.graph.metrics import q_V
 from gfso import tools as T
-from tests.support import make_engine, spec, reviewer_passes
+from tests.support import criterion, make_engine, reviewer_passes, spec
 from gfso.core.types import CriterionMapping
 
 
@@ -340,11 +340,11 @@ def test_passing_a_leaf_says_what_it_freezes():
     """
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="boss")
-    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
                   assignee="boss", parent_id="root")
     T.map_criterion(e, "root", "kid", "c")
     T.signal(e, "kid", "ACCEPT", "boss")

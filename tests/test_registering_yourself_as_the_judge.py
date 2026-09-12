@@ -39,7 +39,7 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import Verdict, TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, UNMODELLED_FAULT
 
 
 def _engine():
@@ -51,7 +51,7 @@ def _engine():
 
 def _leaf(e, tid="leaf", assignee="agent"):
     T.create_task(e, tid, {"description": "a leaf that never does the work",
-                           "criteria": [{"name": "file_exists", "description": "NEVER.txt exists"}],
+                           "criteria": [criterion("file_exists", "NEVER.txt exists")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee=assignee)
@@ -97,7 +97,8 @@ def test_an_instrument_opens_the_seam_ON_THE_VERDICT_IT_PRODUCED():
 
     t = e.get_task(TaskId("leaf"))
     e.record_reviewer_verdict(TaskId("leaf"), Verdict.PASS, [], reviewer="val-1",
-                              observed={c.name: "ran it, it printed what it should"
+                              observed={c.name: {"note": "ran it, it printed what it should",
+                                                 "ran": [p.command for p in (c.check or ())]}
                                         for c in t.spec.criteria})
     out = T.signal(e, "leaf", "PASS", "val-1")
 

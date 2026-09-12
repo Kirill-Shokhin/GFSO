@@ -15,13 +15,13 @@ established about it on 2026-09-02, both about the record's honesty rather than 
 import pytest
 
 from gfso import tools as T
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 
 def _delivered(assignee="worker"):
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "n", {"description": "leaf", "criteria": [{"name": "c", "description": "C"}]},
+    T.create_task(e, "n", {"description": "leaf", "criteria": [criterion("c", "C")]},
                   assignee=assignee)
     T.signal(e, "n", "ACCEPT", assignee)
     T.signal(e, "n", "DELIVER", assignee, result="did it")
@@ -31,7 +31,7 @@ def _delivered(assignee="worker"):
 def test_a_verdict_from_an_unregistered_reviewer_is_recorded_as_asserted_not_instrumented():
     """The gate checks a name; the RECORD has to carry what kind of party stood behind it."""
     e = _delivered()
-    assert T.record_verdict(e, "n", "PASS", reviewer="somebody", observed={"c": "I ran it"})["recorded"]
+    assert T.record_verdict(e, "n", "PASS", reviewer="somebody", observed={"c": {"note": "I ran it", "ran": ["check c"]}})["recorded"]
     v = T.get_verdict(e, "n")
     assert v["verdict"] == "PASS"
     assert v["by_hand"] is True, "a hand-recorded verdict must be legible as one"
@@ -43,7 +43,9 @@ def test_a_registered_instruments_verdict_is_not_marked_as_asserted():
     """…and the mark must MEAN something: an instrument's record does not carry it."""
     e = _delivered()
     e.record_exec_verdict("n", "PASS", [], "val-1",
-                          per_criterion=[{"criterion": "c", "verdict": "pass", "evidence": "ran it"}])
+                          per_criterion=[{"criterion": "c", "verdict": "pass", "evidence": "ran it",
+                                          "probe": [{"behaviour": "c holds", "command": "check c",
+                                                     "expect": "it holds"}]}])
     v = T.get_verdict(e, "n")
     assert v["verdict"] == "PASS" and v["by_hand"] is False
     e.stop()
@@ -52,11 +54,11 @@ def test_a_registered_instruments_verdict_is_not_marked_as_asserted():
 def test_a_verdict_on_a_settled_node_is_refused_and_names_the_only_route_back():
     """`recorded: true` on a DONE node, then "signal it" — which the FSM then refuses (§14.3)."""
     e = _delivered()
-    T.record_verdict(e, "n", "PASS", reviewer="somebody", observed={"c": "I ran it"})
+    T.record_verdict(e, "n", "PASS", reviewer="somebody", observed={"c": {"note": "I ran it", "ran": ["check c"]}})
     T.signal(e, "n", "PASS", "worker")
     assert e.get_task("n").state.name == "DONE"
 
-    out = T.record_verdict(e, "n", "PASS", reviewer="another", observed={"c": "I ran it too"})
+    out = T.record_verdict(e, "n", "PASS", reviewer="another", observed={"c": {"note": "I ran it too", "ran": ["check c"]}})
     assert out["recorded"] is False
     assert "DONE" in out["error"] and "reopen" in out["error"].lower()
     e.stop()
@@ -110,16 +112,16 @@ def test_replacing_the_criteria_says_what_it_left_uncovered():
     """
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c")
 
-    out = T.edit_criteria(e, "root", [{"name": "c", "description": "C"},
-                                      {"name": "d", "description": "a new obligation"}],
+    out = T.edit_criteria(e, "root", [criterion("c", "C"),
+                                      criterion("d", "a new obligation")],
                           agent="agent")
     # …and only the NEW one: a criterion whose name survives the replacement keeps its mapping,
     # which is more than the wave's report assumed and is worth pinning as the actual behaviour.

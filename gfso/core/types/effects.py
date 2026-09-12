@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Union
+from typing import Optional, Union
 
 from .enums import MutationType, Signal, DoneReason, State, RevisionReason
 from .primitives import TaskId, Spec, AgentId
@@ -24,7 +24,9 @@ class MutateGraph:
     assignee: AgentId | None = None
     parent_id: TaskId | None = None      # CREATE_TASK: parent link
     deadline: datetime | None = None     # CREATE_TASK: T deadline
-    max_iterations: int = 3              # CREATE_TASK: rework bound
+    # CREATE_TASK: the rework bound. APPLY_SPEC also carries it, where None means KEEP —
+    # a revision that does not mention the budget is not a revision that resets it.
+    max_iterations: Optional[int] = 12
     covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§10)
     dep_from: TaskId | None = None       # RECORD_DEP: prerequisite node; ADJUDICATE_DEP: corrected source (§14.2)
     dep_froms: tuple[TaskId, ...] = ()   # ADJUDICATE_DEP: corrected FULL source set (SET semantics, §14.2)

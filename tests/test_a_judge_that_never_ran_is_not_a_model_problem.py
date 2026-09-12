@@ -20,7 +20,7 @@ import time
 import gfso.tools as T
 from gfso import delegate as D
 from gfso.delegate import Dispatcher
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 from tests.test_delegate import _agents
 
 _RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
@@ -28,10 +28,10 @@ _RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORD
 
 def _a_delivery(e):
     T.create_task(e, "par", {"description": "parent",
-                             "criteria": [{"name": "g", "description": "G"}],
+                             "criteria": [criterion("g", "G")],
                              "accepted_risks": _RISK}, assignee="a-human")
     T.create_task(e, "kid", {"description": "the work",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")
@@ -81,7 +81,7 @@ def test_the_line_says_what_the_tool_OBSERVED(tmp_path, monkeypatch):
     e.start()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     T.create_task(e, "n", {"description": "the work",
-                           "criteria": [{"name": "c", "description": "C"}]}, assignee="exec-1")
+                           "criteria": [criterion("c", "C")]}, assignee="exec-1")
     T.signal(e, "n", "ACCEPT", "exec-1")
     T.signal(e, "n", "DELIVER", "exec-1", result="did it")
 

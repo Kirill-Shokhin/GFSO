@@ -54,11 +54,16 @@ From an agent session these are MCP tools; from a shell the same verbs are `gfso
 the UI they are the Decompose and Edit Node panels. Same engine, same audit log, whichever door.
 
 ```
-create_task("api", {"name": "…", "description": "…", "criteria": [{"name": "…", "description": "…"}]})
+create_task("api", {"name": "…", "description": "…", "criteria": [
+    {"name": "…", "description": "…",
+     # what will be RUN to decide it — pinned now, before the work (A1, §10)
+     "check": [{"behaviour": "…", "command": "…", "expect": "…"}]}]})
 decompose("api", children=[{"task_id": "schema", "spec": {…}}, …], mappings=[…])
 map_criterion("api", "schema", "…")     # bind a child to a parent criterion after the fact
 edit_criteria("api", [...])             # replace criteria, carry the rest
 add_dependency("schema", "handlers", glue="handlers deserialize the published schema")
+edit_scope("api", ["a capability this goal deliberately does NOT include — and why"])
+claim_drift("api")                      # how the contract moved between authoring and now
 ```
 
 One difference between the doors is worth knowing before you copy a call: on the **MCP** door the

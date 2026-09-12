@@ -18,7 +18,7 @@ from pathlib import Path
 from gfso import tools as T
 from gfso.core.types import TaskId
 from gfso.delegate import AgentRegistry, Dispatcher, run_executor
-from tests.support import make_engine
+from tests.support import make_engine, criterion
 
 
 class _LoudLLM:
@@ -38,7 +38,7 @@ def engine():
     e = make_engine(validate_signals=True)
     e.start()
     T.create_task(e, "n1", {"name": "Nail", "description": "hammer a nail",
-                            "criteria": [{"name": "flush", "description": "nail is flush"}]},
+                            "criteria": [criterion("flush", "nail is flush")]},
                   assignee="exec-1")
     try:
         yield e

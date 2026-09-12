@@ -40,7 +40,11 @@ def test_task_defaults():
     t = Task(id=TaskId("t1"), spec=spec)
     assert t.state == State.IDLE
     assert t.iteration == 0
-    assert t.max_iterations == 3
+    # 12, not 3: Inv-5 demands the DELIVER→FAIL loop be FINITE, never a particular size, and
+    # the size is chosen for the user this product has. A low bound protects a HUMAN issuer's
+    # attention; in agent work issuer and executor are one, so it protected nobody and cost a
+    # terminal node — at a root, a second root with no memory of the refusals (2026-09-20).
+    assert t.max_iterations == 12
     assert t.done_reason is None
 
 

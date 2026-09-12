@@ -17,7 +17,8 @@ from gfso.config import MODEL_VALIDATOR_RETRY
 import gfso.delegate as D
 from gfso.delegate import (AgentRegistry, Dispatcher, run_executor, EXECUTOR_SCHEMA,
                            _auto_validate, _checker_validate)
-from tests.support import make_engine, instrument_passes, workdir as workdir_
+from tests.support import (make_engine, instrument_passes, criterion, pinned,
+                           workdir as workdir_)
 from gfso.decompose.build import build_graph_live
 
 
@@ -62,7 +63,7 @@ class _AgentLLM:
 
 def _node(e, tid="n1", assignee="exec-1"):
     T.create_task(e, tid, {"name": "Nail", "description": "hammer a nail",
-                           "criteria": [{"name": "flush", "description": "nail is flush"}]},
+                           "criteria": [criterion("flush", "nail is flush")]},
                   assignee=assignee)
 
 
@@ -107,7 +108,7 @@ def test_delivered_report_wraps_accept_deliver_then_dispatcher_autovalidates(tmp
     # the DISPATCHER picks the delivered node up and auto-validates + auto-signals (ONE path for
     # delegated and self-executed deliveries alike)
     started, vllm = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []})
+        {"criterion": "flush", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": []})
     assert "validate:n1" in started
     assert e.get_state(TaskId("n1")).name == "DONE"
     assert "Write" not in vllm.packets[0]["tools"]          # validator is read-only
@@ -122,7 +123,7 @@ def test_fail_verdict_drives_rework_loop_with_feedback(tmp_path):
                                          "self_validation": "flush: met"})))
     e.wait_idle()
     _dispatch_validate(e, agents, {"verdict": "FAIL", "per_criterion": [
-        {"criterion": "flush", "verdict": "fail", "evidence": "bent", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": ["flush"]})
+        {"criterion": "flush", "verdict": "fail", "evidence": "bent", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": ["flush"]})
     assert e.get_state(TaskId("n1")).name == "REWORKING"       # auto-FAIL → the FSM's own rework loop
     # the NEXT executor round carries the failed criteria as feedback
     llm2 = _AgentLLM(_fenced({"status": "delivered", "summary": "fixed", "self_validation": "ok"}))
@@ -130,7 +131,7 @@ def test_fail_verdict_drives_rework_loop_with_feedback(tmp_path):
     e.wait_idle()
     assert "REWORKING" in llm2.packets[0]["user"] and "flush" in llm2.packets[0]["user"]
     _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []})
+        {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": []})
     assert e.get_state(TaskId("n1")).name == "DONE"
 
 
@@ -143,7 +144,7 @@ def test_selfexecuted_delivery_also_autovalidated(tmp_path):
     T.signal(e, "s1", "ACCEPT", "agent")
     T.signal(e, "s1", "DELIVER", "agent", result="did it myself; see files")
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "checked", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []})
+        {"criterion": "flush", "verdict": "pass", "evidence": "checked", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": []})
     assert "validate:s1" in started
     assert e.get_state(TaskId("s1")).name == "DONE"          # verdict signed by val-1, not the agent
 
@@ -217,7 +218,7 @@ def test_per_executor_validator_override(tmp_path):
 
 
 def _child(e, tid, parent="par", assignee="exec-1", crit="c", parent_crit="g"):
-    T.create_task(e, tid, {"description": tid, "criteria": [{"name": crit, "description": crit.upper()}]},
+    T.create_task(e, tid, {"description": tid, "criteria": [criterion(crit, crit.upper())]},
                   assignee=assignee, parent_id=parent)
     T.map_criterion(e, parent, tid, parent_crit)   # §13.4: L0-complete plan before executing children
 
@@ -232,8 +233,12 @@ def _drive_done(e, tid, assignee="exec-1"):
     t = e.get_task(TaskId(tid))
     T.signal(e, tid, "ACCEPT", assignee)
     T.signal(e, tid, "DELIVER", assignee, result=f"{tid} out")
+    # …NAMING THE PINNED RUN. A criterion now carries the procedure that decides it (A1/§10), so a
+    # PASS that does not say it ran that procedure is demoted to ⊥ — nothing is decided by a probe
+    # invented at judging time, the scaffolding included.
     T.record_verdict(e, tid, "PASS", reviewer="agent",
-                     observed={c.name: f"ran {tid} and read its output"
+                     observed={c.name: {"note": f"ran {tid} and read its output",
+                                        "ran": [p.command for p in (c.check or ())]}
                                for c in t.spec.criteria if not c.depends_on})
     T.signal(e, tid, "PASS", "agent")
 
@@ -244,11 +249,18 @@ def test_accept_spawn_gated_on_dependency_producers(tmp_path):
     instant the producer reaches DONE, and only then does the consumer spawn."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]})
     _child(e, "prod"); _child(e, "cons")
     T.add_dependency(e, "prod", "cons")                       # cons consumes prod's delivery
+    # …and the glue criterion that desugars from gets its procedure. A criterion now carries the
+    # decision procedure that decides it (A1/§10), and `add_dependency` synthesizes `dep__prod`
+    # with none, so without this the consumer is held back by its OWN contract and the dependency
+    # gate — what this test is about — would never be the thing under test.
+    T.edit_criteria(e, "cons", [criterion("c", "C"),
+                                criterion("dep__prod", "reads prod's output", depends_on="prod")],
+                    agent="agent")
     d = Dispatcher(e, agents, runner=lambda *a: None)
     started = d.dispatch_once()
     assert "prod" in started and "cons" not in started       # producer free; consumer gated on it
@@ -265,7 +277,7 @@ def test_resolved_block_auto_clears_and_respawns_executor(tmp_path):
     wait on and correctly STAYS BLOCKED for a human — the auto-resolver never touches producer-less blocks."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]})
     _child(e, "prod"); _child(e, "blk"); _child(e, "ph")
@@ -293,7 +305,7 @@ def test_multi_blocker_report_records_all_edges_and_gates_on_every_producer(tmp_
     q_Dep starved, auto-resolve blind). The node then auto-resolves only when ALL producers are DONE."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]})
     _child(e, "p1"); _child(e, "p2"); _child(e, "cli")
@@ -325,7 +337,7 @@ def test_mixed_phantom_auto_resolve_drops_only_the_bogus_edge(tmp_path):
     sources, so only the bogus edge goes."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]})
     _child(e, "prod"); _child(e, "blk")
@@ -351,12 +363,12 @@ def test_dep_gate_holds_on_not_yet_created_producer(tmp_path):
     (the old `prod is not None and …` skipped the edge → the consumer spawned into a doomed run)."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]})
     T.create_task(e, "cons", {"description": "consumer", "criteria": [
-        {"name": "c", "description": "C"},
-        {"name": "dep__prod", "description": "reads prod's output", "depends_on": "prod"}]},
+        criterion("c", "C"),
+        criterion("dep__prod", "reads prod's output", depends_on="prod")]},
         assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "cons", "g")   # §13.4: L0-complete before exec
     d = Dispatcher(e, agents, runner=lambda *a: None)
@@ -382,9 +394,9 @@ def test_dispatch_quiesced_while_build_bursts(tmp_path):
     assert "q1" in d.dispatch_once()                  # resumed on the settled graph
     woken = []
     e._dispatch_wake = lambda: woken.append(True)
-    spec = {"name": "goal", "root_criteria": [{"name": "r", "description": "R"}],
+    spec = {"name": "goal", "root_criteria": [criterion("r", "R")],
             "subtasks": [{"id": "a", "description": "A",
-                          "criteria": [{"name": "ca", "description": "CA"}]}],
+                          "criteria": [criterion("ca", "CA")]}],
             "mappings": [{"criterion": "r", "child_id": "a"}], "deps": [], "accepted_risks": [
                 {"item": "none material", "predictability": "STATISTICAL",
                  "justification": "-", "invalidation": "-"}]}
@@ -402,14 +414,14 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     T.create_task(e, "par", {"description": "parent",
-                             "criteria": [{"name": "g", "description": "G"}],
+                             "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]}, assignee="exec-1")
     _child(e, "kid", assignee="exec-2")               # unregistered = human-ish, dispatcher passive
     T.signal(e, "par", "ACCEPT", "exec-1")
     T.signal(e, "par", "DELIVER", "exec-1", result="premature aggregate")
     ok = {"verdict": "PASS",
-          "per_criterion": [{"criterion": "g", "verdict": "pass", "evidence": "aggregate checked", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+          "per_criterion": [{"criterion": "g", "verdict": "pass", "evidence": "aggregate checked", "behaviours": ["the criterion holds"], "probe": [{"command": "check g", "expect": "it holds"}]}],
           "failed_criteria": []}
     llm = _AgentLLM(_fenced(ok), _fenced(ok))
     d = Dispatcher(e, agents, runner=lambda *a: None,
@@ -437,7 +449,8 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     T.signal(e, "kid", "DELIVER", "exec-2", result="kid out")
     # a seam needs the verdict on the record whoever signs it (§14.5); the issuer records what it
     # observed and then signs — "issuer ≠ Del" is a rule about the signature, not the evidence
-    T.record_verdict(e, "kid", "PASS", reviewer="exec-1", observed={"c": "ran the child's output"})
+    T.record_verdict(e, "kid", "PASS", reviewer="exec-1",
+                     observed={"c": {"note": "ran the child's output", "ran": ["check c"]}})
     T.signal(e, "kid", "PASS", "exec-1")
     assert "validate:par" in d.dispatch_once()                # children settled → fresh validation
     for _ in range(300):
@@ -493,7 +506,7 @@ def test_inflight_validator_lock_suppresses_concurrent_duplicates(tmp_path):
             return super().run_agent(system, user, allowed_tools, cwd)
 
     slow = _Blocking(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "ran", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
+        {"criterion": "flush", "verdict": "pass", "evidence": "ran", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": []}))
     first: dict = {}
     t = threading.Thread(target=lambda: first.update(TL.validate_result(e, "n1", _llm=slow)))
     t.start()
@@ -601,25 +614,25 @@ def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     # child under an agent-issued parent → auto-validated, validator verdict ACCEPTED by the FSM
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]})
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")
     T.signal(e, "kid", "DELIVER", "exec-1", result="done; see files")
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
-        {"criterion": "k", "verdict": "pass", "evidence": "ran", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []})
+        {"criterion": "k", "verdict": "pass", "evidence": "ran", "behaviours": ["the criterion holds"], "probe": [{"command": "check k", "expect": "it holds"}]}], "failed_criteria": []})
     assert "validate:kid" in started
     assert e.get_state(TaskId("kid")).name == "DONE"          # val-1's PASS survived the issuer check
     # human-issued node → the dispatcher stays out
     T.create_task(e, "hpar", {"description": "human parent",
-                              "criteria": [{"name": "h", "description": "H"}],
+                              "criteria": [criterion("h", "H")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]}, assignee="kirill")
     T.create_task(e, "hkid", {"description": "human child",
-                              "criteria": [{"name": "c", "description": "C"}]}, assignee="kirill",
+                              "criteria": [criterion("c", "C")]}, assignee="kirill",
                   parent_id="hpar")
     T.map_criterion(e, "hpar", "hkid", "h")
     T.signal(e, "hkid", "ACCEPT", "kirill")
@@ -701,7 +714,7 @@ def test_executor_turn_cap_is_declared_with_the_role(tmp_path):
     assert reg.get("exec-1")["max_turns"] == 50
 
     e = _eng()
-    e.assign_task(TaskId("n1"), Spec("n", (Criteria("c", "c"),)), AgentId("exec-1"))
+    e.assign_task(TaskId("n1"), Spec("n", (Criteria("c", "c", check=pinned("c")),)), AgentId("exec-1"))
     e.wait_idle()
     run_executor(e, TaskId("n1"), "exec-1", reg, _llm=_LLM())
     assert seen["max_turns"] == 50
@@ -774,7 +787,7 @@ def test_one_node_is_never_dispatched_twice_for_the_same_round(tmp_path):
     assert ran == ["n1"], f"one round, {len(ran)} runs: {ran}"
 
     # …and a REVISION is a fresh round: the key changes because the generation is in it.
-    e.revise(TaskId("n1"), Spec("n", (Criteria("c", "c2"),)), AgentId("exec-1"))
+    e.revise(TaskId("n1"), Spec("n", (Criteria("c", "c2", check=pinned("c")),)), AgentId("exec-1"))
     e.wait_idle()
     d.dispatch_once()
     for _ in range(200):
@@ -835,11 +848,12 @@ def test_no_executor_is_spawned_under_a_plan_the_gate_refuses(tmp_path, monkeypa
     d = Dispatcher(e, agents, poll=30, runner=lambda en, tid, ex, ag: ran.append(str(tid)))
 
     # a parent whose plan carries an open Level-0 hole: a criterion no child covers
-    e.assign_task(TaskId("p"), Spec("p", (Criteria("c1", "c1"), Criteria("uncovered", "nobody"))),
+    e.assign_task(TaskId("p"), Spec("p", (Criteria("c1", "c1", check=pinned("c1")),
+                             Criteria("uncovered", "nobody", check=pinned("uncovered")))),
                   AgentId("boss"))
     e.wait_idle()
     e.decompose_task(TaskId("p"),
-                     [(TaskId("p.kid"), Spec("kid", (Criteria("k", "k"),)), AgentId("exec-1"))],
+                     [(TaskId("p.kid"), Spec("kid", (Criteria("k", "k", check=pinned("k")),)), AgentId("exec-1"))],
                      [CriterionMapping("c1", TaskId("p.kid"))])
     e.wait_idle()
 
@@ -861,7 +875,7 @@ def test_a_node_the_plan_gate_holds_back_is_said_out_loud(tmp_path, monkeypatch)
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]})
     _child(e, "kid")
@@ -922,7 +936,7 @@ def test_a_dispute_the_protocol_cannot_carry_still_reaches_the_issuer(tmp_path):
     goes back to OFFERED for its executor to take afresh."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]})
     _child(e, "kid")
@@ -942,7 +956,7 @@ def test_a_dispute_the_protocol_cannot_carry_still_reaches_the_issuer(tmp_path):
     assert "contradicts the parent's own scope" in step["directive"]
     assert "revise" in step["directive"] and "reassign" in step["directive"]
 
-    T.revise(e, "kid", {"description": "kid", "criteria": [{"name": "c", "description": "C, fixed"}]},
+    T.revise(e, "kid", {"description": "kid", "criteria": [criterion("c", "C, fixed")]},
              agent="agent")
     e.wait_idle()
     later = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
@@ -961,7 +975,7 @@ def test_a_node_that_already_refused_a_report_starts_at_the_retry_tier(tmp_path,
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "solo", {"description": "the work", "criteria": [{"name": "k", "description": "K"}],
+    T.create_task(e, "solo", {"description": "the work", "criteria": [criterion("k", "K")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -1016,11 +1030,11 @@ def test_the_executor_can_name_the_sibling_it_is_blocked_on(tmp_path):
     packaging node needed a `__main__.py` another child was writing. Both were real edges the plan
     never declared."""
     e = _eng()
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]})
     for kid in ("core", "readme"):
-        T.create_task(e, kid, {"description": kid, "criteria": [{"name": "k", "description": "K"}]},
+        T.create_task(e, kid, {"description": kid, "criteria": [criterion("k", "K")]},
                       assignee="exec-1", parent_id="par")
     packet = run_executor.__globals__["_executor_packet"](e, e.get_task(TaskId("readme")), str(tmp_path))
     assert "`core`" in packet and "blocker_task_ids" in packet
@@ -1040,11 +1054,11 @@ def test_a_human_issuer_gets_the_judging_and_keeps_the_signature(tmp_path, monke
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="a-human")                       # …an unregistered name: a person
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")
@@ -1095,11 +1109,11 @@ def test_a_recorded_verdict_is_a_settled_outcome_and_is_not_retried(tmp_path, mo
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="a-human")
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")
@@ -1225,11 +1239,11 @@ def test_a_self_report_is_not_a_recorded_verdict_the_instrument_may_skip(tmp_pat
     """
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")          # same Del as its parent ⟹ INTERNAL
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")
@@ -1248,7 +1262,9 @@ def test_a_self_report_is_not_a_recorded_verdict_the_instrument_may_skip(tmp_pat
         judged.append(str(task_id))
         engine.record_exec_verdict(task_id, Verdict.PASS, [], "val-1",
                                    per_criterion=[{"criterion": "k", "verdict": "pass",
-                                                   "evidence": "ran the check for k; it holds"}])
+                                                   "evidence": "ran the check for k; it holds",
+                                                   "probe": [{"command": "check k",
+                                                              "expect": "it holds"}]}])
         return {"verdict": Verdict.PASS}
 
     monkeypatch.setattr(D, "_judge_with", _ran)
@@ -1274,11 +1290,11 @@ def test_a_parent_delivered_over_unfinished_children_costs_nothing_to_refuse(tmp
 
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "par", "ACCEPT", "exec-1")
@@ -1303,7 +1319,7 @@ def test_a_consumer_is_not_spawned_while_its_producer_is_unfinished(tmp_path):
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
     for tid in ("prod", "cons"):
         T.create_task(e, tid, {"description": tid,
-                               "criteria": [{"name": "c", "description": "C"}]}, assignee="exec-1")
+                               "criteria": [criterion("c", "C")]}, assignee="exec-1")
     T.add_dependency(e, "prod", "cons", glue="cons reads what prod writes")
 
     spawned = []
@@ -1325,11 +1341,11 @@ def test_a_node_with_children_is_not_spawned_as_if_it_were_a_leaf(tmp_path):
     """
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
 
@@ -1354,7 +1370,7 @@ def test_a_judge_that_belongs_to_no_project_says_so(tmp_path, monkeypatch):
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("stranger-val", "llm-validator"))
     T.create_task(e, "n", {"description": "the work",
-                           "criteria": [{"name": "c", "description": "C"}]}, assignee="exec-1")
+                           "criteria": [criterion("c", "C")]}, assignee="exec-1")
     T.signal(e, "n", "ACCEPT", "exec-1")
     T.signal(e, "n", "DELIVER", "exec-1", result="did it")
 

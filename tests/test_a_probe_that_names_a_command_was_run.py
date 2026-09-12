@@ -19,11 +19,23 @@ from tests.test_validate_result import _delivered_node, _eng
 _PROBE = [{"command": "pytest -q", "expect": "passed"}]
 
 
+def _pinned(name):
+    """The procedure `n1`'s contract pins for this criterion (tests.support.criterion).
+
+    A PASS that does not account for it is demoted for a DIFFERENT reason than the one under test,
+    which would make every row here green or red by accident. The subject is the tool ledger, so
+    the pinned run is reported and the ledger is the only thing that varies. It is labelled with
+    the behaviour the report enumerates: the probe's IDENTITY is its command (`procedure.probe_id`),
+    while the label is what `underprobed` links to the named behaviours.
+    """
+    return {"behaviour": "b", "command": f"check {name}", "expect": "it holds"}
+
+
 def _report():
     return [{"criterion": "flush", "verdict": "fail", "evidence": "Executed: check() -> not flush",
              "behaviours": ["b"], "probe": list(_PROBE)},
             {"criterion": "holds", "verdict": "pass", "evidence": "ran it",
-             "behaviours": ["b"], "probe": list(_PROBE)}]
+             "behaviours": ["b"], "probe": [*_PROBE, _pinned("holds")]}]
 
 
 def _recorded(tools_used):

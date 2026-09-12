@@ -16,7 +16,7 @@ from gfso.mcp.server import create_server, _bind
 from gfso.runtime import ProjectRegistry
 from gfso import tools as T
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 from gfso.mcp import server as S
 
 
@@ -28,7 +28,7 @@ def _reg(monkeypatch, tmp_path):
 
 
 def _mk(engine, tid):
-    T.create_task(engine, tid, {"description": tid, "criteria": [{"name": "a", "description": "A"}]}, "x")
+    T.create_task(engine, tid, {"description": tid, "criteria": [criterion("a", "A")]}, "x")
 
 
 def test_projects_are_isolated_graphs(monkeypatch, tmp_path):
@@ -112,7 +112,7 @@ def test_mcp_bind_project_param_with_var_keyword(monkeypatch, tmp_path):
     ws = _bind(reg, T.signal)
     assert "source" not in inspect.signature(ws).parameters
     T.create_task(reg.engine("pk"), "s1", {"description": "mine",
-                                           "criteria": [{"name": "a", "description": "A"}]})  # Del=agent
+                                           "criteria": [criterion("a", "A")]})  # Del=agent
     assert _call(ws, "s1", "ACCEPT", project="pk")["state"] == "EXECUTING"
     assert _call(ws, "s1", "DELIVER", result="paths…", project="pk")["state"] == "VALIDATING"
     # a node delegated to someone else does NOT move on the agent's signal (FSM: source ≠ Del)

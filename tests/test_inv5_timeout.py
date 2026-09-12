@@ -5,7 +5,7 @@ OVERDUE, repeat → ESCALATED; issuer inaction on VALIDATING auto-passes (§14.3
 import time
 
 from gfso.core.types import TaskId, AgentId, Spec, Criteria, SignalData, Signal, Task, State
-from tests.support import make_engine
+from tests.support import make_engine, pinned
 from gfso.adapters.storage.memory import MemoryStorage
 
 
@@ -28,7 +28,7 @@ def _wait_state(e, tid, name, timeout=8.0):
 def test_deadline_less_node_escalates_by_state_age():
     e = _eng(state_timeout=0.25)
     try:
-        e.assign_task(TaskId("n"), Spec("no deadline anywhere", (Criteria("c", "C"),)),
+        e.assign_task(TaskId("n"), Spec("no deadline anywhere", (Criteria("c", "C", check=pinned("c")),)),
                       AgentId("human"))
         assert _wait_state(e, "n", "OVERDUE")     # the state clock fired without any deadline
         assert _wait_state(e, "n", "ESCALATED")   # repeat fire → terminal: finiteness holds
@@ -39,7 +39,7 @@ def test_deadline_less_node_escalates_by_state_age():
 def test_validating_auto_passes_on_issuer_inaction():
     e = _eng(state_timeout=0.6)
     try:
-        e.assign_task(TaskId("v"), Spec("deliverable", (Criteria("c", "C"),)), AgentId("human"))
+        e.assign_task(TaskId("v"), Spec("deliverable", (Criteria("c", "C", check=pinned("c")),)), AgentId("human"))
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("v"),
                                       source=AgentId("human")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v"),
@@ -55,7 +55,7 @@ def test_blocked_escalates_directly_on_state_age():
     no intermediate OVERDUE parking)."""
     e = _eng(state_timeout=0.3)
     try:
-        e.assign_task(TaskId("b"), Spec("will block", (Criteria("c", "C"),)), AgentId("human"))
+        e.assign_task(TaskId("b"), Spec("will block", (Criteria("c", "C", check=pinned("c")),)), AgentId("human"))
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("b"),
                                       source=AgentId("human")))
         e.send_signal_sync(SignalData(signal=Signal.BLOCK, task_id=TaskId("b"),
@@ -71,7 +71,7 @@ def test_cancelling_settles_to_cancelled_on_state_age():
     unresponsive executor cannot hold the abandon handshake open)."""
     e = _eng(state_timeout=0.3)
     try:
-        e.assign_task(TaskId("x"), Spec("will cancel", (Criteria("c", "C"),)), AgentId("human"))
+        e.assign_task(TaskId("x"), Spec("will cancel", (Criteria("c", "C", check=pinned("c")),)), AgentId("human"))
         e.send_signal_sync(SignalData(signal=Signal.CANCEL, task_id=TaskId("x"),
                                       source=AgentId("human"), reason="obsolete"))
         assert e.get_state(TaskId("x")).name == "CANCELLING"
@@ -83,7 +83,7 @@ def test_cancelling_settles_to_cancelled_on_state_age():
 def test_state_timeout_disabled_keeps_old_behavior():
     e = _eng(state_timeout=0)                     # declared degraded mode
     try:
-        e.assign_task(TaskId("d"), Spec("no deadline", (Criteria("c", "C"),)), AgentId("human"))
+        e.assign_task(TaskId("d"), Spec("no deadline", (Criteria("c", "C", check=pinned("c")),)), AgentId("human"))
         time.sleep(0.4)
         assert e.get_state(TaskId("d")).name == "OFFERED"   # nothing fires without a deadline
     finally:
@@ -100,7 +100,7 @@ def test_idle_carries_no_clock_and_a_crash_orphan_is_recovered():
     its own ASSIGN rather than by aging into a timeout it never contracted for.
     """
     storage = MemoryStorage()
-    storage.save_task(Task(id=TaskId("orphan"), spec=Spec("half-created", (Criteria("c", "C"),)),
+    storage.save_task(Task(id=TaskId("orphan"), spec=Spec("half-created", (Criteria("c", "C", check=pinned("c")),)),
                            state=State.IDLE, assignee=AgentId("human")))
     e = make_engine(storage, llm=None, validate_signals=True,
                      check_interval=0.05, state_timeout=0.25)

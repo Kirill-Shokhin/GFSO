@@ -22,7 +22,7 @@ import pytest
 
 import gfso.tools as T
 import gfso.tools_llm as TL
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -37,11 +37,11 @@ def _a_plan():
     e = make_engine()
     e.start()
     T.create_task(e, "site", {"description": "a static site generator",
-                              "criteria": [{"name": "r", "description": "R"}],
+                              "criteria": [criterion("r", "R")],
                               "accepted_risks": _RISK}, assignee="me")
     T.decompose(e, "site", [{"task_id": "site.r",
                              "spec": {"description": "renderer",
-                                      "criteria": [{"name": "md", "description": "M"}]},
+                                      "criteria": [criterion("md", "M")]},
                              "assignee": "me", "covers": ["r"]}])
     e.wait_idle()
     return e

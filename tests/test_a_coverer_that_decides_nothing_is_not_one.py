@@ -27,7 +27,7 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import TaskId, passed
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ def _no_plan_gate(monkeypatch):
 
 def _parent_and_an_empty_child(e):
     T.create_task(e, "root", {"description": "the parent",
-                              "criteria": [{"name": "g", "description": "G holds"}],
+                              "criteria": [criterion("g", "G holds")],
                               "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
@@ -92,12 +92,12 @@ def test_a_child_WITH_criteria_covers_and_self_verifies_exactly_as_before():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "the parent",
-                              "criteria": [{"name": "g", "description": "G holds"}],
+                              "criteria": [criterion("g", "G holds")],
                               "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
     T.create_task(e, "root.kid", {"description": "a child that decides something",
-                                  "criteria": [{"name": "k", "description": "K holds"}]},
+                                  "criteria": [criterion("k", "K holds")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "root.kid", "g")
     e.wait_idle()

@@ -19,14 +19,14 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _BOTTOM = "not a verdict on leaf (⊥, not pass — §10): the report names behaviours it never observed"
 
 
 def _delivered(e, tid="leaf"):
     T.create_task(e, tid, {"description": "a leaf",
-                           "criteria": [{"name": "c", "description": "C"}],
+                           "criteria": [criterion("c", "C")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")

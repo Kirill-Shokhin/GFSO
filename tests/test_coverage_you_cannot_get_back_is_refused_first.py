@@ -20,18 +20,17 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _finished_child_covering_its_parent(e):
     T.create_task(e, "par", {"description": "the parent",
-                             "criteria": [{"name": "g", "description": "G holds"},
-                                          {"name": "h", "description": "H holds"}],
+                             "criteria": [criterion("g", "G holds"), criterion("h", "H holds")],
                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
     T.create_task(e, "par.kid", {"description": "the child",
-                                 "criteria": [{"name": "k", "description": "K holds"}]},
+                                 "criteria": [criterion("k", "K holds")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "par.kid", "g")
     T.map_criterion(e, "par", "par.kid", "h")   # both, or CHECK-1 holds the plan and nothing executes
@@ -39,7 +38,8 @@ def _finished_child_covering_its_parent(e):
     T.signal(e, "par.kid", "ACCEPT", "exec-1")
     T.signal(e, "par.kid", "DELIVER", "exec-1", result="child built")
     T.record_verdict(e, "par.kid", "PASS", reviewer="judge",
-                     observed={"k": "ran the k check and read K-OK"})
+                     observed={"k": {"note": "ran the k check and read K-OK",
+                                     "ran": ["check k"]}})
     T.signal(e, "par.kid", "PASS", "exec-1")
     e.wait_idle()
     assert e.get_task(TaskId("par.kid")).state.name == "DONE"
@@ -50,7 +50,7 @@ def test_dropping_a_finished_child_s_coverage_is_refused_before_it_happens():
     e.start()
     _finished_child_covering_its_parent(e)
 
-    out = T.edit_criteria(e, "par", [{"name": "h", "description": "H holds"}], "exec-1")
+    out = T.edit_criteria(e, "par", [criterion("h", "H holds")], "exec-1")
 
     assert out.get("refused") is True, out
     assert out.get("would_destroy_coverage") == ["par.kid"], out
@@ -69,7 +69,7 @@ def test_the_refusal_names_a_route_that_keeps_the_work_and_one_that_does_not():
     e.start()
     _finished_child_covering_its_parent(e)
 
-    err = T.edit_criteria(e, "par", [{"name": "h", "description": "H holds"}], "exec-1")["error"]
+    err = T.edit_criteria(e, "par", [criterion("h", "H holds")], "exec-1")["error"]
 
     assert "auto_decompose" in err, err                    # the canon's recovery, keeps the result
     assert "accept_coverage_loss=true" in err, err         # and the way to mean it anyway
@@ -82,7 +82,7 @@ def test_saying_you_mean_it_still_works():
     e.start()
     _finished_child_covering_its_parent(e)
 
-    out = T.edit_criteria(e, "par", [{"name": "h", "description": "H holds"}], "exec-1",
+    out = T.edit_criteria(e, "par", [criterion("h", "H holds")], "exec-1",
                           accept_coverage_loss=True)
 
     assert out.get("refused") is not True, out
@@ -95,19 +95,18 @@ def test_an_edit_that_destroys_nothing_irreversible_is_untouched():
     e = make_engine()
     e.start()
     T.create_task(e, "p2", {"description": "the parent",
-                            "criteria": [{"name": "g", "description": "G holds"},
-                                         {"name": "h", "description": "H holds"}],
+                            "criteria": [criterion("g", "G holds"), criterion("h", "H holds")],
                             "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                 "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
     T.create_task(e, "p2.kid", {"description": "the child",
-                                "criteria": [{"name": "k", "description": "K holds"}]},
+                                "criteria": [criterion("k", "K holds")]},
                   assignee="exec-1", parent_id="p2")
     T.map_criterion(e, "p2", "p2.kid", "g")
     T.map_criterion(e, "p2", "p2.kid", "h")
     e.wait_idle()
 
-    out = T.edit_criteria(e, "p2", [{"name": "h", "description": "H holds"}], "exec-1")
+    out = T.edit_criteria(e, "p2", [criterion("h", "H holds")], "exec-1")
 
     assert out.get("refused") is not True, out
     assert [c.name for c in e.get_task(TaskId("p2")).spec.criteria] == ["h"]

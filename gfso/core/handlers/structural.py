@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from gfso.core.types import Task, CheckResult, Predictability, DepEdge
+from gfso.core.protocol.procedure import criteria_without_procedure, degenerate_procedures
 
 
 # The canon's own CHECK → failure-mode routing (§13.4's battery, corroborated by §13.6's table).
@@ -56,6 +57,53 @@ def check_anti_mock(children: list[Task], dep_edges: list[DepEdge]) -> CheckResu
             f"seams with no glue truth-maker: {', '.join(glueless)}",
         )
     return CheckResult("CHECK-1c:anti_mock", True)
+
+
+def check_procedure(task: Task) -> CheckResult:
+    """A1:procedure — every criterion of THIS node pins the procedure that decides it (§10, §2.1(i)).
+
+    NOT a member of §13.4's battery, and deliberately not named like one: the numbered level is the
+    canon's and the execution gate is that level in both directions (see the gate's own note on
+    CHECK-1c). It sits beside what CHECK-1 already enforces from A1 — CHECK-1 refuses a decomposed
+    node with NO criteria ("a task is a goal plus a decidable predicate").
+
+    **Graded honestly: this is a DESIGN DECISION that operationalizes A1, not A1 read off the
+    canon.** A1 asserts that a correct decidable predicate EXISTS, "not *which one* it is" (§2.1),
+    and §11.2's own example of a decidable criterion — "every function ≤ 50 lines" — pins no
+    command and would be refused here. What the rule actually demands is that the procedure be
+    WRITTEN DOWN, and before the work: that is Inv-1's pre-registration (§14.4) applied to the
+    thing A1 leaves open, chosen because the alternative was measured — the procedure invented at
+    judging time, differently each round, with a PASS that meant whatever the judge felt like
+    checking.
+
+    What made the gap invisible: "for ANY accepted program the output matches gcc" reads like a
+    criterion and decides nothing — the domain is infinite. Whoever validated then invented a probe
+    set at judging time, a different one each round, so a PASS recorded the judge's appetite rather
+    than the promise. Pinning the procedure with the criterion is what returns the object to its
+    type, and it says its own limit out loud: what P does not reach is unchecked (FM-3, Ch. 8).
+    """
+    if not task.spec.criteria:
+        return CheckResult("A1:procedure", True, "no criteria defined", skipped=True)
+    naked = criteria_without_procedure(task.spec.criteria)
+    if naked:
+        return CheckResult(
+            "A1:procedure", False,
+            f"criteria that pin no runnable check: {', '.join(naked)} — each states an intention, "
+            f"so whoever validates would have to invent the procedure at judging time, "
+            f"differently each round. A1 (§10) asks that a criterion BE decidable and leaves "
+            f"open which predicate decides it; this product asks you to write that down, and "
+            f"before the work (Inv-1, §14.4) — a design decision, not a canon row. Give each "
+            f"one `check: [{{behaviour, command, expect}}]`")
+    if hollow := degenerate_procedures(task.spec.criteria):
+        # NOT a failure: whether a probe can SEE a divergence is FM-3, and §13.6 says no structural
+        # check guards it — one that claimed to would be the false green one level up. Said, so a
+        # hollow procedure is visible on the node instead of reading as coverage.
+        return CheckResult(
+            "A1:procedure", True,
+            "pinned, but these commands emit a constant and cannot come out false — a criterion "
+            "they decide forbids nothing (§2.1): "
+            + "; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(hollow.items())))
+    return CheckResult("A1:procedure", True)
 
 
 def check_coverage(task: Task, children: list[Task]) -> CheckResult:
@@ -457,6 +505,7 @@ def run_structural(task: Task, children: list[Task], dep_edges: list[tuple[str, 
     """
     edges = dep_edges or []
     return [
+        check_procedure(task),
         check_coverage(task, children),
         check_non_redundancy(task, children),
         check_dag(children, edges, task, deadlines),

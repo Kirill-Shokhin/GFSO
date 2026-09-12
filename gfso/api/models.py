@@ -13,9 +13,18 @@ from gfso.engine.audit import AuditEntry
 # The authoring/mutation surface is the generic `POST /api/run/<tool>` (body = the tool's kwargs) — the same
 # `gfso.tools.TOOLS` that MCP + CLI bind — so there are NO per-verb request models here; only reads are typed.
 
+class ProbeIn(BaseModel):
+    behaviour: str = ""
+    command: str = ""
+    expect: str = ""
+
+
 class CriteriaIn(BaseModel):
     name: str
     description: str
+    # The pinned decision procedure, served with the criterion. A page that shows a criterion and
+    # not what will be run to decide it shows an intention and calls it a contract.
+    check: list[ProbeIn] = []
 
 
 # === Response models ===
@@ -191,7 +200,10 @@ def task_to_out(t: Task) -> TaskOut:
         parent_id=t.parent_id, assignee=t.assignee,
         iteration=t.iteration, max_iterations=t.max_iterations,
         done_reason=t.done_reason.name if t.done_reason else None,
-        criteria=[CriteriaIn(name=c.name, description=c.description) for c in t.spec.criteria],
+        criteria=[CriteriaIn(name=c.name, description=c.description,
+                             check=[ProbeIn(behaviour=p.behaviour, command=p.command,
+                                            expect=p.expect) for p in (c.check or ())])
+                  for c in t.spec.criteria],
         accepted_risks=[n.item for n in t.spec.accepted_risks],
         accepted_risks_recorded=(_risks := [{
             "item": n.item,

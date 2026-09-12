@@ -151,6 +151,12 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # no carrier and is not claimed here — a deadline-less node is not defective, `formal/README` #6.)
     if effect.deadline is not None:
         task.deadline = effect.deadline
+    # …AND THE REWORKING BOUND, for the same reason. Running past the budgeted attempts has two
+    # readings — the plan is wrong, or the forecast was — and only the issuer can say which.
+    # With the bound unrevisable the engine answered for them, and a missed forecast cost a
+    # terminal node (at a root: a whole second root with no memory of the refusals).
+    if effect.max_iterations is not None:
+        task.max_iterations = effect.max_iterations
     task.done_reason = None  # re-authored → a fresh contract, no longer a ABANDONED tombstone (clears stale flag)
     # a criteria change strands this node's own mappings that point at a now-removed criterion → prune them here
     # (logged, part of APPLY_SPEC) so no stale mapping persists; the now-unmapped child surfaces via CHECK-1b.
@@ -310,6 +316,8 @@ def _create_task(graph: Graph, effect: MutateGraph) -> list[TaskId]:
         parent_id=effect.parent_id,
         deadline=effect.deadline,
         max_iterations=effect.max_iterations,
+        # the claim as authored, frozen here and nowhere else (revisions leave it alone)
+        authored=effect.spec,
     )
     graph.save_task(task)
     # Mapping = the child declares which parent criteria it covers (§10 non-redundancy). Recorded as a

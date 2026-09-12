@@ -20,14 +20,14 @@ import json
 import pytest
 
 from gfso import tools_llm as TL
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 # Verbs whose whole job is to spawn a model run. They are still called (their argument guards are
 # the point), with an id that exists and a state that stops them before any transport is touched.
 _LLM_VERBS = {"auto_decompose", "review_decomposition", "validate_result"}
 
 _GOOD_SPEC = {"name": "leaf", "description": "a leaf",
-              "criteria": [{"name": "c", "description": "C"}]}
+              "criteria": [criterion("c", "C")]}
 
 
 def _engine():
@@ -40,7 +40,7 @@ def _seeded(e):
     """A small, ordinary graph: a root with ACCEPTED_RISKS, two children, one mapped criterion."""
     TL.TOOLS["create_task"](e, "root", {
         "name": "root", "description": "the goal",
-        "criteria": [{"name": "c1", "description": "the thing"}],
+        "criteria": [criterion("c1", "the thing")],
         "accepted_risks": [{"item": "an unmodelled fault", "predictability": "extraordinary",
                             "justification": "accepted here", "invalidation_condition": "never"}]},
         "agent")
@@ -74,8 +74,11 @@ _GOOD: dict[str, dict] = {
                             "accepted_risks": [{"item": "another fault",
                                                 "predictability": "extraordinary",
                                                 "justification": "accepted", "invalidation_condition": "never"}]},
+    "edit_scope": {"task_id": "root", "agent": "agent",
+                   "scope": ["it does not ship a GUI"]},
+    "claim_drift": {"task_id": "kid"},
     "edit_criteria": {"task_id": "kid", "agent": "agent",
-                      "criteria": [{"name": "c", "description": "C, sharper"}]},
+                      "criteria": [criterion("c", "C, sharper")]},
     "reassign": {"task_id": "kid", "assignee": "someone", "reason": "capability_mismatch"},
     "reopen": {"task_id": "kid", "agent": "agent"},
     "add_dependency": {"from_id": "root", "to_id": "kid", "glue": "the input"},
@@ -83,7 +86,8 @@ _GOOD: dict[str, dict] = {
     "map_criterion": {"parent_id": "root", "child_id": "kid", "criterion_name": "c1"},
     "signal": {"task_id": "kid", "signal": "ACCEPT", "source": "agent"},
     "record_verdict": {"task_id": "kid", "verdict": "PASS", "reviewer": "someone-else",
-                       "observed": {"c": "ran it, it printed what it should"}},
+                       "observed": {"c": {"note": "ran it, it printed what it should",
+                                          "ran": ["check c"]}}},
     "next_step": {},
     "next_steps": {},
     "auto_decompose": {"request": "do the thing", "root_id": "root"},
@@ -113,6 +117,8 @@ _BAD: dict[str, dict] = {
     "edit_accepted_risks": {"task_id": "root", "accepted_risks": [{"item": "x",
                                                                    "predictability": "HIGH"}],
                             "agent": "agent"},
+    "edit_scope": {"task_id": "no-such-node", "scope": "a sentence", "agent": "agent"},
+    "claim_drift": {"task_id": "no-such-node"},
     "edit_criteria": {"task_id": "kid", "criteria": "one criterion", "agent": "agent"},
     "reassign": {"task_id": "no-such-node", "assignee": "someone"},
     "reopen": {"task_id": "no-such-node", "agent": "agent"},

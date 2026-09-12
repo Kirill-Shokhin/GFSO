@@ -13,21 +13,21 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _two_leaves_and_no_declared_dependency(e):
     T.create_task(e, "root", {"description": "two leaves",
-                              "criteria": [{"name": "g", "description": "G holds"},
-                                           {"name": "p", "description": "P holds"}],
+                              "criteria": [criterion("g", "G holds"),
+                                           criterion("p", "P holds")],
                               "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
     T.create_task(e, "root.cons", {"description": "consumer",
-                                   "criteria": [{"name": "c", "description": "C"}]},
+                                   "criteria": [criterion("c", "C")]},
                   assignee="cons-x", parent_id="root")
     T.create_task(e, "root.prod", {"description": "producer",
-                                   "criteria": [{"name": "pp", "description": "PP"}]},
+                                   "criteria": [criterion("pp", "PP")]},
                   assignee="prod-x", parent_id="root")
     T.map_criterion(e, "root", "root.cons", "g")
     T.map_criterion(e, "root", "root.prod", "p")

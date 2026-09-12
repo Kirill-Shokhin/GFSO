@@ -561,7 +561,16 @@ def _executor_packet(engine, task, workdir: str | None) -> str:
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
     inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any."""
     tid = str(task.id)
-    crits = "\n".join(f"- **{c.name}**: {c.description}" for c in task.spec.criteria) or "- (none)"
+    # …AND THE PROCEDURE EACH CRITERION PINS. Pre-registration means something only if the side
+    # being held to it can READ it: the contract says what will be RUN, written before the work, so
+    # the executor builds against the check rather than against its own reading of the criterion.
+    def _crit_line(c) -> str:
+        return "\n".join(
+            [f"- **{c.name}**: {c.description}"]
+            + [f"    - will be checked by — {p.behaviour}: `{p.command}` → must show: {p.expect}"
+               for p in (c.check or ())])
+
+    crits = "\n".join(_crit_line(c) for c in task.spec.criteria) or "- (none)"
     ups = []
     for e in engine.get_dependencies():
         if str(e.to_id) == tid:

@@ -7,17 +7,17 @@ closest to opening the source (CLI door, 2026-09-02). The data was there; the sh
 """
 from gfso import driver
 from gfso import tools as T
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 
 def test_the_tree_shows_state_and_holder_per_node_and_what_the_frontier_holds(monkeypatch, capsys):
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c")
     T.signal(e, "kid", "ACCEPT", "worker")

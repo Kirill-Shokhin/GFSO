@@ -15,7 +15,7 @@ from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.adapters.llm.headless import _tool_use_name, HeadlessClaudeLLM
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import make_engine
+from tests.support import criterion, make_engine, pinned
 
 
 def _eng():
@@ -46,11 +46,11 @@ class _ValidatorLLM:
 
 def _delivered_node(e, tid="n1", extra_dep=False):
     T.create_task(e, tid, {"name": "Nail it", "description": "hammer a nail",
-                           "criteria": [{"name": "flush", "description": "nail head is flush"},
-                                        {"name": "holds", "description": "picture hangs on it"}]}, "alice")
+                           "criteria": [criterion("flush", "nail head is flush"),
+                                        criterion("holds", "picture hangs on it")]}, "alice")
     if extra_dep:
         T.create_task(e, "prod", {"description": "buy nails",
-                                  "criteria": [{"name": "nails", "description": "nails exist"}]}, "alice")
+                                  "criteria": [criterion("nails", "nails exist")]}, "alice")
         T.add_dependency(e, "prod", tid, glue="uses the bought nails")
     assert T.signal(e, tid, "ACCEPT", "alice")["state"] == "EXECUTING"
     r = T.signal(e, tid, "DELIVER", "alice",
@@ -65,10 +65,10 @@ def test_validate_result_happy_path_embeds_contract_and_deliver():
     # must speak to it too — a report silent on the seam is ⊥ over the seam (anti-mock has teeth)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
                                  "per_criterion": [
-                                     {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
                                      {"criterion": "dep__prod", "verdict": "pass",
-                                      "evidence": "grep: uses the real bought nails, no stub", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                      "evidence": "grep: uses the real bought nails, no stub", "behaviours": ["the criterion holds"], "probe": [{"command": "check dep__prod", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "seams": "checked prod output", "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "PASS" and out["failed_criteria"] == []
@@ -88,7 +88,7 @@ def test_validate_result_fail_report_drives_issuer_fail_signal():
     llm = _ValidatorLLM(_fenced({"verdict": "FAIL",
                                  "per_criterion": [
                                      {"criterion": "flush", "verdict": "fail", "evidence": "nail bent", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": ["flush"]}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
@@ -100,12 +100,12 @@ def test_validate_result_fail_report_drives_issuer_fail_signal():
 
 def test_validate_result_requires_a_deliverable():
     e = _eng()
-    T.create_task(e, "n2", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    T.create_task(e, "n2", {"description": "x", "criteria": [criterion("a", "A")]}, "alice")
     out = TL.validate_result(e, "n2", _llm=_ValidatorLLM("irrelevant"))
     assert "error" in out and "DELIVER" in out["error"]
     # explicit deliverable unblocks it (the restart fallback)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "a", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
+        {"criterion": "a", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check a", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
     out = TL.validate_result(e, "n2", deliverable="see out.txt", _llm=llm)
     assert out["verdict"] == "PASS" and "see out.txt" in llm.seen["user"]
     e.stop()
@@ -131,7 +131,7 @@ def test_pass_contradicting_its_own_evidence_is_not_a_verdict():
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
                                  "per_criterion": [
-                                     {"criterion": "flush", "verdict": "pass", "evidence": "flush ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "flush ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
                                      {"criterion": "holds", "verdict": "fail",
                                       "evidence": "fell off — but the plan ACCEPTED_RISKS this as an "
                                                   "impossible criterion, so out of scope", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
@@ -151,7 +151,7 @@ def test_report_leaving_a_criterion_unspoken_is_not_a_verdict():
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
                                  "per_criterion": [
-                                     {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] is None and "holds" in out["verdict_defects"]
@@ -166,7 +166,7 @@ def test_failed_criteria_must_be_the_reports_own_red_set():
     llm = _ValidatorLLM(_fenced({"verdict": "FAIL",
                                  "per_criterion": [
                                      {"criterion": "flush", "verdict": "fail", "evidence": "bent", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": ["holds"]}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] is None and "failed_criteria" in out["verdict_defects"]
@@ -179,9 +179,9 @@ def test_verdict_over_a_foreign_contract_is_not_a_verdict():
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
                                  "per_criterion": [
-                                     {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "holds", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "painted", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                     {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
+                                     {"criterion": "painted", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check painted", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] is None and "painted" in out["verdict_defects"]
@@ -194,8 +194,8 @@ def test_recorded_verdict_carries_the_evidence():
     e = _eng()
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "measured 0.2mm proud", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-        {"criterion": "holds", "verdict": "pass", "evidence": "2kg for 24h", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
+        {"criterion": "flush", "verdict": "pass", "evidence": "measured 0.2mm proud", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
+        {"criterion": "holds", "verdict": "pass", "evidence": "2kg for 24h", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
     TL.validate_result(e, "n1", _llm=llm)
     rec = e.get_exec_verdict(T.TaskId("n1"))
     assert rec["verdict"] == "PASS"
@@ -211,16 +211,16 @@ def test_validate_result_noops_on_internal_node():
     The tool returns a self-verify directive and NEVER spawns the validator."""
     e = _eng()
     T.create_task(e, "par", {"description": "parent",
-                             "criteria": [{"name": "g", "description": "G"}],
+                             "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]}, "alice")
     T.create_task(e, "kid", {"description": "child",
-                             "criteria": [{"name": "k", "description": "K"}]}, "alice", parent_id="par")
+                             "criteria": [criterion("k", "K")]}, "alice", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")   # §13.4: L0-complete plan before executing
     T.signal(e, "kid", "ACCEPT", "alice")
     T.signal(e, "kid", "DELIVER", "alice", result="done; k met")
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "k", "verdict": "pass", "evidence": "x", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
+        {"criterion": "k", "verdict": "pass", "evidence": "x", "behaviours": ["the criterion holds"], "probe": [{"command": "check k", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
     out = TL.validate_result(e, "kid", _llm=llm)
     assert out.get("internal") is True and out["verdict"] is None
     assert llm.seen is None                         # the validator was NEVER spawned
@@ -237,16 +237,16 @@ def test_validate_result_still_validates_a_delegation_seam():
     """The counterpart: a child with a DIFFERENT Del is a seam — validation DOES run there."""
     e = _eng()
     T.create_task(e, "par2", {"description": "parent",
-                              "criteria": [{"name": "g", "description": "G"}],
+                              "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]}, "alice")
     T.create_task(e, "kid2", {"description": "child",
-                              "criteria": [{"name": "k", "description": "K"}]}, "bob", parent_id="par2")
+                              "criteria": [criterion("k", "K")]}, "bob", parent_id="par2")
     T.map_criterion(e, "par2", "kid2", "g")
     T.signal(e, "kid2", "ACCEPT", "bob")
     T.signal(e, "kid2", "DELIVER", "bob", result="done; k met")
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "k", "verdict": "pass", "evidence": "x", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
+        {"criterion": "k", "verdict": "pass", "evidence": "x", "behaviours": ["the criterion holds"], "probe": [{"command": "check k", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
     out = TL.validate_result(e, "kid2", _llm=llm)
     assert out["verdict"] == "PASS" and llm.seen is not None   # seam → validator DID run
     e.stop()
@@ -292,7 +292,7 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     # a FAIL verdict on record does NOT unlock PASS (that override is the falsification q_V fears)
     llm_fail = _ValidatorLLM(_fenced({"verdict": "FAIL", "per_criterion": [
         {"criterion": "flush", "verdict": "fail", "evidence": "bent", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-        {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": ["flush"]}))
+        {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": ["flush"]}))
     TL.validate_result(e, "n1", _llm=llm_fail)
     r = T.signal(e, "n1", "PASS", "alice")
     assert r["accepted"] is False and "FAIL" in r["error"]
@@ -302,8 +302,8 @@ def test_self_pass_gate_requires_fresh_independent_verdict():
     r = T.signal(e, "n1", "PASS", "alice")
     assert r["accepted"] is False and "STALE" in r["error"]
     llm_ok = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-        {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
+        {"criterion": "flush", "verdict": "pass", "evidence": "ok", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
+        {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}], "failed_criteria": []}))
     TL.validate_result(e, "n1", _llm=llm_ok)
     assert T.signal(e, "n1", "PASS", "alice")["state"] == "DONE"
     e.stop()
@@ -320,18 +320,19 @@ def test_a_distinct_issuer_still_needs_the_verdict_on_the_record():
     observed; who signs is a separate rule (the executor may not)."""
     e = _eng()
     T.create_task(e, "par", {"description": "parent",
-                             "criteria": [{"name": "g", "description": "G"}],
+                             "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                 "predictability": "EXTRAORDINARY"}]}, "boss")
     T.create_task(e, "kid", {"description": "child",
-                             "criteria": [{"name": "k", "description": "K"}]}, "worker",
+                             "criteria": [criterion("k", "K")]}, "worker",
                   parent_id="par")
     T.map_criterion(e, "par", "kid", "g")   # §13.4: L0-complete plan before executing
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="done")
     bare = T.signal(e, "kid", "PASS", "boss")                      # issuer=boss ≠ Del=worker…
     assert bare["accepted"] is False and "independent verdict" in bare["error"]
-    T.record_verdict(e, "kid", "PASS", reviewer="boss", observed={"k": "ran it, printed 42"})
+    T.record_verdict(e, "kid", "PASS", reviewer="boss",
+                     observed={"k": {"note": "ran it, printed 42", "ran": ["check k"]}})
     assert T.signal(e, "kid", "PASS", "boss")["state"] == "DONE"   # …once the record exists
     e.stop()
 
@@ -339,7 +340,9 @@ def test_a_distinct_issuer_still_needs_the_verdict_on_the_record():
 def _seen(e, tid):
     """What a human reviewer says they observed — one line per criterion (the door now asks)."""
     t = e.get_task(T.TaskId(tid))
-    return {c.name: f"checked {c.name} by hand" for c in t.spec.criteria if not c.depends_on}
+    return {c.name: {"note": f"checked {c.name} by hand",
+                     "ran": [p.command for p in (c.check or ())]}
+            for c in t.spec.criteria if not c.depends_on}
 
 
 def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gate():
@@ -348,7 +351,7 @@ def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gat
     recording one on their own work (the self-stamp would open the gate from the inside)."""
     e = _eng()
     T.create_task(e, "n9", {"description": "solo work",
-                            "criteria": [{"name": "a", "description": "A"}]}, "h1")
+                            "criteria": [criterion("a", "A")]}, "h1")
     T.signal(e, "n9", "ACCEPT", "h1")
     T.signal(e, "n9", "DELIVER", "h1", result="done; a met")
     assert e.get_state(T.TaskId("n9")).name == "VALIDATING"
@@ -388,7 +391,7 @@ def test_validator_tool_use_is_counted_and_recorded():
     e.record_exec_verdict("n1", "FAIL", ["flush"], "validate_result",
                           per_criterion=[{"criterion": "flush", "verdict": "fail",
                                           "evidence": "Executed: check() -> not flush", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]},
-                                         {"criterion": "holds", "verdict": "pass", "evidence": "hangs", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                         {"criterion": "holds", "verdict": "pass", "evidence": "hangs", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                           tools_used={"Read": 2})
     rec = e.get_exec_verdict("n1")
     assert rec["tools_used"] == {"Read": 2}
@@ -436,7 +439,10 @@ def test_the_probe_requirement_is_the_instrument_s_alone():
     e = _eng()
     _delivered_node(e)
     e.record_reviewer_verdict(T.TaskId("n1"), "PASS", [], "human-reviewer",
-                              observed={c.name: "opened it and read it end to end; it holds"
+                              # no `probe` — prose is a person's licence — but they still say WHICH
+                              # of the criterion's pinned commands they ran by hand
+                              observed={c.name: {"note": "opened it and read it end to end; it holds",
+                                                 "ran": [p.command for p in (c.check or ())]}
                                         for c in e.get_task(T.TaskId("n1")).spec.criteria})
     assert e.get_exec_verdict(T.TaskId("n1"))["verdict"] == "PASS"
 
@@ -459,9 +465,9 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md",
-         "probe": {"command": "python sum.py", "expect": "42"}},
+         "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "ran check",
-         "probe": {"command": "python sum.py", "expect": "42"}}]}))
+         "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]}]}))
     TL.validate_result(e, "n1", workdir=str(project), _llm=llm)
 
     assert llm.seen["cwd"] == str(project), "the validator was opened away from the delivery"
@@ -561,10 +567,10 @@ def test_the_record_names_the_model_that_judged():
                                  "per_criterion": [
                                      {"criterion": "flush", "verdict": "pass", "evidence": "ok",
                                       "behaviours": ["nail head is flush"],
-                                      "probe": [{"command": "pytest -q", "expect": "passed"}]},
+                                      "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
                                      {"criterion": "holds", "verdict": "pass", "evidence": "ok",
                                       "behaviours": ["picture hangs on it"],
-                                      "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+                                      "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": []}))
     TL.validate_result(e, "n1", model="haiku", _llm=llm)
     rec = e.get_exec_verdict(T.TaskId("n1"))
@@ -596,9 +602,9 @@ def test_what_the_validator_leaves_in_the_delivery_is_named(tmp_path):
 
     llm = _Littering(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ran it",
-         "probe": {"command": "python sum.py", "expect": "42"}},
+         "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "ran it",
-         "probe": {"command": "python sum.py", "expect": "42"}}]}))
+         "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]}]}))
     out = TL.validate_result(e, "n1", workdir=str(project), _llm=llm)
 
     assert out["validator_strays"] == ["_fixtures", "t1.csv"]
@@ -633,9 +639,9 @@ def test_an_empty_working_directory_is_refused_not_failed(tmp_path, monkeypatch)
     (empty / "sum.py").write_text("print(42)", encoding="utf-8")
     ok = _fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ran it",
-         "probe": {"command": "python sum.py", "expect": "42"}},
+         "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "ran it",
-         "probe": {"command": "python sum.py", "expect": "42"}}]})
+         "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]}]})
     out2 = TL.validate_result(e, "n1", workdir=str(empty), _llm=_ValidatorLLM(ok))
     assert "empty" not in (out2.get("error") or "")
     e.stop()
@@ -657,7 +663,7 @@ def test_a_refused_report_reaches_the_issuer_who_has_to_decide():
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "read it",
          "behaviours": ["the head sits flush", "and stays flush under load"],
-         "probe": {"command": "python -c \"print('flush')\"", "expect": "flush"}},
+         "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python -c \"print('flush')\"", "expect": "flush"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "looked at it"}],
         "failed_criteria": []}))
     out = TL.validate_result(e, "n1", workdir=".", _llm=llm)
@@ -683,7 +689,7 @@ def test_a_long_contract_is_judged_in_batches_whose_conjunction_is_the_verdict(m
     to probe it, and the merged report is refused on the same terms as any other."""
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
     e = _eng()
-    crits = [{"name": f"c{i}", "description": f"criterion {i}"} for i in range(5)]
+    crits = [criterion(f"c{i}", f"criterion {i}") for i in range(5)]
     T.create_task(e, "big", {"description": "a rich contract", "criteria": crits}, "alice")
     T.signal(e, "big", "ACCEPT", "alice")
     T.signal(e, "big", "DELIVER", "alice", result="built it; see notes")
@@ -700,7 +706,8 @@ def test_a_long_contract_is_judged_in_batches_whose_conjunction_is_the_verdict(m
             return _fenced({"verdict": "PASS", "failed_criteria": [],
                             "per_criterion": [{"criterion": n, "verdict": "pass", "evidence": "ran it",
                                                "behaviours": ["the criterion holds"],
-                                               "probe": [{"command": "pytest -q", "expect": "passed"}]}
+                                               "probe": [{"command": f"check {n}", "expect": "it holds"},
+                                                         {"command": "pytest -q", "expect": "passed"}]}
                                               for n in judged]})
 
         def tag_last(self, stage):
@@ -723,7 +730,7 @@ def test_the_batches_of_one_verdict_run_at_the_same_time(monkeypatch, tmp_path):
     client and the scratch may not be shared."""
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
     e = _eng()
-    crits = [{"name": f"c{i}", "description": f"criterion {i}"} for i in range(5)]
+    crits = [criterion(f"c{i}", f"criterion {i}") for i in range(5)]
     T.create_task(e, "big", {"description": "a rich contract", "criteria": crits}, "alice")
     T.signal(e, "big", "ACCEPT", "alice")
     T.signal(e, "big", "DELIVER", "alice", result="built it")
@@ -747,7 +754,8 @@ def test_the_batches_of_one_verdict_run_at_the_same_time(monkeypatch, tmp_path):
             return _fenced({"verdict": "PASS", "failed_criteria": [],
                             "per_criterion": [{"criterion": n, "verdict": "pass", "evidence": "ran it",
                                                "behaviours": ["the criterion holds"],
-                                               "probe": [{"command": "pytest -q", "expect": "passed"}]}
+                                               "probe": [{"command": f"check {n}", "expect": "it holds"},
+                                                         {"command": "pytest -q", "expect": "passed"}]}
                                               for n in judged]})
 
         def tag_last(self, stage):
@@ -783,7 +791,7 @@ def test_a_refuted_criterion_survives_the_under_probing_rule():
              "probe": [{"command": "grep -r flush tests/", "expect": ""}]},
             {"criterion": "holds", "verdict": "pass", "evidence": "held 2kg",
              "behaviours": ["picture hangs"],
-             "probe": [{"command": "pytest -q", "expect": "passed", "behaviour": "picture hangs"}]}]}))
+             "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed", "behaviour": "picture hangs"}]}]}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
     assert T.get_verdict(e, "n1")["verdict"] == "FAIL"      # …and it is on the record, not discarded
@@ -823,9 +831,9 @@ def test_the_workdir_defaults_to_where_the_nodes_Del_is_registered(tmp_path, mon
     _roster_of(monkeypatch, {"alice": {"kind": "llm-executor", "workdir": str(project)}})
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "failed_criteria": [], "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ran it", "behaviours": ["nail head is flush"],
-         "probe": [{"command": "python sum.py", "expect": "42", "behaviour": "nail head is flush"}]},
+         "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42", "behaviour": "nail head is flush"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "ran it", "behaviours": ["picture hangs on it"],
-         "probe": [{"command": "python sum.py", "expect": "42", "behaviour": "picture hangs on it"}]}]}))
+         "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42", "behaviour": "picture hangs on it"}]}]}))
     monkeypatch.setattr(TL, "llm_factory", lambda model: llm)
 
     out = TL.validate_result(e, "n1")                       # no workdir: the roster has it

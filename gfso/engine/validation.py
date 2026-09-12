@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Optional
 
 
@@ -13,6 +14,7 @@ from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import (validate_fail_has_criteria,
                                            fail_names_this_contract)
 from gfso.core.handlers.structural import run_structural
+from gfso.core.protocol.procedure import criteria_without_procedure
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.review import finding_keys
@@ -468,6 +470,24 @@ def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
         # executor DID choose is causally sound before its parts run (below). (An earlier build gated
         # the leaf itself on an atomicity verdict; that imposed the subtask count from outside and, as a
         # side effect, deadlocked auto_decompose's own builder on its internal ACCEPTs. Removed.)
+        # ITS OWN CONTRACT, BEFORE ANYONE'S PLAN — and this is the only clause a ROOT meets, since
+        # a root has no parent to be admitted by. A1 types a criterion as a decidable predicate
+        # (§10); one that pins no procedure is an intention, and the procedure then gets written by
+        # whoever validates, at judging time, differently each round. Pre-registration is Inv-1's
+        # (§14.4): a check written before the work is a claim, one written after it is a
+        # description of whatever got built. Not folded into `_EXEC_GATING_CHECKS` — that tuple is
+        # §13.4's numbered level and stays exactly it; this is Tier 0, which that level presupposes
+        # (CHECK-1 already refuses a decomposed node carrying no criteria at all, on A1 grounds).
+        _me = graph.get_task(signal_data.task_id)
+        if _me is not None and (_naked := criteria_without_procedure(_me.spec.criteria)):
+            raise ValidationError(
+                f"cannot execute {signal_data.task_id}: its own criteria pin no check, so nothing "
+                f"decides them but a probe improvised at validation time — A1 (§10) asks "
+                f"that a criterion be decidable and this product asks you to write down WHAT "
+                f"decides it, before the work (Inv-1, §14.4) — "
+                f"{', '.join(_naked)}. Give each one the procedure that decides it: "
+                f"`edit_criteria('{signal_data.task_id}', [{{name, description, "
+                f"check: [{{behaviour, command, expect}}]}}])`.")
         parent = graph.get_parent(signal_data.task_id)
         if parent is not None:
             holes = _l0_holes(graph, parent)

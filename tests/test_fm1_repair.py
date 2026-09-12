@@ -21,7 +21,7 @@ from gfso.core.types import (
     State, Signal, SignalData, TaskId, AgentId, Spec, Criteria, CriterionMapping,
 )
 from gfso.engine.validation import ValidationError, validate_signal
-from tests.support import make_engine, reviewer_passes
+from tests.support import make_engine, pinned, reviewer_passes
 
 
 @pytest.fixture(autouse=True)
@@ -46,13 +46,14 @@ def _refuted(e: Engine, root_criterion="rc", description="rc description"):
     Leaves the root in REWORKING with a generation-stamped FAIL verdict — the state every test starts
     from, and the state the live `markdown_renderer` run reached (`EVIDENCE_LOG` §13.3).
     """
-    e.assign_task(TaskId("root"), Spec("root goal", (Criteria(root_criterion, description),),
+    e.assign_task(TaskId("root"), Spec("root goal", (Criteria(root_criterion, description,
+                                                 check=pinned(root_criterion)),),
                                      accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
                                             Predictability.EXTRAORDINARY),)),
                   AgentId("pm"))
     e.wait_idle()
     e.decompose_task(TaskId("root"),
-                     [(TaskId("ch"), Spec("child goal", (Criteria("cc", "cc description"),)),
+                     [(TaskId("ch"), Spec("child goal", (Criteria("cc", "cc description", check=pinned("cc")),)),
                        AgentId("w"))],
                      criterion_mappings=[CriterionMapping(root_criterion, TaskId("ch"))])
     e.wait_idle()
@@ -123,7 +124,7 @@ def test_unrepaired_redeliver_is_refused_and_routed_to_parent_revision(engine):
 def test_dropping_the_refuted_criterion_is_refused(engine):
     """FM-1.f in reverse: a criterion with no fail-extension forbids nothing (§2.1)."""
     _refuted(engine)
-    _revise_root(engine, (Criteria("other", "an unrelated criterion"),))
+    _revise_root(engine, (Criteria("other", "an unrelated criterion", check=pinned("other")),))
     with pytest.raises(ValidationError) as ex:
         _deliver(engine)
     assert "REMOVED rather than covered" in str(ex.value)
@@ -132,7 +133,7 @@ def test_dropping_the_refuted_criterion_is_refused(engine):
 def test_loosening_a_numeric_bound_is_refused(engine):
     """The bound moves, the work does not — decidable on the numeric tier (CHECK-7, §13.4)."""
     _refuted(engine, description="latency < 200")
-    _revise_root(engine, (Criteria("rc", "latency < 300"),))
+    _revise_root(engine, (Criteria("rc", "latency < 300", check=pinned("rc")),))
     with pytest.raises(ValidationError) as ex:
         _deliver(engine)
     assert "LOOSENED" in str(ex.value)
@@ -142,7 +143,7 @@ def test_tightening_a_numeric_bound_is_not_a_false_close(engine):
     """The negative control of the control: a STRICTER bound is not a shrunk fail-extension, so it
     must not be refused as one — it takes the ordinary edited route (a fresh verdict)."""
     _refuted(engine, description="latency < 200")
-    _revise_root(engine, (Criteria("rc", "latency < 100"),))
+    _revise_root(engine, (Criteria("rc", "latency < 100", check=pinned("rc")),))
     _review(engine)
     _deliver(engine)                                           # admitted
 
@@ -151,7 +152,7 @@ def test_tightening_a_numeric_bound_is_not_a_false_close(engine):
 
 def test_edited_criterion_needs_a_current_level2_verdict(engine):
     _refuted(engine)
-    _revise_root(engine, (Criteria("rc", "rc description, sharpened after contact"),))
+    _revise_root(engine, (Criteria("rc", "rc description, sharpened after contact", check=pinned("rc")),))
     with pytest.raises(ValidationError) as ex:
         _deliver(engine)
     assert "no CURRENT Level-2 verdict" in str(ex.value)
@@ -159,7 +160,7 @@ def test_edited_criterion_needs_a_current_level2_verdict(engine):
 
 def test_edited_criterion_with_open_gaps_is_refused(engine):
     _refuted(engine)
-    _revise_root(engine, (Criteria("rc", "rc description, sharpened after contact"),))
+    _revise_root(engine, (Criteria("rc", "rc description, sharpened after contact", check=pinned("rc")),))
     _review(engine, covered=False,
             verdicts=[{"criterion": "rc", "verdict": "insufficient"}])
     with pytest.raises(ValidationError) as ex:
@@ -170,7 +171,7 @@ def test_edited_criterion_with_open_gaps_is_refused(engine):
 def test_edited_criterion_passes_once_the_review_is_clean(engine):
     """The legal repair must survive: revise the parent, re-run the check, re-aggregate."""
     _refuted(engine)
-    _revise_root(engine, (Criteria("rc", "rc description, sharpened after contact"),))
+    _revise_root(engine, (Criteria("rc", "rc description, sharpened after contact", check=pinned("rc")),))
     _review(engine)
     _deliver(engine)                                           # no refusal
     engine.send_signal(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"),
@@ -187,7 +188,7 @@ def test_explore_branch_opts_out_of_the_level2_half(monkeypatch):
     e.start()
     try:
         _refuted(e)
-        _revise_root(e, (Criteria("rc", "rc description, sharpened after contact"),))
+        _revise_root(e, (Criteria("rc", "rc description, sharpened after contact", check=pinned("rc")),))
         _deliver(e)                                            # admitted with no fresh review at all
     finally:
         e.stop()
@@ -199,7 +200,7 @@ def test_explore_branch_still_refuses_a_dropped_criterion(monkeypatch):
     e.start()
     try:
         _refuted(e)
-        _revise_root(e, (Criteria("other", "an unrelated criterion"),))
+        _revise_root(e, (Criteria("other", "an unrelated criterion", check=pinned("other")),))
         with pytest.raises(ValidationError) as ex:
             _deliver(e)
         assert "REMOVED rather than covered" in str(ex.value)

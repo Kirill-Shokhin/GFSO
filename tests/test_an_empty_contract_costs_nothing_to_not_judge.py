@@ -20,7 +20,7 @@ import tempfile
 from gfso import tools as T
 from gfso.core.types import TaskId
 from gfso.delegate import AgentRegistry, Dispatcher
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _roster(tmp: pathlib.Path):
@@ -76,7 +76,7 @@ def test_a_node_WITH_a_contract_is_dispatched_exactly_as_before():
     tmp = pathlib.Path(tempfile.mkdtemp())
     e = make_engine()
     e.start()
-    _delivered(e, "real", [{"name": "c", "description": "C"}])
+    _delivered(e, "real", [criterion("c", "C")])
     d = Dispatcher(e, _roster(tmp), runner=lambda *a: None)
 
     started = d.dispatch_once()

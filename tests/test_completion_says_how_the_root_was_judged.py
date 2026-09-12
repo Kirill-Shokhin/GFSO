@@ -20,12 +20,12 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _closed_by_hand(e, tid="leaf"):
     T.create_task(e, tid, {"description": "a leaf",
-                           "criteria": [{"name": "c", "description": "C"}],
+                           "criteria": [criterion("c", "C")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -33,7 +33,8 @@ def _closed_by_hand(e, tid="leaf"):
     T.signal(e, tid, "ACCEPT", "exec-1")
     T.signal(e, tid, "DELIVER", "exec-1", result="claimed done")
     T.record_verdict(e, tid, "PASS", reviewer="inspector",
-                     observed={"c": "I ran the check myself and read OK"})
+                     observed={"c": {"note": "I ran the check myself and read OK",
+                                     "ran": ["check c"]}})
     T.signal(e, tid, "PASS", "exec-1")
     e.wait_idle()
     assert e.get_state(TaskId(tid)).name == "DONE"
@@ -41,7 +42,7 @@ def _closed_by_hand(e, tid="leaf"):
 
 def _closed_by_an_instrument(e, tid="ok"):
     T.create_task(e, tid, {"description": "a leaf",
-                           "criteria": [{"name": "c", "description": "C"}],
+                           "criteria": [criterion("c", "C")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -52,7 +53,7 @@ def _closed_by_an_instrument(e, tid="ok"):
                           per_criterion=[{"criterion": "c", "verdict": "pass",
                                           "evidence": "ran the check, it printed OK",
                                           "behaviours": ["C holds"],
-                                          "probe": [{"command": "check", "expect": "OK",
+                                          "probe": [{"command": "check c", "expect": "OK",
                                                      "behaviour": "C holds"}]}])
     T.signal(e, tid, "PASS", "exec-1")
     e.wait_idle()

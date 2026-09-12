@@ -15,6 +15,9 @@ It is not the theory. What a criterion IS, and why the register is mandatory, is
   "name": "Short title",
   "description": "the full text of the obligation",
   "criteria": [{"name": "c1", "description": "what must be observably true",
+                "check": [{"behaviour": "the conjunct this observes",
+                           "command": "how to observe it — runnable by someone who did not build it",
+                           "expect": "what the output must show"}],
                 "depends_on": "<producer task id>"}],
   "accepted_risks": [{"item": "what is being accepted",
                       "predictability": "STATISTICAL | EXTRAORDINARY",
@@ -28,6 +31,7 @@ It is not the theory. What a criterion IS, and why the register is mandatory, is
 |---|---|---|
 | `description` | yes | the obligation in full; `name` is only the UI label (≤6 words) |
 | `criteria` | yes, non-empty | the WHOLE obligation: decidable pass/fail conditions on the result. A node with children and no criteria of its own is a hole, not a covered node |
+| `criteria[].check` | yes, before execution | the DECISION PROCEDURE the criterion pins — what will be run to decide it, written with the criterion and before the work exists. A criterion is a decidable predicate (A1, §10), and a text quantified over what nobody can enumerate ("for ANY input …") decides nothing as written. A1 asks that a decidable predicate EXIST and leaves open which one it is; requiring it to be WRITTEN DOWN, and before the work, is this product's design decision (pre-registration, Inv-1 §14.4) — a criterion like "every function ≤ 50 lines" is decidable without a command and would still be asked for one here. What the pinned set does not reach stays unchecked and is said so at closure (FM-3, Ch. 8). Execution does not open while a criterion pins none, and a PASS that skips a pinned probe is refused. A seam criterion (`depends_on`) is exempt: the producer's PASS makes it true and the integration claim belongs to the parent (§5.2) |
 | `criteria[].depends_on` | when it applies | the ONE producer node this criterion consumes. It is what creates the Dep edge — a seam is criteria-content, not a separate declaration. A list is refused |
 | `accepted_risks` | **on any node you decompose** | risk EVENTS with a materialization probability, each with a predictability verdict. Empty on a decomposed node blocks execution (CHECK-4, §13.1: without the register the decomposition is incomplete by definition). A leaf carries none |
 | `scope` | when the exclusion is not obvious | capabilities the goal deliberately excludes. These have NO probability, so they do **not** belong in the register — CHECK-4 refuses them there |

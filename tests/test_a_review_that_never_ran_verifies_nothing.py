@@ -24,7 +24,7 @@ from __future__ import annotations
 from gfso import tools as T
 from gfso.core.types import TaskId
 from gfso.critic.runner import review_decomposition
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 class _NeverCalled:
@@ -45,12 +45,12 @@ class _NeverCalled:
 def _a_plan_with_a_hole_in_it(e):
     """A parent whose criterion no child covers — CHECK-1, the Syntactic level (§13.4)."""
     T.create_task(e, "par", {"description": "parent",
-                             "criteria": [{"name": "g", "description": "G"}],
+                             "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
     T.create_task(e, "par.kid", {"description": "kid",
-                                 "criteria": [{"name": "k", "description": "K"}]},
+                                 "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     e.wait_idle()
     assert [h.get("check") for h in T.list_holes(e)["holes"]] == ["CHECK-1:coverage"], (
@@ -96,7 +96,7 @@ def test_a_leaf_still_counts_as_answered():
     e = make_engine(llm=None)
     e.start()
     T.create_task(e, "leaf", {"description": "a leaf",
-                              "criteria": [{"name": "c", "description": "C"}],
+                              "criteria": [criterion("c", "C")],
                               "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")

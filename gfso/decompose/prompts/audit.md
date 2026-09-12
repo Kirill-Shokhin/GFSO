@@ -56,6 +56,17 @@ Reduce everything to a canonical, non-redundant **BASIS**:
       the standard pair: the guard that satisfies the first falsifies the second, and the node exhausts
       its reworks on a contradiction no executor can resolve. Where one implies a limit, write that limit
       into the other.
+    - **Carries its own procedure (`check`).** A criterion is a DECIDABLE predicate, and a text that
+      quantifies over what nobody can enumerate ("for ANY accepted program the output matches gcc")
+      decides nothing by itself. Write, with the criterion and before any work exists, the finite set
+      of observations that DOES decide it: `check: [{behaviour, command, expect}]` — the conjunct each
+      probe observes, the command someone who was not the executor can run as written, and what its
+      output must show. Cover the edge cases the requirement implies, not one happy path. Refer to the
+      interface the goal promises (the binary, the endpoint, the file) even though it does not exist
+      yet — a check written before the work is a pre-registered claim, and one written after it is a
+      description of whatever was built. What the set does not reach stays unchecked and is SAID so at
+      closure; that residue is honest, and a procedure invented later by whoever happens to validate
+      is not. A command that merely restates the criterion ("review the parser") is not a procedure.
     - **Decidable when its own child delivers.** A child's criterion must be checkable on that child's own
       output plus the outputs of its PRODUCERS — the subtasks that are the SOURCE of a Dep whose TARGET is
       this child, and so land before it (the `from_id` side of `add_dependency(from_id, to_id)` where

@@ -5,7 +5,7 @@ import os
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
 from gfso import tools as T
@@ -64,7 +64,7 @@ def test_deliver_result_survives_restart(tmp_path):
     default path still has the validator's input (no explicit `deliverable` needed)."""
     db = str(tmp_path / "d.db")
     e = _eng(SqliteStorage(db))
-    T.create_task(e, "n", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "w")
+    T.create_task(e, "n", {"description": "x", "criteria": [criterion("a", "A")]}, "w")
     T.signal(e, "n", "ACCEPT", "w")
     T.signal(e, "n", "DELIVER", "w", result="artifact at out/x.txt; a met by ...")
     e.stop()

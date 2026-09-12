@@ -275,13 +275,16 @@ def test_run_structural_returns_all_checks():
     child = _task("c1", desc="perf work", assignee="a1")
     results = run_structural(parent, [child])
     names = [r.check_name for r in results]
-    # Seven canon rows plus §3.4(6), which is a canon RULE with no canon CHECK and therefore
-    # reported under its own name rather than folded into CHECK-3's (see the gate-level test).
-    assert len(results) == 8
+    # Seven canon rows, plus §3.4(6) — a canon RULE with no canon CHECK — plus A1:procedure, a
+    # DESIGN DECISION operationalizing A1 on the node's own contract (A1 asks that a decidable
+    # predicate exist, "not which one it is" — §2.1; this asks it to be written down, before the
+    # work). Each extra is reported under its OWN name and never folded into a CHECK row.
+    assert len(results) == 9
     for expected in (
         "CHECK-1:coverage", "CHECK-1b:no_orphan", "CHECK-2:dag",
         "CHECK-3:deadlines", "CHECK-4:accepted_risks",
         "CHECK-5:risk_nodes", "CHECK-6:delegation", "§3.4(6):vertical_deadlines",
+        "A1:procedure",
     ):
         assert expected in names
 
@@ -358,10 +361,19 @@ def test_the_execution_gate_is_exactly_the_canons_syntactic_level():
     # details — and since the gate matches on the NAME, it refused execution under a canon check's
     # name, which is the one thing this test exists to forbid (audited 2026-09-05, F4).
     produced = {r.check_name.split(":")[0] for r in run_structural(_task_neg(()), [])}
-    assert produced - {"CHECK-1c", "§3.4(6)"} <= canon_level_0
+    assert produced - {"CHECK-1c", "§3.4(6)", "A1"} <= canon_level_0
     assert "§3.4(6)" in produced, "the vertical rule must still be SAID, just not enforced here"
     assert not any(p.startswith("§3.4") for p in _EXEC_GATING_CHECKS)
     assert "CHECK-1c" not in gated                          # …and it stays out of the gate
+    # A1:procedure DOES refuse execution — and not through this filter. Stated at its real grade:
+    # it is NOT a canon row, and it is not A1 read off the canon either (A1 asserts a decidable
+    # predicate exists, not that it is written down — §2.1). It is a product rule with a canon
+    # PARENT: the demand that the procedure be fixed before the work is Inv-1's pre-registration
+    # (§14.4). The finding this test was written for is a rule acquiring a canon check's authority
+    # under that check's NAME; this one refuses under its own name, visible as its own clause in
+    # `_accept_rules` / `execution_blocked_by`, and the battery filter stays exactly the seven.
+    # Whether a product rule may gate at all is the author's call, and it is flagged to him as one.
+    assert "A1" not in gated, "A1 gates as its own named clause, never inside a CHECK row"
 
 
 def test_the_agent_door_can_declare_a_scope_boundary():

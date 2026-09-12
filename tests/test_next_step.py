@@ -7,7 +7,7 @@ import json
 
 from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, Signal,
                              SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 from gfso import tools as T
 
 
@@ -184,9 +184,9 @@ def test_frontier_is_del_aware(monkeypatch):
     e.start()
     monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")
     T.create_task(e, "mine1", {"description": "agent node",
-                               "criteria": [{"name": "a", "description": "A"}]})          # Del=claude-main
+                               "criteria": [criterion("a", "A")]})                        # Del=claude-main
     T.create_task(e, "his1", {"description": "human node",
-                              "criteria": [{"name": "b", "description": "B"}]}, assignee="kirill")
+                              "criteria": [criterion("b", "B")]}, assignee="kirill")
     steps = T.next_steps(e)["steps"]
     by_id = {s["task_id"]: s for s in steps}
     assert by_id["mine1"]["mine"] is True and by_id["mine1"]["assignee"] == "claude-main"
@@ -250,11 +250,11 @@ def test_a_step_names_who_would_sign_it():
     executor's), so the step says so and a door that takes the signer can copy it."""
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="boss")
-    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c")
 

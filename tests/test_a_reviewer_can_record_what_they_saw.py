@@ -19,10 +19,14 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
-_OBSERVED = {"parses": "ran the parser suite: 3 red", "matches": "ran the matcher suite: green"}
+# A reviewer says WHICH of the procedure the contract pins they executed (`ran`), beside their own
+# words — the hand door is not the one place a pinned probe may be skipped in silence.
+_OBSERVED = {"parses": {"note": "ran the parser suite: 3 red", "ran": ["check parses"]},
+             "matches": {"note": "ran the matcher suite: green", "ran": ["check matches"]}}
+_CRITERIA = [criterion("parses", "P"), criterion("matches", "M")]
 
 
 @pytest.fixture(autouse=True)
@@ -33,9 +37,7 @@ def _no_plan_gate(monkeypatch):
 def _recorded(verdict, failed, observed=None):
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
-    T.create_task(e, "n", {"description": "the work",
-                           "criteria": [{"name": "parses", "description": "P"},
-                                        {"name": "matches", "description": "M"}],
+    T.create_task(e, "n", {"description": "the work", "criteria": list(_CRITERIA),
                            "accepted_risks": _RISK}, assignee="worker")
     T.signal(e, "n", "ACCEPT", "worker")
     T.signal(e, "n", "DELIVER", "worker", result="did it")
@@ -64,9 +66,7 @@ def test_the_evidence_the_reviewer_gave_is_what_is_stored():
     for the instrument, which is the whole point of this verb existing."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
-    T.create_task(e, "n", {"description": "the work",
-                           "criteria": [{"name": "parses", "description": "P"},
-                                        {"name": "matches", "description": "M"}],
+    T.create_task(e, "n", {"description": "the work", "criteria": list(_CRITERIA),
                            "accepted_risks": _RISK}, assignee="worker")
     T.signal(e, "n", "ACCEPT", "worker")
     T.signal(e, "n", "DELIVER", "worker", result="did it")

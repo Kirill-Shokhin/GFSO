@@ -42,7 +42,7 @@ from gfso.api.server import create_app
 from gfso.engine.validation import l2_gate_on
 from gfso.runtime import ProjectRegistry
 from gfso.tools_llm import validate_internal_on
-from tests.support import make_engine, spec
+from tests.support import make_engine, spec, criterion
 from tests.test_integration import _engine
 
 
@@ -102,7 +102,7 @@ def test_the_http_door_takes_project_where_every_other_argument_goes():
         made = c.post("/api/run/create_task", json={
             "project": "bodyscope", "task_id": "root",
             "spec": {"name": "root", "description": "a goal",
-                     "criteria": [{"name": "c1", "description": "the thing"}],
+                     "criteria": [criterion("c1", "the thing")],
                      "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
                                          "justification": "accepted", "invalidation_condition": "never"}]},
             "assignee": "agent"})
@@ -417,7 +417,8 @@ def test_a_self_report_is_not_reported_as_an_instruments_work():
         e.record_exec_verdict(TaskId("root"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("worker"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                              "evidence": "SELF-REPORTED by worker"}])
+                                              "evidence": "SELF-REPORTED by worker",
+                                              "probe": [{"command": "check c1", "expect": "it holds"}]}])
         assert e.verdict_provenance(TaskId("root")) == "self", (
             "a verdict signed by the node's own executor is a self-report, not an instrument's work")
         assert "SELF-REPORTED" in _INDEPENDENCE["self"], "the words do not say what the kind is"
@@ -425,7 +426,8 @@ def test_a_self_report_is_not_reported_as_an_instruments_work():
         e.record_exec_verdict(TaskId("root"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("judge"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                              "evidence": "ran it"}])
+                                              "evidence": "ran it",
+                                              "probe": [{"command": "check c1", "expect": "it holds"}]}])
         assert e.verdict_provenance(TaskId("root")) == "instrument", (
             "a verdict signed by somebody other than the executor is an independent one")
 
@@ -500,7 +502,8 @@ def test_complete_is_a_claim_about_every_root():
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("judge"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                              "evidence": "ran it"}])
+                                              "evidence": "ran it",
+                                              "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
                                       source=AgentId("agent")))
         e.wait_idle()
@@ -583,8 +586,12 @@ def test_an_observation_that_restates_the_verdict_records_nothing():
         assert "restates the verdict" in str(refused.get("error")), (
             "the refusal does not say WHY what they wrote is not an observation")
 
+        # …and the observation names the pinned run: a criterion now carries the procedure that
+        # decides it (A1/§10), so an observation is measured against THAT, not against a probe the
+        # observer invented while judging.
         ok = record_verdict(e, "p", "PASS", reviewer="dave-from-accounting",
-                            observed={"c1": "ran `python -m pytest -q` in ./p: 3 passed, 0 failed"})
+                            observed={"c1": {"note": "ran `python -m pytest -q` in ./p: 3 passed",
+                                             "ran": ["check c1"]}})
         assert ok.get("recorded") is True, "a real observation was refused — the rule is a wall"
     finally:
         e.stop()
@@ -656,7 +663,8 @@ def test_q_V_says_what_a_reopen_does_to_it():
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("judge"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                              "evidence": "ran it"}])
+                                              "evidence": "ran it",
+                                              "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
                                       source=AgentId("agent")))
         e.wait_idle()
@@ -700,7 +708,8 @@ def test_a_refused_report_is_said_at_completion_without_withholding_it():
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("judge"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                              "evidence": "ran it"}])
+                                              "evidence": "ran it",
+                                              "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
                                       source=AgentId("agent")))
         e.wait_idle()
@@ -848,7 +857,8 @@ def test_the_verdict_a_node_closed_on_is_not_overwritten_by_a_later_one():
         e.record_exec_verdict(TaskId("n"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("bob-who-ran-nothing"), by_hand=True,
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                              "evidence": "I ran it and it printed 27 passed"}])
+                                              "evidence": "I ran it and it printed 27 passed",
+                                              "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("n"),
                                       source=AgentId("agent")))
         e.wait_idle()
@@ -857,7 +867,8 @@ def test_the_verdict_a_node_closed_on_is_not_overwritten_by_a_later_one():
         e.record_exec_verdict(TaskId("n"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("val-1"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                              "evidence": "ran the suite"}])
+                                              "evidence": "ran the suite",
+                                              "probe": [{"command": "check c1", "expect": "it holds"}]}])
 
         closed_on = e.closing_verdict(TaskId("n"))
         assert closed_on and closed_on["validator"] == "bob-who-ran-nothing", (
@@ -898,15 +909,17 @@ def test_a_hand_verdict_is_refused_while_an_instrument_is_mid_judgement():
         claim = e.begin_validation(TaskId("n"))
         assert claim is not None and e.validation_in_flight(TaskId("n"))
         raced = record_verdict(e, "n", "PASS", reviewer="someone",
-                               observed={"c1": "ran `pytest -q`: 3 passed"})
+                               observed={"c1": {"note": "ran `pytest -q`: 3 passed", "ran": ["check c1"]}})
         assert raced.get("recorded") is False, "a hand verdict raced a running instrument"
         assert raced.get("validation_in_flight") is True
 
         # …and once the run ends, the door opens again: this is a race guard, not a lockout.
         e.end_validation(claim)
         assert not e.validation_in_flight(TaskId("n"))
-        assert record_verdict(e, "n", "PASS", reviewer="someone",
-                              observed={"c1": "ran `pytest -q`: 3 passed"}).get("recorded") is True
+        assert record_verdict(
+            e, "n", "PASS", reviewer="someone",
+            observed={"c1": {"note": "ran `pytest -q`: 3 passed",
+                             "ran": ["check c1"]}}).get("recorded") is True
     finally:
         e.stop()
 
@@ -1007,7 +1020,7 @@ def test_recording_a_verdict_and_arguing_away_a_finding_leave_a_trace():
         e.wait_idle()
 
         record_verdict(e, "n", "PASS", reviewer="bob",
-                       observed={"c1": "ran `pytest -q`: 3 passed"})
+                       observed={"c1": {"note": "ran `pytest -q`: 3 passed", "ran": ["check c1"]}})
         line = e.pipeline_log(20)[-1]["message"]
         assert "bob" in line and "n:" in line, f"the verdict left no trace: {line}"
         assert "ASSERTED BY HAND" in line, (

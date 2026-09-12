@@ -7,7 +7,7 @@ rather than passing: a fail-open check is worse than an absent one.
 from __future__ import annotations
 
 from gfso.core.types import Task, CheckResult, GraphContext, Recommendation, LLMProviderPort, DepEdge
-from .structural import run_structural, check_anti_mock
+from .structural import run_structural, check_anti_mock, check_procedure
 from .constraint import run_constraints
 from .recommend import recommend as _recommend, solver_findings
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import gfso.tools as T
 from gfso.core.types import Signal, SignalData, TaskId
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 _RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
 
@@ -28,10 +28,10 @@ def _graph():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [{"name": "g", "description": "G holds"}]},
+                              "criteria": [criterion("g", "G holds")]},
                   assignee="agent")
     T.create_task(e, "kid", {"description": "the work",
-                             "criteria": [{"name": "k", "description": "K holds"}]},
+                             "criteria": [criterion("k", "K holds")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "g")
     return e
@@ -52,7 +52,8 @@ def _parent_claims_the_aggregate(e):
     T.signal(e, "root", "ACCEPT", "agent")
     T.signal(e, "root", "DELIVER", "agent", result="the aggregate")
     T.record_verdict(e, "root", "PASS", reviewer="rev",
-                     observed={"g": "read the child's artifact end to end; it holds"})
+                     observed={"g": {"note": "read the child's artifact end to end; it holds",
+                                    "ran": ["check g"]}})
     return T.signal(e, "root", "PASS", "agent")
 
 
@@ -88,7 +89,8 @@ def test_a_child_that_actually_failed_still_blocks():
     T.signal(e, "kid", "ACCEPT", "agent")
     T.signal(e, "kid", "DELIVER", "agent", result="a first attempt")
     T.record_verdict(e, "kid", "FAIL", reviewer="rev", failed_criteria=["k"],
-                     observed={"k": "ran it: red on the first case"})
+                     observed={"k": {"note": "ran it: red on the first case",
+                                   "ran": ["check k"]}})
     T.signal(e, "kid", "FAIL", "agent", failed_criteria=["k"])
     out = _parent_claims_the_aggregate(e)
     assert out.get("accepted") is False and "children" in str(out.get("error")), \

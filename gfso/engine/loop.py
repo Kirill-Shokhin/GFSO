@@ -53,8 +53,14 @@ def _spec_json(sd: SignalData) -> Optional[str]:
         sp = sd.spec
         return json.dumps({
             "name": sp.name, "description": sp.description,
+            # …WITH THE PROCEDURE EACH CRITERION PINS. The log is what `claim_drift` reads to say
+            # how a claim moved between authoring and closing; a version stored without its
+            # procedures reports every later version as having changed them, which is a false
+            # finding in the one place built to catch a real one.
             "criteria": [{"name": c.name, "description": c.description,
-                          "depends_on": str(c.depends_on) if c.depends_on else None}
+                          "depends_on": str(c.depends_on) if c.depends_on else None,
+                          "check": [{"behaviour": p.behaviour, "command": p.command,
+                                     "expect": p.expect} for p in (c.check or ())]}
                          for c in sp.criteria],
             "accepted_risks": [{"item": r.item,
                                 "predictability": r.predictability.name if r.predictability else None,

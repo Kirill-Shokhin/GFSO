@@ -206,6 +206,16 @@ const statusLabel = (state, done_reason) =>
 // CANCELLING and OVERDUE. Editing a contract IS that signal, so this is the set the Edit control
 // belongs on — one list, read from the canon's own table rather than guessed per button.
 const REASSIGNABLE = ['OFFERED', 'CHALLENGED', 'EXECUTING', 'BLOCKED', 'VALIDATING', 'REWORKING'];
+// EVERY STRING ON THIS PAGE THAT A MODEL WROTE GOES THROUGH HERE. Panels are built by string
+// concatenation and interpolated RAW, so a validator's own evidence is parsed as markup: the
+// lexer criterion of the closed `javascript_engine` run quotes the operator soup
+// `a===b!==c==d!=e<=f>=g&&h||i<>k`, of which the browser ate `<=f>` and `<>` as tags and showed
+// the reader a sentence with holes in it (author, 2026-09-12). Nothing here is a security claim —
+// the text comes from this operator's own agents — it is that a page which renders its evidence
+// as HTML cannot be read as evidence.
+const esc = (s) => String(s).replace(/[&<>"']/g, ch => (
+    {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+
 const ACTIONS = {
     OFFERED:     [{s:'ACCEPT',cls:'btn-green',label:'Accept'},{s:'CHALLENGE',cls:'btn-orange',label:'Challenge',prompt:'reason'}],
     CHALLENGED: [{s:'ACCEPT_CHALLENGE',cls:'btn-green',label:'Accept Challenge'},{s:'REJECT_CHALLENGE',cls:'btn-muted',label:'Reject Challenge',prompt:'justification'}],
@@ -356,9 +366,9 @@ async function init() {
         const id = evt.target.id();
         const t = allTasksCache.find(t => t.id === id);
         if (!t) return;
-        let h = `<div class="tt-name">${t.name || t.description}</div>`;
+        let h = `<div class="tt-name">${esc(t.name || t.description)}</div>`;
         h += `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, t.done_reason)}</span>`;
-        if (t.assignee) h += `<div class="tt-row">Assignee: ${t.assignee}</div>`;
+        if (t.assignee) h += `<div class="tt-row">Assignee: ${esc(t.assignee)}</div>`;
         h += `<div class="tt-row">Iteration: ${t.iteration}/${t.max_iterations}</div>`;
         if (t.criteria?.length) h += `<div class="tt-row">${t.criteria.length} criteria</div>`;
         tt.innerHTML = h;
@@ -689,14 +699,14 @@ async function selectTask(taskId) {
         const v = vOf(d.state);
         const dl = fmtDeadline(d.deadline);
 
-        let h = `<div class="sidebar-header"><h2>${d.name || d.description}</h2><button class="sidebar-close" onclick="closeSidebar()">&times;</button></div>`;
-        if (d.name && d.description && d.name !== d.description) h += `<p class="node-desc" style="color:var(--text-dim,#888);margin:0 0 8px;font-size:13px">${d.description}</p>`;
+        let h = `<div class="sidebar-header"><h2>${esc(d.name || d.description)}</h2><button class="sidebar-close" onclick="closeSidebar()">&times;</button></div>`;
+        if (d.name && d.description && d.name !== d.description) h += `<p class="node-desc" style="color:var(--text-dim,#888);margin:0 0 8px;font-size:13px">${esc(d.description)}</p>`;
         h += `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">`;
         h += `<span class="v-badge v-${v}" title="V(t) — validation outcome §11.2"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`;
         h += `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, d.done_reason)}</span>`;
         if (dl) h += `<span class="deadline-chip${dl.overdue ? ' overdue':''}" title="deadline">⏱ ${dl.text}</span>`;
         h += `</div>`;
-        h += `<div class="meta">ID: ${d.id} · Assignee: ${d.assignee||'—'} · Iter: ${d.iteration}/${d.max_iterations}</div>`;
+        h += `<div class="meta">ID: ${esc(d.id)} · Assignee: ${esc(d.assignee||'—')} · Iter: ${d.iteration}/${d.max_iterations}</div>`;
         // HOW IT CLOSED, on the node itself. `closure` rides with the node now, so this says the
         // same thing the drawing says and neither has its own copy of the rule.
         const note = closureNote(d.closure);
@@ -708,23 +718,41 @@ async function selectTask(taskId) {
 
         if (d.criteria.length) {
             h += `<div class="section"><div class="section-title">Criteria</div><ul class="item-list">`;
-            d.criteria.forEach(c => h += `<li><strong>${c.name}</strong> — ${c.description}</li>`);
+            // ESCAPED, like everything else a model wrote. Live on the page, 2026-09-12:
+            // `root.lexer`'s `full_operator_tokens` reads "never split into shorter tokens (e.g.
+            // a<" and stops — the rest of the sentence was parsed as a tag and never drawn.
+            // …AND WHAT WILL BE RUN TO DECIDE IT. A page that shows the criterion alone shows an
+            // intention; the pinned procedure is what makes it a contract (A1, §10), and a person
+            // watching the graph is exactly who needs to see whether one was ever written.
+            d.criteria.forEach(c => {
+                h += `<li><strong>${esc(c.name)}</strong> — ${esc(c.description)}`;
+                if (c.check && c.check.length) {
+                    h += `<ul class="facet-list">`;
+                    c.check.forEach(p => h += `<li><code>${esc(p.command)}</code> → ${esc(p.expect)}`
+                        + `${p.behaviour ? ` <span class="hint">(${esc(p.behaviour)})</span>` : ''}</li>`);
+                    h += `</ul>`;
+                } else {
+                    h += `<div class="check-fail">no pinned check — nothing decides this criterion `
+                       + `but a probe improvised at validation time (A1, §10)</div>`;
+                }
+                h += `</li>`;
+            });
             h += `</ul></div>`;
         }
 
         if (d.accepted_risks && d.accepted_risks.length) {
             h += `<div class="section"><div class="section-title">AcceptedRisk (STD-1)</div><ul class="facet-list">`;
-            d.accepted_risks.forEach(n => h += `<li>${n}</li>`);
+            d.accepted_risks.forEach(n => h += `<li>${esc(n)}</li>`);
             h += `</ul></div>`;
         }
         if (d.scope && d.scope.length) {
             h += `<div class="section"><div class="section-title">Scope — boundary exclusions</div><ul class="facet-list">`;
-            d.scope.forEach(s => h += `<li>${s}</li>`);
+            d.scope.forEach(s => h += `<li>${esc(s)}</li>`);
             h += `</ul></div>`;
         }
         if (d.risk_components && d.risk_components.length) {
             h += `<div class="section"><div class="section-title">Risk components (STD-3)</div><ul class="facet-list">`;
-            d.risk_components.forEach(r => h += `<li>${r}</li>`);
+            d.risk_components.forEach(r => h += `<li>${esc(r)}</li>`);
             h += `</ul></div>`;
         }
 
@@ -738,7 +766,7 @@ async function selectTask(taskId) {
             h += `<div class="section"><div class="section-title">Composition (Th.1)</div><div class="composition-panel">`;
             h += `<div class="composition-formula">${formula}</div>`;
             vChildren.forEach(c => {
-                h += `<div class="composition-row v-${c.v}"><span class="v-sym">${V_SYMBOL[c.v]}</span><span class="child-name" onclick="selectTask('${c.id}')">${c.desc.slice(0,40)}</span></div>`;
+                h += `<div class="composition-row v-${c.v}"><span class="v-sym">${V_SYMBOL[c.v]}</span><span class="child-name" onclick="selectTask('${esc(c.id)}')">${esc(c.desc.slice(0,40))}</span></div>`;
             });
             h += `</div></div>`;
         }
@@ -790,22 +818,51 @@ async function selectTask(taskId) {
             const vr = await (await fetch(`/api/tasks/${d.id}/verdict`)).json();
             if (vr && vr.verdict) {
                 const who = vr.by_hand
-                    ? `asserted by hand — ${vr.validator || 'someone'}, not an instrument`
-                    : `judged by ${vr.validator || 'an instrument'}${vr.validator_model ? ' · ' + vr.validator_model : ''}`;
+                    ? `asserted by hand — ${esc(vr.validator || 'someone')}, not an instrument`
+                    : `judged by ${esc(vr.validator || 'an instrument')}${vr.validator_model ? ' · ' + esc(vr.validator_model) : ''}`;
                 const stale = vr.current === false ? ' <span class="check-fail">(judged an EARLIER delivery)</span>' : '';
                 h += `<div class="section"><div class="section-title">Verdict on the work</div>`;
                 h += `<div class="${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${vr.verdict} — ${who}${stale}</div>`;
                 if ((vr.failed_criteria || []).length)
-                    h += `<div class="check-fail">failed: ${vr.failed_criteria.join(', ')}</div>`;
+                    h += `<div class="check-fail">failed: ${esc(vr.failed_criteria.join(', '))}</div>`;
                 if ((vr.undecidable || []).length)
-                    h += `<div class="check-skip">undecidable (never observed): ${vr.undecidable.join(', ')}</div>`;
+                    h += `<div class="check-skip">undecidable (never observed): ${esc(vr.undecidable.join(', '))}</div>`;
+                // ONE `<li>`, TWO FLEX CHILDREN. `.item-list li` is `display:flex`, and this panel
+                // used to hand it a bare tick, a run of text, a `<br>` and several `<code>` as
+                // SIBLINGS — so the flex row laid them out side by side and the column tore the
+                // result apart wherever it happened to fit. Every other panel on this page passes
+                // `.check-icon` + one body; this one did not, and it is the only one a reader
+                // called unreadable (author, 2026-09-12). The icon now goes in the span the
+                // stylesheet already has, and everything else into a single body block.
                 h += `<ul class="item-list">`;
                 (vr.per_criterion || []).forEach(c => {
-                    const probes = (c.probe || []).map(pr => pr.command).filter(Boolean);
-                    h += `<li>${c.verdict === 'pass' ? '✓' : c.verdict === 'fail' ? '✗' : '?'} ${c.criterion}`
-                       + (c.evidence ? ` — ${String(c.evidence).slice(0, 300)}` : '')
-                       + (probes.length ? `<br><code>${probes.join('</code> <code>')}</code>` : '')
-                       + `</li>`;
+                    const cls = c.verdict === 'pass' ? 'check-pass'
+                              : c.verdict === 'fail' ? 'check-fail' : 'check-skip';
+                    const icon = c.verdict === 'pass' ? '✓' : c.verdict === 'fail' ? '✗' : '?';
+                    // A COMMAND SHOWN TWICE SAYS NOTHING TWICE. The record carries one probe per
+                    // BEHAVIOUR, and one command routinely covers several — `numeric_literals`
+                    // listed `./harness.exe -e "42 3.14"` twice in a row. Deduplicate, and let the
+                    // behaviours the command was run for ride as its tooltip.
+                    const byCmd = new Map();
+                    (c.probe || []).forEach(pr => {
+                        const cmd = String(pr.command || '').trim();
+                        if (!cmd) return;
+                        if (!byCmd.has(cmd)) byCmd.set(cmd, []);
+                        if (pr.behaviour) byCmd.get(cmd).push(String(pr.behaviour));
+                    });
+                    h += `<li class="${cls}"><span class="check-icon">${icon}</span>`
+                       + `<div class="verdict-body"><strong>${esc(c.criterion)}</strong>`
+                       // NOT TRUNCATED AT 300 CHARACTERS. The cut landed mid-word with no ellipsis
+                       // and nothing to click, so the page showed "produced ERRO" and "no clos" and
+                       // the rest existed nowhere a reader could reach. Evidence is the whole point
+                       // of this panel; it is shown, and the column wraps it.
+                       + (c.evidence ? `<div class="verdict-evidence">${esc(String(c.evidence))}</div>` : '')
+                       + (byCmd.size
+                            ? `<div class="verdict-probes">` + [...byCmd].map(([cmd, bhs]) =>
+                                `<code title="${esc(bhs.join(' · '))}">${esc(cmd)}</code>`).join('')
+                              + `</div>`
+                            : '')
+                       + `</div></li>`;
                 });
                 h += `</ul></div>`;
             } else if (vr && vr.refused_report) {
@@ -846,11 +903,11 @@ async function selectTask(taskId) {
                 const bad = rev.semantic_covered === false || !rev.gate_passed;
                 h += `<div class="section"><div class="section-title">L2 review${cr.verified ? '' : ' — STALE (decomposition changed)'}</div><ul class="item-list">`;
                 h += `<li class="${bad ? 'check-fail' : ''}">${status}${rev.model ? ' · ' + rev.model : ''}${rev.ts ? ' · ' + rev.ts : ''}</li>`;
-                (rev.criteria_verdicts || []).forEach(v => { h += `<li>${mark(v.verdict)} ${v.criterion} — ${v.why || ''}</li>`; });
-                (rev.conflicts || []).forEach(c => { h += `<li>⚡ [${(c.between || []).join(', ')}] ${c.why || ''}</li>`; });
+                (rev.criteria_verdicts || []).forEach(v => { h += `<li>${mark(v.verdict)} ${esc(v.criterion)} — ${esc(v.why || '')}</li>`; });
+                (rev.conflicts || []).forEach(c => { h += `<li>⚡ [${esc((c.between || []).join(', '))}] ${esc(c.why || '')}</li>`; });
                 undecided.forEach(u => {
                     h += `<li class="check-fail">✗ this node's OWN criteria do not decide: `
-                       + `${u.obligation || u.gap || ''}${u.admits ? ` — <span style="color:var(--ui-text-faint)">${String(u.admits).slice(0, 300)}</span>` : ''}</li>`;
+                       + `${esc(u.obligation || u.gap || '')}${u.admits ? ` <div class="verdict-evidence">${esc(String(u.admits))}</div>` : ''}</li>`;
                 });
                 if (bad)
                     h += `<li style="color:var(--ui-text-faint)">Two ways out: EDIT the criteria this `
@@ -1283,14 +1340,34 @@ async function openEdit(id) {
     document.getElementById('edit-assignee').value = d.assignee || '';
     document.getElementById('edit-modal').classList.add('active');
 }
+// A FIELD IS FILLED BY ASSIGNMENT, NOT BY STRING CONCATENATION — because this form WRITES BACK.
+// `value="${desc}"` ends the attribute at the criterion's first double quote and the rest of the
+// sentence is re-parsed as markup; the box then shows a truncated description, `submitEdit` reads
+// `.value` off that box, sees it differ from the original, and POSTs `edit_criteria` with the
+// mutilated text. Opening this dialog on a healthy node and pressing Save permanently SHORTENED the
+// node's own contract. Half the criterion descriptions in this repository's own graphs contain a
+// double quote, and the shape is live on nodes in a state that offers Edit.
 function addEditCriterion(name='', desc='') {
     const row = document.createElement('div'); row.className = 'criterion-row';
-    row.innerHTML = `<input class="ec-name" placeholder="name" value="${name}"><input class="ec-desc" placeholder="description" value="${desc}"><button class="cr-del" onclick="this.parentElement.remove()">&times;</button>`;
+    const mk = (cls, ph, val) => {
+        const i = document.createElement('input');
+        i.className = cls; i.placeholder = ph; i.value = val;     // assignment: never parsed as HTML
+        return i;
+    };
+    const del = document.createElement('button');
+    del.className = 'cr-del'; del.innerHTML = '&times;';
+    del.onclick = () => row.remove();
+    row.append(mk('ec-name', 'name', name), mk('ec-desc', 'description', desc), del);
     document.getElementById('edit-criteria-rows').appendChild(row);
 }
 function addEditAcceptedRisk(value='') {
     const row = document.createElement('div'); row.className = 'list-item';
-    row.innerHTML = `<input placeholder="excluded factor…" value="${value}"><button class="li-del" onclick="this.parentElement.remove()">&times;</button>`;
+    const i = document.createElement('input');
+    i.placeholder = 'excluded factor…'; i.value = value;      // same rule as the criterion row
+    const del = document.createElement('button');
+    del.className = 'li-del'; del.innerHTML = '&times;';
+    del.onclick = () => row.remove();
+    row.append(i, del);
     document.getElementById('edit-accepted_risks-list').appendChild(row);
 }
 async function submitEdit() {

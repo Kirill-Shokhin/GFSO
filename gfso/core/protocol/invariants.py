@@ -14,6 +14,21 @@ from typing import Mapping, Sequence
 
 from gfso.core.types import SignalData, Signal, Verdict
 
+_DEGENERATE = re.compile(r"^\s*(echo|printf|true|/bin/true)\b[^|;&$`]*$", re.I)
+
+
+def emits_a_constant(command: str) -> bool:
+    """Can this command come out false at all? A floor, never a verdict on sensitivity.
+
+    `echo ok` observes nothing, so the criterion it pins forbids nothing (§2.1 — a claim with an
+    empty fail-extension is empty). Whether a probe that DOES run something is sensitive to a
+    real divergence is FM-3, and §13.6 says no structural check guards it: this stays
+    deliberately literal — a constant emitter with nothing piped behind it. It NAMES a hollow
+    pinned procedure, and stops such a probe standing in for a behaviour nobody observed. One
+    definition, because two spellings of "this observes nothing" would drift apart.
+    """
+    return bool(_DEGENERATE.match(str(command or "")))
+
 
 def validate_fail_has_criteria(signal_data: SignalData) -> bool:
     """Invariant 3, the arity half: FAIL must specify failed criteria.
@@ -273,60 +288,34 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
         claimed = {str(p.get("behaviour", "")).strip().lower()
                    for p in good if str(p.get("behaviour", "")).strip()}
         if claimed:
-            # Matched by containment either way, because both strings are the validator's own prose
-            # and it paraphrases its own list — "it changes no state" against "lapse handling mutates
-            # no node state". Requiring them identical made the LINK depend on wording, so complete
-            # evidence was demoted over a rewritten label. What must exist is the link; recognising
-            # it is the engine's business, not the writer's.
-            # …and containment ALONE is still too literal, because one command legitimately observes
-            # several behaviours and gets ONE fused label for all of them. Measured 2026-08-20 on a
-            # live run: behaviours ["pytest exits 0", "at least 1 test collected and run"] against
-            # the label "pytest exits 0 with >=1 test collected and run" — the same command, really
-            # observing both. Containment caught the first and missed the second ("at least 1" vs
-            # ">=1"), so a complete report was refused, the validation was re-run, and a second
-            # refusal parked the node. Four of ten validator runs in that hour were spent on this,
-            # and the barrier was the writer's phrasing, never the coverage.
-            # So the fallback is overlap of CONTENT words: a behaviour counts as observed when most
-            # of what it says appears in a label. This must not become "no matching at all" — an
-            # unrelated label still leaves the behaviour unobserved, which is the case the rule
-            # exists for — hence a high bar and a floor under how much must overlap.
-            _NOISE = {"the", "a", "an", "is", "are", "it", "its", "and", "or", "of", "to", "in",
-                      "on", "with", "that", "this", "no", "not", "at", "least", "than", "be"}
-
-            def _words(s: str) -> set:
-                return {w for w in re.findall(r"[a-z0-9_]+", s.lower()) if w not in _NOISE}
-
-            # …AND THE OVERLAP IS MEASURED AGAINST THE SHORTER SIDE, not always against the
-            # behaviour. A behaviour that carries a literal — an absolute path, a command, a number
-            # — has a long word set, so a label that names the same fact in ordinary words scores
-            # against a denominator inflated by the literal and is refused. Measured on the HTTP
-            # door (wave 27, 2026-09-06): behaviour "ratelimit.py exists at exactly
-            # C:/…/gfso-wave27/http/ratelimit.py" against the probe label "ratelimit.py exists at
-            # exactly the target path" — the SAME fact, the probe present and run, four words shared
-            # out of six on the label and thirteen on the behaviour. The report was refused as
-            # "names behaviours it never observed", which was false about it, and the caller paid a
-            # wasted run plus a three-times-costlier retry.
-            # The floor keeps the loosened arm honest: a label of one or two words would otherwise
-            # match anything, so it must carry at least three content words to be judged this way.
-            def _covered(b: str) -> bool:
-                bl = b.strip().lower()
-                if any(bl in c or c in bl for c in claimed):
-                    return True
-                bw = _words(bl)
-                if len(bw) < 2:              # too little content to judge overlap on
-                    return False
-                for c in claimed:
-                    cw = _words(c)
-                    if not cw:
-                        continue
-                    shared = len(bw & cw)
-                    if shared / len(bw) >= 0.6:
-                        return True
-                    if len(cw) >= 3 and shared / len(cw) >= 0.6:
-                        return True
-                return False
-
-            if missing := [b for b in behaviours if not _covered(b)]:
+            # …AND THE UNLABELLED PROBES STILL COUNT FOR WHAT IS LEFT. The two arms used to be
+            # exclusive: one label anywhere in the report switched the whole criterion from
+            # counting to matching, so a MIXED report — some probes labelled, some not — had its
+            # unlabelled probes drop out of the reckoning entirely and was demoted for behaviours
+            # it had in fact observed. That mixture is now the NORMAL shape: a contract pins its
+            # probes in the CONTRACT's wording while the judge enumerates behaviours in its own,
+            # so the pinned probe arrives labelled beside the judge's unlabelled ones and the mode
+            # flipped on its presence. A rule that fires because evidence was ADDED teaches its
+            # reader to send less of it. (Found twice, independently, while the suite was brought
+            # onto the pinned-procedure contract — before a paid run could pay for it.)
+            # …AND THE FORGIVENESS IS BOUNDED BY THE OLD BAR, not by the count of spare probes
+            # alone. Truncating the missing list by that count forgives behaviours chosen by list
+            # order, so three junk probes bought a clean report on a criterion naming three
+            # behaviours and probing one — the very defect the label arm exists to catch, made
+            # reachable on purpose (measured by an outside reviewer the day this landed). The
+            # unlabelled probes may only cover the remainder where they would have covered it
+            # BEFORE any labels existed: the cardinality bar of the unlabelled arm below.
+            # …AND A PROBE THAT CANNOT COME OUT FALSE COVERS NOTHING. Cardinality alone could not
+            # tell the honest mixed report from the attack on it: three `echo ok` probes bought a
+            # clean report on a criterion naming three behaviours and probing one (reproduced by a
+            # reviewer through the real door, after the first bound was added). What separates
+            # them is not how many probes there are but whether a probe could observe anything at
+            # all — a constant emitter forbids nothing (§2.1), so it is not spare capacity.
+            _spare = (len([p for p in good
+                           if not str(p.get("behaviour", "")).strip()
+                           and not emits_a_constant(p.get("command", ""))])
+                      if len(good) >= len(behaviours) else 0)
+            if missing := _unobserved_by_label(behaviours, claimed)[_spare:]:
                 out[str(e.get("criterion"))] = missing
             continue
         # No labels: cardinality stays the only mechanical proxy available, and the strict reading
@@ -334,6 +323,69 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
         if len(good) < len(behaviours):
             out[str(e.get("criterion"))] = behaviours[len(good):]
     return out
+
+
+def _unobserved_by_label(behaviours: list, claimed: set) -> list:
+    """The behaviours no probe LABEL accounts for.
+
+    Its own function, not a closure inside `underprobed`: the FORM ratchet holds
+    `F_function_over_size_limit` at zero, and this matching — three ways of linking a behaviour to
+    a label, each one bought by a measured false demotion — is a question of its own.
+    """
+    # Matched by containment either way, because both strings are the validator's own prose
+    # and it paraphrases its own list — "it changes no state" against "lapse handling mutates
+    # no node state". Requiring them identical made the LINK depend on wording, so complete
+    # evidence was demoted over a rewritten label. What must exist is the link; recognising
+    # it is the engine's business, not the writer's.
+    # …and containment ALONE is still too literal, because one command legitimately observes
+    # several behaviours and gets ONE fused label for all of them. Measured 2026-08-20 on a
+    # live run: behaviours ["pytest exits 0", "at least 1 test collected and run"] against
+    # the label "pytest exits 0 with >=1 test collected and run" — the same command, really
+    # observing both. Containment caught the first and missed the second ("at least 1" vs
+    # ">=1"), so a complete report was refused, the validation was re-run, and a second
+    # refusal parked the node. Four of ten validator runs in that hour were spent on this,
+    # and the barrier was the writer's phrasing, never the coverage.
+    # So the fallback is overlap of CONTENT words: a behaviour counts as observed when most
+    # of what it says appears in a label. This must not become "no matching at all" — an
+    # unrelated label still leaves the behaviour unobserved, which is the case the rule
+    # exists for — hence a high bar and a floor under how much must overlap.
+    _NOISE = {"the", "a", "an", "is", "are", "it", "its", "and", "or", "of", "to", "in",
+              "on", "with", "that", "this", "no", "not", "at", "least", "than", "be"}
+
+    def _words(s: str) -> set:
+        return {w for w in re.findall(r"[a-z0-9_]+", s.lower()) if w not in _NOISE}
+
+    # …AND THE OVERLAP IS MEASURED AGAINST THE SHORTER SIDE, not always against the
+    # behaviour. A behaviour that carries a literal — an absolute path, a command, a number
+    # — has a long word set, so a label that names the same fact in ordinary words scores
+    # against a denominator inflated by the literal and is refused. Measured on the HTTP
+    # door (wave 27, 2026-09-06): behaviour "ratelimit.py exists at exactly
+    # C:/…/gfso-wave27/http/ratelimit.py" against the probe label "ratelimit.py exists at
+    # exactly the target path" — the SAME fact, the probe present and run, four words shared
+    # out of six on the label and thirteen on the behaviour. The report was refused as
+    # "names behaviours it never observed", which was false about it, and the caller paid a
+    # wasted run plus a three-times-costlier retry.
+    # The floor keeps the loosened arm honest: a label of one or two words would otherwise
+    # match anything, so it must carry at least three content words to be judged this way.
+    def _covered(b: str) -> bool:
+        bl = b.strip().lower()
+        if any(bl in c or c in bl for c in claimed):
+            return True
+        bw = _words(bl)
+        if len(bw) < 2:              # too little content to judge overlap on
+            return False
+        for c in claimed:
+            cw = _words(c)
+            if not cw:
+                continue
+            shared = len(bw & cw)
+            if shared / len(bw) >= 0.6:
+                return True
+            if len(cw) >= 3 and shared / len(cw) >= 0.6:
+                return True
+        return False
+
+    return [b for b in behaviours if not _covered(b)]
 
 
 PURE_ASSENT = frozenset("""

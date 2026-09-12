@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId, Verdict
-from tests.support import UNMODELLED_FAULT, instrument_passes, make_engine
+from tests.support import criterion, instrument_passes, make_engine, UNMODELLED_FAULT
 
 _RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -24,9 +24,9 @@ def _parent_failed_over_untouched_children():
     """A root whose criterion FAILed while its only covering child stands passed and untouched."""
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "the whole", "criteria": [{"name": "c1", "description": "C1 over the integrated whole"}],
+    T.create_task(e, "root", {"description": "the whole", "criteria": [criterion("c1", "C1 over the integrated whole")],
                               "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, "root.kid", {"description": "a part", "criteria": [{"name": "k1", "description": "K1"}]},
+    T.create_task(e, "root.kid", {"description": "a part", "criteria": [criterion("k1", "K1")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "root.kid", "c1")
     e.wait_idle()
@@ -61,7 +61,7 @@ def test_the_directive_names_the_repair_the_engine_will_accept():
     # the repair the arm actually attempted: a revision that did NOT touch the failed criterion
     # (it reworded the goal), then re-accept and try to aggregate again.
     T.revise(e, "root", {"description": "the whole, restated",
-                         "criteria": [{"name": "c1", "description": "C1 over the integrated whole"}],
+                         "criteria": [criterion("c1", "C1 over the integrated whole")],
                          "accepted_risks": _RISKS}, agent="agent")
     e.wait_idle()
     T.signal(e, "root", "ACCEPT", "agent")
@@ -82,9 +82,9 @@ def test_a_node_the_gate_would_admit_is_still_told_to_deliver():
     """The negative control: an ordinary aggregate must keep its ordinary directive."""
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "the whole", "criteria": [{"name": "c1", "description": "C1"}],
+    T.create_task(e, "root", {"description": "the whole", "criteria": [criterion("c1", "C1")],
                               "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, "root.kid", {"description": "a part", "criteria": [{"name": "k1", "description": "K1"}]},
+    T.create_task(e, "root.kid", {"description": "a part", "criteria": [criterion("k1", "K1")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "root.kid", "c1")
     e.wait_idle()
@@ -118,12 +118,12 @@ def test_it_does_not_advise_a_PASS_the_plan_gate_refuses():
     e = make_engine(check_interval=10_000)
     e.start()
     T.create_task(e, "root", {"description": "the whole",
-                              "criteria": [{"name": "c1", "description": "C1"},
-                                           {"name": "c2", "description": "C2"}],
+                              "criteria": [criterion("c1", "C1"),
+                                           criterion("c2", "C2")],
                               "accepted_risks": _RISKS}, assignee="agent")
     for kid, crit in (("root.kid", "c1"), ("root.other", "c2")):
         T.create_task(e, kid, {"description": "a part",
-                               "criteria": [{"name": "k1", "description": "K1"}]},
+                               "criteria": [criterion("k1", "K1")]},
                       assignee="agent", parent_id="root")
         T.map_criterion(e, "root", kid, crit)
     e.wait_idle()
@@ -139,7 +139,7 @@ def test_it_does_not_advise_a_PASS_the_plan_gate_refuses():
     assert e.get_state(TaskId("root")).name == "VALIDATING"
 
     T.create_task(e, "root.spare", {"description": "a spare part",
-                                    "criteria": [{"name": "s1", "description": "S1"}]},
+                                    "criteria": [criterion("s1", "S1")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "root.spare", "c2")
     e.wait_idle()
@@ -172,12 +172,12 @@ def test_a_recorded_verdict_is_not_hidden_behind_a_plan_repair():
     e = make_engine(check_interval=10_000)
     e.start()
     T.create_task(e, "root", {"description": "the whole",
-                              "criteria": [{"name": "c1", "description": "C1"},
-                                           {"name": "c2", "description": "C2"}],
+                              "criteria": [criterion("c1", "C1"),
+                                           criterion("c2", "C2")],
                               "accepted_risks": _RISKS}, assignee="agent")
     for kid, crit in (("root.kid", "c1"), ("root.other", "c2")):
         T.create_task(e, kid, {"description": "a part",
-                               "criteria": [{"name": "k1", "description": "K1"}]},
+                               "criteria": [criterion("k1", "K1")]},
                       assignee="agent", parent_id="root")
         T.map_criterion(e, "root", kid, crit)
     e.wait_idle()
@@ -199,7 +199,7 @@ def test_a_recorded_verdict_is_not_hidden_behind_a_plan_repair():
                                           "evidence": "ran it; c2 holds"}])
     # …and only then does the plan go red under it
     T.create_task(e, "root.spare", {"description": "a spare part",
-                                    "criteria": [{"name": "s1", "description": "S1"}]},
+                                    "criteria": [criterion("s1", "S1")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "root.spare", "c2")
     e.wait_idle()

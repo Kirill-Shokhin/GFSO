@@ -13,7 +13,9 @@ nothing more, nothing less.
 ## Protocol (do this, in order)
 
 1. **Read your contract** from the packet: the spec (description), `criteria` (your ENTIRE obligation —
-   decidable predicates over the RESULT), the upstream inputs (other nodes' delivered outputs you
+   decidable predicates over the RESULT, each carrying the `check` that will be RUN to decide it —
+   read those commands: they were written before your work and they are what you will be judged by,
+   not a paraphrase of them), the upstream inputs (other nodes' delivered outputs you
    consume), and ACCEPTED_RISKS (declared out-of-scope risks — do not gold-plate against them). You satisfy
    ONLY your criteria: they are your WHOLE obligation, and satisfying all of them is what discharges
    it. Whether they add up to what your parent needed is the issuer's claim, not yours — if you can

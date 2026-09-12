@@ -12,7 +12,7 @@ import gfso.delegate as D
 from gfso import tools as T
 from gfso.core.types import (CriterionMapping, State, Signal,
                              SignalData, TaskId, AgentId, Verdict)
-from tests.support import make_engine, spec, reviewer_passes
+from tests.support import criterion, make_engine, spec, reviewer_passes
 from gfso.delegate import Dispatcher, AgentRegistry
 
 
@@ -66,9 +66,12 @@ def test_internal_same_del_node_may_self_pass(engine):
     engine.wait_idle()
     assert engine.get_state(TaskId("in1")) == State.VALIDATING
 
-    # …saying what was checked settles it, through either door: the executor's own recorded verdict
+    # …saying what was checked settles it, through either door: the executor's own recorded verdict.
+    # A criterion now carries the procedure that decides it (A1/§10), so the observation names which
+    # of the PINNED commands was run — nothing is decided by a probe invented at judging time.
     engine.record_reviewer_verdict(TaskId("in1"), Verdict.PASS, [], reviewer="agent",
-                                   observed={"ic": "ran it and read the output"})
+                                   observed={"ic": {"note": "ran it and read the output",
+                                                    "ran": ["check ic"]}})
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("agent")))
     engine.wait_idle()
     assert engine.get_state(TaskId("in1")) == State.DONE        # no independent verdict required
@@ -127,8 +130,11 @@ def test_seam_child_unaffected_by_d6(engine):
     assert engine.get_state(TaskId("d1")) == State.VALIDATING
     # …and accepted once the issuer says what they observed (a person may judge by hand; what is
     # refused is a PASS standing on nothing)
+    # …naming the pinned command it ran: a criterion carries its own procedure (A1/§10), and a hand
+    # PASS that skips it is a pass on a procedure invented at judging time.
     engine.record_reviewer_verdict(TaskId("d1"), Verdict.PASS, [], reviewer="pm",
-                                   observed={"dc": "ran it, printed 42"})
+                                   observed={"dc": {"note": "ran it, printed 42",
+                                                    "ran": ["check dc"]}})
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("d1"), source=AgentId("pm")))
     engine.wait_idle()
     assert engine.get_state(TaskId("d1")) == State.DONE
@@ -203,12 +209,12 @@ def test_an_internal_node_completes_on_its_own_self_check(engine):
     validation is going to run anyway.
     """
     e = engine
-    T.create_task(e, "par", {"description": "parent", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")],
                              "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
     T.create_task(e, "kid", {"description": "internal child",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")          # same Del as its parent → INTERNAL
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")

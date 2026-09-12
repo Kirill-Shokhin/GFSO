@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from gfso import driver
 from gfso import tools as T
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -24,17 +24,20 @@ _RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 def _two_roots_one_closed_by_hand(e):
     """One root closed on a person's word; a second root still in flight beside it."""
     T.create_task(e, "signed", {"description": "signed off",
-                                "criteria": [{"name": "c", "description": "C"}],
+                                "criteria": [criterion("c", "C")],
                                 "accepted_risks": _RISKS}, assignee="exec-1")
     e.wait_idle()
     T.signal(e, "signed", "ACCEPT", "exec-1")
     T.signal(e, "signed", "DELIVER", "exec-1", result="claimed done")
+    # A criterion now carries the procedure that decides it (A1/§10), so the hand closure names
+    # WHICH pinned command was run — nothing is decided by a probe invented at judging time.
     T.record_verdict(e, "signed", "PASS", reviewer="inspector",
-                     observed={"c": "I ran it myself and read OK"})
+                     observed={"c": {"note": "I ran it myself and read OK",
+                                     "ran": ["check c"]}})
     T.signal(e, "signed", "PASS", "exec-1")
     e.wait_idle()
     T.create_task(e, "live", {"description": "still going",
-                              "criteria": [{"name": "d", "description": "D"}],
+                              "criteria": [criterion("d", "D")],
                               "accepted_risks": _RISKS}, assignee="somebody-else")
     e.wait_idle()
 

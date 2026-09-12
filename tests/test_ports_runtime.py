@@ -26,7 +26,7 @@ from gfso.core.types import (
     TaskId, AgentId, Spec, Criteria, Signal, SignalData, ClockPort, ThreadRunner,
 )
 from gfso import tools as T
-from tests.support import make_engine
+from tests.support import criterion, make_engine, pinned
 from gfso import serverctl, config, doctor, tools_llm as TL
 from gfso.serverctl import drift, declared
 from gfso.mcp import connect
@@ -52,7 +52,7 @@ class FakeClock(ClockPort):
 
 
 def _mk(e, tid="n"):
-    T.create_task(e, tid, {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "w")
+    T.create_task(e, tid, {"description": "x", "criteria": [criterion("a", "A")]}, "w")
     e.wait_idle()
 
 
@@ -118,7 +118,7 @@ def test_asyncio_host_drives_process_signal_without_engine_threads():
         q: asyncio.Queue = asyncio.Queue()
         sink = Sink(q)
         w = AgentId("w")
-        spec = Spec("x", (Criteria("a", "A"),))
+        spec = Spec("x", (Criteria("a", "A", check=pinned("a")),))
         for sd in (SignalData(signal=Signal.ASSIGN, task_id=TaskId("n"), source=w,
                               spec=spec, assignee=w),
                    SignalData(signal=Signal.ACCEPT, task_id=TaskId("n"), source=w)):

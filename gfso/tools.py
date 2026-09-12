@@ -22,6 +22,7 @@ from gfso.core.types import (
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_V_reversed
 from gfso.core.graph.model import verdict_is_current_pass
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent
+from gfso.core.protocol.procedure import probes_from as _checks_of
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
 from gfso.config import (MODEL_VALIDATOR_RETRY, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
                          agent_id as _config_agent_id)
@@ -137,7 +138,8 @@ def _spec_from(d: dict) -> Spec:
             "a spec cannot carry " + ", ".join(f"`{k}` ({_NOT_IN_A_SPEC[k]})" for k in strays)
             + ". Nothing was applied: the rest of this call would have gone through and that field "
               "would have been dropped in silence.")
-    crits = tuple(Criteria(c["name"], c.get("description", ""), depends_on=_dep_of(c))
+    crits = tuple(Criteria(c["name"], c.get("description", ""), depends_on=_dep_of(c),
+                           check=_checks_of(c))
                   for c in d.get("criteria", []))
     # `scope` is read here, not only written back in `_task_out`: without it the agent's door could
     # not express a scope BOUNDARY at all, and the only place left to put one was the risk register —
@@ -162,7 +164,17 @@ def _task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
         "id": t.id, "name": t.spec.name, "description": t.spec.description, "state": t.state.name,
         "assignee": t.assignee, "parent_id": t.parent_id,
         "criteria": [{"name": c.name, "description": c.description,
-                      "depends_on": c.depends_on} for c in t.spec.criteria],
+                      "depends_on": c.depends_on,
+                      # …AND THE PROCEDURE IT PINS. Left out, this door's own read-modify-write
+                      # pattern DESTROYED it: a caller reads `criteria`, appends one, calls
+                      # `edit_criteria` — and every pinned check is gone, the node is refused as
+                      # "its own criteria pin no check", and the refusal then asks for the
+                      # procedure to be authored NOW, after the work exists, which is the exact
+                      # pre-registration defeat this all exists to prevent. The same class the
+                      # repo already paid for with `depends_on`.
+                      "check": [{"behaviour": p.behaviour, "command": p.command,
+                                 "expect": p.expect} for p in (c.check or ())]}
+                     for c in t.spec.criteria],
         # THE REGISTER AS RECORDED, not its item texts. `edit_accepted_risks` learned to answer this
         # in full on 2026-08-21 and every OTHER read of a node kept returning bare strings — so a
         # caller who classified a risk STATISTICAL, justified it and named its invalidation
@@ -1144,6 +1156,7 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
     `assignee` (Del) defaults to `agent` = YOU (this tool surface is the agent's door; the UI is the
     human's and always names its user) — omit it when you will execute the node yourself; name someone
     else ONLY when delegating for real (the FSM then rejects your executor signals on that node)."""
+
     tid = TaskId(task_id or uuid.uuid4().hex[:8])
     # CREATING AND REVISING ARE NOT THE SAME CALL. `create_task` desugars to ASSIGN, and ASSIGN on a
     # live node is a revision (canon-legal, Inv-1) — so a verb named CREATE silently replaced an
@@ -1400,8 +1413,9 @@ def revise(engine: Engine, task_id: str, spec: dict, agent: str,
 
 def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
                         agent: str = "") -> Optional[dict]:
-    """Replace a node's ACCEPTED_RISKS (the RISK register: events with a materialization P — a scope boundary
-    belongs in the goal's criteria, not here), carry the rest. RMW over revise. Each item:
+    """Replace a node's ACCEPTED_RISKS (the RISK register: events with a materialization P — a scope
+    boundary has no P and belongs in `scope`, via `edit_scope`, not here), carry the rest. RMW over
+    revise. Each item:
     {item, predictability: ORDINARY|STATISTICAL|EXTRAORDINARY, justification, invalidation_condition} —
     the predictability verdict is mandatory per factor on a decomposed node (CHECK-4 record form)."""
     agent = agent or _agent_id()
@@ -1419,6 +1433,41 @@ def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
              "justification": n.justification, "invalidation_condition": n.invalidation_condition}
             for n in (t.spec.accepted_risks if t is not None else ())]
         out = _said_state_change(engine, task_id, was.state if was is not None else None, out)
+    return out
+
+
+def edit_scope(engine: Engine, task_id: str, scope: list, agent: str = "") -> Optional[dict]:
+    """Replace a node's declared SCOPE BOUNDARIES — capabilities the goal deliberately does NOT
+    include — carrying the rest of the spec. RMW over revise.
+
+    §13.1 draws the line this verb exists for: ACCEPTED_RISKS holds uncertain EVENTS with a
+    materialization P; a scope boundary has no P (its `estimate` field would be vacuous, breaking
+    the roll-up), so it is objectified ON THE GOAL instead — visible in the graph rather than an
+    implicit absence. The doctrine was already in the product and pointed two ways: the decomposer
+    writes such an exclusion to `scope`, while this door's neighbour told a caller to put it in the
+    goal's criteria, and there was no verb that could reach `scope` at all except a wholesale
+    `revise`. One concept, one destination, one door.
+    """
+    agent = agent or _agent_id()
+    was = engine.get_task(TaskId(task_id))
+    if was is None:
+        return {"refused": True, "error": f"unknown task {task_id}"}
+    if not isinstance(scope, (list, tuple)):
+        return {"refused": True,
+                "error": "`scope` is a LIST of excluded capabilities (each a line saying what is "
+                         "out and why it is safely out), not a " + type(scope).__name__}
+    items = tuple(str(x.get("item", "")) + (f" — {x['why_out']}" if x.get("why_out") else "")
+                  if isinstance(x, dict) else str(x) for x in scope)
+    spec = was.spec
+    out = _task_out(engine.revise(
+        TaskId(task_id),
+        Spec(spec.description, spec.criteria, spec.accepted_risks, spec.risk_components,
+             scope=items, name=spec.name),
+        AgentId(agent), reason="scope_expansion"))
+    if isinstance(out, dict):
+        t = engine.get_task(TaskId(task_id))
+        out["scope_recorded"] = list(t.spec.scope) if t is not None else []
+        out = _said_state_change(engine, task_id, was.state, out)
     return out
 
 
@@ -1448,7 +1497,8 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
     # loop, and the loop died with it (agent door, 2026-09-02 — the project could not be repaired
     # from any verb afterwards, and every one of them blamed the FSM).
     try:
-        crits = tuple(Criteria(c["name"], c.get("description", ""), depends_on=_dep_of(c))
+        crits = tuple(Criteria(c["name"], c.get("description", ""), depends_on=_dep_of(c),
+                               check=_checks_of(c))
                       for c in criteria)
     except (ValueError, KeyError, TypeError) as ex:
         return {"refused": True, "error": str(ex)}
@@ -1683,19 +1733,24 @@ def reopen(engine: Engine, task_id: str, agent: str) -> Optional[dict]:
     return out
 
 
-def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "") -> dict:
+def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "",
+                   check: Optional[list] = None) -> dict:
     """Declare `to_id depends on from_id`'s output — **`from_id` is the PRODUCER, `to_id` the
     CONSUMER**, and the arrow runs producer → consumer: `to_id` is the one that waits.
 
     Dep is criteria-content (§10): desugars to a re-author of the CONSUMER adding the glue
     criterion; the edge is derived. Cycle → rejected. `glue` is the anti-mock truth-maker — what
-    the consumer must do with the real output, not "depends on it".
+    the consumer must do with the real output, not "depends on it". `check` optionally PINS the
+    seam's own probe from the consumer's side ([{behaviour, command, expect}]) — the integration
+    implication itself is the PARENT's claim (§5.2), which is why a seam criterion is not required
+    to carry one.
 
     The direction is worth one sentence because getting it backwards is silent: a person wrote the
     glue "render imports and calls the scan() function delivered by scan", passed them the other way
     round, and made SCAN wait on RENDER — the reply said `ok`, the Level-2 review passed the graph,
     and only `next_steps` (`waits_on`) showed it. So the answer says which way it went."""
-    engine.add_dependency(TaskId(from_id), TaskId(to_id), glue=glue)
+    engine.add_dependency(TaskId(from_id), TaskId(to_id), glue=glue,
+                          check=_checks_of({"check": check}) if check else ())
     return {"ok": True, "from": from_id, "to": to_id,
             "declared": f"'{to_id}' now WAITS for '{from_id}' to pass — '{from_id}' produces, "
                         f"'{to_id}' consumes. If that is backwards, `remove_dependency` and swap."}
@@ -2088,6 +2143,15 @@ _PURE_ASSENT = PURE_ASSENT
 _is_pure_assent = is_pure_assent
 
 
+def claim_drift(engine: Engine, task_id: str) -> dict:
+    """How the node's CLAIM moved between the contract it was authored with and the one it holds
+    now — criteria added / dropped / reworded, procedures changed, with the recorded revision
+    reasons. Nothing here refuses anything: an agent MAY sharpen a criterion or record what contact
+    revealed (a criterion can be a false mock, and only contact shows it), and must never leave the
+    plan worse. This is the record that makes the movement readable instead of anecdotal."""
+    return engine.claim_drift(TaskId(task_id))
+
+
 def record_verdict(engine: Engine, task_id: str, verdict: str,
                    failed_criteria: Optional[list] = None, reviewer: str = "human",
                    observed: Optional[dict] = None) -> dict:
@@ -2322,9 +2386,10 @@ TOOLS = {
     "available_actions": available_actions, "get_dependencies": get_dependencies, "metrics": metrics,
     "usage": usage,
     "create_task": create_task, "decompose": decompose,
-    "revise": revise, "edit_accepted_risks": edit_accepted_risks, "edit_criteria": edit_criteria, "reassign": reassign,
+    "revise": revise, "edit_accepted_risks": edit_accepted_risks, "edit_scope": edit_scope,
+    "edit_criteria": edit_criteria, "reassign": reassign,
     "reopen": reopen,
     "add_dependency": add_dependency, "remove_dependency": remove_dependency, "map_criterion": map_criterion,
-    "signal": signal, "record_verdict": record_verdict,
+    "signal": signal, "record_verdict": record_verdict, "claim_drift": claim_drift,
     "next_step": next_step, "next_steps": next_steps,
 }

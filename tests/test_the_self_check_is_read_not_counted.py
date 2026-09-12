@@ -19,7 +19,7 @@ import pytest
 import gfso.tools as T
 from gfso import delegate as D
 from gfso.core.types import Verdict
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 from tests.test_delegate import _agents
 
 _RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
@@ -35,9 +35,9 @@ def _delivered(said):
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     _agents(pathlib.Path(tempfile.mkdtemp()), ("exec-1", "llm-executor"))
-    T.create_task(e, "par", {"description": "p", "criteria": [{"name": "g", "description": "G"}],
+    T.create_task(e, "par", {"description": "p", "criteria": [criterion("g", "G")],
                              "accepted_risks": _RISK}, assignee="exec-1")
-    T.create_task(e, "kid", {"description": "w", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "w", "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")

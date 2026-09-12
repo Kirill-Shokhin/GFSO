@@ -33,7 +33,7 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.types import AgentId, TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -43,9 +43,9 @@ def _internal_child(self_validation: str | None = None):
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "r", {"description": "the goal", "accepted_risks": _RISK,
-                           "criteria": [{"name": "g", "description": "G holds"}]}, assignee="alice")
+                           "criteria": [criterion("g", "G holds")]}, assignee="alice")
     T.create_task(e, "k", {"description": "a private step",
-                           "criteria": [{"name": "c", "description": "C holds"}]},
+                           "criteria": [criterion("c", "C holds")]},
                   assignee="alice", parent_id="r")
     T.map_criterion(e, "r", "k", "g")
     T.signal(e, "k", "ACCEPT", "alice")
@@ -103,7 +103,8 @@ def test_a_validator_that_actually_judges_still_closes_it() -> None:
     """
     e = _roster(_internal_child(), "val-1")
     T.record_verdict(e, "k", "PASS", reviewer="val-1",
-                     observed={"c": "ran the check for c; it printed OK"})
+                     observed={"c": {"note": "ran the check for c; it printed OK",
+                                     "ran": ["check c"]}})
 
     assert T.signal(e, "k", "PASS", "val-1").get("accepted") is True
     assert e.get_task("k").state.name == "DONE"
@@ -118,7 +119,7 @@ def test_a_seam_node_is_untouched_by_this_guard() -> None:
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "solo", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [{"name": "g", "description": "G holds"}]},
+                              "criteria": [criterion("g", "G holds")]},
                   assignee="ann")
     T.signal(e, "solo", "ACCEPT", "ann")
     T.signal(e, "solo", "DELIVER", "ann", result="done")

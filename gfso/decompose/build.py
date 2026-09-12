@@ -10,6 +10,7 @@ import logging
 
 from gfso.engine import Engine
 from gfso.config import ROOT_ID
+from gfso.core.protocol.procedure import probes_from as _checks_of
 from gfso.core.types import (
     Spec, Criteria, AcceptedRiskItem, CriterionMapping, Predictability, TaskId, AgentId,
     Signal, SignalData, State,
@@ -79,7 +80,8 @@ def _children_from_spec(engine, d: dict, ns, existing_kids: set, C, max_iteratio
     children = []
     for c in d.get("subtasks", []):
         cid = str(c["id"])
-        crit = [Criteria(x["name"], x.get("description", "")) for x in c.get("criteria", [])]
+        crit = [Criteria(x["name"], x.get("description", ""), check=_checks_of(x))
+                for x in c.get("criteria", [])]
         crit += [Criteria(name=f"dep__{f}", description=glue, depends_on=TaskId(ns(f)))
                  for f, glue in deps_by_consumer.get(cid, [])]
         # ONE CRITERION PER NAME. A refine re-derives the set, and a name that appears twice — the
@@ -186,7 +188,8 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     # always meant, and getting the first when they wanted the second locked one out of their own
     # plan for fifteen minutes (measured 2026-08-21).
     C = C or A
-    root_crit = tuple(Criteria(c["name"], c.get("description", "")) for c in d.get("root_criteria", []))
+    root_crit = tuple(Criteria(c["name"], c.get("description", ""), check=_checks_of(c))
+                      for c in d.get("root_criteria", []))
     neg = tuple(
         AcceptedRiskItem(n["item"], _pred(n.get("predictability")), n.get("justification", ""),
                       n.get("invalidation", ""))

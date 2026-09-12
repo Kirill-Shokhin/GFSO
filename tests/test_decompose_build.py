@@ -8,16 +8,15 @@ from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import TaskId, Signal, State, Spec, Criteria, AgentId
 from gfso.decompose.build import build_graph_live
 from gfso import tools as T
-from tests.support import make_engine
+from tests.support import criterion, make_engine, pinned
 from gfso.decompose.loop import AUDIT_SCHEMA
 
 SPEC = {
     "name": "Build the thing",
-    "root_criteria": [{"name": "rc1", "description": "thing A done"},
-                      {"name": "rc2", "description": "thing B done"}],
+    "root_criteria": [criterion("rc1", "thing A done"), criterion("rc2", "thing B done")],
     "subtasks": [
-        {"id": "a", "name": "Do A", "description": "do A", "criteria": [{"name": "a1", "description": "A works"}]},
-        {"id": "b", "name": "Do B", "description": "do B", "criteria": [{"name": "b1", "description": "B works"}]},
+        {"id": "a", "name": "Do A", "description": "do A", "criteria": [criterion("a1", "A works")]},
+        {"id": "b", "name": "Do B", "description": "do B", "criteria": [criterion("b1", "B works")]},
     ],
     "mappings": [{"criterion": "rc1", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}],
     "deps": [{"from": "a", "to": "b", "glue": "B consumes A's output"}],
@@ -73,7 +72,8 @@ def test_build_graph_live_into_existing_root_reauthors_it():
     (CHECK-1 fail). The subtree is retained (revise ≠ abandon)."""
     e = _eng()
     e.assign_task(TaskId("root"), Spec("build the thing",
-                  (Criteria("issuer_made_up", "not the real criteria"),)), AgentId("human"))
+                  (Criteria("issuer_made_up", "not the real criteria",
+                    check=pinned("issuer_made_up")),)), AgentId("human"))
     e.wait_idle()
     build_graph_live(SPEC, "build the thing", e, root_id="root", assignee="human")
     e.wait_idle()
@@ -90,7 +90,8 @@ def test_build_graph_live_reauthors_a_root_owned_by_another_agent():
     else the issuer/executor guards (correctly) reject a foreign actor acting on someone else's root."""
     e = _eng()
     e.assign_task(TaskId("root"), Spec("build the thing",
-                  (Criteria("issuer_made_up", "not the real criteria"),)), AgentId("owner"))
+                  (Criteria("issuer_made_up", "not the real criteria",
+                    check=pinned("issuer_made_up")),)), AgentId("owner"))
     e.wait_idle()
     build_graph_live(SPEC, "build the thing", e, root_id="root", assignee="worker")   # children ≠ root owner
     e.wait_idle()
@@ -141,16 +142,16 @@ def test_rebuild_reuses_hand_built_bare_ids_no_duplicates():
     those nodes in place, never create namespaced duplicates (observed live in the L2 gate
     experiment: C1..C9 + root.C1..C9 doubled the subtree and orphaned every mapping)."""
     e = _eng()
-    T.create_task(e, "root", {"description": "goal", "criteria": [{"name": "rc1", "description": "A"}]}, "human")
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("rc1", "A")]}, "human")
     T.decompose(e, "root", [
-        {"task_id": "C1", "spec": {"description": "do A", "criteria": [{"name": "a1", "description": "old"}]}, "assignee": "human"},
-        {"task_id": "C2", "spec": {"description": "do B", "criteria": [{"name": "b1", "description": "B"}]}, "assignee": "human"},
+        {"task_id": "C1", "spec": {"description": "do A", "criteria": [criterion("a1", "old")]}, "assignee": "human"},
+        {"task_id": "C2", "spec": {"description": "do B", "criteria": [criterion("b1", "B")]}, "assignee": "human"},
     ], [{"criterion_name": "rc1", "child_id": "C1"}])
     e.wait_idle()
-    spec = {"name": "goal", "root_criteria": [{"name": "rc1", "description": "A"}],
+    spec = {"name": "goal", "root_criteria": [criterion("rc1", "A")],
             "subtasks": [
-                {"id": "C1", "name": "Do A", "description": "do A", "criteria": [{"name": "a1", "description": "NEW tighter"}]},
-                {"id": "C2", "name": "Do B", "description": "do B", "criteria": [{"name": "b1", "description": "B"}]}],
+                {"id": "C1", "name": "Do A", "description": "do A", "criteria": [criterion("a1", "NEW tighter")]},
+                {"id": "C2", "name": "Do B", "description": "do B", "criteria": [criterion("b1", "B")]}],
             "mappings": [{"criterion": "rc1", "child_id": "C1"}],
             "deps": [], "accepted_risks": [{"item": "x", "predictability": "STATISTICAL", "justification": "j", "invalidation": "i"}]}
     build_graph_live(spec, "goal", e, root_id="root", assignee="human")
@@ -185,14 +186,14 @@ def test_a_child_may_declare_the_parent_criteria_it_covers():
     failure naming a check rather than the ignored key."""
     e = _eng()
     T.create_task(e, "app", {"description": "ship it",
-                             "criteria": [{"name": "cli", "description": "the CLI runs"},
-                                          {"name": "docs", "description": "the README is true"}]})
+                             "criteria": [criterion("cli", "the CLI runs"),
+                                          criterion("docs", "the README is true")]})
     T.decompose(e, "app", children=[
         {"task_id": "impl", "spec": {"description": "write it",
-                                     "criteria": [{"name": "c", "description": "C"}]},
+                                     "criteria": [criterion("c", "C")]},
          "covers": ["cli"]},
         {"task_id": "write", "spec": {"description": "document it",
-                                      "criteria": [{"name": "d", "description": "D"}]},
+                                      "criteria": [criterion("d", "D")]},
          "covers": ["docs"]},
     ])
     covered = {m.criterion_name for m in e.get_task(TaskId("app")).criterion_mappings}

@@ -48,6 +48,19 @@ exploring beyond the contract.
      criterion passed; `failed_criteria` = exactly the criteria you did not mark `pass`. The engine
      REFUSES a report that contradicts itself or leaves a criterion unspoken — it is recorded as no
      verdict at all, and the node stalls for the issuer. Say what you measured.
+   - **RUN WHAT THE CRITERION ALREADY PINS, FIRST.** Each criterion arrives with its own decision
+     procedure — `check: [{behaviour, command, expect}]`, written by the issuer side BEFORE the work
+     existed. That is the promise this delivery is judged against, and it is not yours to replace:
+     run every pinned probe of a criterion before you pass it, and report each one in that
+     criterion's `probe` list (keep its `id` if you were given one, or quote the same `command`).
+     The engine refuses a PASS that skips one — a procedure fixed before the work and a procedure
+     improvised while judging are different claims, and only the first says the promise was kept.
+     Then GO FURTHER: explore beyond the pinned set. Where your own probe REFUTES something, that
+     observation is kept as the NODE's regression set and every later round must re-run it before
+     that criterion may pass — so the next round starts where you stopped. It is NOT written into
+     the criterion: the contract is the issuer's and does not move under the executor (Inv-1,
+     §14.4); promoting a finding into it is the issuer's act. What neither the pinned set nor your exploration reached stays unchecked and is said
+     so at closure — that residue is honest; a pass that hides it is not.
    - **Every criterion needs a PROBE, and the engine refuses a verdict without one.** A probe is the
      command you actually ran plus the observation it must produce: `probe: [{command, expect}]`,
      one entry per behaviour (below), where each `command` re-runs as-is in the working directory and `expect` is a SUBSTRING OF THE REAL

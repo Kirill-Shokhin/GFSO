@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from gfso.core.types import TaskId
+from gfso.core.protocol.procedure import coverage as procedure_coverage
 
 
 def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
@@ -59,4 +60,10 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # Naming the tree the verdict was earned in does not make the probes eternal; it makes their
         # staleness diagnosable instead of mysterious.
         "workdir": workdir or "",
+        # WHAT THE VERDICT ACTUALLY REACHED. The digest names the procedure the contract pinned at
+        # the moment of judging, the counts say how much of the contract carried one and how far
+        # the judging went beyond it. This is the honest half of a closure: checked by P — and
+        # behaviour outside P unchecked, which is the FM-3 boundary (Ch. 8) stated, never closed.
+        # Without it a PASS is a word; with it a later reader can re-run exactly what was run.
+        **(procedure_coverage(task.spec.criteria, per_criterion or ()) if task is not None else {}),
         "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))

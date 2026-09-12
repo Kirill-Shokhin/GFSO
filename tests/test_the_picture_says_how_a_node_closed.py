@@ -18,9 +18,9 @@ from fastapi.testclient import TestClient
 from gfso import tools as T
 from gfso.api.server import create_app
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, UNMODELLED_FAULT
 
-_CRIT = [{"name": "c", "description": "C"}]
+_CRIT = [criterion("c", "C")]
 _RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
 
@@ -38,7 +38,7 @@ def _instrument_verdict(e, tid, verdict="PASS", failed=()):
                                           "verdict": "pass" if verdict == "PASS" else "fail",
                                           "evidence": "ran the check, it printed OK",
                                           "behaviours": ["C holds"],
-                                          "probe": [{"command": "check", "expect": "OK",
+                                          "probe": [{"command": "check c", "expect": "OK",
                                                      "behaviour": "C holds"}]}])
 
 
@@ -55,7 +55,7 @@ def test_a_node_closed_by_hand_says_so_on_both_reads():
     e.start()
     _leaf(e, "leaf")
     T.record_verdict(e, "leaf", "PASS", reviewer="inspector",
-                     observed={"c": "I ran the check myself and read OK"})
+                     observed={"c": {"note": "I ran the check myself and read OK", "ran": ["check c"]}})
     T.signal(e, "leaf", "PASS", "exec-1")
     e.wait_idle()
     c = _client(e)
@@ -105,7 +105,7 @@ def test_a_hand_verdict_that_displaced_an_instrument_is_visible_on_the_node():
     _leaf(e, "over")
     _instrument_verdict(e, "over", "FAIL", failed=["c"])
     T.record_verdict(e, "over", "PASS", reviewer="me",
-                     observed={"c": "I looked at it myself and it is fine"})
+                     observed={"c": {"note": "I looked at it myself and it is fine", "ran": ["check c"]}})
     T.signal(e, "over", "PASS", "exec-1")
     e.wait_idle()
     c = _client(e)

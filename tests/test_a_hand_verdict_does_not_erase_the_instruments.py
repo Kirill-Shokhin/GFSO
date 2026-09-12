@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _INSTRUMENT_FAIL = [{"criterion": "ghost_runs", "verdict": "fail",
                      "evidence": "python -m ghost: No module named ghost",
@@ -32,8 +32,8 @@ _INSTRUMENT_FAIL = [{"criterion": "ghost_runs", "verdict": "fail",
 
 def _judged_fail_then_passed_by_hand(e, tid="leaf"):
     T.create_task(e, tid, {"description": "nothing was ever built",
-                           "criteria": [{"name": "ghost_runs",
-                                         "description": "python -m ghost prints 2.0.0"}],
+                           "criteria": [criterion("ghost_runs",
+                                                  "python -m ghost prints 2.0.0")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
@@ -44,7 +44,8 @@ def _judged_fail_then_passed_by_hand(e, tid="leaf"):
     e.record_exec_verdict(TaskId(tid), "FAIL", ["ghost_runs"], "val-1",
                           per_criterion=_INSTRUMENT_FAIL)
     T.record_verdict(e, tid, "PASS", reviewer="alice-qa",
-                     observed={"ghost_runs": "I ran python -m ghost myself and saw 2.0.0, exit 0"})
+                     observed={"ghost_runs": {"note": "I ran python -m ghost myself and saw 2.0.0, exit 0",
+                                              "ran": ["check ghost_runs"]}})
 
 
 def test_the_displaced_verdict_is_kept_and_read_back():
@@ -98,7 +99,7 @@ def test_two_verdicts_that_AGREE_leave_no_trace_of_a_conflict():
     e = make_engine()
     e.start()
     T.create_task(e, "ok", {"description": "a leaf",
-                            "criteria": [{"name": "c", "description": "C"}],
+                            "criteria": [criterion("c", "C")],
                             "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                 "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
@@ -109,10 +110,11 @@ def test_two_verdicts_that_AGREE_leave_no_trace_of_a_conflict():
                           per_criterion=[{"criterion": "c", "verdict": "pass",
                                           "evidence": "ran the check, it printed OK",
                                           "behaviours": ["C holds"],
-                                          "probe": [{"command": "check", "expect": "OK",
+                                          "probe": [{"command": "check c", "expect": "OK",
                                                      "behaviour": "C holds"}]}])
     T.record_verdict(e, "ok", "PASS", reviewer="alice-qa",
-                     observed={"c": "ran the same check myself and read OK"})
+                     observed={"c": {"note": "ran the same check myself and read OK",
+                                     "ran": ["check c"]}})
 
     assert "overruled" not in T.get_verdict(e, "ok")
     assert e.hand_overruled_closures() == []

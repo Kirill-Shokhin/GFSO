@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _a_node_standing_at_pass_over_its_own_fail(e, tid="leaf"):
@@ -27,7 +27,7 @@ def _a_node_standing_at_pass_over_its_own_fail(e, tid="leaf"):
     carrier) but the node is already terminal, so the signature stays and the record contradicts it.
     """
     T.create_task(e, tid, {"description": "a leaf that claimed more than it did",
-                           "criteria": [{"name": "file_exists", "description": "NEVER.txt exists"}],
+                           "criteria": [criterion("file_exists", "NEVER.txt exists")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -35,7 +35,8 @@ def _a_node_standing_at_pass_over_its_own_fail(e, tid="leaf"):
     T.signal(e, tid, "ACCEPT", "exec-1")
     T.signal(e, tid, "DELIVER", "exec-1", result="done, I think")
     T.record_verdict(e, tid, "PASS", reviewer="judge",
-                     observed={"file_exists": "ran `ls NEVER.txt` and read the listing"})
+                     observed={"file_exists": {"note": "ran `ls NEVER.txt` and read the listing",
+                                               "ran": ["check file_exists"]}})
     T.signal(e, tid, "PASS", "exec-1")   # the issuer signs; the judge's record is what opens the gate
     e.wait_idle()
     assert e.get_state(TaskId(tid)).name == "DONE"
@@ -73,14 +74,16 @@ def test_a_root_that_is_genuinely_done_still_answers_complete():
     e = make_engine()
     e.start()
     T.create_task(e, "ok", {"description": "an honest leaf",
-                            "criteria": [{"name": "c", "description": "C"}],
+                            "criteria": [criterion("c", "C")],
                             "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                 "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, "ok", "ACCEPT", "exec-1")
     T.signal(e, "ok", "DELIVER", "exec-1", result="built it")
-    T.record_verdict(e, "ok", "PASS", reviewer="judge", observed={"c": "ran the check, it printed OK"})
+    T.record_verdict(e, "ok", "PASS", reviewer="judge",
+                     observed={"c": {"note": "ran the check, it printed OK",
+                                     "ran": ["check c"]}})
     T.signal(e, "ok", "PASS", "exec-1")
     e.wait_idle()
 

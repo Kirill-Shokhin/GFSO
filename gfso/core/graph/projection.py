@@ -38,6 +38,10 @@ class GlueMarker(Enum):
 class CriterionView:
     name: str
     description: str
+    # WHAT WILL BE RUN TO DECIDE IT. A projection that shows the criterion and not its procedure
+    # shows an intention; the judge then writes its own, at judging time, which is the defect the
+    # pinned `check` exists against (A1/§10, Inv-1 §14.4).
+    check: tuple[tuple[str, str, str], ...] = ()     # (behaviour, command, expect)
 
 
 @dataclass(frozen=True)
@@ -118,7 +122,9 @@ def build(
     children of `node`) are captured — this decomposition's internal structure.
     """
     criteria = tuple(
-        CriterionView(c.name, c.description) for c in node.spec.criteria
+        CriterionView(c.name, c.description,
+                      tuple((p.behaviour, p.command, p.expect) for p in (c.check or ())))
+        for c in node.spec.criteria
     )
 
     if not children:
@@ -132,7 +138,10 @@ def build(
             id=str(c.id),
             description=c.spec.description,
             assignee=c.assignee,
-            criteria=tuple(CriterionView(cc.name, cc.description) for cc in c.spec.criteria),
+            criteria=tuple(CriterionView(cc.name, cc.description,
+                                         tuple((p.behaviour, p.command, p.expect)
+                                               for p in (cc.check or ())))
+                           for cc in c.spec.criteria),
             accepted_risks=tuple(n.item for n in c.spec.accepted_risks),
             name=c.spec.name,
         )
@@ -281,6 +290,8 @@ def render(projection: NodeProjection) -> str:
     if p.criteria:
         for c in p.criteria:
             out.append(f"- **{c.name}**: {c.description or '(no description)'}")
+            for beh, cmd, exp in (c.check or ()):
+                out.append(f"    - pinned check — {beh}: `{cmd}` → expect: {exp}")
     else:
         out.append("- (none declared)")
     out.append("")

@@ -36,11 +36,11 @@ def _claimed_pass_over_an_unobserved_behaviour() -> str:
         "per_criterion": [
             {"criterion": "flush", "verdict": "pass", "evidence": "flush ok",
              "behaviours": ["nail head is flush"],
-             "probe": [{"command": "pytest -q", "expect": "passed"}]},
+             "probe": [{"command": "check flush", "expect": "it holds"}]},
             {"criterion": "holds", "verdict": "pass", "evidence": "looks solid",
              # two behaviours named, one probe given — the second was never observed
              "behaviours": ["it holds a picture", "it holds a 2kg frame"],
-             "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+             "probe": [{"command": "check holds", "expect": "it holds"}]}],
         "failed_criteria": []})
 
 
@@ -51,10 +51,10 @@ def _refuted_and_underprobed() -> str:
         "per_criterion": [
             {"criterion": "flush", "verdict": "fail", "evidence": "stands 2mm proud",
              "behaviours": ["nail head is flush"],
-             "probe": [{"command": "pytest -q", "expect": "1 failed"}]},
+             "probe": [{"command": "check flush", "expect": "1 failed"}]},
             {"criterion": "holds", "verdict": "pass", "evidence": "looks solid",
              "behaviours": ["it holds a picture", "it holds a 2kg frame"],
-             "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+             "probe": [{"command": "check holds", "expect": "it holds"}]}],
         "failed_criteria": ["flush"]})
 
 
@@ -105,10 +105,10 @@ def test_an_honest_pass_is_still_a_pass():
         "per_criterion": [
             {"criterion": "flush", "verdict": "pass", "evidence": "flush ok",
              "behaviours": ["nail head is flush"],
-             "probe": [{"command": "pytest -q", "expect": "passed"}]},
+             "probe": [{"command": "check flush", "expect": "it holds"}]},
             {"criterion": "holds", "verdict": "pass", "evidence": "hung a 2kg frame on it",
              "behaviours": ["it holds a 2kg frame"],
-             "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+             "probe": [{"command": "check holds", "expect": "it holds"}]}],
         "failed_criteria": []})
     out = TL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
     assert out["verdict"] == "PASS" and "verdict_demoted_from" not in out

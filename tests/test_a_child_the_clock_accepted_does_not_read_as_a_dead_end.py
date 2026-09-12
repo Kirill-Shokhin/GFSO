@@ -31,7 +31,7 @@ import pytest
 from gfso import tools as T
 from gfso.core.types import DoneReason, State, TaskId
 from gfso.engine import Engine
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 
 @pytest.fixture
@@ -48,12 +48,12 @@ def _graph(engine, kids=("k1",)):
     """root with `kids` beneath it, each covering one of root's criteria."""
     risks = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
     T.create_task(engine, "root", {"description": "root",
-                                   "criteria": [{"name": f"c{i}", "description": f"c{i} d"}
+                                   "criteria": [criterion(f"c{i}", f"c{i} d")
                                                 for i, _ in enumerate(kids)],
                                    "accepted_risks": risks}, assignee="boss")
     for i, k in enumerate(kids):
         T.create_task(engine, k, {"description": k,
-                                  "criteria": [{"name": "x", "description": "x d"}]},
+                                  "criteria": [criterion("x", "x d")]},
                       assignee="worker", parent_id="root")
         T.map_criterion(engine, "root", k, f"c{i}")
     engine.wait_idle()
@@ -105,7 +105,7 @@ def test_a_cancelled_child_left_the_decomposition_and_does_not_block_it(engine: 
 def test_a_root_closed_by_the_clock_is_complete_and_says_how(engine: Engine):
     risks = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
     T.create_task(engine, "root", {"description": "root",
-                                   "criteria": [{"name": "c", "description": "c d"}],
+                                   "criteria": [criterion("c", "c d")],
                                    "accepted_risks": risks}, assignee="boss")
     engine.wait_idle()
     _close(engine, "root", DoneReason.AUTO_PASS)
@@ -129,16 +129,15 @@ def test_work_in_flight_does_not_hide_a_stranded_node(engine: Engine):
     """
     risks = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
     T.create_task(engine, "root", {"description": "root",
-                                   "criteria": [{"name": "c", "description": "c d"}],
+                                   "criteria": [criterion("c", "c d")],
                                    "accepted_risks": risks}, assignee="boss")
     T.create_task(engine, "mid", {"description": "mid",
-                                  "criteria": [{"name": "m0", "description": "m0 d"},
-                                               {"name": "m1", "description": "m1 d"}],
+                                  "criteria": [criterion("m0", "m0 d"), criterion("m1", "m1 d")],
                                   "accepted_risks": risks}, assignee="worker", parent_id="root")
     T.map_criterion(engine, "root", "mid", "c")
     for i, g in enumerate(("g1", "g2")):
         T.create_task(engine, g, {"description": g,
-                                  "criteria": [{"name": "x", "description": "x d"}]},
+                                  "criteria": [criterion("x", "x d")]},
                       assignee="worker", parent_id="mid")
         T.map_criterion(engine, "mid", g, f"m{i}")
     engine.wait_idle()

@@ -8,13 +8,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import NewType, Optional
+from typing import Mapping, NewType, Optional
 
 from .enums import State, Signal, DoneReason, Verdict, AutonomyLevel, Predictability, RevisionReason
 
 
 TaskId = NewType("TaskId", str)
 AgentId = NewType("AgentId", str)
+
+
+@dataclass(frozen=True)
+class Probe:
+    """One observation of one conjunct of a criterion — the criterion's own decision procedure, pinned.
+
+    §10 types a criterion as a DECIDABLE predicate, and "for any accepted program the output matches
+    gcc" is not one: the domain is infinite, so nothing returns pass/fail in finite time. What made
+    such a text pass for a criterion is that the procedure was supplied later, by whoever validated,
+    out of their own head — differently each round. A pinned probe set P is what turns the intention
+    into the predicate the type demands ("matches gcc on P"), fixed BEFORE execution (Inv-1, §14.4),
+    and it names its own residue: behaviour outside P is unchecked, which is the FM-3 boundary stated
+    rather than closed (Ch. 8).
+    """
+    behaviour: str          # the conjunct of the criterion this observes
+    command: str = ""       # how to observe it — runnable as written by someone who was not the executor
+    expect: str = ""        # what the observation must show for this conjunct to count as passed
 
 
 @dataclass(frozen=True)
@@ -27,6 +44,16 @@ class Criteria:
     timeout: Optional[int] = None
     depends_on: Optional[TaskId] = None  # §10: this criterion references a sibling's output (the glue)
                                          # → induces a Dep edge (from=depends_on, to=this task)
+    check: tuple[Probe, ...] = ()        # the pinned decision procedure (§10/A1): what will be run to
+                                         # decide this criterion, authored with the criterion by the
+                                         # ISSUER side and before execution — never invented at
+                                         # validation time by whoever happens to judge
+
+    def __post_init__(self):
+        if self.check and any(isinstance(p, Mapping) for p in self.check):
+            object.__setattr__(self, "check", tuple(
+                Probe(str(p.get("behaviour", "")), str(p.get("command", "")), str(p.get("expect", "")))
+                if isinstance(p, Mapping) else p for p in self.check))
 
 
 @dataclass(frozen=True)
@@ -99,12 +126,33 @@ class Task:
     parent_id: Optional[TaskId] = None
     assignee: Optional[AgentId] = None
     iteration: int = 0
-    max_iterations: int = 3
+    # THE REWORKING BOUND, SET FOR THE USER THIS PRODUCT ACTUALLY HAS. Inv-5 demands that the
+    # DELIVER→FAIL loop be FINITE; the canon's "default 3" is a default, not a magnitude it
+    # derives. Three is the right number when the bound protects a HUMAN issuer's attention and
+    # budget — it says "we talk before a fourth attempt". In agent work the issuer and the
+    # executor are the same agent, so the cap protects nobody and buys the opposite: the node
+    # goes ESCALATED (terminal, no way back), and at a ROOT — which has no parent to re-split —
+    # the only sanctioned recovery, "re-decompose around it", degenerates into building another
+    # root with no memory of the refusals, the regression set or the claim drift. Measured
+    # 2026-09-20 on a `c_compiler` run: the judge refused the aggregate three times on real
+    # defects, the root escalated, the agent built a second root, and it began again.
+    # Finiteness is carried by what really bounds a run — the deadline (timeout → OVERDUE →
+    # ESCALATED) and the money — not by an attempt count that means nothing at machine speed.
+    # A human issuer who means "few attempts" sets it; 3 remains one line of configuration.
+    max_iterations: int = 12
     deadline: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.now)
     # Inv-5 clock: when the CURRENT state was entered (stamped at every state change). Deliberately
     # not persisted — a restart re-arms the clock from load time; finiteness still holds.
     state_entered_at: datetime = field(default_factory=datetime.now)
+    # THE CLAIM AS IT WAS AUTHORED, kept beside the claim as it stands. Set once, at the first
+    # ASSIGN, and never touched by a revision — so "what did this node promise before anyone
+    # worked on it" is a fact on the node rather than an archaeology exercise over the log. The
+    # author asked for exactly this and it was not built: a claim narrows most cheaply through its
+    # risk register, and with nothing to compare against, the narrowing is invisible until someone
+    # reads the whole trace by hand (measured on `c_compiler`, 2026-09-20/21 — the register grew
+    # from seven entries to nine after the work began and every surface said the claim stood).
+    authored: Optional[Spec] = None
     done_reason: Optional[DoneReason] = None
     autonomy: AutonomyLevel = AutonomyLevel.MANUAL
     was_challenged: bool = False
@@ -184,7 +232,9 @@ class SignalData:
     assignee: Optional[AgentId] = None             # ASSIGN: who executes (Del)
     parent_id: Optional[TaskId] = None             # ASSIGN: parent for a child node
     deadline: Optional[datetime] = None            # ASSIGN: T=(spec,criteria,deadline)
-    max_iterations: int = 3                        # ASSIGN: rework bound
+    # ASSIGN: the rework bound. On the FIRST assign it is the node's budget; on a REVISION
+    # `None` means keep the one the node has, like `deadline` and `assignee` beside it.
+    max_iterations: Optional[int] = 12
     covers: tuple[str, ...] = ()                   # ASSIGN: parent criteria this child is mapped to (§10)
     reason: Optional[str] = None                   # CHALLENGE, BLOCK, CANCEL
     in_flight: Optional[str] = None                # CONFIRM_CANCEL: executor's in-flight state at cancellation (Thm 11, §14.3)

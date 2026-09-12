@@ -20,17 +20,17 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import AgentId, Criteria, TaskId
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 
 def _graph():
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c")
     return e

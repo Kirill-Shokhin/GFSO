@@ -23,7 +23,7 @@ from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.delegate import AgentRegistry, _resolution_note, missing_workdir
 from gfso.places import cheap_to_ask, same_place, text_place
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 BS = chr(92)
 
@@ -619,7 +619,7 @@ def test_the_validation_door_asks_the_same_question_of_the_same_directory(monkey
     e = make_engine(validate_signals=True)
     e.start()
     T.create_task(e, "n1", {"name": "Nail", "description": "hammer a nail",
-                            "criteria": [{"name": "flush", "description": "nail is flush"}]}, "alice")
+                            "criteria": [criterion("flush", "nail is flush")]}, "alice")
     T.signal(e, "n1", "ACCEPT", "alice")
     assert T.signal(e, "n1", "DELIVER", "alice", result="done")["state"] == "VALIDATING"
     monkeypatch.setattr(TL, "_roster", lambda _e: AgentRegistry(str(tmp_path / "roster.json")))

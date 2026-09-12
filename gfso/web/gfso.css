@@ -373,6 +373,48 @@ body {
 }
 .item-list li strong { color: var(--ui-text); font-weight: 500; }
 .check-icon { width: 14px; text-align: center; font-weight: 600; flex-shrink: 0; line-height: 1.5; }
+/* THE VERDICT PANEL'S BODY — the second and only other flex child of its `li`.
+   `min-width: 0` is what actually makes a narrow column work: a flex item's default
+   `min-width: auto` refuses to shrink below its longest unbreakable word, so one long probe command
+   pushed the whole panel wider than the column and every line in it wrapped against a box that was
+   no longer there. */
+.verdict-body { min-width: 0; flex: 1; }
+.verdict-evidence {
+    margin: 2px 0 0;
+    color: var(--ui-text-soft);
+    overflow-wrap: anywhere;      /* evidence quotes operator soup and absolute paths */
+    /* A CEILING IN CSS, NEVER A SLICE IN JS. The old panel cut evidence at 300 characters, which is
+       one past the MEDIAN of every verdict this repository holds (p50 302, p90 537, max 1311), so
+       half of them were shown mutilated and the rest existed nowhere a reader could reach. A box
+       that scrolls destroys nothing. */
+    max-height: 16em;
+    overflow-y: auto;
+}
+.verdict-probes { margin-top: 4px; display: flex; flex-direction: column; gap: 3px; }
+.verdict-probes code {
+    display: block;
+    /* Every other mono surface in this file declares it; there is no global `code` rule, so without
+       this the probe commands came out in the UA default (Courier New) beside JetBrains Mono. */
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.45;
+    padding: 3px 6px;
+    border-radius: 2px;
+    background: var(--ui-card);
+    /* NOT `--ui-text-faint`: the palette marks that one DECORATIVE-ONLY, for mono labels at 14px
+       and up, and this block is 11px on `--paper`. A probe command is the evidence a reader came
+       for, not a caption. */
+    color: var(--ui-text-soft);
+    white-space: pre-wrap;        /* a command is read as written, and it wraps */
+    overflow-wrap: anywhere;
+}
+/* THE CLASS ITSELF CARRIED NO COLOUR — only its icon did. Seven elements wear `check-fail` with no
+   `.check-icon` child, the verdict HEADLINE among them, so a node that FAILED and a node that PASSED
+   printed that line in the same ink. The descendant rules stay (the icon is tinted more strongly
+   than its line); these give the line itself a colour when it has no icon to carry one. */
+.check-pass { color: var(--ink-soft); }
+.check-fail { color: var(--acc); }
+.check-skip { color: var(--ui-text-faint); }
 .check-pass .check-icon { color: var(--ink-soft); }
 .check-fail .check-icon { color: var(--acc); }
 .check-skip .check-icon { color: var(--ui-text-faint); }

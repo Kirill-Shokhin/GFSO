@@ -27,6 +27,7 @@ from typing import Optional
 from gfso import runtime
 from gfso.runtime import llm_factory
 from gfso.core.types import TaskId, Signal, Stage, Verdict, passed, settled_positive
+from gfso.core.protocol.procedure import probe_id
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 from gfso.decompose import decompose_into
@@ -294,6 +295,14 @@ _VALIDATOR_SCHEMA = {
                            # side: the measurement's load-bearing direction is the false PASS.
                            # ONE PROBE PER BEHAVIOUR, in the same order.
                            "probe": {"type": "array", "items": {"type": "object", "properties": {
+                               # The pinned probe's own name, when this entry is one of them. The
+                               # contract pins its procedure before the work (A1/§10, Inv-1 §14.4)
+                               # and a PASS that skips a pinned probe is refused — so a report says
+                               # which of them it ran. Matching also works by the command text, so
+                               # an id is a convenience and never a thing to fabricate.
+                               "id": {"type": "string", "description":
+                                   "the pinned probe's id, when this entry runs one of the "
+                                   "criterion's own `check` items (omit for your own exploration)"},
                                # Re-runnable BY SOMEONE ELSE, against the artifact as delivered.
                                # Measured: validators copy the delivery into a scratch directory
                                # under a new name and then cite that name (`from md_real import …`)
@@ -360,7 +369,22 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
     is what one report fails when the contract is long."""
     tid = str(task.id)
     _crits = tuple(criteria if criteria is not None else task.spec.criteria)
-    crits = "\n".join(f"- **{c.name}**: {c.description}" for c in _crits) or "- (none)"
+    # THE PROCEDURE EACH CRITERION PINS, handed over as part of the contract. It is not advice: a
+    # PASS that skips a pinned probe is refused at the record, so the judge has to see them — and
+    # seeing them is also what stops it re-inventing a weaker set of its own (A1/§10, Inv-1 §14.4).
+    _reg = engine.regression_probes(TaskId(tid))
+
+    def _crit_block(c) -> str:
+        lines = [f"- **{c.name}**: {c.description}"]
+        lines += [f"    - PINNED CHECK [{probe_id(c.name, p)}] — {p.behaviour}: "
+                  f"run `{p.command}` → must show: {p.expect}" for p in (c.check or ())]
+        lines += [f"    - REGRESSION [{p.get('id')}] (this probe REFUTED this criterion in an "
+                  f"earlier round — re-run it) — {p.get('behaviour')}: "
+                  f"run `{p.get('command')}` → must show: {p.get('expect')}"
+                  for p in _reg.get(c.name, ())]
+        return "\n".join(lines)
+
+    crits = "\n".join(_crit_block(c) for c in _crits) or "- (none)"
     ups = []
     for e in engine.get_dependencies():
         if str(e.to_id) == tid:

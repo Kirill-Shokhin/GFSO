@@ -3,7 +3,7 @@ embedding attempt. Green here (plus the layer gate) = the embeddability claim ho
 host; anything the embedder had to ask a human = a documentation defect, logged separately."""
 from datetime import datetime, timedelta
 
-from gfso.core.types import (TaskId, AgentId, Signal, SignalData, Spec, Criteria,
+from gfso.core.types import (TaskId, AgentId, Probe, Signal, SignalData, Spec, Criteria,
                              AcceptedRiskItem, Predictability)
 
 
@@ -11,9 +11,15 @@ W = AgentId("host-worker")
 R = AgentId("host-reviewer")
 
 
+def _pinned(name):
+    """The procedure a criterion of this name pins (§10/A1) — a contract whose criteria decide
+    nothing is not admitted to execution, so the host contract is driven with real ones."""
+    return (Probe(f"{name} holds", f"check {name}", "it holds"),)
+
+
 def _spec(desc, *crit, risks=False):
     # A DECOMPOSED node carries the register (§13.1); a leaf does not (CHECK-4 exempts D(t)=∅).
-    return Spec(desc, tuple(Criteria(n, d) for n, d in crit),
+    return Spec(desc, tuple(Criteria(n, d, check=_pinned(n)) for n, d in crit),
                 accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
                                                  Predictability.EXTRAORDINARY),) if risks else ())
 
@@ -28,7 +34,10 @@ def _build(host):
                          spec=_spec("produce", ("p", "artifact exists")), assignee=W))
     host.send(SignalData(signal=Signal.ASSIGN, task_id=TaskId("cons"), source=W,
                          parent_id=TaskId("root"), covers=("g",),
-                         spec=Spec("consume", (Criteria("c", "uses the artifact"),
+                         spec=Spec("consume", (Criteria("c", "uses the artifact",
+                                                        check=_pinned("c")),
+                                               # a seam criterion is exempt from pinning a check:
+                                               # what decides it is the producer's own verdict
                                                Criteria("dep__prod", "reads prod's output",
                                                         depends_on=TaskId("prod")))), assignee=W))
 

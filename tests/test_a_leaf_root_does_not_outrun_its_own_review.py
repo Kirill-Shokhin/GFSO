@@ -25,13 +25,13 @@ import json
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _a_leaf_that_passed_with_its_review_unanswered(e):
     T.create_task(e, "leaf", {"description": "Ship the billing rewrite",
-                              "criteria": [{"name": "suite_green",
-                                            "description": "pytest -q exits 0 with >= 400 passed"}],
+                              "criteria": [criterion("suite_green",
+                                                     "pytest -q exits 0 with >= 400 passed")],
                               "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -48,7 +48,8 @@ def _a_leaf_that_passed_with_its_review_unanswered(e):
     T.signal(e, "leaf", "ACCEPT", "exec-1")
     T.signal(e, "leaf", "DELIVER", "exec-1", result="400 tests, all passing")
     T.record_verdict(e, "leaf", "PASS", reviewer="judge",
-                     observed={"suite_green": "ran `pytest -q`: 400 passed, exit 0"})
+                     observed={"suite_green": {"note": "ran `pytest -q`: 400 passed, exit 0",
+                                               "ran": ["check suite_green"]}})
     T.signal(e, "leaf", "PASS", "exec-1")
     e.wait_idle()
     assert e.get_state(TaskId("leaf")).name == "DONE"
@@ -78,7 +79,7 @@ def test_a_leaf_whose_review_was_answered_carries_nothing():
     e = make_engine()
     e.start()
     T.create_task(e, "ok", {"description": "a leaf",
-                            "criteria": [{"name": "c", "description": "C"}],
+                            "criteria": [criterion("c", "C")],
                             "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                 "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -86,7 +87,8 @@ def test_a_leaf_whose_review_was_answered_carries_nothing():
     T.signal(e, "ok", "ACCEPT", "exec-1")
     T.signal(e, "ok", "DELIVER", "exec-1", result="built it")
     T.record_verdict(e, "ok", "PASS", reviewer="judge",
-                     observed={"c": "ran the check, it printed OK"})
+                     observed={"c": {"note": "ran the check, it printed OK",
+                                     "ran": ["check c"]}})
     T.signal(e, "ok", "PASS", "exec-1")
     e.wait_idle()
 

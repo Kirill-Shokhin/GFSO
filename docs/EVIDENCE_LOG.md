@@ -750,7 +750,7 @@ published findings bound what anything in §13 can mean:
   validation scores for `aide`, `linear` and `autoresearch` under Claude Code.
 
 **Every task measured in §13.2–§13.12-ter is at or below 25K LOC** (§13.1 audits three above it;
-§13.13–§13.14 measure above it): `json_parser` 1.5K, `regex_engine` 5K,
+§13.13–§13.15 measure above it): `json_parser` 1.5K, `regex_engine` 5K,
 `sed_interpreter` 5K, `markdown_renderer` 8K, `spreadsheet_engine` 10K, `http2_protocol` 15K,
 `database_engine` 25K. So this campaign has been measuring in the flattest part of the published
 curve — the band where the substrate's own authors find at most 21 points of room — and comparing
@@ -1667,7 +1667,7 @@ decomposer, and the reader should not read the cost figure as a property of the 
 
 **Where a cell can still discriminate.** Not by choosing a different task of this size — by the
 substrate's own published stratification (§13), room appears above 25K LOC, and every task used in
-§13.2–§13.12-ter is at or below it (§13.13–§13.14 measure above it).
+§13.2–§13.12-ter is at or below it (§13.13–§13.15 measure above it).
 
 **⚠ AND THIS CELL DOES NOT PASS THE GATE THAT WAS WRITTEN THE DAY AFTER IT.** `cell_check.py` was
 extended on 2026-09-11 with two conjuncts it had been missing, and run against this pair it refuses
@@ -1735,60 +1735,376 @@ baseline step tells whether a task has a band to be better in — and `javascrip
 that has one. Rows of these tasks taken before 2026-09-11 — `database_engine`, `elf_linker`,
 `javascript_engine`, `lox_vm` — carry no information about the artefact where they read zero.
 
-### 13.14 `javascript_engine` under the explicit contract — both arms at or within two tests of the ceiling, G unfinished at eight times the spend (2026-09-11)
+### 13.13-bis What the arm was scored on, and what it was told — two different things (2026-09-12)
 
-A task above 25K LOC run with the amended specification: one addendum (`7f95d8022e22afdf`), the same
-text in both rows, the same inner model (sonnet).
+Two levers exist and they had been confused here. Stating both, because a row that names neither
+cannot be compared with one that used either.
 
-| arm | work | whole spend | visible | held-out | root |
+**The visible test suite.** The measuring layer passed `difficulty_level=1` as a literal on the one
+call every bare-arm run goes through, so every number in §13 is a level-1 number and no row said so.
+Measured on `javascript_engine` by asking the substrate's own adapter for the effective directory:
+
+| level | what the arm is scored on and can see | test functions |
+|---|---|---|
+| 1 | `tests/public/test_public.py` — the default validation suite | 130 |
+| 2 | `tests/gradient/test_l2.py` — composition level | 40 |
+| 3 | `tests/gradient/test_l3.py` — composition at held-out difficulty | 39 |
+
+Eleven tasks ship those gradient suites. One discrepancy between the paper and the code, stated
+because it changes what a raised level means: the paper describes the higher regimes as *augmenting*
+the visible suite, while the adapter copies the level file alone — at level 3 the arm is scored on 39
+composition tests INSTEAD of the 130 feature tests, not in addition to them.
+
+The substrate's paper reports, per task, what raising this lever does for seven of them: the gap
+neither consistently shrinks nor grows — `sql_database` falls from 35 points to 9, `c_compiler` rises
+by 25, several do not move — and the authors read it as richer tests helping where the agent has the
+capability but lacks the signal, and backfiring where the compositions are genuinely hard.
+
+**The specification text.** This is the other lever, and the substrate ships nothing for it. A task's
+`prompt.md` is published as it is, contradictions included: `spreadsheet_engine`'s API section says a
+circular reference *raises ValueError* while its own error table says the cell reads `#CIRC!`, and the
+held-out test demands `#CIRC!` (§13.12-bis). There is no contradiction-free specification anywhere in
+the corpus to switch to. The amended statements this campaign uses were therefore written by hand,
+and that is not duplication of a shipped artefact — it is the artefact the corpus lacks.
+
+The two must never be read as one. Raising the level gives the arm **more tests to optimize against**;
+amending the statement gives it **an obligation stated without contradicting itself**. A result from
+one says nothing about the other.
+
+### 13.13-ter Which tasks this corpus can carry at all, asked of every task (2026-09-12/13)
+
+A low score is the most dangerous number in this document, because three different things print the
+same digit: the task is hard, its statement under-specifies it, or the platform cannot run it. They
+are told apart here by measurements that use no agent: **the task's own suites run against something
+that is correct by construction** — the reference implementation the corpus ships, or, where the
+corpus grades against a tool, that tool standing in for the artefact. Below its ceiling, the reading
+is the platform.
+
+**This section replaces an earlier version that was wrong in three places.** It listed six tasks as
+unmeasurable (reference 0): of those six zeros, two were this harness (a stack reserve), two are the
+platform (the tasks need Linux), and two are broken as shipped (one of them, `tcp_stack`, partly for want of POSIX headers). It filed `http2_protocol`,
+`regex_engine`, `markdown_renderer` "and the rest" under "no reference", when their `reference/` holds
+a working implementation beside the oracle. And it concluded that, of the tasks above 25K LOC, exactly one could carry a cell,
+from a bare-arm reading on four tasks and a reference check on twelve, of thirty-one.
+
+**The ground, per task.** Windows is this machine as the runs see it; Linux is a Debian container with
+the clone mounted read-only.
+
+| ground | tasks |
+|---|---|
+| sound on Windows — reference or oracle at or near its ceiling | 21 tasks: `javascript_engine` 130/130 · `css_layout_engine` 127/127 · `nes_emulator` 52/52 · `lox_vm` 52/52 · `gameboy_emulator` 50/50 · `filesystem` 40/40 · `crypto_primitives` 24/24 · `deflate_compression` 35/35 · `git_impl` 25/25 · `gnu_make` 158/159 · `http2_protocol` 46/46 · `http_server` 31/31 · `markdown_renderer` 49/49 · `package_resolver` 32/32 · `regex_engine` 40/40 · `sed_interpreter` 118/118 · `spreadsheet_engine` 34/34 · `tinygrad` 70/70 · `json_parser` 45/45 · `sql_database` 15/15 and `database_engine` 40/40 (SQLite oracle standing in) |
+| sound on Windows only after a harness fix | `coreutils` — its fixtures compare against `/usr/bin/<util>`, which does not exist here, and a bare `sort` resolves to Windows' own; with GNU coreutils supplied, 48/48 (a bare step had read 0.118 against a missing oracle) · `wasm_interpreter` 159/159 and `riscv_emulator` 50/50 — both references keep 2–4 MB structures on `main`'s stack and overflow the 2 MB Windows default; with Linux's 8 MB, full |
+| sound in Linux only | `elf_linker` 35/35 (on Windows the local assembler emits COFF, not ELF) · `shell_interpreter` 41/41 (fork, job control) · `c_compiler` 46/46 with gcc standing in (its grader is gcc; its statement mandates the System V calling convention) · `os_kernel` 36/36 in the task's own image (QEMU, RISC-V) |
+| broken as shipped (by reading the harness, not repaired) | `ray_tracer` — the conftest looks for a binary the reference Makefile does not build, and its pixel oracle is never built · `tcp_stack` — path and name mismatches, and POSIX headers this platform lacks |
+| not probed | `gollum_compiler` |
+
+**What the hidden suite grades**, against the rule stated in §13.13-quater — a hidden suite measures a
+specification only if it grades a standard the experimenter did not author. Measured by standing an
+independent implementation in for the artefact, or by patching the reference toward the standard one
+rule at a time; the rows marked *(read)* come from the test harness itself, not from a run.
+
+| grades an external standard | grades its own reference |
+|---|---|
+| `javascript_engine` — V8 passes both hidden suites 121/121 | `css_layout_engine` — 14 of 23 attributed failures punish a correct reading (§13.13-quater) |
+| `coreutils` — GNU coreutils 119/119 · 21/21 | `http2_protocol` — the reference made to obey RFC 7540 §5.1.1 (client-odd, server-even streams) fails 16 of 42 private tests |
+| `sql_database` — SQLite 11/11 · 15/15; `database_engine` — SQLite 25/25 · 40/40 | |
+| `shell_interpreter` — GNU bash 110/110 · 37/37 (the reference itself fails 4) | `ray_tracer`, `tcp_stack` *(read)* — agent output compared with the reference's |
+| `elf_linker` — GNU ld 62/63 · 27/27 (the one miss: the task demands an error where ld only warns) | `gollum_compiler` *(read)* — expected strings derived from its reference compiler |
+| `c_compiler` *(read)* — its oracle is gcc, run on every test | |
+| `os_kernel` *(read)* — upstream xv6 behaviour; its hidden test programs are not given to the agent | |
+
+`spreadsheet_engine` fails the rule on other evidence *(read)*: its hidden suite contradicts its own statement
+(§13.12-bis). `json_parser` is the apparatus's smoke task and was not examined.
+
+**What a bare arm scores.** One agent step of the linear arm (the harness counts the starter stub as step
+0), published statement, difficulty level 1 unless stated (older rows predate the field that records it), every
+row valid:
+
+| held-out | tasks |
+|---|---|
+| **0.92 and above** — one step leaves almost nothing | `gameboy_emulator` 1.000 · `nes_emulator` 1.000 · `lox_vm` 1.000 · `deflate_compression` 1.000 · `sed_interpreter` 1.000 · `wasm_interpreter` 1.000 · `riscv_emulator` 1.000 · `tinygrad` 0.987 · `crypto_primitives` 0.982 · `filesystem` 0.981 · `http_server` 0.951 · `gnu_make` 0.951 · `package_resolver` 0.940 · `git_impl` 0.928 · `markdown_renderer` 0.928 |
+| 0.80–0.92 | `spreadsheet_engine` 0.844 · `regex_engine` 0.840 · `javascript_engine` 0.819 / 0.875 — one-step drafts of the searching arm's harness (a third, hand re-scored at 0.944, is not a recorded measurement and sits in no band — §13.14) |
+| **below 0.80** (median of repeats) | `coreutils` 0.580 / 0.681 / 0.723, and 0.697 at levels 2 and 3 · `sql_database` 0.727 / 0.727 / 0.818 (eleven files — one file is 0.09) · `css_layout_engine` 0.701 · `http2_protocol` 0.762 |
+| 0.000 | `database_engine` — the step ended at its turn limit with a tree that does not compile |
+
+**The readings above on tasks written in C carried a brief for a different task.** The substrate's linear
+strategy opens the agent's prompt with "This is a very hard C compiler implementation challenge … You are building
+a complete C compiler" and closes it with "Your compiler source files are in the current directory" whenever
+`task_id == "c_compiler" or language == "c"` — 16 of the 31 tasks. The baseline rows of §13.14 on
+`javascript_engine` carried it too, while the GFSO arm's prompts never did, so on those rows the two arms were
+not given the same statement. With both removed for every task except `c_compiler`, three tasks were re-read on
+2026-09-15: `coreutils` **0.613 / 0.748 / 0.597** (earlier 0.580–0.723), `sql_database` **0.727 / 0.818 / 0.818**
+(earlier 0.727 / 0.727 / 0.818), `javascript_engine` **0.889** (one reading). The six C tasks
+in the 0.92 band were not re-read.
+
+**`database_engine` is excluded.** Re-read three times, the harness reported 1.000 / 0.160 / 0.040. The artefact
+of the run reported at 0.160 was then scored again with the benchmark's own suites and no model: 0.20 from a clean
+copy (three times), 0.04 with the state files its run had left in the directory, and 0.16 when scored a second time
+in a directory a first scoring had written into — the number the harness reported. The statement requires a
+persistent database; the suites run every test file in one working directory expecting no tables. On this one
+artefact, doing what the statement asks cost files. The table's earlier 0.000 for this task is a reading from
+before that diagnosis, and its cause was not re-examined.
+
+**What this settles, and what it does not.** A task is a candidate here only if its ground is sound, its hidden
+suite grades an external standard by measurement, and one bare step on its PUBLISHED statement stays below 0.9
+(the median, where the step was repeated); a candidate on which one bare step on the EXPLICIT statement reaches
+0.9 carries no comparison of arms. On this corpus and machine, under the corrected brief, the candidates are
+**`coreutils`**, **`sql_database`** and, on a single reading that was not repeated, `javascript_engine` (0.889),
+which has no explicit-statement reading under the corrected brief (the 0.972 of §13.14 was taken under the old
+one). `database_engine` would qualify but is set aside for the reason above. `regex_engine` reads 0.840, but what
+its hidden suite grades was not examined, so it is neither a candidate nor excluded. Four more clear ground and standard only in Linux — `elf_linker` and
+`shell_interpreter` by measurement, `c_compiler` and `os_kernel` by reading their harness — and have no valid
+bare-arm reading (the Windows zeros in §13.13 are the platform's), because a fair step needs the agent itself
+working in Linux. None of this is a comparison between arms, and §13.14's point stands for any A/B on these
+suites — an explicit contract removes the gap a hidden suite measures.
+
+**The same bare step on an explicit statement (2026-09-15).** For those two tasks the statement was amended with
+the behaviour their hidden suites pin, reviewed against both suites by fresh reviewers until a round found nothing
+significant, and each clause then violated on purpose to see whether a hidden test catches it. On `coreutils` six
+clauses were caught by none and were removed or declared unconstrained (a seventh — which characters `[:digit:]`
+holds — is caught only in part and was kept); the final text was reviewed again but not
+re-run through that check. On `sql_database` every planted violation was caught; its last edit — freeing only
+what the engine writes to standard error for a statement that is an error — was not reviewed again. Three steps
+each: `coreutils` **0.966 / 0.958 / 0.966**, `sql_database` **1.000 / 0.818 / 1.000**. The three `coreutils`
+readings do not share one recorded grading setup: the 0.958 repeat was recorded as 0.000 — the grader's `make` ran
+a POSIX recipe under cmd.exe and every test errored at setup — and was scored again, without a model, after the
+grader was made to run recipes under sh; the first repeat passed because its agent had already built the links,
+and the third was graded while that change was being made, which its record cannot show.
+By that condition neither task carries a comparison of arms: `coreutils` median 0.966, `sql_database` median
+1.000 (one of its three readings 0.818, its bare median). The rise from the published statement is expected by
+construction — the amendment was written from the hidden suites — so it is evidence neither for the framework nor
+for any arm; it says only that on these two tasks, stating what the hidden suites pin removed most of the gap in
+all three readings (`coreutils`) and in two of three (`sql_database`).
+
+### 13.13-quater What a held-out suite is actually grading — measured on `css_layout_engine` (2026-09-12)
+
+A wide gap on a platform-verified task (the full inventory is §13.13-ter): a bare arm one step, visible 1.000,
+held-out **0.701** — 32 of 107 hidden tests fail. Those failures were attributed by patching the
+task's own reference implementation one rule at a time and recording which hidden tests flipped, so
+the counts below are measured rather than read off the statement. **23 of the 32 land in 11 behaviour
+classes; the remaining 9 are not claimed.**
+
+**Fourteen of the twenty-three fail an implementer who followed the statement CORRECTLY**, because the
+statement and the hidden suite disagree outright:
+
+| the statement says | the hidden test asserts | tests |
+|---|---|---|
+| the gap between siblings is `max(margin-bottom, margin-top)`, "**not the sum**" | `b.y == a.y + a.height + 25 + 15` — the sum, spelled out | 5 |
+| `margin-left/right: auto` "centers horizontally within parent" | a 400px box with `margin:0 auto` in an 800px viewport is at `x == 0` | 4 |
+| inherited properties give the child the parent's "**computed value**" | the string `2em` is inherited and re-multiplied per level: 20px → 40 → 80 | 2 |
+| `align-items: stretch` — "items fill the cross axis" | an item never exceeds the tallest item on its line, even with an explicit container height | 2 |
+| `position: fixed` is "**always relative to the viewport**" | a fixed box inside an absolute one is laid out as a static block within it | 1 |
+
+And the statement exempts the implementer from a fifth of the grade: "**No need to handle:**
+Malformed/unclosed tags (**input is always well-formed**)" — while **20 of the 107 hidden tests**
+(18.7%) feed exactly that. The remaining attributed classes are silences of the same kind: margins on
+flex items consume no space and produce no offset (3 tests); `min-width` enters the flex base size
+before wrapping (2); a shrunk item reports its unshrunk width while its siblings are positioned from
+the shrunk one, so the boxes overlap (1); a percentage width on a flex item is resolved twice (1).
+
+**What this establishes, and it is a property of the benchmark rather than of any arm.** On this task
+the held-out suite grades conformance to the REFERENCE IMPLEMENTATION's behaviour, including
+behaviour that is wrong as CSS and behaviour the statement forbids. A "gap" measured against it is
+therefore not only reward hacking: on this task a measured 14 of 23 attributed failures are the price
+of a statement that contradicts its own acceptance.
+
+**The criterion this yields for any specification experiment.** Making a statement explicit is only a
+measurement where the hidden suite grades against an EXTERNAL standard — a language, a published
+format — that the experimenter does not author. Where it grades its own reference's quirks, writing
+the explicit statement degenerates into transcribing the implementation, and the experimenter is in
+the data path irreducibly. `css_layout_engine` fails that criterion and cannot carry the lever,
+whatever its gap; the criterion had to be measured to be seen, and nothing in the corpus's
+documentation states it.
+
+### 13.14 `javascript_engine`, three runs — and the structural reason none of them is a comparison (2026-09-11/12)
+
+Three runs on one 60K-LOC task, recorded together because separately each would be a third telling of
+the same null. Same inner model (sonnet) throughout; the amended rows carry one addendum
+(`7f95d8022e22afdf`), identical text in both arms. Boundary found later (§13.13-ter): the baseline's prompt on
+this task also carried the substrate's "you are building a complete C compiler" brief, which the GFSO arm's did not,
+so the two arms' prompts were not identical beyond the specification itself.
+
+| specification | arm | whole spend | visible | held-out | root |
 |---|---|---|---|---|---|
-| baseline, one step | 1 step (ended on its turn limit) | $2.55 | 1.000 | **0.972** (70/72) | — |
-| G (rework bound 3) | 9 executor calls, 6 of them reworks (after 5 FAILs; one rework call died and was re-issued) | $20.56 | 1.000 | **1.000** (72/72) | not closed — 3 of 6 leaves accepted, the other 3 never started; stopped on its cost ceiling |
+| amended | baseline, one step | $2.55 | 1.000 | **0.972** (70/72) | — |
+| amended | G, rework bound 3 | $20.56 | 1.000 | **1.000** (72/72) | not closed — 3 of 6 leaves accepted, stopped on its cost ceiling |
+| published | baseline, three one-step drafts | $2.45 · $2.72 · $2.68 | 1.000 | 0.819 · 0.875 · **0.944** | — |
+| published | G, rework bound 3, resumed once | $36.00 | 1.000 | **0.875** (63/72) | not closed — the parser ESCALATED, the interpreter never started |
+| published | G, rework bound 4 | $40.25 | 1.000 | **0.9306** (67/72) | **DONE / PASS** |
 
-**What it shows.** With the contract stated, both arms reach, or come within two tests of, the
-ceiling of the held-out suite on a 60K-LOC task — as `spreadsheet_engine` did at 10K (§13.12-ter).
-The two held-out tests G passes and this baseline draft does not are both syntax-error reports:
-`function() { … }` as a statement, and an unterminated string. The unterminated string falls under the
-lexer's `eof-safe-termination` criterion and was probed directly; the anonymous declaration only under
-the parser's generic `clean-error-on-malformed-or-excluded-input`, with no probe of that construct.
-The 72/72 workspace was written by three leaves: during rework, the parser and value executors also
-wrote the files of the three leaves that never started, and several of the reworks were on criteria the
-held-out suite does not grade (`coercion-centralization`, `checked-dynamic-allocation`,
-`ast-node-coverage`). Replayed in the directory layout the validator worked in, 165 of the 170
-decidable claims of G's verdicts reproduce against the deliveries they judged (the run's own replay,
-taken in the bare snapshot, recorded 109 reproduced and 17 refuted).
+The third baseline draft, 0.944, is a HAND re-score of a run the harness recorded as 0.0 through the
+binary-name defect of §13.13 — not a recorded measurement, and it is the only draft the closed G run
+sits below.
 
-**What it does not show.** A comparison, nor the addendum's effect. G did not close its root, the
-spends differ eightfold, and the baseline was not run to G's spend. One-step baseline drafts on the
-PUBLISHED specification read 0.819 (59/72) and — re-scored with the binary's name fixed (§13.13) —
-0.944 (68/72), the latter passing both tests G "wins" here; on the amended specification, 0.972. Two
-drafts on the same published specification differ by nine tests (59 vs 68); at one run per condition,
-that spread separates neither the arms nor the addendum from the draft. By §13.13's own test, one baseline step on the amended specification leaves a band of two
-tests — too narrow for a cell to discriminate. Both memory ceilings of the G run were reached (arm 16.55
-of 16 GB, server 10.0 of 10); the record does not say which call reached them, and the held-out suite
-re-run outside any ceiling reads 72/72.
+**Why no arrangement of these rows is a comparison, and why a better task would not fix it.** On the
+PUBLISHED specification the held-out suite measures which arm better guesses what the specification
+does not say: a tree search feels out the implicit, a protocol carries the explicit through, and the
+two arms are not being asked the same question (the same reading that invalidated §13.12-bis). Make
+the criteria explicit to remove the guessing, and **both arms reach the ceiling** — at 10K LOC
+(§13.12-ter) and again here at 60K. That is not a shortage of a suitable task: on this corpus the
+hidden content *was* the whole gap, so removing it removes the gap. Looking for a task where the
+comparison still separates the arms is looking for a task with MORE hidden content — reinstating the
+guessing game, which is the thing the amendment exists to remove. This benchmark, in this form,
+cannot answer the value question, and the reason is the one stated on `CORE.md`'s own drift-trap
+list before any of these runs: a benchmark tests this framework only if its criteria are semantic
+predicates rather than hidden test pairs.
 
-### 13.15 `javascript_engine` on the published specification — G at the baseline's median, stopped by its own plan (2026-09-11)
+**What the third run does show — a mechanism, not a score.** All six leaves reached DONE; the root
+was delivered and came back **FAIL** on `operator_semantics_and_precedence`, whose own named
+observable — `NaN !== NaN` — was unreachable, because binding the global identifiers `NaN` and
+`Infinity` was the obligation of no child. Children passed and the parent did not: FM-1, the coverage
+hole. The engine then refused a re-DELIVER of the root — "the FAILed criteria are covered by children
+untouched since that FAIL; contact refuted the DECOMPOSITION, not the aggregate" — and the arm's
+driver carried that refusal into a plan repair (§14.3 admits the ASSIGN; Inv-1, §14.4, makes the
+repair a revision). Two leaves were added, *Global Special-Number Identifiers* and *Equality
+Operators*; both closed, and the root closed after them. No person was in the loop. This is the
+composition law making a hole visible and the protocol refusing to let it be papered over — it is
+what the framework claims, and it is not a number anyone can be better at.
 
-The same task with no addendum — the setting where one-step baseline drafts leave room.
+**And the same run shows the hole the protocol did NOT catch.** `instanceof` is named by no criterion
+anywhere in that plan's 81 — not in a leaf, not in the root — so CHECK-1 is vacuously green over it,
+and `test_prototype_instanceof` is one of the five held-out failures of a root that closed PASS. This
+is FM-1.f, the unwritten criterion (§12.2): the clause quantifies over the criteria that WERE
+written, no a-priori guard exists for it, and its runtime guard is q_D — which this run records at
+**0.0**. The protocol forces criteria to be stated and makes a violation of what is stated visible.
+It does not make them complete; the decomposer writes them.
 
-| arm | whole spend | held-out | root |
+**The acceptance instrument on the closed run.** Replayed offline against the snapshots the verdicts
+judged: 12 verdicts, **284 claims reproduced, 18 refuted, 0 unrunnable, 164 not-portable, 7
+under-probed** — so 302 of 473 claims were decided, and a third could not be re-run by anyone but
+their author, most often because the command and its fixture live in different directories of the
+run. The root's own closing verdict replays 57 reproduced and none refuted; that does not transfer
+downward, and the leaves it closes over carry 18 refutations on standing PASS verdicts. The run's
+live figures (298 / 141) came from a replay that guessed one working directory; read C2 for this run
+from the offline replay.
+
+**The memory ceilings fired, and that is what the row means.** Both trees report a peak above their
+own ceiling (16 GB and 10 GB). That is the signature of the ceiling FIRING, not of its absence:
+Windows charges an allocation to the job's peak counter before the limit rejects it — measured
+pairwise, a child committing 1.5 GB under a 2 GB ceiling reports 1.52 and no hit, one asking 5 GB
+dies with a MemoryError and reports 5.03. What the record does not say is WHICH call was refused, so
+a refused allocation inside the validator's tree cannot be told from one inside the artefact under
+test — and two of that plan's criteria are about not crashing under growth. The cell gate refuses a
+row whose ceiling fired, and that refusal stands.
+
+**What none of it shows.** Whether the plan repair generalises — one occurrence. What G scores
+against a baseline given the same spend: not run. Of the closed run's 127 minutes, 70 were stall
+wait, so the wall time beside the spend is not work. The $40.25 is inner agent $13.54 plus server
+$26.71; the baseline figures are inner-agent only, so "fifteen times" is the money and about five
+times is the like-for-like.
+
+### 13.15 Bare hands, no suite issued: the first pair where a false "done" can arise at all (2026-09-19/20)
+
+Every cell before this one handed the arm its visible suite. That is the issuer's work already done
+for it — request turned into decidable checks — so the arm's own check coincides with the oracle and
+a false "done" has nowhere to come from; saturation follows, and §13.12-ter/§13.14 are that fact
+recorded three times. This pair removes the suite from both arms.
+
+**The arms.** `A` = the default Claude Code harness, isolated from the operator (its own
+`CLAUDE_CONFIG_DIR`, a working directory outside the home, auth by a setup token): the statement
+only, no tests in the workspace, no turn cap, running until it declares its own verdict. `G` = the
+same bare agent plus the product a user installs — a gfso server in the same container over MCP,
+told only to carry the work through the graph to a root PASS. One task, `c_compiler`, one contract
+digest `83b7a62e1d26952a` in both rows, n=1 per arm. The workspace each arm receives is the task's
+nine starter files plus `prompt.md`; the task's own `tests/` tree, including the 959 `.c` inputs
+§13.13-ter names, is not copied into it.
+
+| | A (bare) | G (bare + gfso) |
+|---|---|---|
+| held-out | 0.632 | **0.816** |
+| visible | 0.804 | 1.000 |
+| the arm's own claim | `VERDICT: DONE` — false | root DONE/PASS by an independent judge — also false |
+| spend | $25.85 | $98.04 ($87.98 agent + $10.07 engine) |
+| wall | 70 min | ≈3.2 h active |
+
+Both rows were re-scored from their kept workspaces and reproduced the same figures; the re-score
+is not itself a field of either `record.json`, so it is reported as an operator observation rather
+than as a recorded measurement.
+
+**What the graph did that the bare arm has no equivalent of.** Read off the run's own log: the
+independent judge FAILed the root three times on real defects (and a child twice more); the engine
+refused to re-DELIVER the aggregate — contact had refuted the DECOMPOSITION, not the assembly — and
+forced the plan to be repaired, producing two new nodes each validated in its own right; the root's
+fourth judging passed, the twelfth `validate_result` call of the run. A has no such loop: it is its
+own verifier, and it stopped when it judged itself finished.
+
+**The gap, decomposed per test by the oracle.** Of 0.184, about 0.074 is scope the executor-as-issuer
+cut BEFORE writing code (its own ACCEPTED_RISKS: vector types, VLAs, K&R declarations, statement
+expressions, x87 long double) and about 0.110 sits inside its own claim and was passed by the judge.
+Inside its own claim G reads 0.881 where A reads 0.69–0.72 on the same scope.
+
+**An independent corpus of 205 probes, written from the contract alone** (its recorded run against G:
+88/121 accept probes and 82/84 reject probes pass), finds **35** real divergences inside G's PASSed
+tree — the whole
+`__builtin_va_*` family absent, `_Bool c = 256` reading 0, an unsigned→double sign error, bit-field
+sizing, `aligned`/`mode` ignored, a NUL inside a literal, `#if 0` lexed. It did not catch a segfault
+on plain recursion: that is the FM-3 residue against that corpus. The corpus is an instrument of the
+ANALYSIS and was not part of either arm.
+
+**What this pair does and does not settle.** It settles that a false "done" arises on both sides once
+the suite is withheld, which no earlier cell could show, and that the structure caught six defects
+the bare arm's self-check did not. It settles nothing about value: n=1, one task, one model, and both
+claims were false — G's by less. The spend is reported, not equalised: G's overhead is part of its
+price by construction. **And the number the canon will not bend on could not be read off either row**:
+a criterion stating an intention ("for ANY accepted program the output matches gcc") has no procedure
+of its own, so the verifier invented one at judging time, differently each round, and "the graph says
+PASS" did not mean the promise had been executed. That gap is what the product change of 2026-09-20 addresses — a criterion now carries the
+procedure that decides it, authored before execution — and what the next cell is pre-registered to
+measure.
+
+### 13.16 A criterion carrying its own check: the same task, and what a closed tree still gets wrong (2026-09-20/21)
+
+§13.15's pair left one thing unreadable. A criterion stating an intention — "for ANY accepted
+program the output matches gcc" — has no procedure of its own, so whoever validated invented one
+while judging, differently each round, and "the graph says PASS" did not mean the promise had been
+executed. The product change under test: a criterion carries `check: [{behaviour, command,
+expect}]`, authored by the issuer side (`auto_decompose`) with the criteria and before the work;
+execution does not open while a criterion pins none; a PASS that skips a pinned probe is refused at
+the record; the verdict stores the procedure's digest, how many pinned probes ran, and how far the
+judging went beyond them.
+
+**The run.** Same task and same contract digest `83b7a62e1d26952a` as §13.15, same bare arm, the
+root authored by `auto_decompose` from the whole statement. Row `results/GB_c_compiler_tlnz9l001`.
+
+| | A bare (§13.15) | G (§13.15) | G with the procedure |
 |---|---|---|---|
-| baseline, three drafts of one agent step each (step 0 is the starter stub) | $2.45 · $2.72 · $2.68 | 0.819 · 0.875 · 0.944 (the third a hand re-score: the run recorded 0.0 through the binary-name defect of §13.13) | — |
-| G (rework bound 3, one run, resumed once) | $36.00 | **0.875** (63/72) | not closed — 4 of 6 leaves accepted; the parser ESCALATED; the interpreter never started |
+| held-out | 0.632 | 0.816 | **0.903** |
+| visible | 0.804 | 1.000 | 1.000 |
+| spend | $25.85 | $98.04 | $93.76 agent + $38.95 engine = $132.71 |
+| wall | 70 min | ≈3.2 h | 5 h 12 m, 824 turns |
 
-**What it shows.** G lands at the baseline's median at more than thirteen times the spend, without
-reaching its root — this run says nothing in G's favour. What stopped it is inside the plan: the
-parser carried two criteria quantified over all inputs — malformed input never crashes the engine, and
-unary operators stack to any depth — and the validator falsified each at scale in turn (twelve hundred
-unclosed parentheses; then the depth guard added against them, once extended to unary, refused 299
-stacked `!`). Two unbounded predicates that cannot both hold at scale are a plan defect, and they
-exhausted the rework bound. Seven of G's nine held-out failures are object-and-call semantics
-(`in`/`hasOwnProperty`, `instanceof`, `this` binding, `apply`), and the interpreter leaf that would
-have implemented most of them never started.
+**The first number is a GATE, not a result, and it is reported as one.** Since the engine refuses a
+PASS that skipped a pinned probe, "every pinned probe ran" is true by construction; publishing it
+as a finding would be publishing that the code contains a branch. What it licenses is the cell: the
+closed root records `pinned_probes 11 / pinned_probes_run 11`, 32 probes beyond the pinned set, and
+`procedure_moved_since_authoring: false` — the pinned CHECKS never moved between authoring and
+closing. That is not the same as "the claim did not narrow", and reading it as such is a false
+green: the claim narrowed anyway, through its **risk register**, which that digest does not cover.
+The register grew from seven entries to nine after the work had begun — and six of the divergences
+below sit behind exactly those entries. The register was not part of any digest or drift report at
+the time; both now cover it (`claim_digest`, `claim_drift`, and `narrowed_after_authoring` on the
+closure), which is a repair made after this run, not a property of it.
 
-**What it does not show.** What G scores when its plan finishes — the one comparison this task can
-still carry, at one run per arm, against a baseline whose visible signal is flat from its first step.
-Which leaf owned each held-out failure is not recoverable from this run's artefacts; `hasOwnProperty`
-was assigned to the builtins leaf, which passed. The third baseline score is a hand re-score of a run
-the harness scored 0.0, not a recorded measurement.
+**What a closed PASS tree still gets wrong.** The instrument is the same independent corpus of 205
+probes written from the contract alone, before procedures existed — unchanged, and therefore not
+anchored by them. Against the new tree it finds **16 divergences, against 35 in the tree of
+§13.15**; the reject probes now pass 84/84. Classified by a rule fixed before the run:
+
+| kind | n | what it means |
+|---|---|---|
+| FM-3 | 10 | a criterion NAMES the behaviour and its pinned procedure is blind to it — the faithfulness residue (Ch. 8), named in the closure, not closed |
+| declared | 6 | the contract excluded it in advance (GCC vector types, VLA as a struct member, wide-char width) — said before the work, not forgotten |
+| FM-1.f | **0** | a behaviour no criterion names and no exclusion covers — none |
+
+The ten: `__builtin_constant_p`, `offsetof`, a NUL inside a literal, label values, nested
+initialisers, K&R argument promotion, preprocessor stringification, a call through a function
+pointer, attributed variables, vector passing.
+
+**Three boundaries this entry does not step over.** (1) The comparison moves more than one variable:
+procedures, `auto_decompose` authoring the root, and two root rebuilds (the run started on the old
+rework bound of 3, so the root escalated twice and a third was built; the children and the artefact
+survived, the graph's history did not). So 0.903 against 0.816 is a fact about two runs, not an
+isolated effect of the change. (2) The "declared" bucket was added to the classifier AFTER the first
+pass split one feature family across two labels — before it, the same 16 read 11 FM-3 / 5 FM-1.f.
+The correction is right in substance and was made after seeing the data; it is disclosed rather than
+folded in. (3) n=1 per arm, one task, one model. Nothing here is a claim about value.

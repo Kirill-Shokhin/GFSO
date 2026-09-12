@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -35,10 +35,10 @@ def _delivered_internal_node(whose: dict):
     e.start()
     e.project_name = "mine"
     T.create_task(e, "p", {"description": "parent",
-                           "criteria": [{"name": "g", "description": "G"}],
+                           "criteria": [criterion("g", "G")],
                            "accepted_risks": _RISK}, assignee="agent")
     T.create_task(e, "k", {"description": "kid",
-                           "criteria": [{"name": "c", "description": "C"}]},
+                           "criteria": [criterion("c", "C")]},
                   assignee="agent", parent_id="p")
     T.map_criterion(e, "p", "k", "g")
     T.signal(e, "k", "ACCEPT", "agent")

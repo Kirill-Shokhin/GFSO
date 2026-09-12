@@ -22,18 +22,19 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.types import Signal, SignalData, TaskId
-from tests.support import UNMODELLED_FAULT, assert_the_graph_can_still_move, make_engine
+from tests.support import (UNMODELLED_FAULT, assert_the_graph_can_still_move, criterion,
+                           make_engine)
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
 
 def _two_children(e):
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [{"name": "g", "description": "G holds"}]},
+                              "criteria": [criterion("g", "G holds")]},
                   assignee="agent")
     for kid in ("a", "b"):
         T.create_task(e, kid, {"description": f"work {kid}",
-                               "criteria": [{"name": kid, "description": f"{kid} holds"}]},
+                               "criteria": [criterion(kid, f"{kid} holds")]},
                       assignee="agent", parent_id="root")
         T.map_criterion(e, "root", kid, "g")
     return e
@@ -60,8 +61,12 @@ def _delivered(e, node):
 
 
 def _judged(e, node, verdict="PASS", failed=()):
+    # …NAMING THE PINNED RUNS. A criterion carries the procedure that decides it (A1/§10), and a
+    # report that does not account for it is ⊥, not a verdict — so a sweep that skipped them would
+    # be walking shapes in which every judgement was refused, which is not the subject here.
     T.record_verdict(e, node, verdict, reviewer="rev", failed_criteria=list(failed),
-                     observed={c.name: f"ran the check for {c.name}"
+                     observed={c.name: {"note": f"ran the check for {c.name}",
+                                        "ran": [p.command for p in (c.check or ())]}
                                for c in e.get_task(node).spec.criteria if not c.depends_on})
     _accepted(T.signal(e, node, verdict, "agent",
                        **({"failed_criteria": list(failed)} if failed else {})), verdict, node)
@@ -87,7 +92,9 @@ def _claim_the_aggregate(e):
         T.signal(e, "root", "DELIVER", "agent", result="the aggregate")
     if e.get_task("root").state.name == "VALIDATING":
         T.record_verdict(e, "root", "PASS", reviewer="rev",
-                         observed={"g": "read what the children produced; it holds"})
+                         observed={"g": {"note": "read what the children produced; it holds",
+                                         "ran": [p.command for p in
+                                                 (e.get_task("root").spec.criteria[0].check or ())]}})
         T.signal(e, "root", "PASS", "agent")
 
 

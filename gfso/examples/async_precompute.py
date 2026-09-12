@@ -19,8 +19,17 @@ def main() -> None:
     # ── somewhere ELSE (another process, another machine, another planner) ──────────────────────
     precomputed = {
         "root": {"description": "Ship the landing page",
-                 "criteria": [{"name": "content", "description": "copy approved"},
-                              {"name": "live", "description": "deployed and reachable"}],
+                 # A1/§10: a criterion carries the procedure that decides it, authored here —
+                 # before anything is built — so no judge has to invent one later.
+                 "criteria": [{"name": "content", "description": "copy approved",
+                               "check": [{"behaviour": "the approved copy is what ships",
+                                          "command": "diff -u approved/copy.md site/index.md",
+                                          "expect": "no differences"}]},
+                              {"name": "live", "description": "deployed and reachable",
+                               "check": [{"behaviour": "the public URL answers 200",
+                                          "command": "curl -s -o /dev/null -w '%{http_code}' "
+                                                     "https://example.com/landing",
+                                          "expect": "200"}]}],
                  # STD-1: a decomposed node without a ACCEPTED_RISKS register is a visible hole (CHECK-4)
                  "accepted_risks": [{"item": "traffic spike on launch day", "predictability": "statistical",
                                 "justification": "static page behind a CDN",
@@ -28,10 +37,17 @@ def main() -> None:
         "children": [
             {"task_id": "copy", "assignee": "host",
              "spec": {"description": "Write the copy",
-                      "criteria": [{"name": "approved", "description": "stakeholder sign-off"}]}},
+                      "criteria": [{"name": "approved", "description": "stakeholder sign-off",
+                                    "check": [{"behaviour": "a named stakeholder signed off",
+                                               "command": "cat approved/SIGNOFF",
+                                               "expect": "a name and a date"}]}]}},
             {"task_id": "deploy", "assignee": "host",
              "spec": {"description": "Deploy the page",
-                      "criteria": [{"name": "reachable", "description": "200 on the public URL"},
+                      "criteria": [{"name": "reachable", "description": "200 on the public URL",
+                                    "check": [{"behaviour": "the page answers 200",
+                                               "command": "curl -s -o /dev/null -w '%{http_code}' "
+                                                          "https://example.com/landing",
+                                               "expect": "200"}]},
                                    {"name": "dep__copy", "description": "renders the approved copy",
                                     "depends_on": "copy"}]}},
         ],

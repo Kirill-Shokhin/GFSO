@@ -18,7 +18,7 @@ import pytest
 
 import gfso.tools as T
 from gfso.engine.validation import _EXEC_GATING_CHECKS
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -33,15 +33,14 @@ def _plan(x_deadline, dep=False):
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "goal",
-                              "criteria": [{"name": "a", "description": "A"},
-                                           {"name": "b", "description": "B"}],
+                              "criteria": [criterion("a", "A"), criterion("b", "B")],
                               "accepted_risks": _RISK}, assignee="me", deadline="2026-10-01")
     T.decompose(e, "root", [
         {"task_id": "root.x",
-         "spec": {"description": "x", "criteria": [{"name": "x1", "description": "X"}]},
+         "spec": {"description": "x", "criteria": [criterion("x1", "X")]},
          "assignee": "me", "covers": ["a"], "deadline": x_deadline},
         {"task_id": "root.y",
-         "spec": {"description": "y", "criteria": [{"name": "y1", "description": "Y"}]},
+         "spec": {"description": "y", "criteria": [criterion("y1", "Y")]},
          "assignee": "me", "covers": ["b"], "deadline": "2026-09-05"}])
     if dep:
         T.add_dependency(e, "root.x", "root.y", glue="y reads x")

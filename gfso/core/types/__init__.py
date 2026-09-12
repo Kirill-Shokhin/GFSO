@@ -11,7 +11,7 @@ from .enums import (
 )
 from .primitives import (
     TaskId, AgentId,
-    Criteria, Spec, Task, AcceptedRiskItem,
+    Criteria, Probe, Spec, Task, AcceptedRiskItem,
     CriterionMapping, DepEdge,
     GuardContext, CheckResult, Recommendation,
     GraphContext, SignalData, DispatchPayload, Refusal, SignalOutcome, Wait,

@@ -26,7 +26,7 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 _RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
 
@@ -35,13 +35,13 @@ def _graph():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [{"name": "g", "description": "G holds"}]},
+                              "criteria": [criterion("g", "G holds")]},
                   assignee="agent")
     T.create_task(e, "A", {"description": "producer",
-                           "criteria": [{"name": "a", "description": "A holds"}]},
+                           "criteria": [criterion("a", "A holds")]},
                   assignee="agent", parent_id="root")
     T.create_task(e, "B", {"description": "consumer",
-                           "criteria": [{"name": "b", "description": "B holds"}]},
+                           "criteria": [criterion("b", "B holds")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "A", "g")
     T.map_criterion(e, "root", "B", "g")
@@ -89,7 +89,8 @@ def test_honest_work_still_records():
     e = _graph()
     _delivered(e)
     ok = T.record_verdict(e, "B", "PASS", reviewer="a-reviewer",
-                          observed={"b": "ran `pytest -k b`: 3 passed, exit 0"})
+                          observed={"b": {"note": "ran `pytest -k b`: 3 passed, exit 0",
+                                          "ran": ["check b"]}})
     assert ok.get("recorded") is True, f"an observed PASS must still be recordable: {ok}"
 
     e2 = _graph()

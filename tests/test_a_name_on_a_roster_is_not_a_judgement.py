@@ -19,10 +19,11 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 _RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
-_PROBE = [{"command": "pytest -q", "expect": "ok"}]
+#: the procedure the contract PINS — a report that skips it is demoted (A1, §10)
+_PROBE = [{"behaviour": "b", "command": "check c", "expect": "it holds"}]
 
 
 @pytest.fixture(autouse=True)
@@ -34,7 +35,7 @@ def _a_delivered_root():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "root", {"description": "a goal",
-                              "criteria": [{"name": "c", "description": "C"}],
+                              "criteria": [criterion("c", "C")],
                               "accepted_risks": _RISK}, assignee="me")
     T.signal(e, "root", "ACCEPT", "me")
     T.signal(e, "root", "DELIVER", "me", result="nothing was actually written")

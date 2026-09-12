@@ -11,7 +11,7 @@ from typing import Optional
 from gfso.core.types import (
     Signal, State, Action, CriticVerdict, SignalData, SignalOutcome, Refusal, Wait,
     TaskId, AgentId, Verdict, passed, settled_positive,
-    Spec, Criteria, Task, CheckResult, Recommendation, CriterionMapping, DepEdge,
+    Spec, Criteria, Probe, AcceptedRiskItem, Task, CheckResult, Recommendation, CriterionMapping, DepEdge,
     LLMProviderPort, AgentPort, StoragePort,
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
     TERMINAL_STATES, DoneReason,
@@ -24,8 +24,11 @@ from gfso.core.graph.projection import build as build_projection, render as rend
 from gfso.core.protocol.fsm import available_signals, not_admissible_here
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_that_expected_nothing,
-                                          verdict_report_defects, underprobed, probe_labels,
-                                          unrun_probes)
+                                          verdict_report_defects, probe_labels, unrun_probes)
+from gfso.core.protocol.procedure import (criteria_without_procedure, coverage as procedure_coverage,
+                                          refuting_probes, merge_regression, probe_id,
+                                          unaccounted_for, orphaned_regression,
+                                          procedure_digest, claim_digest)
 from gfso.core.handlers import run_all_checks
 from gfso.core.handlers.structural import check_dag
 
@@ -352,6 +355,17 @@ class Engine:
         named = {c.name for c in criteria}
         carried = tuple(c for c in t.spec.criteria
                         if c.depends_on and c.name not in named)
+        # …AND THE PINNED PROCEDURE OF A CRITERION THE CALLER RE-SENT WITHOUT ONE. Same argument as
+        # the seam above, one field along: nobody rewording a criterion is asking to DELETE the
+        # check that decides it, and losing it is invisible until the node is refused for pinning
+        # nothing — after the work exists, which is when a procedure may no longer be authored
+        # honestly. Passing the criterion WITH a `check` still replaces it, so an issuer who means
+        # to change the procedure can; only silence carries the old one forward.
+        _had = {c.name: c.check for c in t.spec.criteria if c.check}
+        criteria = tuple(c if c.check or c.name not in _had
+                         else Criteria(c.name, c.description, c.input, c.expected, c.n, c.timeout,
+                                       c.depends_on, _had[c.name])
+                         for c in criteria)
         new_spec = Spec(t.spec.description, tuple(criteria) + carried,
                         t.spec.accepted_risks, t.spec.risk_components,
                         scope=t.spec.scope, name=t.spec.name)
@@ -774,7 +788,9 @@ class Engine:
             # reader in the tree, a test asserting the contradiction is merely STORED. Folded into
             # `gaps` so the disposition below (⊥ belongs to the INSTRUMENT, never to the executor's
             # rework budget) applies unchanged.
-            gaps = underprobed(per_criterion)
+            gaps = unaccounted_for(task, per_criterion, by_hand, validator_id,
+                                   self.regression_probes(task_id),
+                                   internal=not self._graph.is_public(task))
             for _c in unrun_probes(per_criterion, tools_used):
                 gaps.setdefault(_c, []).append(
                     "its probe names a command, and this judging run's tool ledger records no shell "
@@ -888,6 +904,16 @@ class Engine:
                    for k, g in zip(("iteration", "reopens", "revisions"), _gen)):
                 self._graph._storage.store_critique(TaskId(f"{task_id}#overruled-verdict"),
                                                     json.dumps(prior, default=str))
+        # THE REGRESSION SET GROWS, AND ONLY GROWS. Kept beside the node rather than folded into
+        # the criterion: the pinned procedure is the issuer's pre-registered claim, and rewriting
+        # it at judging time would move the contract under the executor (Inv-1). Promotion into
+        # the contract stays an issuer's act (`edit_criteria`), and `claim_drift` shows it.
+        if per_criterion:
+            _found = refuting_probes(per_criterion)
+            if _found:
+                self._graph._storage.store_critique(
+                    TaskId(f"{task_id}#regression-probes"),
+                    json.dumps(merge_regression(self.regression_probes(task_id), _found)))
         store_verdict(self._graph._storage, task_id, task, verdict, failed_criteria, validator_id,
                       generation or self.generation_of(task_id),
                       per_criterion=per_criterion, tools_used=tools_used, model=model,
@@ -993,10 +1019,29 @@ class Engine:
         # while probing Inv-3). `failed_criteria` is exactly the red set (Inv-3); everything else
         # the reviewer observed passed.
         _red = {str(f) for f in (failed_criteria or ())}
+        # …AND WHICH OF THE PINNED PROBES THE PERSON RAN. A reviewer is still not asked to WRITE
+        # commands — that rule stands, and the sentence remains the human-sized grade of evidence.
+        # What they are asked is which of the procedure the contract ALREADY pins they executed:
+        # `observed={'c1': {'note': 'ran it, it printed 42', 'ran': ['c1#2ad15c16']}}`, or the
+        # commands themselves. Without that a hand PASS would be the one door where a pinned
+        # procedure may be skipped in silence — and the hand door is where the false passes this
+        # product keeps finding were measured (2026-08-20, 2026-09-02, wave 23).
+        _crit = {c.name: c for c in (task.spec.criteria if task is not None else ())}
+
+        def _entry(k, v):
+            note = v.get("note", v.get("observed", "")) if isinstance(v, dict) else v
+            ran = [str(x) for x in (v.get("ran") or ())] if isinstance(v, dict) else []
+            pinned = {probe_id(k, p): p for p in ((_crit[k].check or ()) if k in _crit else ())}
+            named = [{"id": pid, "behaviour": p.behaviour, "command": p.command, "expect": p.expect}
+                     for pid, p in pinned.items()
+                     if pid in ran or any(str(p.command).strip() and str(p.command).strip() in r
+                                          for r in ran)]
+            e = {"criterion": k, "verdict": "fail" if k in _red else "pass", "evidence": str(note)}
+            return dict(e, probe=named) if named else e
+
         self.record_exec_verdict(
             task_id, verdict, list(failed_criteria or ()), str(reviewer),
-            per_criterion=[{"criterion": k, "verdict": "fail" if k in _red else "pass",
-                            "evidence": str(v)} for k, v in (observed or {}).items()] or None,
+            per_criterion=[_entry(k, v) for k, v in (observed or {}).items()] or None,
             by_hand=True)
 
     def record_rejected_report(self, task_id: TaskId, defects: str,
@@ -1085,6 +1130,25 @@ class Engine:
 
         Returns {why, opens_with} — the reason in the caller's own terms and the one call that opens
         the gate."""
+        # ITS OWN CONTRACT FIRST, and this one has no parent to ask. A1 types a criterion as a
+        # decidable predicate (§10); a criterion that pins no procedure is an intention, and the
+        # procedure then gets invented by whoever validates, at judging time, differently each
+        # round — which is exactly how a PASS comes to mean "the judge checked what it felt like".
+        # Pre-registration is Inv-1's (§14.4): the contract is fixed BEFORE the work, not after it.
+        # Kept out of `_EXEC_GATING_CHECKS` on purpose — that tuple is §13.4's numbered level and
+        # stays it in both directions; this is A1 on the node's own criteria, which that level
+        # presupposes (CHECK-1 already refuses a decomposed node carrying none).
+        me = self._graph.get_task(task_id)
+        if me is not None and (naked := criteria_without_procedure(me.spec.criteria)):
+            return {"parent_id": str(self._graph.get_parent(task_id).id)
+                                  if self._graph.get_parent(task_id) else None,
+                    "why": ("its own criteria pin no check, so nothing decides them but an "
+                            "improvised probe at validation time — A1 (§10) asks that a "
+                            "criterion be decidable, and this product asks WHAT decides it to "
+                            f"be written down before the work: {', '.join(naked)}"),
+                    "opens_with": (f"give each criterion its procedure — "
+                                   f"`edit_criteria('{task_id}', [{{name, description, "
+                                   f"check: [{{behaviour, command, expect}}]}}])`")}
         parent = self._graph.get_parent(task_id)
         if parent is None:
             return None                          # a root has no plan above it to admit it
@@ -1188,6 +1252,122 @@ class Engine:
         and Inv-7 rest on: the node's attributes are a projection of it, never the other way round."""
         return self._audit.get_entries(task_id)
 
+    def _authoring_digest(self, task_id: TaskId) -> Optional[str]:
+        """The procedure digest of the contract this node was FIRST assigned — the pre-registered
+        one. Read off the append-only log (every ASSIGN stores its spec), so nothing is duplicated."""
+        for e in self._audit.get_entries(task_id):
+            if e.signal != Signal.ASSIGN or e.rejected or not e.spec:
+                continue
+            try:
+                d = json.loads(e.spec)
+            except (ValueError, TypeError):
+                return None
+            return claim_digest(Spec(
+                d.get("description", ""),
+                tuple(Criteria(c.get("name", ""), c.get("description", ""),
+                               check=tuple(Probe(p.get("behaviour", ""), p.get("command", ""),
+                                                 p.get("expect", "")) for p in (c.get("check") or ())))
+                      for c in (d.get("criteria") or ())),
+                tuple(AcceptedRiskItem(str(n.get("item", "") if isinstance(n, dict) else n))
+                      for n in (d.get("accepted_risks") or ())),
+                scope=tuple(str(x) for x in (d.get("scope") or ()))))
+        return None
+
+    def regression_probes(self, task_id: TaskId) -> dict:
+        """{criterion: [probes that have ever REFUTED this node]} — the set every later PASS on it
+        must re-run. Grows at each verdict that refutes something; never shrinks."""
+        raw = self._graph._storage.get_critique(TaskId(f"{task_id}#regression-probes"))
+        try:
+            return json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            return {}
+
+    def claim_drift(self, task_id: TaskId) -> dict:
+        """How this node's CLAIM moved between the contract it was authored with and the one it
+        closed on — criterion by criterion, with the engine's own revision reasons beside it.
+
+        The author's rule, and the reason this is a RECORD and not a prohibition: an agent may
+        sharpen a criterion, add a node, write down what it found — it must never leave the plan
+        worse ("weakly better"). Locking the contract would make the run artificial, because a
+        criterion CAN turn out to be a false mock and only contact reveals it. So nothing here
+        refuses anything; it makes the movement readable, which is what turns "the claim narrowed
+        before the work" from an anecdote into a measurement. Measured on `c_compiler`
+        (2026-09-19/20): of a 0.184 gap between a bare agent and the graph, ≈0.074 was scope the
+        executor-as-issuer had cut BEFORE coding — visible only because someone read the register
+        by hand at call #14.
+
+        Reads the append-only log (Inv-1/Inv-7: every re-ASSIGN appends the version it installed),
+        so it needs no second copy of the contract and cannot fall out of step with one.
+        """
+        entries = [e for e in self._audit.get_entries(task_id)
+                   if e.signal == Signal.ASSIGN and not e.rejected and e.spec]
+        if not entries:
+            return {"task_id": str(task_id), "versions": 0,
+                    "note": "no ASSIGN with a recorded contract — nothing to compare"}
+
+        def _crit(raw: str) -> dict:
+            try:
+                d = json.loads(raw)
+            except (ValueError, TypeError):
+                return {}
+            return {c.get("name"): c for c in (d.get("criteria") or ()) if c.get("name")}
+
+        def _reg(raw: str) -> tuple[set, set]:
+            """(accepted risks, scope) as a version declared them."""
+            try:
+                d = json.loads(raw)
+            except (ValueError, TypeError):
+                return set(), set()
+            risks = {str(n.get("item", "") if isinstance(n, dict) else n).strip()
+                     for n in (d.get("accepted_risks") or ())}
+            return {r for r in risks if r}, {str(x).strip() for x in (d.get("scope") or ()) if str(x).strip()}
+
+        first, last = _crit(entries[0].spec), _crit(entries[-1].spec)
+        task = self.get_task(task_id)
+        now = {c.name: {"description": c.description,
+                        "check": [{"behaviour": p.behaviour, "command": p.command,
+                                   "expect": p.expect} for p in (c.check or ())]}
+               for c in (task.spec.criteria if task is not None else ())} or last
+        added = sorted(set(now) - set(first))
+        dropped = sorted(set(first) - set(now))
+        reworded = sorted(n for n in set(first) & set(now)
+                          if (first[n].get("description") or "") != (now[n].get("description") or ""))
+        reprobed = sorted(n for n in set(first) & set(now)
+                          if [p.get("command") for p in (first[n].get("check") or ())]
+                          != [p.get("command") for p in (now[n].get("check") or ())])
+        # THE REGISTER IS HALF THE CLAIM, and it was missing from this report. A plan narrows as
+        # readily by excluding as by dropping a criterion — more readily, because an exclusion
+        # looks like diligence. Measured on `c_compiler` (2026-09-20/21): the criteria and their
+        # procedures never moved, so every surface said the claim stood, while the register grew
+        # from seven entries to nine AFTER the work began — and six of the divergences an
+        # independent corpus later found inside that closed tree sat behind exactly those entries.
+        # The author's rule is "weakly better": an agent may sharpen and record, never leave the
+        # plan worse — and the answer to a narrowing is a RECORD, so the record has to contain it.
+        _risks0, _scope0 = _reg(entries[0].spec)
+        _risksN, _scopeN = ((({n.item for n in task.spec.accepted_risks}, set(task.spec.scope))
+                             if task is not None else _reg(entries[-1].spec)))
+        return {
+            "task_id": str(task_id),
+            "versions": len(entries),
+            # narrowing: what the plan stopped promising after it was authored
+            "risks_added": sorted(_risksN - _risks0),
+            "scope_added": sorted(_scopeN - _scope0),
+            "narrowed": bool((_risksN - _risks0) or (_scopeN - _scope0) or (set(first) - set(now))),
+            "risks_dropped": sorted(_risks0 - _risksN),
+            "authored": {"at": entries[0].timestamp.isoformat(sep=" ", timespec="seconds"),
+                         "criteria": sorted(first)},
+            "now": {"criteria": sorted(now)},
+            "added": added, "dropped": dropped,
+            "reworded": reworded, "procedure_changed": reprobed,
+            # The engine's own words for each move, in order — a revision that names no reason is
+            # itself the finding (§24.5 splits spec_defect from scope_expansion for exactly this).
+            "revisions": [{"at": e.timestamp.isoformat(sep=" ", timespec="seconds"),
+                           "by": str(e.source or ""), "reason": e.reason or "(none recorded)"}
+                          for e in entries[1:]],
+            "accepted_risks_now": [n.item for n in (task.spec.accepted_risks if task else ())],
+            "scope_now": list(task.spec.scope) if task is not None else [],
+        }
+
     # === Decomposition API ===
 
     def decompose_task(
@@ -1251,7 +1431,8 @@ class Engine:
 
     # === Dependency API ===
 
-    def add_dependency(self, from_id: TaskId, to_id: TaskId, discovered: bool = False, glue: str = "") -> None:
+    def add_dependency(self, from_id: TaskId, to_id: TaskId, discovered: bool = False, glue: str = "",
+                       check: tuple = ()) -> None:
         """Record a dependency: to_id depends on from_id's output.
 
         DECLARED (discovered=False): Dep is **criteria-content** (§10) — recorded as a criterion on the
@@ -1287,7 +1468,8 @@ class Engine:
         if to is None:
             raise ValueError(f"consumer {to_id} not found")
         if not any(c.depends_on == from_id for c in to.spec.criteria):  # idempotent
-            dep_crit = Criteria(name=f"dep__{from_id}", description=glue, depends_on=from_id)
+            dep_crit = Criteria(name=f"dep__{from_id}", description=glue, depends_on=from_id,
+                                check=tuple(check or ()))
             # `scope` carried EXPLICITLY. Declaring a dependency desugars to a re-author of the
             # consumer, and this rebuilt its Spec positionally without the scope field — so the
             # node's declared boundary ("what this goal deliberately does NOT include", §13.1)
@@ -1656,6 +1838,62 @@ class Engine:
             # trade is only honest while every surface can say which kind of DONE it is looking at.
             "auto_accepted": t.done_reason is DoneReason.AUTO_PASS,
             "validator": rec.get("validator"),
+            # WHAT THE CLOSURE ACTUALLY REACHED — the honest half, said at the close rather than
+            # left to be inferred. A node closes on the procedure its contract pinned plus whatever
+            # the judging went on to explore; everything outside that is UNCHECKED, and a criterion
+            # can be decidable and still insensitive to a real divergence. That residue is the FM-3
+            # boundary (Ch. 8, §13.6 — no structural check guards it), and naming it is the only
+            # honest thing the system can do with it. Measured on `c_compiler`: a root closed PASS
+            # by an independent judge, and 205 probes written from the same contract found 34 real
+            # divergences in the tree it closed over.
+            "checked_by": {
+                "procedure_digest": rec.get("procedure_digest"),
+                # …AND THE AUTHORING ONE BESIDE IT. A contract narrowed mid-run closes green and
+                # the narrowing is visible only to someone who pulls `claim_drift` by hand — which
+                # is exactly how the 0.074 of scope the executor-as-issuer cut on `c_compiler` was
+                # found: by hand, at call #14. Two digests side by side make it a glance.
+                # The WHOLE claim, not the procedures alone: a claim narrows through its risk
+                # register as readily as through its checks, and reading one as the other is a
+                # false green (measured on `c_compiler`, where the register grew from seven
+                # entries to nine after the work began and the procedures never moved).
+                "authoring_digest": (_auth := self._authoring_digest(task_id)),
+                "claim_digest": (_now := claim_digest(t.spec)),
+                "claim_moved_since_authoring": bool(_auth and _auth != _now),
+                # …AND WHICH WAY IT MOVED, on the node itself. A flag that says "the claim moved"
+                # sends the reader to another verb; a green node is read where it is, and the
+                # movement that matters is the one that made passing easier. So the exclusions
+                # added after authoring are named here, beside the verdict they qualify.
+                "narrowed_after_authoring": ({
+                    k: v for k, v in (self.claim_drift(task_id) or {}).items()
+                    if k in ("risks_added", "scope_added", "dropped") and v
+                } or None) if _auth and _auth != _now else None,
+                "pinned_probes": rec.get("pinned_probes"),
+                "pinned_probes_run": rec.get("pinned_probes_run"),
+                "beyond_the_procedure": rec.get("probes_beyond_the_procedure"),
+                # A refutation whose criterion was renamed or replaced by a plan repair: the
+                # obligation to re-run it cannot be enforced against a criterion that no longer
+                # exists, so it is named here rather than lost. Silence is the failure mode this
+                # whole change exists against.
+                "orphaned_refutations": orphaned_regression(
+                    t.spec.criteria, self.regression_probes(task_id)) or None,
+                # THE RESIDUE, AND IT IS NOT ONE SENTENCE. What the pinned set does not reach is
+                # unchecked; so is a pinned probe that never ran (the D6 self-report door closes a
+                # node without running any); and so is the sensitivity of the procedure ITSELF — no
+                # check anywhere decides whether a pinned command CAN fail, and §13.6 says none
+                # can. Saying only the first would be the honest-sounding half of three.
+                "residue": (
+                    ("NOT checked by the pinned procedure: "
+                     f"{(rec.get('pinned_probes') or 0) - (rec.get('pinned_probes_run') or 0)} of "
+                     f"{rec.get('pinned_probes')} pinned probes were never run on this closure "
+                     "(an internal node closes on its executor's own report — §14.5 D6). "
+                     if (rec.get("pinned_probes_run") or 0) < (rec.get("pinned_probes") or 0)
+                     else "checked by the pinned procedure and what the judging explored. ")
+                    + "Behaviour outside that is UNCHECKED; the procedure's own sensitivity is "
+                      "unchecked too (a decidable criterion can be insensitive to a real "
+                      "divergence, and no structural check guards that — FM-3, Ch. 8 / §13.6); "
+                      "and what a pinned probe's output actually SHOWED is the judge's word — the "
+                      "engine matches the command that ran, never the observation it returned"),
+            } if rec else None,
         }
 
     def closures_by_hand(self, root_id: Optional[TaskId] = None) -> list[str]:

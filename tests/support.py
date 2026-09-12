@@ -20,7 +20,7 @@ from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.core.types.ports import ClockPort, RunnerPort, StoragePort
 from gfso import tools as T
-from gfso.core.types import AcceptedRiskItem, Criteria, Predictability, Spec
+from gfso.core.types import Probe, AcceptedRiskItem, Criteria, Predictability, Spec
 from gfso.engine import Engine
 
 #: What a decomposition declares it knowingly does not cover. Every graph the engine admits needs a
@@ -59,6 +59,23 @@ def make_engine(
     )
 
 
+def pinned(name: str) -> tuple:
+    """The procedure a criterion of this name pins — the scaffolding twin of a real contract's.
+
+    Every criterion the product accepts must say what will be run to decide it (A1, §10); a test
+    fixture whose criteria pin nothing is not a smaller contract, it is the pre-fix one, and it
+    would quietly exempt the suite from the rule the suite exists to hold.
+    """
+    return (Probe(f"{name} holds", f"check {name}", "it holds"),)
+
+
+def criterion(name: str, description: str = "", **kw) -> dict:
+    """A criterion as a door receives it, procedure included. For tests that post raw dicts."""
+    return {"name": name, "description": description or f"{name} description",
+            "check": [{"behaviour": p.behaviour, "command": p.command, "expect": p.expect}
+                      for p in pinned(name)], **kw}
+
+
 def spec(description: str = "goal", *criteria: str, risks: bool = True) -> Spec:
     """A contract with one decidable criterion per name given, and the standard risk register.
 
@@ -67,7 +84,8 @@ def spec(description: str = "goal", *criteria: str, risks: bool = True) -> Spec:
     """
     return Spec(
         description=description,
-        criteria=tuple(Criteria(c, f"{c} description") for c in (criteria or ("c1",))),
+        criteria=tuple(Criteria(c, f"{c} description", check=pinned(c))
+                       for c in (criteria or ("c1",))),
         accepted_risks=(UNMODELLED_FAULT,) if risks else (),
     )
 
@@ -85,7 +103,8 @@ def reviewer_passes(engine, task_id, reviewer: str = "reviewer") -> None:
     task = engine.get_task(task_id)
     engine.record_reviewer_verdict(
         task_id, "PASS", [], reviewer,
-        observed={c.name: f"checked `{c.name}` by hand against the delivery: it holds"
+        observed={c.name: {"note": f"checked `{c.name}` by hand against the delivery: it holds",
+                           "ran": [p.command for p in (c.check or ())]}
                   for c in task.spec.criteria if not c.depends_on})
 
 
@@ -98,7 +117,14 @@ def instrument_passes(engine, task_id, validator: str = "validate_result", **kw)
     return engine.record_exec_verdict(
         task_id, "PASS", [], validator,
         per_criterion=[{"criterion": c.name, "verdict": "pass",
-                        "evidence": f"ran the check for `{c.name}`: it holds"}
+                        "evidence": f"ran the check for `{c.name}`: it holds",
+                        # …INCLUDING THE PROCEDURE THE CONTRACT PINNED. A PASS that skips it is
+                        # demoted to ⊥ by the engine, so scaffolding that omitted it would stop
+                        # every test that merely needs a judged node — and would do it for the
+                        # right reason, which is why the fixture reports the pinned run instead
+                        # of the rule being relaxed for tests.
+                        "probe": [{"behaviour": p.behaviour, "command": p.command,
+                                   "expect": p.expect} for p in (c.check or ())]}
                        for c in task.spec.criteria], **kw)
 
 

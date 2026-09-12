@@ -23,14 +23,14 @@ from __future__ import annotations
 
 from gfso import tools as T, tools_llm as TL
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, UNMODELLED_FAULT
 
 _REFUSAL = "not a verdict on leaf: criterion 'c' - unobserved: the file exists, the file is readable"
 
 
 def _delivered(e, tid="leaf"):
     T.create_task(e, tid, {"description": "a leaf",
-                           "criteria": [{"name": "c", "description": "C"}],
+                           "criteria": [criterion("c", "C")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee="agent")

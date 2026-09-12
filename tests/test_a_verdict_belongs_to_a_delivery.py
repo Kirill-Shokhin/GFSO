@@ -23,13 +23,13 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _reworking(e, tid="leaf"):
     """A node whose first delivery was refused — the state the exploit needs."""
     T.create_task(e, tid, {"description": "a leaf",
-                           "criteria": [{"name": "c", "description": "C"}],
+                           "criteria": [criterion("c", "C")],
                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -37,7 +37,7 @@ def _reworking(e, tid="leaf"):
     T.signal(e, tid, "ACCEPT", "exec-1")
     T.signal(e, tid, "DELIVER", "exec-1", result="first try")
     T.record_verdict(e, tid, "FAIL", reviewer="judge", failed_criteria=["c"],
-                     observed={"c": "ran the check, it printed NOT-OK"})
+                     observed={"c": {"note": "ran the check, it printed NOT-OK", "ran": ["check c"]}})
     T.signal(e, tid, "FAIL", "exec-1", failed_criteria=["c"])
     e.wait_idle()
     assert e.get_state(TaskId(tid)).name == "REWORKING"
@@ -49,7 +49,8 @@ def test_no_verdict_is_recorded_while_the_work_is_being_redone():
     _reworking(e)
 
     out = T.record_verdict(e, "leaf", "PASS", reviewer="phantom-qa",
-                           observed={"c": "I checked it and the content was there as required"})
+                           observed={"c": {"note": "I checked it and the content was there as required",
+                                     "ran": ["check c"]}})
 
     assert out.get("recorded") is False, out
     assert "no delivery standing" in (out.get("error") or ""), out
@@ -62,7 +63,8 @@ def test_and_the_next_delivery_does_not_inherit_one():
     e.start()
     _reworking(e)
     T.record_verdict(e, "leaf", "PASS", reviewer="phantom-qa",
-                     observed={"c": "I checked it and the content was there as required"})
+                     observed={"c": {"note": "I checked it and the content was there as required",
+                                     "ran": ["check c"]}})
 
     delivered = T.signal(e, "leaf", "DELIVER", "exec-1", result="same delivery, nothing changed")
     signed = T.signal(e, "leaf", "PASS", "exec-1")
@@ -78,7 +80,7 @@ def test_a_verdict_on_the_delivery_being_judged_is_recorded_exactly_as_before():
     e = make_engine()
     e.start()
     T.create_task(e, "ok", {"description": "a leaf",
-                            "criteria": [{"name": "c", "description": "C"}],
+                            "criteria": [criterion("c", "C")],
                             "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                 "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -87,7 +89,7 @@ def test_a_verdict_on_the_delivery_being_judged_is_recorded_exactly_as_before():
     T.signal(e, "ok", "DELIVER", "exec-1", result="built it")
 
     out = T.record_verdict(e, "ok", "PASS", reviewer="judge",
-                           observed={"c": "ran the check, it printed OK"})
+                           observed={"c": {"note": "ran the check, it printed OK", "ran": ["check c"]}})
 
     assert out.get("recorded") is True, out
     assert T.signal(e, "ok", "PASS", "exec-1")["accepted"] is True

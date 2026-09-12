@@ -25,7 +25,7 @@ import pytest
 from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, UNMODELLED_FAULT
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -33,10 +33,10 @@ _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 def _reviewed(e, record: dict):
     """A node carrying a stored review of THIS version of its plan — the shape the checker writes."""
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [{"name": "c1", "description": "C1 holds"}]},
+                              "criteria": [criterion("c1", "C1 holds")]},
                   assignee="pm")
     T.create_task(e, "kid", {"description": "the work",
-                             "criteria": [{"name": "k", "description": "K holds"}]},
+                             "criteria": [criterion("k", "K holds")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     e._graph._storage.store_critique(TaskId("root"), json.dumps(record))

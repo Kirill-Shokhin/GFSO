@@ -31,7 +31,7 @@ import gfso.tools as T
 from gfso.core.types import TaskId
 from gfso.delegate import EXECUTOR_SCHEMA, _decided_status, _report_into_signals
 from gfso.adapters.llm.structured import parse_structured
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -44,7 +44,7 @@ def _accepted_node():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "n", {"description": "the work", "accepted_risks": _RISK,
-                           "criteria": [{"name": "g", "description": "G holds"}]},
+                           "criteria": [criterion("g", "G holds")]},
                   assignee="worker")
     T.signal(e, "n", "ACCEPT", "worker")
     return e

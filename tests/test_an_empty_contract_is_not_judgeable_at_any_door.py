@@ -16,7 +16,7 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 
 def _delivered_with_no_criteria(e, tid="hollow"):
@@ -63,7 +63,7 @@ def test_a_node_WITH_criteria_is_judged_exactly_as_before():
     e = make_engine()
     e.start()
     T.create_task(e, "real", {"description": "a leaf with a contract",
-                              "criteria": [{"name": "c", "description": "C"}],
+                              "criteria": [criterion("c", "C")],
                               "accepted_risks": [{"item": UNMODELLED_FAULT.item,
                                                   "predictability": "EXTRAORDINARY"}]},
                   assignee="exec-1")
@@ -75,7 +75,7 @@ def test_a_node_WITH_criteria_is_judged_exactly_as_before():
                                 per_criterion=[{"criterion": "c", "verdict": "pass",
                                                 "evidence": "ran the check, it printed OK",
                                                 "behaviours": ["C holds"],
-                                                "probe": [{"command": "check", "expect": "OK",
+                                                "probe": [{"command": "check c", "expect": "OK",
                                                            "behaviour": "C holds"}]}])
 
     assert rec["verdict"] == "PASS"

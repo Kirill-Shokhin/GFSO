@@ -27,13 +27,13 @@ from gfso.core.graph.model import dep_scope
 from gfso.core.handlers.structural import check_deadlines
 from gfso.engine.validation import _l0_holes
 from gfso.core.types import AgentId, Criteria, Spec, Task, TaskId
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 RISKS = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
 
 
 def _crit(*names):
-    return [{"name": n, "description": n + " d"} for n in names]
+    return [criterion(n, n + " d") for n in names]
 
 
 @pytest.fixture

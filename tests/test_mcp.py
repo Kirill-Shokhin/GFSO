@@ -5,7 +5,7 @@ from gfso.adapters.llm.stub import StubLLM
 from gfso import tools as T
 from gfso import tools_llm as TL, serverctl
 from gfso.mcp.server import _bind, _with_ui_link
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
 
@@ -19,7 +19,7 @@ def _eng():
 def test_agent_loop_through_tools():
     """The agent's authoring loop driven entirely through the MCP tool functions → JSON-able dicts."""
     e = _eng()
-    root = T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    root = T.create_task(e, "r", {"description": "root", "criteria": [criterion("a", "A")]}, "alice")
     assert root["state"] == "OFFERED" and root["id"] == "r"
 
     proj = T.project(e, "r")
@@ -29,8 +29,8 @@ def test_agent_loop_through_tools():
     assert isinstance(proj, dict) and "root" in proj["markdown"] and proj["task_id"] == "r"
 
     kids = T.decompose(e, "r",
-                       [{"task_id": "c1", "spec": {"description": "c1", "criteria": [{"name": "x", "description": "X"}]}, "assignee": "alice"},
-                        {"task_id": "c2", "spec": {"description": "c2", "criteria": [{"name": "y", "description": "Y"}]}, "assignee": "alice"}],
+                       [{"task_id": "c1", "spec": {"description": "c1", "criteria": [criterion("x", "X")]}, "assignee": "alice"},
+                        {"task_id": "c2", "spec": {"description": "c2", "criteria": [criterion("y", "Y")]}, "assignee": "alice"}],
                        [{"criterion_name": "a", "child_id": "c1"}])
     assert {k["id"] for k in kids} == {"c1", "c2"}
 
@@ -40,7 +40,7 @@ def test_agent_loop_through_tools():
     assert any(d["from"] == "c1" and d["to"] == "c2" for d in deps)
 
     # RMW edits via tools
-    T.edit_criteria(e, "c1", [{"name": "x2", "description": "tighter"}], "alice")
+    T.edit_criteria(e, "c1", [criterion("x2", "tighter")], "alice")
     assert [c["name"] for c in T.get_task(e, "c1")["criteria"]] == ["x2"]
     T.reassign(e, "c2", "bob")
     assert T.get_task(e, "c2")["assignee"] == "bob"
@@ -54,7 +54,7 @@ def test_agent_loop_through_tools():
 def test_get_task_exposes_name():
     """get_task returns the short `name` (BUG-4: it was omitted, so the label looked lost across readers)."""
     e = _eng()
-    T.create_task(e, "r", {"name": "Root Label", "description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    T.create_task(e, "r", {"name": "Root Label", "description": "root", "criteria": [criterion("a", "A")]}, "alice")
     assert T.get_task(e, "r")["name"] == "Root Label"
     e.stop()
 
@@ -62,7 +62,7 @@ def test_get_task_exposes_name():
 def test_signal_rejection_reports_reason():
     """A rejected signal returns WHY + the structural gate, not a silent accepted:false (BUG-3)."""
     e = _eng()
-    T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    T.create_task(e, "r", {"description": "root", "criteria": [criterion("a", "A")]}, "alice")
     # decompose it (CHECK-4 gates decomposed nodes only, v3.7 §13.1) — root has no ACCEPTED_RISKS → open hole
     T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
                 [{"criterion_name": "a", "child_id": "k"}])
@@ -77,7 +77,7 @@ def test_list_holes_surfaces_graph_gaps():
     """list_holes aggregates every unmet structural check across the graph — check the decomposer's output
     BEFORE driving signals (a decomposed graph can come back with holes)."""
     e = _eng()
-    T.create_task(e, "r", {"description": "root", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    T.create_task(e, "r", {"description": "root", "criteria": [criterion("a", "A")]}, "alice")
     holes = T.list_holes(e)["holes"]
     # A leaf is not gated on the register (§13.1) — and with no holes at all the verb SAYS so rather
     # than returning an empty list a reader cannot tell from a broken call.
@@ -117,7 +117,7 @@ def test_agent_mutation_fires_the_ui_live_event():
     e = _eng()
     events = []
     e.on_transition(lambda tid, old, new, sig: events.append((str(tid), new.name, sig.name)))
-    T.create_task(e, "live", {"description": "x", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    T.create_task(e, "live", {"description": "x", "criteria": [criterion("a", "A")]}, "alice")
     e.wait_idle()
     assert any(t == "live" and new == "OFFERED" and sig == "ASSIGN" for t, new, sig in events)
 
@@ -130,7 +130,7 @@ def test_unified_mcp_transport_mounts_and_handshakes():
     pytest.importorskip("mcp")
 
     e = _eng()
-    T.create_task(e, "shared", {"description": "s", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+    T.create_task(e, "shared", {"description": "s", "criteria": [criterion("a", "A")]}, "alice")
     app = create_app(e, with_mcp=True)
     assert any(str(getattr(r, "path", "")) == "/mcp" for r in app.routes)  # mounted, not /mcp/mcp
     with TestClient(app) as c:  # 'with' runs the lifespan → session manager
@@ -151,16 +151,16 @@ def test_default_assignee_is_the_calling_agent(monkeypatch):
     an explicit assignee = a real delegation and always wins."""
     e = _eng()
     monkeypatch.delenv("GFSO_AGENT_ID", raising=False)
-    t = T.create_task(e, "self1", {"description": "x", "criteria": [{"name": "a", "description": "A"}]})
+    t = T.create_task(e, "self1", {"description": "x", "criteria": [criterion("a", "A")]})
     assert t["assignee"] == "agent"                      # works with NO env at all
     kids = T.decompose(e, "self1", [{"task_id": "k1", "spec": {"description": "k"}}],
                        [{"criterion_name": "a", "child_id": "k1"}])
     assert kids[0]["assignee"] == "agent"
-    t2 = T.create_task(e, "other", {"description": "y", "criteria": [{"name": "b", "description": "B"}]},
+    t2 = T.create_task(e, "other", {"description": "y", "criteria": [criterion("b", "B")]},
                        assignee="bob")
     assert t2["assignee"] == "bob"                       # explicit = real delegation, wins
     monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")   # optional RENAME, not a requirement
-    t3 = T.create_task(e, "named", {"description": "z", "criteria": [{"name": "c", "description": "C"}]})
+    t3 = T.create_task(e, "named", {"description": "z", "criteria": [criterion("c", "C")]})
     assert t3["assignee"] == "claude-main"
     e.stop()
 

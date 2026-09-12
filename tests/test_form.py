@@ -135,6 +135,10 @@ BASE = {
     # rule "say a refusal once, keyed by what it is about" out by hand five times, and seven sites
     # across `delegate.py` did; `_say_once` owns it. `signal` sent the signal AND authored the whole
     # reply; what an accepted signal owes its sender is a different question from how one is sent.
+    # Held at 0 through the pinned-procedure landing (2026-09-20): it pushed
+    # `Engine.record_exec_verdict` to 42 statements with two more gap sources, and the answer was
+    # the split rather than a new baseline — the three sources are one question ("what did this
+    # report not account for") and now have one owner, `procedure.unaccounted_for`.
     "F_function_over_size_limit": 0,
     # C5 — the hardcode rule, and the number S4 owns. Floor is 1, NOT 0: `GFSO_L2_GATE` is read at
     # its point of enforcement DELIBERATELY (hard constraint #7 of the run sheet) — it is the switch

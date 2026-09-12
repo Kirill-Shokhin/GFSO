@@ -17,16 +17,16 @@ from gfso import tools
 from gfso import tools as T
 from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
 
 def _internal_leaf(e, tid):
     """A leaf whose Del is its parent's — the §14.5 internal node that self-verifies."""
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, tid, {"description": "a leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, tid, {"description": "a leaf", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", tid, "c")
     e.wait_idle()

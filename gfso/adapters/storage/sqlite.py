@@ -14,7 +14,7 @@ from gfso import __version__
 
 from gfso.core.types import (
     TaskId, AgentId, Task, State, DoneReason, AutonomyLevel, Predictability,
-    Spec, Criteria, CriterionMapping, AcceptedRiskItem,
+    Spec, Criteria, Probe, CriterionMapping, AcceptedRiskItem,
     CheckResult, Recommendation, DepEdge,
     StoragePort, TERMINAL_STATES,
 )
@@ -273,7 +273,12 @@ class SqliteStorage(StoragePort):
             # FULL Criteria roundtrip — input/expected/n/timeout are contract content (a verifier
             # reads them); dropping them silently was a declared leak of the storage contract.
             "criteria": [{"name": c.name, "description": c.description, "depends_on": c.depends_on,
-                          "input": c.input, "expected": c.expected, "n": c.n, "timeout": c.timeout}
+                          "input": c.input, "expected": c.expected, "n": c.n, "timeout": c.timeout,
+                          # the pinned decision procedure travels WITH the criterion: a contract that
+                          # loses its probes on the way to disk is back to a procedure invented at
+                          # validation time, which is the defect the field exists against
+                          "check": [{"behaviour": p.behaviour, "command": p.command,
+                                     "expect": p.expect} for p in (c.check or ())]}
                          for c in spec.criteria],
             "accepted_risks": SqliteStorage._accepted_risks_to_json(spec.accepted_risks),
             "risk_components": list(spec.risk_components),
@@ -287,7 +292,10 @@ class SqliteStorage(StoragePort):
             description=d["description"],
             criteria=tuple(Criteria(c["name"], c["description"], depends_on=c.get("depends_on"),
                                     input=c.get("input"), expected=c.get("expected"),
-                                    n=c.get("n"), timeout=c.get("timeout"))
+                                    n=c.get("n"), timeout=c.get("timeout"),
+                                    check=tuple(Probe(p.get("behaviour", ""), p.get("command", ""),
+                                                      p.get("expect", ""))
+                                                for p in (c.get("check") or ())))
                            for c in d["criteria"]),
             accepted_risks=SqliteStorage._accepted_risks_from_json(d.get("accepted_risks", ())),
             risk_components=tuple(d.get("risk_components", ())),

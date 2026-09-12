@@ -23,7 +23,7 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.protocol.invariants import fail_names_this_contract
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
 
@@ -37,8 +37,7 @@ def _delivered():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "n", {"description": "the work",
-                           "criteria": [{"name": "parses", "description": "P"},
-                                        {"name": "matches", "description": "M"}],
+                           "criteria": [criterion("parses", "P"), criterion("matches", "M")],
                            "accepted_risks": _RISK}, assignee="worker")
     T.signal(e, "n", "ACCEPT", "worker")
     T.signal(e, "n", "DELIVER", "worker", result="did it")

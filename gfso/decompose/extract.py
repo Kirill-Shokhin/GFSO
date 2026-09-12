@@ -34,13 +34,22 @@ def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
             if cr.depends_on:  # build's seam encoding: dep__{producer} criterion on the CONSUMER
                 deps.append({"from": dens(cr.depends_on), "to": dens(c.id), "glue": cr.description})
             else:
-                crit.append({"name": cr.name, "description": cr.description})
+                crit.append({"name": cr.name, "description": cr.description,
+                             # …WITH ITS PROCEDURE. This function calls itself the exact data
+                             # inverse of `build_graph_live`, and an inverse that drops a field
+                             # DELETES it: one refine round stripped every pinned check off a
+                             # contract that had just been authored with one, and the plan then
+                             # failed A1 where a minute earlier it had passed.
+                             "check": [{"behaviour": p.behaviour, "command": p.command,
+                                        "expect": p.expect} for p in (cr.check or ())]})
         subtasks.append({"id": dens(c.id), "name": c.spec.name, "description": c.spec.description,
                          "criteria": crit})
 
     return {
         "name": root.spec.name,
-        "root_criteria": [{"name": cr.name, "description": cr.description}
+        "root_criteria": [{"name": cr.name, "description": cr.description,
+                           "check": [{"behaviour": p.behaviour, "command": p.command,
+                                      "expect": p.expect} for p in (cr.check or ())]}
                           for cr in root.spec.criteria],
         "subtasks": subtasks,
         "mappings": [{"criterion": m.criterion_name, "child_id": dens(m.child_id)}

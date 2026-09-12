@@ -15,7 +15,7 @@ from gfso.core.types import Verdict, TaskId, AgentId, AcceptedRiskItem, SignalDa
 from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
 from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, _fold_merge, shape,
                                  SEARCH_FAST, AUDIT_FAST)
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 
 class FakeLLM:
@@ -38,10 +38,13 @@ def _graph_state(mappings=None, accepted_risks=None):
     """The graph-form state after a successful first fold (also the shape build_graph_live consumes)."""
     return {
         "name": "Thing",
-        "root_criteria": [{"name": "rc1", "description": "A done"}, {"name": "rc2", "description": "B done"}],
+        # …AND EVERY CRITERION CARRIES ITS PROCEDURE. The AUDIT schema requires `check` now (A1/§10):
+        # a model reply without it is a contract nothing decides, and `build` would land criteria the
+        # graph reports as holes — so the fake model emits what the real one is now asked for.
+        "root_criteria": [criterion("rc1", "A done"), criterion("rc2", "B done")],
         "subtasks": [
-            {"id": "a", "name": "A", "description": "do A", "criteria": [{"name": "a1", "description": "A ok"}]},
-            {"id": "b", "name": "B", "description": "do B", "criteria": [{"name": "b1", "description": "B ok"}]},
+            {"id": "a", "name": "A", "description": "do A", "criteria": [criterion("a1", "A ok")]},
+            {"id": "b", "name": "B", "description": "do B", "criteria": [criterion("b1", "B ok")]},
         ],
         "mappings": mappings or [{"criterion": "rc1", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}],
         "deps": [{"from": "a", "to": "b", "glue": "B reads A's output"}],
@@ -58,7 +61,7 @@ def _init_patch(mappings=None, accepted_risks=None):
 
 
 _ADD_C = {"add_subtasks": [{"id": "c", "name": "C", "description": "do C",
-                            "criteria": [{"name": "c1", "description": "C ok"}]}],
+                            "criteria": [criterion("c1", "C ok")]}],
           "add_mappings": [{"criterion": "rc2", "child_id": "c"}],
           "add_deps": [{"from": "b", "to": "c", "glue": "C reads B"}]}
 
@@ -229,16 +232,19 @@ def test_refine_frozen_terminal_children_surface_as_holes():
     # reached DONE through a hole closed 2026-09-08: a PASS from a roster id closed an INTERNAL
     # node over no verdict record at all. The subject of this test is refine over a FROZEN child,
     # so how the child froze is setup — but setup that stands on a defect goes green with it.
+    # …AND IT NAMES THE PINNED RUN. A criterion carries the procedure that decides it (A1/§10), so a
+    # PASS that does not account for it is demoted to ⊥ — the node would never freeze.
     e.record_exec_verdict(TaskId("root.a"), Verdict.PASS, [], "vx",
                           per_criterion=[{"criterion": "a1", "verdict": "pass",
-                                          "evidence": "ran the check for a1; it holds"}])
+                                          "evidence": "ran the check for a1; it holds",
+                                          "probe": criterion("a1")["check"]}])
     e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root.a"), source=AgentId("vx")))
     e.wait_idle()
     assert e.get_state(TaskId("root.a")) == State.DONE
     n_signals_a = len(e.audit_log(TaskId("root.a")))
     upd_a = {"update_subtasks": [{"id": "a", "name": "A", "description": "do A DIFFERENTLY",
-                                  "criteria": [{"name": "a1", "description": "A ok"},
-                                               {"name": "a9", "description": "new obligation"}]}]}
+                                  "criteria": [criterion("a1", "A ok"),
+                                               criterion("a9", "new obligation")]}]}
     fake2 = FakeLLM(texts=["found: a must also do a9"], specs=[upd_a, {}])   # repair fails → residue
     res2 = refine(e, root_id="root", llm=fake2)
     assert "COMPLETED SUBTASKS — contracts FROZEN" in fake2.calls[0][1]      # searcher saw the freeze
@@ -264,7 +270,8 @@ def test_refine_on_terminal_target_refused():
         refusal to refine a terminal node; getting there now takes the judging it always implied."""
         t = e.get_task(TaskId(tid))
         e.record_reviewer_verdict(TaskId(tid), Verdict.PASS, [], reviewer="vx",
-                                  observed={c.name: "ran it, it printed what it should"
+                                  observed={c.name: {"note": "ran it, it printed what it should",
+                                                     "ran": [p.command for p in (c.check or ())]}
                                             for c in t.spec.criteria})
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId(tid), source=AgentId("vx")))
 
@@ -347,7 +354,7 @@ def test_extract_spec_roundtrips_build():
     assert got["name"] == want["name"]
     assert {c["id"] for c in got["subtasks"]} == {"a", "b"}
     a = [c for c in got["subtasks"] if c["id"] == "a"][0]
-    assert a["criteria"] == [{"name": "a1", "description": "A ok"}]      # dep__ criteria NOT here
+    assert a["criteria"] == [criterion("a1", "A ok")]                   # dep__ criteria NOT here
     assert got["deps"] == [{"from": "a", "to": "b", "glue": "B reads A's output"}]
     assert sorted((m["criterion"], m["child_id"]) for m in got["mappings"]) == \
         [("rc1", "a"), ("rc2", "b")]
@@ -362,10 +369,9 @@ def test_fold_merge_add_update_remove():
     patch = {
         "remove_subtask_ids": ["b"],
         "update_subtasks": [{"id": "a", "name": "A+", "description": "do A better",
-                             "criteria": [{"name": "a1", "description": "A ok"},
-                                          {"name": "a2", "description": "A edge ok"}]}],
+                             "criteria": [criterion("a1", "A ok"), criterion("a2", "A edge ok")]}],
         "add_subtasks": [{"id": "c", "name": "C", "description": "do C",
-                          "criteria": [{"name": "c1", "description": "C ok"}]}],
+                          "criteria": [criterion("c1", "C ok")]}],
         "add_mappings": [{"criterion": "rc2", "child_id": "c"}],
         "add_deps": [{"from": "a", "to": "c", "glue": "C reads A"}],
     }

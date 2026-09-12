@@ -23,8 +23,18 @@ def main() -> None:
 
     T.create_task(e, "report", {
         "description": "Quarterly report",
-        "criteria": [{"name": "numbers", "description": "figures match the ledger"},
-                     {"name": "sent", "description": "mailed to the board"}],
+        # Each criterion carries the procedure that decides it (A1, §10) — written with the
+        # criterion and before the work, so nobody has to invent one while judging. A human-grade
+        # procedure is still a procedure: it says what to open and what it must show.
+        "criteria": [{"name": "numbers", "description": "figures match the ledger",
+                      "check": [{"behaviour": "every figure ties to the ledger export",
+                                 "command": "open report.pdf beside the Q3 ledger export and "
+                                            "compare each total row by row",
+                                 "expect": "every row matches; no unexplained difference"}]},
+                     {"name": "sent", "description": "mailed to the board",
+                      "check": [{"behaviour": "the board received it",
+                                 "command": "search the sent folder for the board thread",
+                                 "expect": "a sent message to the board list with report.pdf"}]}],
     }, assignee="ann")
 
     T.signal(e, "report", "ACCEPT", "ann")
@@ -37,8 +47,13 @@ def main() -> None:
     # the human door asks for the same thing as the machine one — at human grade: a sentence rather
     # than a re-runnable command. With no independent seam this record IS the guarantee (§14.5).
     print(T.record_verdict(e, "report", "PASS", reviewer="bob", observed={
-        "numbers": "totals tie to the ledger export, row by row",
-        "sent": "board thread shows it delivered at 09:02"}))
+        # …and WHICH of the pinned checks he actually ran. Not a command he had to invent: the
+        # contract already said what to do, and he names the one he did.
+        "numbers": {"note": "totals tie to the ledger export, row by row",
+                    "ran": ["open report.pdf beside the Q3 ledger export and compare each total "
+                            "row by row"]},
+        "sent": {"note": "board thread shows it delivered at 09:02",
+                 "ran": ["search the sent folder for the board thread"]}}))
     print("after bob's record:", T.signal(e, "report", "PASS", "ann"))  # now the PASS lands
 
     print("final:", e.get_state(T.TaskId("report")).name)

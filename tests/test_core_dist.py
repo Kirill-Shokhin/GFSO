@@ -63,13 +63,14 @@ sys.path.insert(0, sys.argv[1])
 from gfso.engine import Engine
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.core.types import TaskId, AgentId, Spec, Criteria, Signal, SignalData
+from gfso.core.types import TaskId, AgentId, Spec, Criteria, Probe, Signal, SignalData
 
 e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
 e.start()
 w = AgentId("w")
 e.send_signal(SignalData(signal=Signal.ASSIGN, task_id=TaskId("n"), source=w,
-                         spec=Spec("x", (Criteria("a", "A"),)), assignee=w))
+                         spec=Spec("x", (Criteria("a", "A", check=(Probe("a holds", "check a", "it holds"),)),)),
+                         assignee=w))
 for sig, kw in ((Signal.ACCEPT, {}), (Signal.DELIVER, {"result": "done; a met"})):
     e.wait_idle()
     e.send_signal(SignalData(signal=sig, task_id=TaskId("n"), source=w, **kw))
@@ -78,7 +79,9 @@ e.wait_idle()
 # PASS — the embedding host runs its own verifier and records, exactly as here
 e.record_exec_verdict(TaskId("n"), "PASS", [], "host-verifier",
                       per_criterion=[{"criterion": c.name, "verdict": "pass",
-                                      "evidence": "the host's verifier ran it and it holds"}
+                                      "evidence": "the host's verifier ran it and it holds",
+                                      "probe": [{"behaviour": p.behaviour, "command": p.command,
+                                                 "expect": p.expect} for p in c.check]}
                                      for c in e.get_task(TaskId("n")).spec.criteria])
 e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("n"), source=w))
 e.wait_idle()

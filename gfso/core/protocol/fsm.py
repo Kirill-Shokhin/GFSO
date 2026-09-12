@@ -374,6 +374,15 @@ def transition(
                         # ACCEPTED, the node went to OFFERED, the executor re-consented, and the
                         # date did not move (probed 2026-09-07). None = keep, like `assignee`.
                         deadline=signal_data.deadline,
+                        # …AND THE REWORKING BOUND, dropped here for the same reason the deadline
+                        # was. Exhausting the attempts has TWO readings and only the issuer can
+                        # choose between them: the plan is wrong (change the plan), or the
+                        # forecast was — fewer attempts were budgeted than the work needed. The
+                        # engine decided the first for everyone by making the bound unrevisable,
+                        # so a missed forecast broke the whole graph: the node escalated, and at
+                        # a root the only way on was another root with no memory. An issuer who
+                        # reads it as the second now simply says so. None = keep.
+                        max_iterations=signal_data.max_iterations,
                         revision_reason=signal_data.revision_reason),  # causal typing (§24.5)
             _mg(task_id, State.OFFERED),
             RunChecks(task_id),

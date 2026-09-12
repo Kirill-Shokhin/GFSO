@@ -21,7 +21,7 @@ import pytest
 import gfso.tools as T
 from gfso import delegate as D
 from gfso.core.types import Verdict
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import UNMODELLED_FAULT, criterion, make_engine
 from tests.test_delegate import _agents
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
@@ -38,10 +38,10 @@ def test_the_refusal_reaches_the_reader_with_its_reason(monkeypatch):
     agents = _agents(pathlib.Path(tempfile.mkdtemp()), ("exec-1", "llm-executor"),
                      ("val-1", "llm-validator"))
     T.create_task(e, "par", {"description": "parent",
-                             "criteria": [{"name": "g", "description": "G"}],
+                             "criteria": [criterion("g", "G")],
                              "accepted_risks": _RISK}, assignee="a-human")
     T.create_task(e, "kid", {"description": "the work",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="exec-1", parent_id="par")
     T.map_criterion(e, "par", "kid", "g")
     T.signal(e, "kid", "ACCEPT", "exec-1")

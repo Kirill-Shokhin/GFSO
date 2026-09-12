@@ -17,7 +17,7 @@ import time
 import gfso.delegate as D
 import gfso.tools as T
 from gfso.delegate import AgentRegistry, Dispatcher, default_agents
-from tests.support import make_engine
+from tests.support import make_engine, criterion
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
 from tests.test_integration import _engine
@@ -25,7 +25,7 @@ from tests.test_integration import _engine
 
 def _graph_with_one_leaf(e) -> None:
     T.create_task(e, "root", {"name": "goal", "description": "a goal",
-                              "criteria": [{"name": "c1", "description": "the thing is done"}],
+                              "criteria": [criterion("c1", "the thing is done")],
                               # a split carries its register (§13.1) — without it CHECK-4 stands and
                               # the plan is never admitted to execution, so nothing would dispatch
                               # for reasons that have nothing to do with what is under test
@@ -35,7 +35,7 @@ def _graph_with_one_leaf(e) -> None:
                                                   "invalidation_condition": "it turns out impossible"}]},
                   "alice")
     T.create_task(e, "leaf", {"name": "leaf", "description": "do the thing",
-                              "criteria": [{"name": "k", "description": "the thing is done"}]},
+                              "criteria": [criterion("k", "the thing is done")]},
                   "worker", parent_id="root")
     T.map_criterion(e, "root", "leaf", "c1")
     T.signal(e, "root", "ACCEPT", "alice")
@@ -190,7 +190,10 @@ def test_a_settled_graph_produces_no_lapse_at_all(tmp_path):
     e, reg, d, spawned = _setup(tmp_path, live)
     T.signal(e, "leaf", "ACCEPT", "worker")
     T.signal(e, "leaf", "DELIVER", "worker", result="done")
-    T.record_verdict(e, "leaf", "PASS", [], "alice", observed={"k": "checked by hand"})        # the parent's Del is the issuer here
+    # …saying which pinned run was made: a criterion now carries the procedure that decides it
+    # (A1/§10), so an observation that names none is ⊥ and does not settle the node.
+    T.record_verdict(e, "leaf", "PASS", [], "alice",                # the parent's Del is the issuer here
+                     observed={"k": {"note": "checked by hand", "ran": ["check k"]}})
     T.signal(e, "leaf", "PASS", "alice")
     assert T.get_task(e, "leaf")["state"] == "DONE", "precondition: the work is settled"
 

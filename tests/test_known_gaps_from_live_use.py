@@ -35,7 +35,7 @@ from gfso.delegate import AgentRegistry, Dispatcher
 from gfso.driver import _as_list, _wants_list, run, run as _cli_run
 from gfso.engine.loop import _CANCELLING_GRACE_S
 from gfso.runtime import ProjectRegistry
-from tests.support import make_engine, workdir
+from tests.support import criterion, make_engine, workdir
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
 
 
@@ -49,7 +49,7 @@ def _engine(storage=None):
 def _root(e, extra_criteria=()):
     T.create_task(e, "root", {
         "name": "root", "description": "a goal",
-        "criteria": [{"name": "c1", "description": "the thing"}, *extra_criteria],
+        "criteria": [criterion("c1", "the thing"), *extra_criteria],
         "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
                             "justification": "accepted here", "invalidation_condition": "never"}]},
         "agent")
@@ -64,7 +64,7 @@ def test_a_revised_contract_can_be_read_back_from_the_log():
     db = str(Path(tempfile.mkdtemp()) / "r.db")     # Windows will not unlink an open sqlite file
     e = _engine(SqliteStorage(db))
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "MATERIALLY DIFFERENT"}], "agent")
+    T.edit_criteria(e, "root", [criterion("c1", "MATERIALLY DIFFERENT")], "agent")
     e.stop()
 
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -81,7 +81,7 @@ def test_create_task_refuses_an_id_that_already_exists():
     e = _engine()
     _root(e)
     out = T.create_task(e, "root", {"name": "other", "description": "other",
-                                    "criteria": [{"name": "z", "description": "z"}],
+                                    "criteria": [criterion("z", "z")],
                                     "accepted_risks": []}, "agent")
     kept = e.get_task("root")
     e.stop()
@@ -101,14 +101,14 @@ def test_editing_criteria_keeps_the_dependency_edges():
     _root(e)
     for cid in ("prod", "cons"):
         T.create_task(e, cid, {"name": cid, "description": "part",
-                               "criteria": [{"name": "k", "description": "d"}]},
+                               "criteria": [criterion("k", "d")]},
                       "agent", parent_id="root")
     T.map_criterion(e, "root", "cons", "c1")
     T.add_dependency(e, "prod", "cons")
     before = T.get_dependencies(e)
     assert before, "precondition: the dependency was declared"
 
-    T.edit_criteria(e, "cons", [{"name": "k", "description": "d"}], "agent")
+    T.edit_criteria(e, "cons", [criterion("k", "d")], "agent")
     after = T.get_dependencies(e)
     e.stop()
     assert after == before, f"the edge vanished with the criteria: {before} → {after}"
@@ -133,7 +133,7 @@ def test_a_human_verdict_must_carry_evidence_like_a_machine_one():
     e = _engine()
     _root(e)
     T.create_task(e, "leaf", {"name": "leaf", "description": "part",
-                              "criteria": [{"name": "k", "description": "d"}]}, "kirill",
+                              "criteria": [criterion("k", "d")]}, "kirill",
                   parent_id="root")
     T.map_criterion(e, "root", "leaf", "c1")
     T.signal(e, "root", "ACCEPT", "agent")
@@ -148,7 +148,7 @@ def test_a_human_verdict_must_carry_evidence_like_a_machine_one():
     # and what they said is what the log carries (§14.5 — with no seam, the explicit record IS the
     # guarantee; refusing the solo user outright would be a different claim than the canon makes).
     ok = T.record_verdict(e, "leaf", "PASS", reviewer="a-colleague",
-                          observed={"k": "ran it on the sample and read the output"})
+                          observed={"k": {"note": "ran it on the sample and read the output", "ran": ["check k"]}})
     rec = e.get_exec_verdict(T.TaskId("leaf"))
     e.stop()
     assert ok.get("recorded"), ok
@@ -169,11 +169,14 @@ def test_the_frontier_names_the_node_that_blocks_the_root():
     e = _engine()
     _root(e)
     T.create_task(e, "leaf", {"name": "leaf", "description": "part",
-                              "criteria": [{"name": "k", "description": "d"}]},
+                              "criteria": [criterion("k", "d")]},
                   "agent", parent_id="root")
     T.map_criterion(e, "root", "leaf", "c1")
     T.signal(e, "root", "ACCEPT", "agent")
     T.signal(e, "leaf", "ACCEPT", "agent")
+    # the bound this test means, stated: the default now budgets an agent's rework loop (12),
+    # and the subject here is the frontier's answer about an ESCALATED node, not the count
+    e.get_task("leaf").max_iterations = 3
     for i in range(6):
         if e.get_task("leaf").state.name == "ESCALATED":
             break
@@ -204,7 +207,7 @@ def test_a_delegated_node_is_visibly_executing_while_its_executor_works():
     e = _engine()
     _root(e)
     T.create_task(e, "leaf", {"name": "leaf", "description": "part",
-                              "criteria": [{"name": "k", "description": "d"}]},
+                              "criteria": [criterion("k", "d")]},
                   "worker", parent_id="root")
     T.map_criterion(e, "root", "leaf", "c1")
     T.signal(e, "root", "ACCEPT", "agent")
@@ -267,10 +270,10 @@ def test_the_verdict_directive_is_read_against_the_current_state():
         "per_criterion": [
             {"criterion": "flush", "verdict": "pass", "evidence": "ok",
              "behaviours": ["nail head is flush"],
-             "probe": [{"command": "pytest -q", "expect": "passed"}]},
+             "probe": [{"command": "check flush", "expect": "it holds"}]},
             {"criterion": "holds", "verdict": "pass", "evidence": "hung a 2kg frame",
              "behaviours": ["it holds a 2kg frame"],
-             "probe": [{"command": "pytest -q", "expect": "passed"}]}],
+             "probe": [{"command": "check holds", "expect": "it holds"}]}],
         "failed_criteria": []})
     TL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
     T.signal(e, "n1", "PASS", "alice")                       # the ISSUER settles it
@@ -292,7 +295,7 @@ def test_a_wrong_predictability_names_the_three_categories():
     e = _engine()
     with pytest.raises(Exception) as ex:
         T.create_task(e, "n", {"name": "n", "description": "d",
-                               "criteria": [{"name": "k", "description": "d"}],
+                               "criteria": [criterion("k", "d")],
                                "accepted_risks": [{"item": "vendor outage",
                                                    "predictability": "high",
                                                    "justification": "j",
@@ -329,7 +332,7 @@ def test_delegating_a_child_does_not_stale_the_plan_verdict():
     e = _engine()
     _root(e)
     T.create_task(e, "leaf", {"name": "leaf", "description": "part",
-                              "criteria": [{"name": "k", "description": "d"}]},
+                              "criteria": [criterion("k", "d")]},
                   "agent", parent_id="root")
     T.map_criterion(e, "root", "leaf", "c1")
 
@@ -340,7 +343,7 @@ def test_delegating_a_child_does_not_stale_the_plan_verdict():
     T.reassign(e, "leaf", "worker-7")          # delegation: same contract, new owner
     assert e.get_task("root").verified, "naming an executor threw away the plan verdict"
 
-    T.edit_criteria(e, "leaf", [{"name": "k", "description": "MATERIALLY DIFFERENT"}], "agent")
+    T.edit_criteria(e, "leaf", [criterion("k", "MATERIALLY DIFFERENT")], "agent")
     e.stop()
     assert not e.get_task("root").verified, "a real contract change must still stale the verdict"
 
@@ -386,7 +389,7 @@ def test_the_observation_log_carries_the_humans_own_signals():
     db = str(Path(tempfile.mkdtemp()) / "r.db")
     e = _engine(SqliteStorage(db))
     T.create_task(e, "root", {"name": "root", "description": "a goal",
-                              "criteria": [{"name": "c1", "description": "the thing"}],
+                              "criteria": [criterion("c1", "the thing")],
                               "accepted_risks": []}, "kirill")     # the human owns it
     T.signal(e, "root", "ACCEPT", "kirill")
     e.wait_idle()
@@ -429,9 +432,9 @@ def test_a_hand_resolved_block_puts_the_executor_back_in_the_queue(tmp_path):
     """
     e = _engine()
     _root(e)
-    T.create_task(e, "prod", {"description": "producer", "criteria": [{"name": "p", "description": "P"}]},
+    T.create_task(e, "prod", {"description": "producer", "criteria": [criterion("p", "P")]},
                   assignee="exec-1", parent_id="root")
-    T.create_task(e, "cons", {"description": "consumer", "criteria": [{"name": "c", "description": "C"}]},
+    T.create_task(e, "cons", {"description": "consumer", "criteria": [criterion("c", "C")]},
                   assignee="exec-1", parent_id="root")
     T.map_criterion(e, "root", "prod", "c1")
     T.map_criterion(e, "root", "cons", "c1")
@@ -459,7 +462,10 @@ def test_a_hand_resolved_block_puts_the_executor_back_in_the_queue(tmp_path):
     T.signal(e, "prod", "DELIVER", "exec-1", result="prod out")
     # a SEAM node needs a verdict for THIS delivery whoever signs it (§14.5): the issuer's signature
     # is not the validation — pinned by `test_a_seam_pass_needs_a_verdict_whoever_signs_it`
-    T.record_verdict(e, "prod", "PASS", reviewer="agent", observed={"p": "ran it, printed the output"})
+    # …and the observation names the PINNED run: a criterion now carries the procedure that decides
+    # it (A1/§10), so a PASS that skips it is a pass on a probe invented at judging time.
+    T.record_verdict(e, "prod", "PASS", reviewer="agent",
+                     observed={"p": {"note": "ran it, printed the output", "ran": ["check p"]}})
     T.signal(e, "prod", "PASS", "agent")
     e.wait_idle()
     assert e.get_state(TaskId("prod")).name == "DONE"
@@ -511,7 +517,7 @@ def test_a_refused_reopen_says_which_gate_refused_it():
     alone."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "kid", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "kid", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
 
@@ -559,7 +565,7 @@ def test_a_person_can_ask_the_frontier_as_themselves():
     `actor` is the human door naming itself, exactly as the UI has always done."""
     e = _engine()
     T.create_task(e, "mine", {"description": "the human's own node",
-                              "criteria": [{"name": "c", "description": "C"}]}, assignee="kirill")
+                              "criteria": [criterion("c", "C")]}, assignee="kirill")
 
     as_agent = T.next_step(e)
     assert as_agent["mine"] is False and "NOT YOURS" in as_agent["directive"]
@@ -594,7 +600,7 @@ def test_a_frontier_held_by_the_dependency_order_names_the_pair():
     whole answer."""
     e = _engine()
     _root(e)
-    T.create_task(e, "cons", {"description": "consumer", "criteria": [{"name": "c", "description": "C"}]},
+    T.create_task(e, "cons", {"description": "consumer", "criteria": [criterion("c", "C")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "cons", "c1")
     T.add_dependency(e, "not-built-yet", "cons")
@@ -628,7 +634,7 @@ def test_no_available_action_says_why_not():
     assert "record_verdict" in out["gate"]
 
     # And the genuinely empty case still explains itself: a stranger holds no role on a child.
-    T.create_task(e, "kid", {"description": "kid", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "kid", "criteria": [criterion("k", "K")]},
                   assignee="someone", parent_id="root")
     none = T.available_actions(e, "kid", agent="a-stranger")
     assert none["actions"] == []
@@ -650,7 +656,7 @@ def test_the_rework_directive_does_not_ask_for_a_delivery_the_gate_refuses():
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "the covering child",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
@@ -693,12 +699,12 @@ def test_the_affordance_surface_agrees_with_the_machine_in_both_directions():
     e = _engine()
     T.create_task(e, "root", {
         "name": "root", "description": "a goal",
-        "criteria": [{"name": "c1", "description": "the thing"}],
+        "criteria": [criterion("c1", "the thing")],
         "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
                             "justification": "accepted here", "invalidation_condition": "never"}]},
         "kirill")
     T.create_task(e, "kid", {"description": "internal child",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="kirill", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "kirill")
@@ -711,7 +717,7 @@ def test_the_affordance_surface_agrees_with_the_machine_in_both_directions():
     assert "PASS" not in unchecked["actions"] and "self_validation" in unchecked["gate"]
     assert T.signal(e, "kid", "PASS", "kirill")["accepted"] is False
 
-    T.record_verdict(e, "kid", "PASS", reviewer="kirill", observed={"k": "ran it, read the output"})
+    T.record_verdict(e, "kid", "PASS", reviewer="kirill", observed={"k": {"note": "ran it, read the output", "ran": ["check k"]}})
     internal = T.available_actions(e, "kid", agent="kirill")
     assert "PASS" in internal["actions"]                    # D6: an internal node self-verifies
     assert T.signal(e, "kid", "PASS", "kirill")["accepted"] is True     # …and the FSM agrees
@@ -737,9 +743,12 @@ def test_reopen_says_what_it_destroyed():
     _root(e)
     T.signal(e, "root", "ACCEPT", "agent")
     T.signal(e, "root", "DELIVER", "agent", result="did it")
+    # the report accounts for the procedure the criterion PINS (A1/§10) — a PASS that skips it is
+    # demoted to ⊥, so this node would never reach DONE to be reopened
     e.record_exec_verdict(TaskId("root"), "PASS", [], "val-1",
                           per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                          "evidence": "ran it", "probe": "x", "expect": "y"}])
+                                          "evidence": "ran it", "expect": "y",
+                                          "probe": criterion("c1")["check"]}])
     T.signal(e, "root", "PASS", "agent")
     assert e.get_state(TaskId("root")).name == "DONE"
 
@@ -758,9 +767,9 @@ def test_a_signals_reply_names_the_node_its_next_step_is_about():
     on the frontier — it simply never said whose."""
     e = _engine()
     _root(e)
-    T.create_task(e, "a", {"description": "a", "criteria": [{"name": "x", "description": "X"}]},
+    T.create_task(e, "a", {"description": "a", "criteria": [criterion("x", "X")]},
                   assignee="agent", parent_id="root")
-    T.create_task(e, "b", {"description": "b", "criteria": [{"name": "y", "description": "Y"}]},
+    T.create_task(e, "b", {"description": "b", "criteria": [criterion("y", "Y")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "a", "c1")
     T.map_criterion(e, "root", "b", "c1")
@@ -796,7 +805,7 @@ def test_the_validate_directive_names_the_instrument_on_a_seam():
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "delegated child",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="someone-else", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "someone-else")
@@ -820,16 +829,16 @@ def test_a_refused_revision_names_the_branch_that_refused_it():
     e = _engine()
     T.create_task(e, "root", {
         "name": "root", "description": "a goal",
-        "criteria": [{"name": "c1", "description": "the thing"}],
+        "criteria": [criterion("c1", "the thing")],
         "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
                             "justification": "accepted here", "invalidation_condition": "never"}]},
         "owner")
-    T.create_task(e, "kid", {"description": "kid", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "kid", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
 
     # Through the DOOR surface (the registry), where a refusal is data rather than an exception.
-    out = TL.TOOLS["edit_criteria"](e, "kid", [{"name": "k", "description": "K, sharper"}],
+    out = TL.TOOLS["edit_criteria"](e, "kid", [criterion("k", "K, sharper")],
                                     agent="stranger")
     err = out["error"]
     assert "'stranger' is not the issuer" in err and "'owner'" in err
@@ -874,7 +883,7 @@ def test_the_plan_review_says_whether_the_children_may_start(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")      # the suite runs with the gate off by default
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "kid", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "kid", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
 
@@ -906,10 +915,10 @@ def test_declaring_a_dependency_keeps_the_nodes_declared_scope():
     empty. Found by the code-orthogonality sweep as D-23 and confirmed here."""
     e = _engine()
     _root(e)
-    T.create_task(e, "prod", {"description": "producer", "criteria": [{"name": "p", "description": "P"}]},
+    T.create_task(e, "prod", {"description": "producer", "criteria": [criterion("p", "P")]},
                   assignee="agent", parent_id="root")
     T.create_task(e, "cons", {"description": "consumer",
-                              "criteria": [{"name": "c", "description": "C"}],
+                              "criteria": [criterion("c", "C")],
                               "scope": ["no retries", "no caching"]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "prod", "c1")
@@ -933,7 +942,7 @@ def test_a_step_that_is_not_yours_names_the_side_it_actually_waits_on():
     asker held, so an issuer was always told the node waits on themselves."""
     e = _engine()
     _root(e)                                        # root's Del is `agent`; issuer of a root is itself
-    T.create_task(e, "kid", {"description": "kid", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "kid", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -964,7 +973,7 @@ def test_a_cancellation_nobody_confirms_still_settles():
     The handshake keeps its window; what it may not have is no bottom."""
     e = _engine()
     _root(e)
-    T.create_task(e, "junk", {"description": "a mistyped node", "criteria": [{"name": "j", "description": "J"}]},
+    T.create_task(e, "junk", {"description": "a mistyped node", "criteria": [criterion("j", "J")]},
                   parent_id="root")                    # no assignee → `agent`, whom nobody drives
     T.signal(e, "junk", "CANCEL", "agent", reason="mistyped")
     assert e.get_state(TaskId("junk")).name == "CANCELLING"
@@ -1097,11 +1106,12 @@ def test_a_parent_with_an_escalated_child_does_not_buy_a_validator_run():
     through."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "kid", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "kid", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
     T.signal(e, "kid", "DELIVER", "agent", result="tried")
+    e.get_task("kid").max_iterations = 3     # the budget this test means, stated: the default now sizes an agent's rework loop (12), and the subject here is the escalated child
     for _ in range(4):                                  # exhaust the rework bound → ESCALATED
         T.signal(e, "kid", "FAIL", "agent", failed_criteria=["k"])
         if e.get_state(TaskId("kid")).name == "ESCALATED":
@@ -1136,7 +1146,7 @@ def test_a_revision_that_would_delete_the_contract_is_refused():
     assert e.get_task(TaskId("root")).spec.criteria                # …and nothing was lost
 
     ok = T.revise(e, "root", {"description": "a new description",
-                              "criteria": [{"name": "c1", "description": "the thing, sharper"}],
+                              "criteria": [criterion("c1", "the thing, sharper")],
                               "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
                                                   "justification": "accepted", "invalidation_condition": "never"}]},
                   agent="agent")
@@ -1158,25 +1168,25 @@ def test_an_internal_node_can_carry_its_own_recorded_verdict():
     e = _engine()
     T.create_task(e, "root", {
         "name": "root", "description": "a goal",
-        "criteria": [{"name": "c1", "description": "the thing"}],
+        "criteria": [criterion("c1", "the thing")],
         "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
                             "justification": "accepted here", "invalidation_condition": "never"}]},
         "sam")
     T.create_task(e, "kid", {"description": "internal child",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="sam", parent_id="root")            # same Del as its parent → INTERNAL
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "sam")
     T.signal(e, "kid", "DELIVER", "sam", result="wrote kid.py; ran its check, it printed OK", self_validation="PASS")
 
     rec = T.record_verdict(e, "kid", "PASS", reviewer="sam",
-                           observed={"k": "ran it and read the output: K holds"})
+                           observed={"k": {"note": "ran it and read the output: K holds", "ran": ["check k"]}})
     assert rec["recorded"] is True
     assert T.get_verdict(e, "kid")["per_criterion"][0]["evidence"].startswith("ran it")
 
     T.signal(e, "root", "ACCEPT", "sam")
     T.signal(e, "root", "DELIVER", "sam", result="integrated")
-    seam = T.record_verdict(e, "root", "PASS", reviewer="sam", observed={"c1": "looked at it"})
+    seam = T.record_verdict(e, "root", "PASS", reviewer="sam", observed={"c1": {"note": "looked at it", "ran": ["check c1"]}})
     assert seam["recorded"] is False and "SEAM" in seam["error"]   # …the seam still refuses
     e.stop()
 
@@ -1189,9 +1199,9 @@ def test_a_mapping_call_says_what_it_bound_and_what_is_still_uncovered():
     moved. A verb whose whole job is to bind one criterion to one child should say which two."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}], agent="agent")
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")], agent="agent")
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     out = T.map_criterion(e, "root", "kid", "c1")
     assert out["mapped"] == "root.c1 is covered by kid"
@@ -1220,7 +1230,7 @@ def test_the_review_hands_back_the_exact_string_a_dispute_takes():
     (measured 2026-08-21). `get_review` now hands back the exact strings that are open."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     e._graph._storage.store_critique(TaskId("root"), json.dumps({
@@ -1266,7 +1276,7 @@ def test_a_signal_reply_does_not_tell_you_to_do_someone_elses_work():
     none."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="someone-else", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     out = T.signal(e, "root", "ACCEPT", "agent")
@@ -1286,7 +1296,7 @@ def test_the_frontier_does_not_offer_an_accept_the_plan_gate_refuses(monkeypatch
     e = _engine()
     _root(e)
     T.signal(e, "root", "ACCEPT", "agent")
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     steps = T.next_steps(e)
@@ -1312,7 +1322,8 @@ def test_the_verdict_record_names_the_validator_role_not_the_verb():
     T.signal(e, "root", "DELIVER", "agent", result="did it")
     e.record_exec_verdict(TaskId("root"), "PASS", [], "w5-val-1",
                           per_criterion=[{"criterion": "c1", "verdict": "pass",
-                                          "evidence": "ran it", "probe": "python -c ..."}],
+                                          "evidence": "ran it",
+                                          "probe": criterion("c1")["check"]}],
                           generation=e.generation_of(TaskId("root")))
     assert T.get_verdict(e, "root")["validator"] == "w5-val-1"
     e.stop()
@@ -1328,11 +1339,11 @@ def test_auto_decompose_can_delegate_the_work_without_handing_over_the_plan():
     thing, which is what a caller almost always means: the children go to them, the root stays
     with you."""
     e = _engine()
-    spec = {"name": "goal", "root_criteria": [{"name": "c1", "description": "one"}],
+    spec = {"name": "goal", "root_criteria": [criterion("c1", "one")],
             "accepted_risks": [{"item": "fixture", "predictability": "EXTRAORDINARY",
                                 "justification": "accepted", "invalidation": "never"}],
             "subtasks": [{"id": "kid", "description": "the work",
-                          "criteria": [{"name": "k", "description": "K"}]}],
+                          "criteria": [criterion("k", "K")]}],
             "mappings": [{"criterion": "c1", "child_id": "kid"}], "deps": []}
     build_graph_live(spec, "a goal", e, root_id="root", assignee="coordinator",
                      child_assignee="worker-1")
@@ -1353,7 +1364,7 @@ def test_a_self_executed_leaf_cannot_close_on_nothing():
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "internal child",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
@@ -1364,7 +1375,7 @@ def test_a_self_executed_leaf_cannot_close_on_nothing():
 
     # …and the two ways to say it. From VALIDATING the node is past delivering, so the record is the
     # door: `record_verdict` with what was observed.
-    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": "ran it: K holds"})
+    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": {"note": "ran it: K holds", "ran": ["check k"]}})
     assert T.signal(e, "kid", "PASS", "agent")["accepted"] is True
     rec = T.get_verdict(e, "kid")
     assert rec["verdict"] == "PASS" and rec["validator"] == "agent"      # …and DONE has a record now
@@ -1372,7 +1383,7 @@ def test_a_self_executed_leaf_cannot_close_on_nothing():
 
     # The other door: a DELIVER that carries its self-check needs nothing else afterwards.
     T.create_task(e, "kid2", {"description": "another internal child",
-                              "criteria": [{"name": "k2", "description": "K2"}]},
+                              "criteria": [criterion("k2", "K2")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid2", "c1")
     T.signal(e, "kid2", "ACCEPT", "agent")
@@ -1409,7 +1420,7 @@ def test_the_signal_that_finishes_a_node_still_answers_with_a_next():
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "internal child",
-                             "criteria": [{"name": "k", "description": "K"}]},
+                             "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
@@ -1429,10 +1440,10 @@ def test_an_edit_that_sends_the_node_back_to_offered_says_so():
     e = _engine()
     _root(e)
     T.signal(e, "root", "ACCEPT", "agent")
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
-    out = T.edit_criteria(e, "root", [{"name": "c1", "description": "the thing, sharper"}],
+    out = T.edit_criteria(e, "root", [criterion("c1", "the thing, sharper")],
                           agent="agent")
     assert out["state"] == "OFFERED"
     assert "EXECUTING → OFFERED" in out["state_changed"] and "ACCEPT" in out["state_changed"]
@@ -1448,12 +1459,12 @@ def test_the_log_names_a_reopen_as_a_reopen():
     name; the line says what it was."""
     e = _engine()
     T.create_task(e, "solo", {"name": "solo", "description": "a goal",
-                              "criteria": [{"name": "c1", "description": "the thing"}]}, "agent")
+                              "criteria": [criterion("c1", "the thing")]}, "agent")
     T.signal(e, "solo", "ACCEPT", "agent")
     T.signal(e, "solo", "DELIVER", "agent", result="did it")
     # a ROOT is a seam, so its PASS needs a verdict from someone else (§14.5) — that is not what this
     # test is about, so an independent reviewer records one
-    T.record_verdict(e, "solo", "PASS", reviewer="someone-else", observed={"c1": "ran it"})
+    T.record_verdict(e, "solo", "PASS", reviewer="someone-else", observed={"c1": {"note": "ran it", "ran": ["check c1"]}})
     T.signal(e, "solo", "PASS", "agent")
     T.reopen(e, "solo", "agent")
     line = e._graph._storage.get_pipeline()[-1]["message"]
@@ -1475,7 +1486,7 @@ def test_a_parent_in_validating_whose_children_wait_on_its_plan_still_has_a_step
     e = _engine()
     _root(e)
     T.signal(e, "root", "ACCEPT", "agent")
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "root", "DELIVER", "agent", result="aggregated")     # …parent now VALIDATING
@@ -1497,7 +1508,7 @@ def test_the_plan_gate_holds_every_door_into_execution(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "CHALLENGE", "worker", justification="the criterion names a missing file")
@@ -1516,7 +1527,7 @@ def test_the_step_for_a_blocked_node_belongs_to_the_side_that_can_send_it():
     is the defect this surface exists to prevent (found by walking the protocol 2026-08-21)."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -1539,7 +1550,7 @@ def test_a_cancelled_child_says_which_parent_criteria_it_was_carrying():
     the one who has to decide what carries those criteria now."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "CANCEL", "agent", reason="the goal changed")
@@ -1559,8 +1570,8 @@ def test_both_kinds_of_waiting_explain_themselves_the_same_way():
     reader, same question — why is this node not moving."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}], agent="agent")
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")], agent="agent")
     for kid, crit in (("parser", "p"), ("cli", "c")):
         T.create_task(e, kid, {"description": kid,
                                "criteria": [{"name": crit, "description": crit.upper()}]},
@@ -1582,8 +1593,8 @@ def test_a_refused_cycle_names_the_path_and_the_two_ways_out():
     other are one node."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}], agent="agent")
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")], agent="agent")
     for kid, crit in (("a", "p"), ("b", "q")):
         T.create_task(e, kid, {"description": kid,
                                "criteria": [{"name": crit, "description": crit.upper()}]},
@@ -1607,10 +1618,11 @@ def test_a_node_the_graph_cannot_move_past_is_named_even_when_something_else_is_
     monkeypatch.setenv("GFSO_L2_GATE", "0")   # this walk is about the terminal, not the plan gate
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
+    e.get_task("kid").max_iterations = 3     # the budget this test means, stated: the default now sizes an agent's rework loop (12), and the subject here is the escalated child
     for _ in range(4):     # the default rework budget, spent to its end (§14.3)
         T.signal(e, "kid", "DELIVER", "worker", result="attempt")
         T.signal(e, "kid", "FAIL", "agent", failed_criteria=["k"])
@@ -1652,7 +1664,7 @@ def test_a_locked_terminal_does_not_offer_the_signal_that_would_reopen_it():
     affordance surface removes the act and gives the same sentence."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
@@ -1697,7 +1709,7 @@ def test_a_dispute_key_that_differs_only_in_mangled_punctuation_still_lands(monk
     is wrong. One unambiguous near-match is accepted; the answer says which key it landed on."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     e._graph._storage.store_critique(TaskId("root"), json.dumps({
@@ -1727,7 +1739,7 @@ def test_a_parent_delivered_too_early_is_not_offered_and_not_hidden():
     e = _engine()
     _root(e)
     T.signal(e, "root", "ACCEPT", "agent")
-    T.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "child", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
 
@@ -1782,7 +1794,7 @@ def test_an_edit_does_not_demand_a_name_the_door_never_asked_for():
     is what the agent door has always used, and naming yourself still overrides it."""
     e = _engine()
     _root(e)
-    out = T.edit_criteria(e, "root", [{"name": "c1", "description": "the thing, sharper"}])
+    out = T.edit_criteria(e, "root", [criterion("c1", "the thing, sharper")])
     assert out["criteria"][0]["description"] == "the thing, sharper"
     risks = T.edit_accepted_risks(e, "root", [{"item": "x", "predictability": "EXTRAORDINARY",
                                                "justification": "j", "invalidation_condition": "i"}])
@@ -1801,18 +1813,18 @@ def test_a_cancelled_childs_coverage_mapping_does_not_lock_the_parent_forever():
     the criterion becomes an honest CHECK-1 hole a person can actually close."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}])
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")])
     for kid, crit in (("kid", "c1"), ("other", "c2")):
-        T.create_task(e, kid, {"description": kid, "criteria": [{"name": "k", "description": "K"}]},
+        T.create_task(e, kid, {"description": kid, "criteria": [criterion("k", "K")]},
                       assignee="worker", parent_id="root")
         T.map_criterion(e, "root", kid, crit)
     T.signal(e, "kid", "CANCEL", "agent", reason="the goal changed")
     T.signal(e, "kid", "CONFIRM_CANCEL", "worker")
     assert [h for h in T.list_holes(e, "root")["holes"] if "invalid mappings" in h["details"]]   # …a hole
 
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one, restated"},
-                                {"name": "c2", "description": "two"}])
+    T.edit_criteria(e, "root", [criterion("c1", "one, restated"),
+                                criterion("c2", "two")])
     assert not [h for h in T.list_holes(e, "root")["holes"]
                 if "invalid mappings" in h["details"]]              # …and a re-author clears it
     assert [h for h in T.list_holes(e, "root")["holes"] if "uncovered criteria" in h["details"]]
@@ -1828,10 +1840,10 @@ def test_a_mapping_call_does_not_throw_away_a_delivery_in_flight():
     and the reply was a coverage summary that mentioned no state change at all."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}])
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")])
     for kid, crit in (("kid", "c1"), ("other", "c2")):
-        T.create_task(e, kid, {"description": kid, "criteria": [{"name": "k", "description": "K"}]},
+        T.create_task(e, kid, {"description": kid, "criteria": [criterion("k", "K")]},
                       assignee="worker", parent_id="root")
         T.map_criterion(e, "root", kid, crit)
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -1851,7 +1863,7 @@ def test_a_cancel_says_what_is_at_stake_before_the_point_of_no_return():
     information I needed one step earlier")."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     out = T.signal(e, "kid", "CANCEL", "agent", reason="the goal changed")
@@ -1869,7 +1881,7 @@ def test_editing_a_finished_node_says_the_verdict_is_gone():
     2026-08-21: recovering cost a plan review, seven disputes, a re-delivery and two validations."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
@@ -1877,7 +1889,7 @@ def test_editing_a_finished_node_says_the_verdict_is_gone():
     T.signal(e, "kid", "PASS", "agent")
     assert e.get_state(TaskId("kid")).name == "DONE"
 
-    out = T.edit_criteria(e, "kid", [{"name": "k", "description": "K, sharper"}])
+    out = T.edit_criteria(e, "kid", [criterion("k", "K, sharper")])
     assert out["state"] == "OFFERED"
     assert "verdict is GONE" in out["state_changed"] and "reopen is spent" in out["state_changed"]
     e.stop()
@@ -1893,8 +1905,8 @@ def test_a_self_report_is_recorded_once_not_copied_per_criterion():
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "internal child",
-                             "criteria": [{"name": "k1", "description": "K1"},
-                                          {"name": "k2", "description": "K2"}]},
+                             "criteria": [criterion("k1", "K1"),
+                                          criterion("k2", "K2")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
@@ -1915,10 +1927,10 @@ def test_assign_on_a_finished_node_says_it_is_a_reopen():
     what its name does not say is what it does to a node that has finished."""
     e = _engine()
     T.create_task(e, "solo", {"name": "solo", "description": "a goal",
-                              "criteria": [{"name": "c1", "description": "the thing"}]}, "agent")
+                              "criteria": [criterion("c1", "the thing")]}, "agent")
     T.signal(e, "solo", "ACCEPT", "agent")
     T.signal(e, "solo", "DELIVER", "agent", result="did it")
-    T.record_verdict(e, "solo", "PASS", reviewer="someone-else", observed={"c1": "ran it"})
+    T.record_verdict(e, "solo", "PASS", reviewer="someone-else", observed={"c1": {"note": "ran it", "ran": ["check c1"]}})
     T.signal(e, "solo", "PASS", "agent")
     assert e.get_state(TaskId("solo")).name == "DONE"
 
@@ -1936,12 +1948,12 @@ def test_a_rebuild_leaves_one_criterion_per_name():
     confusing: `record_verdict` takes its evidence as a mapping keyed BY CRITERION NAME, so two
     criteria of one name cannot be judged separately at all — one silently overwrites the other."""
     e = _engine()
-    spec = {"name": "goal", "root_criteria": [{"name": "c1", "description": "one"}],
+    spec = {"name": "goal", "root_criteria": [criterion("c1", "one")],
             "accepted_risks": [{"item": "fixture", "predictability": "EXTRAORDINARY",
                                 "justification": "accepted", "invalidation": "never"}],
             "subtasks": [{"id": "kid", "description": "the work",
-                          "criteria": [{"name": "k", "description": "the first statement"},
-                                       {"name": "k", "description": "the restatement"}]}],
+                          "criteria": [criterion("k", "the first statement"),
+                                       criterion("k", "the restatement")]}],
             "mappings": [{"criterion": "c1", "child_id": "kid"}], "deps": []}
     build_graph_live(spec, "a goal", e, root_id="root", assignee="agent")
     crits = e.get_task(TaskId("root.kid")).spec.criteria
@@ -1959,15 +1971,16 @@ def test_the_directive_lists_every_criterion_the_record_will_demand():
     human door 2026-08-22, two round-trips)."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}])
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")])
     T.create_task(e, "producer", {"description": "producer",
-                                  "criteria": [{"name": "k", "description": "K"}]},
+                                  "criteria": [criterion("k", "K")]},
                   assignee="agent", parent_id="root")
     T.create_task(e, "consumer", {"description": "consumer",
-                                  "criteria": [{"name": "own", "description": "its own work"},
-                                               {"name": "dep__producer", "depends_on": "producer",
-                                                "description": "uses the real producer output"}]},
+                                  "criteria": [criterion("own", "its own work"),
+                                               dict(criterion("dep__producer",
+                                                               "uses the real producer output"),
+                                                    depends_on="producer")]},
                   assignee="agent", parent_id="root")
     T.map_criterion(e, "root", "producer", "c1")
     T.map_criterion(e, "root", "consumer", "c2")
@@ -1991,9 +2004,9 @@ def test_a_blocked_node_says_what_it_is_blocked_on():
     e = _engine()
     _root(e)
     T.create_task(e, "producer", {"description": "producer",
-                                  "criteria": [{"name": "p", "description": "P"}]},
+                                  "criteria": [criterion("p", "P")]},
                   assignee="worker", parent_id="root")
-    T.create_task(e, "kid", {"description": "the work", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "the work", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.map_criterion(e, "root", "producer", "c1")
@@ -2016,10 +2029,10 @@ def test_a_block_is_not_cleared_by_saying_so():
     can execute."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}])
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")])
     for kid, crit in (("producer", "c1"), ("consumer", "c2")):
-        T.create_task(e, kid, {"description": kid, "criteria": [{"name": "k", "description": "K"}]},
+        T.create_task(e, kid, {"description": kid, "criteria": [criterion("k", "K")]},
                       assignee="worker", parent_id="root")
         T.map_criterion(e, "root", kid, crit)
     T.add_dependency(e, "producer", "consumer", glue="consumer uses it")
@@ -2033,7 +2046,7 @@ def test_a_block_is_not_cleared_by_saying_so():
 
     T.signal(e, "producer", "ACCEPT", "worker")
     T.signal(e, "producer", "DELIVER", "worker", result="made it")
-    T.record_verdict(e, "producer", "PASS", reviewer="agent", observed={"k": "ran it"})
+    T.record_verdict(e, "producer", "PASS", reviewer="agent", observed={"k": {"note": "ran it", "ran": ["check k"]}})
     T.signal(e, "producer", "PASS", "agent")                  # the issuer signs across the seam
     assert e.get_state(TaskId("producer")).name == "DONE"
     assert T.signal(e, "consumer", "RESOLVE_BLOCK", "agent")["accepted"] is True
@@ -2049,7 +2062,7 @@ def test_the_step_asks_for_a_signature_when_the_judging_is_done():
     owed at that point is the signal, not the judging."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -2075,14 +2088,14 @@ def test_the_delivery_says_what_becomes_of_it():
     was already judging (measured on the human door 2026-08-22)."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
     out = T.signal(e, "kid", "DELIVER", "worker", result="made it")
     assert "validate_result kid" in out["awaiting_verdict"]
 
-    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": "ran it"})
+    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": {"note": "ran it", "ran": ["check k"]}})
     T.signal(e, "kid", "FAIL", "agent", failed_criteria=["k"])       # back to REWORKING…
     out = T.signal(e, "kid", "DELIVER", "worker", result="fixed it")  # …and delivered again
     assert "waits for a verdict" in out["awaiting_verdict"]
@@ -2149,7 +2162,7 @@ def test_a_seam_pass_needs_a_verdict_whoever_signs_it():
     from the ordinary door, in the product whose claim is that nothing completes by impression."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")           # …Del ≠ its parent's ⟹ a SEAM
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -2169,7 +2182,7 @@ def test_a_seam_pass_needs_a_verdict_whoever_signs_it():
     assert stale["accepted"] is False and "STALE" in stale["error"]
 
     # A person judging by hand is still free to: the record is what is required, not the instrument.
-    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": "re-ran it, printed 42"})
+    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": {"note": "re-ran it, printed 42", "ran": ["check k"]}})
     assert T.signal(e, "kid", "PASS", "agent")["accepted"] is True
     assert e.get_state(TaskId("kid")).name == "DONE"
     e.stop()
@@ -2185,7 +2198,7 @@ def test_a_criterion_that_keeps_failing_is_named_to_both_sides():
     running", though the count is a fact in the log."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "imp", "description": "I"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("imp", "I")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -2215,7 +2228,7 @@ def test_a_refused_signal_says_where_the_intent_goes():
     word about what is admissible instead."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -2241,7 +2254,7 @@ def test_a_working_graph_is_not_reported_stuck():
     already on the record."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "root", "ACCEPT", "agent")           # the parent is in hand, its child is the work
@@ -2267,8 +2280,8 @@ def test_one_delivery_leaves_one_self_report():
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "leaf",
-                             "criteria": [{"name": "a", "description": "A"},
-                                          {"name": "b", "description": "B"}]},
+                             "criteria": [criterion("a", "A"),
+                                          criterion("b", "B")]},
                   assignee="agent", parent_id="root")          # same Del as its parent ⟹ INTERNAL
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "agent")
@@ -2289,12 +2302,12 @@ def test_replacing_a_contract_says_what_it_replaced():
     description (measured on the human door 2026-08-22)."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "a", "description": "A"},
-                                {"name": "b", "description": "B"}], agent="agent")
-    out = T.edit_criteria(e, "root", [{"name": "a", "description": "A"}], agent="agent")
+    T.edit_criteria(e, "root", [criterion("a", "A"),
+                                criterion("b", "B")], agent="agent")
+    out = T.edit_criteria(e, "root", [criterion("a", "A")], agent="agent")
     assert out["removed"] == ["b: B"] and "REPLACES the set" in out["removed_note"]
 
-    same = T.edit_criteria(e, "root", [{"name": "a", "description": "A (sharpened)"}], agent="agent")
+    same = T.edit_criteria(e, "root", [criterion("a", "A (sharpened)")], agent="agent")
     assert "removed" not in same, "editing a description is not a removal"
     e.stop()
 
@@ -2315,7 +2328,7 @@ def test_the_node_says_whether_its_children_may_start(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     e._graph._storage.store_critique(TaskId("root"), json.dumps({
@@ -2338,7 +2351,7 @@ def test_the_graph_says_who_it_waits_for_on_a_validating_node():
     them apart (measured on the human door 2026-08-22)."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
     T.signal(e, "kid", "ACCEPT", "worker")
@@ -2350,7 +2363,7 @@ def test_the_graph_says_who_it_waits_for_on_a_validating_node():
     _key = e.begin_validation(TaskId("kid"))          # …the key is what releases it
     assert {n["id"]: n for n in T.get_graph(e)["nodes"]}["kid"]["awaiting"] == "validator"
     e.end_validation(_key)
-    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": "ran it"})
+    T.record_verdict(e, "kid", "PASS", reviewer="agent", observed={"k": {"note": "ran it", "ran": ["check k"]}})
     assert {n["id"]: n for n in T.get_graph(e)["nodes"]}["kid"]["awaiting"] == "issuer"
     e.stop()
 
@@ -2364,7 +2377,7 @@ def test_a_pass_on_an_undelivered_node_is_refused_for_the_real_reason():
     a rule I had added the same day; outside VALIDATING the FSM's own answer is the true one."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
 
@@ -2391,10 +2404,10 @@ def test_a_block_that_closes_a_cycle_says_the_plan_is_now_red():
     door 2026-08-22)."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}])
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")])
     for kid, crit in (("a", "c1"), ("b", "c2")):
-        T.create_task(e, kid, {"description": kid, "criteria": [{"name": "k", "description": "K"}]},
+        T.create_task(e, kid, {"description": kid, "criteria": [criterion("k", "K")]},
                       assignee="worker", parent_id="root")
         T.map_criterion(e, "root", kid, crit)
     T.add_dependency(e, "a", "b", glue="b consumes a")        # …declared: b waits for a
@@ -2416,10 +2429,10 @@ def test_removing_a_dependency_says_it_staled_the_plan():
     again. Canon, and silent (measured on the human door 2026-08-22)."""
     e = _engine()
     _root(e)
-    T.edit_criteria(e, "root", [{"name": "c1", "description": "one"},
-                                {"name": "c2", "description": "two"}])
+    T.edit_criteria(e, "root", [criterion("c1", "one"),
+                                criterion("c2", "two")])
     for kid, crit in (("a", "c1"), ("b", "c2")):
-        T.create_task(e, kid, {"description": kid, "criteria": [{"name": "k", "description": "K"}]},
+        T.create_task(e, kid, {"description": kid, "criteria": [criterion("k", "K")]},
                       assignee="worker", parent_id="root")
         T.map_criterion(e, "root", kid, crit)
     T.add_dependency(e, "a", "b", glue="b consumes a")
@@ -2439,7 +2452,7 @@ def test_the_state_answers_before_the_identity_does():
     signal moves nothing whoever sends it, that is the honest answer, and it carries the route."""
     e = _engine()
     _root(e)
-    T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},
+    T.create_task(e, "kid", {"description": "leaf", "criteria": [criterion("k", "K")]},
                   assignee="worker", parent_id="root")
     T.map_criterion(e, "root", "kid", "c1")
 
