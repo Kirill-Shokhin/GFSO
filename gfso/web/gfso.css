@@ -57,6 +57,10 @@ body {
 }
 
 /* ============ Header (chrome) ============ */
+/* The GAP belongs to the ROW, not to one child. The bar takes every pixel of slack (`flex: 1 1
+   auto`), so with no gap here it grew flush against the wordmark and the first state dot sat on the
+   "O" — rendered 2026-09-12. The right-hand collision had been answered once with a margin on
+   `.metrics` alone, which is the same rule spelled in one place and missing in the other. */
 .header {
     background: var(--ui-chrome);
     color: var(--ui-on-chrome);
@@ -64,6 +68,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 24px;
     border-bottom: 1px solid var(--hair-on-chrome);
 }
 .header h1 {
@@ -72,6 +77,7 @@ body {
     font-weight: 600;
     letter-spacing: var(--tr-heading);
     color: var(--ui-on-chrome);
+    flex: 0 0 auto;          /* the wordmark is never the thing that gives way */
 }
 /* The frontier line is a SENTENCE ("1 waiting — it consumes what those nodes produce…"), not a
    count, and it had no width bound: rendered live 2026-09-02 it wrapped to two lines and ran into
@@ -93,7 +99,7 @@ body {
 .stat--wide { flex: 0 1 auto; min-width: 0; display: block; white-space: nowrap;
               overflow: hidden; text-overflow: ellipsis; }
 .stat-dot { width: 7px; height: 7px; border-radius: 50%; }
-.metrics { display: flex; gap: 18px; flex: 0 0 auto; margin-left: 18px; }
+.metrics { display: flex; gap: 18px; flex: 0 0 auto; }   /* the row's own gap separates it */
 .metric { text-align: center; min-width: 46px; }
 .metric-val {
     font-family: var(--font-display);

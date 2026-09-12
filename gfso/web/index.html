@@ -576,22 +576,66 @@ async function _refreshStats() {
     // and every driver of this product had to ask it from a terminal (measured on all four doors,
     // waves 18-19). Same three lists the agent door reads, in the place a person is already looking.
     try {
+        // ASKED AS WHOEVER THIS PAGE IS. `next_steps` computes `mine` against the SERVER's own id
+        // unless it is told otherwise (`actor`), and the page was not telling it — so the bar counted
+        // the server's queue while the YOU ARE box named someone else. Renaming the box changed the
+        // label and not the number: a chip asserting something false, which is worse than the vague
+        // "for you" it replaced. The box already signs every signal; it decides whose frontier this is.
         const f = await (await fetch('/api/run/next_steps',
-                                     {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json();
+                                     {method:'POST', headers:{'Content-Type':'application/json'},
+                                      body: JSON.stringify(myRole() ? {actor: myRole()} : {})})).json();
+        // COUNTS ON THE BAR, THE SENTENCE IN THE TOOLTIP — like every other chip up here. This was
+        // one wide line carrying the engine's prose verbatim ("2 waiting — no CURRENT Level-2 verdict
+        // covers its decomposition…"), and a bar that has six state counts before it has no room for
+        // a sentence: it truncated mid-word on a 1400px window and printed a node's hash where a
+        // reader needs a name. The facts were right and unreadable.
+        // …AND FIRST ON THE BAR. The bar clips at its right edge on a narrow window (measured at
+        // 900px), so whatever is rendered last is what a reader loses — and the frontier chips are
+        // the only ones that say what to DO. The state counts are the ones that may fall off.
+        let front = '';
+        const chip = (text, why, colour) =>
+            front += `<span class="stat" title="${String(why).replace(/"/g,'&quot;')}">`
+            + `<span class="stat-dot" style="background:${colour}"></span>${text}</span>`;
+        const named = id => {
+            const t = allTasksCache.find(x => x.id === id);
+            return t && t.name ? `${t.name} (${id})` : id;
+        };
         if (f && f.complete) {
-            el.innerHTML += `<span class="stat"><span class="stat-dot" style="background:var(--acc)"></span>root DONE — the goal is met</span>`;
+            chip('root DONE — the goal is met', 'every node settled and the root passed',
+                                 'var(--acc)');
         } else if (f) {
-            const mine = (f.steps || []).filter(x => x.mine).length;
-            const bits = [];
-            if (mine) bits.push(`${mine} step(s) for you — first: ${f.steps.find(x => x.mine).action} `
-                                + `${f.steps.find(x => x.mine).task_id}`);
-            if ((f.in_flight || []).length) bits.push(`${f.in_flight.length} being worked on`);
-            if ((f.waiting || []).length) bits.push(`${f.waiting.length} waiting — ${f.waiting[0].why}`);
-            if (bits.length) {
-                const line = bits.join(' · ');
-                el.innerHTML += `<span class="stat stat--wide" title="${line.replace(/"/g,'&quot;')}">${line}</span>`;
-            }
+            // STUCK FIRST, and it was not shown at all. The engine already decides it — a settled
+            // negative node, or a wait whose object can never pass — and says what to do about it in
+            // `directive`. A watcher could see "1 Validating" for an hour and never learn that no
+            // verdict is coming; that is precisely the difference between a graph working and a graph
+            // needing its issuer, which is this bar's whole job.
+            if (f.stuck)
+                chip(`stuck${(f.blocked_by || []).length ? `: ${f.blocked_by.map(named).join(', ')}` : ''}`,
+                                     f.directive || 'no actionable node and the root is not DONE',
+                                     'var(--acc)');
+            // NAME WHO, because "you" is nobody on a graph many parties drive and watch. The count
+            // is the steps the frontier calls `mine` — computed against the identity in YOU ARE,
+            // the same one this page signs its signals with — so the chip says that identity out
+            // loud and changes when the box does. Anyone else's queue is not this reader's business
+            // and is not shown; what IS everyone's business (stuck / working / waiting) sits beside
+            // it without an owner.
+            const mine = (f.steps || []).filter(x => x.mine);
+            if (mine.length)
+                chip(`${mine.length} for ${myRole() || 'you'}`,
+                                     `assigned to ${myRole() || 'this page'} (the YOU ARE box) — `
+                                     + `first: ${mine[0].action} ${named(mine[0].task_id)}`
+                                     + (mine.length > 1 ? ` · and ${mine.length - 1} more` : ''),
+                                     DOT_ON_CHROME[bucketOf('OFFERED')]);
+            if ((f.in_flight || []).length)
+                chip(`${f.in_flight.length} working`,
+                                     f.in_flight.map(w => `${named(w.task_id)} ${w.why}`).join(' · '),
+                                     DOT_ON_CHROME[bucketOf('EXECUTING')]);
+            if ((f.waiting || []).length)
+                chip(`${f.waiting.length} waiting`,
+                                     f.waiting.map(w => (w.why || w)).join(' · '),
+                                     DOT_ON_CHROME[bucketOf('BLOCKED')]);
         }
+        if (front) el.innerHTML = front + el.innerHTML;
     } catch (e) { /* the frontier is a read; a page that cannot get it still shows the counts */ }
 }
 
@@ -1165,7 +1209,10 @@ function toggleMineOnly() {
     document.getElementById('queue-toggle').classList.toggle('active', mineOnly);
     applyMineDim();
 }
-function onRoleChange() { rememberRole(myRole()); if (mineOnly) applyMineDim(); }
+// …AND THE BAR IS ASKED AGAIN, because the frontier is computed FOR this identity (`actor`): the
+// personal count is about whoever the box now names, and leaving the old one on screen states
+// something false about them. The graph dimming already followed the box; the bar did not.
+function onRoleChange() { rememberRole(myRole()); if (mineOnly) applyMineDim(); refreshStats(); }
 function applyMineDim() {
     if (!cy) return;
     const me = myRole();

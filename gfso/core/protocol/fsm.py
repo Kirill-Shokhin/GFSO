@@ -366,6 +366,14 @@ def transition(
             MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.spec,
                         assignee=signal_data.assignee,   # carries a new executor for reassign (Del change); None = keep
                         covers=signal_data.covers,       # (re)declared coverage of parent criteria (§10)
+                        # …AND THE DEADLINE, which Inv-1 lists among the packet fields a revision
+                        # exists to change ("criteria, deadline, ACCEPTED_RISKS, Del") and which
+                        # this branch dropped on the floor. §14.6 walks the case end to end — a
+                        # RESOLVE_BLOCK moving Feature B from d7 to d9, re-consented and re-checked
+                        # against Testing's d12 — and none of it could happen: the revision was
+                        # ACCEPTED, the node went to OFFERED, the executor re-consented, and the
+                        # date did not move (probed 2026-09-07). None = keep, like `assignee`.
+                        deadline=signal_data.deadline,
                         revision_reason=signal_data.revision_reason),  # causal typing (§24.5)
             _mg(task_id, State.OFFERED),
             RunChecks(task_id),

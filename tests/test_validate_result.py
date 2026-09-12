@@ -427,10 +427,17 @@ def test_a_verdict_with_no_reproducible_probe_is_refused():
 def test_the_probe_requirement_is_the_instrument_s_alone():
     """A human reviewer records a verdict WITHOUT a probe: `record_reviewer_verdict` is a person's
     judgement at the seam, not a machine's re-runnable observation, and holding it to the same rule
-    would demand a command line from someone who inspected the thing by hand."""
+    would demand a command line from someone who inspected the thing by hand.
+
+    No PROBE and no OBSERVATION are different absences, and only the first is a person's licence:
+    what they saw is the entire weight of their record (the record says so itself, in its
+    `independence` line), so it is prose here rather than a command — and not nothing.
+    """
     e = _eng()
     _delivered_node(e)
-    e.record_reviewer_verdict(T.TaskId("n1"), "PASS", [], "human-reviewer")
+    e.record_reviewer_verdict(T.TaskId("n1"), "PASS", [], "human-reviewer",
+                              observed={c.name: "opened it and read it end to end; it holds"
+                                        for c in e.get_task(T.TaskId("n1")).spec.criteria})
     assert e.get_exec_verdict(T.TaskId("n1"))["verdict"] == "PASS"
 
 
@@ -469,15 +476,27 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     e.stop()
 
 
-def test_internal_model_calls_start_no_mcp_server(monkeypatch):
-    """Every internal call (decompose, the Level-2 review, the validator) is a `claude -p` that
-    INHERITS the user's MCP configuration — and this installation registers its own door there. Each
-    call therefore started the gfso stdio bridge as a child process, each with its own console
-    window: measured live, one extra bridge per call without the pin and none with it.
+def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeypatch):
+    """Every internal call (decompose, the Level-2 review, the validator) is a `claude -p`, and a
+    `claude -p` inherits the operator's whole console configuration. Two parts of it must not come
+    along, for two different reasons.
 
-    The window is the visible half. The other half is why hiding it would have been the wrong fix:
-    these calls need no gfso tools, and a VALIDATOR holding them could sign the graph it is judging
-    (§14.5 verifier ≠ executor). `--strict-mcp-config` with no `--mcp-config` starts nothing."""
+    MCP: this installation registers its own door there, so each call started the gfso stdio bridge
+    as a child process, each with its own console window — measured live, one extra bridge per call
+    without the pin and none with it. The window is the visible half; the other half is why hiding
+    it would have been the wrong fix — these calls need no gfso tools, and a VALIDATOR holding them
+    could sign the graph it is judging (§14.5 verifier ≠ executor).
+
+    HOOKS: the same fact one layer over. A hook written for a person's interactive console fires
+    inside this child too — measured live: a session-lifecycle hook logged a start event for an
+    internal call and injects its own instructions, so a run's context stops being the run's. On the
+    Stop event it is worse than contamination: a hook may REFUSE the child's exit and buy extra
+    generation rounds on a paid call. Neither is the operator's mistake; a child of ours is ours to
+    keep clean.
+
+    HISTORY: the reverse direction — the child must not leave anything IN the console either. Each
+    call saved its transcript into the operator's session history; measured on one install, 10 459
+    of them beside 18 of the person's own, and `claude --resume` took minutes to list them."""
     seen = {}
 
     class _P:
@@ -518,6 +537,14 @@ def test_internal_model_calls_start_no_mcp_server(monkeypatch):
         "no process was started at all: the argv this test judges was never built"
     assert "--strict-mcp-config" in seen["args"], \
         "an internal call would inherit the user's MCP servers and spawn the gfso bridge"
+    args = seen["args"]
+    assert "--settings" in args and \
+        json.loads(args[args.index("--settings") + 1]).get("disableAllHooks") is True, \
+        "an internal call would inherit the operator's hooks: injected instructions on start, and " \
+        "a refused exit buying paid generation rounds on Stop"
+    assert "--no-session-persistence" in args, \
+        "every internal call would save its transcript into the operator's session history, " \
+        "burying their own sessions and stalling `claude --resume` for minutes"
 
 
 def test_the_record_names_the_model_that_judged():
@@ -844,3 +871,38 @@ def test_an_unreadable_delivery_accuses_nobody(monkeypatch, tmp_path):
     out: dict = {}
     TL._strays_left_behind(None, "n1", str(tmp_path), None, out, lambda *_: None)
     assert "strays" not in out and not out, "with no pre-image, the honest answer about strays is silence"
+
+
+def test_a_judge_that_wrote_nothing_is_not_a_judge_that_wrote_badly():
+    """Fifteen minutes, 232 tokens, $0.00 — a transport that stopped, reported as a parse failure.
+
+    Measured on a paid run (2026-09-06, `database_engine` under arm G): the judging call came back
+    with one sentence — "I'll inspect the delivery and run real probes" — and nothing else. The
+    engine refused it, correctly; what it SAID was "the validator's report did not parse", the same
+    words a genuinely unreadable report gets. On the second such refusal the node parks and the run
+    ends, so the reader has to tell a judge worth re-running from a judge worth replacing, and both
+    facts wore one sentence. 51 minutes and $2.53 ended there.
+    """
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM("I'll inspect the delivery and run real probes.")
+
+    out = TL.validate_result(e, "n1", _llm=llm)
+
+    assert out["verdict"] is None, "⊥ stays ⊥ — this changes what is SAID, never what is accepted"
+    said = out["verdict_defects"]
+    assert "produced NO REPORT" in said and "run that stopped" in said, said
+    assert "did not parse" not in said, said
+
+
+def test_an_unreadable_report_still_says_it_did_not_parse():
+    """The negative control: a real report that cannot be read keeps its own diagnosis."""
+    e = _eng()
+    _delivered_node(e)
+    llm = _ValidatorLLM('{"verdict": "PASS", "per_criterion": [ {"criterion": "flush"  '   # truncated JSON
+                        + "x" * 500)
+
+    out = TL.validate_result(e, "n1", _llm=llm)
+
+    assert out["verdict"] is None
+    assert "did not parse" in out["verdict_defects"], out["verdict_defects"]

@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -28,15 +30,45 @@ class SqliteStorage(StoragePort):
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
+        # One connection is shared by every dispatcher thread (`check_same_thread=False`), so the
+        # lock below — not the connection — is what makes a multi-statement write atomic. Reentrant
+        # because a reader may call another reader (`get_parent` → `get_task`).
+        self._lock = threading.RLock()
+        with self._write() as c:
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA busy_timeout=5000")
         self._check_schema_version()
         self._init_tables()
+
+    # === The only two ways to reach the connection ===
+
+    @contextmanager
+    def _write(self):
+        """A whole mutation — every statement of it and its commit — under one lock.
+
+        Without this, `sqlite3` in serialized mode still let a neighbouring thread's `commit()`
+        publish THIS thread's half-finished write: `store_check_results` is DELETE + INSERT, and a
+        commit landing between them stored a task's checks as an empty set. An exception now rolls
+        the partial write back instead of leaving it for whoever commits next."""
+        with self._lock:
+            try:
+                yield self._conn
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    @contextmanager
+    def _read(self):
+        """A read under the same lock, so a reader never lands between the statements of a write."""
+        with self._lock:
+            yield self._conn
 
     def close(self) -> None:
         """Release the file handle (Windows keeps the .db locked until the connection closes —
         project deletion depends on this)."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     # The schema this build of gfso writes. Bumped only when a change is not additive — the
     # migrations below handle additive ones by inspecting `PRAGMA table_info`.
@@ -46,6 +78,9 @@ class SqliteStorage(StoragePort):
     # migrated" mark, before this field carried a schema version at all. Recognised, never written.
     _V4_MIGRATION_MARK = 40
 
+    # The two schema methods below are the ONE exception to "_read/_write own the connection":
+    # they run inside `__init__`, before the store exists as a value any other thread could hold,
+    # and they are DDL, which sqlite3 does not wrap in an implicit transaction anyway.
     def _check_schema_version(self):
         """Stamp the schema version, and REFUSE a database written by a newer gfso.
 
@@ -75,6 +110,24 @@ class SqliteStorage(StoragePort):
                 f"`pip install -U gfso`, or point GFSO_HOME at a different directory.")
         if found != self.SCHEMA_VERSION:
             self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+
+    #: (table, column, declaration) — applied in order to a database that predates each column.
+    #: The comments are the canon rows the columns exist for, kept where the columns are named.
+    _ADDITIVE_MIGRATIONS = (
+        ("dep_edges", "glue", "TEXT DEFAULT ''"),
+        ("dep_edges", "provisional", "INTEGER DEFAULT 0"),
+        ("tasks", "verified", "INTEGER DEFAULT 0"),
+        ("tasks", "reopens", "INTEGER DEFAULT 0"),                      # R′ (§14.3)
+        ("tasks", "max_reopens", "INTEGER DEFAULT 1"),
+        ("tasks", "reopened_from_pass", "INTEGER DEFAULT 0"),
+        ("tasks", "spec_defect_criteria_change", "INTEGER DEFAULT 0"),  # §24.5 revision-reason typing
+        ("tasks", "reassign_reason_typed", "INTEGER DEFAULT 0"),
+        ("tasks", "reassign_capability_mismatch", "INTEGER DEFAULT 0"),
+        ("tasks", "revisions", "INTEGER DEFAULT 0"),                    # contract generation (Inv-1)
+        ("tasks", "state_entered_at", "TEXT"),                          # Inv-5's per-state clock
+        ("check_results", "vacuous", "INTEGER DEFAULT 0"),   # a green over an EMPTY subject differs
+        ("audit_log", "spec_json", "TEXT"),                  # Inv-7: the contract each ASSIGN set
+    )
 
     def _init_tables(self):
         self._conn.executescript("""
@@ -175,33 +228,15 @@ class SqliteStorage(StoragePort):
                 spec_json TEXT
             );
         """)
-        # Defensive migrations for DBs created before these columns existed.
-        dep_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(dep_edges)")}
-        if "glue" not in dep_cols:
-            self._conn.execute("ALTER TABLE dep_edges ADD COLUMN glue TEXT DEFAULT ''")
-        if "provisional" not in dep_cols:
-            self._conn.execute("ALTER TABLE dep_edges ADD COLUMN provisional INTEGER DEFAULT 0")
-        task_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
-        if "verified" not in task_cols:
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN verified INTEGER DEFAULT 0")
-        if "reopens" not in task_cols:  # R′ (§14.3)
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN reopens INTEGER DEFAULT 0")
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN max_reopens INTEGER DEFAULT 1")
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN reopened_from_pass INTEGER DEFAULT 0")
-        if "spec_defect_criteria_change" not in task_cols:  # §24.5 revision-reason typing
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN spec_defect_criteria_change INTEGER DEFAULT 0")
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN reassign_reason_typed INTEGER DEFAULT 0")
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN reassign_capability_mismatch INTEGER DEFAULT 0")
-        if "revisions" not in task_cols:   # contract generation (Inv-1 revisions)
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN revisions INTEGER DEFAULT 0")
-        if "state_entered_at" not in task_cols:   # Inv-5's per-state clock (see save/load below)
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN state_entered_at TEXT")
-        check_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(check_results)")}
-        if "vacuous" not in check_cols:   # a green over an EMPTY subject is not the same green
-            self._conn.execute("ALTER TABLE check_results ADD COLUMN vacuous INTEGER DEFAULT 0")
-        audit_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(audit_log)")}
-        if "spec_json" not in audit_cols:   # Inv-7: the contract each ASSIGN installed
-            self._conn.execute("ALTER TABLE audit_log ADD COLUMN spec_json TEXT")
+        # Defensive migrations for DBs created before these columns existed. DATA, not twenty
+        # near-identical statements: every one of them is the same act — "if this table lacks this
+        # column, add it with this default" — and written out longhand the list is where a column
+        # gets added to the CREATE above and forgotten here, which is a database that opens and then
+        # fails on the first read of a field the code declares.
+        for table, column, decl in self._ADDITIVE_MIGRATIONS:
+            have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # === Serialization ===
 
@@ -318,12 +353,14 @@ class SqliteStorage(StoragePort):
     # === StoragePort ===
 
     def get_task(self, task_id: TaskId) -> Optional[Task]:
-        row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        with self._read() as c:
+            row = c.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return self._row_to_task(row) if row else None
 
     def save_task(self, task: Task) -> None:
-        self._conn.execute(
-            """INSERT OR REPLACE INTO tasks
+        with self._write() as c:
+            c.execute(
+                """INSERT OR REPLACE INTO tasks
                (id, spec_json, state, parent_id, assignee, iteration, max_iterations,
                 deadline, created_at, state_entered_at, done_reason, autonomy,
                 was_challenged, was_reassigned, false_positive, criterion_mappings_json, verified,
@@ -331,45 +368,47 @@ class SqliteStorage(StoragePort):
                 spec_defect_criteria_change, reassign_reason_typed, reassign_capability_mismatch,
                 revisions)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                task.id,
-                self._spec_to_json(task.spec),
-                task.state.name,
-                task.parent_id,
-                task.assignee,
-                task.iteration,
-                task.max_iterations,
-                task.deadline.isoformat() if task.deadline else None,
-                task.created_at.isoformat(),
-                task.state_entered_at.isoformat() if task.state_entered_at else None,
-                task.done_reason.name if task.done_reason else None,
-                task.autonomy.name,
-                int(task.was_challenged),
-                int(task.was_reassigned),
-                int(task.false_positive),
-                self._mappings_to_json(task.criterion_mappings),
-                int(task.verified),
-                task.reopens,
-                task.max_reopens,
-                int(task.reopened_from_pass),
-                int(task.spec_defect_criteria_change),
-                int(task.reassign_reason_typed),
-                int(task.reassign_capability_mismatch),
-                int(task.revisions),
-            ),
-        )
-        self._conn.commit()
+                (
+                    task.id,
+                    self._spec_to_json(task.spec),
+                    task.state.name,
+                    task.parent_id,
+                    task.assignee,
+                    task.iteration,
+                    task.max_iterations,
+                    task.deadline.isoformat() if task.deadline else None,
+                    task.created_at.isoformat(),
+                    task.state_entered_at.isoformat() if task.state_entered_at else None,
+                    task.done_reason.name if task.done_reason else None,
+                    task.autonomy.name,
+                    int(task.was_challenged),
+                    int(task.was_reassigned),
+                    int(task.false_positive),
+                    self._mappings_to_json(task.criterion_mappings),
+                    int(task.verified),
+                    task.reopens,
+                    task.max_reopens,
+                    int(task.reopened_from_pass),
+                    int(task.spec_defect_criteria_change),
+                    int(task.reassign_reason_typed),
+                    int(task.reassign_capability_mismatch),
+                    int(task.revisions),
+                ),
+            )
 
     def get_all_tasks(self) -> list[Task]:
-        rows = self._conn.execute("SELECT * FROM tasks").fetchall()
+        with self._read() as c:
+            rows = c.execute("SELECT * FROM tasks").fetchall()
         return [self._row_to_task(r) for r in rows]
 
     def get_children(self, task_id: TaskId) -> list[Task]:
-        rows = self._conn.execute("SELECT * FROM tasks WHERE parent_id = ?", (task_id,)).fetchall()
+        with self._read() as c:
+            rows = c.execute("SELECT * FROM tasks WHERE parent_id = ?", (task_id,)).fetchall()
         return [self._row_to_task(r) for r in rows]
 
     def get_parent(self, task_id: TaskId) -> Optional[Task]:
-        row = self._conn.execute("SELECT parent_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        with self._read() as c:
+            row = c.execute("SELECT parent_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if row and row["parent_id"]:
             return self.get_task(TaskId(row["parent_id"]))
         return None
@@ -377,141 +416,154 @@ class SqliteStorage(StoragePort):
     def get_active_tasks(self) -> list[Task]:
         terminal = tuple(s.name for s in TERMINAL_STATES)
         placeholders = ",".join("?" * len(terminal))
-        rows = self._conn.execute(
-            f"SELECT * FROM tasks WHERE state NOT IN ({placeholders})", terminal
-        ).fetchall()
+        with self._read() as c:
+            rows = c.execute(
+                f"SELECT * FROM tasks WHERE state NOT IN ({placeholders})", terminal
+            ).fetchall()
         return [self._row_to_task(r) for r in rows]
 
     def get_check_results(self, task_id: TaskId) -> list[CheckResult]:
-        rows = self._conn.execute(
-            "SELECT * FROM check_results WHERE task_id = ?", (task_id,)
-        ).fetchall()
+        with self._read() as c:
+            rows = c.execute(
+                "SELECT * FROM check_results WHERE task_id = ?", (task_id,)
+            ).fetchall()
         # `vacuous` rides the round trip: dropping it here would have made the distinction true in
         # memory and false a moment later, which is the "one field, two doors" defect in miniature.
         return [CheckResult(r["check_name"], bool(r["passed"]), r["details"], bool(r["skipped"]),
                             bool(r["vacuous"])) for r in rows]
 
     def store_check_results(self, task_id: TaskId, results: list[CheckResult]) -> None:
-        self._conn.execute("DELETE FROM check_results WHERE task_id = ?", (task_id,))
-        self._conn.executemany(
-            "INSERT INTO check_results (task_id, check_name, passed, details, skipped, vacuous) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [(task_id, r.check_name, int(r.passed), r.details, int(r.skipped), int(r.vacuous))
-             for r in results],
-        )
-        self._conn.commit()
+        # DELETE + INSERT is ONE mutation: a reader landing between them sees a node whose checks
+        # are an empty set, and a neighbouring thread's commit between them used to PUBLISH exactly
+        # that. `_write` is what makes the pair atomic.
+        with self._write() as c:
+            c.execute("DELETE FROM check_results WHERE task_id = ?", (task_id,))
+            c.executemany(
+                "INSERT INTO check_results (task_id, check_name, passed, details, skipped, vacuous) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [(task_id, r.check_name, int(r.passed), r.details, int(r.skipped), int(r.vacuous))
+                 for r in results],
+            )
 
     def get_recommendation(self, task_id: TaskId) -> Optional[Recommendation]:
-        row = self._conn.execute("SELECT * FROM recommendations WHERE task_id = ?", (task_id,)).fetchone()
+        with self._read() as c:
+            row = c.execute("SELECT * FROM recommendations WHERE task_id = ?", (task_id,)).fetchone()
         if row:
             return Recommendation(suggestions=tuple(json.loads(row["suggestions_json"])))
         return None
 
     def store_recommendation(self, task_id: TaskId, rec: Recommendation) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO recommendations (task_id, suggestions_json) VALUES (?, ?)",
-            (task_id, json.dumps(list(rec.suggestions))),
-        )
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO recommendations (task_id, suggestions_json) VALUES (?, ?)",
+                (task_id, json.dumps(list(rec.suggestions))),
+            )
 
     def add_dep_edge(self, edge: DepEdge) -> None:
-        self._conn.execute(
-            "INSERT INTO dep_edges (from_id, to_id, discovered, glue, provisional) VALUES (?, ?, ?, ?, ?)",
-            (edge.from_id, edge.to_id, int(edge.discovered), edge.glue, int(edge.provisional)),
-        )
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "INSERT INTO dep_edges (from_id, to_id, discovered, glue, provisional) VALUES (?, ?, ?, ?, ?)",
+                (edge.from_id, edge.to_id, int(edge.discovered), edge.glue, int(edge.provisional)),
+            )
 
     def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
-        self._conn.execute(
-            "DELETE FROM dep_edges WHERE from_id = ? AND to_id = ?", (from_id, to_id)
-        )
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "DELETE FROM dep_edges WHERE from_id = ? AND to_id = ?", (from_id, to_id)
+            )
 
     def get_dep_edges(self) -> list[DepEdge]:
-        rows = self._conn.execute("SELECT * FROM dep_edges").fetchall()
+        with self._read() as c:
+            rows = c.execute("SELECT * FROM dep_edges").fetchall()
         return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]),
                         r["glue"] or "", bool(r["provisional"])) for r in rows]
 
     def store_critique(self, task_id: TaskId, critique_json: str) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO critiques (task_id, critique_json) VALUES (?, ?)",
-            (task_id, critique_json),
-        )
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO critiques (task_id, critique_json) VALUES (?, ?)",
+                (task_id, critique_json),
+            )
 
     def get_critique(self, task_id: TaskId) -> Optional[str]:
-        row = self._conn.execute("SELECT critique_json FROM critiques WHERE task_id = ?", (task_id,)).fetchone()
+        with self._read() as c:
+            row = c.execute("SELECT critique_json FROM critiques WHERE task_id = ?", (task_id,)).fetchone()
         return row["critique_json"] if row else None
 
     def store_deliver_result(self, task_id: TaskId, result: str) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO deliver_results (task_id, result) VALUES (?, ?)",
-            (task_id, result))
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO deliver_results (task_id, result) VALUES (?, ?)",
+                (task_id, result))
 
     def get_deliver_result(self, task_id: TaskId) -> Optional[str]:
-        row = self._conn.execute(
-            "SELECT result FROM deliver_results WHERE task_id = ?", (task_id,)).fetchone()
+        with self._read() as c:
+            row = c.execute(
+                "SELECT result FROM deliver_results WHERE task_id = ?", (task_id,)).fetchone()
         return row["result"] if row else None
 
     def store_exec_verdict(self, task_id: TaskId, verdict_json: str) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO exec_verdicts (task_id, verdict_json) VALUES (?, ?)",
-            (task_id, verdict_json))
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO exec_verdicts (task_id, verdict_json) VALUES (?, ?)",
+                (task_id, verdict_json))
 
     def get_exec_verdict(self, task_id: TaskId) -> Optional[str]:
-        row = self._conn.execute(
-            "SELECT verdict_json FROM exec_verdicts WHERE task_id = ?", (task_id,)).fetchone()
+        with self._read() as c:
+            row = c.execute(
+                "SELECT verdict_json FROM exec_verdicts WHERE task_id = ?", (task_id,)).fetchone()
         return row["verdict_json"] if row else None
 
     def log_pipeline(self, ts: str, source: str, message: str) -> None:
-        self._conn.execute(
-            "INSERT INTO pipeline_log (ts, source, message) VALUES (?, ?, ?)", (ts, source, message))
-        # pragmatic cap (designs §6): keep the last 10k rows — one indexed delete, cheap per insert
-        self._conn.execute(
-            "DELETE FROM pipeline_log WHERE id <= (SELECT MAX(id) FROM pipeline_log) - 10000")
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "INSERT INTO pipeline_log (ts, source, message) VALUES (?, ?, ?)", (ts, source, message))
+            # pragmatic cap (designs §6): keep the last 10k rows — one indexed delete, cheap per insert
+            c.execute(
+                "DELETE FROM pipeline_log WHERE id <= (SELECT MAX(id) FROM pipeline_log) - 10000")
 
     def get_pipeline(self, limit: int = PIPELINE_PAGE) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT ts, source, message FROM "
-            "(SELECT * FROM pipeline_log ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
+        with self._read() as c:
+            rows = c.execute(
+                "SELECT ts, source, message FROM "
+                "(SELECT * FROM pipeline_log ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
         return [{"ts": r["ts"], "source": r["source"], "message": r["message"]} for r in rows]
 
     _USAGE_COLS = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens",
                    "cache_input_tokens", "cost_usd", "duration_ms")
 
     def log_usage(self, row: dict) -> None:
-        self._conn.execute(
-            f"INSERT INTO llm_usage ({', '.join(self._USAGE_COLS)}) "
-            f"VALUES ({', '.join('?' * len(self._USAGE_COLS))})",
-            tuple(row.get(c) if c in ("ts", "stage", "model", "node_id") else (row.get(c) or 0)
-                  for c in self._USAGE_COLS))
-        self._conn.commit()
+        with self._write() as conn:
+            conn.execute(
+                f"INSERT INTO llm_usage ({', '.join(self._USAGE_COLS)}) "
+                f"VALUES ({', '.join('?' * len(self._USAGE_COLS))})",
+                tuple(row.get(c) if c in ("ts", "stage", "model", "node_id") else (row.get(c) or 0)
+                      for c in self._USAGE_COLS))
 
     def get_usage(self, limit: int = USAGE_PAGE) -> list[dict]:
-        rows = self._conn.execute(
-            f"SELECT {', '.join(self._USAGE_COLS)} FROM "
-            f"(SELECT * FROM llm_usage ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
+        with self._read() as conn:
+            rows = conn.execute(
+                f"SELECT {', '.join(self._USAGE_COLS)} FROM "
+                f"(SELECT * FROM llm_usage ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
         return [{c: r[c] for c in self._USAGE_COLS} for r in rows]
 
     # === Audit log (Thm 11/Inv-7): APPEND-ONLY — insert + full ordered read, no update/delete path ===
 
     def append_audit(self, row: dict) -> None:
-        self._conn.execute(
-            "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
-            "rejected, error, source, reason, justification, result, failed_criteria_json, "
-            "action, in_flight, spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
-             json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
-             row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
-             json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight"),
-             row.get("spec")))
-        self._conn.commit()
+        with self._write() as c:
+            c.execute(
+                "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
+                "rejected, error, source, reason, justification, result, failed_criteria_json, "
+                "action, in_flight, spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
+                 json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
+                 row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
+                 json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight"),
+                 row.get("spec")))
 
     def load_audit(self) -> list[dict]:
-        rows = self._conn.execute("SELECT * FROM audit_log ORDER BY id ASC").fetchall()
+        with self._read() as c:
+            rows = c.execute("SELECT * FROM audit_log ORDER BY id ASC").fetchall()
         return [{
             "ts": r["ts"], "task_id": r["task_id"], "signal": r["signal"],
             "old_state": r["old_state"], "new_state": r["new_state"],

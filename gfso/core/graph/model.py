@@ -83,13 +83,6 @@ class Graph:
             if c.state not in (State.CANCELLING, State.ABANDONED)
         ]
 
-    def non_leaf_ids(self, children: list[Task]) -> set[str]:
-        """Which of these children decompose further — the fact CHECK-6 needs and a single split
-        does not carry (§13.4 quantifies over LEAVES). A node that splits is accountable through its
-        own children; demanding an executor for it reads Del as a label rather than as §10's
-        per-node accountability."""
-        return {str(c.id) for c in children if self.get_active_children(c.id)}
-
     def get_parent(self, task_id: TaskId) -> Optional[Task]:
         return self._storage.get_parent(task_id)
 
@@ -108,6 +101,33 @@ class Graph:
         ]
         edges.extend(self._storage.get_dep_edges())  # discovered (BLOCK) / legacy-stored
         return edges
+
+    def subtree(self, root_id: Optional[TaskId] = None) -> list[Task]:
+        """`root_id` and every node beneath it, by the parent edges the graph actually holds.
+
+        The relation, not the spelling: scoping by an id prefix is true of the graphs
+        `auto_decompose` builds and false of every graph built by hand, where a person names a node
+        `parser` and the engine records its parent perfectly well. The prefix is honoured as well,
+        so an id that spells its ancestry answers even before its parent edge exists.
+
+        Cancellation is excluded for the same reason `get_active_children` excludes it: a cancelled
+        node persists as provenance but has left the decomposition.
+        """
+        tasks = [t for t in self._storage.get_all_tasks()
+                 if t.state not in (State.CANCELLING, State.ABANDONED)]
+        if root_id is None:
+            return tasks
+        root, by_parent = str(root_id), {}
+        for t in tasks:
+            by_parent.setdefault(str(t.parent_id), []).append(t)
+        seen, frontier = {root}, [root]
+        while frontier:
+            for child in by_parent.get(frontier.pop(), []):
+                if str(child.id) not in seen:
+                    seen.add(str(child.id))
+                    frontier.append(str(child.id))
+        seen |= {str(t.id) for t in tasks if str(t.id).startswith(root + ".")}
+        return [t for t in tasks if str(t.id) in seen]
 
     def get_guard_context(self, task_id: TaskId) -> GuardContext:
         """What the FSM needs to decide a transition beyond the state itself: the rework counter and
@@ -291,3 +311,48 @@ class Graph:
 
     def store_recommendation(self, task_id: TaskId, rec: Recommendation) -> None:
         self._storage.store_recommendation(task_id, rec)
+
+
+def dep_scope(graph: Graph, root_id: TaskId) -> tuple[list, dict[str, object]]:
+    """The Dep pairs a node's plan checks quantify over, and the deadlines of their endpoints.
+
+    ONE owner, because there were two and they disagreed. The cached computation
+    (`Engine._recompute_checks`) handed the checks EVERY edge in the graph; the execution gate
+    (`validation._l0_holes`) handed them only edges with both endpoints among the node's direct
+    children. The checks themselves then silently dropped whatever fell outside the sibling set,
+    so a Dep edge between two nodes under DIFFERENT parents — the ordinary shape of a seam once
+    a plan has two branches — was examined by nobody: `list_holes` said `count: 0`, the plan gate
+    admitted execution, and `check_dag` over the whole graph named the very cycle those surfaces
+    called clean. The canon quantifies CHECK-2 and CHECK-3 over Dep itself (§13.4), so the
+    population is the SUBTREE: at the root that is the whole relation, and below it the seams
+    that decomposition owns. Reported at the node whose plan declares them.
+    """
+    inside = {str(t.id): t for t in graph.subtree(root_id)}
+    known = {str(t.id) for t in graph.subtree(None)}
+    edges = []
+    for e in graph.dep_edges():
+        ends = (str(e.from_id), str(e.to_id))
+        if all(x in inside for x in ends):
+            edges.append(e)
+        elif any(x in inside for x in ends) and not all(x in known for x in ends):
+            # A DANGLING endpoint is not "outside this population", it is a plan naming a producer
+            # that does not exist — the node's own defect, and the node's own checks must see it.
+            # Filtering purely on membership swallowed it: a criterion whose `depends_on` was a LIST
+            # (the malformed value that ended a live run) stringifies to an id no node has, so the
+            # edge silently left every population and the contract carrying it was stored clean.
+            # Skipping an edge because it is outside a subtree is right; skipping one because its
+            # endpoint is nowhere is the same "not examined by anybody" this function exists to end.
+            edges.append(e)
+    return edges, {i: t.deadline for i, t in inside.items()}
+
+
+def non_leaf_ids(graph: Graph, children: list[Task]) -> set[str]:
+    """Which of these children decompose further — the fact CHECK-6 needs and a single split does
+    not carry (§13.4 quantifies over LEAVES). A node that splits is accountable through its own
+    children; demanding an executor for it reads Del as a label rather than as §10's per-node
+    accountability.
+
+    A derived question over the public surface, so it lives beside the graph rather than on it: a
+    class that answers every question ABOUT a thing is how a facade stops being one.
+    """
+    return {str(c.id) for c in children if graph.get_active_children(c.id)}

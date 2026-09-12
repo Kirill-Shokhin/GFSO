@@ -45,6 +45,39 @@ def fail_names_this_contract(failed_criteria: Sequence[str],
     return [n for n in (str(f) for f in failed_criteria) if n not in known] if known else []
 
 
+def spoken_verdict(raw) -> str:
+    """A per-criterion verdict word, normalized ONCE — `pass` / `fail` / anything else, lower-case.
+
+    The schema declares `enum: ["pass","fail","undecidable"]` and the reply parser does not enforce
+    it, while the TOP-LEVEL verdict in the same JSON object is upper-case — an invitation to a model
+    to mix them. Five sites read this field and only one lowered it, so the same word decided
+    differently depending on which guard looked at it: with `"pass"` the probe-reality check
+    (`unrun_probes`) skipped the criterion and a PASS whose probe was never run was RECORDED, and
+    with `"FAIL"` a genuine refutation was refused for carrying no reproducible probe and thrown
+    away. One rule, one reader.
+    """
+    return str(raw if raw is not None else "").strip().lower()
+
+
+def decided_verdict(raw) -> str:
+    """The TOP-LEVEL verdict word, coerced to the enum or refused — never passed through as text.
+
+    Typed `str` and compared with `== Verdict.PASS`, a value in any other casing matched NEITHER
+    branch: every integrity check below fell through as a no-op, the string was stored verbatim, and
+    downstream nothing recognised it — the parent's AND never closed, no signal was ever sent, and
+    the node sat in VALIDATING for ever WITH a verdict record on it. A stopped run whose graph shows
+    a verdict. The human door has always coerced here (`tools._self_check_verdict`); the record did
+    not, and the record is where every door lands.
+    """
+    word = str(raw if raw is not None else "").strip().upper()
+    if word in (Verdict.PASS, Verdict.FAIL):
+        return Verdict[word]
+    raise ValueError(
+        f"not a verdict: {raw!r} is neither {Verdict.PASS} nor {Verdict.FAIL}. V is two-valued "
+        f"(§11.2) and a third word decides nothing — it would disarm every check that asks which "
+        f"of the two this is, and leave the node waiting for a signal nobody can send.")
+
+
 def verdict_report_defects(criteria: Sequence[str], verdict: str,
                            per_criterion: Sequence[Mapping],
                            failed_criteria: Sequence[str],
@@ -75,9 +108,14 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
     an execution happened. This is A1's decidability clause one level down: a criterion whose check
     cannot be re-run mechanically is not decided by this report.
     """
+    # …AND THE TOP-LEVEL WORD IS NORMALIZED HERE TOO, not trusted from the caller. The battery is
+    # what decides whether a report is a verdict at all; making its own comparisons depend on
+    # somebody upstream having coerced first is the shape where one guard moves and the other does
+    # not. A third word matches neither arm here and is refused at the record (`decided_verdict`).
+    verdict = str(verdict if verdict is not None else "").strip().upper()
     names = [str(c) for c in criteria]
     known = set(names)
-    spoken = {str(e.get("criterion")): str(e.get("verdict", "")).lower() for e in per_criterion}
+    spoken = {str(e.get("criterion")): spoken_verdict(e.get("verdict")) for e in per_criterion}
     defects = []
 
     for missing in [n for n in names if n not in spoken]:
@@ -120,7 +158,7 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
             # right and its FAIL was refused at the report level over empty `expect` fields, so bad
             # work went back looking accepted. A command with a stated verdict of `fail` and
             # evidence behind it is a probe; it is only a PASS that needs the expectation spelled.
-            _refuting = e.get("verdict") == "fail" and str(e.get("evidence", "")).strip()
+            _refuting = spoken_verdict(e.get("verdict")) == "fail" and str(e.get("evidence", "")).strip()
             good = [p for p in probes
                     if str(p.get("command", "")).strip()
                     and (str(p.get("expect", "")).strip() or _refuting)]
@@ -193,7 +231,7 @@ def unrun_probes(per_criterion: Sequence[Mapping], tools_used: Mapping | None) -
         return []
     out: list[str] = []
     for e in per_criterion or ():
-        if e.get("verdict") != "pass":
+        if spoken_verdict(e.get("verdict")) != "pass":
             continue
         raw = e.get("probe")
         probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
@@ -218,7 +256,7 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
         raw = e.get("probe")
         probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
                   else [raw] if isinstance(raw, Mapping) else [])
-        _refuting = e.get("verdict") == "fail" and str(e.get("evidence", "")).strip()
+        _refuting = spoken_verdict(e.get("verdict")) == "fail" and str(e.get("evidence", "")).strip()
         good = [p for p in probes
                 if str(p.get("command", "")).strip()
                 and (str(p.get("expect", "")).strip() or _refuting)]   # an absence has no `expect`

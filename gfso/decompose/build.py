@@ -154,6 +154,28 @@ def _children_that_changed(engine, rid, children, mappings, dropped: list) -> li
     return changed
 
 
+def refined_root_spec(existing: Spec, request: str, criteria: tuple, accepted_risks: tuple,
+                     scope: tuple, derived_name: str) -> Spec:
+    """The contract a REFINE round writes over an already-decomposed root — one named place.
+
+    The decomposer OWNS the root's criteria: it re-authors them to the derived V-set so the child
+    `covers` mappings resolve against real criteria. Everything the decomposer does NOT author is
+    carried across, and the list of those is the reason this is a function rather than a literal
+    inside the round: it was a hand-built `Spec(...)` in the middle of a 90-line routine, and it
+    silently dropped `risk_components` — the fourth POSITIONAL field, never passed, defaulted to
+    `()` on every refine.
+
+    The data loss was the smaller half. CHECK-5 (STD-3, §13.3 — a risk node per grouped component)
+    quantifies over exactly that tuple, so emptying it does not make the check FAIL, it makes it
+    VACUOUS. Probed end to end 2026-09-07: a root with two components reads `CHECK-5 … no children
+    to cover 2 risk components` (RED), and one refine later reads `no risk components defined`
+    (GREEN) — nothing covered, no child added. A rule true at zero X, and a step that makes the zero.
+    """
+    return Spec(existing.description or request, criteria, accepted_risks,
+                existing.risk_components, scope=scope,
+                name=existing.name or derived_name)
+
+
 def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
                       A: AgentId, max_iterations: int | None = None,
                       C: AgentId | None = None) -> tuple[Engine, TaskId, list[str]]:
@@ -191,8 +213,7 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
         # NAME and DESCRIPTION are their framing of the goal — PRESERVE them (only fall back to the derived
         # text if absent). Re-author is safe: revise retains the subtree (no cascade). IDEMPOTENT: an
         # unchanged contract emits no signal (a refine that didn't touch the root leaves it in place).
-        new_spec = Spec(existing.spec.description or request, root_crit, neg, scope=scp,
-                        name=existing.spec.name or d.get("name", ""))
+        new_spec = refined_root_spec(existing.spec, request, root_crit, neg, scp, d.get("name", ""))
         if new_spec != existing.spec:
             engine.revise(rid, new_spec, root_actor); engine.wait_idle()
             root_revised = True

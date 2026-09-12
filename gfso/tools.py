@@ -26,7 +26,6 @@ from gfso.core.protocol.validation import P2P_SIGNALS, Role
 from gfso.config import (MODEL_VALIDATOR_RETRY, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
                          agent_id as _config_agent_id)
 from gfso.engine import Engine
-from gfso.engine.validation import _l0_holes, _l2_undischarged, l2_gate_on
 
 
 # The entry verbs whose result should tell the caller WHERE TO LOOK. Kept here, on the verb surface
@@ -116,7 +115,28 @@ def _dep_of(c: dict) -> Optional[TaskId]:
     return TaskId(dep)
 
 
+#: Packet fields Inv-1 names that a SPEC dict cannot carry, and what does carry them. A change to
+#: any of these is a revision (§14.4), so a caller putting one here has decided something real —
+#: and the reader used to drop it without a word. Probed 2026-09-07: a revision passing a new
+#: `deadline` was ACCEPTED (the node went to OFFERED, the executor re-consented) and the deadline
+#: did not move. A verb that accepts a decision and discards it is worse than one that refuses.
+#: `deadline` has no carrier yet at all — the parameter is missing from every authoring verb and
+#: `MutateGraph(APPLY_SPEC)` has nowhere to put it — which is why this names the absence instead of
+#: papering over it: half the canon's clocks (CHECK-3, §3.4 item 6) are vacuous without it.
+_NOT_IN_A_SPEC = {
+    "deadline": "pass it as the verb's own `deadline` argument — `revise(..., deadline=…)` moves "
+                "it (Inv-1), a spec dict does not",
+    "assignee": "use `reassign` — a Del change is its own revision (§14.4, counted by q_Del)",
+    "del": "use `reassign`",
+}
+
+
 def _spec_from(d: dict) -> Spec:
+    if strays := [k for k in _NOT_IN_A_SPEC if k in d]:
+        raise ValueError(
+            "a spec cannot carry " + ", ".join(f"`{k}` ({_NOT_IN_A_SPEC[k]})" for k in strays)
+            + ". Nothing was applied: the rest of this call would have gone through and that field "
+              "would have been dropped in silence.")
     crits = tuple(Criteria(c["name"], c.get("description", ""), depends_on=_dep_of(c))
                   for c in d.get("criteria", []))
     # `scope` is read here, not only written back in `_task_out`: without it the agent's door could
@@ -169,11 +189,10 @@ def _task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
         # plan is admitted" while `review_decomposition` was answering `execution_admitted: false`
         # about the same node in the same minute, and only that verb's payload carried the
         # disclaimer (measured on the human door 2026-08-22). Two surfaces, one fact.
-        if engine is not None and (_open := engine.open_l2_findings(t.id)):
-            out["execution_admitted"] = False
-            out["l2_open"] = _open
-        elif engine is not None:
-            out["execution_admitted"] = t.verified
+        if engine is not None:
+            out["execution_admitted"] = engine.execution_admitted(t.id)
+            if _open := engine.open_l2_findings(t.id):
+                out["l2_open"] = _open
     return out
 
 
@@ -240,7 +259,7 @@ def get_review(engine: Engine, task_id: str) -> dict:
                                  "checker to run. It is not a verdict on the plan — that is "
                                  "`execution_admitted`, and the two disagree whenever the checker "
                                  "ran and returned findings."),
-           "execution_admitted": bool(t.verified and not open_findings),
+           "execution_admitted": engine.execution_admitted(t.id),
            "open_findings": open_findings,       # null = no current review to be open against
            "dispute_keys": open_findings or [],  # pass one of these verbatim as `criterion`
            }
@@ -655,29 +674,59 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
     Its own function because the affordance surface has to model three gates (the plan's §13.4, the
     seam's §14.5, and the internal node's own self-check) and every one of them was added after a
     live run found the surface offering what the machine then rejected."""
-    gate_note = None
+    # EVERY REASON, NOT THE LAST ONE WRITTEN. This was a single slot each branch overwrote, so a
+    # node under two gates answered with whichever fired last in source order: a delivered parent
+    # with open children carried the conjunction's note and lost the one saying `revise` is what
+    # sends the ASSIGN beside it. The gates are independent facts about the same node — which is
+    # the whole reason `_gated_out` has more than one — so the answer is their conjunction too.
+    #
+    # Two lists, because ORDER is the second half of it. A note that says "this signal is gone and
+    # here is what opens it" is what a caller acts on; a note that only explains a signal still on
+    # offer is context. Joined in source order the context led — a delivered parent answered with a
+    # paragraph about ASSIGN before the sentence saying why PASS had been withheld. Removals first,
+    # then context, separated so the answer reads as a list rather than one run-on paragraph.
+    notes: list[str] = []          # a signal was TAKEN OUT of the list — say which, and what opens it
+    asides: list[str] = []         # the signal stays, but its name does not say what it does
+    # …and the same fact STRUCTURALLY, keyed by the signal it is about. The prose is for a person;
+    # this is for anything that has to ASK whether a particular signal was withheld and why. A test
+    # written to check that every withheld signal is explained had to substring-match the joined
+    # note, and every note about a VALIDATING node ends by saying "FAIL is open to you" — so a
+    # defect that silently dropped FAIL was excused by a sentence asserting FAIL was available.
+    # A note that MENTIONS a signal is not a note that names it as withheld, and only the code that
+    # removed it knows which of the two it wrote.
+    withheld: dict[str, str] = {}
+
+    def _drop(sig: str, why: str) -> None:
+        notes.append(why)
+        withheld[sig] = why
     # …and the PLAN gate, which this verb did not model at all: measured live, it offered ACCEPT on a
     # child whose parent's plan had no current Level-2 verdict, and the signal was refused (§13.4).
-    if Signal.DELIVER.name in acts and (_open := [c.id for c in engine.get_active_children(t.id)
-                                                 if not passed(c)]):
+    if Signal.DELIVER.name in acts and (_open := (engine.pass_blocked_by(TaskId(task_id)) or {}
+                                                 ).get("unpassed")):
         # A PARENT DELIVERS ITS CHILDREN'S AGGREGATE (Thm 1), so delivering while they are unfinished
         # only parks it: no validator will judge it (a verdict would be refused at the gate), its own
         # PASS is refused too, and the node then sits in VALIDATING outside the frontier. Measured on
         # the human door 2026-08-21: offered here, accepted by the FSM, and the node was gone from
         # `next_steps` for an hour. The signal stays admissible where §14.3 admits it; what stops is
         # this surface RECOMMENDING it.
+        # …AND IT ASKS THE ENGINE, like the PASS gate below. This branch kept its own copy of the
+        # child conjunction after that one stopped re-deriving it, so the count of hand-written
+        # spellings went three to two rather than three to one — which is why `pass_blocked_by`
+        # returns the offending ids as `unpassed` rather than only a sentence.
         acts = [a for a in acts if a != Signal.DELIVER.name]
-        gate_note = (f"DELIVER is not the move yet: {task_id} aggregates children that have not "
-                     f"passed ({', '.join(str(c) for c in _open)}), and a parent's verdict is the "
-                     f"AND over them (Thm 1). Delivering now parks it in VALIDATING — no verdict can "
-                     f"be given, and its own PASS is refused. Drive those children first.")
+        _drop(Signal.DELIVER.name,
+              f"DELIVER is not the move yet: {task_id} aggregates children that have not passed "
+              f"({', '.join(str(c) for c in _open)}), and a parent's verdict is the AND over them "
+              f"(Thm 1). Delivering now parks it in VALIDATING — no verdict can be given, and its "
+              f"own PASS is refused. Drive those children first.")
     if "ACCEPT" in acts:
         if (_shut := engine.execution_blocked_by(TaskId(task_id))) is not None:
             acts = [a for a in acts if a != "ACCEPT"]
-            gate_note = (f"ACCEPT is not open yet: this node's parent ('{_shut['parent_id']}') has a "
-                         f"plan that is not admitted to execution (§13.4) — {_shut['why']}. "
-                         f"{_shut['opens_with']}. The signal would be refused, and the executor's "
-                         f"work with it.")
+            _drop("ACCEPT",
+                  f"ACCEPT is not open yet: this node's parent ('{_shut['parent_id']}') has a plan "
+                  f"that is not admitted to execution (§13.4) — {_shut['why']}. "
+                  f"{_shut['opens_with']}. The signal would be refused, and the executor's work "
+                  f"with it.")
     if (Signal.ASSIGN.name in acts and t.state.name in ("DONE", "ABANDONED")
             and _reopen_gate(engine, t) is None):
         # …AND WHEN IT IS OPEN, SAY WHAT IT IS. On a finished root the ONLY action offered was the
@@ -686,10 +735,30 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
         # re-delivery and a $0.60 opus re-validation (measured on the human door 2026-08-22). The
         # signal is legitimately open there (R′ rides on it, §14.3); what was missing is that its
         # name says nothing about what it does to a node that is already finished.
-        gate_note = (f"ASSIGN on {task_id} is a REOPEN (R′, §14.3), not a no-op: it returns a "
+        asides.append(f"ASSIGN on {task_id} is a REOPEN (R′, §14.3), not a no-op: it returns a "
                      f"finished node to OFFERED, its verdict is GONE (re-earned by fresh contact) "
                      f"and one of its {t.max_reopens} reopens is spent. `reopen` is the same act "
                      f"under its own name, and `revise` is it with a new contract.")
+    if Signal.ASSIGN.name in acts and t.state.name not in ("DONE", "ABANDONED", "IDLE"):
+        # …AND ON A LIVE NODE, SAY WHICH DOOR PERFORMS IT. A re-ASSIGN here is a REVISION (Inv-1),
+        # and the FSM admits it only with a packet: `fsm.py` takes this edge on
+        # `signal_data.spec is not None`. The `signal` verb has no `spec` parameter at all, so
+        # `signal <node> ASSIGN` is refused by the guard on EVERY reassignable node — the surface
+        # names an action whose door cannot carry it. Probed 2026-09-07 across OFFERED, EXECUTING
+        # and VALIDATING: refused every time, with a sentence about a precondition rather than
+        # about the missing contract. The signal stays listed because it IS admissible (that is
+        # what a revision is); what was missing is the verb that sends it — the same repair the
+        # terminal case above already had.
+        asides.append(f"ASSIGN on {task_id} is a REVISION (a re-ASSIGN under the same id, Inv-1): it "
+                     f"returns the node to OFFERED with a NEW contract, which the executor then "
+                     f"re-consents to. It carries that contract, so `signal` cannot send it — "
+                     f"`revise('{task_id}', …)` is its door for criteria, deadline and "
+                     # …AND NOT FOR Del, WHICH THIS SENTENCE FIRST GOT WRONG. `_spec_from` refuses
+                     # `assignee` in a spec by name and sends the caller to `reassign` (a Del change
+                     # is its own revision, §14.4, and q_Del counts it) — so a note whose whole job
+                     # is naming the door that performs the act named the one that refuses it.
+                     f"accepted_risks; a Del change is `reassign` (its own revision, §14.4, counted "
+                     f"by q_Del). Either way a revision does not cascade and the subtree is kept.")
     if Signal.ASSIGN.name in acts and (shut := _reopen_gate(engine, t)) is not None and t.state.name in (
             "DONE", "ABANDONED"):
         # A terminal node lists ASSIGN because §14.3's R′ edge rides on it — but the edge is
@@ -698,16 +767,51 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
         # consumed child: `reopen` explained itself perfectly and the affordance list beside it still
         # said ASSIGN.
         acts = [a for a in acts if a != Signal.ASSIGN.name]
-        gate_note = shut["error"]
-    if (Signal.PASS.name in acts and t.assignee == AgentId(who) and not engine.is_seam(t)
+        _drop(Signal.ASSIGN.name, shut["error"])
+    if Signal.PASS.name in acts and (_shut_pass := engine.pass_blocked_by(TaskId(task_id))):
+        # THE CONJUNCTION ITSELF — the one standing rule of the machine this surface did not model.
+        # The two PASS gates below ask WHO may sign and whether a verdict for this delivery exists;
+        # neither asks the prior question Thm 1 (§11.1) settles: a parent's PASS *is* the AND over
+        # its children, so with any child unsettled the engine refuses outright
+        # (`engine/validation.py`, "cannot PASS …: not all children have PASSed"). Probed
+        # 2026-09-07: a root delivered with both children still OFFERED, a PASS verdict recorded,
+        # `available_actions` answering `['PASS', 'FAIL', 'CANCEL', 'ASSIGN']` with no `gate` — and
+        # the signal refused `by rule`. It surfaced while building the class instrument for
+        # "a node in a state with no exit": the sweep's crude half stayed true precisely because
+        # this surface advertised the refused signal. Fourth instance of surface ≠ machine.
+        # The two PASS gates below stay quiet once this one fires — they are guarded on PASS
+        # still being in `acts` — so this note is the one that reaches a reader, which is right:
+        # no verdict and no signer question can open a PASS the machine refuses outright.
+        # …AND IT IS THE ENGINE'S ANSWER, NOT A COPY OF IT. The first spelling re-derived the child
+        # conjunction here with the same comprehension `engine/validation.py` uses, making three
+        # hand-written copies of one rule — the very duplication the neighbouring repairs remove —
+        # and it modelled only that one of the engine's two who-independent PASS rules. The other
+        # (the node's OWN plan gone red, §13.4) stayed unmodelled, so a parent whose children had
+        # all settled under a broken decomposition was still offered a PASS the engine refuses.
+        # `Engine.pass_blocked_by` is now the owner of both, exactly as `execution_blocked_by` is
+        # for the plan gate on ACCEPT.
+        acts = [a for a in acts if a != Signal.PASS.name]
+        _drop(Signal.PASS.name,
+              f"PASS is not open yet: {task_id} — {_shut_pass['why']}. The engine refuses this "
+              f"signal by rule, whoever signs and whatever verdict is on the record. "
+              f"{_shut_pass['opens_with'][:1].upper()}{_shut_pass['opens_with'][1:]}. FAIL is open "
+              f"to you: refusing an aggregate that is not there needs no conjunction.")
+    # …WHOEVER ASKS, exactly as the seam filter below. This carried `t.assignee == AgentId(who)`,
+    # mirroring an engine guard that itself keyed on the signer — and when that keying was removed
+    # from the engine, this copy kept it. Probed: an internal node with no record answers `['PASS',
+    # 'FAIL']` to a roster validator and to the UI's any-role view, with `gate: None` and `withheld:
+    # {}`, while the engine refuses PASS to everyone. Half a mirror, for the third time in two days
+    # (the seam filter, `_roles_of`, and now this) — the same defect the fix beside it closes.
+    if (Signal.PASS.name in acts and not engine.is_seam(t)
             and not verdict_is_current_pass(engine.get_exec_verdict(TaskId(task_id)), t)):
         # …and the INTERNAL node's own rule, which this surface has to model too. Such a node
         # self-verifies rather than being judged independently (§14.5 D6) — but through the check its
         # DELIVER carries, and a PASS with nothing behind it is ⊥ (§11.2). Offering PASS here while
         # the machine refuses it is the same lie the seam case was fixed for.
         acts = [a for a in acts if a != Signal.PASS.name]
-        gate_note = (f"PASS is not open yet: {task_id} is INTERNAL (same Del as its parent), so it "
-                     f"self-verifies — but nothing says what was checked for this delivery. "
+        _drop(Signal.PASS.name,
+              f"PASS is not open yet: {task_id} is INTERNAL (same Del as its parent), so it "
+              f"self-verifies — but nothing says what was checked for this delivery. "
                      f"`record_verdict('{task_id}', 'PASS', observed={{…}})` with what you ran and "
                      f"what it printed, then signal; a DELIVER carrying `self_validation` records it "
                      f"for you. FAIL is open to you: refusing your own work needs no check."
@@ -717,8 +821,7 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
                         f"contradicting it (`next_steps` reports that as `refuted_passes`). Waiting "
                         f"costs a minute; the other way costs the node."
                         if engine.validation_in_flight(TaskId(task_id)) else ""))
-    if (Signal.PASS.name in acts and engine.is_seam(t)
-            and not engine.signs_as_instrument(who)):
+    if Signal.PASS.name in acts and engine.is_seam(t):
         # THE SEAM'S RULE, WHOEVER ASKS. This mirrored the engine's old shape — it dropped PASS only
         # for the node's own executor — so on a delegated node it advertised PASS to the issuer with
         # no verdict on the record and none of the fields this verb documents. Measured on the agent
@@ -726,22 +829,32 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
         # DONE over a STALE FAIL while its validator was still running. The surface follows the
         # machine: at a seam the question is whether a verdict for THIS delivery exists, not who is
         # holding the pen (`engine.current_exec_verdict` is the one owner of that question).
+        # …AND THE CONDITION SAID OTHERWISE UNTIL 2026-09-07. It carried `and not
+        # engine.signs_as_instrument(who)`, exempting anyone on the validator roster — the exact
+        # "who is holding the pen" reading the sentence above rejects, sitting one line under it.
+        # The engine has never had that exemption: its own branch computes `_on_roster` and then
+        # requires a current record regardless (`engine/validation.py`, the `is_public` branch),
+        # because an id on a roster is a CLAIM about who signs and the record is the evidence that
+        # judging happened. Probed: a roster member asking on a delivered root with no verdict was
+        # answered `['PASS', 'FAIL', 'CANCEL', 'ASSIGN']` with no `gate` at all, and the signal was
+        # then refused by rule. Dropping the exemption loses nothing legitimate — every instrument
+        # path records its verdict before it signs, so a real validator passes this test already.
         rec = engine.current_exec_verdict(TaskId(task_id))
         if rec is None or rec.get("verdict") != Verdict.PASS:
             acts = [a for a in acts if a != Signal.PASS.name]
             _mine = t.assignee == AgentId(who)
             _state = ("no verdict for this delivery is on the record" if rec is None
                       else f"the recorded verdict is {rec.get('verdict')}, not PASS")
-            gate_note = (f"PASS is not open here: {task_id} is a SEAM (a root, or its Del differs "
-                         f"from its parent's), where the result is judged in the scope it crosses "
-                         f"into (§14.5) — and {_state}. `validate_result('{task_id}', workdir=…)` "
-                         f"runs the instrument, or `record_verdict('{task_id}', 'PASS', "
-                         f"observed={{…}})` puts what YOU observed on the record; then signal. FAIL "
-                         f"is open"
-                         + (" to you: refusing your own work needs no second opinion "
-                            "(verifier ≠ executor, §14.5, is about the PASS)."
-                            if _mine else ": a refusal needs no independent verdict."))
-    return acts, gate_note
+            _drop(Signal.PASS.name,
+                  f"PASS is not open here: {task_id} is a SEAM (a root, or its Del differs from "
+                  f"its parent's), where the result is judged in the scope it crosses into "
+                  f"(§14.5) — and {_state}. `validate_result('{task_id}', workdir=…)` runs the "
+                  f"instrument, or `record_verdict('{task_id}', 'PASS', observed={{…}})` puts what "
+                  f"YOU observed on the record; then signal. FAIL is open"
+                  + (" to you: refusing your own work needs no second opinion "
+                     "(verifier ≠ executor, §14.5, is about the PASS)."
+                     if _mine else ": a refusal needs no independent verdict."))
+    return acts, ("  ·  ".join(notes + asides) or None), withheld
 
 
 def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None) -> dict:
@@ -770,10 +883,15 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
     # …and what the SEAM would refuse comes out of the list, with the reason. Listing PASS where the
     # verifier ≠ executor gate rejects it is the same lie in the other direction: the affordance
     # surface must agree with the machine, in both directions (§14.5).
-    acts, gate_note = _gated_out(engine, t, task_id, who, acts)
+    acts, gate_note, withheld = _gated_out(engine, t, task_id, who, acts)
     out = {"task_id": task_id, "state": t.state.name, "actions": acts}
     if gate_note:
         out["gate"] = gate_note
+    if withheld:
+        # The same thing keyed by signal: `gate` is the sentence a person reads, `withheld` is what
+        # anything else has to ask — which signal was taken out, and why. Both come from one place,
+        # so they cannot say different things.
+        out["withheld"] = withheld
     if not acts and gate_note:
         # THE GATE ALREADY SAID IT. When a gate emptied the list, the generic "why nothing is open"
         # below explains the ROLE rules instead — true in general and wrong about this node, which
@@ -1138,8 +1256,26 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
             for c in children]
     declared = [CriterionMapping(name, TaskId(c["task_id"]))
                 for c in children for name in (c.get("covers") or ())]
-    maps = ([CriterionMapping(m["criterion_name"], TaskId(m["child_id"])) for m in (mappings or [])]
-            + declared) or None
+    # THIS VERB ADDS CHILDREN; IT DOES NOT RE-AUTHOR THE PARENT'S COVERAGE. `decompose_task` reads a
+    # non-None mapping list as the FULL set and prunes everything else — right for the refine path,
+    # which passes the whole set, and wrong here, where the list is built from the children of THIS
+    # call alone. So a second `decompose` adding one child unmapped every child added before it:
+    # measured, `CHECK-1: uncovered criteria: a` and `CHECK-1b: children addressing no parent
+    # criterion: k1` immediately after a call that only added `k2` — and those orphaned children can
+    # no longer start, because their parent's plan stops passing Level 0. The `children=[]` refusal
+    # above was written for exactly this damage and guards only the empty spelling. Merging with what
+    # the parent already carries is what "adds children" means; removing a pair is `edit_criteria`
+    # (which re-authors the contract) or `map_criterion` (which binds one).
+    _parent = engine.get_task(TaskId(parent_id))
+    _existing = list(_parent.criterion_mappings) if _parent is not None else []
+    _new = ([CriterionMapping(m["criterion_name"], TaskId(m["child_id"])) for m in (mappings or [])]
+            + declared)
+    _pairs, maps = set(), []
+    for m in _existing + _new:
+        if (m.criterion_name, str(m.child_id)) not in _pairs:
+            _pairs.add((m.criterion_name, str(m.child_id)))
+            maps.append(m)
+    maps = maps or None
     # The rework bound rides the ASSIGN of every child: §14.3 bounds the DELIVER→FAIL loop and
     # §26.9(b) states no failure mode pins the number, so it is a term of the CONTRACT chosen per
     # decomposition — not a property of whichever process happens to be serving.
@@ -1218,7 +1354,8 @@ def _contract_moved_under_you(before, expect_criteria) -> Optional[dict]:
 
 def revise(engine: Engine, task_id: str, spec: dict, agent: str,
            reason: Optional[str] = None,
-           expect_criteria: Optional[list] = None) -> Optional[dict]:
+           expect_criteria: Optional[list] = None,
+           deadline: Optional[str] = None) -> Optional[dict]:
     """Revise a node's whole spec. Canon v3.7 Inv-1: a spec change = re-ASSIGN under the SAME id → OFFERED
     (NOT a CANCEL — no cascade, no tombstone; the executor re-ACCEPTs the new contract). The subtree is
     RETAINED (revision ≠ abandonment); if a criteria change strands a child's coverage it shows up as a
@@ -1258,7 +1395,7 @@ def revise(engine: Engine, task_id: str, spec: dict, agent: str,
                     # reaching the FSM and being told no is a successful call — and stay 200.
                     "refused": True, "would_delete": _loses}
     return _task_out(engine.revise(TaskId(task_id), _spec_from(spec), AgentId(agent),
-                                   reason=_reason_from(reason)))
+                                   reason=_reason_from(reason), deadline=_deadline(deadline)))
 
 
 def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
@@ -2011,7 +2148,24 @@ def record_verdict(engine: Engine, task_id: str, verdict: str,
                          f"(`edit_criteria`) and judge those.",
                 "criteria": []}
     if verdict == Verdict.PASS and _t is not None:
+        # A GLUE CRITERION IS NOT SOMETHING THE EXECUTOR OBSERVES — its truth is the producer's
+        # passing — so it is excluded from what a PASS must speak to. But a node whose criteria are
+        # ALL glue has nothing of its own left to observe, and the floor then passes over an empty
+        # requirement: the rule that is vacuously true at zero X, which is the rule's absence
+        # wearing its name. Reproduced 2026-09-07: `edit_criteria(B, [])` wiped the contract, the
+        # engine kept the `dep__A` criterion it had authored itself, and a PASS observing nothing
+        # met a floor that asked for nothing. That is a defect of the CONTRACT, not of the verdict,
+        # so it is named as one rather than papered over by demanding evidence for the glue.
         _need = [c.name for c in _t.spec.criteria if not c.depends_on]
+        if not _need:
+            return {"recorded": False,
+                    "error": f"{task_id} carries no obligation of its own: every criterion it has "
+                             f"is a dependency link the engine authored ("
+                             + ", ".join(c.name for c in _t.spec.criteria) +
+                             f"), so there is nothing a PASS could report having observed. A "
+                             f"verdict cannot repair a contract — give the node criteria of its "
+                             f"own (`edit_criteria`), or remove it if the work belongs elsewhere.",
+                    "criteria": [c.name for c in _t.spec.criteria]}
         _said = {k for k, v in (observed or {}).items() if str(v).strip()}
         # …AND AN OBSERVATION THAT RESTATES THE VERDICT IS NOT ONE. Treated as unsaid, so the refusal
         # below names it in the same breath as one that was left out entirely — which is what it is.

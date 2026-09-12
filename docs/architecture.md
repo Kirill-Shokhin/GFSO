@@ -300,6 +300,10 @@ gfso/
 
   decompose/ · critic/ · delegate.py · runtime.py   ← L2: the AI product (search↔audit monada,
                             # L2 validate, registry+dispatcher, DI/llm_factory/ProjectRegistry)
+  config.py · places.py     ← leaves with NO gfso imports, readable from anywhere: the settings
+                            # vocabulary, and where a path is (is it cheap to stat, what is its
+                            # normal form, do two spellings name one place). Both exist so a rule
+                            # kept in two layers cannot move in one of them.
   mcp/ · api/ · web/ · cli.py · driver.py · main.py ← binding: the doors (generated from tools_llm.TOOLS).
                             # api/server.py mounts one concern at a time — pages · reads · acts ·
                             # ledgers · lifecycle · runtime · events — rather than one body of routes;
@@ -322,6 +326,7 @@ core/            → core/ only          (hermetic; stdlib-only)
 engine/          → core/ + engine/     (the ONE framework edge)
 tools.py         → core/ + engine/     (structural surface — no LLM, no adapters)
 adapters/        → core/ + adapters/   (port implementations, and each other)
+config.py|places.py → NOTHING (gfso-import-free leaves; admissible from any layer)
 decompose|critic|delegate|runtime|tools_llm → anything below binding
 mcp|api|web|cli|driver|main|doctor     → everything (and NOTHING below imports them)
 ```
@@ -358,7 +363,7 @@ what runs here is an approximation to it, not the level itself. (The collision f
 naming-overhaul; until then this section is the disambiguation.)
 
 Level 2 is NOT one component — it is one FUNCTION with four deliberate surfaces, split by
-the QUESTION each asks. Two prior designs are deliberately dead: the monolithic analyst⊥judge
+the QUESTION each asks. Two prior designs are deliberately dead: the monolithic analyst⊥validator
 critic (E2-refuted: polices form, cannot move content) and the SEARCH-in-diff-mode hole-hunt
 as the standalone verb (the opposite extreme — "what is missing" is the DECOMPOSER's question;
 it lives in refine and only there):

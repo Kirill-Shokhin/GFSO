@@ -12,7 +12,7 @@ import gfso.delegate as D
 from gfso import tools as T
 from gfso.core.types import (CriterionMapping, State, Signal,
                              SignalData, TaskId, AgentId, Verdict)
-from tests.support import make_engine, spec
+from tests.support import make_engine, spec, reviewer_passes
 from gfso.delegate import Dispatcher, AgentRegistry
 
 
@@ -98,7 +98,7 @@ def test_root_self_pass_still_gated(engine):
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("solo"), source=AgentId("agent")))
     engine.wait_idle()
     assert engine.get_state(TaskId("solo")) == State.VALIDATING  # rejected without a verdict
-    engine.record_reviewer_verdict(TaskId("solo"), "PASS", [], "reviewer")
+    reviewer_passes(engine, TaskId("solo"))
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("solo"), source=AgentId("agent")))
     engine.wait_idle()
     assert engine.get_state(TaskId("solo")) == State.DONE

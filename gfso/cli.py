@@ -225,7 +225,18 @@ def _dispatch(args) -> None:
         # Non-zero when it DECLINED to reconcile: `gfso up && …` could not otherwise tell a server
         # that is now current from one left stale because somebody else is working on it.
         try:
-            sys.exit(1 if ensure_correct(force=args.force)["action"] == "left-alone" else 0)
+            # …AND IT SAYS WHY, which it did not. `gfso up` exited 1 in total silence: the
+            # branch a caller hits most (`GFSO_NO_RECONCILE`) returned without printing anything at
+            # all, and the exit code was the whole of the answer — read, on this repository's own
+            # server, as "another session is connected" when it was nothing of the sort.
+            # The repair is in `connect.ensure_correct`, not here: every outcome now narrates
+            # through one owner (`_left_alone`, plus the verbose summary) AND carries the sentence
+            # in what it RETURNS, so a caller that is not a terminal can read it too. A print here
+            # as well was tried and removed — `verbose` already emits the identical line, so the
+            # door said everything twice and the drift three times, and silencing `verbose` to stop
+            # that also swallowed the "did not come up, retrying" progress lines.
+            _out = ensure_correct(force=args.force)
+            sys.exit(1 if _out["action"] == "left-alone" else 0)
         except RuntimeError as ex:      # the server did not come up: say so, do not throw a stack
             sys.exit(f"gfso: {ex}")
     elif args.command == "down":
@@ -299,8 +310,13 @@ def _projects(args):
     names = [n for n in out.get("projects", []) if not args.match or args.match in n]
     shown = names if not args.n else names[:args.n]
     active = out.get("active")
-    print(f"{len(names)} project(s), most recently worked in first"
-          + (f" (showing {len(shown)})" if len(shown) < len(names) else "") + ":")
+    # THE TOTAL IS THE SERVER'S, not the length of the page it sent. The endpoint pages (a full list
+    # was 19KB), so this printed "50 project(s)" on an installation holding a hundred — a count that
+    # answers "how many did you send me" while reading as "how much do I have".
+    total = out.get("total") if not args.match else len(names)
+    total = len(names) if total is None else total
+    print(f"{total} project(s), most recently worked in first"
+          + (f" (showing {len(shown)})" if len(shown) < total else "") + ":")
     for n in shown:
         print(f"  {'*' if n == active else ' '} {n}")
     print("\n  * = the server's active project. Every `gfso run` verb takes `project=<name>`; "

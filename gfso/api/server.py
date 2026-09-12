@@ -780,8 +780,18 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
         """Hash of the agent registry AS LOADED BY THIS PROCESS."""
         return _AGENTS_VERSION
 
+    # ASYNC ON PURPOSE — these two answer the questions everything else is guarded BY, and a sync
+    # handler occupies one of the threadpool's limited threads. Every verb route is sync and some of
+    # them run for minutes (`auto_decompose`, `validate_result`, a delegated execution), so under a
+    # busy graph these queued behind them: measured on a separate app, `/api/runtime` took 14 s
+    # against a 3 s client timeout while the lease grace is 12 s. What that unlocked, all at once:
+    # `/api/shutdown` stops answering 409 and the server can be stopped with work in flight; the
+    # dispatcher stops spawning for a role whose owner's lease has lapsed; and `foreign_holder()`
+    # reads a slow answer as "something else is on this port" and a new session gets no tools.
+    # Neither handler blocks — one reads process-scoped switches, the other stamps a dict — so they
+    # belong on the event loop, where a busy threadpool cannot delay them.
     @app.get("/api/runtime")
-    def get_runtime():
+    async def get_runtime():
         """The switches that are PROCESS-scoped, so a client can see what this server actually does.
 
         Both change behaviour a caller would otherwise have to infer from silence: with
@@ -870,7 +880,7 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
         return list(app.state.leases)
 
     @app.post("/api/lease")
-    def renew_lease(body: dict = Body(...)):
+    async def renew_lease(body: dict = Body(...)):
         """Heartbeat one session's claim on this process (`id` in the body), good for about twelve
         seconds. Everything that could interrupt somebody — `/api/shutdown`, the reaper, a
         reconcile — counts these leases, so a client that stops calling is what makes the server

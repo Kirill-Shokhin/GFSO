@@ -21,7 +21,7 @@ from gfso.core.types import (
     State, Signal, SignalData, TaskId, AgentId, Spec, Criteria, CriterionMapping,
 )
 from gfso.engine.validation import ValidationError, validate_signal
-from tests.support import make_engine
+from tests.support import make_engine, reviewer_passes
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +63,7 @@ def _refuted(e: Engine, root_criterion="rc", description="rc description"):
     ):
         e.send_signal(sd)
         e.wait_idle()
-    e.record_reviewer_verdict(TaskId("ch"), "PASS", [], "reviewer")
+    reviewer_passes(e, TaskId("ch"))
     e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("ch"), source=AgentId("pm")))
     e.wait_idle()
     for sd in (

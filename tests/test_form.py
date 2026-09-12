@@ -36,6 +36,15 @@ _ROOT = Path(os.environ.get("GFSO_REPO") or Path(__file__).resolve().parent.pare
 PKG = _ROOT / "gfso"
 TESTS = _ROOT / "tests"
 SIZE_LIMIT = 40          # statements in one function body (flattened)
+# …AND THE SAME QUESTION ONE LEVEL UP, which nothing asked until 2026-09-07. Every size rule here
+# stood on the FUNCTION, so `Engine` — an order of magnitude past the next class in the package —
+# was green while `gfso/` grew 74 %, and three consecutive audits had to find its five independent
+# blocks by reading. A ratchet whose only ceiling is the function measures the wrong unit for the
+# defect it exists to prevent. (No count is quoted in this comment on purpose: the first version
+# named `Engine`'s two, and a method added in the same diff made both stale before the day was out.
+# The numbers live in BASE, where the ratchet keeps them honest.)
+CLASS_SIZE_LIMIT = 200   # statements in one class body (flattened) — see F_class_over_size_limit
+CLASS_API_LIMIT = 20     # public methods on one class — see F_class_over_method_limit
 
 # The numbers as of the last measurement. ONE edit per step, in the step's own commit.
 #: The quote characters this rule is ABOUT, named once — a rule whose own literals break it
@@ -46,6 +55,32 @@ _TRIPLES = (chr(39) * 3, chr(34) * 3)
 BASE = {
     "G1_name_never_bound": 0,
     "G2_unreachable_after_jump": 0,
+    # 2 — `Engine` and `Dispatcher`. Both are already named split candidates: five blocks with no
+    # shared state in the first, the dispatch loop in the second. The nearest class below the line
+    # is `SqliteStorage`, and it is a port implementation rather than a split candidate — so this
+    # is not a limit the package brushes against; it is two sites, and each is a claim that a class
+    # is doing two things.
+    "F_class_over_size_limit": 2,
+    # 4 — `Engine` (93), and the storage triple `StoragePort` (25) / `SqliteStorage` (26) /
+    # `MemoryStorage` (25). The triple is legitimately as wide as its port: an adapter's API IS the
+    # contract it implements, and narrowing it would mean narrowing the port. They are counted
+    # anyway rather than exempted, because an exemption is the "indulgence forever" this file's own
+    # docstring guards against — if the port grows, this number moves and someone says why.
+    "F_class_over_method_limit": 4,
+    # 9 — the MODULES that sit inside a mutually-importing group, at module granularity:
+    #     {decompose, decompose.loop, delegate, runtime, tools_llm} · {api.server, mcp.server} ·
+    #     {doctor, mcp.connect}.
+    # The unit is modules, not groups. Counting GROUPS was the first spelling and it cannot see the
+    # defect grow: a module joining an existing knot leaves the count at 3 while the number of files
+    # that cannot be read, tested or replaced apart goes up. Resolving relative imports moved this
+    # from 8 to 9 (`decompose.loop`) without moving the group count at all — the demonstration and
+    # the reason for the change arrived together.
+    # `test_layering.py` answers a different question — whether an edge is PERMITTED by the layer
+    # matrix — and every one of these three is permitted. A knot is not an illegal edge; it is a
+    # place where two modules cannot be read, tested or replaced apart, and it is why 16 imports in
+    # this package must stay inside functions (the A2 floor above says so in its own words).
+    # The floor is 0: an acyclic import graph is reachable here, unlike A2's 16.
+    "F_modules_in_an_import_cycle": 9,
     # 0: every package and module says what it owns — the first thing a stranger reads
     "A1_module_without_docstring": 0,
     # 188: `llm_factory` moved to the import section — it was imported inside two functions
@@ -143,6 +178,13 @@ BASE_TESTS = {
     # 1 — the acceptance-embeddability suite keeps its own, deliberately: it plays a FOREIGN
     # host and must need nothing from this repository's test kit
     "T2_spec_helper_redefined": 1,
+    # …and the two CLASS rules, which were computed for `tests/` and then thrown away: the ratchet
+    # is parametrized over this dict, so a rule absent here is measured and never asserted, and a
+    # 300-statement test class tripped nothing. 0 and 1 — the one is `JsonlStorage` in
+    # `reference_host.py` at 21 public methods, a deliberate foreign-host storage implementation
+    # whose API is the port it stands in for, exactly like the adapters in `gfso/`.
+    "F_class_over_size_limit": 0,
+    "F_class_over_method_limit": 1,
 }
 
 # Rules that are already at their target and must STAY there (a floor, not a ratchet step).
@@ -164,6 +206,21 @@ def _stmts(node: ast.AST) -> int:
     """
     doc = 1 if ast.get_docstring(node) is not None else 0
     return sum(1 for n in ast.walk(node) if isinstance(n, ast.stmt)) - 1 - doc
+
+
+def _own_stmts(cls: ast.ClassDef) -> int:
+    """The statements this class itself holds — a nested class's body belongs to that class."""
+    doc = 1 if ast.get_docstring(cls) is not None else 0
+    n = 0
+    stack = list(cls.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.stmt):
+            n += 1
+        if isinstance(node, ast.ClassDef):
+            continue                        # counted as one statement here; its body is its own
+        stack.extend(ast.iter_child_nodes(node))
+    return n - doc
 
 
 def _measure(root: Path) -> tuple[dict[str, int], dict[str, list[str]]]:
@@ -277,6 +334,27 @@ def _measure(root: Path) -> tuple[dict[str, int], dict[str, list[str]]]:
                             and n.value.id == "self" and isinstance(n.ctx, ast.Store) \
                             and n.attr not in declared:
                         hit("B1_attribute_born_outside_init", f"{path.name}:{n.lineno} {cls.name}.{n.attr}")
+
+        for cls in [c for c in ast.walk(tree) if isinstance(c, ast.ClassDef)]:
+            # The class's own two sizes: how much it DOES, and how wide it is to a caller. They are
+            # separate defects — a class can be huge behind three public methods (`Dispatcher`) or
+            # wide over a small body (`StoragePort`) — so they are two rules, not one composite.
+            # A nested class's body is NOT charged to the class around it: `ast.walk` descends into
+            # it and it is measured again on its own iteration, so the inner statements counted
+            # twice. Nothing in `gfso/` is near a limit today, which is precisely when a counting
+            # rule should be fixed rather than after it decides something.
+            # Subtracting a term PER nested class was the first repair and it is wrong from depth
+            # two: `ast.walk` yields the grandchild as well, so its statements come off once inside
+            # the child's term and again in its own (an `Outer` with a `Mid` with a `Deep` measured
+            # −1). What is wanted is the class's own statements, so the count SKIPS the subtree of
+            # every nested class instead of subtracting it back out.
+            if (_cs := _own_stmts(cls)) > CLASS_SIZE_LIMIT:
+                hit("F_class_over_size_limit", f"{path.name}:{cls.lineno} {cls.name} ({_cs})")
+            _api = [f for f in cls.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not f.name.startswith("_")]
+            if len(_api) > CLASS_API_LIMIT:
+                hit("F_class_over_method_limit",
+                    f"{path.name}:{cls.lineno} {cls.name} ({len(_api)})")
 
         for fn in [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]:
             if _stmts(fn) > SIZE_LIMIT:
@@ -402,7 +480,103 @@ def _unreachable(tree: ast.AST) -> list[tuple[int, str]]:
     return out
 
 
+def _pkg_name(path: Path, root: Path) -> str:
+    """The importable name of a file — a package's `__init__` names the package."""
+    parts = path.relative_to(root.parent).with_suffix("").parts
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+def _import_graph_knots(root: Path) -> list[list[str]]:
+    """The mutually-importing groups of `root`, at module granularity — Tarjan, no dependency.
+
+    Measured on the SAME edges `test_layering.py` reads (module and function-level imports both
+    count: a lazy import inside a method is still an edge) but asking the other question. Layering
+    asks whether an edge is permitted; this asks whether the graph has knots at all. `from a.b
+    import c` contributes the edge to `a.b.c` as well when that names a module, or a package's
+    __init__ hides half the cycles behind an attribute import.
+    """
+    # A PACKAGE IS NAMED BY ITS DIRECTORY, NOT BY ITS `__init__`. Keyed literally, `gfso/engine/
+    # __init__.py` became `gfso.engine.__init__`, so every edge written the way every importer
+    # actually writes it — `from gfso.engine import Engine` — pointed at a name not in the map and
+    # was dropped. The first run of this rule reported 3 knots and stayed green with a real
+    # `config` ⇄ `engine` cycle deliberately added: the instrument could not see a cycle through
+    # any package at all, which is most of them. Caught by the paired control, not by reading.
+    mods = {_pkg_name(p, root): p for _m, p in _modules(root)}
+    def _edges(p: Path, me: str) -> set[str]:
+        out: set[str] = set()
+        for n in ast.walk(ast.parse(p.read_text(encoding="utf-8-sig"))):
+            if isinstance(n, ast.Import):
+                out |= {a.name for a in n.names if a.name.startswith(root.name)}
+            elif isinstance(n, ast.ImportFrom):
+                # RELATIVE IMPORTS ARE EDGES TOO, and the first version dropped all 36 of them: it
+                # required `n.module` to start with the package name, which `from .model import …`
+                # and `from . import fsm` never do. `n.level` is the hop count up from the importing
+                # module's own package, so resolving it is what makes the graph the real one rather
+                # than the absolutely-spelled half of it. (`test_layering.py` shares the blindness;
+                # it asks a different question — whether an edge is permitted — and a missed edge
+                # there is a missed violation, which is worth naming separately.)
+                base = me.rsplit(".", 1)[0] if p.name != "__init__.py" else me
+                if n.level:
+                    parts = base.split(".")
+                    # An `or parts[:1]` fallback here would BEND an import that walks past the
+                    # package root back onto the root itself, inventing an edge the source does not
+                    # have. There are no such imports today; a rule that fabricates data when its
+                    # assumption fails is worth closing before there are.
+                    up = len(parts) - (n.level - 1)
+                    if up < 1:
+                        continue
+                    base = ".".join(parts[:up])
+                    mod = f"{base}.{n.module}" if n.module else base
+                elif n.module and n.module.startswith(root.name):
+                    mod = n.module
+                else:
+                    continue
+                out.add(mod)
+                out |= {f"{mod}.{a.name}" for a in n.names}
+        return out & set(mods)
+
+    graph = {m: _edges(p, m) for m, p in mods.items()}
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on: set[str] = set()
+    counter = [0]
+    found: list[list[str]] = []
+
+    def strong(v: str) -> None:
+        index[v] = low[v] = counter[0]
+        counter[0] += 1
+        stack.append(v)
+        on.add(v)
+        for w in graph.get(v, ()):
+            if w not in index:
+                strong(w)
+                low[v] = min(low[v], low[w])
+            elif w in on:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop()
+                on.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            # A self-import is a knot of one and would be missed by a bare `len > 1`.
+            if len(comp) > 1 or v in graph.get(v, ()):
+                found.append(sorted(comp))
+
+    for v in graph:
+        if v not in index:
+            strong(v)
+    return sorted(found)
+
+
 COUNTS, WHERE = _measure(PKG)
+for _knot in _import_graph_knots(PKG):
+    COUNTS["F_modules_in_an_import_cycle"] = (
+        COUNTS.get("F_modules_in_an_import_cycle", 0) + len(_knot))
+    WHERE.setdefault("F_modules_in_an_import_cycle", []).append(" ⇄ ".join(_knot))
 COUNTS_T, WHERE_T = _measure(TESTS)
 
 

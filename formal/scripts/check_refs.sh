@@ -76,9 +76,14 @@ PRODUCT=(../gfso/**/*.py ../gfso/**/*.md
          ../gfso/web/index.html ../gfso/web/gfso.css ../tests/**/*.py
          ../docs/embeddability_acceptance.md ../docs/TASK_PACKET.md)
 
+# …INCLUDING A CITATION CONTINUED BY A COMMA. "`EVIDENCE_LOG` §13.12, §13.12-bis" stripped only its
+# first half, and the surviving `, §13.12-bis` was read as a canon reference: the guard went red on
+# two pushed commits over a line that cites no canon at all. Only a bare `, §N…` run is eaten, and
+# only directly after a foreign citation — a continuation that names its own document ("…, §11.2 of
+# the canon") keeps its own name and is collected as before.
 strip_foreign() {
   tr '\n' ' ' \
-    | sed -e 's/EVIDENCE_LOG[^§]\{0,15\}§[0-9.]*\(–\(§\)\{0,1\}[0-9.]*\)\{0,1\}//g' \
+    | sed -e 's/EVIDENCE_LOG[^§]\{0,15\}§[0-9.]*\(–\(§\)\{0,1\}[0-9.]*\)\{0,1\}\(, *§[0-9.]*\(-[a-z]\{1,6\}\)\{0,1\}\)*//g' \
           -e 's/§[0-9.]*\(–\(§\)\{0,1\}[0-9.]*\)\{0,1\} *\(of the evidence log\|этого дока\)//g' \
           -e "s/v3\.9\('s\)\{0,1\}:\{0,1\} *§[0-9.]*\(–\(§\)\{0,1\}[0-9.]*\)\{0,1\}//g"
 }

@@ -12,7 +12,7 @@ from gfso.core.graph.metrics import false_fail_share
 from gfso.decompose import _dep_contradictions
 from gfso.engine import Engine
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import make_engine
+from tests.support import make_engine, instrument_passes
 
 
 class AutoAgent(AgentPort):
@@ -140,7 +140,7 @@ def test_pass_requires_all_children_passed_theorem1():
     assert eng.get_state(TaskId("c")) == State.DONE               # internal self-validation (D6)
     e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
     assert e is None or e.rejected                                # ROOT self-pass without a verdict → refused
-    eng.record_exec_verdict(TaskId("p"), "PASS", [], "validate_result")
+    instrument_passes(eng, TaskId("p"))
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
     assert eng.get_state(TaskId("p")) == State.DONE and eng.get_task(TaskId("p")).done_reason.name == "PASS"
     eng.stop()

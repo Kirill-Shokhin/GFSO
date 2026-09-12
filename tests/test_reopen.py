@@ -20,7 +20,7 @@ from gfso.core.types import (
 )
 from gfso.core.graph.metrics import q_V
 from gfso import tools as T
-from tests.support import make_engine, spec
+from tests.support import make_engine, spec, reviewer_passes
 from gfso.core.types import CriterionMapping
 
 
@@ -42,7 +42,7 @@ def _drive_to_done(e: Engine, tid="n1", issuer="boss", worker="w"):
     ):
         e.send_signal(sd)
         e.wait_idle()
-    e.record_reviewer_verdict(TaskId(tid), "PASS", [], "reviewer")
+    reviewer_passes(e, TaskId(tid))
     e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId(tid), source=AgentId(issuer)))
     e.wait_idle()
     assert e.get_state(TaskId(tid)) == State.DONE
@@ -119,7 +119,7 @@ def _parent_child(e: Engine, deliver_parent=False):
     ):
         e.send_signal(sd)
         e.wait_idle()
-    e.record_reviewer_verdict(TaskId("ch"), "PASS", [], "reviewer")
+    reviewer_passes(e, TaskId("ch"))
     e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("ch"), source=AgentId("pm")))
     e.wait_idle()
     assert e.get_state(TaskId("ch")) == State.DONE
@@ -162,7 +162,7 @@ def test_refuted_coverage_gates_parent_redeliver(engine):
     ):
         engine.send_signal(sd)
         engine.wait_idle()
-    engine.record_reviewer_verdict(TaskId("ch"), "PASS", [], "reviewer")
+    reviewer_passes(engine, TaskId("ch"))
     engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("ch"), source=AgentId("pm")))
     engine.wait_idle()
     for sd in (
@@ -257,7 +257,7 @@ def test_stale_verdict_cannot_pass_self_pass_gate_after_reopen(engine):
     ):
         e.send_signal(sd)
         e.wait_idle()
-    e.record_reviewer_verdict(TaskId("s1"), "PASS", [], "reviewer")
+    reviewer_passes(e, TaskId("s1"))
     e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("s1"), source=AgentId("me")))
     e.wait_idle()
     assert e.get_state(TaskId("s1")) == State.DONE
@@ -274,7 +274,7 @@ def test_stale_verdict_cannot_pass_self_pass_gate_after_reopen(engine):
     e.wait_idle()
     assert e.get_state(TaskId("s1")) == State.VALIDATING  # rejected, still validating
     # a FRESH independent verdict re-opens the way
-    e.record_reviewer_verdict(TaskId("s1"), "PASS", [], "reviewer")
+    reviewer_passes(e, TaskId("s1"))
     e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("s1"), source=AgentId("me")))
     e.wait_idle()
     assert e.get_state(TaskId("s1")) == State.DONE

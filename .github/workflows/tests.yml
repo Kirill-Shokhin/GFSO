@@ -60,5 +60,31 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install
         run: pip install -e .[dev] build
+      # THE REASON MUST BE READABLE WITHOUT ADMIN RIGHTS. A red run said only "Process completed with
+      # exit code 1" to anyone but the repository's owner — the job log needs admin, so the one person
+      # who could act on a failure from a laptop could not see which test failed. The summary is
+      # public on the run's page, so the failing names travel with the red.
       - name: Test
-        run: python -m pytest tests -q
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest tests -q 2>&1 | tee pytest.out || rc=$?
+          # THE REPORTING MUST NOT DECIDE THE BUILD. The runner's bash carries `-e`, and a `grep`
+          # that matches nothing — exactly what a green suite looks like — exits 1 and took the step
+          # down with it: a passing suite reported as a failed build on all four matrix legs. The
+          # verdict is pytest's return code and nothing else, so the lines below run with `-e` off.
+          set +e
+          {
+            echo "### pytest — ${{ matrix.os }}, Python ${{ matrix.python-version }}"
+            echo '```'
+            grep -E '^(FAILED|ERROR)' pytest.out | head -40
+            tail -n 15 pytest.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # …and as ANNOTATIONS, the part a reader WITHOUT admin rights can fetch: a job log needs
+          # admin, and the step summary is not served with the check run, so a red build answered
+          # "Process completed with exit code 1" to everyone but the repository's owner.
+          grep -E '^(FAILED|ERROR)' pytest.out | head -40 | while IFS= read -r line; do
+            echo "::error title=pytest ${{ matrix.os }} py${{ matrix.python-version }}::${line}"
+          done
+          exit ${rc:-0}

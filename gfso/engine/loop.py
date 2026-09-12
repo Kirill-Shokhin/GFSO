@@ -18,6 +18,7 @@ from gfso.core.protocol.fsm import transition, available_signals, not_admissible
 from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.validation import Role, required_role
 from gfso.core.graph import Graph
+from gfso.core.graph.model import dep_scope, non_leaf_ids
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
 from gfso.core.handlers import run_all_checks, recommend
 
@@ -358,8 +359,9 @@ def _refresh_parent_checks(graph: Graph, node_id: Optional[TaskId]) -> None:
     if node is None:
         return
     kids = graph.get_active_children(node_id)
+    deps, deadlines = dep_scope(graph, node_id)
     graph.store_check_results(
-        node_id, run_all_checks(node, kids, graph.dep_edges(), graph.non_leaf_ids(kids)))
+        node_id, run_all_checks(node, kids, deps, non_leaf_ids(graph, kids), deadlines))
 
 
 def _execute_effects(
@@ -374,17 +376,24 @@ def _execute_effects(
             case MutateGraph() as mg:
                 affected = apply_mutation(graph, mg)
                 if mg.mutation in (MutationType.RECORD_DEP, MutationType.ADJUDICATE_DEP):
-                    # A Dep change moves the PARENT's cached checks (CHECK-2/3 run over the children's
-                    # seams). Without this refresh a BLOCK-discovered edge contradicting a declared seam
-                    # is a recorded-but-INVISIBLE cycle: graph_holes reads the cache, and nothing else
-                    # recomputes it (observed live — list_holes stayed [] over a live 2-cycle).
+                    # A Dep change moves the cached checks of every node whose SUBTREE holds the
+                    # seam. Without this refresh a BLOCK-discovered edge contradicting a declared
+                    # seam is a recorded-but-INVISIBLE cycle: graph_holes reads the cache, and
+                    # nothing else recomputes it (observed live — list_holes stayed [] over a live
+                    # 2-cycle). EVERY ANCESTOR, not the direct parents: CHECK-2/3 quantify over the
+                    # Dep pairs inside a subtree (`dep_scope`), and a seam between two BRANCHES lies
+                    # inside no direct parent's population — only inside their common ancestor's.
+                    # Refreshing the parents alone left that ancestor's cache reading "no dependency
+                    # edges" while the live gate refused execution over the violation it denied.
                     seen: set = set()
                     for nid in (mg.task_id, mg.dep_from, *mg.dep_froms):
                         t = graph.get_task(nid) if nid else None
-                        pid = t.parent_id if t else None
-                        if pid and pid not in seen:
-                            seen.add(pid)
-                            _refresh_parent_checks(graph, pid)
+                        while t is not None and t.parent_id is not None:
+                            if t.parent_id in seen:
+                                break              # this chain and its tail are already refreshed
+                            seen.add(t.parent_id)
+                            _refresh_parent_checks(graph, t.parent_id)
+                            t = graph.get_task(t.parent_id)
                 # A refused child (CANCEL → ABANDONED) leaves the decomposition (§14.3) — so the parent's coverage and
                 # non-redundancy change, and nothing was recomputing them. Measured live: four
                 # planned subtasks were refused after the goal was revised, went ABANDONED, and
@@ -411,8 +420,9 @@ def _execute_effects(
                 task = graph.get_task(tid)
                 children = graph.get_children(tid)
                 if task:
-                    results = run_all_checks(task, children, graph.dep_edges(),
-                                             graph.non_leaf_ids(children))
+                    deps, deadlines = dep_scope(graph, tid)
+                    results = run_all_checks(task, children, deps,
+                                             non_leaf_ids(graph, children), deadlines)
                     graph.store_check_results(tid, results)
 
             case Recommend(task_id=tid):

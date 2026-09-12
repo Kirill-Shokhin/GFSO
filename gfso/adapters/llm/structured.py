@@ -95,6 +95,29 @@ def parse_structured(text: str, schema: dict):
             obj = json.loads(raw, strict=False)
         except Exception:
             continue
-        if isinstance(obj, dict) and all(k in obj for k in schema.get("required", [])):
+        if isinstance(obj, dict) and _answers(obj, schema):
             return obj
     return None
+
+
+def _answers(obj: dict, schema: dict) -> bool:
+    """Is this object the reply, or something else that also happens to be JSON?
+
+    The required keys are the discriminator wherever there are any. WHERE THERE ARE NONE they say
+    nothing — `all(... for k in [])` is true of every object — and the docstring's protection ("an
+    echo parses as JSON but lacks the required keys, so it is skipped") is then vacuous. That is not
+    a corner: the two PATCH schemas make every field optional on purpose, because a corrective round
+    re-emits only what it changes, and those are exactly the schemas the refinement rounds use.
+    Probed 2026-09-07: against the fold schema, a schema echo placed before the real answer WINS,
+    and so does any unrelated object (`{"note": "nothing"}`); against a schema with required keys
+    the real answer wins — the control that pins the mechanism to the empty list.
+
+    With nothing required, what still separates a reply from a bystander is the schema's own
+    VOCABULARY: a reply speaks the declared fields, an echo speaks `type` and `properties`. An empty
+    object stays a reply, because "nothing to change" is the one honest answer a patch can give and
+    refusing it would turn a converged round into a failed call.
+    """
+    required = schema.get("required") or ()
+    if required:
+        return all(k in obj for k in required)
+    return not obj or bool(set(obj) & set(schema.get("properties") or ()))

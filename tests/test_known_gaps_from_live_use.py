@@ -35,7 +35,7 @@ from gfso.delegate import AgentRegistry, Dispatcher
 from gfso.driver import _as_list, _wants_list, run, run as _cli_run
 from gfso.engine.loop import _CANCELLING_GRACE_S
 from gfso.runtime import ProjectRegistry
-from tests.support import make_engine
+from tests.support import make_engine, workdir
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
 
 
@@ -353,15 +353,19 @@ def test_a_validator_in_the_same_workspace_beats_a_stranger_registered_earlier()
     2026-08-20 — once by a judge whose `workdir` was an experiment's scratch directory. Naming
     `validator=` at registration still wins; this only fixes the DEFAULT.
     """
-    reg = AgentRegistry(path=str(Path(tempfile.mkdtemp()) / "agents.json"))
-    reg.register("old-val", "llm-validator", workdir="C:/somebody/elses/run")
-    reg.register("mine-exec", "llm-executor", workdir="C:/my/project")
-    reg.register("mine-val", "llm-validator", workdir="C:/my/project")
+    box = Path(tempfile.mkdtemp())
+    reg = AgentRegistry(path=str(box / "agents.json"))
+    # Two REAL directories: the roster refuses one that is not there, and the point of the test is
+    # that the two workspaces are different, not that either is fictional.
+    theirs, mine = workdir(box, "somebody-elses-run"), workdir(box, "my-project")
+    reg.register("old-val", "llm-validator", workdir=theirs)
+    reg.register("mine-exec", "llm-executor", workdir=mine)
+    reg.register("mine-val", "llm-validator", workdir=mine)
 
     assert reg.validator_for("mine-exec") == "mine-val", (
         f"a stranger's validator was chosen: {reg.validator_for('mine-exec')}")
 
-    reg.register("pinned-exec", "llm-executor", workdir="C:/my/project", validator="old-val")
+    reg.register("pinned-exec", "llm-executor", workdir=mine, validator="old-val")
     assert reg.validator_for("pinned-exec") == "old-val", "an explicit override must still win"
 
 
@@ -2295,13 +2299,20 @@ def test_replacing_a_contract_says_what_it_replaced():
     e.stop()
 
 
-def test_the_node_says_whether_its_children_may_start():
+def test_the_node_says_whether_its_children_may_start(monkeypatch):
     """`plan_verified: true` was read as "the plan is admitted" while the checker said otherwise.
 
     The two facts are different — the structural levels being current, and the Level-2 findings
     being discharged — and only `review_decomposition`'s own payload carried the disclaimer. A
     reader had `plan_verified: true` from `get_task` and `execution_admitted: false` from the review
-    in the same minute (measured on the human door 2026-08-22)."""
+    in the same minute (measured on the human door 2026-08-22).
+
+    WITH THE GATE ON, because that is when the question has an answer. The suite runs the canon's
+    EXPLORE branch by default (conftest: `GFSO_L2_GATE=0`), where children may start whatever the
+    review said — a true answer to a different question, and `review_decomposition` has always given
+    it. This test is about a node reporting the GATE's verdict, so it names the deployment it means.
+    """
+    monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = _engine()
     _root(e)
     T.create_task(e, "kid", {"description": "leaf", "criteria": [{"name": "k", "description": "K"}]},

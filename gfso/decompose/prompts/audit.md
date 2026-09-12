@@ -36,6 +36,33 @@ Reduce everything to a canonical, non-redundant **BASIS**:
     whole node is a **parent-level spanning invariant**; a criterion about one component's own output belongs
     to **that child**. Do NOT park a child's real obligation on the parent as a spanning invariant — the child
     that will be executed in isolation must carry the concrete, decidable criteria of its own piece.
+    Three tests every criterion must pass, or it is not a criterion of this plan:
+    - **Anchored in the goal.** It states a behaviour the goal requires — written in the statement,
+      entailed by it, or required to make the pieces compose (integration / glue obligations count as
+      anchored even though no statement spells them out: an unwritten-but-required criterion is the one
+      defect no later check can catch). What is NOT anchored is hardening beyond the goal — surviving
+      resource exhaustion or adversarial scale, fault injection, a preferred internal code structure: a
+      child can fail those while the goal is fully met, which breaks `V(parent) = AND(V(children))` from
+      the other side. If you are unsure whether the goal requires it, KEEP it — dropping a real
+      obligation is the worse error.
+      The same applies to a criterion's QUANTIFIER: "never crashes on malformed input" ranges over every
+      input of every size. Bound it to what the goal describes ("on malformed programs of ordinary size —
+      an unbalanced bracket, a missing operand, an unterminated literal"). The unbounded remainder is a
+      RISK with a materialization probability, so it belongs in **ACCEPTED_RISKS** — and in **N** only if
+      the goal genuinely does not include that capability at all. Narrow a quantifier to what the goal
+      means, never to what a validator happens to probe.
+    - **Jointly satisfiable.** No two criteria — on one child or across siblings — may demand X and ¬X at
+      the extremes of their ranges. An unbounded "never fails" beside an unbounded "accepts any depth" is
+      the standard pair: the guard that satisfies the first falsifies the second, and the node exhausts
+      its reworks on a contradiction no executor can resolve. Where one implies a limit, write that limit
+      into the other.
+    - **Decidable when its own child delivers.** A child's criterion must be checkable on that child's own
+      output plus the outputs of its PRODUCERS — the subtasks that are the SOURCE of a Dep whose TARGET is
+      this child, and so land before it (the `from_id` side of `add_dependency(from_id, to_id)` where
+      `to_id` is this child) — nothing else will exist yet. A criterion
+      that needs a sibling's work ("every builtin uses …", "the interpreter handles every node kind") is
+      that sibling's criterion, or the parent's integration criterion, or it needs the Dep that orders the
+      two. Left on the earlier child, it fails for work that is not its own.
   - **N (scope)** — declared scope-BOUNDARY exclusions: a capability the goal deliberately does NOT include
     (no materialization probability — NOT a risk event). Each with why it is safely out. These are objectified
     ON THE GOAL — they belong in the graph's `scope` (not prose-only) and shape which criteria exist; a risk

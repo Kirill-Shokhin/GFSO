@@ -188,8 +188,18 @@ cases need an 8th failure mode). **E2 (decomposition convergence) ran**:
 it established the convergence *method* — bare SEARCH ⊕ gfso
 AUDIT, iterated, productized as `auto_decompose()` — but **not** the method's value
 over bare (coverage-to-a-bare-built reference can't read it; that is **E3**).
-The next move is **E3 (multi-agent compositional validation, under execution)** —
-falsifiable, the biggest signal-per-effort available now.
+**E3 (multi-agent compositional validation, under execution) has its first
+cells with a control arm, and NONE of them can answer the question yet**
+(`EVIDENCE_LOG` §13.12, §13.12-bis). Two cells are saturated on the visible
+suite; the third is not, and the baseline leads it 0.833 to 0.778 — but every
+one of arm G's twenty held-out failures there is un-derivable from the task's
+own specification or contradicted by it (the spec demands `ValueError` where
+the hidden test demands `#CIRC!`). That suite measures how well an arm guesses
+what the spec does not say: a tree search explores its way onto unstated
+requirements, while GFSO carries the stated contract through faithfully. The
+two arms are not being asked the same question, and no cell so far supports a
+claim about value in either direction. The design that would — hidden criteria
+made EXPLICIT, one complete contract to both arms — is the next measurement.
 
 ---
 

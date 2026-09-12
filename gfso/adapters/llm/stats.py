@@ -17,10 +17,39 @@ def _tag(llm, stage: str) -> None:
         llm.tag_last(stage)
 
 
+def calls_of(llm) -> tuple:
+    """The stat dicts this provider recorded, or nothing — the ONE place that asks a provider for
+    them. Duck-typed for the reason this module exists: only a stat-collecting adapter has `calls`,
+    and a fake or a third-party provider has to stay usable without growing one."""
+    calls = getattr(llm, "calls", None)
+    return tuple(calls) if calls else ()
+
+
+def the_call_was_cut(llm, said: str) -> bool:
+    """Did the last call STOP, rather than answer badly? Asked of the provider, not of the text.
+
+    The adapter that read the CLI's stream knows: it ended with no result event. The shape of what
+    came back ("short, and no brace in it") is the same question answered by inference, kept only
+    for a provider that cannot say — two answers to one question is how the two drift apart.
+    """
+    calls = calls_of(llm)
+    # ANY torn call of this run, not the LAST one. A rich contract is judged in concurrent batches
+    # that all push onto one `calls` list, in completion order — so asking the last entry made the
+    # answer depend on which batch happened to finish first: the same severed call was recognised
+    # as torn, or not, by a race. Unrecognised it is read as "answered badly", which spends the
+    # node's ONE retry and then parks it. A run stops on a coin toss, and the doctrine this function
+    # exists for — a cut call is not an answer, so it does not spend the answer's budget — held only
+    # by luck. If any batch of this judgement was severed, the judgement was severed.
+    _typed = [c for c in calls if isinstance(c, dict) and "transport_torn" in c]
+    if _typed:
+        return any(bool(c["transport_torn"]) for c in _typed)
+    return len(said) < 400 and "{" not in said
+
+
 def _stat_line(llm) -> str:
     """One-line cost readout of the llm's LAST call + the running total. Duck-typed on `calls`
     holding stat DICTS (the headless adapter); anything else (fakes, API adapter) → plain 'done'."""
-    calls = getattr(llm, "calls", None)
+    calls = calls_of(llm)
     if not calls or not isinstance(calls[-1], dict):
         return "done"
     c = calls[-1]

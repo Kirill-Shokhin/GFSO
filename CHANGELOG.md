@@ -10,6 +10,197 @@ below. Nothing in this file states a measured effect of using GFSO on real work:
 would establish one (E3) is open, and what has been run so far is a calibration tier with its own
 stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earlier ones.
 
+## [Unreleased]
+
+### Fixed
+
+- **The two answers everything else is guarded by could be starved out.** The server's verb routes
+  are synchronous and some of them run for minutes, so the liveness reads — the session lease and
+  the runtime switches — queued behind them on the same worker threads: measured, three-second
+  client timeouts against a fourteen-second answer, while a lease expires in twelve. Three things
+  unlock at once when it lapses: the shutdown endpoint stops refusing, so the server can be stopped
+  with work in flight; the dispatcher stops spawning for the roles whose owner it thinks is gone;
+  and a new session reads the slow answer as "something else is on this port" and gets no tools at
+  all. Both handlers now answer on the event loop, where a busy pool cannot delay them.
+- **The roster was written in place, so a reader could see half of it — and a kill could freeze it
+  that way.** Registrations are a json file that readers re-read on every access and hold no lock
+  on; a plain rewrite leaves it empty for the length of the write (measured: 31% of concurrent
+  reads). A process killed in that window — and the shutdown path exits a third of a second after
+  the request — left the file truncated permanently, after which every node reports that its
+  executor is not registered and the run stalls with nothing to point at. It is now written beside
+  and moved over, and where the move itself is refused the registration fails out loud rather than
+  quietly.
+- **A validation severed mid-flight was recognised by a race.** A contract with more criteria than
+  the batch size is judged in concurrent batches that report in completion order, and the question
+  "was this call cut?" was asked of whichever answered last. Read as a cut, the call is redialled
+  for free; read as an answer that did not parse, it spends the node's one retry and the next one
+  parks the node with no verdict ever coming. The question is now asked of the whole judgement.
+- **A verdict decided differently depending on the case of a letter.** The word a validator
+  returns travels as a string and was compared with `== PASS`, so `"pass"` matched neither arm:
+  every integrity check fell through as a no-op, the string was stored as it arrived, and nothing
+  downstream recognised it — the parent's AND never closed, no signal was ever sent, and the node
+  waited in VALIDATING for ever with a verdict on its own record. Per criterion the same field had
+  five readers and one of them lowered the case, so `"pass"` skipped the check that a criterion's
+  probe was actually run — recording a pass over a probe nobody executed — while `"FAIL"` was
+  refused for carrying no reproducible probe, throwing a genuine refutation away and sending the
+  work back looking accepted. The schemas declare the enumeration and the reply parser does not
+  read it, so this is an ordinary answer from a model, not a malformed one. The word is now coerced
+  to the enumeration where every door lands, or refused; the per-criterion field has one reader.
+- **A run could wait for something that had already settled, for ever.** A delivered parent one of
+  whose children is ESCALATED or ABANDONED can never satisfy the AND over its children (Thm 1), so
+  no verdict will arrive — and the frontier answered that with an ordinary wait: `stuck: false`,
+  "the graph is working, poll again in a minute". A driver polling that loops until it is stopped
+  by hand. The wait is now reported as what it is, with the move that exists named (FAIL the
+  delivered node and re-decompose, or REOPEN the settled child while it has reopens left).
+- **Three ways for a round to end with nothing signalled, and only one of them was handled.** An
+  unreadable executor report got one retry and then an honest park; an exception anywhere in the
+  spawn, and a report whose `status` is a word the contract does not define, got neither — the node
+  stayed in EXECUTING with its round already spent, so the dispatcher never picked it up again
+  while the frontier went on advertising the step. The second of those is reachable from a
+  perfectly well-formed answer: an executor reporting that it could not do the work. All three now
+  answer to one rule.
+- **A delegated executor was started with nowhere to work.** The roster is a json file the
+  registry invites people to edit by hand and re-reads on every access, so an entry can reach it
+  without passing the registration check, and a directory that existed when a role was registered
+  can be gone by the time its node is picked up. Neither was asked: the transport raised into a
+  handler that only logged, no signal was sent, and the node was never retried — the run stopped
+  with nothing said about why. The question is now asked where the answer still costs nothing, one
+  step before ACCEPT fixes the obligation, so the node is genuinely left in OFFERED and its round
+  is freed: putting the directory back is enough for the next pass to dispatch it. The place is
+  named in the refusal.
+- **A role could be registered against a directory that is not there.** The roster refused an
+  *empty* `workdir` and read any non-empty string as an answer, so a path naming nothing
+  registered cleanly — and a role registered against a place that does not exist is spawned into
+  nothing: the executor dies in the transport, and a validator opens an empty tree and FAILs
+  correct work over every criterion. The spelling that actually occurs is a POSIX path on
+  Windows (`/c/Users/...`), which resolves against the *current drive root* rather than the C:
+  drive, so the roster looks right while pointing somewhere else, and whatever runs there writes
+  outside the project. The check sits on the registry itself, where both doors pass, and the
+  refusal names the path and, when it points somewhere else, where that is. Validator selection
+  matches workspaces the same way, so a validator registered under one spelling of a directory is
+  still the validator for work registered under another. One exemption, stated because it is a real
+  hole and not a detail: a path on a network share is NOT checked, at registration or at dispatch.
+  Asking costs seven to twenty-one seconds against a host that does not answer, on a thread holding
+  one of the dispatcher's slots, so a slow file server would stall the graph and a momentary outage
+  would read as "this role has nowhere to work". Such a workdir is taken as given; it fails where
+  it always failed, in the transport.
+- **The affordance surface named signals a standing rule would refuse — in three more places.**
+  `available_actions` answers "what can be done with this node from where you stand", and the list
+  is documented as what would actually be ACCEPTED. It offered PASS on a parent whose children have
+  not passed, which Thm 1 (§11.1) forbids outright; it offered PASS on a delivered seam with no
+  verdict on the record to anyone on the validator roster, an exemption for *who signs* that the
+  engine has never had; and it offered PASS on a node whose own decomposition had since gone red
+  (§13.4). The two rules that do not depend on the asker are now asked of the engine
+  (`pass_blocked_by`), beside the one the plan gate already had, so the two surfaces that used to
+  re-derive them no longer can. Stated exactly: the enforcer is still the validation layer, and
+  `pass_blocked_by` is a second spelling that agrees with it — the count of hand-written copies went
+  from three to two, not to one. Collapsing the last two needs the owner to live on the graph rather
+  than the engine, which the validation layer is the one caller that cannot reach.
+- **Every asker was the ISSUER of a root.** The role filter granted the issuer role to anyone at all
+  on a node with no parent, while the engine resolves a root's issuer to its own assignee and
+  refuses everybody else — so a stranger was shown FAIL and CANCEL, and told in as many words that
+  FAIL was open, on a node the engine would not move for them.
+- **A refusal's KIND changed on the round trip.** The engine distinguishes three: the state does not
+  admit this signal, the transition's own guard said no, and a rule above the machine refused it.
+  The classifier read the kind off *whether an error sentence existed*, so a guard refusal coming
+  back through the door was relabelled as a rule refusal — the identical refusal answered `guard`
+  computed directly and `rule` through `signal`. A refusal for a task that does not exist also came
+  back with an empty reason; it now says so, and says to check the project.
+- **ASSIGN on a live node had no door.** A re-ASSIGN is a revision and carries a contract, which the
+  `signal` verb has no field for — so the signal was listed as available in every reassignable state
+  and guard-refused in all of them. It stays listed, because it is genuinely admissible, and the
+  surface now names `revise` (and `reassign` for a Del change) as what performs it.
+- **An executor that reported it could not do the work had its node moved on as a delivery.** The
+  executor's report declares its `status` with an enumeration of three — delivered, blocked,
+  challenge — and the reply parser validates the presence of keys, never their types or their
+  enumerations, so the declaration was a comment. Six of the package's seven such declarations fail
+  closed when a model answers outside them; this one failed open, because the dispatch read
+  everything that was neither a challenge nor a block as a delivery. A node whose executor
+  disclaimed its own work went to validation, where an independent validator is then paid to assess an
+  artifact its author said does not exist. A word the contract does not define decides nothing: no
+  signal is sent, the node stays where it is, and the issuer is told which word arrived.
+- **An INTERNAL node closed DONE/PASS on a signature with no verdict of any kind behind it.** §14.5
+  makes such a node self-verify and §11.2 makes ⊥ not a pass, and the engine held both — but only
+  against the node's own executor, because the guard was written against the SIGNER rather than
+  against the record. On an internal node the role rules admit one other party, a registered
+  validator, and that party walked past it; the seam rule does not apply to an internal node, so
+  nothing was left. A child delivered with nothing done reached DONE with `verdict record: None`,
+  and its DONE is a conjunct of its parent's conjunction, so it did not stay put. The guard now asks
+  for the record whoever signs — the rule the seam already carries: a roster id is a claim about who
+  signs, the record is the evidence that validation happened. The affordance surface asks the same way:
+  it had its own copy of the old condition and went on offering the PASS the engine had begun to
+  refuse. Both legitimate paths are unchanged: a
+  DELIVER carrying `self_validation`, and a validator that records before it signs.
+- **A refinement round emptied the root's risk register, and that turned its own check green.** The
+  contract a refine writes was built by hand and omitted `risk_components` — the fourth positional
+  field of a Spec — so every refine defaulted it to none. CHECK-5 (STD-3) quantifies over exactly
+  that tuple: a root with two uncovered components reads red before the refine and green after it,
+  with nothing covered and no child added. The construction now has a name, so what the decomposer
+  does not author is carried rather than dropped by omission.
+- **On a node with no executor, the surface said there was no move and the engine moved it.** Both
+  role rules are guarded as "if there is a holder and you are not them", so an unassigned node
+  accepts issuer and executor signals from anybody; the affordance surface matched on neither half,
+  then on one. A caller who is told they have no action gets no refusal to lead them back, which
+  makes this the worse direction of the same defect.
+- **When several gates applied to one node, the caller got whichever fired last.** The reason was a
+  single slot each gate overwrote. All the reasons are now returned, with the ones that removed a
+  signal first and the ones that only explain a signal still on offer after.
+- **`gfso up` exited non-zero in silence.** Every branch of the reconciler composes a sentence — left
+  alone because another session is connected, because work is in flight, because the server refused
+  to stop, because reporting was asked for instead — and four of the five returned without it, so
+  the exit code was the whole of what a caller could read. Every outcome now carries its reason in
+  what it RETURNS, so a caller that is not a terminal can read it too, and every outcome is narrated
+  exactly once — by the verb that makes the decision, the door owning only the exit code.
+
+- **A PASS could be recorded, and a node closed, with no observation of any criterion.** Two guards
+  were vacuous at once: the floor that asks for one observation per criterion computed its
+  requirement over the criteria that are not dependency links, so a contract left holding only an
+  engine-authored `dep__*` criterion asked for nothing; and the engine's report battery ran under
+  `if per_criterion is not None`, which an empty observation set switched OFF rather than failed.
+  A FAIL is unchanged — Inv-3 asks it for the failed set, not for a line per conjunct.
+- **A child that reached DONE on the timeout locked its whole ancestry.** The canon makes auto_pass
+  an acceptance (§12.2, §14.3), and the parent's conjunction was reading "DONE with a verdict
+  somebody gave", so the child was terminal, consumed, and un-reopenable while the frontier reported
+  the graph as working. Composition and readiness now read acceptance; the metrics still exclude
+  auto_pass (§15.2), and every surface names the nodes a result stands on that nobody checked.
+- **Two of the three surfaces answering "may the children start?" could say yes over ⊥.**
+  `get_review` wrote `verified and not open_findings`, and an unreadable Level-2 verdict is `None`,
+  which is falsy — so the reading doors admitted execution while the engine refused the child in the
+  same second. One owner now, on the engine, where the refusal is decided.
+- **CHECK-7 read a child bound's number and dropped its operator**, so two children bounded `<= 100`
+  entailed a parent bounded `< 200` — a positive verdict on the Semantic level for an entailment
+  that does not hold, in the exact arithmetic §13.4 annotates. CHECK-8 had the mirror defect and
+  reported `x <= 5` with `x >= 5` as a contradiction.
+- **A structured reply was matched by required keys, and the two patch schemas require none** —
+  so any JSON object in the reply, including an echo of the schema itself, could be taken as the
+  answer. In a refinement round that surfaced as "empty fold — converged" over a round that had
+  answered nothing.
+- **A validation call cut mid-flight was charged against the node's one retry** and escalated to a
+  costlier tier, which repairs a thin report and not a severed pipe. The provider now reports a
+  stream that ended without its result event, and a cut call gets its own small, finite budget.
+- **The two doors sent a validator to different working directories** for the same node: the
+  dispatcher asked the graph first, the manual verb asked the roster first. One owner; the graph
+  answers first because where the work is is a fact about the graph, and the roster still answers
+  when the graph cannot.
+- **A revision could not move the deadline** — a packet field Inv-1 names, and §14.6 walks — leaving
+  CANCEL, which cascades, as the only way to reschedule. `revise` now carries it; omitting it keeps
+  the node's own.
+- **Questions scoped to a subtree were answered by an id-prefix convention** rather than by the
+  parent edges, so a graph whose nodes are not named `root.child` fell out of every scoped answer.
+- Internal `claude -p` calls no longer inherit the operator's hooks, for the reason they already do
+  not inherit the operator's MCP servers: a hook written for an interactive console injects its own
+  instructions into an internal call, and on the Stop event can refuse the call's exit.
+
+### Changed
+
+- `docs/EVIDENCE_LOG.md` §13.10's bill figures now read: validation is **0.710** of a closed run's
+  spend and the run costs **$10.40**. They were wrong, and in both directions before they were
+  right: a run's model calls are recorded in two places, whether those two overlap depends on which
+  regime spawned the executor, and neither file says so where they are read. §13.10 states that
+  difference where the numbers stand. §13.8's own share figures are unchanged; its label is
+  sharpened to say they cover validation of the delivery rather than all validation. The account of
+  how the figures were arrived at is process and lives outside the public record.
+
 ## [0.1.0] — 2026-09-06
 
 The first published version. Nothing before this was published — there was no 0.1 and no 0.2 to install — so the public line

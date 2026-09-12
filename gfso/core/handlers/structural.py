@@ -152,8 +152,32 @@ def check_non_redundancy(task: Task, children: list[Task]) -> CheckResult:
     return CheckResult("CHECK-1b:no_orphan", True)
 
 
+def _a_split_that_is_not_a_dag(task: Task | None, children: list[Task]) -> CheckResult | None:
+    """The D clause of CHECK-2, over ONE split — or None if this split is fine.
+
+    What is decidable from a single node's decomposition is a node that is its own child (a
+    self-parent, reachable through the authoring door — measured) and a repeated child. A longer D
+    cycle is not visible from one split and is refused where the whole graph is:
+    `Engine._assert_no_d_cycle`, at the ASSIGN that would close it.
+    """
+    if task is None:
+        return None
+    seen: set[str] = set()
+    for c in children:
+        if str(c.id) == str(task.id):
+            return CheckResult("CHECK-2:dag", False,
+                               f"cycle in the decomposition graph: {task.id} is its own child "
+                               f"(D must be a DAG — a cycle is infinite recursion, §10/§13.4)")
+        if str(c.id) in seen:
+            return CheckResult("CHECK-2:dag", False,
+                               f"cycle in the decomposition graph: {c.id} appears twice among "
+                               f"the children of {task.id}")
+        seen.add(str(c.id))
+    return None
+
+
 def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
-              task: Task | None = None) -> CheckResult:
+              task: Task | None = None, population: dict | set | None = None) -> CheckResult:
     """CHECK-2: the graph of D is a DAG (§13.4 → FM-4), and Dep is acyclic (§10, which defines Dep as
     an acyclic relation and has no CHECK row of its own).
 
@@ -164,21 +188,24 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
     D cycle is not visible from a single node's split and is refused where the whole graph is —
     `Engine._assert_no_d_cycle`, at the ASSIGN that would close it.
     """
-    if task is not None:
-        seen: set[str] = set()
-        for c in children:
-            if str(c.id) == str(task.id):
-                return CheckResult("CHECK-2:dag", False,
-                                   f"cycle in the decomposition graph: {task.id} is its own child "
-                                   f"(D must be a DAG — a cycle is infinite recursion, §10/§13.4)")
-            if str(c.id) in seen:
-                return CheckResult("CHECK-2:dag", False,
-                                   f"cycle in the decomposition graph: {c.id} appears twice among "
-                                   f"the children of {task.id}")
-            seen.add(str(c.id))
+    if (d_cycle := _a_split_that_is_not_a_dag(task, children)) is not None:
+        return d_cycle
 
-    if not dep_edges:
-        return CheckResult("CHECK-2:dag", True, "D acyclic; no dependency edges", vacuous=True)
+    # VACUOUS IS ABOUT WHAT WAS EXAMINED — the same rule CHECK-3 keeps below, and this half was
+    # left reading the list handed in. An edge whose endpoints are not nodes of the graph (a
+    # `depends_on` naming an id nobody has) reaches the walk, contributes no reachable pair, and
+    # turned `vacuous` FALSE — a positive claim that the dependencies were acyclic, with empty
+    # details, rendered by `api/models.py` as "met" rather than "met_vacuously". The population is
+    # the pairs whose BOTH ends this walk can stand on.
+    known = set(population or ()) or ({str(t.id) for t in children} |
+                                      ({str(task.id)} if task is not None else set()))
+    reachable = [(a, b) for a, b in dep_edges if a in known and b in known]
+    if not reachable:
+        return CheckResult("CHECK-2:dag", True,
+                           "D acyclic; no dependency edges" if not dep_edges
+                           else "D acyclic; no dependency edge of this decomposition has both ends "
+                                "in the graph",
+                           vacuous=True)
 
     # Build adjacency and detect cycle via DFS
     adj: dict[str, list[str]] = {}
@@ -186,7 +213,16 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
         adj.setdefault(a, []).append(b)
 
     UNVISITED, IN_PROGRESS, DONE = 0, 1, 2
-    status: dict[str, int] = {t.id: UNVISITED for t in children}
+    # EVERY NODE THE EDGES TOUCH, not only the siblings. Seeded from `children` alone, the walk
+    # refused to step onto any endpoint outside the sibling set (the `node not in status` guard
+    # below), so a Dep edge between nodes under DIFFERENT parents was silently not examined — and
+    # a cycle closed through such an edge read as `passed=True` here while `check_dag` over the
+    # whole graph named it verbatim. The caller decides the population (`Graph.dep_scope`); this
+    # check must examine all of what it is given.
+    status: dict[str, int] = {str(t.id): UNVISITED for t in children}
+    for a, b in dep_edges:
+        status.setdefault(a, UNVISITED)
+        status.setdefault(b, UNVISITED)
     stack: list[str] = []
 
     def find_cycle(node: str) -> list[str] | None:
@@ -210,9 +246,9 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
         status[node] = DONE
         return None
 
-    for task in children:
-        if status.get(task.id, DONE) == UNVISITED:
-            cycle = find_cycle(task.id)
+    for start in list(status):
+        if status.get(start, DONE) == UNVISITED:
+            cycle = find_cycle(start)
             if cycle is not None:
                 # Name the cycle — an anonymous "cycle detected" leaves the repair (refine reads this
                 # as a structural hole) without a locus; the named path IS the contradiction to fix
@@ -223,7 +259,8 @@ def check_dag(children: list[Task], dep_edges: list[tuple[str, str]],
     return CheckResult("CHECK-2:dag", True)
 
 
-def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str, str]]) -> CheckResult:
+def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str, str]],
+                    deadlines: dict[str, object] | None = None) -> CheckResult:
     """CHECK-3: deadline coherence along Dep — the HORIZONTAL rule, which is the whole of the row.
 
     §10: for every dependency (a, b), deadline(a) < deadline(b).
@@ -239,22 +276,34 @@ def check_deadlines(task: Task, children: list[Task], dep_edges: list[tuple[str,
     SURFACED where the plan's checks are read, and refuses nothing — the same treatment CHECK-1c
     gets, for the same reason.
     """
-    deadlines = {t.id: t.deadline for t in children}
-    deadlines[task.id] = task.deadline
+    # The deadlines of the WHOLE examined population, supplied by the caller that decided that
+    # population (`Graph.dep_scope`). Built from `children` alone, this map had no entry for an
+    # endpoint under a different parent, and the pair was `continue`d — so a violation carried by a
+    # cross-branch seam, which is the ordinary shape of a seam, was skipped rather than reported.
+    known = dict(deadlines or {})
+    known.setdefault(str(task.id), task.deadline)
+    for c in children:
+        known.setdefault(str(c.id), c.deadline)
 
-    violations = []
+    violations, examined = [], 0
     for a, b in dep_edges:
-        dl_a = deadlines.get(a)
-        dl_b = deadlines.get(b)
+        dl_a, dl_b = known.get(a), known.get(b)
         if dl_a is None or dl_b is None:
-            continue
+            continue                    # a node without a deadline states no ordering to violate
+        examined += 1
         if dl_a >= dl_b:
             violations.append(f"Dep {a}(deadline={dl_a}) >= {b}(deadline={dl_b})")
 
     if violations:
         return CheckResult("CHECK-3:deadlines", False, "; ".join(violations))
-    if not dep_edges:
-        return CheckResult("CHECK-3:deadlines", True, "no dependency edges", vacuous=True)
+    # VACUOUS IS ABOUT WHAT WAS EXAMINED, not about what was handed in. Read off `dep_edges` alone,
+    # this said `passed=True, vacuous=False` — a positive claim that the dependencies were ordered —
+    # over a node for which not one comparable pair existed.
+    if not examined:
+        return CheckResult("CHECK-3:deadlines", True,
+                           "no dependency edges" if not dep_edges
+                           else "no dependency pair carries deadlines on both ends",
+                           vacuous=True)
     return CheckResult("CHECK-3:deadlines", True)
 
 
@@ -398,14 +447,20 @@ def check_delegation(children: list[Task], task: Task | None = None,
 
 
 def run_structural(task: Task, children: list[Task], dep_edges: list[tuple[str, str]] | None = None,
-                   non_leaf_ids: set[str] | None = None) -> list[CheckResult]:
-    """Run all structural checks (CHECK-1 through CHECK-6)."""
+                   non_leaf_ids: set[str] | None = None,
+                   deadlines: dict[str, object] | None = None) -> list[CheckResult]:
+    """Run all structural checks (CHECK-1 through CHECK-6).
+
+    `dep_edges` and `deadlines` come from ONE owner (`Graph.dep_scope`) so that the cached
+    computation and the execution gate quantify over the same population; they used to differ, and
+    the same node then carried opposite answers at two doors.
+    """
     edges = dep_edges or []
     return [
         check_coverage(task, children),
         check_non_redundancy(task, children),
-        check_dag(children, edges, task),
-        check_deadlines(task, children, edges),
+        check_dag(children, edges, task, deadlines),
+        check_deadlines(task, children, edges, deadlines),
         check_vertical_deadlines(task, children),
         check_accepted_risks(task, children),
         check_risk_nodes(task, children),

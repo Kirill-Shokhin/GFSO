@@ -52,8 +52,12 @@ def _a_leaf_that_passed_with_its_review_unanswered(e):
     T.signal(e, "leaf", "PASS", "exec-1")
     e.wait_idle()
     assert e.get_state(TaskId("leaf")).name == "DONE"
-    assert T.get_review(e, "leaf")["execution_admitted"] is False, (
-        "the probe never produced the disagreement it is about")
+    # …ASSERTED ON THE FINDINGS, not on the gate's answer. `execution_admitted` says whether the
+    # machine will let children start, and that depends on a deployment switch (`GFSO_L2_GATE`,
+    # which this suite turns off — the canon's EXPLORE branch). What this test is about is the
+    # review nobody answered, and that fact is the same under either setting.
+    assert T.get_review(e, "leaf")["open_findings"], (
+        "the probe never produced the unanswered review it is about")
 
 
 def test_completion_names_the_review_it_passed_over():

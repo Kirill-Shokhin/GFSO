@@ -17,7 +17,7 @@ from gfso.config import MODEL_VALIDATOR_RETRY
 import gfso.delegate as D
 from gfso.delegate import (AgentRegistry, Dispatcher, run_executor, EXECUTOR_SCHEMA,
                            _auto_validate, _checker_validate)
-from tests.support import make_engine
+from tests.support import make_engine, instrument_passes, workdir as workdir_
 from gfso.decompose.build import build_graph_live
 
 
@@ -424,7 +424,7 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     # guarded validation path, with the round already claimed.
     vkey = d._round_key(e.get_task(TaskId("par")), "v:")
     d._seen.add(vkey)
-    threading.Thread(target=d._validate_guarded, args=(TaskId("par"), 0), daemon=True).start()
+    threading.Thread(target=d._validate_guarded, args=(TaskId("par"), (0, 0, 0)), daemon=True).start()
     for _ in range(300):                              # verdict consumed + guarded postlude done
         if len(llm._texts) == 1 and vkey not in d._seen:
             break
@@ -461,7 +461,7 @@ def test_auto_validate_reuses_fresh_recorded_verdict(tmp_path):
                                          "self_validation": "flush: met"})))
     e.wait_idle()
     assert e.get_state(TaskId("n1")).name == "VALIDATING"
-    e.record_exec_verdict(TaskId("n1"), "PASS", [], "validate_result")   # fresh manual verdict
+    instrument_passes(e, TaskId("n1"))                                   # fresh manual verdict
     e._graph.authorized_validators = {"val-1"}      # the dispatcher syncs this each pass
     unused = _AgentLLM("never popped")
     assert _auto_validate(e, TaskId("n1"), agents, _llm=unused) == "pass"
@@ -526,13 +526,15 @@ def test_stale_queued_run_releases_slot_without_spawning(tmp_path):
     _node(e, "t1")
     ran = []
     d = Dispatcher(e, agents, runner=lambda en, tid, ex, ag: ran.append(str(tid)))
-    # fresh: OFFERED at iteration 0 → runs
-    d._run_guarded(TaskId("t1"), "exec-1", 0)
+    # fresh: OFFERED at generation (0, 0, 0) → runs. The guard compares the WHOLE generation
+    # (iteration, reopens, revisions) — the same triple `_round_key` builds the round from — because
+    # comparing iteration alone let a REVISED node run twice, once against a dead contract.
+    d._run_guarded(TaskId("t1"), "exec-1", (0, 0, 0))
     assert ran == ["t1"]
     # stale by state: the node delivered meanwhile → the queued run drops
     T.signal(e, "t1", "ACCEPT", "exec-1")
     T.signal(e, "t1", "DELIVER", "exec-1", result="out")
-    d._run_guarded(TaskId("t1"), "exec-1", 0)
+    d._run_guarded(TaskId("t1"), "exec-1", (0, 0, 0))
     assert ran == ["t1"]                                  # no second run
     # stale validate: iteration mismatch drops AND frees the key for a fresh dispatch.
     # The key is built the way the dispatcher builds it — id plus the node's GENERATION
@@ -542,9 +544,9 @@ def test_stale_queued_run_releases_slot_without_spawning(tmp_path):
     d._seen.add(vkey)
     validated = []
     d._validate = lambda en, t, a: validated.append(str(t)) or "pass"
-    d._validate_guarded(TaskId("t1"), 5)                  # node is at iteration 0, not 5
+    d._validate_guarded(TaskId("t1"), (5, 0, 0))          # node is at iteration 0, not 5
     assert not validated and vkey not in d._seen
-    d._validate_guarded(TaskId("t1"), 0)                  # fresh: VALIDATING at iteration 0
+    d._validate_guarded(TaskId("t1"), (0, 0, 0))          # fresh: VALIDATING at generation (0,0,0)
     assert validated == ["t1"]
     e.stop()
 
@@ -567,7 +569,7 @@ def test_a_reassigned_node_is_not_run_as_its_old_executor(tmp_path):
     e.reassign(TaskId("t1"), AgentId("exec-2"))
     e.wait_idle()
     assert str(e.get_task(TaskId("t1")).assignee) == "exec-2"
-    d._run_guarded(TaskId("t1"), "exec-1", 0)         # …the slot the OLD dispatch won
+    d._run_guarded(TaskId("t1"), "exec-1", (0, 0, 0))   # …the slot the OLD dispatch won
     assert ran == [], "a run as the old executor makes signals the FSM refuses"
     assert d._round_key(e.get_task(TaskId("t1"))) not in d._seen, "the round is freed with the slot"
     assert "t1" in d.dispatch_once()                  # …and the next pass sends it to exec-2
@@ -900,7 +902,7 @@ def test_a_registration_does_not_erase_another_sessions_roles(tmp_path):
 
     # …and a run tidying up after itself removes only what it staffed, in the directory it staffed.
     assert a.unregister("run-exec-1", workdir=str(tmp_path))["unregistered"] == "run-exec-1"
-    assert a.unregister("tester-exec-1", workdir=str(tmp_path / "elsewhere"))["unregistered"] is None
+    assert a.unregister("tester-exec-1", workdir=workdir_(tmp_path, "elsewhere"))["unregistered"] is None
     assert set(json.loads(roster.read_text(encoding="utf-8"))) == {"tester-exec-1", "run-exec-2"}
 
 
@@ -1072,14 +1074,14 @@ def test_a_validator_standing_somewhere_else_is_not_this_works_judge(tmp_path):
     an unrelated directory". When an executor HAS a workspace and no instrument stands in it, the
     honest answer is none: the node waits for its issuer, who is told to register one."""
     a = AgentRegistry(path=str(tmp_path / "agents.json"))
-    a.register("their-val", "llm-validator", workdir=str(tmp_path / "somewhere-else"))
-    a.register("my-exec", "llm-executor", workdir=str(tmp_path / "my-work"))
+    a.register("their-val", "llm-validator", workdir=workdir_(tmp_path, "somewhere-else"))
+    a.register("my-exec", "llm-executor", workdir=workdir_(tmp_path, "my-work"))
     assert a.validator_for("my-exec") is None                 # …not their-val
 
-    a.register("my-val", "llm-validator", workdir=str(tmp_path / "my-work"))
+    a.register("my-val", "llm-validator", workdir=workdir_(tmp_path, "my-work"))
     assert a.validator_for("my-exec") == "my-val"             # …the one standing in the work
-    a.register("pinned", "llm-validator", workdir=str(tmp_path / "somewhere-else"))
-    a.register("my-exec", "llm-executor", workdir=str(tmp_path / "my-work"), validator="pinned")
+    a.register("pinned", "llm-validator", workdir=workdir_(tmp_path, "somewhere-else"))
+    a.register("my-exec", "llm-executor", workdir=workdir_(tmp_path, "my-work"), validator="pinned")
     assert a.validator_for("my-exec") == "pinned"             # …an explicit binding still wins
 
 
@@ -1123,17 +1125,17 @@ def test_another_projects_validator_does_not_judge_this_projects_work(tmp_path):
     roles at all, $2.43 of a $4.38 run. The project name is the isolation boundary everywhere else;
     a role registered under another project is not this project's instrument."""
     a = AgentRegistry(path=str(tmp_path / "agents.json"))
-    a.register("their-val", "llm-validator", workdir=str(tmp_path / "theirs"), project="their-run")
+    a.register("their-val", "llm-validator", workdir=workdir_(tmp_path, "theirs"), project="their-run")
     assert a.validator_for(None, project="my-run") is None       # …not theirs
     assert a.validator_for("nobody", project="my-run") is None
 
     # …and a role registered with NO project is UNSCOPED, not foreign: the measurement arm registers
     # through the library and names none, and excluding it left a run with no validator at all
     # (measured 2026-08-22).
-    a.register("library-val", "llm-validator", workdir=str(tmp_path / "arm"))
+    a.register("library-val", "llm-validator", workdir=workdir_(tmp_path, "arm"))
     assert a.validator_for(None, project="my-run") == "library-val"
 
-    a.register("my-val", "llm-validator", workdir=str(tmp_path / "mine"), project="my-run")
+    a.register("my-val", "llm-validator", workdir=workdir_(tmp_path, "mine"), project="my-run")
     assert a.validator_for(None, project="my-run") == "my-val"
     assert a.validator_for(None, project="their-run") == "their-val"
 
@@ -1152,7 +1154,7 @@ def test_a_project_with_no_validator_is_not_a_validator_that_failed(tmp_path):
     T.signal(e, "t1", "ACCEPT", "exec-1")
     T.signal(e, "t1", "DELIVER", "exec-1", result="out")
 
-    d._validate_guarded(TaskId("t1"), 0)
+    d._validate_guarded(TaskId("t1"), (0, 0, 0))
     assert not d._retried, "a missing instrument was counted as a failed one"
     assert e.get_state(TaskId("t1")).name == "VALIDATING"            # …it waits for its issuer
     assert not e.validation_parked(TaskId("t1")) if hasattr(e, "validation_parked") else True
@@ -1194,17 +1196,17 @@ def test_the_project_rule_does_not_shadow_the_workdir_rule(tmp_path):
     restored by the rule that was meant to be orthogonal to it.
     """
     a = AgentRegistry(path=str(tmp_path / "agents.json"))
-    a.register("aaa-elsewhere", "llm-validator", workdir=str(tmp_path / "elsewhere"))
-    a.register("zzz-in-the-work", "llm-validator", workdir=str(tmp_path / "work"))
-    a.register("exec-1", "llm-executor", workdir=str(tmp_path / "work"), project="run-7")
+    a.register("aaa-elsewhere", "llm-validator", workdir=workdir_(tmp_path, "elsewhere"))
+    a.register("zzz-in-the-work", "llm-validator", workdir=workdir_(tmp_path, "work"))
+    a.register("exec-1", "llm-executor", workdir=workdir_(tmp_path, "work"), project="run-7")
 
     # both judges are unscoped, so both are candidates — and the one standing in the work wins
     assert a.validator_for("exec-1", project="run-7") == "zzz-in-the-work"
 
     # scope still comes FIRST: a judge of another project is not a candidate at all, even standing here
     b = AgentRegistry(path=str(tmp_path / "agents2.json"))
-    b.register("theirs", "llm-validator", workdir=str(tmp_path / "work"), project="other-run")
-    b.register("exec-1", "llm-executor", workdir=str(tmp_path / "work"), project="run-7")
+    b.register("theirs", "llm-validator", workdir=workdir_(tmp_path, "work"), project="other-run")
+    b.register("exec-1", "llm-executor", workdir=workdir_(tmp_path, "work"), project="run-7")
     assert b.validator_for("exec-1", project="run-7") is None
 
 
@@ -1235,8 +1237,21 @@ def test_a_self_report_is_not_a_recorded_verdict_the_instrument_may_skip(tmp_pat
 
     e._graph.authorized_validators = {"val-1"}      # what the dispatcher publishes each round
     judged = []
-    monkeypatch.setattr(D, "_judge_with",
-                        lambda *a, **k: (judged.append(str(a[2])) or {"verdict": Verdict.PASS}))
+
+    def _ran(engine, agents_, task_id, *a, **k):
+        # THE STUB RECORDS, BECAUSE THE REAL ONE DOES. `_judge_with` writes
+        # `record_exec_verdict` on both its branches; a stub that returns a verdict and records
+        # nothing simulates a judge that judged and left no trace — a state the product cannot
+        # produce. It was invisible while the internal-node guard still keyed on the SIGNER's name
+        # (the stub signs as `val-1`, not the executor, so the guard was skipped); once the guard
+        # began asking for the RECORD, this test failed and the stub was the reason.
+        judged.append(str(task_id))
+        engine.record_exec_verdict(task_id, Verdict.PASS, [], "val-1",
+                                   per_criterion=[{"criterion": "k", "verdict": "pass",
+                                                   "evidence": "ran the check for k; it holds"}])
+        return {"verdict": Verdict.PASS}
+
+    monkeypatch.setattr(D, "_judge_with", _ran)
     out = D._auto_validate(e, "kid", agents)
 
     assert judged == ["kid"], "the instrument must run: a self-report is not an independent verdict"
@@ -1363,10 +1378,10 @@ def test_registering_a_validator_says_what_it_will_judge(tmp_path, monkeypatch):
     monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
     e = _eng()
 
-    first = TL.register_agent(e, "w-exec", "llm-executor", workdir=str(tmp_path / "work"))
+    first = TL.register_agent(e, "w-exec", "llm-executor", workdir=workdir_(tmp_path, "work"))
     assert "nobody YET" in str(first["will_be_judged_by"])
 
-    second = TL.register_agent(e, "w-val", "llm-validator", workdir=str(tmp_path / "work"))
+    second = TL.register_agent(e, "w-val", "llm-validator", workdir=workdir_(tmp_path, "work"))
     assert second["will_judge"] == ["w-exec"], "the loop the first registration opened is closed"
     e.stop()
 
@@ -1385,14 +1400,14 @@ def test_a_judge_that_works_in_its_own_scratch_is_still_this_projects_judge(tmp_
     measurement, unchanged — the test above still pins it).
     """
     a = AgentRegistry(path=str(tmp_path / "agents.json"))
-    a.register("arm-exec", "llm-executor", workdir=str(tmp_path / "ws"), project="run-7")
-    a.register("arm-val", "llm-validator", workdir=str(tmp_path / "scratch"), project="run-7")
+    a.register("arm-exec", "llm-executor", workdir=workdir_(tmp_path, "ws"), project="run-7")
+    a.register("arm-val", "llm-validator", workdir=workdir_(tmp_path, "scratch"), project="run-7")
     assert a.validator_for("arm-exec", project="run-7") == "arm-val"
 
-    a.register("near", "llm-validator", workdir=str(tmp_path / "ws"), project="run-7")
+    a.register("near", "llm-validator", workdir=workdir_(tmp_path, "ws"), project="run-7")
     assert a.validator_for("arm-exec", project="run-7") == "near", "place still breaks the tie"
 
     b = AgentRegistry(path=str(tmp_path / "b.json"))
-    b.register("their-val", "llm-validator", workdir=str(tmp_path / "elsewhere"))
-    b.register("my-exec", "llm-executor", workdir=str(tmp_path / "mine"))
+    b.register("their-val", "llm-validator", workdir=workdir_(tmp_path, "elsewhere"))
+    b.register("my-exec", "llm-executor", workdir=workdir_(tmp_path, "mine"))
     assert b.validator_for("my-exec") is None, "with no project, place is the whole rule"

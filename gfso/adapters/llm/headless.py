@@ -170,6 +170,19 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 # and a VALIDATOR holding them could sign the graph it is judging (§14.5). With
                 # --strict-mcp-config and no --mcp-config, no MCP server is started.
                 "--strict-mcp-config",
+                # The same fact one layer over: the CLI also inherits the user's HOOKS, and a hook
+                # written for a person's interactive console has no business inside an internal
+                # call of this product. Measured live: a session-lifecycle hook fires in this child
+                # and injects its own instructions into the run — so a run's context stops being
+                # the run's. Worse for the Stop event, where a hook may REFUSE the child's exit and
+                # buy extra generation rounds on a paid call, for a stop nobody was waiting on.
+                # Neither is the operator's mistake; a child of ours is ours to keep clean.
+                "--settings", '{"disableAllHooks": true}',
+                # And the reverse direction: each call used to SAVE its transcript into the
+                # operator's session history for this directory. Measured on one install: 10 459
+                # internal transcripts beside 18 of the person's own, and `claude --resume` took
+                # over three minutes to list them. Nothing reads them; the envelope comes off stdout.
+                "--no-session-persistence",
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 *(tools_args if tools_args is not None else ["--disallowedTools", "*"])]
         t0 = time.monotonic()
@@ -209,6 +222,16 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 # question the system could not answer about itself.
                 "cost_usd": out.get("total_cost_usd"),
                 "model": self._model,
+                # THE STREAM ENDED WITHOUT ITS RESULT EVENT — the call was cut, not answered.
+                # Only this layer can see the difference: upstream all that survives is a short
+                # answer at zero cost, and zero cost is a fact about the money and about nothing
+                # else. A judge whose call was cut looks exactly like a judge whose report came back
+                # thin, and the two want opposite handling — a bigger model repairs a thin report
+                # and does nothing at all for a severed pipe. Measured 2026-09-06: one such call ran
+                # 15 minutes, produced 232 tokens and $0.00, was read as a weak report, escalated to
+                # a tier three times the price, and spent the node's last attempt; the run
+                # (`database_engine`) ended on it.
+                "transport_torn": envelope is None,
             })
             if out.get("is_error"):
                 log.warning(f"headless claude call errored: {str(out)[:300]}")

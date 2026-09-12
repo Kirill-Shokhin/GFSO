@@ -14,6 +14,7 @@ import os
 import sys
 import threading
 import typing
+import weakref
 from pathlib import Path
 from typing import Optional
 
@@ -32,12 +33,61 @@ from gfso import tools_llm as T                   # the COMPLETE action surface 
 # `use_project` must switch THAT session's default, not a global (two sessions would fight over it).
 # Keyed by the MCP session object; a session that never called use_project falls back to the
 # registry's active project. Stdio (one session per process) degrades to exactly the old behavior.
-_SESSION_PROJECTS: dict[int, str] = {}
+# KEYED BY THE SESSION OBJECT, held WEAKLY — never by `id()`. CPython reuses an address once the
+# object behind it is collected, and the SDK drops the transport when a session ends, so successive
+# sessions (same type, same size — the likeliest reuse candidate) could land on one key: a session
+# that had never called `use_project` inherited another session's project and its verbs wrote into
+# THAT graph, silently, with the registry reporting a different active project in the same second.
+# A weak key dies with its session, so the entry cannot outlive the object and be re-found by an
+# address. (What this does NOT fix: a bridge rebuild makes a genuinely NEW session, whose mapping is
+# gone — `gfso/mcp/connect.py` replays only the `initialize` handshake, not `use_project`.)
+class _SessionProjects:
+    """A mapping from SESSION OBJECT to project name that no address can be re-found by.
+
+    Weak where the session allows it, so the entry dies with the session; strong where it does not
+    (a few objects refuse a weak reference), which keeps the session itself alive and therefore its
+    address unre-usable. Either way the invariant is the one that matters: an entry can never be
+    reached by a session that is not the one that made it.
+    """
+
+    def __init__(self):
+        self._weak, self._strong = weakref.WeakKeyDictionary(), {}
+
+    def _side(self, key):
+        return self._weak if key in self._weak else (self._strong if key in self._strong else None)
+
+    def get(self, key, default=None):
+        """This session's project, or `default` — never another session's."""
+        side = self._side(key)
+        return default if side is None else side[key]
+
+    def __contains__(self, key):
+        return self._side(key) is not None
+
+    def __getitem__(self, key):
+        return self._side(key)[key]
+
+    def __setitem__(self, key, value):
+        try:
+            self._weak[key] = value
+        except TypeError:
+            self._strong[key] = value
+
+    def __delitem__(self, key):
+        del self._side(key)[key]
+
+    def items(self):
+        """Every (session, project) pair, for the sweep that drops a deleted project's sessions."""
+        return [*self._weak.items(), *self._strong.items()]
 
 
-def _session_key(ctx) -> int | None:
+_SESSION_PROJECTS = _SessionProjects()
+
+
+def _session_key(ctx):
+    """The session OBJECT — the key `_SESSION_PROJECTS` is keyed by, or None outside a session."""
     try:
-        return id(ctx.request_context.session) if ctx is not None else None
+        return ctx.request_context.session if ctx is not None else None
     except Exception:
         return None
 
@@ -48,7 +98,8 @@ def _resolver(engine_or_registry):
     param → the calling SESSION's project → the registry's active."""
     if hasattr(engine_or_registry, "engine"):        # ProjectRegistry
         def _res(project=None, ctx=None):
-            name = project or _SESSION_PROJECTS.get(_session_key(ctx) or 0)
+            key = _session_key(ctx)
+            name = project or (_SESSION_PROJECTS.get(key) if key is not None else None)
             return engine_or_registry.engine(name)
         return _res
     return lambda project=None, ctx=None: engine_or_registry   # bare Engine — ignored
@@ -98,7 +149,8 @@ def _with_ui_link(name: str, out, project=None, ctx=None):
     if name not in _UI_LINK_VERBS or not isinstance(out, dict) or "ui" in out:
         return out
     try:
-        name_ = project or out.get("active") or _SESSION_PROJECTS.get(_session_key(ctx) or 0)
+        _k = _session_key(ctx)
+        name_ = project or out.get("active") or (_SESSION_PROJECTS.get(_k) if _k is not None else None)
         out["ui"] = _T.ui_link(name_)
     # the docstring's contract: a link is a convenience, and the verb's result is already correct
     # without it

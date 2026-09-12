@@ -65,6 +65,14 @@ def _weigh_the_numeric_bounds(task, child_by_id) -> tuple[list, int, int]:
             continue
 
         child_sum = 0.0
+        # THE CHILDREN'S STRICTNESS IS PART OF WHAT THEY ENTAIL, not decoration on the number.
+        # `m < c` for at least one child makes the sum STRICTLY below Σc; all-non-strict children
+        # only give `m ≤ Σc`. §13.4 annotates its own worked example with exactly this — "the bound
+        # 100 + 100 ≤ 200 with both child bounds STRICT; the non-strict test alone would not entail
+        # the strict parent criterion" — and the tier used to read the value and drop the operator,
+        # so `<= 100` twice under a parent `< 200` was reported as a verified bound. A false green
+        # on the Semantic level is the one thing this tier exists to prevent.
+        strict_sum = False
         parseable = True
         for cid in mapped_children:
             child = child_by_id.get(cid)
@@ -74,6 +82,7 @@ def _weigh_the_numeric_bounds(task, child_by_id) -> tuple[list, int, int]:
                 cb = _parse_numeric_bound(cc.description)
                 if cb and cb[0].strip() == p_metric.strip():
                     child_sum += cb[2]
+                    strict_sum = strict_sum or "=" not in cb[1]
                     break
             else:
                 parseable = False
@@ -83,10 +92,14 @@ def _weigh_the_numeric_bounds(task, child_by_id) -> tuple[list, int, int]:
             continue
 
         checked += 1
-        if "<" in p_op and child_sum > p_val:
-            violations.append(f"{p_metric}: children sum {child_sum} > parent bound {p_val}")
-        elif ">" in p_op and child_sum < p_val:
-            violations.append(f"{p_metric}: children sum {child_sum} < parent bound {p_val}")
+        # Reached: `m < Σc` when some child is strict, `m ≤ Σc` otherwise. At Σc = P that entails a
+        # strict parent bound only in the first case; below P, and for a non-strict parent, either
+        # case does.
+        beyond = child_sum > p_val if "<" in p_op else child_sum < p_val
+        at_the_bound = child_sum == p_val and not (strict_sum or "=" in p_op)
+        if beyond or at_the_bound:
+            violations.append(f"{p_metric}: children sum {child_sum} does not entail {p_op} {p_val}"
+                              + ("" if beyond else " (no child bound is strict)"))
     return violations, checked, beyond_tier
 
 
@@ -134,12 +147,18 @@ def check_consistency(children: list[Task]) -> CheckResult:
 
     contradictions = []
     for metric, entries in bounds.items():
-        uppers = [(v, cid) for op, v, cid in entries if "<" in op]
-        lowers = [(v, cid) for op, v, cid in entries if ">" in op]
-        for uv, uid in uppers:
-            for lv, lid in lowers:
-                if uv <= lv:
-                    contradictions.append(f"{metric}: {uid} requires <{uv} but {lid} requires >{lv}")
+        uppers = [(v, op, cid) for op, v, cid in entries if "<" in op]
+        lowers = [(v, op, cid) for op, v, cid in entries if ">" in op]
+        for uv, uop, uid in uppers:
+            for lv, lop, lid in lowers:
+                # AT EQUAL BOUNDS THE OPERATORS DECIDE, and dropping them invented a conflict:
+                # `x <= 5` and `x >= 5` are jointly satisfied by x = 5, and CHECK-8 reported them
+                # as an FM-2 contradiction — the check whose whole purpose is to find real ones.
+                # Unsatisfiable iff the window is empty: the upper below the lower, or the two
+                # meeting at a point that at least one of them excludes.
+                if uv < lv or (uv == lv and ("=" not in uop or "=" not in lop)):
+                    contradictions.append(
+                        f"{metric}: {uid} requires {uop}{uv} but {lid} requires {lop}{lv}")
 
     if contradictions:
         return CheckResult("CHECK-8:consistency", False, "; ".join(contradictions))

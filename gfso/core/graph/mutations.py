@@ -143,6 +143,14 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # delivery and lands its PASS afterwards, stamped with unchanged (iteration, reopens).
     task.revisions = task.revisions + 1
     task.spec = effect.spec
+    # THE DEADLINE IS A PACKET FIELD, and Inv-1 names it among the four a revision exists to change.
+    # It was write-once: set at creation and unreachable afterwards, so a schedule that had moved
+    # could not be repaired — the only exit left was CANCEL, which cascades, which is precisely what
+    # Inv-1 says a revision must not do. `None` means KEEP, exactly as it does for `assignee` above:
+    # a revision that does not mention the date is not a revision that clears it. (Clearing one has
+    # no carrier and is not claimed here — a deadline-less node is not defective, `formal/README` #6.)
+    if effect.deadline is not None:
+        task.deadline = effect.deadline
     task.done_reason = None  # re-authored → a fresh contract, no longer a ABANDONED tombstone (clears stale flag)
     # a criteria change strands this node's own mappings that point at a now-removed criterion → prune them here
     # (logged, part of APPLY_SPEC) so no stale mapping persists; the now-unmapped child surfaces via CHECK-1b.

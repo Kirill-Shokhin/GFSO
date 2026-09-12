@@ -26,12 +26,13 @@ from typing import Optional
 
 from gfso import runtime
 from gfso.runtime import llm_factory
-from gfso.core.types import TaskId, Signal, Stage, Verdict, passed
+from gfso.core.types import TaskId, Signal, Stage, Verdict, passed, settled_positive
+from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 from gfso.decompose import decompose_into
 from gfso.engine.events import emit_cb
-from gfso.engine.validation import _l0_holes, _l2_undischarged, l2_gate_on
-from gfso.adapters.llm.stats import _stat_line
+from gfso.engine.validation import _l0_holes, _l2_undischarged
+from gfso.adapters.llm.stats import _stat_line, the_call_was_cut
 from gfso.engine import Engine
 from gfso import tools as _tools
 from gfso.tools import _agent_id
@@ -174,22 +175,28 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
         return {"task_id": task_id, "inflight": True, "verdict": None,
                 "note": "a Level-2 check is already running over this version of the plan — "
                         "duplicate spawn suppressed; its verdict lands by itself (`get_review` "
-                        "reads it when it does)."}
-    llm = llm_factory(model)
-    llm.on_tick = _cb
-    llm.stage_hint = f"{task_id} L2-checker"
-    _cb(f"{task_id}: L2 checker (causal entailment per parent criterion)…")
-    # What stood open BEFORE this run, so the reply can say which findings are new (see below).
-    # From the STORED review, not from the gate's current view: the gate answers None the moment an
-    # edit stales the verdict — which is exactly the situation in which someone re-runs the check —
-    # so the delta went blank in the rounds that changed something. Measured on the human door
-    # 2026-08-22, on the round where the checker CONTRADICTED two earlier ones: "the round that
-    # actually regressed is the round where the delta reporting silently switched off".
-    _prev_open = engine.stored_review_findings(TaskId(task_id))
-    _prev_ts = (engine.get_critique(TaskId(task_id)) or {}).get("ts")
+                        "reads it when it does). If nothing lands, the plan has changed under it "
+                        "or its runner died: `revise` moves the node to a new version and the "
+                        "check can be asked again."}
     try:
+        llm = llm_factory(model)
+        llm.on_tick = _cb
+        llm.stage_hint = f"{task_id} L2-checker"
+        _cb(f"{task_id}: L2 checker (causal entailment per parent criterion)…")
+        # What stood open BEFORE this run, so the reply can say which findings are new (see below).
+        # From the STORED review, not the gate's current view: the gate answers None the moment an
+        # edit stales the verdict — which is exactly the situation in which someone re-runs the
+        # check — so the delta went blank in the rounds that changed something. Measured on the
+        # human door 2026-08-22, on the round where the checker CONTRADICTED two earlier ones:
+        # "the round that actually regressed is the round where the delta reporting switched off".
+        _prev_open = engine.stored_review_findings(TaskId(task_id))
+        _prev_ts = (engine.get_critique(TaskId(task_id)) or {}).get("ts")
         out = asdict(_critic_runner.review_decomposition(engine, TaskId(task_id), llm=llm))
-    finally:                      # the slot is released whether the check answers or dies
+    finally:
+        # EVERYTHING AFTER THE CLAIM, not only the model call. Four statements used to sit between
+        # `begin_review` and this `try` — building the provider, arming the tick callback, and two
+        # storage reads. `llm_factory` raises on an ordinary misconfiguration, and the claim then
+        # leaked with no model ever having run: no kill, no hang, no thread teardown needed.
         engine.end_review(_slot)
     out["stats"] = list(llm.calls)
     # …AND HOW TO READ IT AGAIN FOR FREE. This verb SPENDS a model run every call, and it is also
@@ -207,9 +214,7 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
     # may start, so the answer carries it.
     _t = engine.get_task(TaskId(task_id))
     _open = _l2_undischarged(engine._graph, _t) if _t is not None else None
-    out["execution_admitted"] = bool(
-        _t is not None and not _l0_holes(engine._graph, _t)
-        and (not l2_gate_on() or _open == []))
+    out["execution_admitted"] = engine.execution_admitted(TaskId(task_id))
     # ... and what the OTHER flag is about, beside it. `gate_passed: true` next to
     # `execution_admitted: false` reads as a contradiction unless you already know the first names a
     # PRE-condition (the structure was clean enough to run the checker) rather than a verdict on the
@@ -550,7 +555,7 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     # (Thm 1). So a parent with an escalated child bought a full validator run whose verdict the
     # gate then refused: exactly the waste this pre-check exists to prevent, in the one case it
     # let through. Two spellings of one rule, and the looser one was the one that spent money.
-    _open = [c for c in engine._graph.get_active_children(TaskId(task_id)) if not passed(c)]
+    _open = [c for c in engine._graph.get_active_children(TaskId(task_id)) if not settled_positive(c)]
     if _open:
         return {"error": f"not validating {task_id} yet: it aggregates children that have not "
                          f"settled — " + ", ".join(f"'{c.id}' is {c.state.name}" for c in _open)
@@ -576,10 +581,17 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     # another experiment's scratch directory and a root took a false FAIL on seventeen criteria,
     # which then drove the run into the loop that ended it. The judge does not get to conclude from
     # an empty room; refusing costs one comparison, and the alternative costs a run.
-    _wd = Path(workdir) if workdir else None
-    if _llm is None and (_wd is None or not _wd.is_dir()
-                         or not any(q.name not in ("__pycache__", ".gfso-scratch")
-                                    for q in _wd.iterdir())):
+    # …AND THE SAME RULE ABOUT WHAT IS CHEAP TO ASK. This door stats the workdir and then enumerates
+    # it, and asking either of a share whose host does not answer costs 7-21 seconds on the caller's
+    # own thread — the cost the dispatcher's guard was built to avoid, in the one other place that
+    # asks the same question of the same directory. A rule kept in two places moves in one of them,
+    # which is the defect this repository keeps paying for; both now read `cheap_to_ask`. A network
+    # workdir is therefore not pre-checked: the validator opens it and reports what it finds.
+    _wd = Path(workdir) if workdir and cheap_to_ask(workdir) else None
+    if _llm is None and cheap_to_ask(workdir) and (
+            _wd is None or not _wd.is_dir()
+            or not any(q.name not in ("__pycache__", ".gfso-scratch")
+                       for q in _wd.iterdir())):
         # …and the way OUT of the refusal depends on whether the roster was able to answer. It used
         # to read "`list_agents` shows where this node's executor works" in both cases — advice that
         # is a dead end for a node held by a person, and homework the server has already done for a
@@ -625,7 +637,10 @@ def _judging_place(task_id: str, workdir):
     scratch is a SIBLING of the delivery, so a criterion like "every file here belongs
     to this package" stays true. Returns (scratch, files_before)."""
     scratch = None
-    if workdir:
+    if workdir and cheap_to_ask(workdir):
+        # …and not beside a delivery on a share: creating the scratch there is the same wait as
+        # asking about it, in a place the caller cannot see. Without one, the validator is simply
+        # offered no scratch — a path the code already carries (`place = … if scratch else None`).
         # BESIDE the delivery, not inside it. One dotted directory rather than a loose
         # `<task>_<epoch>/` per validation — and a SIBLING of the tree being judged, because a
         # criterion like "every file under the target dir belongs to this package" is then true:
@@ -650,7 +665,7 @@ def _judging_place(task_id: str, workdir):
     # ⊥ is not zero here either (§11.2): with no pre-image there is nothing to subtract, so the
     # honest answer about strays is silence.
     _before = None
-    if workdir:
+    if workdir and cheap_to_ask(workdir):     # see `gfso.places.cheap_to_ask`: a share can hang
         try:
             _before = {q.name for q in Path(workdir).iterdir()}
         except OSError as e:
@@ -667,7 +682,7 @@ def _strays_left_behind(engine, task_id: str, workdir, _before, out: dict, _cb) 
     the lesson this project keeps relearning — so the difference is MEASURED rather than
     assumed. Nothing is deleted: the executor's tree is not this code's to prune, and a
     stray named in the record is a fact its owner can act on."""
-    if workdir and _before is not None:
+    if workdir and _before is not None and cheap_to_ask(workdir):
         try:
             strays = sorted({q.name for q in Path(workdir).iterdir()}
                             - _before - {".gfso-scratch"})
@@ -689,31 +704,21 @@ def _strays_left_behind(engine, task_id: str, workdir, _before, out: dict, _cb) 
 
 
 def _registered_workdir(engine: Engine, task_id: str, validator: Optional[str]) -> Optional[str]:
-    """Where the work is, asked of the roster instead of the caller.
+    """Where the work is, asked of the ONE owner instead of of this door's own order.
 
-    Both halves were measured as refusals the server could have answered itself. `validator=w-val`
-    was passed with the role registered against the delivery's directory and the run refused with
-    "the working directory None is empty" — the roster held it and nobody asked. Then the same
-    refusal met a plain `validate_result(<node>)` whose Del is a registered role, and told the caller
-    to go read `list_agents`: the answer the server was already holding, handed back as homework
-    (measured on the human door 2026-08-22 — the tester passed the directory by hand, and the
-    hand-passed argument is what then crashed). The Del is the role that DID the work, so its
-    registered workdir is the delivery's; a name the roster does not know is a person, and there the
-    refusal is the honest answer."""
+    Both halves this door was built for are kept and neither is decided here any more: a
+    `validator=` naming a role registered against the delivery is asked (the run that refused with
+    "the working directory None is empty" while the roster held it — human door, 2026-08-22), and a
+    plain call on a node whose Del is a registered role is answered from the graph rather than
+    handed back as homework. What changed is the ORDER, which this door had wrong: it asked the
+    roster before the graph, which is the priority a false FAIL over seventeen criteria already
+    bought a correction for on the dispatcher's side, in one copy of two (probed 2026-09-07 —
+    the two doors sent the judge to different directories for the same node).
+    """
     reg = _roster()
-    task = engine.get_task(TaskId(task_id))
-    # …AND THE BOUND JUDGE IS THE THIRD PLACE TO ASK. A ROOT is normally held by the caller
-    # themselves — an unregistered id, so the first two questions come back empty — while the
-    # project's registered validator stands exactly in the delivery. The refusal then said "agent has
-    # no registered workdir (the roster was asked first)" while a judge with the right directory was
-    # in the same roster, and the same call went on to produce the verdict anyway (HTTP door,
-    # 2026-09-02: "had I trusted the error and stopped, I would have reported the run as stalled
-    # while it was in fact passing").
-    _bound = reg.validator_for(task.assignee if task else None, project=engine.project_name)
-    for who in (validator, task.assignee if task else None, _bound):
-        if who and (wd := (reg.get(str(who)) or {}).get("workdir")):
-            return wd
-    return None
+    return _delegation().judging_workdir(
+        engine, reg, TaskId(task_id), named_validator=validator,
+        vcfg=(reg.get(str(validator)) if validator else None))
 
 
 def _the_validators_answer(engine, task_id, out, parsed, recorded, _cb, llm) -> dict:
@@ -908,9 +913,31 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
             # judging had already died, because the one surface the DELIVER reply had pointed them at
             # is built from this record and there was no record. A judge ran, produced something, and
             # it was gone: against the one promise the audit trail is sold on.
+            # …AND "IT WROTE NOTHING" IS NOT "IT WROTE SOMETHING UNREADABLE". Measured on a paid run
+            # (2026-09-06, `database_engine`): the judging call ran for FIFTEEN MINUTES, returned 232
+            # tokens — one sentence, "I'll inspect the delivery and run real probes" — and cost
+            # $0.00, which is a transport that stopped, not a model that answered badly. Both arrived
+            # as "the report did not parse", so the reader could not tell a judge worth re-running
+            # from a judge worth replacing, and the run died on the second one. The two are told
+            # apart by what came back, and the advice differs because the fix does.
+            # …AND THE PROVIDER IS ASKED, not guessed at. "Short and without a brace" is a symptom of
+            # a stopped run; the provider that read the CLI's stream KNOWS, because the stream ended
+            # with no result event (`transport_torn`). Two answers to one question is how the two
+            # drift apart, so the observation wins wherever it exists and the shape of the text is
+            # the fallback for a provider that cannot say — and the same flag is what keeps the
+            # dispatcher from spending the node's one retry on a severed pipe, so the advice this
+            # branch gives is now carried out rather than merely printed.
+            _said = str(text or "").strip()
+            _cut_off = the_call_was_cut(llm, _said)
             out.update(_keep_a_report_that_decided_nothing(
                 engine, task_id,
-                "the validator's report did not parse — no verdict could be read from it", text))
+                ("the validator produced NO REPORT — its run returned "
+                 f"{len(_said)} characters and no structured answer at all"
+                 + (f" ({_said[:120]!r})" if _said else " (nothing)")
+                 + ". That is a run that stopped, not a judgement: re-running the same tier is the "
+                   "right move here, unlike a report that parsed and decided nothing"
+                 if _cut_off else
+                 "the validator's report did not parse — no verdict could be read from it"), text))
             _cb(f"{task_id}: validator report did not parse (verdict=null) · {_stat_line(llm)}"
                 + (f" · report kept: {out.get('report_kept_at')}" if out.get("report_kept_at") else ""))
             return out
@@ -1152,13 +1179,29 @@ def _roster(engine: Engine = None):
     Imported here rather than at module scope because `gfso.delegate` imports THIS module (the
     dispatcher asks it whether internal nodes are being validated), and one lazy accessor is the
     whole of that cycle rather than one import inside each verb that needs the roster."""
-    # LEFT: import cycle gfso.tools_llm ↔ gfso.delegate — `gfso.delegate` imports this module at
-    # module level, so the roster is reached from here only at call time.
-    from gfso.delegate import default_agents, ensure_dispatcher
-    agents = default_agents()
+    agents = _delegation().default_agents()
     if engine is not None:
-        ensure_dispatcher(engine, agents)
+        _delegation().ensure_dispatcher(engine, agents)
     return agents
+
+
+_DELEGATION = None
+
+
+def _delegation():
+    """The ONE lazy door to `gfso.delegate`, crossed once for the whole module.
+
+    `gfso.delegate` imports this module at module level, so the edge back can only be taken at call
+    time — and the accessor above already said that a single lazy crossing is the whole of the
+    cycle "rather than one import inside each verb that needs it". A second verb needing a second
+    thing from there is exactly the drift that sentence was written against, so it goes through
+    here instead of growing a new import of its own.
+    """
+    global _DELEGATION
+    if _DELEGATION is None:
+        from gfso import delegate as _d
+        _DELEGATION = _d
+    return _DELEGATION
 
 
 def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
@@ -1215,6 +1258,11 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
                           oracle_map=oracle_map, max_turns=max_turns, client=client,
                           project=engine.project_name)
+    # THE SPELLING THAT BINDS, not the one that was typed. The roster stores the workdir RESOLVED,
+    # and the workspace binding is decided on that value — while the advice below interpolated the
+    # caller's own argument, so a relative `workdir='work'` came back as an instruction that names a
+    # different place when run from a different directory.
+    workdir = out.get("workdir") or workdir
     # …AND WHO WILL ACTUALLY JUDGE THIS ROLE'S WORK. The roster is server-wide, and an executor
     # registered without an explicit `validator` came back with `validator: null` — while the
     # instrument that would really judge it was whichever llm-validator had been registered first,

@@ -12,7 +12,7 @@ from gfso.core.types import (
     TaskId, AgentId, RevisionReason, SignalData, Signal,
 )
 from gfso.core.graph.metrics import q_T, q_Del
-from tests.support import make_engine, spec
+from tests.support import make_engine, spec, instrument_passes
 from gfso import tools as T
 from gfso.engine.validation import ValidationError
 
@@ -41,7 +41,7 @@ def test_revision_from_validating_is_admitted_and_voids_the_delivery(engine):
                                        source=AgentId("boss"), result="done"))
     engine.wait_idle()
     assert engine.get_state(TaskId("v1")).name == "VALIDATING"
-    engine.record_exec_verdict(TaskId("v1"), "PASS", [], "val-1")
+    instrument_passes(engine, TaskId("v1"), "val-1")
 
     engine.revise(TaskId("v1"), spec("goal", "c1_changed", risks=False), AgentId("boss"))
     engine.wait_idle()
@@ -147,7 +147,7 @@ def test_a_verdict_landing_after_a_revision_does_not_open_the_seam(engine):
     generation = engine.generation_of(TaskId("r1"))          # the validator starts on THIS delivery
     engine.revise(TaskId("r1"), spec("goal", "c1_changed", risks=False), A)       # contract changes under it
     engine.wait_idle()
-    engine.record_exec_verdict(TaskId("r1"), "PASS", [], "val-1", generation=generation)  # lands late
+    instrument_passes(engine, TaskId("r1"), "val-1", generation=generation)  # lands late
 
     # re-earn the delivery under the NEW contract, then try to self-PASS on that verdict
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("r1"), source=A))

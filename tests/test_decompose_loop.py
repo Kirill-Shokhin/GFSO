@@ -215,11 +215,23 @@ def test_refine_frozen_terminal_children_surface_as_holes():
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
-    # drive root.a to DONE: executor signals by its Del (human), verdict by an authorized validator
+    # drive root.a to DONE: executor signals by its Del (human), verdict by an authorized validator.
+    # The DELIVER carries `self_validation`, which is what the canon asks of an INTERNAL node
+    # (§14.5 D6) and what records the verdict this PASS then stands on. It was omitted while a PASS
+    # from a roster id closed such a node over no record at all; that hole was closed 2026-09-08,
+    # and this setup — which only needs a DONE child to test refine against — reached DONE through it.
     for sig in (Signal.ACCEPT, Signal.DELIVER):
         e.send_signal_sync(SignalData(signal=sig, task_id=TaskId("root.a"), source=AgentId("human"),
                                       result="a done" if sig is Signal.DELIVER else None))
     e._graph.authorized_validators = {"vx"}
+    # …and the validator RECORDS before it signs, which is what the real one does
+    # (`delegate._judge_with` → `record_exec_verdict` on both its branches). Omitted, this setup
+    # reached DONE through a hole closed 2026-09-08: a PASS from a roster id closed an INTERNAL
+    # node over no verdict record at all. The subject of this test is refine over a FROZEN child,
+    # so how the child froze is setup — but setup that stands on a defect goes green with it.
+    e.record_exec_verdict(TaskId("root.a"), Verdict.PASS, [], "vx",
+                          per_criterion=[{"criterion": "a1", "verdict": "pass",
+                                          "evidence": "ran the check for a1; it holds"}])
     e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root.a"), source=AgentId("vx")))
     e.wait_idle()
     assert e.get_state(TaskId("root.a")) == State.DONE

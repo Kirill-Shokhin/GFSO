@@ -70,6 +70,35 @@ def home() -> Path:
     return _config_home()
 
 
+#: One generation is kept beside the live log. The point is a BOUND, not a history: what a reader
+#: ever wants is the last start's output, and the generation before it for a crash that took the
+#: server down mid-write.
+LOG_MAX_BYTES = 8 * 1024 * 1024
+
+
+def open_server_log(data: Path, max_bytes: int = LOG_MAX_BYTES):
+    """The server's log, opened for append and ROTATED when it has grown past its bound.
+
+    It was opened `"a"` and never anything else, so the file grew for the life of the installation:
+    measured on this one, 61 MB accumulated over nine weeks, and nothing in the product would ever
+    have stopped it. A log without a bound is not a log an operator can keep — and for someone who
+    installed `gfso` from PyPI it is the one file the product writes to their disk forever.
+
+    Rotation at START, not per write: the server holds this handle open for its whole life, so the
+    size can only be judged between runs — and that is also the only moment nothing is writing.
+    """
+    data.mkdir(parents=True, exist_ok=True)
+    path = data / "server.log"
+    try:
+        if path.exists() and path.stat().st_size > max_bytes:
+            prev = data / "server.log.1"
+            prev.unlink(missing_ok=True)
+            path.rename(prev)
+    except OSError:
+        pass          # a log we cannot rotate is still a log we must open: never block the server
+    return open(path, "a", encoding="utf-8")
+
+
 def declared_path() -> Path:
     """Where the installation writes what its server should be (`data/serve.json`)."""
     return home() / "data" / "serve.json"

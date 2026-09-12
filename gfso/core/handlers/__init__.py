@@ -13,22 +13,27 @@ from .recommend import recommend as _recommend, solver_findings
 
 
 def run_checks(task: Task, children: list[Task], dep_edges: list[tuple[str, str]] | None = None,
-               non_leaf_ids: set[str] | None = None) -> list[CheckResult]:
+               non_leaf_ids: set[str] | None = None,
+               deadlines: dict[str, object] | None = None) -> list[CheckResult]:
     """Run all checks: structural (CHECK-1-6) + constraints (CHECK-7-8).
 
     `non_leaf_ids` = the children that decompose further, which only a caller holding the graph can
-    know; CHECK-6 quantifies over LEAVES (§13.4) and reads it."""
-    results = run_structural(task, children, dep_edges, non_leaf_ids)
+    know; CHECK-6 quantifies over LEAVES (§13.4) and reads it. `deadlines` covers every endpoint of
+    `dep_edges`, not only the children — CHECK-3 quantifies over Dep (§13.4), and a seam between two
+    branches has an endpoint no list of siblings holds."""
+    results = run_structural(task, children, dep_edges, non_leaf_ids, deadlines)
     results.extend(run_constraints(task, children))
     return results
 
 
 def run_all_checks(task: Task, children: list[Task], dep_edges: list[DepEdge],
-                   non_leaf_ids: set[str] | None = None) -> list[CheckResult]:
+                   non_leaf_ids: set[str] | None = None,
+                   deadlines: dict[str, object] | None = None) -> list[CheckResult]:
     """The single L0/L1 check set (structural + constraints + anti-mock seam), over
     DepEdge objects (so glue is checked). The ONE computation both the engine's cache
     refresh and the event loop use — same result everywhere."""
-    results = run_checks(task, children, [(e.from_id, e.to_id) for e in dep_edges], non_leaf_ids)
+    results = run_checks(task, children, [(str(e.from_id), str(e.to_id)) for e in dep_edges],
+                         non_leaf_ids, deadlines)
     results.append(check_anti_mock(children, dep_edges))
     return results
 

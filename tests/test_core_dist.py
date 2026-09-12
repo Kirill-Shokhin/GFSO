@@ -76,7 +76,10 @@ for sig, kw in ((Signal.ACCEPT, {}), (Signal.DELIVER, {"result": "done; a met"})
 e.wait_idle()
 # the verifier≠executor gate demands a RECORDED independent verdict before a self-executed
 # PASS — the embedding host runs its own verifier and records, exactly as here
-e.record_exec_verdict(TaskId("n"), "PASS", [], "host-verifier")
+e.record_exec_verdict(TaskId("n"), "PASS", [], "host-verifier",
+                      per_criterion=[{"criterion": c.name, "verdict": "pass",
+                                      "evidence": "the host's verifier ran it and it holds"}
+                                     for c in e.get_task(TaskId("n")).spec.criteria])
 e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("n"), source=w))
 e.wait_idle()
 print(e.get_state(TaskId("n")).name)

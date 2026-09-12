@@ -215,7 +215,7 @@ self-verifies on evidence you put in the delivery, and its guarantee is carried 
 Independent validation is for the seams, and the root is always one.
 
 **A green that is not green does not stay quiet.** A signature can land before the instrument's
-verdict does — you sign, and the judge that was already running reports `FAIL` a few seconds later at
+verdict does — you sign, and the validator that was already running reports `FAIL` a few seconds later at
 a node the protocol has closed. That verdict is refused as a signal, correctly, because the node is
 terminal; it is not discarded. `next_steps` then refuses to call the graph complete and names the node
 under `refuted_passes`; `gfso status` marks it `[X] … PASS CONTRADICTED by its own current verdict`
@@ -225,8 +225,8 @@ Recovery is `reopen` while the node is not consumed, and re-decomposition around
 Two things follow from that, and both are deliberate. A verdict arriving after a node closed is kept
 BESIDE the one it closed on rather than replacing it (`closed_on`) — a later record is evidence about
 the same delivery, never a substitute for the one that was acted on. And a report the engine refused
-as ⊥ is named beside a completion rather than withholding it: a judge that could not decide is not a
-judge that decided against you (§11.2).
+as ⊥ is named beside a completion rather than withholding it: a validator that could not decide is not
+a validator that decided against you (§11.2).
 
 **What is asked of an observation, and what is not.** A `PASS` whose text per criterion only restates
 the verdict — `"ok"`, `"looks green"` — is refused the way a `PASS` with no text at all already was;

@@ -30,8 +30,10 @@ from gfso.tools_llm import validate_internal_on as _validate_internal_on
 from gfso.adapters.llm.stats import _stat_line
 from gfso.adapters.llm.structured import schema_instruction, parse_structured
 from gfso.adapters.verifiers import evaluate_unittest
+from gfso.places import cheap_to_ask, disk_place, same_place, text_place
 from gfso.core.graph.model import generation_of_task
 from gfso.core.types import (TaskId, AgentId, Signal, SignalData, Stage, State, Verdict, Action,
+                             settled_positive,
                              SPAWNABLE_ACTIONS, passed)
 from gfso.engine.events import emit_cb
 
@@ -39,6 +41,10 @@ log = logging.getLogger(__name__)
 
 _PROMPTS = Path(__file__).parent / "mcp" / "prompts"
 EXECUTOR_TOOLS = ("Read", "Write", "Edit", "Bash", "Glob", "Grep")
+#: How many times a judging call that was CUT mid-flight is redialled before the node falls through
+#: to the ordinary no-verdict path. Two, not more: a box that cannot complete the same call twice
+#: running has a fault a third attempt does not reach, and the point of the budget is that it ends.
+TORN_REDIALS = 2
 
 EXECUTOR_SCHEMA = {
     "type": "object",
@@ -57,6 +63,71 @@ EXECUTOR_SCHEMA = {
     },
     "required": ["status", "summary"],
 }
+
+
+def _put_atomically(path: Path, text: str) -> None:
+    """Write beside, then move over — never truncate-then-fill in place.
+
+    Readers of the roster hold no lock (the `.lock` orders writers only), and a plain `write_text`
+    leaves the file EMPTY for as long as the write takes: 31% of concurrent reads saw a partial file
+    in a four-second write loop. In-process that costs a stale snapshot; a process killed mid-write
+    — and the shutdown path is `os._exit` a third of a second after the request — leaves the roster
+    truncated FOR GOOD, and every later load then reports "delegation is OFF" while every node
+    answers "Del is not a registered executor". `os.replace` is atomic on both platforms.
+
+    On Windows the move itself can be refused while a reader holds the destination open, so it is
+    retried briefly and then REFUSED OUT LOUD: trading a silent corruption for a silent failure to
+    register would be no repair. Nothing is written on that path and the old file stands.
+    """
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    for _ in range(25):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.02)
+    tmp.unlink(missing_ok=True)
+    raise OSError(f"could not put the roster in place: {path} stayed open for half a second of "
+                  f"retries. Nothing was written and nothing was damaged; the registration did not "
+                  f"happen and can be repeated.")
+
+
+def _resolution_note(workdir: str) -> str:
+    """" (it resolves to X)" — but only when X is a DIFFERENT PLACE, not a different spelling.
+
+    The whole point of the clause is the case a caller cannot see: a POSIX path on Windows lands at
+    the current drive root. Compared as raw strings, the ordinary `C:/my/project` also "differs"
+    from its resolution and the clause fired there too, which is noise on a path that points exactly
+    where it looks. And resolving is not total: `stat` rejects an embedded NUL that `is_dir()`
+    swallows, so an unguarded call replaces a crafted refusal with a stat error.
+    """
+    if not cheap_to_ask(workdir):
+        return ""                      # resolving a network path blocks; see `cheap_to_ask`
+    try:
+        resolved = Path(workdir).resolve()
+        same = os.path.normcase(os.path.normpath(str(resolved))) == \
+            os.path.normcase(os.path.normpath(str(workdir)))
+    except (OSError, ValueError):
+        return ""
+    return "" if same else f" (it resolves to {resolved})"
+
+
+def missing_workdir(cfg: dict) -> str | None:
+    """The role's registered place, IF it is not there — else `None`. One predicate, two callers.
+
+    Registration answers "does this exist" once, when the role is put on the roster. This answers
+    "is it there NOW", which registration cannot: the roster is a hand-editable json re-read on every
+    access, so entries arrive without passing `register`, and a directory can be moved or deleted
+    between registration and dispatch. Two places need the answer — the dispatcher, BEFORE it fixes
+    the obligation with ACCEPT, and `run_executor` for whoever calls it directly — and they share
+    this function rather than each spelling the rule, which is how one half of a rule ends up moving
+    alone.
+    """
+    wd = (cfg or {}).get("workdir")
+    if not wd or not cheap_to_ask(wd):
+        return None                    # a network path is not asked; see `cheap_to_ask`
+    return wd if not Path(wd).is_dir() else None
 
 
 class AgentRegistry:
@@ -140,6 +211,53 @@ class AgentRegistry:
                 f"registering {agent_id!r} as {kind} needs `workdir`: the directory of the project "
                 f"it works in. Without it the agent would be spawned where the server stands — the "
                 f"gfso state home — which contains none of the work it is meant to do or judge.")
+        # …AND A DIRECTORY THAT DOES NOT EXIST IS THE SAME DEFECT WITH A VALUE IN THE FIELD. The
+        # check above reads a non-empty string as an answer, so a path that names nothing passed it
+        # and the role was registered against a place no work can happen in: the executor is spawned
+        # with `cwd=` this path and dies in the transport, the validator judges an empty tree and
+        # FAILs correct work. The case that actually happens on Windows is a POSIX-form path — an
+        # agent working through a bash shell registers `/c/Users/…`, which Windows resolves against
+        # the current DRIVE ROOT, so `/c/Users/kasho/Work/GFSO` becomes `C:\c\Users\kasho\Work\GFSO`:
+        # a real directory gets created there by whatever writes next, outside the project, and the
+        # roster looks correct while pointing at it (found 2026-09-08 as litter at the drive root,
+        # dated 2026-08-21). Resolved rather than tested as written, because the difference between
+        # the two spellings is exactly what the caller cannot see.
+        if workdir and cheap_to_ask(workdir) and not Path(workdir).is_dir():
+            raise ValueError(
+                # The path is quoted, not repr'd: `!r` doubles every backslash, and a Windows path
+                # a person has to retype is the last place to print it in an escaped spelling.
+                f"registering {agent_id!r}: `workdir` '{workdir}' is not an existing directory"
+                # …and the resolution is named only when it is genuinely somewhere ELSE. Compared
+                # raw, `C:/my/project` "differs from" `C:\my\project` and the clause fired on the
+                # ordinary forward-slash spelling every agent types — noise on exactly the paths
+                # that point where they look, in a sentence written for the ones that do not.
+                # Resolving can also fail outright (an embedded NUL is rejected by `stat` while
+                # `is_dir()` swallows it), and a crafted refusal replaced by a stat error is a worse
+                # answer than no clause at all.
+                + (_resolution_note(workdir) or "")
+                # ASCII only, deliberately: this sentence is raised as an exception and printed by
+                # doors that reach a cp1251 Windows console, where a stray em-dash or ellipsis kills
+                # the message and takes its diagnosis with it (the instrument that died printing its
+                # own report, 2026-09-07).
+                + ". A role registered against a place that does not exist is spawned into nothing: "
+                  "create the directory first, or name the one the work is really in. A path in "
+                  "POSIX form on Windows ('/c/Users/...') is resolved against the current drive "
+                  "root, not the C: drive - pass the native path.")
+        if workdir:
+            # STORED ABSOLUTE. A relative `workdir` is checked here against the SERVER's cwd and
+            # would later be resolved against whatever cwd the spawn happens to have — the same
+            # ambiguity the guard above exists to end, one step further along. What was validated is
+            # what gets written down.
+            # (a network path is stored as written — resolving it blocks; see `cheap_to_ask`)
+            # …AND FOR EVERY PATH, network ones included: `abspath` makes no filesystem call, so
+            # the exemption that spares them a `stat` was never a reason to leave them relative -
+            # and it left a drive-relative `Z:work` going into `cwd=` as written.
+            # ABSPATH, NOT RESOLVE. The need is relative -> absolute; `resolve()` also walks
+            # junctions and symlinks, so a workdir named through a link was silently rewritten to
+            # its target - and that target is what the executor is spawned in (`cwd=`) and what the
+            # registration advice quotes back. Reconciling two spellings is `same_place`'s job, at
+            # comparison time; the roster keeps the place the caller named.
+            workdir = os.path.abspath(workdir)
         with self._lock:
             self._reread()            # …whatever anyone else wrote since we last looked (see _write)
             self._agents[agent_id] = {"kind": kind, "model": model, "workdir": workdir,
@@ -183,9 +301,22 @@ class AgentRegistry:
             cur = self._agents.get(agent_id)
             if cur is None:
                 return {"unregistered": None, "note": f"{agent_id} is not in the roster"}
-            if workdir is not None and str(cur.get("workdir") or "") != str(workdir):
+            # Compared as PLACES: registration stores the workdir resolved, and the caller hands
+            # back what it typed, so `C:/x` against `C:\x` is one directory written two ways.
+            # Read raw, the conditional removal stopped firing for the ordinary forward-slash
+            # spelling — and this call is a run's budget-stop, whose silent failure is recorded as
+            # "a run that ended at its ceiling was still executing minutes later".
+            # Two roles with NO place are not two places (`same_place` answers False for an empty
+            # side, by design): a placeless role called with an empty workdir used to match, and the
+            # conditional removal is a run's budget-stop, so the silent half of the change is undone
+            # here rather than by softening the predicate.
+            _cur_wd, _both_placeless = cur.get("workdir"), not (cur.get("workdir") or workdir)
+            if workdir is not None and not _both_placeless and not same_place(_cur_wd, workdir):
                 return {"unregistered": None,
-                        "note": f"{agent_id} works in {cur.get('workdir')!r}, not {workdir!r} — "
+                        # Quoted and ASCII, for the same reason the registration refusal is: `!r`
+                        # quadrupled the backslashes of a Windows path a person then has to retype,
+                        # and the em-dash died on a cp1251 console.
+                        "note": f"{agent_id} works in '{cur.get('workdir')}', not '{workdir}' - "
                                 f"left alone (a shared roster is not one run's to clear)"}
             del self._agents[agent_id]
             self._write(deleted=(agent_id,))
@@ -258,8 +389,7 @@ class AgentRegistry:
             self._agents.update(mine)                    # …plus every change this process made
             for gone in deleted:                         # …minus what this call removed
                 self._agents.pop(gone, None)
-            self._path.write_text(json.dumps(self._agents, ensure_ascii=False, indent=1),
-                                  encoding="utf-8")
+            _put_atomically(self._path, json.dumps(self._agents, ensure_ascii=False, indent=1))
             try:
                 self._mtime = self._path.stat().st_mtime
             except OSError:
@@ -334,7 +464,32 @@ class AgentRegistry:
             # Cost, measured 2026-09-02: auto-validation never fired, the arm waited 25 minutes for a
             # verdict nobody was going to give, and a $20 run ended `validation_stalled`. What keeps
             # a stranger's judge out is the PROJECT scope above; place is how we break a tie.
-            same = [aid for aid in candidates if judges[aid].get("workdir") == wd]
+            # TEXT OVER THE WHOLE SET, DISK ONLY IF IT FOUND NOBODY. `same_place` asks the
+            # filesystem whenever two spellings differ, and here they differ for every judge
+            # standing somewhere else — which is most of them: 12.9 ms per call over a roster of 25
+            # (measured), on a comparison that runs per delivered node per dispatch pass and once
+            # per executor on every `list_agents`. The free pass answers the ordinary case.
+            #
+            # AND IT IS A PREFERENCE, DECIDED, not merely an optimization: where BOTH a judge whose
+            # spelling matches as text and a judge that matches only through the disk stand in the
+            # work, the textual one is chosen — even if the other sorts earlier. Measured on random
+            # rosters, the two orders disagree in 375 of 3000; the exact spelling is the better
+            # answer (it is the one a reader comparing the roster to the workspace would also pick),
+            # and the alphabet was never a reason for anything. The paid pass is not a fallback in
+            # the apologetic sense: it is what answers when text found nobody at all.
+            #
+            # AND THE PAID PASS ASKS ABOUT THE EXECUTOR ONCE. `same_place` resolves BOTH sides, so
+            # calling it per candidate re-resolved the same `wd` twenty-five times for twenty-five
+            # judges — half the cost of the branch, spent re-deriving a value that cannot change
+            # inside the loop.
+            _here = text_place(wd)
+            same = [aid for aid in candidates
+                    if (_w := judges[aid].get("workdir")) and text_place(_w) == _here]
+            if not same:
+                _here_disk = disk_place(wd)
+                same = [aid for aid in candidates
+                        if _here_disk is not None
+                        and disk_place(judges[aid].get("workdir")) == _here_disk]
             if same:
                 return sorted(same)[0]
             # WITH NO PROJECT there is nothing else keeping a stranger out, so place is the whole
@@ -482,6 +637,30 @@ def _decided_self_check(raw) -> "Verdict | None":
     return Verdict[head] if head in (Verdict.PASS, Verdict.FAIL) else None
 
 
+def _decided_status(raw) -> "str | None":
+    """Which of the three the executor reported — or nothing, when it reported something else.
+
+    §14.2 gives an executor three moves after it has worked: it delivered, it is blocked, or it
+    disputes the contract. The schema says so (`EXECUTOR_SCHEMA`'s `enum`) and the schema is not
+    enforced: `parse_structured` validates the presence of KEYS, never their types or their
+    enumerations — so the declaration reads as a guarantee and is a comment.
+
+    Six of the seven `enum`s in this package fail CLOSED when a model answers outside them (an
+    unknown word becomes not-SUFFICIENT, not-`atomic`, not-PASS). This one failed OPEN, because the
+    dispatch below is `if challenge / elif blocked / else`, and `else` is DELIVERED. Probed
+    2026-09-08: `{"status": "failed", "summary": "could not do it"}` parses, takes the else, and
+    sends DELIVER — an executor saying it could not do the work moves its node to VALIDATING as a
+    delivery, where a validator is then paid to judge an artifact its own author disclaimed.
+
+    A word the contract does not define decides nothing, and ⊥ is not a delivery (§11.2). The caller
+    routes `None` into the branch that already exists for a report that did not parse: no signal is
+    forged, the node stays where it is, and the issuer is told. `"DELIVERED"`, `" blocked "` and the
+    like are the same three words and are read as such — what is refused is a fourth meaning.
+    """
+    word = str(raw or "").strip().lower()
+    return word if word in ("delivered", "blocked", "challenge") else None
+
+
 def _settle_internal(engine, task_id: TaskId, self_check, _cb) -> None:
     """An INTERNAL node completes on its own self-check — §14.5 D6, read literally.
 
@@ -592,6 +771,15 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
                 blocker_task_id=TaskId(blocker) if blocker else None,
                 blocker_task_ids=blockers)
         _cb(f"{task_id}: executor BLOCKED ({report.get('reason', '')[:80]}) · {_stat_line(llm)}")
+    elif status != "delivered":
+        # THE GUARD SITS WITH THE DISPATCH IT GUARDS. This was `else:` — every word that is neither
+        # `challenge` nor `blocked` was read as a delivery — and the first repair put the check in
+        # the CALLER, where a probe calling this function directly walked straight past it. A guard
+        # a caller can step around is the shape this repository has already paid for twice.
+        _cb(f"{task_id}: executor reported status {status!r}, which is none of delivered / blocked "
+            f"/ challenge (§14.2) — no signal sent, the node stays where it is; issuer attention "
+            f"needed · {_stat_line(llm)}")
+        engine.emit_info("delegate", f"{task_id}: undecided status {status!r} — no signal forged")
     else:  # delivered — the DISPATCHER picks the VALIDATING node up and auto-validates (one path
         # for every delivery, delegated or self-executed; natural node×iteration dedup)
         if task.state.name == "OFFERED":
@@ -623,6 +811,20 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
         return {"error": f"unknown task {task_id}"}
 
     _cb = emit_cb(engine, "delegate")
+    # THE PLACE, ASKED BEFORE ANYTHING IS SPENT — the same question `missing_workdir` answers for
+    # the dispatcher, through the same function rather than a second spelling of the rule. This arm
+    # is for whoever calls this verb DIRECTLY; under the dispatcher the question was already asked
+    # one step earlier, before ACCEPT, because by here the obligation has been fixed.
+    # ASCII, deliberately: this sentence reaches the observation strip and consoles that are cp1251.
+    _wd = missing_workdir(cfg)
+    if _wd:
+        _cb(f"{task_id}: executor {executor_id} NOT spawned - its registered workdir '{_wd}' is not "
+            f"a directory{_resolution_note(_wd)}. No signal sent; re-register the role against the "
+            f"directory the work is really in.")
+        engine.emit_info("delegate", f"{task_id}: executor {executor_id} has no working directory "
+                                     f"('{_wd}') - not spawned")
+        return {"task_id": str(task_id), "status": "no_workdir", "workdir": _wd,
+                "error": f"the registered workdir of {executor_id!r} is not an existing directory"}
     llm = _llm or llm_factory(cfg.get("model", MODEL_DEFAULT))
     llm.on_tick = _cb
     llm.stage_hint = f"{task_id} executor({executor_id})"
@@ -658,9 +860,14 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
         return {"task_id": str(task_id), "status": "unparsed", "report_text": text,
                 "stats": list(getattr(llm, "calls", []))}
 
-    status = report["status"]
-    _report_into_signals(engine, task_id, executor_id, task, report, status, llm, _cb)
-    return {"task_id": str(task_id), "status": status,
+    # `_decided_status` is the owner of "which of the three was this"; the dispatch enforces it and
+    # this line only reports what the round amounted to. An unrecognised word is `undecided`, and
+    # the caller can tell that from a delivery.
+    status = _decided_status(report.get("status"))
+    _report_into_signals(engine, task_id, executor_id, task, report,
+                         status or str(report.get("status")), llm, _cb)
+    return {"task_id": str(task_id), "status": status or "undecided",
+            "reported_status": None if status else report.get("status"),
             "stats": list(getattr(llm, "calls", []))}
 
 
@@ -720,6 +927,40 @@ def _children_workdir(engine, agents: AgentRegistry, task_id: TaskId) -> str | N
     return None
 
 
+def judging_workdir(engine, agents: AgentRegistry, task_id: TaskId,
+                    named_validator: str | None = None, vcfg: dict | None = None) -> str | None:
+    """WHERE THE JUDGE OF THIS NODE STANDS — one answer, whichever door asked.
+
+    There were two, and they disagreed. Probed 2026-09-07 with an executor registered against
+    `WORK` and a validator against `SCRATCH`: the dispatcher sent the judge to `WORK`, a manual
+    `validate_result(node, validator="val-1")` sent it to `SCRATCH`, and on a node held by an
+    unregistered person the manual door sent it to `SCRATCH` even with no validator named. Three
+    orders of priority for one question.
+
+    The order below is the dispatcher's, and it is the one a run already paid for: **the graph
+    before the roster**. The validator's registered directory is a roster fact; where the work IS is
+    a graph fact, and only the second is true by construction (measured 2026-08-21 — a stale `val-1`
+    from an older experiment pointed at a scratch directory, the root was judged there, the report
+    said "no implementation exists", and a false FAIL over seventeen criteria drove the run into the
+    rework loop that ended it).
+
+    The roster is still asked, and that is the OTHER fix this keeps: a root is normally held by the
+    caller themselves, an id the roster does not know, so the graph answers nothing and the named
+    validator's own directory is what saves the call (measured on the HTTP door 2026-09-02, where
+    the refusal "agent has no registered workdir" stood while a judge with the right directory sat
+    in the same roster). It answers second, not first.
+    """
+    task = engine.get_task(task_id)
+    executor = task.assignee if task is not None else None
+    roster_side = (named_validator, executor,
+                   agents.validator_for(executor, project=engine.project_name))
+    return ((agents.get(executor or "") or {}).get("workdir")
+            or _children_workdir(engine, agents, task_id)
+            or next((wd for who in roster_side
+                     if who and (wd := (agents.get(str(who)) or {}).get("workdir"))), None)
+            or _oracle_workdir(engine, vcfg or {}))
+
+
 def _judge_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
                 model_override, _llm) -> dict:
     """Run whichever instrument this node is bound to, and hand back its report.
@@ -756,8 +997,8 @@ def _judge_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
         # report said "no implementation exists" — and a FALSE FAIL over seventeen criteria drove
         # the run into the rework loop that ended it. The snapshot taken at that same delivery holds
         # every file the validator could not find.
-        _wd = ((ecfg or {}).get("workdir") or _children_workdir(engine, agents, task_id)
-               or vcfg.get("workdir") or _oracle_workdir(engine, vcfg))
+        _wd = judging_workdir(engine, agents, task_id,
+                              named_validator=str(validator_id), vcfg=vcfg)
         out = T.TOOLS["validate_result"](engine, str(task_id),
                               model=model_override or vcfg.get("model", MODEL_DEFAULT),
                               workdir=_wd, validator=str(validator_id), _llm=_llm)
@@ -977,7 +1218,15 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
                             else " · no model call is recorded for it, so `usage` will not show it")
                          + (f" (report: {out['report_kept_at']})" if out.get("report_kept_at")
                             else " (report not kept)"))
-        return "no-verdict" if (out.get("stats") or _spent) else "no-verdict:never-ran"
+        # THREE OUTCOMES, NOT TWO. A judge that was never started, a judge that answered badly, and
+        # a judge whose call was CUT are three different facts, and only the last one was being
+        # read as one of the other two. The provider marks it where it is visible (the CLI's stream
+        # ended with no result event — `transport_torn`); here it only has to be believed rather
+        # than re-derived from a cost of zero, which is the inference that misdiagnosed it.
+        _stats = out.get("stats") or ()
+        if _stats and _stats[-1].get("transport_torn"):
+            return "no-verdict:torn"
+        return "no-verdict" if (_stats or _spent) else "no-verdict:never-ran"
     # WITH THE FSM'S OWN REASON. "The node revalidates on the graph's next change" is true and
     # useless on its own: some refusals are transient (children not settled yet — the graph WILL
     # change) and some are standing (the node's plan no longer passes the Syntactic level — nothing
@@ -1015,6 +1264,10 @@ class Dispatcher:
         # latent race does — it waits for the schedule to shift.
         self._claim_lock = threading.Lock()
         self._retried: set[str] = set()   # validator no-verdict retries (one per node×iteration)
+        #: redials after a CUT call, counted apart from the retry above and per the same key:
+        #: a transport that never delivered a judgement must not consume the budget meant for
+        #: a second judgement (see the branch in the validate pass).
+        self._torn: dict[str, int] = {}
         self._stop = threading.Event()
         self._dirty = threading.Event()   # set by every transition → the loop re-evaluates the frontier
         # Subscribed HERE, not in `start()`: the callback no longer only sets a flag — it is what
@@ -1114,7 +1367,7 @@ class Dispatcher:
         """A parent's verdict is structurally rejected until ALL its children PASS (Theorem-1 gate) —
         a validator run before that is a guaranteed-wasted spawn (observed live: two doomed PASSes)."""
         kids = self._engine.get_active_children(task_id)
-        return all(passed(k) for k in kids)
+        return all(settled_positive(k) for k in kids)
 
     def _round_key(self, task, prefix: str = "") -> str:
         """The dedup key of a node's CURRENT round: id + the generation that makes it a round.
@@ -1182,7 +1435,7 @@ class Dispatcher:
         """Say, once per open set, which children a delivered parent is still aggregating."""
         _open = [f"'{k.id}' is {k.state.name}"
                  for k in self._engine.get_active_children(TaskId(s["task_id"]))
-                 if not passed(k)]
+                 if not settled_positive(k)]
         if _open:
             self._say_once(
                 f"kids:{s['task_id']}#{','.join(sorted(_open))}",
@@ -1191,7 +1444,7 @@ class Dispatcher:
                 f"would be refused at the gate, so none is spent. Drive those nodes; "
                 f"validation follows by itself.")
 
-    def _dispatch_validation(self, s: dict, task, it: int, started: list) -> bool:
+    def _dispatch_validation(self, s: dict, task, it: tuple, started: list) -> bool:
         """Act on a delivery that is waiting to be judged. True when this step is done with.
 
         Three of the four ways out are a SENTENCE and no thread: the issuer keeps the
@@ -1266,7 +1519,9 @@ class Dispatcher:
         round's own shape was invisible. This is the acting; the round is what calls it."""
         for s in out.get("steps", []):
             task = self._engine.get_task(TaskId(s["task_id"]))
-            it = task.iteration
+            # THE WHOLE GENERATION, not the iteration: it is what `_round_key` keys the round on,
+            # and the staleness guard has to ask the same question the dedup key answers.
+            it = generation_of_task(task)
             if self._dispatch_validation(s, task, it, started):
                 continue
             if s.get("action") not in SPAWNABLE_ACTIONS:
@@ -1408,7 +1663,7 @@ class Dispatcher:
 
     _EXECUTOR_STATES = ("OFFERED", "EXECUTING", "REWORKING")
 
-    def _fresh(self, task_id: TaskId, expect_iter: int, states: tuple,
+    def _fresh(self, task_id: TaskId, expect_gen: tuple, states: tuple,
                executor_id: str | None = None) -> bool:
         """TOCTOU guard: the dispatch decision can be minutes older than the semaphore slot (observed
         live — a queued second-generation run fired on a node that had DELIVERED meanwhile). Re-check
@@ -1420,12 +1675,23 @@ class Dispatcher:
         signal that run made came back "exec-1 is not executor for root.matcher (executor=exec-2)".
         Measured on a live E3 run 2026-08-22: an ACCEPT, a second ACCEPT and a DELIVER all refused,
         the run paid for, and the graph stalled for ten minutes with the frontier repeating a step
-        the dispatcher could not take."""
+        the dispatcher could not take.
+
+        SO IS THE REST OF THE GENERATION. This compared `iteration` alone, while `_round_key` — the
+        dedup key of the very same round — uses the whole (iteration, reopens, revisions) triple.
+        The two halves of one fact disagreed: a node REVISED while its run sat in the queue got a new
+        round key, so the dispatcher spawned a SECOND paid run, and this guard let the first one
+        proceed as well — against a contract that no longer exists. Measured: two paid executor runs
+        on one node, the node left in VALIDATING carrying the superseded delivery to be judged
+        against the new criteria, and the run that did the right work having its DELIVER refused by
+        the FSM. Both `revise` and `reopen` land the node in OFFERED, which is an executor state, so
+        the state check catches neither."""
         t = self._engine.get_task(task_id)
-        if t is None or t.state.name not in states or t.iteration != expect_iter:
+        if t is None or t.state.name not in states or generation_of_task(t) != tuple(expect_gen):
             self._engine.emit_info("delegate",
                                    f"{task_id}: queued run is stale (state {t.state.name if t else '?'}"
-                                   f") — slot released")
+                                   f", generation {generation_of_task(t) if t else '?'} ≠ "
+                                   f"{tuple(expect_gen)}) — slot released")
             return False
         if executor_id is not None and str(t.assignee) != str(executor_id):
             # …and the ROUND is freed with it. A reassignment moves no generation counter, so the
@@ -1439,9 +1705,32 @@ class Dispatcher:
             return False
         return True
 
-    def _run_guarded(self, task_id: TaskId, executor_id: str, expect_iter: int = 0) -> None:
+    def _one_retry_then_park(self, task_id: TaskId, tag: str, what: str) -> None:
+        """A round that ended with NOTHING SIGNALLED: give it exactly one more, then park it and say so.
+
+        Three things end a round that way — an unreadable report, a status word the contract does not
+        define, and an exception anywhere in the spawn — and all three leave a node whose round key is
+        already spent, i.e. one the dispatcher will never pick up again while the frontier goes on
+        advertising the step. ACCEPT was already sent, so the node sits in EXECUTING; with the state
+        clock off by default (`GFSO_STATE_TIMEOUT=0`) and no deadline, nothing else moves it either.
+        Written ONCE because a rule kept in three places moves in one of them — which is how the
+        unreadable-report case came to be handled and the other two did not.
+        """
+        t = self._engine.get_task(task_id)
+        key = self._round_key(t, tag) if t is not None else None
+        if key and key not in self._retried:
+            self._retried.add(key)
+            self._seen.discard(self._round_key(t))
+            self._dirty.set()
+            self._engine.emit_info("delegate", f"{task_id}: {what} — one retry")
+        else:
+            self._engine.emit_info(
+                "delegate", f"{task_id}: {what} twice — the node is PARKED where it stands and "
+                            f"needs its issuer; nothing was signalled on its behalf")
+
+    def _run_guarded(self, task_id: TaskId, executor_id: str, expect_gen: tuple = (0, 0, 0)) -> None:
         with self._cap:
-            if not self._fresh(task_id, expect_iter, self._EXECUTOR_STATES, executor_id):
+            if not self._fresh(task_id, expect_gen, self._EXECUTOR_STATES, executor_id):
                 return
             # ACCEPT FIXES THE START OF THE OBLIGATION (§14.2) — so it is sent when the work
             # STARTS, not when the report comes back. Wrapping the finished report into
@@ -1453,6 +1742,31 @@ class Dispatcher:
             # "trust, but see" (§1.1) has nothing to see. The executor's consent is still its own
             # report — a spawned executor that never reports leaves the node in EXECUTING, where
             # the dispatcher's own `_EXECUTOR_STATES` picks it up again exactly as before.
+            # THE PLACE IS ASKED BEFORE THE OBLIGATION IS FIXED. `run_executor` refuses a role whose
+            # workdir is gone, but by the time it is called the ACCEPT below has already moved the
+            # node OFFERED → EXECUTING and this round's key is spent — so the refusal said "the node
+            # stays where it is" while the node had in fact been started and would never be picked
+            # up again, even after the directory was restored. Same liveness as the transport crash
+            # it replaced, with a better sentence: exactly the shape this repository keeps paying
+            # for. Asked here, nothing is signalled, and the ROUND IS FREED, so putting the
+            # directory back is enough for the next pass to dispatch the node.
+            _gone = missing_workdir(self._agents.get(executor_id) or {})
+            if _gone:
+                _t0 = self._engine.get_task(task_id)
+                if _t0 is not None:
+                    self._seen.discard(self._round_key(_t0))
+                self._say_once(
+                    f"nowd:{task_id}:{executor_id}",
+                    f"{task_id}: not started - the workdir registered for '{executor_id}' "
+                    f"('{_gone}') is not a directory{_resolution_note(_gone)}. Nothing was "
+                    f"signalled and the node is where it was; re-register the role against the "
+                    f"directory the work is really in, and the next pass dispatches it.")
+                return
+            # …AND THE ONCE IS RELEASED WHEN THE PLACE COMES BACK. Kept forever, "once" means once
+            # per server lifetime: a directory that goes away, returns, and goes away again is held
+            # back in silence the second time — the same shape as the owner-departure notice, which
+            # discards its own key when the owner returns.
+            self._lapsed_said.discard(f"nowd:{task_id}:{executor_id}")
             _t = self._engine.get_task(task_id)
             if _t is not None and _t.state.name == "OFFERED":
                 _signal(self._engine, task_id, Signal.ACCEPT, executor_id)
@@ -1464,36 +1778,58 @@ class Dispatcher:
                 # for the rest of the run on a single unreadable report, while the arm watched a
                 # graph that was, as far as it could tell, simply waiting. One retry, then the node
                 # is left alone and SAID so — a parked node with a reason beats a silent one.
-                if isinstance(out, dict) and out.get("status") == "unparsed":
-                    t = self._engine.get_task(task_id)
-                    key = self._round_key(t, "u:") if t is not None else None
-                    if key and key not in self._retried:
-                        self._retried.add(key)
-                        self._seen.discard(self._round_key(t))
-                        self._dirty.set()
-                        self._engine.emit_info(
-                            "delegate", f"{task_id}: unreadable executor report — one retry")
-                    else:
-                        self._engine.emit_info(
-                            "delegate", f"{task_id}: unreadable executor report twice — the node is "
-                                        f"PARKED where it stands and needs its issuer; nothing was "
-                                        f"signalled on its behalf")
+                _st = out.get("status") if isinstance(out, dict) else None
+                if _st == "unparsed":
+                    self._one_retry_then_park(task_id, "u:", "unreadable executor report")
+                elif _st == "undecided":
+                    # …AND A WELL-FORMED REPORT WITH AN UNDEFINED STATUS ENDS THE ROUND JUST AS DEAD.
+                    # The dispatch correctly refuses to forge a DELIVER out of a fourth word (an
+                    # executor saying "failed" is an ordinary model answer), but the refusal reached
+                    # nobody here: no retry, no park, key spent, node in EXECUTING. The run stopped
+                    # on a report the model wrote correctly.
+                    _word = out.get("reported_status")
+                    self._one_retry_then_park(
+                        task_id, "s:", f"executor reported status {_word!r}, which is none of "
+                                       f"delivered / blocked / challenge")
             except Exception as e:
                 # Into the OBSERVATION FIELD, not only a log record. This handler catches the whole
                 # spawn path, and a node whose dispatch raised is never retried — its key stays in
                 # `_seen` until a re-ASSIGN. Logged alone, that is a graph which simply stops.
                 log.warning(f"delegate run failed on {task_id}: {e}")
                 try:
-                    self._engine.emit_info("delegate", f"{task_id}: dispatch failed — {e}")
+                    # …AND THE ROUND IS GIVEN BACK. This handler catches the whole spawn path — the
+                    # transport, the model factory, the usage record, reading the prompt file — and
+                    # it used to log the failure and leave the key spent, which the comment here
+                    # described in as many words and did not fix: "a graph which simply stops".
+                    self._one_retry_then_park(task_id, "x:", f"dispatch failed — {e}")
                 # the log line above already carries the failure; the observation strip must not be
                 # able to mask the dispatch error it is reporting
                 except Exception:
                     pass
 
-    def _validate_guarded(self, task_id: TaskId, expect_iter: int = 0, sign: bool = True) -> None:
+    def _redial(self, task_id: TaskId, key: str) -> bool:
+        """Dial a CUT judging call again, within its own small budget. True = handled here.
+
+        The budget is separate from the one retry on purpose: that retry exists to buy a second
+        JUDGEMENT of a delivery, and a severed transport produced no first one — charging it there
+        is how a node reaches its park having never been judged. Finite, because an unbounded
+        redial is the loop Inv-5 exists against.
+        """
+        if self._torn.get(key, 0) >= TORN_REDIALS:
+            return False
+        self._torn[key] = self._torn.get(key, 0) + 1
+        self._seen.discard(key)
+        self._engine.emit_info(
+            "delegate", f"{task_id}: the validator's call was CUT before it answered "
+                        f"(attempt {self._torn[key]} of {TORN_REDIALS}) — redialling on its own "
+                        f"tier; no judgement was produced, so this does not spend the node's retry")
+        return True
+
+    def _validate_guarded(self, task_id: TaskId, expect_gen: tuple = (0, 0, 0),
+                          sign: bool = True) -> None:
         with self._cap:
             _t0 = self._engine.get_task(task_id)
-            if not self._fresh(task_id, expect_iter, ("VALIDATING",)):
+            if not self._fresh(task_id, expect_gen, ("VALIDATING",)):
                 if _t0 is not None:
                     self._seen.discard(self._round_key(_t0, "v:"))
                 return
@@ -1541,6 +1877,15 @@ class Dispatcher:
             # a validator run that died/unparsed leaves VALIDATING with no verdict — ONE retry
             if t is not None and t.state.name == "VALIDATING":
                 key = self._round_key(t, "v:")
+                # A CUT CALL IS NOT AN ANSWER, so it does not spend the answer's budget. The one
+                # retry exists to buy a second JUDGEMENT of this delivery; a severed transport
+                # produced no judgement to be second to, and charging it against that budget is how
+                # a node reaches its park having never been judged once. It gets a budget of its
+                # own instead — small, because an installation that cannot complete a call twice in
+                # a row has a problem no third attempt fixes, and finite, because an unbounded
+                # redial is the loop Inv-5 exists against.
+                if ret == "no-verdict:torn" and self._redial(task_id, key):
+                    return
                 if key not in self._retried:
                     self._retried.add(key)
                     self._seen.discard(key)
@@ -1564,7 +1909,12 @@ class Dispatcher:
                     # sentence ("a fuller report is usually a coverage-discipline gap") is then a
                     # wrong diagnosis printed with confidence. Measured 2026-09-05: three runs died
                     # here, each having spent its two attempts on a judge that never started.
-                    _tier = validator_retry_model() if ret != "no-verdict:never-ran" else None
+                    # …and a CUT call earns no escalation either, for the same reason a never-started
+                    # one does not: the tier answers a report's thinness, and neither of these two
+                    # produced a report to be thin. Reaching here means the redials are spent, so
+                    # what follows is the ordinary last attempt, on the node's own tier.
+                    _tier = (validator_retry_model()
+                             if ret not in ("no-verdict:never-ran", "no-verdict:torn") else None)
                     if _tier:
                         self._retry_model[key] = _tier
                     self._engine.emit_info(

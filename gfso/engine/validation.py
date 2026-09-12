@@ -1,4 +1,4 @@
-"""Signal validation enforcement — L2 wrapper around L1 role rules."""
+﻿"""Signal validation enforcement — L2 wrapper around L1 role rules."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from typing import Optional
 
 
 from gfso.core.types import (Signal, SignalData, State, CriticVerdict, DoneReason, TaskId,
-                             Verdict, passed)
+                             Verdict, passed, settled_positive)
 from gfso.core.protocol.fsm import available_signals, not_admissible_here
 from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import (validate_fail_has_criteria,
@@ -16,7 +16,8 @@ from gfso.core.handlers.structural import run_structural
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import generation_of_task, verdict_is_current_pass
+from gfso.core.graph.model import (dep_scope, generation_of_task, non_leaf_ids,
+                                   verdict_is_current_pass)
 
 
 class ValidationError(Exception):
@@ -86,6 +87,30 @@ def _l2_undischarged(graph: Graph, node) -> Optional[list[str]]:
     # it (measured: a regex engine signed off on two root criteria, neither requiring it to match
     # anything, with 21 hidden tests red).
     return finding_keys(rec)
+
+
+def execution_admitted(graph: Graph, node) -> bool:
+    """May this node's CHILDREN start? — the question every reading surface was answering itself.
+
+    Three spellings existed. `review_decomposition` had it whole; `get_task` read only the Level-2
+    findings and skipped the structural level and the gate flag; `get_review` wrote
+    `t.verified and not open_findings`, and `not None` is true — so ⊥, the state the checker's own
+    doctrine calls "no verdict is never read as clean", came back as ADMITTED.
+
+    Probed 2026-09-07: a node reviewed by a checker whose reply was unreadable answers
+    `execution_admitted: True` at both reading doors while the engine, in the same second, refuses
+    its child's ACCEPT and explains exactly why. That is the false green on the Level-2 panel — the
+    class this product catches for other people — on its own surface, and the surface it appears on
+    is the one a person watches.
+
+    Answered here because this is where the refusal is decided: the same three facts, in one place,
+    so an affordance cannot come to disagree with the machine.
+    """
+    if node is None:
+        return False
+    if _l0_holes(graph, node):
+        return False
+    return not l2_gate_on() or _l2_undischarged(graph, node) == []
 
 
 def _fail_extension_shrank(old_desc: str, new_desc: str) -> bool:
@@ -201,13 +226,16 @@ def _l0_holes(graph: Graph, parent) -> list:
     children = graph.get_active_children(parent.id)
     if not children:
         return []
-    child_ids = {str(c.id) for c in children}
-    edges = [(str(e.from_id), str(e.to_id)) for e in graph.dep_edges()
-             if str(e.from_id) in child_ids and str(e.to_id) in child_ids]
+    # THE SAME POPULATION THE CACHE SEES (`Graph.dep_scope`) — the subtree, not the direct
+    # siblings. Filtered to sibling pairs here, the gate admitted execution over a plan whose
+    # cross-branch seam ran backwards in time or closed a cycle, and said `count: 0` while doing it.
+    scoped, deadlines = dep_scope(graph, parent.id)
+    edges = [(str(e.from_id), str(e.to_id)) for e in scoped]
     # Same leaf information the cached computation gets (`Engine._recompute_checks`): without it
     # CHECK-6 would read every child as a leaf HERE and as a leaf-or-branch THERE, so the gate could
     # refuse a start over a hole `get_checks`/`list_holes` shows green — two views of one plan.
-    return [c for c in run_structural(parent, children, edges, graph.non_leaf_ids(children))
+    return [c for c in run_structural(parent, children, edges,
+                                     non_leaf_ids(graph, children), deadlines)
             if not c.passed and not c.skipped and c.check_name.startswith(_EXEC_GATING_CHECKS)]
 
 
@@ -226,11 +254,24 @@ def _pass_rules(signal_data: SignalData, graph: Graph) -> None:
         # that advice records a verdict about work that does not exist, or fails again for the real
         # reason nobody named: nothing has been delivered (measured on the human door 2026-08-22).
         # Outside VALIDATING the FSM's own answer is the true one, and it is what the caller gets.
-        unpassed = [c.id for c in graph.get_active_children(signal_data.task_id)
-                    if not passed(c)]
-        if unpassed:
+        # …AND THE CONJUNCTION ASKS WHETHER THE CHILD WAS ACCEPTED, not whether its pass was
+        # earned. §12.2 states it outright — "DONE is reached through acceptance (PASS ∨ auto_pass),
+        # never through fail" — and §14.3 calls the timeout edge auto-ACCEPTANCE. Reading the
+        # conjunction as `passed` (DONE with a verdict someone gave) excluded auto_pass, and since
+        # the child is terminal and, once its parent has delivered, CONSUMED, there was no way
+        # back: probed 2026-09-07 end to end — the parent's PASS refused, `reopen` refused as
+        # consumed, and `next_step` reporting `stuck: false` while advising the very signal the
+        # engine forbids. A permanent lock with a green frontier over it.
+        # The auto-acceptance is not thereby laundered into an earned pass: it stays recorded apart
+        # (§24.7), q_D still excludes it, q_V still carries its risk through the pass→later-fail
+        # term, and the acceptance below NAMES the children it stood on rather than absorbing them
+        # silently — the making-explicit answer to a weaker conjunct, instead of a stalled graph.
+        unaccepted = [c.id for c in graph.get_active_children(signal_data.task_id)
+                      if not settled_positive(c)]
+        if unaccepted:
             raise ValidationError(
-                f"cannot PASS {signal_data.task_id}: not all children have PASSed (V=AND of children): {unpassed}"
+                f"cannot PASS {signal_data.task_id}: not all children have PASSed "
+                f"(V=AND of children): {unaccepted}"
             )
         # …AND THE AND MUST STILL BE ABOUT THIS GOAL. Thm 1 (§11.1) makes a parent's PASS the
         # conjunction over its children, and that conjunction only establishes the PARENT because
@@ -276,11 +317,30 @@ def _pass_rules(signal_data: SignalData, graph: Graph) -> None:
         # same node. What is required here is the DECIDED self-report the canon names, not
         # independence (that is owed at the seam, and the branch below is where it is enforced):
         # deliver with `self_validation`, or record your own verdict — both leave a record.
-        if (task is not None and signal_data.source and signal_data.source == task.assignee
+        # …AND THE GUARD ASKS FOR THE RECORD, NOT FOR THE SIGNER'S NAME. It carried
+        # `signal_data.source == task.assignee`, so it fired only on the executor — and on an
+        # internal node the role check admits exactly two parties, the executor and an id on
+        # `authorized_validators`. The second walked past this branch, `is_public` is False so the
+        # seam branch below never ran either, and NOTHING was left: probed 2026-09-08 with a paired
+        # control — a child delivered "I wrote nothing at all" reaches DONE/PASS on a roster id's
+        # signature with `verdict record: None, provenance: none, per_criterion: []`, while the same
+        # delivery signed by its own executor is refused. The difference between a refusal and a
+        # false close was one name on a roster.
+        # This is the SAME rule the seam branch was corrected to on 2026-09-05 and which was never
+        # mirrored here — "an id on a roster is a CLAIM about who is signing; the record is the
+        # evidence that judging happened, and ⊥ is not a pass (§11.2) no matter whose name is on
+        # it". Nothing legitimate is lost: `self_validation` on the DELIVER records itself
+        # (`engine/loop.py::_keep_the_self_check`), and a validator that actually judges records
+        # before it signs — both leave exactly the record this asks for.
+        if (task is not None and signal_data.source
                 and not graph.is_public(task)
                 and not verdict_is_current_pass(graph.exec_verdict_record(signal_data.task_id), task)):
+            _own = signal_data.source == task.assignee
             raise ValidationError(
-                f"PASS on {signal_data.task_id} by its own executor ({signal_data.source}) carries no "
+                f"PASS on {signal_data.task_id} by "
+                + (f"its own executor ({signal_data.source})" if _own
+                   else f"'{signal_data.source}'")
+                + f" carries no "
                 f"self-check for this delivery. An INTERNAL node (same Del as its parent) self-verifies "
                 f"rather than being judged independently (§14.5 D6) — but a verdict with no check behind "
                 f"it is ⊥, not a pass (§11.2). Say what you checked: `record_verdict({signal_data.task_id}, "
@@ -503,7 +563,7 @@ def _resolve_block_rules(signal_data: SignalData, graph: Graph) -> None:
         # producer — that case is what the retracting form is for, and reading it as "unpassed"
         # made the auto-resolve refuse its own signal in a loop.
         _open = sorted({p for p in _claimed
-                        if (_t := graph.get_task(TaskId(p))) is not None and not passed(_t)})
+                        if (_t := graph.get_task(TaskId(p))) is not None and not settled_positive(_t)})
         if _open and not signal_data.external:
             # …AND THE PROMISE IS ONLY MADE WHERE IT IS KEPT. "The block is then resolved for you"
             # is true when the node's ISSUER is automated — the dispatcher clears it. On a node a
@@ -545,14 +605,36 @@ def _deliver_rules(signal_data: SignalData, graph: Graph) -> None:
         # refuted criterion also deletes the mapping that pointed at it, so a mapping-keyed trigger
         # would let exactly the false close through. A leaf is out of scope by the same reading —
         # its contract belongs to the issuer above, whose CHECK-1 surfaces any hole a rewrite leaves.
-        if (task is not None and task.state in (State.REWORKING, State.EXECUTING)
-                and graph.get_active_children(task.id)):
-            rec = graph.exec_verdict_record(signal_data.task_id)
-            if (rec and rec.get("verdict") == Verdict.FAIL
-                    and rec.get("reopens", 0) == task.reopens
-                    and rec.get("iteration") == task.iteration - 1):
-                if (refusal := _refuted_coverage_refusal(graph, task, rec)) is not None:
-                    raise ValidationError(refusal)
+        if (refusal := redelivery_refusal(graph, task)) is not None:
+            raise ValidationError(refusal)
+
+
+def redelivery_refusal(graph: Graph, task) -> Optional[str]:
+    """Why a re-DELIVER of `task` would be refused right now, or None — asked by the RULE and by
+    the FRONTIER, from one owner.
+
+    The trigger is "this node has a decomposition", not "it still has mappings": deleting the
+    refuted criterion also deletes the mapping that pointed at it, so a mapping-keyed trigger
+    would let exactly the false close through. A leaf is out of scope by the same reading — its
+    contract belongs to the issuer above, whose CHECK-1 surfaces any hole a rewrite leaves.
+
+    ASKED BY THE FRONTIER TOO, because the two were saying opposite things about the same node. On a
+    live run (2026-09-06, `http2_protocol`) the engine refused the re-delivery — the failed criteria
+    were covered by children untouched since that FAIL, so contact refuted the DECOMPOSITION — while
+    the frontier, in the same second, told the executor "AGGREGATE: all its children PASSED —
+    integrate them … DELIVER". The executor obeyed the directive, was refused twice, and the run
+    ended there. Advice the engine forbids is worse than no advice.
+    """
+    if task is None or task.state not in (State.REWORKING, State.EXECUTING):
+        return None
+    if not graph.get_active_children(task.id):
+        return None
+    rec = graph.exec_verdict_record(task.id)
+    if not (rec and rec.get("verdict") == Verdict.FAIL
+            and rec.get("reopens", 0) == task.reopens
+            and rec.get("iteration") == task.iteration - 1):
+        return None
+    return _refuted_coverage_refusal(graph, task, rec)
 
 
 def validate_signal(signal_data: SignalData, graph: Graph) -> None:

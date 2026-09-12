@@ -66,7 +66,7 @@ def ensure_server(url: str = URL, wait_s: float = 25.0) -> bool:
     home = serverctl.home()
     data = home / "data"
     data.mkdir(parents=True, exist_ok=True)
-    log = open(data / "server.log", "a", encoding="utf-8")
+    log = serverctl.open_server_log(data)
     print(f"[gfso connect] shared server not running — starting it on :{port}",
           file=sys.stderr, flush=True)
     # A HIDDEN CONSOLE, not NO console — the difference is the whole class of "an empty window keeps
@@ -123,6 +123,20 @@ def foreign_holder(host: str, port: int) -> bool:
 
 
 
+def _left_alone(drift, fp, said: str) -> dict:
+    """One shape for "the server was left as it is" — the sentence SAID and the sentence RETURNED.
+
+    Each of these branches composed a reason, printed it to stderr, and returned a dict without it,
+    so `ensure_correct`'s `why` key existed on exactly one of five returns. `gfso up` reads the dict:
+    it therefore exited 1 in silence for every reason but one, and the one caller who could see the
+    others was a human watching a terminal. Measured 2026-09-07 — an exit 1 whose stderr line was
+    lost to a pipe was read as the wrong cause entirely. The reason a decision was made is part of
+    the decision, so it travels with it.
+    """
+    print(f"gfso: {said}", file=sys.stderr, flush=True)
+    return {"action": "left-alone", "drift": drift, "code_version": fp, "why": said}
+
+
 def _reconcile_running(rt, env, fp, holds_lease: bool, force: bool):
     """Decide what to do about a server that IS up: leave it, or stop it so a current one can
     start. Returns (runtime|None, action, drift) — a `None` runtime means "it is gone, start
@@ -155,10 +169,9 @@ def _reconcile_running(rt, env, fp, holds_lease: bool, force: bool):
                 note = (f"{others} other session(s)" if others else "") + \
                        (" and " if others and busy else "") + \
                        (f"work in flight ({', '.join(busy)})" if busy else "")
-                print(f"gfso: the server is not current ({'; '.join(why)}), and {note} — leaving it "
-                      f"alone. `gfso down` when it is safe, and the next command starts a current one.",
-                      file=sys.stderr, flush=True)
-                return {"action": "left-alone", "drift": why, "code_version": fp}
+                return _left_alone(why, fp,
+                    f"the server is not current ({'; '.join(why)}), and {note} — leaving it alone. "
+                    f"`gfso down` when it is safe, and the next command starts a current one.")
         # (`gfso up` turns "left-alone" into a non-zero exit — a caller chaining on it must be able
         # to tell a reconciled server from one it was asked to leave.)
         if why:
@@ -175,10 +188,9 @@ def _reconcile_running(rt, env, fp, holds_lease: bool, force: bool):
                     headers={"Content-Type": "application/json"}), timeout=3).read()
             except urllib.error.HTTPError as ex:
                 if ex.code == 409:
-                    print(f"gfso: the server is not current ({'; '.join(why)}) but clients are "
-                          f"working on it — leaving it alone; the next start will be current.",
-                          file=sys.stderr, flush=True)
-                    return {"action": "left-alone", "drift": why, "code_version": fp}
+                    return _left_alone(why, fp,
+                        f"the server is not current ({'; '.join(why)}) but clients are working on "
+                        f"it — leaving it alone; the next start will be current.")
             # whether the server stopped is decided by `wait_closed()` below, not by this request; a
             # refused POST is just one more way of not having stopped it
             except Exception:
@@ -188,9 +200,9 @@ def _reconcile_running(rt, env, fp, holds_lease: bool, force: bool):
                 # about an act that did not happen — and the caller then believed it was talking to
                 # current code. Whatever refused (a client on it, a stop that never arrived) leaves
                 # the drift standing, which is the honest answer.
-                print(f"gfso: the server did not stop ({'; '.join(why)} stands) — leaving it alone; "
-                      f"the next start will be current.", file=sys.stderr, flush=True)
-                return {"action": "left-alone", "drift": why, "code_version": fp}
+                return _left_alone(why, fp,
+                    f"the server did not stop ({'; '.join(why)} stands) — leaving it alone; the "
+                    f"next start will be current.")
             return None, "restarted", why
     return rt, "already-correct", why
 
@@ -213,8 +225,15 @@ def ensure_correct(verbose: bool = True, holds_lease: bool = False, force: bool 
         # Asked not to touch it (a probe, a health check, a suite). Report what is there; change
         # nothing. `force=True` is a caller who said so explicitly and still means it.
         if not force:
-            return {"action": "left-alone", "drift": [],
-                    "why": "GFSO_NO_RECONCILE is set — reporting, not reconciling"}
+            # Through the same owner as the other three, so "one shape for left-alone" is four of
+            # four rather than three of four — this being the branch that actually misled a reader.
+            # `code_version=None`: this branch is the cheap probe ("a probe, a health check, a
+            # suite"), and a first spelling called `source_fingerprint()` here — which reads and
+            # hashes every file under `gfso/` — putting ~20 ms of I/O on a path whose whole
+            # contract is that it touches nothing. Not knowing the fingerprint is the honest answer
+            # for a branch that deliberately did not look.
+            return _left_alone([], None,
+                               "GFSO_NO_RECONCILE is set — reporting, not reconciling")
     env, fp = serverctl.declared(), serverctl.source_fingerprint()
     rt, action, why = serverctl.runtime(), "already-correct", []
     _r = _reconcile_running(rt, env, fp, holds_lease, force)
@@ -255,13 +274,19 @@ def ensure_correct(verbose: bool = True, holds_lease: bool = False, force: bool 
             if serverctl.runtime() is not None:
                 break
             time.sleep(1)
+    # …AND THE ACTING BRANCHES OWE THE SAME SENTENCE. `_left_alone` gives every refusal a `why`;
+    # without this the two outcomes that DID something were the remaining silent returns, so a
+    # caller reading the dict could learn why nothing happened and not why something did.
+    # A REASON, not the action's own name back. `already-correct · code … · home …` is a status
+    # line wearing the word "why"; what a caller asked is what was found and what was done about it.
+    said = ((f"the server was already current — {action}" if action == "already-correct"
+             else f"{action} ({'; '.join(why)})" if why else f"{action}")
+            + f" · code {fp} · home {serverctl.home()}")
     if verbose:
         # The HOME is printed, not assumed: it decides where the database, the log and the agent
         # registry live, and it differs between a source checkout and an installed package.
-        print(f"gfso server {serverctl.BASE}: {action}"
-              + (f" ({'; '.join(why)})" if why else "")
-              + f" · code {fp} · home {serverctl.home()}")
-    return {"action": action, "drift": why, "code_version": fp}
+        print(f"gfso server {serverctl.BASE}: {said}")
+    return {"action": action, "drift": why, "code_version": fp, "why": said}
 
 
 # How many times a dropped bridge is rebuilt before giving up, and how long to wait between
