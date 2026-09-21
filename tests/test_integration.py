@@ -50,6 +50,8 @@ def test_revise_is_reassign_same_id_no_cascade():
         return Spec(d, tuple(Criteria(n, t) for n, t in c), accepted_risks=neg)
 
     # Leaf revise (the planning case): SAME id, spec applied, logged as a second ASSIGN — NO CANCEL involved.
+    # `leaf` is this project's ONE root; the later subjects (`p`, `q`) hang under it, since a second
+    # parentless node would be a second verdict with no rule composing the two.
     eng.assign_task(TaskId("leaf"), sp("leaf", ("a", "a")), A); eng.wait_idle()
     eng.revise(TaskId("leaf"), sp("leaf", ("a", "a2"), neg=(AcceptedRiskItem("ext"),)), A); eng.wait_idle()
     lf = eng.get_task(TaskId("leaf"))
@@ -61,7 +63,7 @@ def test_revise_is_reassign_same_id_no_cascade():
 
     # Parent revise: the subtree is RETAINED (revise ≠ abandon). Changing only ACCEPTED_RISKS here leaves coverage
     # intact → the child survives, no cascade.
-    eng.assign_task(TaskId("p"), sp("p", ("g", "g")), A); eng.wait_idle()
+    eng.assign_task(TaskId("p"), sp("p", ("g", "g")), A, parent_id=TaskId("leaf")); eng.wait_idle()
     eng.decompose_task(TaskId("p"), [(TaskId("k"), sp("k", ("x", "x")), B)],
                        [CriterionMapping("g", TaskId("k"))]); eng.wait_idle()
     eng.revise(TaskId("p"), sp("p", ("g", "g"), neg=(AcceptedRiskItem("re"),)), A); eng.wait_idle()
@@ -76,7 +78,7 @@ def test_revise_is_reassign_same_id_no_cascade():
     assert not {c.check_name: c for c in eng.get_checks(TaskId("p"))}["CHECK-1:coverage"].passed
 
     # Gate: the ISSUER may re-author a delegated OFFERED leaf; the EXECUTOR may not.
-    eng.assign_task(TaskId("q"), sp("q", ("g", "g")), A); eng.wait_idle()
+    eng.assign_task(TaskId("q"), sp("q", ("g", "g")), A, parent_id=TaskId("leaf")); eng.wait_idle()
     eng.decompose_task(TaskId("q"), [(TaskId("d"), sp("d", ("z", "z")), B)],
                        [CriterionMapping("g", TaskId("d"))]); eng.wait_idle()
     eng.revise(TaskId("d"), sp("d", ("z2", "tight")), A); eng.wait_idle()   # issuer alice ✓
@@ -98,9 +100,11 @@ def test_rmw_preserves_name_clears_done_reason_and_map_criterion():
     assert t.spec.name == "Human Label"                             # name carried through RMW
     assert t.done_reason is None and t.state == State.OFFERED        # tombstone flag cleared on re-author
 
+    # `n` is the project's one root; the coverage subject `p` hangs under it.
     eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g"),),
                     accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
-                                                     Predictability.EXTRAORDINARY),)), A); eng.wait_idle()
+                                                     Predictability.EXTRAORDINARY),)), A,
+                    parent_id=TaskId("n")); eng.wait_idle()
     eng.decompose_task(TaskId("p"), [(TaskId("c"), Spec("c", (Criteria("z", "z"),)), A)], None); eng.wait_idle()
     checks = lambda: {c.check_name: c for c in eng.get_checks(TaskId("p"))}
     assert not checks()["CHECK-1:coverage"].passed                  # g uncovered (child unmapped)
@@ -560,8 +564,11 @@ def test_add_dependency():
     engine = _engine(NoopAgent())  # tasks stay in OFFERED (re-authorable), not auto-completed
     engine.start()
 
-    engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("d"))
-    engine.assign_task(TaskId("t2"), Spec("b", (), ("r",)), AgentId("d"))
+    # The two ends of the seam are SIBLINGS under the project's one root — a Dep joins peers, and a
+    # second parentless node is no longer a shape the graph has.
+    engine.assign_task(TaskId("goal"), Spec("goal", (), ("r",)), AgentId("d"))
+    engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("d"), parent_id=TaskId("goal"))
+    engine.assign_task(TaskId("t2"), Spec("b", (), ("r",)), AgentId("d"), parent_id=TaskId("goal"))
     engine.wait_idle()
 
     engine.add_dependency(TaskId("t1"), TaskId("t2"), discovered=False)  # t2 depends on t1 (declared → t2's criterion)
@@ -611,8 +618,8 @@ def test_tasks_by_assignee():
     engine = _engine(NoopAgent())
     engine.start()
 
-    engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("alice"))
-    engine.assign_task(TaskId("t2"), Spec("b", (), ("r",)), AgentId("bob"))
+    engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("alice"))  # the project's one root
+    engine.assign_task(TaskId("t2"), Spec("b", (), ("r",)), AgentId("bob"), parent_id=TaskId("t1"))
     engine.wait_idle()
 
     alice_tasks = engine.tasks_by_assignee(AgentId("alice"))

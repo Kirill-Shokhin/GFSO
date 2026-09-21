@@ -211,10 +211,14 @@ def test_refine_leaves_untouched_children_in_place():
 
 
 def test_refine_frozen_terminal_children_surface_as_holes():
-    """Completed work is FROZEN: a fold update targeting a DONE child cannot apply (a terminal node
+    """SETTLED work is FROZEN: a fold update targeting a DONE child cannot apply (a terminal node
     admits no revision, §14.3) — the intent must NOT vanish into rejected signals (observed live):
     the searcher sees the frozen list, the unapplied change surfaces as an honest hole, and the
-    child's state/audit stay untouched."""
+    child's state/audit stay untouched.
+
+    "Settled" is DONE or ABANDONED and no longer ESCALATED, which is the issuer waiting rather than
+    the work finishing (§14.3-bis) — a refine round may restructure around such a child, and that is
+    the issuer's own second move."""
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
@@ -252,12 +256,16 @@ def test_refine_frozen_terminal_children_surface_as_holes():
     a = e.get_task(TaskId("root.a"))
     assert a.state == State.DONE and "DIFFERENTLY" not in a.spec.description  # untouched
     assert len(e.audit_log(TaskId("root.a"))) == n_signals_a                  # zero signals emitted
-    assert any("terminal" in str(h) for h in res2.holes)                      # honest residue
+    assert any("settled" in str(h) or "frozen" in str(h) for h in res2.holes)  # honest residue
 
 
 def test_refine_on_terminal_target_refused():
-    """A completed goal is frozen (terminal admits no revision; REOPEN is parked) — the one verb
-    refuses loudly instead of crashing on the root's own re-author."""
+    """A SETTLED goal is frozen (a terminal admits no revision) — the one verb refuses loudly
+    instead of crashing on the root's own re-author, and names `reopen` as the way back.
+
+    An ESCALATED goal is deliberately NOT refused: it is the issuer waiting, and narrowing the
+    criteria is his move (§14.3-bis). This refusal used to fire on it too and told him, by name, to
+    "start a NEW goal (new root)" — the literal act that broke a measured run, twice."""
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
@@ -285,8 +293,13 @@ def test_refine_on_terminal_target_refused():
     _judged_pass("root")
     e.wait_idle()
     assert e.get_state(TaskId("root")) == State.DONE
-    with pytest.raises(ValueError, match="terminal"):
+    with pytest.raises(ValueError, match="settled goal is frozen"):
         decompose_into(e, "", root_id="root", llm=FakeLLM(texts=[], specs=[]))
+    # …and the refusal points at the act that exists, never at a second root.
+    try:
+        decompose_into(e, "", root_id="root", llm=FakeLLM(texts=[], specs=[]))
+    except ValueError as ex:
+        assert "reopen" in str(ex) and "new root" not in str(ex), str(ex)
 
 
 def test_refine_state_view_carries_blocked_children_with_reasons():

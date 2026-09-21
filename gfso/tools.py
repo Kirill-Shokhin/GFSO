@@ -20,7 +20,7 @@ from gfso.core.types import (
     RevisionReason, settled_positive, passed,
 )
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_V_reversed
-from gfso.core.graph.model import verdict_is_current_pass
+from gfso.core.graph.model import verdict_is_current_pass, root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent
 from gfso.core.protocol.procedure import probes_from as _checks_of
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
@@ -897,6 +897,21 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
     # surface must agree with the machine, in both directions (§14.5).
     acts, gate_note, withheld = _gated_out(engine, t, task_id, who, acts)
     out = {"task_id": task_id, "state": t.state.name, "actions": acts}
+    # WHOSE the open acts are, where the state is about that and not about the acts. ESCALATED
+    # admits CANCEL and ASSIGN — both the ISSUER's — and a list of two signals does not say so; a
+    # reader who does not know they are his reads "the node admits things" and keeps polling.
+    if t.state == State.ESCALATED:
+        out["waiting_on"] = "issuer"
+        out["recovery"] = engine.issuer_moves_on(TaskId(task_id))
+    # …and OVERDUE, which answered with a bare ["CANCEL"] and none of the prose every other state
+    # gets — while the product itself recommends `revise(deadline=…)` one tick later.
+    elif t.state == State.OVERDUE:
+        out["waiting_on"] = "clock"
+        out["recovery"] = (
+            f"the deadline ran out and OVERDUE accepts no progress signal (§14.3): the way back to "
+            f"work runs THROUGH the handover. The clock escalates '{task_id}' on its next tick and "
+            f"the decision is then the ISSUER's — `revise('{task_id}', deadline=…)` is what he will "
+            f"be offered, and `signal('{task_id}', 'CANCEL')` closes it without waiting.")
     if gate_note:
         out["gate"] = gate_note
     if withheld:
@@ -924,10 +939,10 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
             # sent a person hunting through four verbs for one that was not refused (§14.3 gives a
             # different answer for each terminal; walked by hand 2026-08-21).
             if t.state == State.ESCALATED:
-                out["recovery"] = (
-                    f"'{task_id}' exhausted its rework loop — that is a settled FAIL, and the canon "
-                    f"hands it to the ISSUER (§14.3): re-decompose AROUND it, adding a child that "
-                    f"carries what it left uncovered. It is not reopened and takes no revision.")
+                # NOT a settled node, and this used to say it was ("it is not reopened and takes no
+                # revision") — the sentence that sent an agent to build a second root. ESCALATED is
+                # the issuer's waiting state (§14.3-bis) and the moves are his.
+                out["recovery"] = f"'{task_id}' is waiting: {engine.issuer_moves_on(TaskId(task_id))}"
             elif t.state in (State.DONE, State.ABANDONED):
                 out["recovery"] = (
                     f"'{task_id}' is finished. `reopen` puts it back to OFFERED under its standing "
@@ -1182,6 +1197,20 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
                          f"scope}}. A node is defined by its CRITERIA — what would show it done — "
                          f"and a bare sentence names none. What you passed reads as the "
                          f"`description`; write the criteria that would settle it."}
+    # ONE ROOT PER PROJECT, refused in the verb's own terms rather than as an internal breach. A
+    # parentless node is not a free-standing task — it is THE goal, and V(root) is the project's
+    # verdict, so a second one is a second verdict with no rule composing them. The refusal names
+    # the two acts that were meant, because a caller told only "no" invents a third.
+    if not parent_id:
+        _root = root_of(engine.all_tasks())
+        if _root is not None and str(_root.id) != str(tid):
+            return {"error": (
+                f"this project already has its root, '{_root.id}' "
+                f"({_root.spec.name or _root.spec.description[:60]}), and a project has exactly one. "
+                f"If '{tid}' is part of that goal, give it a parent: "
+                f"`create_task(parent_id='{_root.id}', …)` and map it to the criterion it covers "
+                f"(`map_criterion`). If it is a different goal, it belongs in a different project: "
+                f"`use_project('<name>')`.")}
     dl = _deadline(deadline)
     t = engine.assign_task(tid, _spec_from(spec or {}), AgentId(assignee or _agent_id()),
                            parent_id=TaskId(parent_id) if parent_id else None, deadline=dl)
@@ -1365,10 +1394,11 @@ def _contract_moved_under_you(before, expect_criteria) -> Optional[dict]:
                         f"carries now, and re-send with the new `expect_criteria`.")}
 
 
-def revise(engine: Engine, task_id: str, spec: dict, agent: str,
+def revise(engine: Engine, task_id: str, spec: Optional[dict] = None, agent: str = "",
            reason: Optional[str] = None,
            expect_criteria: Optional[list] = None,
-           deadline: Optional[str] = None) -> Optional[dict]:
+           deadline: Optional[str] = None,
+           max_iterations: Optional[int] = None) -> Optional[dict]:
     """Revise a node's whole spec. Canon v3.7 Inv-1: a spec change = re-ASSIGN under the SAME id → OFFERED
     (NOT a CANCEL — no cascade, no tombstone; the executor re-ACCEPTs the new contract). The subtree is
     RETAINED (revision ≠ abandonment); if a criteria change strands a child's coverage it shows up as a
@@ -1392,6 +1422,18 @@ def revise(engine: Engine, task_id: str, spec: dict, agent: str,
         return {"error": f"unknown task {task_id}"}
     if (_moved := _contract_moved_under_you(t, expect_criteria)):
         return _moved
+    # A REVISION THAT CHANGES ONLY A NON-SPEC PACKET FIELD NEEDS NO SPEC. The bound and the deadline
+    # are packet fields like the criteria (Inv-1), and the issuer of an ESCALATED node most often
+    # means exactly one of them — "the forecast was short, take more attempts". Demanding the whole
+    # contract back to say that made the move the product ITSELF names unreachable: `revise` had no
+    # `max_iterations` at all, and passing it inside `spec` was accepted and did nothing.
+    if spec is None:
+        if max_iterations is None and deadline is None:
+            return {"refused": True,
+                    "error": (f"`revise` needs either the new `spec` (the WHOLE contract) or a packet "
+                              f"field to change on its own — `max_iterations` or `deadline`. To change "
+                              f"one part of the contract and carry the rest, use `edit_criteria` or "
+                              f"`edit_accepted_risks`.")}
     if isinstance(spec, dict):
         _loses = [name for name, key in (("criteria", "criteria"), ("ACCEPTED_RISKS", "accepted_risks"),
                                          ("scope", "scope"))
@@ -1407,8 +1449,12 @@ def revise(engine: Engine, task_id: str, spec: dict, agent: str,
                     # status). A verb's other `{error: …}` answers report an OUTCOME — `signal`
                     # reaching the FSM and being told no is a successful call — and stay 200.
                     "refused": True, "would_delete": _loses}
-    return _task_out(engine.revise(TaskId(task_id), _spec_from(spec), AgentId(agent),
-                                   reason=_reason_from(reason), deadline=_deadline(deadline)))
+    # spec=None carries the node's OWN contract unchanged — the bound-only revision above.
+    return _task_out(engine.revise(TaskId(task_id),
+                                   _spec_from(spec) if spec is not None else t.spec,
+                                   AgentId(agent),
+                                   reason=_reason_from(reason), deadline=_deadline(deadline),
+                                   max_iterations=max_iterations))
 
 
 def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
@@ -1523,7 +1569,9 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
     # `map_criterion` puts the coverage back, and the note below is enough.
     _doomed = sorted({k for c, k in _had_map if c not in {n["name"] for n in criteria}
                       and (kid := engine.get_task(TaskId(k))) is not None
-                      and kid.state.name in ("DONE", "ABANDONED", "ESCALATED")})
+                      # ESCALATED is NOT finished — it is waiting for its issuer and still takes
+                      # a revision (§14.3-bis), so its coverage can be put back like any live node's.
+                      and kid.state.name in ("DONE", "ABANDONED")})
     if _doomed and not accept_coverage_loss:
         return {"refused": True, "would_destroy_coverage": _doomed,
                 "error": (f"this call would drop the coverage of {', '.join(_doomed)}, and that "
@@ -1574,7 +1622,9 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
             out["coverage_dropped"] = _lost
             _frozen = sorted({k for c, k in _going
                               if (kid := engine.get_task(TaskId(k))) is not None
-                              and kid.state.name in ("DONE", "ABANDONED", "ESCALATED")})
+                              # ESCALATED is NOT finished — it is waiting for its issuer and still takes
+                      # a revision (§14.3-bis), so its coverage can be put back like any live node's.
+                      and kid.state.name in ("DONE", "ABANDONED")})
             out["coverage_dropped_note"] = (
                 f"{len(_lost)} criterion→child mapping(s) went with the criteria this call replaced. "
                 + (f"IRREVERSIBLE: {', '.join(_frozen)} {'is' if len(_frozen) == 1 else 'are'} "

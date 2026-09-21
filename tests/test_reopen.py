@@ -32,9 +32,13 @@ def engine():
     e.stop()
 
 
-def _drive_to_done(e: Engine, tid="n1", issuer="boss", worker="w"):
-    """ASSIGN→ACCEPT→DELIVER→PASS a standalone root (issuer = its own creator context)."""
-    e.assign_task(TaskId(tid), spec(), AgentId(issuer))
+def _drive_to_done(e: Engine, tid="n1", issuer="boss", worker="w", parent=None):
+    """ASSIGN→ACCEPT→DELIVER→PASS a node (issuer = its own creator context).
+
+    `parent` hangs it under an existing node — needed wherever a test wants two nodes, since a
+    project has exactly one root and a second parentless node is refused."""
+    e.assign_task(TaskId(tid), spec(), AgentId(issuer),
+                  parent_id=TaskId(parent) if parent else None)
     e.wait_idle()
     for sd in (
         SignalData(signal=Signal.ACCEPT, task_id=TaskId(tid), source=AgentId(issuer)),
@@ -81,15 +85,24 @@ def test_reopen_cancelled_to_review(engine):
     assert not t.reopened_from_pass          # negative terminal — no pass to refute
 
 
-def test_escalated_stays_fully_terminal(engine):
+def test_escalated_is_not_reopened_because_it_never_settled(engine):
+    """R′ restores a node that FINISHED. ESCALATED did not finish — it is waiting for the issuer.
+
+    The verb is refused and the refusal names the acts that do exist, because the two are different
+    objects: a reopen spends a counter against the finality gate, while the moves out of ESCALATED
+    are the issuer answering a question the protocol put to him (§14.3-bis)."""
     engine.assign_task(TaskId("e1"), spec(), AgentId("boss"))
     engine.wait_idle()
     for _ in range(2):  # OFFERED → OVERDUE → ESCALATED
         engine.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("e1")))
         engine.wait_idle()
     assert engine.get_state(TaskId("e1")) == State.ESCALATED
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="waiting for YOU"):
         engine.reopen(TaskId("e1"), AgentId("boss"))
+    # …and the act that DOES exist works: the issuer revises, the node returns to OFFERED.
+    engine._revise(TaskId("e1"), spec(), AgentId("boss"))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("e1")) == State.OFFERED
 
 
 # ── gate (ii): max_reopens, sign-agnostic ────────────────────────────────────
@@ -209,12 +222,31 @@ def test_parent_rework_releases_child_for_reopen(engine):
 
 
 def test_dep_consumer_built_on_result_locks_producer(engine):
-    prod = _drive_to_done(engine, tid="prod", issuer="boss")
-    # consumer declares the dep and ACCEPTs into work — it read-and-built on prod's result
-    spec = Spec(description="consumer", criteria=(
-        Criteria("uses", "builds on prod output", depends_on=TaskId("prod")),))
-    engine.assign_task(TaskId("cons"), spec, AgentId("boss"))
+    # Producer and consumer are SIBLINGS under the project's one root: a project has exactly one
+    # (the root carries the goal's criteria, and V(root) is the goal's verdict), so two top-level
+    # nodes with a Dep between them is not a shape the graph admits.
+    engine.assign_task(TaskId("goal"), spec("the goal", "gc1", "gc2"), AgentId("boss"))
     engine.wait_idle()
+    cons_spec = Spec(description="consumer", criteria=(
+        Criteria("uses", "builds on prod output", depends_on=TaskId("prod")),))
+    engine.assign_task(TaskId("prod"), spec(), AgentId("boss"), parent_id=TaskId("goal"))
+    engine.assign_task(TaskId("cons"), cons_spec, AgentId("boss"), parent_id=TaskId("goal"))
+    engine.wait_idle()
+    # …the whole plan covers the goal BEFORE any child executes (CHECK-1, §13.4)
+    engine.map_criterion(TaskId("goal"), TaskId("prod"), "gc1")
+    engine.map_criterion(TaskId("goal"), TaskId("cons"), "gc2")
+    engine.wait_idle()
+    for sd in (
+        SignalData(signal=Signal.ACCEPT, task_id=TaskId("prod"), source=AgentId("boss")),
+        SignalData(signal=Signal.DELIVER, task_id=TaskId("prod"), source=AgentId("boss"), result="r"),
+    ):
+        engine.send_signal(sd)
+        engine.wait_idle()
+    reviewer_passes(engine, TaskId("prod"))
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("prod"), source=AgentId("boss")))
+    engine.wait_idle()
+    assert engine.get_state(TaskId("prod")) == State.DONE
+    # consumer declares the dep and ACCEPTs into work — it read-and-built on prod's result
     engine.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId("cons"), source=AgentId("boss")))
     engine.wait_idle()
     assert engine.get_state(TaskId("cons")) == State.EXECUTING

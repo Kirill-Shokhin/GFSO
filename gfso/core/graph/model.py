@@ -7,7 +7,7 @@ from typing import Optional
 from gfso.core.types import (
     TaskId, AgentId, Task, State, Signal, Verdict,
     GuardContext, GraphContext, CheckResult, Recommendation,
-    DispatchPayload, DepEdge, StoragePort,
+    DispatchPayload, DepEdge, StoragePort, DEFAULT_MAX_ITERATIONS,
 )
 
 
@@ -137,7 +137,7 @@ class Graph:
         storage, and the point of the FSM is that it does not."""
         task = self._storage.get_task(task_id)
         if task is None:
-            return GuardContext(iteration=0, max_iterations=3)
+            return GuardContext(iteration=0, max_iterations=DEFAULT_MAX_ITERATIONS)
         return GuardContext(
             iteration=task.iteration,
             max_iterations=task.max_iterations,
@@ -201,7 +201,9 @@ class Graph:
             stack = [c for c in self.get_children(task.id)]
             while stack:
                 n = stack.pop()
-                if n.state not in (State.DONE, State.ABANDONED, State.ESCALATED):
+                # SETTLED, and ESCALATED is not: it is waiting for its issuer (§14.3-bis), so a
+                # descendant sitting there means the cascade has NOT come to rest.
+                if n.state not in (State.DONE, State.ABANDONED):
                     return False
                 stack.extend(self.get_children(n.id))
             # parent replanned around the hole? — a criterion this node covered is now covered
@@ -312,6 +314,32 @@ class Graph:
     def store_recommendation(self, task_id: TaskId, rec: Recommendation) -> None:
         self._storage.store_recommendation(task_id, rec)
 
+
+
+def root_of(tasks: list[Task]) -> Optional[Task]:
+    """THE root of this project — the one node that carries the goal, or None before there is one.
+
+    A project has exactly one. The derivation is the composition rule, not taste: the root carries the
+    goal's criteria, so V(root) IS the goal's verdict, and the canon's one composition rule is
+    V(parent) = AND(V(children)), which needs a parent. Two parentless nodes have no parent, so a
+    project holding two has no object that says whether the PROJECT is done. Two tasks that share
+    nothing compose to nothing — those are two projects; two that share something have the thing they
+    share as their parent, and that parent is the root. There is no third case, and so no version of
+    this where a second root means something.
+
+    Read rather than stored, so it cannot disagree with the graph it describes; a free function over
+    the node list rather than a method, because `Graph` is at its class-size limit and this is a shape
+    question like `dep_scope` and `non_leaf_ids` beside it. It takes EVERY node, tombstones included:
+    a cancelled root is still this project's root, and skipping it would re-open the very path the
+    rule closes — refuse the goal, then build a fresh root beside its corpse."""
+    roots = [t for t in tasks if t.parent_id is None]
+    if not roots:
+        return None
+    # A graph written BEFORE the rule can hold several, and the measured run that motivated the rule
+    # produced exactly that. Nothing here can decide which of them was the goal, so this at least
+    # does not decide it DIFFERENTLY on each read: oldest first, ties by id. An arbitrary answer
+    # that changes between calls is how one reader's "the root" stops being another's.
+    return min(roots, key=lambda t: (t.created_at, str(t.id)))
 
 def dep_scope(graph: Graph, root_id: TaskId) -> tuple[list, dict[str, object]]:
     """The Dep pairs a node's plan checks quantify over, and the deadlines of their endpoints.

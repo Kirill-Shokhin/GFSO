@@ -374,17 +374,34 @@ def status(argv: list[str]) -> int:
           + f" · {len(shown)} nodes"
           + (f" under {root}" if root else " total"))
     if isinstance(nxt, dict):
-        if nxt.get("refuted_passes"):
-            print(f"frontier: NOT COMPLETE — {nxt['directive']}")
-        elif nxt.get("complete"):
-            print("frontier: COMPLETE — the root is DONE/PASS")
-        else:
-            mine = [s for s in (nxt.get("steps") or ()) if s.get("mine")]
-            print(f"frontier: {len(mine)} step(s) for you"
-                  + (f", first: {mine[0].get('action')} {mine[0].get('task_id')}" if mine else "")
-                  + f" · {len(nxt.get('in_flight') or ())} in flight"
-                  + f" · {len(nxt.get('waiting') or ())} waiting")
+        print(_frontier_line(nxt))
     return 0
+
+
+def _frontier_line(nxt: dict) -> str:
+    """The one line `status` ends on — and it has to leave the reader with an act or an owner.
+
+    "0 step(s) for you" is true and empty: it reads the same whether the graph is waiting on
+    somebody, waiting on a clock, or finished, and a reader who cannot tell those apart polls. So a
+    step that is not yours names whose it is, and no step at all hands over the frontier's own
+    sentence rather than a count of nothing."""
+    if nxt.get("refuted_passes"):
+        return f"frontier: NOT COMPLETE — {nxt['directive']}"
+    if nxt.get("complete"):
+        return "frontier: COMPLETE — the root is DONE/PASS"
+    steps = list(nxt.get("steps") or ())
+    mine = [s for s in steps if s.get("mine")]
+    if mine:
+        head = f", first: {mine[0].get('action')} {mine[0].get('task_id')}"
+    elif steps:
+        head = ", but " + "; ".join(
+            f"{s.get('action')} {s.get('task_id')} is {s.get('assignee') or 'unassigned'}'s"
+            for s in steps[:3]) + ("…" if len(steps) > 3 else "")
+    else:
+        head = f" — {nxt['directive']}" if nxt.get("directive") else ""
+    return (f"frontier: {len(mine)} step(s) for you{head}"
+            f" · {len(nxt.get('in_flight') or ())} in flight"
+            f" · {len(nxt.get('waiting') or ())} waiting")
 
 
 def run_verb(name: str, project: str | None = None, *pos, **kw):

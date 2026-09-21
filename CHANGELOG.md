@@ -12,7 +12,66 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 
 ## [Unreleased]
 
+### Changed
+
+- **`ESCALATED` is no longer a terminal state, and a project has exactly one root.** The two are one
+  defect in two places: the protocol did not guarantee that the obligation to act always has an
+  OWNER. Inv-6 asks that the admissible signal set be *defined* in every state, and that was met by
+  defining it empty — which is right only where the work is over (DONE, ABANDONED). `ESCALATED`
+  means the executor stopped and the issuer must decide, and it admitted no act of the issuer:
+  `revise` refused it, it was absent from the reassignable states, and the engine said in as many
+  words that its resolution was "outside the FSM". A state whose meaning is "someone must decide"
+  that names neither the someone nor the decisions leaves the next move to whatever sits outside the
+  protocol. Measured cost, on a `c_compiler` run: the root escalated, the agent built a second root
+  beside it, then a third, and closed the whole goal on a childless leaf while the work hung under
+  the dead one.
+  - `ESCALATED` is now the ISSUER's waiting state, the mirror under Inv-4 of `OFFERED` where the
+    EXECUTOR owes the answer. It admits his three moves: a re-ASSIGN → `OFFERED` (raising the rework
+    bound and changing or narrowing the criteria are both packet fields, so Inv-1 makes them one
+    act, and from this state the re-ASSIGN may carry no spec at all); the universal `CANCEL`, which
+    closes it and cascades the live subtree the escalation never touched; and its own timeout, which
+    settles it — through `CANCELLING`, because escalation cascades nothing and the node's children
+    are still live under their own contracts, so silence takes the cancellation's own path and the
+    subtree goes with it. The issuer's silence closes a task; it never drifts toward a pass. His
+    window is the state's own grace, held apart from the opt-in per-state age clock for the reason
+    `CANCELLING`'s grace already is: the other exits belong to a party who may never answer.
+  - A parentless node is not a free-standing task, it is THE goal: `V(root)` is the project's
+    verdict, and the canon's one composition rule needs a parent, so a second root is a second
+    verdict with no rule combining them. Creating one is refused, and the refusal names the two acts
+    that were meant — give the node a parent, or open another project.
+  - The guarantee, not just the two repairs: `tests/test_the_obligation_to_act_always_has_an_owner.py`
+    enumerates every state and holds that a state where the work is not over admits at least one
+    signal, and that the door names the owner and the acts. The enumeration is over STATES and every
+    remaining hole was found at a DOOR, by somebody driving the product — so the file also pins those:
+    that `revise(id, max_iterations=…)` exists (it was named by the escalation directive and did not
+    exist on any door), that the frontier asks an escalated PARENT for a decision rather than for a
+    plan check it cannot take, that a settled goal is not reported as a structural block while
+    `reopen` goes unnamed, and that the silence has a bottom on a default install.
+  - Carried into `gfso/decompose/`, which was the layer an agent actually drives: `auto_decompose`
+    refused an escalated root as "terminal … a completed goal is frozen; start a NEW goal (new root)"
+    — the literal instruction the measured run followed, twice — and a refine fold froze an escalated
+    child. Narrowing the criteria of an escalated node is the issuer's second move, so it is now what
+    that door does.
+  - Two states whose meaning is "a decision is owed" now say whose and what: `ESCALATED` names the
+    issuer's three moves wherever a reader meets it (the frontier, the action surface, the page, the
+    decomposition verbs), route-aware — only the exhausted-loop route offers the bound, the clock
+    routes offer the deadline — and `OVERDUE`, one tick earlier, says the clock is about to hand the
+    node over rather than answering "no actionable node … check `list_holes`" over a childless leaf.
+    A settled goal likewise reports itself as settled and names `reopen` with the budget left,
+    instead of calling itself a structural block.
+  - Canon §14.3-bis derives it; §26.9(b) is corrected with it — `ESCALATED` moves from the free
+    timeout-geometry decorations to the tier forced by IC, where `CANCELLING` already sits, and the
+    forced backbone is ten states rather than nine. `Fsm.lean`, `FsmCanon.lean` and the TLA table
+    move with the code; Inv-5's deadline path is now three timeouts instead of two, because it ends
+    in a handover before it ends in a settlement.
+
 ### Fixed
+
+- **The rework bound had four spellings and two of them still said 3.** The default moved 3 → 12,
+  but `Engine.assign_task` carried its own `if max_iterations is None: 3` — the door
+  `create_task` uses and the door `auto_decompose` authors the ROOT through — so the node the raise
+  was made for kept the old bound while the change was reported as shipped. One constant now
+  (`core.types.DEFAULT_MAX_ITERATIONS`), and the storage DDL carries no default of its own.
 
 - **The two answers everything else is guarded by could be starved out.** The server's verb routes
   are synchronous and some of them run for minutes, so the liveness reads — the session lease and

@@ -185,7 +185,9 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     proj = engine.project(TaskId(root_id))
     cur_holes = engine.graph_holes(TaskId(root_id))
     kids = engine.get_active_children(TaskId(root_id))
-    frozen = [c for c in kids if c.state.name in ("DONE", "ABANDONED", "ESCALATED")]
+    # FROZEN = settled. An ESCALATED child is not settled — it is waiting for its issuer and takes a
+    # revision like any live node (§14.3-bis), so a refine round may still restructure around it.
+    frozen = [c for c in kids if c.state.name in ("DONE", "ABANDONED")]
     # RUNTIME contact feeds the replan: a BLOCKED child is the world's verdict on the plan's seams
     # (observed live: an inverted Dep direction deadlocked the graph, and the fold — reading only the
     # static projection — could not see WHY, so it re-derived the same structure). Surface each
@@ -343,11 +345,18 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     # own contract is the request — re-authoring the goal itself is the revise verb, not decompose).
     existing = engine.get_task(TaskId(root_id))
     note = None
-    if existing is not None and existing.state.name in ("DONE", "ABANDONED", "ESCALATED"):
-        # a terminal goal is FROZEN (no revision on terminal nodes, §14.3; REOPEN does not exist) —
-        # refining it would only crash on the root's own re-author. Refuse loudly.
-        raise ValueError(f"auto_decompose: {root_id!r} is {existing.state.name} (terminal) — a completed "
-                         f"goal is frozen; start a NEW goal (new root) instead of refining this one.")
+    # A SETTLED goal is FROZEN (no revision on a terminal, §14.3) — refining it would only crash on
+    # the root's own re-author. ESCALATED is deliberately NOT in this list: it is not settled, it is
+    # waiting for its issuer (§14.3-bis), and "change or narrow the criteria" is the second of his
+    # three moves — which is exactly what a refine round IS. This sentence used to read "a completed
+    # goal is frozen; start a NEW goal (new root) instead", i.e. the door for the issuer's own move
+    # told him by name to do the one thing that breaks the graph. It is the literal instruction the
+    # measured `c_compiler` run followed, twice.
+    if existing is not None and existing.state.name in ("DONE", "ABANDONED"):
+        raise ValueError(f"auto_decompose: {root_id!r} is {existing.state.name} — a settled goal is "
+                         f"frozen. `reopen({root_id!r})` puts it back under its standing contract "
+                         f"while nothing has been staked on it and reopens remain (§14.3); a goal "
+                         f"that is genuinely different belongs in its own project (`use_project`).")
     if existing is not None and engine.get_active_children(TaskId(root_id)):
         _progress(f"{root_id} is already decomposed → {depth} refine round(s) over the existing graph",
                   progress)

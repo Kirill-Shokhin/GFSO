@@ -54,12 +54,14 @@ Guards are simple predicates on graph state, read off `GuardContext` (`iteration
 (BLOCKED, timeout)               → ESCALATED     [MutateGraph]          # direct, see below
 (VALIDATING, PASS)               → DONE          [MutateGraph, Dispatch]
 (VALIDATING, FAIL, iter < max)   → REWORKING        [MutateGraph, Dispatch]
-(VALIDATING, FAIL, iter >= max)  → ESCALATED     [MutateGraph, Dispatch] # reason=fail carried onto the terminal (§14.3)
+(VALIDATING, FAIL, iter >= max)  → ESCALATED     [MutateGraph, Dispatch] # reason=fail carried onto the handover (§14.3)
 (VALIDATING, timeout)            → DONE          [MutateGraph, Dispatch] # reason=auto in mutation
 (REWORKING, DELIVER)                → VALIDATING    [MutateGraph, Dispatch]
 (REWORKING, BLOCK)                  → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP as above
 (REWORKING, timeout)                → OVERDUE       [MutateGraph]
 (OVERDUE, timeout)               → ESCALATED     [MutateGraph]          # repeated timeout
+(ESCALATED, timeout)             → ABANDONED     [MutateGraph]          # the issuer's silence CLOSES (§14.3-bis)
+(ESCALATED, ASSIGN)              → OFFERED       [MutateGraph(APPLY_SPEC), …]  # his revision: raise the bound / change the criteria
 (CANCELLING, CONFIRM_CANCEL)         → ABANDONED     [MutateGraph, Dispatch] # in_flight logged (T11)
 (CANCELLING, timeout)            → ABANDONED     [MutateGraph]          # cancellation is authoritative (§14.3)
 (ANY_NON_TERM \ CANCELLING, CANCEL) → CANCELLING [MutateGraph, Dispatch] # opens the handshake; cascades CANCEL to subtree (§14.2)
@@ -70,8 +72,12 @@ Guards are simple predicates on graph state, read off `GuardContext` (`iteration
                                                  # R′ REOPEN (§14.3): a gated re-ASSIGN, NOT a 13th signal — see below
 ```
 
-Terminal states: DONE (with reason: pass/auto — acceptance only, §12.2), ESCALATED (attention; carries
-reason=fail when it is the exhausted validation loop rather than a timeout), ABANDONED (V=⊥). **DONE and ABANDONED
+Terminal states: DONE (with reason: pass/auto — acceptance only, §12.2) and ABANDONED (V=⊥). **ESCALATED
+is NOT terminal** (§14.3-bis): it is the ISSUER's waiting state, the mirror under Inv-4 of OFFERED, where
+the EXECUTOR owes the answer. It carries reason=fail when it was reached by the exhausted validation loop
+rather than by a clock, and it admits his three answers — re-ASSIGN (raise the bound / change the
+criteria, one act by Inv-1), CANCEL (close it, cascading the live subtree), and its own timeout, which
+settles it in ABANDONED because silence must close rather than drift toward a pass. **DONE and ABANDONED
 are QUASI-terminal (R′, §14.3):** a re-ASSIGN out of them is admitted under a DOUBLE gate — (i) the
 finality-gate: the terminal is not CONSUMED in the graph (positive: the parent has not DELIVERed the
 aggregate that presumes this pass AND no Dep-consumer has ACCEPTed into work on the result; negative:
@@ -87,7 +93,8 @@ while neither of the first two moves on a revision; and it is captured when a va
 (`Engine.generation_of`, handed to `record_exec_verdict`), because a verdict is about the delivery the
 validator read, not about whatever the node has become by the time it finishes. The self-PASS gate
 compares all three; q_V/false_fail_share compare the reopen generation. A pass-terminal reopened under the SAME criteria whose fresh run
-FAILs sets `false_positive` — exactly q_V's pass→later-fail member. ESCALATED stays fully terminal.
+FAILs sets `false_positive` — exactly q_V's pass→later-fail member. ESCALATED needs nothing from R′:
+finality is a property of settlements, and its exits are ordinary live-node edges.
 
 DONE is one state; completion reason is metadata in the MutateGraph mutation. Cancellation is NOT a DONE
 reason — canon §14.3 gives it its own two-step handshake `CANCEL→CANCELLING→CONFIRM_CANCEL→ABANDONED`
@@ -96,7 +103,7 @@ carrying the executor's in-flight report). **12 states in enum**: IDLE, OFFERED,
 BLOCKED, VALIDATING, REWORKING, CANCELLING, DONE, ABANDONED, OVERDUE, ESCALATED. Pre-v3.7 DBs stored
 cancellation as DONE(reason=CANCELLED) — migrated on read in the SQLite adapter.
 
-ESCALATED resolution is outside FSM — admin action (re-assign or close). Escalation crosses hierarchy levels which the per-task FSM cannot model.
+ESCALATED resolution is INSIDE the FSM (§14.3-bis). It was written as outside it, which singled out one issuer act as extra-protocol while ASSIGN, PASS, FAIL, CANCEL and REJECT_CHALLENGE are all inside — and left a state meaning "someone must decide" admitting no act of the decider. Measured cost: an agent whose root escalated built a second root beside it, then a third, and closed the goal on a childless leaf.
 
 **Discovered-Dep (§14.2/§15.2, two-phase):** a BLOCK naming undeclared prerequisite NODE(s)
 (`blocker_task_ids`; `blocker_task_id` = single-blocker shorthand) emits RECORD_DEP PER named node —
@@ -156,7 +163,7 @@ runs of "the same agent" under different caps are not the same agent.
 
 **Guarded transition (VALIDATING + FAIL).** One of two guarded families (the other is REOPEN under the R′ finality gate). Iteration counter lives in graph task node, not FSM state — FSM stays memoryless except for this one predicate read. Alternative was splitting FAIL/FAIL_FINAL into two signals, but that inflates the signal set for what is a single semantic action (validation failed).
 
-**DONE is one state.** DONE(pass) and DONE(auto) are the same FSM state with different metadata in the graph. Simplifies the FSM — terminal is terminal. Reason is recorded by MutateGraph for metrics. What DONE does NOT carry is a verdict of fail: acceptance is its only route in (§12.2), the exhausted rework loop settles in ESCALATED(fail) instead, and DONE(cancelled) is a pre-v3.7 encoding migrated on read.
+**DONE is one state.** DONE(pass) and DONE(auto) are the same FSM state with different metadata in the graph. Simplifies the FSM — terminal is terminal. Reason is recorded by MutateGraph for metrics. What DONE does NOT carry is a verdict of fail: acceptance is its only route in (§12.2), the exhausted rework loop hands the node to its issuer in ESCALATED(fail) instead, and DONE(cancelled) is a pre-v3.7 encoding migrated on read.
 
 **BLOCKED timeout → ESCALATED directly.** Other timeouts go through OVERDUE state first. BLOCKED skips this: the block itself IS the escalation signal. The team already knows there's a problem. Adding a OVERDUE intermediate is unnecessary indirection.
 

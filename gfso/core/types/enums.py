@@ -22,19 +22,37 @@ class State(Enum):
     ESCALATED = auto()
 
 
-TERMINAL_STATES = frozenset({State.DONE, State.ESCALATED, State.ABANDONED})
+# TERMINAL = the work is OVER: passed (DONE) or abandoned by authority (ABANDONED, V=⊥). Nothing
+# else belongs here. ESCALATED used to, and that was the conflation this vocabulary exists to
+# prevent: a SETTLEMENT (the work ended) and a HANDOVER (the executor's contract ended and the
+# issuer's decision begins) are different things, and ESCALATED is the second. It is the issuer's
+# waiting state, symmetric to OFFERED — where the EXECUTOR owes an answer — and Inv-4 makes the two
+# parties equally accountable to the protocol, so a machine with one and not the other is asymmetric
+# in the invariant's own terms. The old reading ("its resolution is outside the FSM") treated one
+# issuer act as extra-protocol while ASSIGN, PASS, FAIL, CANCEL and REJECT_CHALLENGE are all inside
+# it; nothing in §14.3 derives that, and §26.9(b)'s "free decoration" verdict is a verdict about the
+# machine in which the issuer owes no answer. Once the obligation exists, ESCALATED is forced by IC
+# exactly as CANCELLING is (§26.9(b): "CANCELLING is forced by IC (Inv-4), not by deadlock").
+TERMINAL_STATES = frozenset({State.DONE, State.ABANDONED})
 NON_TERMINAL_STATES = frozenset(s for s in State if s not in TERMINAL_STATES)
 
 # R′ (§14.3 "Финальность"): DONE and ABANDONED are QUASI-terminal — a named extension of the
 # admissible set (Inv-6): re-ASSIGN (REOPEN) is admitted under a double gate (finality-gate of
-# consumption + max_reopens). ESCALATED stays fully terminal (its resolution is outside the FSM).
+# consumption + max_reopens). ESCALATED is not here and needs nothing from R′: finality is a property
+# of settlements, and a handover is not one — its exits are ordinary live-node edges.
 QUASI_TERMINAL_STATES = frozenset({State.DONE, State.ABANDONED})
 
 # States a live node can be re-ASSIGNed (revised) from — §14.4 Inv-1: revision = re-ASSIGN same id → OFFERED.
 # OVERDUE accepts no progress signals (§14.3); CANCELLING's sole staffed exit is CONFIRM_CANCEL (§14.3).
+# ESCALATED is here because re-ASSIGN is exactly what two of the issuer's three moves ARE — raising the
+# rework bound and changing or narrowing the criteria are both packet fields, and Inv-1 types any packet
+# change as a re-ASSIGN. The third move (close it) is the universal CANCEL, which ESCALATED now carries by
+# being non-terminal. OVERDUE stays out: there the miss has not yet been handed to anyone, and the canon's
+# "no-return path to escalation" is what routes it here first.
 REASSIGNABLE_STATES = frozenset({
     State.OFFERED, State.CHALLENGED, State.EXECUTING,
     State.BLOCKED, State.VALIDATING, State.REWORKING,
+    State.ESCALATED,
 })
 
 

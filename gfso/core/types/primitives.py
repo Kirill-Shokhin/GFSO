@@ -16,6 +16,12 @@ from .enums import State, Signal, DoneReason, Verdict, AutonomyLevel, Predictabi
 TaskId = NewType("TaskId", str)
 AgentId = NewType("AgentId", str)
 
+# THE REWORKING BOUND, in ONE place. It was spelled three times — here, in the effect that carries a
+# revision, and in the storage DDL — and two of them still said 3 after the value moved to 12, so the
+# product shipped a rule whose number depended on which door wrote the row. The reasoning behind the
+# magnitude is on `Task.max_iterations` below; what this constant carries is that there is exactly one.
+DEFAULT_MAX_ITERATIONS = 12
+
 
 @dataclass(frozen=True)
 class Probe:
@@ -138,8 +144,10 @@ class Task:
     # defects, the root escalated, the agent built a second root, and it began again.
     # Finiteness is carried by what really bounds a run — the deadline (timeout → OVERDUE →
     # ESCALATED) and the money — not by an attempt count that means nothing at machine speed.
-    # A human issuer who means "few attempts" sets it; 3 remains one line of configuration.
-    max_iterations: int = 12
+    # A human issuer who means "few attempts" sets it on the node — it is a packet field, and
+    # since §14.3-bis exhausting it is a question FOR the issuer rather than a dead end, the
+    # number is his forecast of his own cost and nothing else depends on it.
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
     deadline: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.now)
     # Inv-5 clock: when the CURRENT state was entered (stamped at every state change). Deliberately
@@ -234,7 +242,7 @@ class SignalData:
     deadline: Optional[datetime] = None            # ASSIGN: T=(spec,criteria,deadline)
     # ASSIGN: the rework bound. On the FIRST assign it is the node's budget; on a REVISION
     # `None` means keep the one the node has, like `deadline` and `assignee` beside it.
-    max_iterations: Optional[int] = 12
+    max_iterations: Optional[int] = DEFAULT_MAX_ITERATIONS
     covers: tuple[str, ...] = ()                   # ASSIGN: parent criteria this child is mapped to (§10)
     reason: Optional[str] = None                   # CHALLENGE, BLOCK, CANCEL
     in_flight: Optional[str] = None                # CONFIRM_CANCEL: executor's in-flight state at cancellation (Thm 11, §14.3)

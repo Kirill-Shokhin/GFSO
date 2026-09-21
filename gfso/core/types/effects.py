@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional, Union
 
 from .enums import MutationType, Signal, DoneReason, State, RevisionReason
-from .primitives import TaskId, Spec, AgentId
+from .primitives import TaskId, Spec, AgentId, DEFAULT_MAX_ITERATIONS
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,7 @@ class MutateGraph:
     deadline: datetime | None = None     # CREATE_TASK: T deadline
     # CREATE_TASK: the rework bound. APPLY_SPEC also carries it, where None means KEEP —
     # a revision that does not mention the budget is not a revision that resets it.
-    max_iterations: Optional[int] = 12
+    max_iterations: Optional[int] = DEFAULT_MAX_ITERATIONS
     covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§10)
     dep_from: TaskId | None = None       # RECORD_DEP: prerequisite node; ADJUDICATE_DEP: corrected source (§14.2)
     dep_froms: tuple[TaskId, ...] = ()   # ADJUDICATE_DEP: corrected FULL source set (SET semantics, §14.2)

@@ -24,7 +24,11 @@ from .model import Graph
 # §12.2), and the terminal carries DoneReason.FAIL so a verdict-escalation stays distinguishable
 # from a timeout one. DONE(fail) is kept in the set because graphs written before that routing
 # still hold such nodes — reading history correctly is not the same as producing it.
-_STANDING_FAIL_STATES = (State.ESCALATED, State.DONE)
+# …and ABANDONED, now that the issuer can CLOSE an escalated node: the node's own FAIL still
+# stands (nobody overturned it), it just came to rest one state further on. The
+# `done_reason == FAIL` conjunct every reader pairs with this set is what keeps an ordinary
+# cancellation — which carries no reason — out of the population.
+_STANDING_FAIL_STATES = (State.ESCALATED, State.DONE, State.ABANDONED)
 
 
 #: What each number is ABOUT — in the module that computes it, so every door reads ONE writing.

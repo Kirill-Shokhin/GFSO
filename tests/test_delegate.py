@@ -61,10 +61,27 @@ class _AgentLLM:
         self.calls[-1]["stage"] = stage
 
 
-def _node(e, tid="n1", assignee="exec-1"):
+def _goal(e, tid="goal", assignee="kirill"):
+    """The project's ONE root, which the leaves below hang under.
+
+    A parentless node is THE goal, not a free-standing task: V(root) is the project's verdict and the
+    canon's one composition rule needs a parent, so a second parentless node would be a second
+    verdict with nothing combining the two. Held by a human so the dispatcher leaves it alone, and
+    carrying the ACCEPTED_RISKS the Syntactic level asks of a plan — otherwise the children below are
+    held back by the plan gate rather than by whatever the test is about."""
+    T.create_task(e, tid, {"name": "Goal", "description": "the project's goal",
+                           "criteria": [criterion("g", "the goal holds")],
+                           "accepted_risks": [{"item": "an unmodelled environment fault",
+                                               "predictability": "EXTRAORDINARY"}]},
+                  assignee=assignee)
+
+
+def _node(e, tid="n1", assignee="exec-1", parent=None):
     T.create_task(e, tid, {"name": "Nail", "description": "hammer a nail",
                            "criteria": [criterion("flush", "nail is flush")]},
-                  assignee=assignee)
+                  assignee=assignee, **({"parent_id": parent} if parent else {}))
+    if parent:
+        T.map_criterion(e, parent, tid, "g")   # §13.4: L0-complete plan before executing children
 
 
 def test_registry_roundtrip_and_kinds(tmp_path):
@@ -152,13 +169,14 @@ def test_selfexecuted_delivery_also_autovalidated(tmp_path):
 def test_challenge_and_unparsed_paths(tmp_path):
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
-    _node(e, "c1")
+    _goal(e)
+    _node(e, "c1", parent="goal")
     run_executor(e, TaskId("c1"), "exec-1", agents,
                  _llm=_AgentLLM(_fenced({"status": "challenge", "summary": "-",
                                          "reason": "criteria undecidable"})))
     e.wait_idle()
     assert e.get_state(TaskId("c1")).name == "CHALLENGED"   # issuer resolves
-    _node(e, "u1")
+    _node(e, "u1", parent="goal")
     out = run_executor(e, TaskId("u1"), "exec-1", agents, _llm=_AgentLLM("no json here"))
     e.wait_idle()
     assert out["status"] == "unparsed"
@@ -168,9 +186,10 @@ def test_challenge_and_unparsed_paths(tmp_path):
 def test_dispatcher_autostarts_only_registered_executors(tmp_path):
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _node(e, "a1", assignee="exec-1")                       # registered executor → starts
-    _node(e, "h1", assignee="kirill")                       # human → passive
-    _node(e, "v1", assignee="val-1")                        # kind-guard: validator ≠ executor
+    _goal(e)
+    _node(e, "a1", assignee="exec-1", parent="goal")        # registered executor → starts
+    _node(e, "h1", assignee="kirill", parent="goal")        # human → passive
+    _node(e, "v1", assignee="val-1", parent="goal")         # kind-guard: validator ≠ executor
     ran = []
 
     def fake_runner(engine, task_id, executor_id, ag):
@@ -386,22 +405,26 @@ def test_dispatch_quiesced_while_build_bursts(tmp_path):
     raises engine._dispatch_quiesce → dispatch_once is silent; on exit it pokes _dispatch_wake."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
-    _node(e, "q1")
+    _goal(e)
+    _node(e, "q1", parent="goal")
     d = Dispatcher(e, agents, runner=lambda *a: None)
     e._dispatch_quiesce = 1
     assert d.dispatch_once() == []                    # quiesced → nothing dispatched
     e._dispatch_quiesce = 0
     assert "q1" in d.dispatch_once()                  # resumed on the settled graph
+    # The burst itself AUTHORS a root, so it runs on its own project — a graph has exactly one.
+    e2 = _eng()
     woken = []
-    e._dispatch_wake = lambda: woken.append(True)
+    e2._dispatch_wake = lambda: woken.append(True)
     spec = {"name": "goal", "root_criteria": [criterion("r", "R")],
             "subtasks": [{"id": "a", "description": "A",
                           "criteria": [criterion("ca", "CA")]}],
             "mappings": [{"criterion": "r", "child_id": "a"}], "deps": [], "accepted_risks": [
                 {"item": "none material", "predictability": "STATISTICAL",
                  "justification": "-", "invalidation": "-"}]}
-    build_graph_live(spec, "goal", e, root_id="broot", assignee="exec-1")
-    assert getattr(e, "_dispatch_quiesce", 0) == 0 and woken   # counter cleared + the loop poked
+    build_graph_live(spec, "goal", e2, root_id="broot", assignee="exec-1")
+    assert getattr(e2, "_dispatch_quiesce", 0) == 0 and woken   # counter cleared + the loop poked
+    e2.stop()
     e.stop()
 
 
@@ -626,20 +649,23 @@ def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
         {"criterion": "k", "verdict": "pass", "evidence": "ran", "behaviours": ["the criterion holds"], "probe": [{"command": "check k", "expect": "it holds"}]}], "failed_criteria": []})
     assert "validate:kid" in started
     assert e.get_state(TaskId("kid")).name == "DONE"          # val-1's PASS survived the issuer check
-    # human-issued node → the dispatcher stays out
-    T.create_task(e, "hpar", {"description": "human parent",
+    # human-issued node → the dispatcher stays out. Its own project: the human tree is a second goal,
+    # and a graph has exactly one root.
+    e2 = _eng()
+    T.create_task(e2, "hpar", {"description": "human parent",
                               "criteria": [criterion("h", "H")],
                               "accepted_risks": [{"item": "an unmodelled environment fault",
                                                  "predictability": "EXTRAORDINARY"}]}, assignee="kirill")
-    T.create_task(e, "hkid", {"description": "human child",
-                              "criteria": [criterion("c", "C")]}, assignee="kirill",
+    T.create_task(e2, "hkid", {"description": "human child",
+                               "criteria": [criterion("c", "C")]}, assignee="kirill",
                   parent_id="hpar")
-    T.map_criterion(e, "hpar", "hkid", "h")
-    T.signal(e, "hkid", "ACCEPT", "kirill")
-    T.signal(e, "hkid", "DELIVER", "kirill", result="done by hand")
-    started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [], "failed_criteria": []})
+    T.map_criterion(e2, "hpar", "hkid", "h")
+    T.signal(e2, "hkid", "ACCEPT", "kirill")
+    T.signal(e2, "hkid", "DELIVER", "kirill", result="done by hand")
+    started, _ = _dispatch_validate(e2, agents, {"verdict": "PASS", "per_criterion": [], "failed_criteria": []})
     assert not any("hkid" in s for s in started)              # human issuer keeps the verdict
-    assert e.get_state(TaskId("hkid")).name == "VALIDATING"
+    assert e2.get_state(TaskId("hkid")).name == "VALIDATING"
+    e2.stop()
     e.stop()
 
 
@@ -1317,9 +1343,12 @@ def test_a_consumer_is_not_spawned_while_its_producer_is_unfinished(tmp_path):
     """
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    _goal(e)
     for tid in ("prod", "cons"):
         T.create_task(e, tid, {"description": tid,
-                               "criteria": [criterion("c", "C")]}, assignee="exec-1")
+                               "criteria": [criterion("c", "C")]}, assignee="exec-1",
+                      parent_id="goal")
+        T.map_criterion(e, "goal", tid, "g")
     T.add_dependency(e, "prod", "cons", glue="cons reads what prod writes")
 
     spawned = []

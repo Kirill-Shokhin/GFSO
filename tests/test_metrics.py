@@ -286,7 +286,7 @@ def test_q_T_says_which_kind_of_spec_defect_each_node_carried():
     T.create_task(e, "a", {"description": "a", "criteria": [{"name": "c", "description": "C"}]},
                   assignee="worker")
     T.create_task(e, "b", {"description": "b", "criteria": [{"name": "c", "description": "C"}]},
-                  assignee="worker")
+                  assignee="worker", parent_id="a")   # `a` is the project's one root
     T.signal(e, "a", "CHALLENGE", "worker", reason="this criterion cannot be met as written")
     # the issuer revises: a root's issuer is its own Del (§14.2)
     T.edit_criteria(e, "b", [{"name": "c", "description": "sharper"}], agent="worker",

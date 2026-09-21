@@ -7,7 +7,7 @@ from typing import Optional
 
 from gfso.core.types import (
     TaskId, Task, State, MutationType, DoneReason, RevisionReason,
-    MutateGraph, CriterionMapping, DepEdge, TERMINAL_STATES,
+    MutateGraph, CriterionMapping, DepEdge, TERMINAL_STATES, NON_TERMINAL_STATES,
 )
 
 
@@ -93,12 +93,25 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
         elif new_state == State.DONE and effect.done_reason in (DoneReason.PASS, DoneReason.AUTO_PASS):
             task.reopened_from_pass = False
 
+    task_was = task.state
     if task.state != new_state:
         task.state_entered_at = datetime.now()   # Inv-5: every state carries its own clock
     task.state = new_state
 
     if effect.done_reason is not None:
         task.done_reason = effect.done_reason
+    # …and a node LEAVING the issuer's waiting state into live work carries no settlement reason any
+    # more. ESCALATED(FAIL) records that the node's own FAIL came to rest there; once the issuer
+    # answers with a revision the FAIL is no longer standing, and a reason left on the node would
+    # keep it in the standing-FAIL populations (q_D, `false_fail_share`) and would be read again if
+    # the node later settled for an unrelated cause.
+    elif task_was == State.ESCALATED and new_state == State.OFFERED:
+        # …only into WORK. A node the issuer takes back for another attempt carries no standing FAIL
+        # any more. A node he CLOSES does: it goes ESCALATED → CANCELLING → ABANDONED, and clearing
+        # the reason on the way through would have made the same settlement read two different ways
+        # in `false_fail_share` and q_D depending on whether the issuer acted or stayed silent —
+        # which is the opposite of what a measurement of issuer behaviour should do.
+        task.done_reason = None
 
     graph.save_task(task)
 

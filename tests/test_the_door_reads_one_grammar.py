@@ -67,7 +67,10 @@ def test_a_node_created_with_no_contract_says_what_it_is():
     e.start()
     bare = T.TOOLS["create_task"](e)
     assert "NO criteria" in bare["note"] and "revise(" in bare["note"]
+    # …the authored one hangs under it: a project has exactly one root, and which node is the root
+    # is beside the question here — the reply is about the CONTRACT the caller did or did not give.
     authored = T.TOOLS["create_task"](e, "x", {"description": "g",
-                                               "criteria": [{"name": "c", "description": "C"}]})
+                                               "criteria": [{"name": "c", "description": "C"}]},
+                                      parent_id=bare["id"])
     assert "note" not in authored, "a node with a contract must not be lectured about not having one"
     e.stop()

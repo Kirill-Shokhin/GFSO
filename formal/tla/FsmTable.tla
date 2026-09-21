@@ -11,9 +11,11 @@ CONSTANTS MaxIterations, MaxReopens
 
 States == {"IDLE", "OFFERED", "CHALLENGED", "EXECUTING", "BLOCKED", "VALIDATING",
            "REWORKING", "CANCELLING", "OVERDUE", "DONE", "ABANDONED", "ESCALATED"}
-Terminal == {"DONE", "ABANDONED", "ESCALATED"}                      \* enums.py TERMINAL_STATES
+Terminal == {"DONE", "ABANDONED"}                                   \* enums.py TERMINAL_STATES
+\* ESCALATED is NOT here: terminal means the work is over (accepted / refused by authority),
+\* and ESCALATED is the ISSUER's waiting state — the mirror of OFFERED under Inv-4 (§14.3-bis).
 Reassignable == {"OFFERED", "CHALLENGED", "EXECUTING", "BLOCKED",    \* enums.py REASSIGNABLE_STATES
-                 "VALIDATING", "REWORKING"}
+                 "VALIDATING", "REWORKING", "ESCALATED"}            \* …the issuer's revision IS his move
 QuasiTerminal == {"DONE", "ABANDONED"}                              \* enums.py QUASI_TERMINAL_STATES (R', §6.3)
 
 P2P == {"ASSIGN", "ACCEPT", "CHALLENGE", "ACCEPT_CHALLENGE", "REJECT_CHALLENGE",
@@ -50,6 +52,9 @@ Step(s, sig, it, ro, consumed) ==
     [] s = "REWORKING"     /\ sig = "BLOCK"            -> "BLOCKED"
     [] s = "REWORKING"     /\ sig = "TIMEOUT"          -> "OVERDUE"
     [] s = "OVERDUE"    /\ sig = "TIMEOUT"          -> "ESCALATED"   \* repeated timeout
+    [] s = "ESCALATED"  /\ sig = "TIMEOUT"          -> "CANCELLING"  \* the issuer's silence CLOSES
+                                                       \* (§14.3-bis): V=⊥, never a pass —
+                                                       \* nothing is on the table to accept
     [] s = "CANCELLING" /\ sig = "CONFIRM_CANCEL"       -> "ABANDONED"
     [] s = "CANCELLING" /\ sig = "TIMEOUT"          -> "ABANDONED"   \* cancellation authoritative
     [] s \notin Terminal /\ s # "CANCELLING"

@@ -453,6 +453,14 @@ def _execute_effects(
 # answer at all.
 _CANCELLING_GRACE_S = 120.0
 
+# …and the same reasoning for ESCALATED, whose only exits belong to the ISSUER (§14.3-bis: re-ASSIGN,
+# CANCEL, or this timeout). An issuer who never answers would otherwise leave the node standing for
+# good with the per-state age clock off, which is the "no bottom" the line above was written against.
+# The canon demands finiteness (Inv-5), never a number; this one is generous on purpose, because the
+# act it waits for is a person's or an agent's DECISION rather than a handshake reply, and the issuer
+# who wants a shorter one sets the node's deadline, which is a field of the contract.
+_ESCALATED_GRACE_S = 86_400.0
+
 
 def timeout_monitor(
     graph: Graph,
@@ -499,6 +507,17 @@ def timeout_monitor(
             break
         for task in _active:
             overdue = task.deadline and now > task.deadline.timestamp()
+            # …EXCEPT in the issuer's waiting state, where the deadline is already spent by
+            # construction: a node that reached ESCALATED by missing it would be settled on the very
+            # next tick, so the "waiting state" would give the issuer no wait at all and record V=⊥
+            # as "he did not decide" when he was never offered a window. His window is this state's
+            # OWN grace, below — the same asymmetry CANCELLING's grace exists for.
+            # …and in CANCELLING, for the same reason and now on the common path: the silence-close
+            # of an overdue node enters the handshake with its deadline already spent, so the
+            # executor would lose the window CONFIRM_CANCEL exists for — the in-flight report that
+            # carries provenance (Thm 11). Both states are governed by their own grace, below.
+            if task.state in (State.ESCALATED, State.CANCELLING):
+                overdue = False
             state_age = now - (task.state_entered_at or task.created_at).timestamp()
             stale = state_timeout is not None and state_timeout > 0 and state_age > state_timeout
             # CANCELLING IS FINITE WHETHER OR NOT THE AGE CLOCK IS ON. Inv-5 demands finiteness of
@@ -510,6 +529,8 @@ def timeout_monitor(
             # revise it (no revision in CANCELLING), and got out only by impersonating the executor.
             # The handshake keeps its window; what it may not have is no bottom.
             if task.state == State.CANCELLING and state_age > _CANCELLING_GRACE_S:
+                stale = True
+            if task.state == State.ESCALATED and state_age > _ESCALATED_GRACE_S:
                 stale = True
             if (overdue or stale) and task.state not in TERMINAL_STATES:
                 visit = (task.state, (task.state_entered_at or task.created_at))

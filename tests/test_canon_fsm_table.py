@@ -118,7 +118,11 @@ def test_the_engine_invents_no_edge_the_canon_denies(state):
 
 
 def test_the_terminals_stay_terminal():
-    for state in (State.DONE, State.ABANDONED, State.ESCALATED):
+    """Two states, and only two: terminal means the WORK IS OVER (accepted, or refused by authority).
+
+    ESCALATED is not among them — it is the issuer's waiting state (§14.3-bis), with a row of its own
+    in the canon's table, and `test_every_canon_edge_is_implemented` checks that row like any other."""
+    for state in (State.DONE, State.ABANDONED):
         assert CANON_ROWS[state] == {}
         for signal in Signal:
             if state in (State.DONE, State.ABANDONED) and signal is Signal.ASSIGN:

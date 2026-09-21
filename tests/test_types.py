@@ -23,14 +23,20 @@ def test_fm_count():
 
 
 def test_terminal_states():
+    """TERMINAL = the work is OVER. Two states qualify, and ESCALATED is not one of them.
+
+    It used to be filed here, which conflated a SETTLEMENT (the work ended) with a HANDOVER (the
+    executor's contract ended and the issuer's decision begins). ESCALATED is the second, and it is
+    the issuer's waiting state — symmetric to OFFERED, where the executor owes the answer (Inv-4)."""
     assert State.DONE in TERMINAL_STATES
-    assert State.ESCALATED in TERMINAL_STATES
     assert State.ABANDONED in TERMINAL_STATES  # v3.7 §14.3: terminal, V=⊥
-    assert len(TERMINAL_STATES) == 3
+    assert State.ESCALATED not in TERMINAL_STATES
+    assert len(TERMINAL_STATES) == 2
 
 
 def test_non_terminal_states():
-    assert len(NON_TERMINAL_STATES) == 9
+    assert len(NON_TERMINAL_STATES) == 10
+    assert State.ESCALATED in NON_TERMINAL_STATES  # the issuer's waiting state, not a settlement
     assert State.CANCELLING in NON_TERMINAL_STATES  # v3.7 §14.3: handshake in flight
     assert State.DONE not in NON_TERMINAL_STATES
 

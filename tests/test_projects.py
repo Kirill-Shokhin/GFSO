@@ -1,5 +1,9 @@
-"""Multi-project registry: a project = one GRAPH (forest) in its OWN DB file — physical isolation
-(cross-project Dep unrepresentable by construction); verbs route per-call via `project` or follow
+"""Multi-project registry: a project = one GOAL — one rooted TREE in its OWN DB file, physically
+isolated
+(cross-project Dep unrepresentable by construction). It read "one graph (forest)" while a
+project could hold several parentless nodes; it holds exactly one, because the root carries the goal's
+criteria and V(root) is the goal's verdict, so a second root is a second verdict with no rule
+composing them. Verbs route per-call via `project` or follow
 the ACTIVE project; back-compat: default project = the env-configured engine, nothing changes."""
 import asyncio
 import inspect
@@ -115,9 +119,10 @@ def test_mcp_bind_project_param_with_var_keyword(monkeypatch, tmp_path):
                                            "criteria": [criterion("a", "A")]})  # Del=agent
     assert _call(ws, "s1", "ACCEPT", project="pk")["state"] == "EXECUTING"
     assert _call(ws, "s1", "DELIVER", result="paths…", project="pk")["state"] == "VALIDATING"
-    # a node delegated to someone else does NOT move on the agent's signal (FSM: source ≠ Del)
-    _mk(reg.engine("pk"), "his")                        # Del="x"
-    assert _call(ws, "his", "ACCEPT", project="pk")["accepted"] is False
+    # a node delegated to someone else does NOT move on the agent's signal (FSM: source ≠ Del).
+    # Its own project: `pk` already has its root, and a project has exactly one.
+    _mk(reg.engine("pk2"), "his")                       # Del="x"
+    assert _call(ws, "his", "ACCEPT", project="pk2")["accepted"] is False
     for e in list(reg._engines.values()):
         e.stop()
 

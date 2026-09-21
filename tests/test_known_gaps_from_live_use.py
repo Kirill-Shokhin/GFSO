@@ -163,9 +163,12 @@ def test_the_frontier_names_the_node_that_blocks_the_root():
     `stuck: true` with a directive. What it did not do is NAME the node, and "inspect node states"
     is true and useless to a caller in a loop. Measured live: two escalated leaves blocked a root
     while the driving agent hunted the cause through the raw graph and tried four recovery verbs
-    against a terminal node. `available_actions` there is empty and every recovery verb refuses it
-    (reopen takes DONE/ABANDONED only, CANCEL is not admissible from ESCALATED), so naming it — and
-    saying the repair is re-decomposition, not a reopen — is the whole of what the caller needs."""
+    against a node that admitted none of them.
+
+    Under §14.3-bis the answer is no longer "stuck": ESCALATED is the issuer's waiting state, so the
+    graph CAN move — by his decision — and what the caller needs is the node named, the owner named,
+    and the acts named. "Stuck" over a node one revision away from running is the older half of the
+    same defect: a true sentence that leaves the reader with nothing to do."""
     e = _engine()
     _root(e)
     T.create_task(e, "leaf", {"name": "leaf", "description": "part",
@@ -186,11 +189,15 @@ def test_the_frontier_names_the_node_that_blocks_the_root():
 
     steps = T.next_steps(e, "root")
     e.stop()
-    assert steps.get("stuck"), "the frontier did not say the graph cannot move"
-    assert "leaf" in (steps.get("blocked_by") or []), (
-        f"the blocking node is not named: {steps}")
-    assert "leaf" in steps["directive"] and "ESCALATED" in steps["directive"], (
-        f"the directive does not say which node or what state: {steps['directive']}")
+    assert not steps.get("stuck"), (
+        "the graph is not stuck: an ESCALATED node is waiting for its issuer, who has three moves")
+    named = {x["task_id"]: x for x in (steps.get("stranded") or [])}
+    assert "leaf" in named, f"the blocking node is not named: {steps}"
+    opens = named["leaf"]["opens_with"]
+    for act in ("revise", "CANCEL"):
+        assert act in opens, f"the issuer's act '{act}' is not named: {opens}"
+    step_on_leaf = [x for x in (steps.get("steps") or []) if x["task_id"] == "leaf"]
+    assert step_on_leaf and "ISSUER" in step_on_leaf[0]["directive"], steps
 
 
 def test_a_delegated_node_is_visibly_executing_while_its_executor_works():
@@ -1612,9 +1619,15 @@ def test_a_node_the_graph_cannot_move_past_is_named_even_when_something_else_is_
     The frontier names stranded nodes only when NOTHING is actionable — so a root with one escalated
     child and one takeable sibling reported the sibling and said nothing about the child that had
     already made the root impossible (walked by hand 2026-08-21). A parent's PASS is the AND over its
-    children: one settled FAIL below and nothing above it can ever complete. And on the node itself,
-    "the state is terminal" sent a person hunting through four verbs for one that was not refused —
-    each terminal has its own recovery in §14.3, so the answer names it."""
+    children: an ESCALATED child below and nothing above it can complete until its issuer moves.
+
+    And on the node itself, "the state is terminal" sent a person hunting through four verbs for one
+    that was not refused. ESCALATED is not terminal: it is the ISSUER's waiting state, symmetric to
+    OFFERED, and it admits three acts (§14.3) — re-ASSIGN through a revision (which may carry only a
+    raised `max_iterations`), the universal CANCEL that cascades the live subtree, and its own
+    TIMEOUT, which closes the task and never auto-passes. So the frontier names the issuer and those
+    acts rather than prescribing a re-decomposition around a node one revision away from running,
+    and the door offers the acts instead of an empty list with a recovery note beside it."""
     monkeypatch.setenv("GFSO_L2_GATE", "0")   # this walk is about the terminal, not the plan gate
     e = _engine()
     _root(e)
@@ -1631,10 +1644,15 @@ def test_a_node_the_graph_cannot_move_past_is_named_even_when_something_else_is_
     out = T.next_steps(e)
     assert out.get("steps")                                        # …something else IS actionable
     stranded = {s["task_id"]: s for s in out.get("stranded", [])}
-    assert "kid" in stranded and "re-decompose" in stranded["kid"]["opens_with"]
+    assert "kid" in stranded, out
+    opens = stranded["kid"]["opens_with"]
+    assert opens == e.issuer_moves_on(TaskId("kid")), opens
+    for act in ("revise", "max_iterations", "CANCEL"):
+        assert act in opens, f"the issuer's act '{act}' is not named: {opens}"
 
     acts = T.available_actions(e, "kid", agent="agent")
-    assert acts["actions"] == [] and "re-decompose" in acts["recovery"]
+    assert set(acts["actions"]) == {"CANCEL", "ASSIGN"}, acts
+    assert "revise(" in acts["gate"], acts["gate"]
     e.stop()
 
 

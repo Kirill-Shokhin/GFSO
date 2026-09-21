@@ -918,7 +918,18 @@ async function selectTask(taskId) {
         } catch(e) {}
 
         const acts = ACTIONS[d.state] || [];
-        const noCancel = ['DONE','ESCALATED','ABANDONED','CANCELLING'];  // §14.3: no re-CANCEL from CANCELLING; terminals reject all
+        // ESCALATED is the ISSUER's waiting state (§14.3-bis), not a terminal — and the page showed
+        // it with no actions at all, which is the same hole the engine had: a node that says "someone
+        // must decide" and offers the decider nothing. Say whose move it is and what the moves are.
+        if (d.state === 'ESCALATED') {
+            h += `<div class="section"><div class="section-title">Waiting for the issuer</div>`
+               + `<div class="muted">The executor stopped and the decision is the issuer's. Three moves: `
+               + `<b>raise the rework bound</b> (Revise → max_iterations) if the forecast was short `
+               + `rather than the plan wrong; <b>change or narrow the criteria</b> (Revise) if the plan `
+               + `is what is wrong; or <b>close it</b> (Cancel — it cascades the live subtree). `
+               + `Silence closes it too, by this state's own timeout; it never drifts to a pass.</div></div>`;
+        }
+        const noCancel = ['DONE','ABANDONED','CANCELLING'];  // §14.3: no re-CANCEL from CANCELLING; terminals reject all
         if (acts.length || !noCancel.includes(d.state)) {
             h += `<div class="section"><div class="section-title">Actions</div><div class="actions">`;
             // …and a place for the forms those actions need. The page asked for a delivery report

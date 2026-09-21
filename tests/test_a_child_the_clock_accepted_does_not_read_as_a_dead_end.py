@@ -78,15 +78,43 @@ def test_a_child_accepted_by_the_clock_is_not_a_dead_end(engine: Engine):
         f"the guard fired over an accepted child: {answer.get('directive')}"
 
 
-def test_an_escalated_child_is_still_a_dead_end(engine: Engine):
-    """The POSITIVE control: the case the guard exists for must still fire."""
+def test_an_escalated_child_is_a_wait_on_the_issuer_not_a_dead_end(engine: Engine):
+    """ESCALATED stops the parent just as hard, but it is NOT the dead end the guard names.
+
+    ESCALATED left `TERMINAL_STATES`: it is the issuer's waiting state, symmetric to OFFERED, and it
+    admits three acts (§14.3) — re-ASSIGN through a revision (including one carrying only
+    `max_iterations`), the universal CANCEL that cascades the live subtree, and its own TIMEOUT,
+    which closes the task and never drifts to PASS. So `_never_passes` — whose sentence is "this
+    child can never satisfy the parent's AND, settle the parent NEGATIVE" — must not claim it: the
+    node is one revision away from running, and "settled WITHOUT passing" there prescribed
+    FAIL-and-re-decompose over live work.
+
+    What the frontier owes instead is the SOMEONE and his moves. A state whose meaning is "a person
+    must decide" that names no act is what sent a measured run to build a second root beside the
+    dead one; so the child is still named as a node the graph cannot move past — whether or not
+    something else is actionable — and what it `opens_with` is the issuer's three acts,
+    `Engine.issuer_moves_on`, not "a terminal node is not reopened and takes no revision".
+
+    CONTROL: put ESCALATED back into `TERMINAL_STATES` and the first assertion goes red; let the
+    stranded entry fall back to the re-decompose sentence and the rest does.
+    """
     _graph(engine)
     t = engine._graph.get_task(TaskId("k1"))
     t.state, t.done_reason = State.ESCALATED, DoneReason.FAIL
     engine._graph.save_task(t)
     engine.wait_idle()
 
-    assert [str(k.id) for k in engine._never_passes(TaskId("root"))] == ["k1"]
+    assert engine._never_passes(TaskId("root")) == [], \
+        "ESCALATED is a wait on the issuer, not a settlement — it is not a node that can never pass"
+
+    answer = engine.next_steps()
+    stranded = {s["task_id"]: s for s in answer.get("stranded") or []}
+    assert "k1" in stranded, f"the node the graph cannot move past is not named: {answer}"
+    opens = stranded["k1"]["opens_with"]
+    assert opens == engine.issuer_moves_on(TaskId("k1")), opens
+    assert "is not reopened" not in opens, opens
+    for act in ("revise", "max_iterations", "CANCEL"):
+        assert act in opens, f"the issuer's act '{act}' is not named: {opens}"
 
 
 def test_a_cancelled_child_left_the_decomposition_and_does_not_block_it(engine: Engine):
@@ -120,13 +148,17 @@ def test_a_root_closed_by_the_clock_is_complete_and_says_how(engine: Engine):
 
 
 def test_work_in_flight_does_not_hide_a_stranded_node(engine: Engine):
-    """A stranded node is a fact no running work can change, so it must not be masked by one.
+    """A node the graph cannot move past must not be masked by work that is running.
 
     The shape that produced it live: root -> mid -> {g1 PASS, g2 ESCALATED}, with root and mid in
-    EXECUTING and the roster calling their assignee an executor. `mid` can never close, the frontier
-    offers no step, and the in-flight branch — whose test is `state in (EXECUTING, REWORKING)` plus
-    a roster kind, i.e. a property of Del — answered `stuck: false`, "poll again in a minute".
-    """
+    EXECUTING and the roster calling their assignee an executor. `mid` can never close on its own,
+    and the in-flight branch — whose test is `state in (EXECUTING, REWORKING)` plus a roster kind,
+    i.e. a property of Del — answered `stuck: false`, "poll again in a minute".
+
+    What changed with §14.3-bis: g2 is no longer a DEAD end but a node waiting for its ISSUER, so
+    the right answer is not "stuck" — it is a STEP, on g2, naming the decision he owes. The masking
+    is what this test guards, and masking a live decision is the same defect as masking a dead node:
+    either way the reader is told to poll while the graph waits on someone."""
     risks = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
     T.create_task(engine, "root", {"description": "root",
                                    "criteria": [criterion("c", "c d")],
@@ -154,9 +186,12 @@ def test_work_in_flight_does_not_hide_a_stranded_node(engine: Engine):
     engine.wait_idle()
 
     answer = engine.next_steps()
-    assert not answer.get("steps"), f"a step exists, so this is not the masking case: {answer}"
-    assert answer.get("stuck") is True, answer.get("directive")
-    assert "g2" in (answer.get("blocked_by") or []), answer
+    steps = {s["task_id"]: s for s in (answer.get("steps") or [])}
+    assert "g2" in steps, f"the node the graph waits on is not surfaced at all: {answer}"
+    assert str(steps["g2"]["action"]) == "revise", steps["g2"]
+    assert "ISSUER" in steps["g2"]["directive"], steps["g2"]
+    # …and it is still named among what the graph cannot move past, for a reader scanning that list.
+    assert any(x["task_id"] == "g2" for x in (answer.get("stranded") or [])), answer
 
 
 def test_a_tombstone_does_not_pre_empt_work_in_flight(engine: Engine):

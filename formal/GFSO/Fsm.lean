@@ -43,15 +43,24 @@ deriving DecidableEq, Repr
 
 open St Sig
 
-/-- Terminal states (§14.3: DONE, ABANDONED, ESCALATED). -/
+/-- Terminal states (§14.3: DONE, ABANDONED).
+
+    ESCALATED is NOT one. Terminal means the WORK IS OVER — accepted (DONE) or refused by
+    authority (ABANDONED, V = ⊥). ESCALATED is the ISSUER's waiting state (§14.3-bis): the
+    executor's contract ended and the issuer's decision begins, which is a HANDOVER and not a
+    settlement. Inv-4 forces it — the machine has a state where the EXECUTOR owes an answer
+    (OFFERED) and, the two parties being equally accountable, must have its mirror. -/
 def isTerminal : St → Bool
-  | DONE | ABANDONED | ESCALATED => true
+  | DONE | ABANDONED => true
   | _ => false
 
 /-- Reassignable states (§14.4 Inv-1: re-ASSIGN under the same id → OFFERED). Mirrors
     `enums.py::REASSIGNABLE_STATES` (all non-terminals except IDLE, CANCELLING, OVERDUE). -/
 def isReassignable : St → Bool
   | OFFERED | CHALLENGED | EXECUTING | BLOCKED | VALIDATING | REWORKING => true
+  -- …and ESCALATED: a revision there is the ISSUER answering the question the protocol put to him
+  -- (§14.3-bis). OVERDUE stays out — there the miss has not been handed to anyone yet.
+  | ESCALATED => true
   | _ => false
 
 /--
@@ -92,7 +101,7 @@ def step (s : St) (sig : Sig) (canRework : Bool) : Option St :=
     | _ => none
   | BLOCKED => match sig with
     | RESOLVE_BLOCK => some EXECUTING
-    | Sig.TIMEOUT => some ESCALATED           -- direct-to-terminal (block IS escalation)
+    | Sig.TIMEOUT => some ESCALATED           -- direct to the handover (block IS escalation)
     | CANCEL => some CANCELLING
     | ASSIGN => some OFFERED
     | _ => none
@@ -125,10 +134,21 @@ def step (s : St) (sig : Sig) (canRework : Bool) : Option St :=
   -- drift): this file holds the terminal-absorbing BASE automaton, which R′ preserves in the
   -- limit (max_reopens exhausts). The reopen edge's system-level liveness is TLC-checked
   -- (formal/tla/FsmSpike.tla: Termination = <>[] terminal, FinalityAbsorbing) and the graph
-  -- gate is code-tested (tests/test_reopen.py). ESCALATED is fully terminal everywhere.
+  -- gate is code-tested (tests/test_reopen.py).
   | DONE => none
   | ABANDONED => none
-  | ESCALATED => none
+  -- ESCALATED carries the issuer's three answers. Raising the rework bound and changing the
+  -- criteria are both packet fields, so Inv-1 makes them ONE act (re-ASSIGN → OFFERED, taken by
+  -- the reassignable catch-all below); closing it is the universal CANCEL; and the timeout is
+  -- what keeps the wait finite — silence CLOSES (V = ⊥) and never drifts toward a pass, because
+  -- nothing is on the table to accept: the executor stopped.
+  | ESCALATED =>
+    match sig with
+    | ASSIGN => some OFFERED                  -- raise the bound / change the criteria (Inv-1)
+    | CANCEL => some CANCELLING               -- close it; the cascade settles the live subtree
+    | Sig.TIMEOUT => some CANCELLING           -- silence IS his cancellation: it takes the
+                                              -- cancel path so the live subtree goes with it
+    | _ => none
 
 /-- The declared admissible-signal set per state (mirrors `fsm.py::available_signals`:
     the table rows + universal CANCEL for non-terminals≠CANCELLING + re-ASSIGN for
@@ -145,7 +165,7 @@ def admissible : St → List Sig
   | OVERDUE     => [TIMEOUT, CANCEL]
   | DONE        => []
   | ABANDONED   => []
-  | ESCALATED   => []
+  | ESCALATED   => [ASSIGN, CANCEL, TIMEOUT]
 
 -- Finite enumerations (used to lift `decide`-checks to genuine ∀ statements).
 
@@ -211,18 +231,26 @@ def timeoutStep : St → St
   | BLOCKED => ESCALATED
   | VALIDATING => DONE
   | CANCELLING => ABANDONED
-  | OVERDUE => ESCALATED                                  -- second timeout → terminal
+  | OVERDUE => ESCALATED                                  -- second timeout → the handover
+  | ESCALATED => CANCELLING                               -- third: silence = his cancellation
   | s => s                                                -- IDLE + terminals: fixpoint
 
 /-- **Finiteness / termination (Inv-5).** From EVERY non-terminal state except IDLE, at most
-    TWO system timeouts drive the FSM into a terminal state — the deadline path cannot stall.
-    This is the real content of Inv-5 (finiteness of every non-terminal). `decide`-checked. -/
+    FOUR system timeouts drive the FSM into a terminal state — the deadline path cannot stall.
+    This is the real content of Inv-5 (finiteness of every non-terminal). `decide`-checked.
+
+    It was TWO while ESCALATED counted as a terminal. The bound grew because the deadline path now
+    ends in a HANDOVER and then in a CANCELLATION before it ends in a settlement:
+    OFFERED → OVERDUE → ESCALATED → CANCELLING → ABANDONED. Nothing about finiteness weakened — the
+    added steps are the issuer's silence being given its own clock (which is what Inv-5 demands of a
+    live state) and that silence being spent, like any cancellation, on the whole subtree. -/
 theorem timeout_terminates_check :
     allSt.all (fun s =>
-        isTerminal s || (s == IDLE) || isTerminal (timeoutStep (timeoutStep s))) = true := by decide
+        isTerminal s || (s == IDLE)
+        || isTerminal (timeoutStep (timeoutStep (timeoutStep (timeoutStep s))))) = true := by decide
 
 theorem timeout_terminates (s : St) (h₁ : isTerminal s = false) (h₂ : s ≠ IDLE) :
-    isTerminal (timeoutStep (timeoutStep s)) = true := by
+    isTerminal (timeoutStep (timeoutStep (timeoutStep (timeoutStep s)))) = true := by
   have h := List.all_eq_true.mp timeout_terminates_check s (mem_allSt s)
   simp only [Bool.or_eq_true] at h
   rcases h with (h | h) | h
@@ -242,12 +270,13 @@ theorem timeoutStep_matches_check :
     the pre-contract state carries no clock, and IDLE starvation surfaces as the PARENT's timeout).
     This encoding follows the canon.
 
-    **PENDING ENGINE DIVERGENCE (declared, not silent).** `gfso/core/protocol/fsm.py` currently
-    carries an `(IDLE, TIMEOUT)` row, added under the v3.9 reading in which Inv-5 was TOTAL over
-    non-terminals; the v4.0 canon exempts IDLE, so that row is now against the canon and its removal
-    is an engineer obligation — the second one, beside retargeting `(VALIDATING, FAIL, iter >= max)`
-    to ESCALATED. Until it lands, this file is AHEAD of the engine at exactly this row (a different
-    thing from the one divergence it is BEHIND the canon on — see README §corners). -/
+    **The engine agrees, and this note used to say otherwise.** It declared two pending divergences
+    — an `(IDLE, TIMEOUT)` row in `fsm.py` and an unretargeted `(VALIDATING, FAIL, iter >= max)` —
+    and BOTH had since been closed in the engine (`fsm.py` carries no IDLE row, with a test pinning
+    its absence, and the FAIL cell targets ESCALATED). A mirror whose declaration of where it
+    diverges from the engine is wrong in both directions is the wrong instrument to check the engine
+    with: a stale "known divergence" is exactly where a real one hides. Checked against `fsm.py`
+    2026-09-21; there is no pending divergence at this row. -/
 theorem idle_has_no_timeout : step IDLE TIMEOUT false = none := by decide
 
 /-! ### Inv-1 — revision (re-ASSIGN) is NOT cancellation (§14.3, §14.4)

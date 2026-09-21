@@ -15,7 +15,8 @@ from pathlib import Path
 
 from gfso.engine import Engine
 from gfso.core.protocol.fsm import transition
-from gfso.core.types import State, Signal, SignalData, GuardContext, TaskId, AgentId, TERMINAL_STATES
+from gfso.core.types import (State, Signal, SignalData, GuardContext, TaskId, AgentId,
+                             TERMINAL_STATES, DEFAULT_MAX_ITERATIONS)
 from gfso import tools as T
 from gfso.tools import _spec_from
 from tests.support import make_engine
@@ -126,9 +127,10 @@ def _walk(e: Engine, tid: str, seed: int, steps: int = 200):
             spec=_spec_from(SPEC_DICT) if sig == Signal.ASSIGN else None))
         e.wait_idle()
 
-        ns = MODEL_STEP(model_state, sig.name, model_iter, 3, model_ro, 1, False)
+        ns = MODEL_STEP(model_state, sig.name, model_iter, DEFAULT_MAX_ITERATIONS,
+                        model_ro, 1, False)
         if ns != "REJECT":
-            if model_state == "VALIDATING" and sig.name == "FAIL" and model_iter < 3:
+            if model_state == "VALIDATING" and sig.name == "FAIL" and model_iter < DEFAULT_MAX_ITERATIONS:
                 model_iter += 1
             if model_state in ("DONE", "ABANDONED") and sig.name == "ASSIGN":
                 model_ro += 1  # the REOPEN mutation spends the counter
@@ -148,11 +150,13 @@ def test_trace_replay_through_live_engine():
     model step-for-step on random walks. Signal validation off = the FSM-core is the
     object (role/issuer checks are a stricter outer filter, not table semantics);
     monitor idle (huge interval) so trajectories are deterministic."""
-    e = make_engine(llm=None, validate_signals=False,
-                     check_interval=10_000)
-    e.start()
-    try:
-        for i, seed in enumerate((11, 22, 33, 44, 55)):
+    # ONE ENGINE PER WALK. Each walk drives a parentless node, and a project has exactly one root
+    # (§14.3-bis's companion rule): five walks in one graph is five roots, which the engine refuses.
+    # The walks were always independent — sharing the engine was only ever a saving.
+    for i, seed in enumerate((11, 22, 33, 44, 55)):
+        e = make_engine(llm=None, validate_signals=False, check_interval=10_000)
+        e.start()
+        try:
             _walk(e, f"n{i}", seed)
-    finally:
-        e.stop()
+        finally:
+            e.stop()

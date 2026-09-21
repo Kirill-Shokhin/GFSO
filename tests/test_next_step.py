@@ -183,10 +183,16 @@ def test_frontier_is_del_aware(monkeypatch):
     e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
     monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")
+    # `mine1` is the project's one root; his node hangs under it as a child with its coverage
+    # declared, so what holds `his1` back on the frontier is Del and nothing else.
     T.create_task(e, "mine1", {"description": "agent node",
-                               "criteria": [criterion("a", "A")]})                        # Del=claude-main
+                               "criteria": [criterion("a", "A")],
+                               "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                   "predictability": "EXTRAORDINARY"}]})    # Del=claude-main
     T.create_task(e, "his1", {"description": "human node",
-                              "criteria": [criterion("b", "B")]}, assignee="kirill")
+                              "criteria": [criterion("b", "B")]}, assignee="kirill",
+                  parent_id="mine1")
+    T.map_criterion(e, "mine1", "his1", "a")
     steps = T.next_steps(e)["steps"]
     by_id = {s["task_id"]: s for s in steps}
     assert by_id["mine1"]["mine"] is True and by_id["mine1"]["assignee"] == "claude-main"

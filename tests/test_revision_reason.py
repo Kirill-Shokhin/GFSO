@@ -51,7 +51,8 @@ def test_revision_from_validating_is_admitted_and_voids_the_delivery(engine):
     assert rec["verdict"] == "VOID" and rec["superseded_verdict"] == "PASS"
 
     # a FAIL record survives a revision intact (it gates nothing and its snapshot is load-bearing)
-    engine.assign_task(TaskId("v2"), spec("goal", "c1", risks=False), AgentId("boss"))
+    engine.assign_task(TaskId("v2"), spec("goal", "c1", risks=False), AgentId("boss"),
+                       parent_id=TaskId("v1"))   # `v1` is the project's one root
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("v2"), source=AgentId("boss")))
     engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v2"),
                                        source=AgentId("boss"), result="done"))
@@ -90,8 +91,9 @@ def test_untyped_criteria_change_stays_uncounted(engine):
 
 
 def test_qdel_counts_only_typed_capability_mismatch(engine):
-    for tid in ("a", "b", "c"):
-        engine.assign_task(TaskId(tid), spec("goal", "c1", risks=False), AgentId("boss"))
+    for tid in ("a", "b", "c"):                   # `a` is the project's one root; b, c hang under it
+        engine.assign_task(TaskId(tid), spec("goal", "c1", risks=False), AgentId("boss"),
+                           parent_id=None if tid == "a" else TaskId("a"))
         engine.wait_idle()
     engine.reassign(TaskId("a"), AgentId("w1"), reason=RevisionReason.CAPABILITY_MISMATCH)
     engine.reassign(TaskId("b"), AgentId("w2"), reason=RevisionReason.OTHER)  # handoff — not a defect

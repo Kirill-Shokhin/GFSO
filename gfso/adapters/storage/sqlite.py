@@ -138,7 +138,8 @@ class SqliteStorage(StoragePort):
                 parent_id TEXT,
                 assignee TEXT,
                 iteration INTEGER DEFAULT 0,
-                max_iterations INTEGER DEFAULT 3,
+                max_iterations INTEGER,   -- no DDL default: the rule has ONE spelling,
+                                          -- core.types.DEFAULT_MAX_ITERATIONS, and every insert writes it
                 deadline TEXT,
                 created_at TEXT NOT NULL,
                 state_entered_at TEXT,

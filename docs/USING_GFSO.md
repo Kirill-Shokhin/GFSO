@@ -253,8 +253,12 @@ add a child that covers the gap — and re-aggregate.
 | The goal is genuinely dropped | `CANCEL` | Cascades to the subtree; this is `⊥`, not "done" |
 | A closed node has to be re-earned | `reopen(task_id)` | Only while nothing has been staked on it, and only within its reopen budget (§14.3) |
 
-A node in `ESCALATED` is asking for a human. That is the design: the automatic path failed and says
-so, rather than closing something to look finished.
+A node in `ESCALATED` is asking its ISSUER, and asking is the design: the automatic path stopped and
+says so rather than closing something to look finished. It is not a dead end — the issuer has three
+answers, and the graph names them on the node. Raise the rework bound (`revise(id,
+max_iterations=…)`) if the forecast was short rather than the plan wrong; change or narrow the
+criteria (`revise`) if the plan is what is wrong; or close it (`signal(id, "CANCEL")`, which cascades
+the live subtree). Silence closes it too, by the state's own timeout — it never drifts to a pass.
 
 `metrics()` reads the quality vector off the execution trace — including `q_D`, which is where a
 decomposition that looked fine and did not hold shows up after the fact.

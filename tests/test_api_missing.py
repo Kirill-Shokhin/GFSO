@@ -58,8 +58,9 @@ def test_decompose_per_child_deadline():
 
 def test_declared_cycle_rejected():
     e = _engine()
-    e.assign_task(TaskId("t1"), Spec("a", ()), AgentId("d"))
-    e.assign_task(TaskId("t2"), Spec("b", ()), AgentId("d"))
+    e.assign_task(TaskId("goal"), Spec("the goal", ()), AgentId("d"))
+    e.assign_task(TaskId("t1"), Spec("a", ()), AgentId("d"), parent_id=TaskId("goal"))
+    e.assign_task(TaskId("t2"), Spec("b", ()), AgentId("d"), parent_id=TaskId("goal"))
     e.wait_idle()
     e.add_dependency(TaskId("t1"), TaskId("t2"))
     try:
@@ -71,8 +72,9 @@ def test_declared_cycle_rejected():
 
 def test_remove_dependency():
     e = _engine()
-    e.assign_task(TaskId("t1"), Spec("a", ()), AgentId("d"))
-    e.assign_task(TaskId("t2"), Spec("b", ()), AgentId("d"))
+    e.assign_task(TaskId("goal"), Spec("the goal", ()), AgentId("d"))
+    e.assign_task(TaskId("t1"), Spec("a", ()), AgentId("d"), parent_id=TaskId("goal"))
+    e.assign_task(TaskId("t2"), Spec("b", ()), AgentId("d"), parent_id=TaskId("goal"))
     e.wait_idle()
     e.add_dependency(TaskId("t1"), TaskId("t2"))
     assert len(e.get_dependencies()) == 1
@@ -82,8 +84,9 @@ def test_remove_dependency():
 
 def test_dependency_endpoints():
     e = _engine()
-    e.assign_task(TaskId("t1"), Spec("a", ()), AgentId("d"))
-    e.assign_task(TaskId("t2"), Spec("b", ()), AgentId("d"))
+    e.assign_task(TaskId("goal"), Spec("the goal", ()), AgentId("d"))
+    e.assign_task(TaskId("t1"), Spec("a", ()), AgentId("d"), parent_id=TaskId("goal"))
+    e.assign_task(TaskId("t2"), Spec("b", ()), AgentId("d"), parent_id=TaskId("goal"))
     e.wait_idle()
     c = _client(e)
     r = c.post("/api/run/add_dependency", json={"from_id": "t1", "to_id": "t2"})

@@ -68,15 +68,26 @@ def _await_state(e, tid, names, timeout=3.0):
 
 def test_fake_clock_drives_inv5_state_age_in_milliseconds():
     """An HOUR-scale state_timeout enforced through virtual time: the deadline-less node cannot
-    sit in OFFERED forever; the sub-FSM escalates (first timeout → OVERDUE, repeat → ESCALATED) —
-    all in milliseconds of wall time, because Inv-5 reads the ClockPort, not the wall clock."""
+    sit in OFFERED forever; the sub-FSM escalates (OFFERED → OVERDUE → ESCALATED → CANCELLING →
+    ABANDONED, one TIMEOUT per step) — all in milliseconds of wall time, because Inv-5 reads the ClockPort, not
+    the wall clock.
+
+    The chain no longer stops at ESCALATED: that is the ISSUER's waiting state, and its own timeout
+    is the issuer's silence closing the task — through CANCELLING, since escalation cascades
+    nothing and the subtree has to go with it. So the end of an unanswered escalation is
+    ABANDONED (V=⊥); it never drifts to DONE. Four virtual hours, four TIMEOUTs, nothing after."""
     e = make_engine(llm=None, validate_signals=True,
                      check_interval=1800, state_timeout=3600, clock=FakeClock())
     e.start()
     _mk(e)
-    got = _await_state(e, "n", {"OVERDUE", "ESCALATED"})
-    assert got in ("OVERDUE", "ESCALATED")
-    assert _await_state(e, "n", {"ESCALATED"}) == "ESCALATED"   # repeated virtual timeout
+    got = _await_state(e, "n", {"OVERDUE", "ESCALATED", "ABANDONED"})
+    assert got in ("OVERDUE", "ESCALATED", "ABANDONED")
+    assert _await_state(e, "n", {"ABANDONED"}) == "ABANDONED"   # repeated virtual timeouts
+    # FOUR: OFFERED → OVERDUE → ESCALATED → CANCELLING → ABANDONED. The deadline path now ends in a
+    # HANDOVER (the issuer's waiting state, §14.3-bis) and then in a CANCELLATION before it ends in a
+    # settlement — his silence is his cancellation, and it takes the whole subtree with it.
+    assert [a.signal for a in e.audit_log(TaskId("n"))
+            if not a.rejected].count(Signal.TIMEOUT) == 4       # one per step, and the chain rests
     e.stop()
 
 

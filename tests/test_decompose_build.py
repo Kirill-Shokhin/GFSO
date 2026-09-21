@@ -124,8 +124,18 @@ def test_build_graph_live_surfaces_dropped_items():
 def test_build_graph_live_no_cross_tree_collision():
     """REGRESSION (observed live on T01): two decompositions whose specs share LLM-chosen child ids must land
     in DISJOINT trees. Without namespacing, the second build's ASSIGN on an existing id REVISED the first
-    tree's node in place (same-id revision, foreign parent) — corrupting both graphs."""
+    tree's node in place (same-id revision, foreign parent) — corrupting both graphs.
+
+    The two decompositions now hang under the project's ONE root (a second parentless node is a
+    second verdict with nothing composing the two), which is the same collision: the child ids the
+    spec names are identical on both sides, and only the namespacing keeps the trees disjoint."""
     e = _eng()
+    T.create_task(e, "top", {"description": "both things", "criteria": [criterion("t", "both done")]},
+                  "human")
+    for sub in ("r1", "r2"):
+        T.create_task(e, sub, {"description": sub, "criteria": [criterion("s", "sub done")]},
+                      "human", parent_id="top")
+    e.wait_idle()
     build_graph_live(SPEC, "thing one", e, root_id="r1", assignee="human"); e.wait_idle()
     build_graph_live(SPEC, "thing two", e, root_id="r2", assignee="human"); e.wait_idle()
     assert {c.id for c in e.get_active_children(TaskId("r1"))} == {TaskId("r1.a"), TaskId("r1.b")}

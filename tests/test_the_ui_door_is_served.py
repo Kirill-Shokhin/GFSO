@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.graph import DIAGNOSTIC_MEANS, Q_MEANS
+from gfso.core.graph.mutations import InvariantViolation
 from gfso.delegate import _replay_a_standing_verdict
 from gfso.core.types import (AgentId, CriterionMapping, RevisionReason, Signal, SignalData, TaskId,
                              Verdict, passed)
@@ -472,26 +473,41 @@ def test_the_bridge_says_what_it_is_instead_of_hanging():
         "reason running it by hand looks like a hang")
 
 
-def test_complete_is_a_claim_about_every_root():
-    """A forest is not finished because its first tree is.
+def test_complete_is_a_claim_about_the_whole_tree_not_the_first_node_that_closes():
+    """A project is not finished because one branch of it is — and it cannot be a forest at all.
 
     Measured on the MCP door 2026-09-02: a second root had been created in the project, and after
     signalling on it the reply still read `COMPLETE — root 'root' is DONE/PASS. Execution finished.`
     while that second root sat mid-flight with work owed on it. The frontier took the FIRST
-    parentless node and answered about that one alone. A project is explicitly allowed to be a
-    forest, and saying a graph is done while it is not is the single kind of wrong answer this
-    product exists to make impossible.
+    parentless node and answered about that one alone.
+
+    The forest itself is now refused at the door: a parentless node is not a free-standing task, it
+    is THE goal — V(root) is the project's verdict and the canon's one composition rule
+    (V(parent)=AND(children)) needs a parent, so a second parentless node is a second verdict with
+    nothing composing them. Both halves are pinned here: the refusal, and — over the shape that is
+    legal — that `complete` stays the claim about the ROOT's own AND, not about whichever node
+    happened to close first. Saying a graph is done while it is not is the single kind of wrong
+    answer this product exists to make impossible.
     """
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("a"), spec("first goal", "c1"), AgentId("agent"))
-        e.assign_task(TaskId("b"), spec("second goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("g"), spec("the goal", "c1", "c2"), AgentId("agent"))
+        e.assign_task(TaskId("a"), spec("first branch", "c1"), AgentId("agent"),
+                      parent_id=TaskId("g"))
+        e.assign_task(TaskId("b"), spec("second branch", "c1"), AgentId("agent"),
+                      parent_id=TaskId("g"))
+        map_criterion(e, "g", "a", "c1")
+        map_criterion(e, "g", "b", "c2")
         e.wait_idle()
 
-        # Close root 'a' for real — accepted, delivered, judged by somebody who is not its executor,
-        # then signed. Anything less leaves it in VALIDATING, where NEITHER reading of the rule calls
-        # the graph complete and the test passes without touching what it is about.
+        # THE SECOND ROOT IS REFUSED, which is where the measured forest came from.
+        with pytest.raises(InvariantViolation, match="already has its root"):
+            e.assign_task(TaskId("other"), spec("a second goal", "c1"), AgentId("agent"))
+
+        # Close branch 'a' for real — accepted, delivered, judged by somebody who is not its
+        # executor, then signed. Anything less leaves it in VALIDATING, where NEITHER reading of the
+        # rule calls the graph complete and the test passes without touching what it is about.
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"),
                                       source=AgentId("agent")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("a"),
@@ -507,13 +523,13 @@ def test_complete_is_a_claim_about_every_root():
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
                                       source=AgentId("agent")))
         e.wait_idle()
-        assert passed(e.get_task(TaskId("a"))), "the first root did not actually close"
-        assert not passed(e.get_task(TaskId("b"))), "the second root must still owe its work"
+        assert passed(e.get_task(TaskId("a"))), "the first branch did not actually close"
+        assert not passed(e.get_task(TaskId("b"))), "the second branch must still owe its work"
 
         out = e._frontier()
         if isinstance(out, dict) and out.get("complete"):
             raise AssertionError(
-                f"the graph called itself finished with root 'b' still open: {out['directive']}")
+                f"the graph called itself finished with 'b' still open: {out['directive']}")
     finally:
         e.stop()
 

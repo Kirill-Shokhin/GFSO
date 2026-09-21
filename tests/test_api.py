@@ -40,16 +40,20 @@ def test_create_task():
 
 def test_list_tasks():
     c = _client()
-    c.post("/api/run/create_task", json={"spec": {"description": "a"}, "assignee": "d1"})
-    c.post("/api/run/create_task", json={"spec": {"description": "b"}, "assignee": "d2"})
+    # One root, and the second node under it: a project has exactly one parentless node.
+    a = c.post("/api/run/create_task", json={"spec": {"description": "a"}, "assignee": "d1"}).json()
+    c.post("/api/run/create_task", json={"spec": {"description": "b"}, "assignee": "d2",
+                                         "parent_id": a["id"]})
     r = c.get("/api/tasks")
     assert len(r.json()) == 2
 
 
 def test_list_tasks_filter_assignee():
     c = _client()
-    c.post("/api/run/create_task", json={"spec": {"description": "a"}, "assignee": "alice"})
-    c.post("/api/run/create_task", json={"spec": {"description": "b"}, "assignee": "bob"})
+    a = c.post("/api/run/create_task", json={"spec": {"description": "a"},
+                                             "assignee": "alice"}).json()
+    c.post("/api/run/create_task", json={"spec": {"description": "b"}, "assignee": "bob",
+                                         "parent_id": a["id"]})
     r = c.get("/api/tasks?assignee=alice")
     tasks = r.json()
     assert len(tasks) == 1

@@ -10,7 +10,7 @@ from .enums import (
     EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS,
 )
 from .primitives import (
-    TaskId, AgentId,
+    TaskId, AgentId, DEFAULT_MAX_ITERATIONS,
     Criteria, Probe, Spec, Task, AcceptedRiskItem,
     CriterionMapping, DepEdge,
     GuardContext, CheckResult, Recommendation,

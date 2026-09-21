@@ -68,11 +68,15 @@ def test_the_two_doors_agree_on_where_the_work_is(box, node, named):
 
 def test_the_roster_still_answers_when_the_graph_cannot(box):
     """The other half. A node nobody registered, with no registered children either, has no graph
-    fact to offer — and then the named validator's own directory is the answer, not a refusal."""
+    fact to offer — and then the named validator's own directory is the answer, not a refusal.
+
+    It hangs under `par` because a project has exactly one root; the subject is the node's own
+    silence, and `judging_workdir` reads the node and DOWNWARDS, so a parent changes nothing here.
+    """
     e, reg, tmp_path = box
     T.create_task(e, "orphan", {"description": "held by a person", "accepted_risks": _RISK,
                                 "criteria": [{"name": "o", "description": "O holds"}]},
-                  assignee="a-person-not-on-the-roster")
+                  assignee="a-person-not-on-the-roster", parent_id="par")
     assert TL._registered_workdir(e, "orphan", "val-1") == str(tmp_path / "SCRATCH"), \
         "with nothing in the graph to go on, refusing while the roster holds the answer is the " \
         "call that was measured failing on the HTTP door"

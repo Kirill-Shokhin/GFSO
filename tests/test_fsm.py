@@ -22,13 +22,15 @@ def _transition(state, signal, ctx=CTX, **kw):
 
 # === Table row count ===
 
-def test_table_has_21_explicit_rows():
-    # 19 + (CANCELLING, CONFIRM_CANCEL) + (CANCELLING, TIMEOUT) — v3.7 §6.3 two-step cancellation.
+def test_table_has_22_explicit_rows():
+    # 19 + (CANCELLING, CONFIRM_CANCEL) + (CANCELLING, TIMEOUT) — v3.7 §6.3 two-step cancellation —
+    # + (ESCALATED, TIMEOUT): the issuer's waiting state is live, so Inv-5 applies to it again, and
+    # its silence settles the node in ABANDONED rather than drifting anywhere near a pass.
     # There is NO (IDLE, TIMEOUT) row: Inv-5 exempts IDLE by name (§14.4) — the pre-contract state
     # carries no clock, and a crash orphan is recovered by finishing its interrupted ASSIGN.
     # Plus the catch-alls in transition(): universal CANCEL → CANCELLING, revision re-ASSIGN →
     # OFFERED, and the R′ REOPEN (quasi-terminal re-ASSIGN under the finality gate, §14.3).
-    assert len(_LOOKUP) == 21
+    assert len(_LOOKUP) == 22
 
 
 def test_idle_has_no_timeout_row():
@@ -235,8 +237,12 @@ def test_no_revision_from_timeout_or_cancelling():
 
 
 def test_no_revision_of_terminal_nodes():
-    """Terminal is terminal (§14.3) — incl. ABANDONED: no resurrect-by-re-ASSIGN (revision is for live nodes)."""
-    for st in (State.DONE, State.ESCALATED, State.ABANDONED):
+    """Terminal is terminal (§14.3) — incl. ABANDONED: no resurrect-by-re-ASSIGN (revision is for live
+    nodes). The R′ REOPEN is the named exception and carries its own gate; a bare revision is not it.
+
+    ESCALATED is deliberately absent from this list now: it is not a terminal but the issuer's waiting
+    state, and a revision there IS his move — see `test_escalated_admits_the_issuers_three_moves`."""
+    for st in (State.DONE, State.ABANDONED):
         assert _transition(st, Signal.ASSIGN, spec=_NEW_SPEC) is None
 
 
@@ -247,12 +253,24 @@ def test_done_rejects_all():
         result = _transition(State.DONE, sig)
         assert result is None, f"DONE should reject {sig.name}"
 
-def test_escalated_rejects_all():
-    for sig in Signal:
-        if sig == Signal.CANCEL:
-            continue  # CANCEL catch-all won't fire for terminal
-        result = _transition(State.ESCALATED, sig)
-        assert result is None, f"ESCALATED should reject {sig.name}"
+def test_escalated_admits_the_issuers_three_moves():
+    """ESCALATED is where the executor stopped and the ISSUER must decide, so it carries his answers.
+
+    It rejected everything while it was filed as a terminal, and that is what broke a measured run:
+    the root escalated, no act was admissible or even named, and the agent built a second root beside
+    it. Raising the rework bound and changing the criteria are both packet fields, so by Inv-1 they
+    are ONE act (re-ASSIGN → OFFERED); closing it is the universal CANCEL; and the timeout is what
+    keeps the wait finite (Inv-5), settling it rather than passing it."""
+    assert _transition(State.ESCALATED, Signal.ASSIGN, spec=_NEW_SPEC)[0] == State.OFFERED
+    # …and a revision that changes ONLY the bound carries no spec: the issuer who reads the
+    # exhaustion as a short forecast should not have to restate a contract he is not disputing.
+    assert _transition(State.ESCALATED, Signal.ASSIGN)[0] == State.OFFERED
+    assert _transition(State.ESCALATED, Signal.CANCEL)[0] == State.CANCELLING
+    # …through CANCELLING: silence IS his cancellation, so the live subtree goes with it.
+    assert _transition(State.ESCALATED, Signal.TIMEOUT)[0] == State.CANCELLING
+    for sig in (Signal.ACCEPT, Signal.DELIVER, Signal.PASS, Signal.FAIL, Signal.BLOCK,
+                Signal.CHALLENGE, Signal.RESOLVE_BLOCK, Signal.CONFIRM_CANCEL):
+        assert _transition(State.ESCALATED, sig) is None, f"ESCALATED should reject {sig.name}"
 
 def test_idle_rejects_non_assign():
     # IDLE admits exactly: ASSIGN (creation), CANCEL (universal catch-all), TIMEOUT (Inv-5 total —

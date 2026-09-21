@@ -14,7 +14,8 @@
   on CONSUMPTION, a graph fact (the parent staked the AND, or a Dep consumer read-and-built) and
   not a state-resident datum, so no finite (state, counters) composite is an automaton over the
   signal alphabet on the R' machine; and under R' the three terminals are no longer one block
-  (ESCALATED alone keeps no outgoing edge).
+  (ESCALATED is no longer one of them at all: it is the ISSUER's waiting state, §14.3-bis,
+  and carries its own row in the BASE machine — ASSIGN, CANCEL and its own timeout).
 
   TRANSCRIPTION SOURCE, per row (Ch. 14.3): the diagram, plus the prose catch-alls -- universal
   CANCEL from any non-terminal except CANCELLING; re-ASSIGN (Inv-1) from the reassignable states;
@@ -84,7 +85,7 @@ def canonStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
     | _ => none
   | CANCELLING => match sig with
     | CONFIRM_CANCEL => some ABANDONED
-    | Sig.TIMEOUT => some ABANDONED
+    | Sig.TIMEOUT => some CANCELLING     -- silence IS his cancellation; the subtree goes too
     | _ => none
   | OVERDUE => match sig with
     | Sig.TIMEOUT => some ESCALATED
@@ -92,16 +93,26 @@ def canonStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
     | _ => none
   | DONE => none
   | ABANDONED => none
-  | ESCALATED => none
+  -- The issuer's waiting state (§14.3-bis), mirror of OFFERED under Inv-4: raising the rework
+  -- bound and changing the criteria are both packet fields, hence ONE act by Inv-1; closing it is
+  -- the universal CANCEL; and the timeout keeps the wait finite by CLOSING, never by passing.
+  | ESCALATED => match sig with
+    | ASSIGN => some OFFERED
+    | CANCEL => some CANCELLING
+    | Sig.TIMEOUT => some CANCELLING     -- silence IS his cancellation; the subtree goes too
+    | _ => none
 
-/-- The settlement mode: the three-valued terminal label (Ch. 14.3 — ABANDONED "distinct from
-    DONE = pass and ESCALATED = timeout"). It is NOT the verdict V: under V both ABANDONED and
-    ESCALATED carry ⊥ and would be indistinguishable. -/
+/-- The settlement mode: the terminal label (Ch. 14.3). It is NOT the verdict V — under V both
+    ABANDONED and a timeout-settled node carry ⊥ and would be indistinguishable.
+
+    ESCALATED is `live` here, not a settlement mode of its own: nothing has settled while the issuer
+    still owes an answer (§14.3-bis). The timeout attribution it used to carry now lands where the
+    node actually comes to rest — ABANDONED, whether by the issuer's CANCEL or by his silence. -/
 inductive Settle | pass | abandoned | timeout | live
 deriving DecidableEq, Repr
 
 def settle : St → Settle
-  | DONE => Settle.pass | ABANDONED => Settle.abandoned | ESCALATED => Settle.timeout
+  | DONE => Settle.pass | ABANDONED => Settle.abandoned
   | _ => Settle.live
 
 /-! ### The canon-side facts -/
@@ -208,14 +219,15 @@ theorem variant_agrees_off_validating_timeout :
 
 Adequacy pins a minimality-forced SKELETON (the backbone every adequate protocol shares, grounded in
 the four §14.2 defect types: initiation, accept→work, deliver→validate, pass→complete, block→report,
-challenge→dispute, accept-challenge→re-offer, cancel→abandon, re-ASSIGN→offer — nine forced states).
+challenge→dispute, accept-challenge→re-offer, cancel→abandon, re-ASSIGN→offer — plus the
+issuer's own waiting state, ESCALATED, forced by IC exactly as CANCELLING is: TEN forced states).
 The design-freedom is confined to DECORATIONS on it. OVERDUE is one such: the timeout INTERMEDIATE, and
 a protocol may route every first-timeout DIRECTLY to ESCALATED, omitting OVERDUE, and stay adequate
 (deadlock-free + finite) — the `noOverdue` table below (a uniform relabeling of OVERDUE→ESCALATED over
 the timeout cells; machine-checked on finiteness, full adequacy argued). With `variant` (the free
 timeout destination) and the argued `max_iterations` (the rework-loop bound → REWORKING), this confines
-the underdetermination to the decoration cells; the nine-state backbone is canonical up to behavioural
-equivalence (a lower bound, argued — not machine-checked). NB ESCALATED is itself a decoration, not a
+the underdetermination to the decoration cells; the ten-state backbone is canonical up to behavioural
+equivalence (a lower bound, argued — not machine-checked). NB ESCALATED is NOT itself a decoration (it is IC-forced, below) — it is a
 forced state: it is separated from ABANDONED only by the settlement mode (both V=⊥), a free observable. -/
 
 def noOverdueStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
@@ -243,15 +255,22 @@ theorem noOverdue_omits_overdue :
 theorem canon_reaches_overdue :
     canonStep EXECUTING Sig.TIMEOUT false = some OVERDUE := by decide
 
-/-! ### ESCALATED is a decoration too — witnessed removable (completing the decoration set)
+/-! ### ESCALATED is NOT a decoration — forced by IC, the way CANCELLING is (§14.3-bis)
 
-ESCALATED is separated from ABANDONED only by the settlement mode (both carry V = ⊥). It is reached
-from two directions — the repeat timeout, and §14.3's exhausted-rework cell (VALIDATING, FAIL, no
-retries left) — and `noEscalatedStep` retargets BOTH, so the exhausted-rework path settles as
-ABANDONED. What that gives up is the *attribution* distinction between a timed-out and an abandoned
-settlement, not a channel: the FAIL row still exists and still settles. So a protocol with no distinct
-"attention" terminal still exits every state (deadlock-free + finite) and omits ESCALATED. Both OVERDUE and ESCALATED are thus
-machine-witnessed removable; the 9-state forced backbone is what remains. -/
+This section used to read the other way, and the reading was right about a machine in which the
+ISSUER owes no answer. In that machine ESCALATED is separated from ABANDONED only by the settlement
+mode (both carry V = ⊥), and folding it in gives up an *attribution* distinction, not a channel.
+
+It is not that machine. ESCALATED is the issuer's waiting state: the executor stopped, and the
+decision — raise the bound, change the criteria, or close it — is his. `noEscalatedStep` still
+`decide`s deadlock-free, because deadlock-freedom is not the axis this state sits on. What the fold
+removes is the CHANNEL through which the issuer answers: every act out of ESCALATED lands on
+ABANDONED instead, so the exhausted-rework path settles with nobody asked. That is the *same*
+grounding §26.9(b) gives CANCELLING — "forced by IC (Inv-4), not by deadlock; what holds it in the
+skeleton is the executor's CONFIRM_CANCEL acknowledgment" — with the parties swapped. The theorems
+below are kept because what they check is still true and still worth checking: the fold survives the
+finiteness axis. They no longer witness REMOVABILITY, and the forced backbone is ten states, not
+nine, with OVERDUE the one remaining free timeout-geometry decoration. -/
 
 def noEscalatedStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
   match canonStep s sig canRework with
@@ -268,14 +287,17 @@ theorem noEscalated_omits_escalated :
       [false, true].all (fun b => noEscalatedStep s g b != some ESCALATED)))) = true := by
   decide
 
-/-- The canon reaches ESCALATED (e.g. an exhausted validation loop, corner-#3 target) — so ESCALATED
-    is a decoration the canon adds, not a state adequacy forces. -/
+/-- The canon reaches ESCALATED (e.g. an exhausted validation loop, corner-#3 target) — so the fold
+    above genuinely removes a state the canon has, rather than one it never reaches. What it removes
+    is a CHANNEL, not a decoration: this is the twin of `canon_reaches_overdue`, and the two differ
+    exactly where the section header says they do (§14.3-bis — OVERDUE carries no FM and no IC and
+    is free; ESCALATED is held by IC, as CANCELLING is, with the parties swapped). -/
 theorem canon_reaches_escalated :
     canonStep VALIDATING FAIL false = some ESCALATED := by decide
 
 /-! ### §26.9(b): a forced skeleton exit is load-bearing — a canon-internal reachability witness
 
-    SCOPE, honestly. The forcedness of the nine-state skeleton over *every* adequate protocol is an
+    SCOPE, honestly. The forcedness of the ten-state skeleton over *every* adequate protocol is an
     argued lower bound (a universal over an unbounded protocol class + semantic FM-hypotheses, outside
     `decide`) — this does NOT machine-check that. It checks the weaker **canon-internal necessary
     condition**: a forced exit is load-bearing for the canon's own success-reachability. Illustrated on
@@ -312,7 +334,8 @@ theorem nodeliver_strands_done : reachesDONE noDeliver EXECUTING = false := by d
 This upgrades the single `nodeliver_strands_done` witness to a per-edge classification. Each
 signal-destination cell is graded on two axes (below): whether its EXISTENCE is forced (a non-timeout
 adequacy source — an FM channel, an invariant, or the transaction role — vs. only exit-existence, the
-free timeout/retry cells witnessed above: OVERDUE, ESCALATED, `variant`, `max_iterations`), and whether
+free timeout/retry cells witnessed above: OVERDUE, `variant`, `max_iterations` — ESCALATED left
+that list, §14.3-bis), and whether
 its DESTINATION is forced (some are existence-forced but destination-FREE — the resume-vs-re-consent
 decorations). Forced edges carry a canon-INTERNAL necessary-condition witness. This is the INNER
 (fixed-alphabet, finite) statement; the OUTER frame (undelimited alphabets/observables) stays the
@@ -321,7 +344,7 @@ boundary of the first kind (§26.9 "the wall").
 HONEST CEILING (held visible): each theorem below is a canon-INTERNAL necessary condition — removing the
 edge degrades the CANON's own adequacy. The OUTER universal — "necessary ⟹ forced over EVERY adequate
 protocol" — is a universal over an unbounded protocol class + semantic FM-hypotheses, outside `decide`;
-it stays ARGUED, exactly as the nine-state forcedness does.
+it stays ARGUED, exactly as the ten-state forcedness does.
 
 TWO STRENGTH TIERS (orthogonal to the a/b/c FUNCTION split — do not conflate them):
  • FATAL — removal makes the target UNREACHABLE (the strong witness): ASSIGN, BLOCK, CHALLENGE, CANCEL,
@@ -371,12 +394,26 @@ theorem canon_reaches_challenged : reaches canonStep IDLE CHALLENGED = true := b
 theorem noChallenge_strands_challenged :
     reaches (dropSig canonStep CHALLENGE) IDLE CHALLENGED = false := by decide
 
-/-- CANCEL is reachability-fatal for the ABANDONED terminal: ABANDONED's only in-edges are from
-    CANCELLING, whose only in-edges are the CANCEL cells — so cutting CANCEL strands ABANDONED. The
-    cleanest kind-(a) witness (a whole terminal depends on the channel), completing the enumeration. -/
+/-- CANCEL used to be reachability-FATAL for the ABANDONED terminal — its only in-edges ran through
+    CANCELLING, whose only in-edges were the CANCEL cells. It no longer is, and the reason is exactly
+    §14.3-bis: ESCALATED is a live state, so Inv-5 gives it a timeout, and the issuer's silence
+    settles the node in ABANDONED without any CANCEL. So CANCEL drops one tier — from *fatal* to
+    *sole genuine provider*: what is lost by cutting it is not the terminal but the ACKNOWLEDGED and
+    authoritative route to it (CONFIRM_CANCEL carries the in-flight state, Thm 11), leaving only the
+    degenerate one where nobody answered. That is the same tier, and the same reason, §26.9(b)
+    already records for PASS (DONE stays reachable by auto_pass) — the enumeration is unchanged in
+    shape, and one cell moved within it. -/
 theorem canon_reaches_abandoned : reaches canonStep IDLE ABANDONED = true := by decide
-theorem noCancel_strands_abandoned :
-    reaches (dropSig canonStep CANCEL) IDLE ABANDONED = false := by decide
+/-- …and what survives without CANCEL is the DEGENERATE route only: the issuer's silence, which is
+    the single remaining cell that opens the handshake. Stated cell-wise rather than by reachability
+    because that is the content — every OTHER state loses its way in. -/
+theorem noCancel_keeps_the_silence :
+    dropSig canonStep CANCEL ESCALATED Sig.TIMEOUT false = some CANCELLING := by decide
+
+theorem noCancel_leaves_only_the_silence :
+    (allSt.all (fun s => (s == ESCALATED) || (s == CANCELLING) || allSig.all (fun g =>
+      [false, true].all (fun b =>
+        dropSig canonStep CANCEL s g b != some CANCELLING)))) = true := by decide
 
 /-- CONTRACT-CHANGE → OFFERED is Inv-1-FORCED (re-consent), over every adequate protocol — a changed
     contract may not silently bind a working node (§14.4). Two edges carry a contract change and are thus
@@ -454,9 +491,9 @@ theorem canon_confirm_is_genuine : canonStep CANCELLING CONFIRM_CANCEL false = s
 /-! ### S1 — CANCELLING is forced by IC, NOT by deadlock (why it is skeleton and OVERDUE is not)
 
 A ONE-STEP cancel (CANCEL → ABANDONED directly; no CANCELLING, no CONFIRM_CANCEL) is still deadlock-free
-+ finite — so on the SAME finiteness axis on which the file witnesses OVERDUE/ESCALATED removable,
++ finite — so on the SAME finiteness axis on which the file witnesses OVERDUE removable,
 CANCELLING is ALSO removable. Hence CANCELLING's forcedness is NOT deadlock: it is IC (the CONFIRM_CANCEL
-kind-(c) witness above — the executor acknowledges and reports in-flight state). OVERDUE/ESCALATED have
+kind-(c) witness above — the executor acknowledges and reports in-flight state). OVERDUE has
 no FM/IC attached (pure timeout geometry) and are genuinely free; CANCELLING is grounded, so it is
 skeleton. This makes precise the file's "grounded in the four defect types" as a PER-CELL basis. -/
 
@@ -464,6 +501,9 @@ def oneStepCancel (s : St) (sig : Sig) (canRework : Bool) : Option St :=
   match s, sig with
   | CANCELLING, _ => none                                       -- CANCELLING no longer exists
   | _, CANCEL => if isTerminal s then none else some ABANDONED  -- cancel settles in one step
+  -- …and the issuer's silence settles in one step too, for the same reason: in a protocol with no
+  -- handshake there is nothing for it to open, so it goes straight to the settlement.
+  | ESCALATED, Sig.TIMEOUT => some ABANDONED
   | _, _ => canonStep s sig canRework
 
 theorem oneStepCancel_still_timeout_defined :

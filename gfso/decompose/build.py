@@ -147,8 +147,10 @@ def _children_that_changed(engine, rid, children, mappings, dropped: list) -> li
         # the re-ASSIGN anyway; observed live: a refine fold updated DONE children and its intent
         # vanished into rejected signals). Surface the unapplied change as a problem instead — the
         # repair loop (or the honest holes residue) routes the new obligation to a NEW subtask.
-        if ex is not None and ex.state in (State.DONE, State.ABANDONED, State.ESCALATED):
-            dropped.append(f"child {cid_t}: {ex.state.name} is terminal — completed work is frozen, "
+        # ESCALATED is not here: the node is waiting for its issuer, not finished, and a revision is
+        # precisely what it admits (§14.3-bis) — so the change applies rather than being dropped.
+        if ex is not None and ex.state in (State.DONE, State.ABANDONED):
+            dropped.append(f"child {cid_t}: {ex.state.name} is settled — finished work is frozen, "
                            f"the intended contract/coverage change was NOT applied; route new "
                            f"obligations to a NEW subtask (or leave the child as built)")
             continue

@@ -239,6 +239,32 @@ def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
     ])
 
 
+# === ESCALATED (§14.3: the ISSUER's waiting state, symmetric to OFFERED) ===
+
+@_row(State.ESCALATED, Signal.TIMEOUT)
+def _(tid: TaskId, ctx: GuardContext) -> TransitionResult:
+    # Inv-5 applies again now that this is a live state, and the destination is forced by what the
+    # state means. The issuer was handed a decision and did not make it; the node may not sit for
+    # ever (finiteness), and it may not drift toward PASS either — the VALIDATING auto-pass exists
+    # because a delivered result with no verdict in time is an issuer-inaction ACCEPTANCE, whereas
+    # here nothing is on the table to accept: the executor stopped. Silence therefore CLOSES.
+    #
+    # Through CANCELLING, not straight to ABANDONED, and the difference is the SUBTREE. Escalation
+    # cascades nothing, so an escalated node's children are still live under their own contracts;
+    # settling only the parent leaves the product handing out work under a goal nobody owns any
+    # more — a silence this very edge would otherwise create. Silence IS the issuer's cancellation,
+    # so it takes the cancellation's own path: the cascade reaches every live descendant, each runs
+    # its own handshake, and CANCELLING's grace keeps the whole thing finite (Inv-5). The
+    # settlement is the same ABANDONED either way; what differs is that the tree goes with it.
+    return (State.CANCELLING, [
+        _mg(tid, State.CANCELLING),
+        # …and the node's OWN executor is told, like every cascaded child is. The children re-enter
+        # through the CANCEL catch-all, which dispatches; this edge did not, so the one party whose
+        # contract actually ended by the clock was the one nobody informed.
+        Dispatch(tid, Signal.CANCEL),
+    ])
+
+
 # === CANCELLING (§14.3: cancellation is a two-step handshake, mirror of ASSIGN→ACCEPT) ===
 
 @_row(State.CANCELLING, Signal.CONFIRM_CANCEL)
@@ -360,8 +386,13 @@ def transition(
     # version is appended to the log (Inv-7: the immutable record is the LOG, not the node). Excluded:
     # OVERDUE (no progress signals, §14.3), CANCELLING (sole exit CONFIRM_CANCEL), terminals (no rows).
     # The single in-place spec change remains ACCEPT_CHALLENGE (above) — executor-initiated (FM-7→FM-5).
+    # …and from ESCALATED a re-ASSIGN carrying NO spec is still a revision. On a live node a bare
+    # ASSIGN means nothing and is refused (there is a contract and it did not change), but ESCALATED
+    # is the issuer being asked to decide, and one of his three answers — "the forecast was short,
+    # take more attempts" — changes only `max_iterations`. Demanding a spec there would force the
+    # issuer to restate a contract he is not disputing in order to say the one thing he means.
     if (signal == Signal.ASSIGN and state in REASSIGNABLE_STATES
-            and signal_data.spec is not None):
+            and (signal_data.spec is not None or state == State.ESCALATED)):
         return (State.OFFERED, [
             MutateGraph(task_id, MutationType.APPLY_SPEC, spec=signal_data.spec,
                         assignee=signal_data.assignee,   # carries a new executor for reassign (Del change); None = keep

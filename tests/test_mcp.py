@@ -156,11 +156,13 @@ def test_default_assignee_is_the_calling_agent(monkeypatch):
     kids = T.decompose(e, "self1", [{"task_id": "k1", "spec": {"description": "k"}}],
                        [{"criterion_name": "a", "child_id": "k1"}])
     assert kids[0]["assignee"] == "agent"
+    # the delegated and the renamed node hang under `self1` — the project's one root
     t2 = T.create_task(e, "other", {"description": "y", "criteria": [criterion("b", "B")]},
-                       assignee="bob")
+                       assignee="bob", parent_id="self1")
     assert t2["assignee"] == "bob"                       # explicit = real delegation, wins
     monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")   # optional RENAME, not a requirement
-    t3 = T.create_task(e, "named", {"description": "z", "criteria": [criterion("c", "C")]})
+    t3 = T.create_task(e, "named", {"description": "z", "criteria": [criterion("c", "C")]},
+                       parent_id="self1")
     assert t3["assignee"] == "claude-main"
     e.stop()
 

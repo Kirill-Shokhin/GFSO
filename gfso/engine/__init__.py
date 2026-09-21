@@ -14,10 +14,11 @@ from gfso.core.types import (
     Spec, Criteria, Probe, AcceptedRiskItem, Task, CheckResult, Recommendation, CriterionMapping, DepEdge,
     LLMProviderPort, AgentPort, StoragePort,
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
-    TERMINAL_STATES, DoneReason,
+    TERMINAL_STATES, DoneReason, DEFAULT_MAX_ITERATIONS,
 )
 from gfso.core.graph import Graph
-from gfso.core.graph.model import dep_scope, generation_of_task, non_leaf_ids
+from gfso.core.graph.model import dep_scope, generation_of_task, non_leaf_ids, root_of
+from gfso.core.graph.mutations import InvariantViolation
 from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_was_refuted
 from gfso.core.graph.review import finding_keys
 from gfso.core.graph.projection import build as build_projection, render as render_projection
@@ -250,7 +251,23 @@ class Engine:
         loop cannot retry all night unnoticed — it is a convenience, not a bound on the project.
         """
         if max_iterations is None:
-            max_iterations = 3
+            max_iterations = DEFAULT_MAX_ITERATIONS
+        # ONE ROOT PER PROJECT. A parentless node is not a free-standing task, it is THE goal: V(root)
+        # is the project's verdict, and the canon's one composition rule (V(parent)=AND(children))
+        # needs a parent, so a second parentless node is a second verdict with nothing to combine
+        # them. Nothing forbade it, and what filled the gap was an agent whose escalated root admitted
+        # no act: it built `root2`, then `root3`, and closed the goal green on a childless leaf while
+        # the work hung under the dead one. The refusal names the two acts that were actually meant.
+        existing_root = root_of(self.all_tasks()) if parent_id is None else None
+        if existing_root is not None and str(existing_root.id) != str(task_id):
+            raise InvariantViolation(
+                f"this project already has its root, '{existing_root.id}' "
+                f"({existing_root.spec.name or existing_root.spec.description[:60]}), and a project "
+                f"has exactly one: the root carries the goal's criteria, so a second one is a second "
+                f"verdict with no rule composing them. If '{task_id}' is part of that goal, give it a "
+                f"parent (`create_task(parent_id=…)`, and map it to the criterion it covers). If it "
+                f"is a different goal, it belongs in a different project (`use_project`)."
+            )
         self._assert_no_d_cycle(task_id, parent_id)
         # Creation is the ASSIGN effect (CREATE_TASK), logged — no unlogged pre-save. ASSIGN is an
         # issuer signal: source = parent's assignee or self. send_signal_sync so the node exists on return.
@@ -269,8 +286,9 @@ class Engine:
             raise ValueError(
                 f"parent {parent_id!r} does not exist, so {task_id} cannot hang under it — D is a "
                 f"DAG over NODES (§10), and an edge to something that is not one is not an edge in "
-                f"it. Create the parent first (`create_task {parent_id} …`), or leave `parent_id` "
-                f"out and this node is a root of its own.")
+                f"it. Create the parent first (`create_task {parent_id} …`), or — only while this "
+                f"project has no root yet — leave `parent_id` out and this node becomes it: a "
+                f"project has exactly one.")
         source = parent.assignee if parent and parent.assignee else assignee
         self.send_signal_sync(SignalData(
             signal=Signal.ASSIGN, task_id=task_id, spec=spec, source=source,
@@ -304,7 +322,7 @@ class Engine:
     # === Authoring operations (UPPER layer — desugar to the 12 signals, NOT new signals) ===
 
     def revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId, reason=None,
-               deadline=None) -> Task:
+               deadline=None, max_iterations: Optional[int] = None) -> Task:
         """Revise a node's spec — canon v3.7 §14.4 Inv-1: a packet change on a live node = **re-ASSIGN under
         the SAME id → OFFERED** (NOT the CANCEL signal). The executor re-ACCEPTs/CHALLENGEs the new contract;
         each version is appended to the log (Inv-7: the immutable record is the LOG, not the node).
@@ -320,7 +338,8 @@ class Engine:
         CAPABILITY_MISMATCH (Del change → counts in q_Del) / OTHER. Untyped keeps each metric's
         documented bias.
         """
-        return self._revise(task_id, new_spec, agent, reason=reason, deadline=deadline)
+        return self._revise(task_id, new_spec, agent, reason=reason, deadline=deadline,
+                            max_iterations=max_iterations)
 
     def edit_accepted_risks(self, task_id: TaskId, accepted_risks: tuple, agent: AgentId) -> Task:
         """UPPER convenience = read-modify-write over REVISE: replace a node's ACCEPTED_RISKS, keep the rest.
@@ -395,6 +414,16 @@ class Engine:
         t = self._graph.get_task(task_id)
         if t is None:
             raise ValueError(f"task {task_id} not found")
+        # REOPEN is restoration of a SETTLED node. ESCALATED is not settled — it is waiting for this
+        # very caller — so the verb is refused and the act that exists is named instead. Left
+        # unrefused it would have quietly worked (the edge out of ESCALATED is an ordinary re-ASSIGN),
+        # and the two verbs would blur: one spends a reopen against the finality gate, the other is
+        # the issuer answering a question the protocol asked him.
+        if t.state == State.ESCALATED:
+            raise ValueError(
+                f"{task_id} is not settled — it is ESCALATED, which means it is waiting for YOU "
+                f"(§14.3-bis). `reopen` restores a node that finished; here nothing finished. "
+                f"{self.issuer_moves_on(task_id)}")
         return self._revise(task_id, t.spec, agent)
 
     # === Query API ===
@@ -1592,7 +1621,8 @@ class Engine:
 
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
                 new_assignee: Optional[AgentId] = None, covers: tuple = (),
-                reason=None, severing: tuple = (), deadline=None) -> Task:
+                reason=None, severing: tuple = (), deadline=None,
+                max_iterations: Optional[int] = None) -> Task:
         """Canon v3.7 Inv-1 (§14.4): a spec/Del change = REVISION — ONE re-ASSIGN under the SAME id → OFFERED,
         never an in-place mutation and never the CANCEL signal (revision ≠ abandonment; no CANCELLING pass,
         no cascade). The id persists (Inv-7) so references (the parent's mapping, dependents' depends_on)
@@ -1635,6 +1665,10 @@ class Engine:
             signal=Signal.ASSIGN, task_id=task_id, spec=new_spec, source=agent,
             assignee=new_assignee or old.assignee, covers=tuple(covers),
             deadline=deadline,               # None = keep the one the node has (Inv-1)
+            # …and the REWORKING bound, the packet field an escalated node's issuer most often means:
+            # exhausting the attempts reads two ways, and "the forecast was short" is answered by
+            # raising it. None = keep.
+            max_iterations=max_iterations,
             revision_reason=reason))
         if a is None or a.rejected:
             # WHICH of the three, said by name. The refusal printed the node's state and then a
@@ -1645,11 +1679,9 @@ class Engine:
             st = self.get_state(task_id)
             cur = self._graph.get_task(task_id)
             issuer = self.issuer_of(task_id)
-            if st is not None and st.name in ("OVERDUE", "CANCELLING", "ESCALATED"):
+            if st is not None and st.name in ("OVERDUE", "CANCELLING"):
                 why = (f"a node in {st.name} takes no revision (§14.3). "
-                       + ("It is terminal: recovery is re-decomposition around it by ITS issuer."
-                          if st.name == "ESCALATED" else
-                          "Let it settle first — the clock or the cancellation handshake decides."))
+                       "Let it settle first — the clock or the cancellation handshake decides.")
             elif st is not None and st.name in ("DONE", "ABANDONED"):
                 why = (f"{task_id} is {st.name} and the R′ finality-gate refused it: it is either "
                        f"CONSUMED (the graph built on this result — then it is locked for good and "
@@ -2316,6 +2348,14 @@ class Engine:
                     f"'{t.id}' is delivered and waits on "
                     + ", ".join(f"'{k.id}' ({k.state.name})" for k in _gone)
                     + " — settled WITHOUT passing")
+            # …and a child in ESCALATED is NOT that case, though it stops the parent just as hard.
+            # It is not settled: it is waiting for its issuer, and saying "settled without passing"
+            # there prescribed FAIL-and-re-decompose over a node one revision away from running.
+            for k in self._graph.get_active_children(t.id):
+                if k.state == State.ESCALATED:
+                    _dead_waits.append(
+                        f"'{t.id}' is delivered and waits on '{k.id}', which is ESCALATED — "
+                        + self.issuer_moves_on(k.id))
         if _dead_waits:
             return {"complete": False, "stuck": True, "steps": [],
                     "directive": (
@@ -2364,9 +2404,13 @@ class Engine:
                 **({"in_flight": _running} if _running else {}),
                 "directive": (
                     f"Stuck: no actionable node, and the root is not DONE/PASS. {where} — a "
-                    f"settled node the graph cannot move past, and the canon hands that to the "
-                    f"ISSUER (§14.3). Re-decompose around it (revise the parent so another child "
-                    f"carries the criteria it left uncovered); a terminal node is not reopened."
+                    f"node the graph cannot move past, and the canon hands that to the "
+                    f"ISSUER (§14.3). "
+                    + "; ".join(f"on '{t.id}' {self.issuer_moves_on(t.id)}"
+                                for t in stranded if t.state == State.ESCALATED)
+                    + (" For a node settled for good, re-decompose around it (revise the parent so "
+                       "another child carries the criteria it left uncovered)."
+                       if any(t.state != State.ESCALATED for t in stranded) else "")
                     if stranded else
                     # …and when the hold IS the dependency order, name the pair. The frontier
                     # now gates OFFERED and REWORKING on producers too (a leaf handed out before
@@ -2378,9 +2422,52 @@ class Engine:
                      f"not PASSED, and nothing else can run meanwhile — drive them, or drop the "
                      f"edge (`remove_dependency`) if it was declared in error."
                      if waiting else
-                     "Stuck: no actionable node, but the root is not DONE/PASS — and nothing is "
-                     "settled-negative either, so the block is structural: check `list_holes` and "
-                     "the nodes' Dep producers."))}
+                     self._why_nothing_is_open()))}
+
+    def _why_nothing_is_open(self) -> str:
+        """The LAST answer, when no node is takeable and no dependency explains it.
+
+        It used to assert "nothing is settled-negative either, so the block is structural: check
+        `list_holes` and the nodes' Dep producers" — and it said that over a deliberately CLOSED
+        root, where `list_holes` answers empty, the claim is false, and the act that exists
+        (`reopen`, which `available_actions` names) went unmentioned. A door that gives no act and
+        no owner is the hole this release is about; the last branch is where one hides.
+        """
+        root = root_of(self.all_tasks())
+        if root is not None and root.state in (State.ABANDONED, State.DONE):
+            what = ("abandoned" if root.state == State.ABANDONED else
+                    "closed on a FAIL" if root.done_reason == DoneReason.FAIL else "done")
+            if root.state == State.DONE and root.done_reason != DoneReason.FAIL:
+                return (f"Nothing is open because the goal is finished: '{root.id}' is DONE. "
+                        f"If it should not be, `reopen('{root.id}')` puts it back to OFFERED while "
+                        f"nothing has been staked on it and reopens remain (§14.3).")
+            left = max(0, root.max_reopens - root.reopens)
+            return (f"Nothing is open, and that is not a block: the goal itself is settled — "
+                    f"'{root.id}' is {root.state.name} ({what}). Nothing below a settled root can "
+                    + (f"move it. To take the goal up again: `reopen('{root.id}')` "
+                       f"({left} of {root.max_reopens} reopens left), which returns it to OFFERED "
+                       f"to be re-earned by fresh contact. To start a different goal, open another "
+                       f"project (`use_project`)." if left else
+                       f"move it, and its reopens are spent ({root.reopens}/{root.max_reopens}) — "
+                       f"this goal is over. A different goal belongs in another project "
+                       f"(`use_project`)."))
+        # …and the OTHER state whose meaning is "a decision is owed" — one tick before the handover.
+        # It was answered with the structural sentence below: no act, no owner, and a diagnosis that
+        # is false of a childless leaf, pointing at a `list_holes` that returns nothing. The same
+        # shape as the settled-root hole, displaced one state over, and found the same way.
+        od = [t for t in self.all_tasks() if t.state == State.OVERDUE]
+        if od:
+            names = ", ".join(f"'{t.id}'" for t in od[:3]) + ("…" if len(od) > 3 else "")
+            return (f"Nothing is open because the deadline ran out: {names} "
+                    f"{'is' if len(od) == 1 else 'are'} OVERDUE, which accepts no progress signal "
+                    f"(§14.3) — the way back to work runs THROUGH the handover, never around it. "
+                    f"The clock escalates it on its next tick and the decision is then the ISSUER's; "
+                    f"he need not wait for that — `signal('{od[0].id}', 'CANCEL')` closes it now, and "
+                    f"`revise('{od[0].id}', deadline=…)` is what the escalation will offer him.")
+        return ("Stuck: no actionable node, and no dependency explains it. The usual cause is a "
+                "plan that does not admit its own children — `list_holes` names any open structural "
+                "hole, and `available_actions(<node>)` says, for one node, what its state admits "
+                "and who may send it.")
 
     def _plan_repair_before_signing(self, t, nm):
         """The step for a delivered node whose PASS is refused by rule — or None if none is.
@@ -2772,10 +2859,23 @@ class Engine:
                 return ({"complete": True,
                          "directive": f"COMPLETE — root '{roots[0].id}' is DONE/PASS. "
                                       f"Execution finished.", **extra}, None)
+            # SEVERAL ROOTS IS NOT A SHAPE THIS PROJECT HAS ANY MORE, so "every root is DONE/PASS"
+            # is not a verdict on a goal — there is no object saying what the PROJECT achieved when
+            # nothing composes them (V(parent) = AND(children) needs a parent). Such a graph can only
+            # predate the rule; the measured run that motivated it left exactly this on disk, with
+            # the real work under a dead root and the green on a childless one. Say what it is
+            # instead of reporting a completion no rule backs.
             named = ", ".join(f"'{r.id}'" for r in roots)
-            return ({"complete": True,
-                     "directive": f"COMPLETE — every root ({named}) is DONE/PASS. "
-                                  f"Execution finished.", **extra}, None)
+            return ({"complete": False, "multi_root": [str(r.id) for r in roots],
+                     "directive": (
+                         f"{len(roots)} parentless nodes ({named}) are all DONE/PASS, and that is "
+                         f"NOT a completed goal: a project has exactly one root, because the root "
+                         f"carries the goal's criteria and V(root) is the project's verdict — with "
+                         f"several there is no rule composing them and nothing says what was "
+                         f"achieved. This graph predates that rule. Decide which of them is the "
+                         f"goal and hang the others under it (`revise`/`map_criterion`), or move "
+                         f"the separate goals into their own projects (`use_project`)."),
+                     **extra}, None)
         # …and the root handed on is one with work LEFT, never a finished one, or the step search
         # below starts from a node whose subtree is already closed.
         return None, next((r for r in roots if not _passed(r)), roots[0])
@@ -2849,6 +2949,15 @@ class Engine:
         # own validation is skipped while they are unsettled, and the frontier went empty.
         # Measured on the E3 arm 2026-08-21: 51 minutes of a live run with nothing to do and
         # nothing said. Any non-terminal parent whose children wait on its plan gets the step.
+        # …AND A NODE WAITING FOR ITS ISSUER IS NOT ASKING FOR ITS PLAN TO BE CHECKED. An ESCALATED parent
+        # was told to `review_decomposition`, an act its state does not admit at all (CANCEL and
+        # ASSIGN are), while the decision that would actually move it went unnamed — and precisely
+        # when the node HAS a subtree, which is the delegated case this whole rule is for. A door
+        # may not name an act the FSM refuses; the first thing here is whose move it is.
+        if t.state == State.ESCALATED:
+            cands.append((0.5, t, Action.REVISE,
+                          f"DECIDE on '{t.id}' ({nm}): {self.issuer_moves_on(t.id)}"))
+            return True
         _gating = (kids and self._validate and not _passed(t)
                    and any(k.state == State.OFFERED for k in kids))
         if _gating and (_holes := _l0_holes(self._graph, t)):
@@ -3163,9 +3272,11 @@ class Engine:
             # …AND WHAT THE GRAPH CANNOT MOVE PAST, whether or not something else is actionable.
             out["stranded"] = [
                 {"task_id": str(t.id), "state": t.state.name,
-                 "why": (f"its rework loop was exhausted (§14.3) — a settled FAIL, and a parent's "
+                 "why": (self.why_escalated(t.id) if t.state == State.ESCALATED else
+                         f"its rework loop was exhausted (§14.3) — a settled FAIL, and a parent's "
                          f"PASS is the AND over its children, so nothing above it can complete"),
-                 "opens_with": (f"re-decompose around it: add a child that carries what "
+                 "opens_with": (self.issuer_moves_on(t.id) if t.state == State.ESCALATED else
+                                f"re-decompose around it: add a child that carries what "
                                 f"'{t.id}' left uncovered and map it (`map_criterion`). A terminal "
                                 f"node is not reopened and takes no revision.")}
                 for t in stranded]
@@ -3214,6 +3325,49 @@ class Engine:
         the tombstone.
         """
         return [t for t in self.stranded_nodes() if t.state is not State.ABANDONED]
+
+    def issuer_moves_on(self, task_id) -> str:
+        """The acts an ESCALATED node admits, WRITTEN ONCE because three surfaces said otherwise.
+
+        ESCALATED is the issuer's waiting state (§14.3): the executor stopped and the decision is
+        his. Every surface that met the state used to end its sentence with "a terminal node is not
+        reopened and takes no revision" — which named no act at all, and an agent told that a node
+        it must move admits nothing does not stop: it builds a new root beside the dead one, which
+        is what a measured run did twice in one graph.
+
+        WHICH moves, though, depends on HOW the node got here — §14.3 names three routes and only
+        one of them is a spent rework loop. Written once does not mean written blind: offering
+        "raise the rework bound" to a node that timed out is offering the one move that provably
+        cannot help (the bound touches neither clock), and saying "its loop was exhausted" of it is
+        simply false. The route is decidable: only the exhausted-loop cell carries DoneReason.FAIL.
+        """
+        t = self._graph.get_task(task_id)
+        if t is None:
+            return "the ISSUER decides — the node is gone from this graph."
+        spent = t.done_reason == DoneReason.FAIL
+        first = (f"raise the rework bound (`revise('{task_id}', max_iterations=N)`; "
+                 f"{t.iteration}/{t.max_iterations} spent) if the forecast was short rather than "
+                 f"the plan wrong"
+                 if spent else
+                 f"give it more time (`revise('{task_id}', deadline=…)`) if the clock is what ran "
+                 f"out — but if what ran out was a BLOCKER nobody cleared, more time alone will not "
+                 f"help: RESOLVE_BLOCK is not admissible here, so clear it outside the graph and "
+                 f"revise, or revise the contract around it (`get_dependencies('{task_id}')` names "
+                 f"what it was waiting on)")
+        return (f"the ISSUER decides, and has three moves: {first}; change or narrow the criteria "
+                f"(`revise`) if the plan is what is wrong; or close it "
+                f"(`signal('{task_id}', 'CANCEL')`, which cascades the live subtree). Silence "
+                f"closes it too, by the state's own timeout — it never drifts to PASS.")
+
+    def why_escalated(self, task_id) -> str:
+        """Why this node is waiting — the same route split, said where a reader meets the state."""
+        t = self._graph.get_task(task_id)
+        if t is not None and t.done_reason == DoneReason.FAIL:
+            return (f"its rework loop is spent ({t.iteration}/{t.max_iterations}, §14.3) — a "
+                    f"standing FAIL, and a parent's PASS is the AND over its children, so nothing "
+                    f"above it completes until its issuer decides")
+        return ("it ran out of time (§14.3: a deadline missed twice, or a block nobody cleared) — "
+                "not a verdict on the work, and nothing above it completes until its issuer decides")
 
     def stranded_nodes(self) -> list:
         """Nodes the graph cannot move past: settled NEGATIVE (§14.3 — the exhausted rework loop

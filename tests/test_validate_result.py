@@ -45,12 +45,23 @@ class _ValidatorLLM:
 
 
 def _delivered_node(e, tid="n1", extra_dep=False):
+    if extra_dep:
+        # a seam joins two SIBLINGS, so the pair hangs under the project's one root: a second
+        # parentless node would be a second verdict with nothing composing the two
+        T.create_task(e, "goal", {"description": "hang the picture",
+                                  "criteria": [criterion("hung", "the picture hangs")],
+                                  "accepted_risks": [{"item": "an unmodelled environment fault",
+                                                      "predictability": "EXTRAORDINARY"}]}, "boss")
     T.create_task(e, tid, {"name": "Nail it", "description": "hammer a nail",
                            "criteria": [criterion("flush", "nail head is flush"),
-                                        criterion("holds", "picture hangs on it")]}, "alice")
+                                        criterion("holds", "picture hangs on it")]}, "alice",
+                  **({"parent_id": "goal"} if extra_dep else {}))
     if extra_dep:
         T.create_task(e, "prod", {"description": "buy nails",
-                                  "criteria": [criterion("nails", "nails exist")]}, "alice")
+                                  "criteria": [criterion("nails", "nails exist")]}, "alice",
+                      parent_id="goal")
+        for kid in (tid, "prod"):                 # §13.4: an L0-complete plan admits its children
+            T.map_criterion(e, "goal", kid, "hung")
         T.add_dependency(e, "prod", tid, glue="uses the bought nails")
     assert T.signal(e, tid, "ACCEPT", "alice")["state"] == "EXECUTING"
     r = T.signal(e, tid, "DELIVER", "alice",

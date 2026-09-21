@@ -85,7 +85,9 @@ def main() -> None:
     # invent a verdict), and this loop would then spin for as long as the reader let it. The example
     # says what it is waiting on and returns.
     deadline = time.monotonic() + 1800
-    while e.get_state(T.TaskId("job")).name not in ("DONE", "ESCALATED"):
+    # The ends are the SETTLEMENTS. ESCALATED is the issuer waiting (§14.3-bis), which is not
+    # an end, and stopping there while never stopping on ABANDONED was both at once.
+    while e.get_state(T.TaskId("job")).name not in ("DONE", "ABANDONED"):
         d.dispatch_once()
         if time.monotonic() > deadline:
             print("stopped after 30 min without a terminal root — the graph as it stands:")
