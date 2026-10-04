@@ -18,6 +18,8 @@ name: tests
 # The path lists carry the packaging and release surface too: they were narrower, so an edit to
 # CHANGELOG, MANIFEST.in or a workflow itself ran nothing at all. (Written out twice because GitHub
 # Actions does not resolve YAML anchors.)
+# README and the canon's surface are the theory's: a theory push runs only the formal workflow and
+# passes there on its own; the product's canon citations and names are guarded by the job below.
 on:
   push:
     paths:
@@ -26,10 +28,8 @@ on:
       - 'packaging/**'
       - 'pyproject.toml'
       - 'MANIFEST.in'
-      - 'README.md'
       - 'CHANGELOG.md'
       - 'SECURITY.md'
-      - '.github/workflows/**'
   pull_request:
     paths:
       - 'gfso/**'
@@ -37,13 +37,22 @@ on:
       - 'packaging/**'
       - 'pyproject.toml'
       - 'MANIFEST.in'
-      - 'README.md'
       - 'CHANGELOG.md'
       - 'SECURITY.md'
-      - '.github/workflows/**'
   workflow_dispatch:
 
 jobs:
+  # The product's canon citations and names, over the whole tree — the formal workflow reads only the
+  # canon's own surface, so a theory push passes on its own and the product's drift reds here.
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Canon reference guard over the product
+        run: bash formal/scripts/check_refs.sh
+      - name: Naming guard over the product
+        run: bash formal/scripts/check_naming.sh
+
   pytest:
     strategy:
       fail-fast: false

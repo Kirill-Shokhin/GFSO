@@ -1,49 +1,41 @@
 # GFSO — the dependency map
 
-> What follows from what. A solid arrow `A --> B` = "B is derived from / depends on A".
-> A dashed one `A -.-> B` = an auxiliary link (guard / detector / explanatory view / empirical
-> corroboration), labelled with its role. Everything is built from the canon `applied_gfso_v4_en.md`
-> (§ given in the nodes and on the edge labels; the full register — "Edge ledger" at the bottom).
+> What follows from what in the canon `applied_gfso_v4_en.md`. A solid arrow `A --> B` = "B is derived from /
+> depends on A"; a dashed one is an auxiliary link labelled with its kind. Every node carries the § of its home;
+> every edge is a claim of the canon, the nontrivial ones registered with their § in the Edge ledger at the bottom.
+> The claims themselves live in the canon — the map draws only their dependencies.
 >
-> **The completeness spine (what the map exists for):** axioms → 4 primitives → the correctness
-> conditions (§10) → Thm 1 (§11.1) → **the covering axiom CA1 (§12.8)** → **the 7 FM: a complete
-> independent basis of failures (§12.4)**.
-> This is **one of three** completeness closures in v4 — each under its own covering axiom (§1.4, §27):
-> the 7 FM (CA1, §12.8) · the three verification levels (CA-Morris, §13.4) · the five links
-> (CA-Links, §4.2). The map unfolds the first in full and carries the other two as nodes on the
-> foundation view (E1 corroborates the first, 0/216).
-> The standards (§13), the protocol (§14), the metrics (§15.2) and the AI layer (§15.3) are
-> **guards/detectors** hung on specific FMs — **not** a source of completeness.
+> **The completeness spine (what the map exists for):** axioms → primitives → correctness (Ch. 2, 7) → Thm 1 (§7.3)
+> → **CA1 (§8.2)** → **the 6 FM as a basis (§8.8)**, scoped by §8.10. It is one of the three closures of §20.5
+> (CA1 · CA-Morris §9.1 · CA-Links §5.3); the map unfolds the first and carries the other two as nodes on View 4.
+> The standards (Ch. 9), the protocol (Ch. 11–12), the metrics (§15.4) and the AI layer (Ch. 17) hang on specific
+> FMs as **guards/detectors — not a source of completeness**.
 
 ## Edge legend
 
 | Edge | Meaning |
 |---|---|
 | `A --> B` solid | B is **derived from / depends on** A (a load-bearing deduction of the canon) |
-| `A -.->\|guard\| B` | a standard/invariant/axiom **excludes** this FM (§13, §13.6, §14.4) — not a source of completeness |
-| `A -.->\|detect\| B` | a metric/protocol mechanism **catches** this FM at runtime (§14.2, §15.2) |
-| `A -.->\|corrob\| B` | empirical corroboration (E1: 0/216 outside the basis) |
-| `A -.->\|explain\| B` | the theory-model §2–§3 + §7: the grounding view (map/territory) — the canon derives the apparatus from it (Part II), but its edges do not re-prove T1 / the 7 FM / minimality |
-| `A -.->\|second reading\| B` | §2.6: a **status change** (postulate → interface condition of Contact), **NOT** a derivation — the axiomatic status of A1/A2 stays primary. Drawn dashed on purpose: a solid arrow here would assert exactly the laundering §2.6 forbids |
-| `A -.->\|mirror\| B` | a projection of the canon (Constitution / CORE / code) — a rendering, not a new primitive |
+| `A -.->\|guard\| B` | a standard/invariant/axiom/protocol mechanism **guards** this FM (§9.10, Ch. 11–12) — not a source of completeness |
+| `A -.->\|detect\| B` | a metric **catches** this FM at runtime (§15.4, §15.7) |
+| `A -.->\|corrob\| B` | empirical corroboration (E1, `EVIDENCE_LOG`) |
+| `A -.->\|explain\| B` | the theory-model (Ch. 3–6, §19.3) grounding the apparatus (§20.11); dashed because its edges do not re-prove T1 / the 6 FM / minimality |
+| `A -.->\|second reading\| B` | §3.7: "The reading adds to the axioms, postulates still, the role of interface conditions of Contact, without deriving them" — dashed on purpose: a solid arrow into A1/A2 would assert the derivation §3.7 denies |
+| `A -.->\|bounds\| B` | a premise (§20.5), boundary (§20.8) or around-the-theory node (§20.9) limiting B |
+| `A -.->\|mirror\| B` | a projection of the canon — a rendering, not a new primitive |
 
-> **The grounding discipline (strict).** Every edge = a real claim of the canon, with a §.
-> The theory-model (§2–§3) is the **foundation**: the canon leads with it and derives the apparatus as
-> its consequence (Part II — "the apparatus as consequence"). What it does **not** do: it does not change
-> T1 / the 7 FM / minimality — those stand exactly as proved (§1.5: "the theory-model does not change
-> the formal results; it grounds them"). Hence its edges here are dashed `explain`: they carry
-> justification, not re-proof; and no framework edge "derives" the theory-model — the direction is
-> one-way.
+> **Direction.** The `explain` edges run one-way, from the theory-model into the apparatus (§20.11's logical map).
+> METH alone takes edges in from the apparatus: §18.1's mechanisms are forced by (F2) in Prop 7's model and (F3) `c_check`
+> graded by level (Ch. 9).
 
-> The map is split into **4 focus views** (each readable on its own; a node/edge may repeat across
-> views — that is deliberate). The full graph is at the bottom, under a spoiler.
-> The classDef styles are shared by all views.
+> The map is split into **4 focus views** (each readable on its own; a node/edge may repeat across views — that is
+> deliberate). The full graph is at the bottom, under a spoiler. The classDef styles are shared by all views.
 
 ---
 
 ## View 1 — THE COMPLETENESS SPINE (hero)
 
-*What it shows: the closed completeness chain of the 7 FM — axioms → primitives → correctness → the covering axiom CA1 → 7 FM → basis (one of v4's three closures; the other two, CA-Morris §13.4 and CA-Links §4.2, are named here and carried on View 4); E1 corroborates; the failure root explains FM-1/FM-3.*
+*What it shows: axioms → primitives → correctness → CA1 → 6 FM → basis; E1 corroborates; the failure root's integration cases explain FM-1; the seam's second reading of the axioms.*
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'nodeSpacing': 30, 'rankSpacing': 70}}}%%
@@ -58,19 +50,19 @@ flowchart TD
 
   subgraph SAX[" "]
     direction TB
-    A1["A1 — Verifiability §9"]
-    A2["A2 — Decomposability §9"]
+    A1["A1 — Verifiability §1.2"]
+    A2["A2 — Decomposability §1.2"]
   end
   class A1,A2 axiom
 
   subgraph SPR[" "]
     direction TB
-    T["T — Task §10"]
-    D["D — Decomposition §10"]
-    Del["Del — Delegation §10"]
-    Dep["Dep — Dependency §10"]
-    V["V — Validation, derived §10"]
-    MIN["MIN — Minimality §10.2"]
+    T["T — Task §2.2"]
+    D["D — Decomposition §2.4"]
+    Del["Del — Delegation §2.6"]
+    Dep["Dep — Dependency §2.7"]
+    V["V — Validation, derived §2.3"]
+    MIN["MIN — Minimality §7.5"]
   end
   class T,D,Del,Dep prim
   class V derived
@@ -78,50 +70,49 @@ flowchart TD
 
   subgraph SCM[" "]
     direction TB
-    JS["JS — Joint sufficiency §10"]
-    NR["NR — Non-redundancy §10"]
-    BIN["BIN — Binarity |L|=2 §11.2"]
-    ANDu["ANDu — Uniqueness of AND §11.3"]
-    T1["T1 — Theorem 1 §11.1"]
-    INFO["INFO — Informativeness §11.4"]
+    JS["JS — Joint sufficiency §2.4"]
+    NR["NR — Non-redundancy §2.4"]
+    BIN["BIN — Binarity |L|=2 §7.1"]
+    ANDu["ANDu — Uniqueness of AND §7.2"]
+    T1["T1 — Theorem 1 §7.3"]
+    INFO["INFO — Informativeness §7.4"]
   end
   class JS,NR,BIN,ANDu,T1,INFO derived
 
   subgraph SAXC[" "]
     direction TB
-    AX1["CA1 — Evaluation Completeness §12.8"]
-    AX2["CA2 discharged: causal order §12.8 — 3 phases, zero assumptions<br/>(the single clock is discharged §27)"]
+    AX1["CA1 — Evaluation Completeness §8.2"]
+    AX2["CA2 discharged — causal order §8.2"]
   end
   class AX1 axiom
   class AX2 derived
 
-  subgraph SFM["7 FM — the failure basis §12.4"]
+  subgraph SFM["6 FM — the failure basis §8.8"]
     direction TB
-    FM1["FM-1 Correspondence §12.2"]
-    FM2["FM-2 Consistency §12.2"]
-    FM3["FM-3 Veracity §12.2"]
-    FM4["FM-4 Propagation §12.2"]
-    FM6["FM-6 Feasibility before §12.3"]
-    FM5["FM-5 Freshness during §12.3"]
-    FM7["FM-7 Feedback after §12.3"]
+    FM1["FM-1 Correspondence §8.3"]
+    FM2["FM-2 Consistency §8.3"]
+    FM3["FM-3 Veracity §8.4"]
+    FM4["FM-4 Propagation §8.5"]
+    FM6["FM-6 Feasibility §8.6"]
+    FM5["FM-5 Freshness §8.6"]
   end
-  class FM1,FM2,FM3,FM4,FM5,FM6,FM7 fm
+  class FM1,FM2,FM3,FM4,FM5,FM6 fm
 
-  BASIS["BASIS — the complete basis FM-1..7 §12.4/§12.8"]
+  BASIS["BASIS — FM-1..6 §8.8"]
   class BASIS basis
 
-  ROOT["ROOT — the failure root e ∈ Ŝ_used∖S §2.2/§12"]
+  ROOT["ROOT — the failure root §3.2/§8.1"]
   class ROOT ground
 
-  SEAM["SEAM — Contact, the single seam §2.4<br/>the ONLY operation that reads S"]
+  SEAM["SEAM — Contact §3.5"]
   class SEAM ground
 
-  E1["E1 — 216 post-mortems, 0 outside the basis"]
+  E1["E1 — 216 post-mortems (EVIDENCE_LOG)"]
   class E1 emp
 
   %% axioms → primitives
   A1 --> T
-  A1 --> V
+  T --> V
   A2 --> D
   A2 --> Del
   T --> Dep
@@ -149,24 +140,22 @@ flowchart TD
   NR --> AX1
   BIN --> AX1
   ANDu --> AX1
-  A1 -->|connectedness of the evaluation interval| AX2
+  A1 -->|connectedness §8.2| AX2
 
   %% each FM derived
   JS --> FM1
   NR --> FM1
-  Dep --> FM2
+  AX1 --> FM2
   D --> FM2
   BIN --> FM3
   A1 --> FM3
   ANDu --> FM4
   A1 --> FM6
   A1 --> FM5
-  A1 --> FM7
   AX2 --> FM5
   AX2 --> FM6
-  AX2 --> FM7
 
-  %% the 7 FM = a proved basis
+  %% the 6 FM = a proved basis
   AX1 --> BASIS
   FM1 --> BASIS
   FM2 --> BASIS
@@ -174,35 +163,26 @@ flowchart TD
   FM4 --> BASIS
   FM5 --> BASIS
   FM6 --> BASIS
-  FM7 --> BASIS
 
   %% E1 corroborates
   E1 -.->|corrob| AX1
   E1 -.->|corrob| BASIS
 
-  %% the seam: where S enters at all, and the second reading of the axioms
-  SEAM -.->|explain: S enters only here §2.3–§2.4| ROOT
-  SEAM -.->|second reading §2.6: solvability of the OUTPUT| A1
-  SEAM -.->|second reading §2.6: κ-constructibility of the INPUT| A2
+  %% the seam: where S enters, and the second reading of the axioms
+  SEAM -.->|explain §3.3–3.5| ROOT
+  SEAM -.->|second reading §3.7: OUTPUT| A1
+  SEAM -.->|second reading §3.7: INPUT| A2
 
-  %% the failure root explains FM-1/FM-3
+  %% the failure root's integration cases explain FM-1
   ROOT -.->|explain hole-i| FM1
-  ROOT -.->|explain insensitive-ii| FM3
+  ROOT -.->|explain insensitive-ii| FM1
 ```
-
-> **Reading the two `second reading` edges (anti-laundering, §2.6 — hold this louder than the recast).**
-> They are dashed, and they point *at* A1/A2 rather than *from* them, for one reason: §2.6 is a
-> **status change** (postulate → interface condition of Contact), **not** a derivation of A1/A2 from an
-> empty field. The residue is ≈ the axioms themselves (A1's clause (ii) is apparatus-uncertifiable; κ
-> is a cost premise about the actor; the decomposability clause is ≈ A2 moved). **The axiomatic status
-> of A1/A2 (§9) remains primary.** A solid arrow into A1/A2 here would encode exactly the claim the
-> canon spends a paragraph forbidding.
 
 ---
 
 ## View 2 — GUARDS AND DETECTORS
 
-*What it shows: the 7 FM as anchors, with the standards (§13), the protocol (§14), the metrics (§15.2) and the AI layer (§15.3) hung on them — guards and runtime detectors, built out of BASIS.*
+*What it shows: the 6 FM as anchors, with the standards (Ch. 9), the protocol (Ch. 11–12), the metrics (§15.4) and the AI layer (Ch. 17) hung on them — guards and runtime detectors, built out of BASIS.*
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk'}}}%%
@@ -214,8 +194,10 @@ flowchart LR
   classDef derived fill:#0f2030,stroke:#5b9bd5,color:#e6f0fa;
   classDef guard fill:#241a32,stroke:#9b7fc4,color:#efe9f7;
   classDef bound fill:#3a1326,stroke:#c46a93,color:#f6e3ec,stroke-dasharray:3 3;
+  classDef premise fill:#262626,stroke:#b0a07a,color:#efe8d6,stroke-dasharray:2 2;
+  classDef around fill:#1e1e1e,stroke:#7a7a7a,color:#dcdcdc,stroke-dasharray:1 3;
 
-  BASIS["BASIS — FM-1..7 §12.4"]
+  BASIS["BASIS — FM-1..6 §8.8"]
   class BASIS basis
 
   FM1["FM-1 Correspondence"]
@@ -224,56 +206,54 @@ flowchart LR
   FM4["FM-4 Propagation"]
   FM5["FM-5 Freshness"]
   FM6["FM-6 Feasibility"]
-  FM7["FM-7 Feedback"]
-  class FM1,FM2,FM3,FM4,FM5,FM6,FM7 fm
+  class FM1,FM2,FM3,FM4,FM5,FM6 fm
 
   %% light anchors
-  A1["A1 §9"]; A2["A2 §9"]; T["T §10"]; BIN["BIN §11.2"]
+  A1["A1 §1.2"]; A2["A2 §1.2"]; D["D §2.4"]; BIN["BIN §7.1"]
   class A1,A2 axiom
   class BIN derived
-  BFAITH["BFAITH — the faithfulness residue §8"]
+  BFAITH["BFAITH — faithfulness residue §20.2"]
   class BFAITH bound
 
-  %% standards §13
-  STD1["STD-1 ACCEPTED_RISKS §13.1"]
-  STD2["STD-2 admissibility of omission §13.2"]
-  STD3["STD-3 risk grouping §13.3"]
-  STD4["STD-4 form verification §13.4"]
-  CHK["CHECK-1,1b,2–8 (9) + Solver §13.4"]
-  COST["COST verify-vs-explore §13.5"]
+  %% standards Ch. 9
+  STD1["STD-1 ACCEPTED_RISKS §9.2"]
+  STD2["STD-2 predictability §9.3"]
+  STD3["STD-3 risk grouping §9.4"]
+  STD4["STD-4 form verification §9.5"]
+  CHK["CHECK battery §9.5–9.6"]
+  COST["COST verify vs explore §9.9"]
   class STD1,STD2,STD3,STD4,CHK,COST guard
 
-  %% protocol §14
-  SIG["SIG — 12 signals §14.2"]
-  FSM["FSM — 12 states §14.3"]
-  INV["INV — invariants §14.4"]
-  AGN["AGN — agent-agnosticity §14.5"]
-  class SIG,FSM,INV,AGN guard
+  %% protocol Ch. 11–12
+  SIG["SIG — 12 signals §11.2"]
+  FSM["FSM — 11 states §12.1"]
+  INV["INV — invariants §12.3–12.13"]
+  SOD["SOD — separation of duties §10.3"]
+  class SIG,FSM,INV,SOD guard
 
-  %% metrics §15.2
-  GRAPH["GRAPH — the task graph §15.1"]
-  QT["q_T §15.2"]; QD["q_D §15.2"]; QV["q_V §15.2"]; QDEP["q_Dep §15.2"]; QDEL["q_Del §15.2"]
-  SELF["SELF — self-measurement §21"]
-  TRANS["TRANS — transparency §22"]
+  %% metrics §15.4
+  GRAPH["GRAPH — log and 𝒢 §15.1"]
+  QT["q_T §15.4"]; QD["q_D §15.4"]; QV["q_V §15.4"]; QDEP["q_Dep §15.4"]; QDEL["q_Del §15.4"]
+  SELF["SELF — Thm 10 §15.6"]
+  TRANS["TRANS — Thm 11 §11.6"]
   class GRAPH,QT,QD,QV,QDEP,QDEL,SELF,TRANS guard
 
-  %% AI layer §15.3
-  SOLVER["SOLVER — deduction §15.3.2"]
-  LLM["LLM — induction+abduction §15.3.2"]
-  XIMP["XIMP — cross-impossibility §15.3.3"]
-  SAFE["SAFE — safety net §15.3.6"]
+  %% AI layer Ch. 17
+  SOLVER["SOLVER §17.2"]
+  LLM["LLM §17.2"]
+  XIMP["XIMP — cross-impossibility §17.3"]
+  SAFE["SAFE — safety net §17.7"]
   class SOLVER,LLM,XIMP,SAFE guard
 
   %% standards = FM guards
-  T -.->|ACCEPTED_RISKS| STD1
+  D -.->|ACCEPTED_RISKS, the split's register| STD1
   STD1 -.->|guard| FM1
   STD2 -.->|admissibility| FM1
   STD3 -.->|guard| FM1
   STD4 -.->|guard| FM1
   STD4 -.->|guard| FM2
-  STD4 -.->|guard| FM4
+  T1["T1 §7.3"] -.->|departure from AND, no CHECK| FM4
   STD4 -.->|guard| FM5
-  STD4 -.->|guard| FM7
   A1 -.->|form only, no guard| FM3
   STD4 --> CHK
   CHK -.->|guard L1| FM1
@@ -285,15 +265,16 @@ flowchart LR
   BASIS --> SIG
   BASIS --> FSM
   SIG --> FSM
-  SIG -.->|guard FM7| FM7
+  SIG -.->|guard at contact| FM1
+  SIG -.->|guard at contact| FM2
   SIG -.->|guard FM5| FM5
   SIG -.->|guard FM3| FM3
-  FSM -.->|guard: deferred decomposition| FM6
+  FSM -.->|guard: deferral §8.6| FM6
   INV -.->|guard| FM3
   INV -.->|guard| FM5
   BIN --> INV
   FSM --> INV
-  AGN -.->|guard IC| FM3
+  SOD -.->|guard IC at the seam| FM3
 
   %% metrics: the graph from the protocol, the q's catch FMs
   SIG --> GRAPH
@@ -304,10 +285,11 @@ flowchart LR
   GRAPH --> QDEP
   GRAPH --> QDEL
   QT -.->|detect| FM1
+  QT -.->|detect| FM2
   QD -.->|detect| FM1
   QV -.->|detect false-PASS only| FM3
-  QDEP -.->|detect| FM5
-  QDEL -.->|detect| FM7
+  QV -.->|detect a PASS over a dropped fail| FM4
+  QDEP -.->|detect a race| FM5
   GRAPH --> SELF
   INV --> TRANS
   STD1 --> TRANS
@@ -328,9 +310,9 @@ flowchart LR
 
 ---
 
-## View 3 — THE PART-III RESULTS AND THE BOUNDARIES
+## View 3 — THE CH. 16 RESULTS AND THE BOUNDARIES
 
-*What it shows: the load-bearing results of Part III (Prop 3 / Prop 8 / the cascade), the derivatives (stratification, Scrum), and the boundary nodes tied to exactly what each bounds.*
+*What it shows: the load-bearing results of Ch. 16 (Prop 3, Prop 8, Prop 7), the derivatives (stratification, Scrum), and the premise / boundary / around nodes tied to exactly what each bounds.*
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk'}}}%%
@@ -341,63 +323,68 @@ flowchart LR
   classDef fm fill:#3a1f12,stroke:#d98a4a,color:#fbeee2,stroke-width:2px;
   classDef guard fill:#241a32,stroke:#9b7fc4,color:#efe9f7;
   classDef bound fill:#3a1326,stroke:#c46a93,color:#f6e3ec,stroke-dasharray:3 3;
+  classDef premise fill:#262626,stroke:#b0a07a,color:#efe8d6,stroke-dasharray:2 2;
+  classDef around fill:#1e1e1e,stroke:#7a7a7a,color:#dcdcdc,stroke-dasharray:1 3;
   classDef emp fill:#102a2a,stroke:#4fb0b0,color:#e3f5f5;
   classDef basis fill:#42230f,stroke:#e0a050,color:#fdf1e2,stroke-width:3px;
   classDef ground fill:#2b2b2b,stroke:#8a8a8a,color:#e8e8e8,stroke-dasharray:5 4;
+  classDef cited fill:#0f2030,stroke:#5b9bd5,color:#e6f0fa,stroke-dasharray:4 2;
 
   %% light anchors
-  A1["A1 §9"]; A2["A2 §9"]; Dep["Dep §10"]; D["D §10"]
+  A1["A1 §1.2"]; A2["A2 §1.2"]; Dep["Dep §2.7"]; D["D §2.4"]
   class A1,A2 axiom
   class Dep,D prim
-  T1["T1 §11.1"]; INFO["INFO §11.4"]
+  T1["T1 §7.3"]; INFO["INFO §7.4"]
   class T1,INFO derived
-  FM3["FM-3 §12.2"]
+  FM3["FM-3 §8.4"]
   class FM3 fm
-  GRAPH["GRAPH §15.1"]; SIG["SIG §14.2"]; INV["INV §14.4"]; STD1["STD-1 §13.1"]; STD4["STD-4 §13.4"]; BASIS["BASIS §12.4"]
+  GRAPH["GRAPH §15.1"]; SIG["SIG §11.2"]; INV["INV §12.3–12.13"]; STD1["STD-1 §9.2"]; STD4["STD-4 §9.5"]; BASIS["BASIS §8.8"]
   class GRAPH,SIG,INV,STD1,STD4 guard
   class BASIS basis
-  ATTR["ATTR — two-sided attribution §3.5"]
+  ATTR["ATTR — two-sided attribution §4.4"]
   class ATTR ground
-  E2["E2 — convergence to a reference (decompose)"]
+  E2["E2 — decomposition method (EVIDENCE_LOG)"]
   class E2 emp
 
   %% derivative results
-  STRAT["STRAT — stratification §25.1"]
-  SCRUM["SCRUM — Scrum ⊂ GFSO §25.2"]
+  STRAT["STRAT — stratification §19.5"]
+  SCRUM["SCRUM — embedded, a relaxation §19.4"]
   class STRAT,SCRUM derived
 
-  %% Part III results
-  P3["P3 — Blackwell dominance §16.2<br/>in ADHERENCE α: for α₂&gt;α₁, ℰ_α₂ ≥_B ℰ_α₁<br/>garbling = proj_α₁ discards the protocol<br/>signals of the tasks in (α₁,α₂]"]
-  P8["P8 — Incentive compatibility §19<br/>honesty dominant per observed state,<br/>at a detection probability p (structural = the channel, not p=1);<br/>IC-critical features §19.1: CHALLENGE · BLOCK ·<br/>DELIVER+self_validation · ACCEPTED_RISKS-mandatory ·<br/>FAIL+criteria[] · criteria-immutable ·<br/>REJECT_CHALLENGE+justification · timeouts · max_iterations ·<br/>ACCEPT · ACCEPT_CHALLENGE"]
-  PCASC["PCASC — the cascade bound §18.3 Prop 7<br/>(Λ·γ)ⁿ vs Λⁿ when Λ·γ&lt;1<br/>from submultiplicativity of operator norms"]
-  BIBO["BIBO — feedback-channel stability §18.3 Remark<br/>small-gain (Zames 1966): gain↑·gain↓&lt;1 ⟹ no spiral<br/>a DIFFERENT channel from Prop 7's cascade"]
-  LOCAL["LOCAL — locality of correction §3.5<br/>from explicit composition/attribution<br/>— NOT from the cascade bound"]
-  class P3,P8,PCASC,BIBO,LOCAL derived
+  %% Ch. 16 results
+  P3["P3 — Prop 3, information dominance §16.2"]
+  P8["P8 — Prop 8, incentive compatibility §16.11"]
+  PCASC["PCASC — Prop 7, scale bounds §16.7"]
+  BIBO["BIBO — small-gain, by citation §16.7"]
+  LOCAL["LOCAL — locality of correction §7.3"]
+  class P3,P8,PCASC,LOCAL derived
+  class BIBO cited
 
-  %% boundaries
-  BRAT["BRAT — rationality §24.1"]
-  BADV["BADV — non-adversarial §24.2"]
-  BCAUS["BCAUS — L2 causal correctness §24.3"]
-  BOVR["BOVR — overhead §24.4"]
-  BDOM["BDOM — scope A1∧A2 §24.6"]
-  BFAITH["BFAITH — the faithfulness residue §8"]
-  BMETH["BMETH — decomposition-method quality §8"]
-  class BRAT,BADV,BCAUS,BOVR,BDOM,BFAITH,BMETH bound
+  %% premises of Ch. 16 (§20.5), boundaries of Ch. 20 (§20.8), around (§20.9)
+  BRAT["BRAT — rationality §16.2"]
+  BADV["BADV — non-adversarial §16.4"]
+  BCAUS["BCAUS — causal correctness §7.3"]
+  BOVR["BOVR — overhead §16.3"]
+  BDOM["BDOM — scope A1∧A2 §2.1"]
+  BFAITH["BFAITH — faithfulness residue §20.2"]
+  BMETH["BMETH — method quality §20.2"]
+  class BCAUS,BDOM,BFAITH,BMETH bound
+  class BRAT,BADV premise
+  class BOVR around
 
   %% derivatives
   D --> STRAT
-  A1 --> STRAT
   SIG --> SCRUM
   D --> SCRUM
   BASIS --> SCRUM
 
-  %% Part III results
+  %% Ch. 16 results
   GRAPH -->|info structure| P3
   SIG --> P8
   INV --> P8
   STD1 --> P8
-  T1 -.->|the validation step the gain models; γ&lt;1 is DEFINITIONAL in §18.3, not derived from T1| PCASC
-  SIG -->|feedback FM7 channel| BIBO
+  T1 -->|the validation step §16.7| PCASC
+  SIG -->|upward feedback channel| BIBO
   ATTR --> LOCAL
 
   %% E2 inherits completeness
@@ -408,6 +395,7 @@ flowchart LR
   BADV -.->|bounds| P8
   BCAUS -.->|bounds| T1
   BCAUS -.->|bounds| FM3
+  BCAUS -.->|bounds| PCASC
   BOVR -.->|bounds| STD4
   BDOM -.->|bounds| A1
   BDOM -.->|bounds| A2
@@ -419,7 +407,7 @@ flowchart LR
 
 ## View 4 — THE THEORY-MODEL FOUNDATION + MIRRORS
 
-*What it shows: the theory-model §2–§3 + §7 (dashed `explain` = grounding), the single contact seam and the two other covering axioms, and the canon's mirrors (`mirror`) — the foundation the canon derives the apparatus from, and its projections; no re-proof of T1 / the 7 FM / minimality happens here.*
+*What it shows: the theory-model (dashed `explain` = grounding), the single contact seam, the two other covering axioms, and the canon's mirrors (`mirror`); no re-proof of T1 / the 6 FM / minimality happens here.*
 
 ```mermaid
 %%{init: {'flowchart': {'nodeSpacing': 45, 'rankSpacing': 55}}}%%
@@ -431,63 +419,67 @@ flowchart LR
   classDef guard fill:#241a32,stroke:#9b7fc4,color:#efe9f7;
   classDef ground fill:#2b2b2b,stroke:#8a8a8a,color:#e8e8e8,stroke-dasharray:5 4;
   classDef bound fill:#3a1326,stroke:#c46a93,color:#f6e3ec,stroke-dasharray:3 3;
+  classDef premise fill:#262626,stroke:#b0a07a,color:#efe8d6,stroke-dasharray:2 2;
+  classDef around fill:#1e1e1e,stroke:#7a7a7a,color:#dcdcdc,stroke-dasharray:1 3;
   classDef mirror fill:#222018,stroke:#9a8f5a,color:#f1edda,stroke-dasharray:2 3;
   classDef axiom fill:#1b2a4a,stroke:#7da2d9,color:#eaf0fb,stroke-width:2px;
 
   %% the theory-model = the foundation (classDef `ground`)
-  SEAM["SEAM — Contact §2.4<br/>Contact : (e, [e∈S]) ↦ (verdict, Ŝ′)<br/>the ONLY operation of the field that reads S"]
-  SINGLE["SINGLE-SEAM §2.3–§2.5<br/>the apparatus 𝒜 is syntactically S-free:<br/>every α ∈ 𝒜 is Ŝᵏ → Ŝ (Lemma 1)"]
-  SSHAT["SSHAT — S/Ŝ notation §2.2"]
-  SUBST["SUBST — the continuous substrate §5"]
-  LINKS["LINKS — the 5 links §4"]
-  METH["METH — the methodology §7"]
-  VAL["VAL — value = making-explicit §6.2"]
-  ROOT["ROOT — the failure root §2.2/§12"]
+  SEAM["SEAM — Contact §3.5"]
+  SINGLE["SINGLE-SEAM §3.5, by Lemma 1 §3.4"]
+  SSHAT["SSHAT — S and Ŝ §3.1"]
+  SUBST["SUBST — continuous substrate Ch. 6"]
+  LINKS["LINKS — the five links Ch. 5"]
+  METH["METH — methodology §18.1"]
+  VAL["VAL — making-explicit §19.3"]
+  ROOT["ROOT — the failure root §3.2/§8.1"]
   class SEAM,SINGLE,SSHAT,SUBST,LINKS,METH,VAL,ROOT ground
 
-  %% the other two covering axioms (the canon has THREE; View 1 unfolds CA1)
-  AXM["CA-Morris §13.4 — morris_trichotomy<br/>syntax ⊕ semantics ⊕ pragmatics; no fourth<br/>⟹ the 3 verification levels"]
-  AXL["CA-Links §4.2 — directed_action_completeness<br/>REPRESENTATION(3) ⊕ REALIZATION(2); no sixth<br/>⟹ the 5 links. The REPRESENTATIONAL branch alone is<br/>sub-CA1 (REACHES-ternarity + the folded START residue);<br/>the modal and realization branches are at full covering strength"]
+  %% the other two covering axioms (View 1 unfolds CA1)
+  AXM["CA-Morris §9.1"]
+  AXL["CA-Links §5.3"]
   class AXM,AXL axiom
 
   %% mirrors
   CONST["CONST — method_gfso.md"]
   CORE["CORE.md"]
-  CODE["CODE — gfso/ (the canon's v4.0 names, enum to model checker)"]
+  CODE["CODE — gfso/"]
   class CONST,CORE,CODE mirror
 
   %% light anchors
-  A1["A1 §9"]; A2["A2 §9"]
+  A1["A1 §1.2"]; A2["A2 §1.2"]
   class A1,A2 axiom
-  NR["NR §10"]; JS["JS §10"]; MIN["MIN §10.2"]
+  NR["NR §2.4"]; JS["JS §2.4"]; MIN["MIN §7.5"]
   class NR,JS,MIN derived
-  FM1["FM-1 §12.2"]; FM3["FM-3 §12.2"]
+  FM1["FM-1 §8.3"]; FM3["FM-3 §8.4"]
   class FM1,FM3 fm
-  STD4["STD-4 §13.4"]; COST["COST §13.5"]; SIG["SIG §14.2"]; AI["AI layer §15.3"]; CHK["CHECK levels §13.4"]
-  class STD4,COST,SIG,AI,CHK guard
-  BASIS["BASIS §12.4"]
+  COST["COST §9.9"]; SIG["SIG §11.2"]; AI["AI layer Ch. 17"]; CHK["CHECK levels §9.1"]
+  class COST,SIG,AI,CHK guard
+  PCASC["PCASC — Prop 7 §16.7"]
+  class PCASC derived
+  BASIS["BASIS §8.8"]
   class BASIS basis
-  BCAUS["BCAUS §24.3"]
+  BCAUS["BCAUS §7.3"]
   class BCAUS bound
 
   %% the seam: the single place S enters, and the second reading of the axioms
-  SEAM -.->|explain: epistemology glued to ontology at ONE seam| SSHAT
-  SINGLE -.->|explain: no a-priori discipline certifies faithfulness| SEAM
-  SEAM -.->|second reading §2.6: solvability of the OUTPUT — NOT a derivation| A1
-  SEAM -.->|second reading §2.6: κ-constructibility of the INPUT — NOT a derivation| A2
-  SINGLE -.->|explain ii: apparatus-uncertifiable| BCAUS
+  SEAM -.->|explain: one seam| SSHAT
+  SINGLE -.->|explain: Lemma 1| SEAM
+  SEAM -.->|second reading §3.7: OUTPUT| A1
+  SEAM -.->|second reading §3.7: INPUT| A2
+  SINGLE -.->|explain ii| BCAUS
 
-  %% the theory-model = explain (dashed) = grounding; it does not re-prove T1 / the 7 FM
+  %% the theory-model = explain (dashed) = grounding
   ROOT -.->|explain hole-i| FM1
-  ROOT -.->|explain insensitive-ii| FM3
+  ROOT -.->|explain insensitive-ii| FM1
   SSHAT -.->|explain| ROOT
   SUBST -.->|explain| SSHAT
   SUBST -.->|explain joints| NR
   SUBST -.->|explain seam| JS
   LINKS -.->|explain agent-needed| AI
   LINKS -.->|explain| SSHAT
-  METH -.->|explain| STD4
-  METH -.->|explain| COST
+  COST -->|F3 §18.1| METH
+  PCASC -->|F2 §18.1| METH
   VAL -.->|explain| BASIS
   SSHAT -.->|explain ii| BCAUS
 
@@ -504,171 +496,112 @@ flowchart LR
 
 ## How to read it (the key chains)
 
-- **The completeness spine** (View 1). `A1 + §10 + §11.2 + §11.3` ground the **denotational** axis of CA1 (§12.8; the operational axis is derived from the strict causal order — asymmetry + excluded middle — which these do not supply) →
-  `{FM-1..7}` are complete. This is one of three completeness closures (CA-Morris — the three levels
-  §13.4; CA-Links — the five links §4.2; both are nodes on View 4); the map unfolds this one, and `E1`
-  corroborates it (dashed `corrob`, 0/216 outside the basis). Everything below the basis is
+Each chain names its view, its nodes and where the canon states it; the claims are read there.
+
+- **The completeness spine** (View 1): the 6 FM complete as a basis modulo CA1 (§8.2, §8.8), scope §8.10; CA2's
+  discharge §8.2, §20.5. One of three closures (§20.5); E1 corroborates (`EVIDENCE_LOG`). Everything below BASIS is
   implementation, not a source of completeness.
-- **The single seam** (Views 1 and 4). `Contact` is the **only** operation of the whole field that
-  reads `S` (§2.3–§2.4): the apparatus 𝒜 is syntactically S-free, every `α ∈ 𝒜` is `Ŝᵏ → Ŝ` (Lemma 1).
-  That is why faithfulness is opened by nothing but execution, and why the failure root `Ŝ_used∖S` is
-  where every mode bites. **The two `second reading` edges into A1/A2 are dashed and must stay dashed:**
-  §2.6 reads A1 as the solvability of Contact's *output* and A2 as the κ-constructibility of its
-  *input*, but that is a **status change** (postulate → interface condition), **not** a derivation —
-  the residue is ≈ the axioms themselves, and the axiomatic status of A1/A2 (§9) stays primary.
-  Reading those edges as derivations is exactly the laundering §2.6 exists to forbid.
-- **The denotational axis** (what is checked): arguments→FM-1/FM-2, values→FM-3, rule→FM-4 (§12.2).
-  **The operational axis** (when): before→FM-6, during→FM-5, after→FM-7 — the trichotomy of the strict
-  causal order by excluded middle, with no assumptions about the shape of time; the single clock (CA2)
-  is a discharged hypothesis, the linear special case (under concurrency FM-5 generalizes into a
-  read/write race — it does not weaken) (§12.8/§27).
-- **The standards (§13)** (View 2) hang ON the FMs as guards (the §13.6 table): STD-1/3 operationalize
-  FM-1's joint-sufficiency clause, while STD-2 is the ADMISSIBILITY criterion for omission (not
-  coverage: it adds no children); STD-4 + the nine CHECKs cover FM-1/2/4/5/7. **FM-6 is guarded by the
-  PROTOCOL** (deferred decomposition, §13.6), and **FM-3 by no structural guard at all — A1 fixes only the verdict's form** (§13.6/§27) — those two have no
-  structural CHECK (§27), and FM-3's half (ii) stays open (see the boundaries).
-- **The protocol (§14)** (View 2) is built out of the basis: four of the 12 signals answer an FM
-  (§14.2: CHALLENGE→FM-7, BLOCK→FM-5/7, CANCEL→FM-5, FAIL→FM-3), the other
-  eight closing FSM deadlocks (4), IC seams (3 — ACCEPT, REJECT_CHALLENGE and ACCEPT_CHALLENGE, whose
-  removal costs the dispute's positive closure, the spec update being carried by re-ASSIGN under Inv-1)
-  and initiating (1); the FSM
-  gives finiteness; the invariants (§14.4) pull in binarity (§11.2), failure transparency (FM-3) and
-  immutability (FM-5). Agent-agnosticity (§14.5) is interface-level; self-checking at a **seam** breaks
-  IC (an FM-3 guard).
-- **The metrics (§15.2)** (View 2) are runtime detectors: the graph `𝒢` (from the signals) → q_T/q_D
-  catch FM-1, q_V catches FM-3 (the **false-PASS direction only**, by design — §24.5), q_Dep catches
-  FM-5, q_Del catches FM-7. Self-measurement (§21) makes the cost 0; transparency (§22) is the record
-  `R(d)` from the invariants + STD-1.
-- **The AI layer (§15.3)** (View 2) guards the residual FMs: the Solver (deduction) feeds CHECK-7/8 →
-  FM-1.d/FM-2; the LLM (induction+abduction) closes the semantic residual of FM-2; cross-impossibility
-  (§15.3.3) is why both are needed; the safety net (§15.3.6) catches errors with a formal signature,
-  **but** the domain-silent false-PASS remains (→ the faithfulness boundary §8).
-- **The derivatives (§25.1, §25.2)** (View 3): stratification = deadline coherence along D (§3.4 item 6) + A1 (+ the empirical
-  stationarity premise, step 4); Scrum ⊂ GFSO = a special case under relaxed restrictions.
-- **The Part III results (§16–§22)** (View 3): load-bearing derivations over the apparatus.
-  **P3 Blackwell (§16.2)** — the information structure `ℐ(α)` from the graph of signals ⟹ dominance
-  **in adherence α** (`ℰ_{α₂} ≥_B ℰ_{α₁}` for `α₂ > α₁`), the garbling being the projection `proj_{α₁}`
-  that discards the protocol signals of the tasks in `(α₁, α₂]`. *(§11.4's Inf-B is NOT an input to
-  Prop 3: it is Blackwell running the other way — a continuous scale over the same tree is strictly
-  MORE informative, and Inf-B rescues binarity by decision-irrelevance. §16.2 derives Prop 3 from the
-  α-projection kernel alone and never cites §11.4. There is no `INFO → P3` edge — it would assert a derivation the
-  canon does not run.)*
-  **Prop 8 IC (§19)** — honesty is a DOMINANT strategy (not merely an equilibrium), and the canon states
-  it **per observed state** under a state-contingent honest policy; the `ℙ(defect) > 0` form is the
-  ex-ante corollary. Dominance carries a **detection probability `p`**: structural names the channel's
-  independence of the counterparty's strategy, not `p = 1` — `p = 1` on the rows whose consequence the
-  FSM forces, and `p = 1 − ∏(1 − p_j)` over the §26.3 validation cone on the acceptance row, whose
-  `p → 0` limit is the Pragmatic-level boundary. The IC-critical set is the §19.1 enumeration (11 features — ACCEPT and ACCEPT_CHALLENGE included, both IC rows of §14.2).
-  **The cascade (§18.3 Prop 7)** — `(Λ·γ)ⁿ` vs `Λⁿ` when `Λ·γ < 1`, from submultiplicativity of operator
-  norms. *(Two things the canon keeps apart and this map now keeps apart too: **small-gain** (Zames) is
-  a separate Remark about the **feedback channel** (CHALLENGE/BLOCK), not Prop 7's condition; and the
-  **locality** of correction is derived from explicit composition/attribution (§3.5), **not** from the
-  cascade bound.)*
-- **The boundaries (§24, §8)** (View 3) are dashed `bounds` nodes tied to exactly what they bound:
-  rationality (§24.1) bounds **P3/Blackwell** and non-adversarial (§24.2) bounds **P8/IC** — both are
-  *assumption* nodes of Ch. 24, not Ch. 8 boundaries: neither carries an impossibility argument from
-  A1 ∧ A2 (the §8 criterion), and the same holds of §24.4's formalization overhead, which the canon
-  calls an empirical question; L2 causal
-  correctness (§24.3/§8) bounds T1 and FM-3; A1∧A2 is the scope; the faithfulness residue is a permanent
-  boundary, while method-quality is a **SPLIT** (§8): its *faithfulness* half is a boundary (Lemma 1),
-  its *generation-procedure* half an OPEN PROBLEM closed as a procedure by E2 (`auto_decompose()`) — the
-  seam's faithfulness remains the E3 blocker.
-- **The two uniqueness verdicts (§26.9)** are OPPOSITE and must not be read as one: **(a) the basis** —
-  uniqueness open, with a positive partial result (σ-canonicity over the Beth class, the wall pinned to the
-  FO-frame stipulation); **(b) the protocol** — the bi-interpretation currency does not transport, the
-  working currency is behavioural equivalence, and over bare adequacy the answer is **negative**
-  (machine-witnessed: a VALIDATING-timeout→ESCALATED variant is adequate and behaviourally distinct;
-  `max_iterations` is a second free cell). What IS canonical there is the nine-state minimality-forced
-  skeleton; OVERDUE and ESCALATED are free decorations and REWORKING ≡ EXECUTING is an attribution label.
-- **The theory-model (§2–§3 + §7) = the FOUNDATION** (View 4). All its edges are dashed `explain`. It
-  *grounds* the protocol (the root `Ŝ∖S` split into FM-1 / FM-3; the substrate explains joints =
-  non-redundancy and the seam = joint-sufficiency; the five links explain the necessity of the
-  agent/AI layer; the methodology explains STD-4 + verify-vs-explore; value = making-explicit explains
-  why the basis is mandatory at every level). What it does **not** do: it does not change or re-prove
-  T1 / the 7 FM / minimality — their proofs live in the apparatus tiers (§11–§12), and the canon derives
-  the apparatus itself from the theory-model (§1.5, §2.1).
-- **The mirrors** (View 4) are projections of the canon (`mirror`): the Constitution, CORE, the code
-  `gfso/` (which carries the canon's v4.0 names throughout, `architecture.md`).
-  Not new primitives — renderings.
-- **E2** (View 3) inherits its completeness from here: the reference = a decomposition that excludes all
-  7 FM; "completeness of the buckets" is proved by §12.4, "completeness inside a bucket" = faithfulness,
-  reached by the cycle (§2–§3). **E2 showed that cycle converges** (bare-SEARCH ⊕ gfso-AUDIT →
-  `auto_decompose()`); faithfulness to the real domain remains (E3).
+- **The single seam** (Views 1, 4): Lemma 1 (§3.4), Contact and SINGLE-SEAM (§3.5), the second reading (§3.7).
+  The `second reading` edges stay dashed (legend).
+- **The two axes** (View 1): denotational FM-1–FM-4 (§8.3–8.5), operational FM-6, FM-5, none after (§8.6); geometry
+  §8.10.
+- **The standards** (View 2): the guard table §9.10 — which FMs have a structural guard and which none.
+- **The protocol** (View 2): why these twelve and their 4/4/3/1 typing, §11.4; FSM §12.1; invariants §12.3–12.13;
+  separation of duties at the seam §10.3.
+- **The metrics** (View 2): what each q senses, §15.4 and §15.7; limits §15.8; Thm 10 §15.6; Thm 11 §11.6.
+- **The AI layer** (View 2): §17.2–17.4, safety net §17.7, who is who §17.8.
+- **The derivatives** (View 3): stratification §19.5 (its premises steps 2–5); Scrum §19.4.
+- **The Ch. 16 results** (View 3): Prop 3 §16.2, Prop 8 §16.8–16.12, Prop 7 §16.7. The map's own drawing choices:
+  - no `INFO → P3` edge — §16.2's proof runs on the projection kernel and does not cite §7.4; Inf-B (§7.4) is
+    Blackwell against binarity, not an input to Prop 3;
+  - `T1 → PCASC` solid and BCAUS bounding PCASC — "Thm 1 and what rests on it — Prop 7 … — are conditional on
+    the correctness of D" (§16.7); γ is defined there;
+  - BIBO is a separate `cited` node — §16.7 holds it by citation, about the feedback channel, not as Prop 7's
+    condition;
+  - LOCAL hangs on ATTR, not on PCASC — §7.3, §18.2.
+- **The bounds** (View 3): BRAT and BADV are premises (`premise` class, §20.5), BOVR is around the theory (§20.9),
+  the rest boundaries (§20.2, §20.8; BDOM §2.1, §16.17). The uniqueness of the basis and of the protocol sits at the
+  carve wall (§20.7; BWALL in the full graph); the protocol's forcing over the log is §13.4.
+- **The theory-model** (View 4): the foundation (§20.11); its integration cases §8.7; the agent's necessity §4.1
+  against the AI layer's capacity §17.8; METH fed by COST and PCASC (§18.1).
+- **The mirrors** (View 4): projections of the canon; the code's names, `architecture.md`.
+- **E2** (View 3): the experiment in `EVIDENCE_LOG`; the generation method §19.3; the value's open measurement §20.10.
 
 ## Edge ledger (the grounding — for the critic)
 
-> The obvious spine edges (A1→T, JS→T1, FM-i→BASIS etc.) are omitted — they are verbatim in §9–§12.
-> Below: the nontrivial / added edges, each with its §.
+> The obvious spine edges (A1→T, JS→T1, FM-i→BASIS etc.) are omitted — they are Ch. 1–8 verbatim.
+> Below: the nontrivial / added edges, each with its § and the claim it rests on, named or quoted.
 
-| Edge | § | Grounding (one line) |
+| Edge | § | Grounding |
 |---|---|---|
-| SEAM -.explain.-> SSHAT | §2.3–§2.4 | Contact is the only operation reading S; before it, any Ŝ is a projection without ground |
-| SINGLE -.explain.-> SEAM | §2.3–§2.5 | the apparatus 𝒜 is syntactically S-free (every α ∈ 𝒜 is Ŝᵏ → Ŝ) ⟹ no a-priori discipline certifies faithfulness (Lemma 1) |
-| SEAM -.second reading.-> A1 | §2.6 | A1 = solvability of Contact's OUTPUT. **A status change (postulate → interface condition), NOT a derivation:** clause (ii) stays apparatus-uncertifiable; the axiomatic status of A1 (§9) stays primary |
-| SEAM -.second reading.-> A2 | §2.6 | A2 = κ-constructibility of Contact's INPUT. Same status: κ is a cost premise about the actor, and the decomposability clause is ≈ A2 itself moved out of the field's definitions — **not** derived from bare dynamics |
-| SINGLE -.explain ii.-> BCAUS | §2.3–§2.5 / §8 | S enters only through Contact ⟹ domain-correctness is not supplied by the apparatus = the L2 boundary |
-| AXM → CHK | §13.4 | CA-Morris (`morris_trichotomy`): syntax ⊕ semantics ⊕ pragmatics, no fourth ⟹ exactly three verification levels |
-| AXL → LINKS | §4.2 | CA-Links (`directed_action_completeness`): REPRESENTATION(3) ⊕ REALIZATION(2) ⟹ five links; the REPRESENTATIONAL branch alone is sub-CA1 (REACHES-ternarity + the folded START residue) — the modal and realization branches are derived to full covering-axiom strength |
-| A1 → STRAT | §25.1 step 2 | criteria must be checkable within the horizon ⟹ more concrete on a short one |
-| D → STRAT | §25.1 step 1 | deadline coherence along D (§3.4 item 6): deadline(child) < deadline(parent) ⟹ the horizon shrinks with depth (Ch. 10's Dep coherence is the horizontal rule) |
-| BIN → INFO, D → INFO | §11.4 / Inf-A | binarity + decomposition is strictly more informative than a continuous score without D |
-| T → STD1 (ACCEPTED_RISKS) | §13.1 | STD-1 = the explicit ACCEPTED_RISKS assumptions in the task packet |
-| STD1/STD2/STD3 -.guard.-> FM1 | §13.6 | STD-1/3 operationalize joint-sufficiency; STD-2 = the admissibility criterion for omission |
-| STD4 -.guard.-> FM1/2/4/5/7 | §13.4 / §13.6 | STD-4 form verification covers these FMs; FM-6 is answered by the PROTOCOL (deferred decomposition), FM-3 only by A1's form requirement: neither has a structural CHECK (§27) |
-| FSM -.guard.-> FM6 | §13.6 / §14.3 | FM-6 (D not definable at the start) is answered by the protocol's deferred decomposition — the node stays open, not silently declared covered |
-| CHK -.guard L1.-> FM1, FM2 | §13.6 | CHECK-7 formal sufficiency → FM-1.d; CHECK-8 consistency → FM-2 |
-| COST -.guard.-> STD4 | §13.5 | verify-vs-explore: the depth of the FORM check by the stakes on `c_check` |
-| A1 -.form only, no guard.-> FM3 | §13.6 / §27 | A1 fixes the verdict's FORM (decidable, binary), not its truth — FM-3 has NO structural guard; runtime q_V, false-PASS only |
-| Q/𝒢 → TRIAGE | §15.4 | triage order over the graph: repair first the failing node whose dependency cone (E_D upward by Thm 1, E_Dep forward) blocks the most, nearest binding deadline as tie-break — derivable; ranking by *how badly* a node failed is the cardinal-severity boundary (§8) |
-| BASIS → SIG, BASIS → FSM | §14 preamble / §12.7 | the protocol operationalizes the FMs; the 12 signals split 4 FM / 4 FSM-deadlock / 3 IC / 1 operation (§14.2) |
-| SIG -.guard FM7.-> FM7 | §14.2 | CHALLENGE→FM-7; BLOCK→FM-7 (feedback on a defect/blocker) |
-| SIG -.guard FM5.-> FM5 | §14.2 | BLOCK / CANCEL / RESOLVE_BLOCK → FM-5 (freshness); the spec update after an accepted challenge is re-ASSIGN's, Inv-1 |
-| SIG -.guard FM3.-> FM3 | §14.2 | FAIL(criteria) → FM-3 (name the failed_criteria; no auto-pass) |
-| BIN → INV, FSM → INV | §14.4 | Inv-2 (binarity) from §11.2; Inv-5/6 (finiteness/determinism) from the FSM |
-| INV -.guard.-> FM3 | §14.4 Inv-3 | failure transparency: FAIL ⇒ failed_criteria ≠ ∅ |
-| INV -.guard.-> FM5 | §14.4 Inv-1 | immutability of criteria after ASSIGN ⟹ prevents silent contract staleness |
-| AGN -.guard IC.-> FM3 | §14.5 | self-checking at a seam breaks IC; distinct Issuer/Executor instances preserve validation |
-| SIG → GRAPH, FSM → GRAPH | §15.1 | every P2P signal = a deterministic mutation of the graph 𝒢 |
-| GRAPH → q_* | §15.2 / §21 | each q-metric = a query over 𝒢 on data unique to it |
-| QT/QD -.detect.-> FM1 | §15.2 / §13.6 | q_T (criteria) and q_D (decomposition) catch FM-1 at runtime |
-| QV -.detect.-> FM3 | §15.2 / §24.5 | q_V catches the **acceptance** (false-PASS) direction of FM-3 by design; false-FAIL is guarantee-safe, its share an optional diagnostic |
-| QDEP -.detect.-> FM5 | §15.2 | q_Dep (declared vs discovered) catches freshness through the dependencies |
-| QDEL -.detect.-> FM7 | §15.2 | q_Del (reassignment) catches feedback through delegation |
-| GRAPH → SELF | §21 Thm 10 | Q is computable from the trace, cost = 0 |
-| INV → TRANS, STD1 → TRANS | §22 Thm 11 | R(d) from the invariants (ASSIGN, immutability, FAIL) + STD-1 ACCEPTED_RISKS |
-| GRAPH → SOLVER, GRAPH → LLM | §15.3.1 | the AI layer feeds on the graph; the capacity necessity (Simon) |
-| SOLVER → CHK | §15.3.2 | the Solver realizes CHECK-7/8 (SMT, constraint propagation) |
-| SOLVER -.guard FM1d.-> FM1 | §13.6 / §15.3.4 | the formal sufficiency check → FM-1.d insufficient-entailment |
-| LLM -.guard residual.-> FM2 | §13.6 | the semantic residual of FM-2 is closed by LLM review |
-| SOLVER+LLM → XIMP | §15.3.3 | cross-impossibility: neither replaces the other |
-| SAFE -.guard signed-error.-> FM1 | §15.3.6 | the safety net catches errors with a formal signature (a bad D → q_D) |
-| SAFE -.residual uncaught.-> BFAITH | §15.3.6 / §8 | the domain-silent false-PASS is **not** caught — the faithfulness boundary |
-| SIG/D/BASIS → SCRUM | §25.2 | Scrum = the special case at depth ≤ 2, ACCEPTED_RISKS = ∅, CHECK-7/8 off |
-| GRAPH →\|info structure\| P3 | §16.1–§16.2 | the info structure ℐ(α) = the graph's signals; ℰ_{α₂} ≥_B ℰ_{α₁} via the garbling projection proj_{α₁} |
-| ~~INFO → P3~~ **(removed)** | §11.4 / §16.2 | **the canon does not run this edge.** §16.2 derives Prop 3 from the α-projection kernel alone and never cites §11.4; and Inf-B is Blackwell running AGAINST binarity (a continuous scale is strictly more informative), rescued by decision-irrelevance — not an input to Prop 3 |
-| SIG → P8, INV → P8, STD1 → P8 | §19 Prop 8 | honesty optimal per signal AND per observed state: CHALLENGE/BLOCK/FAIL + the invariants' transparency + ACCEPTED_RISKS-mandatory. (The IC-critical set is the §19.1 enumeration; binarity of V is **not** a member) |
-| T1 -.the validation step.-> PCASC | §18.3 Prop 7 | validation is the step whose gain γ < 1 damps the cascade ⟹ (Λ·γ)ⁿ vs Λⁿ. **Dashed on purpose:** §18.3 introduces γ **definitionally** (the induced operator norm of the validation step); it does not derive γ from Thm 1 |
-| SIG →\|feedback FM7 channel\| BIBO | §18.3 Remark | CHALLENGE/BLOCK = the upward feedback channel; the **small-gain theorem** (Zames 1966) applies to **that channel** (gain-up · gain-down < 1 ⟹ BIBO) — it is **not** Prop 7's condition, which is submultiplicativity of norms |
-| ATTR → LOCAL | §3.5 / §18.3 Remark | the **locality** of correction (a correct upper node survives) is derived from explicit composition/attribution — the canon states explicitly that it is **not** derived from the cascade bound |
-| A2 -.latent.-> COST | §13.5 / §7 | `c_check` is latent in A2 ("exceeds capacity" = a cost boundary) |
-| Dep → FM2, D → FM2 | §12.2 / §12.8 (the FM-2 condition) | FM-2 = compatibility of the children's criteria (D) + cross-task relations = Dep |
-| BRAT -.bounds.-> P3 | §24.1 | Blackwell (Prop 3) presumes rationality — the boundary hangs on the result itself |
-| BADV -.bounds.-> P8 | §24.2 | IC (Prop 8) presumes non-adversarial; a characterized *stratification* (survives/imports). By the §8 criterion the incentivized core is an OPEN PROBLEM (§26.3), not a boundary — hardness is not impossibility from A1∧A2; only its `p = 0` limit is the Pragmatic-level boundary |
-| BCAUS -.bounds.-> T1, FM3 | §24.3 / §8 | L2 causal correctness = half (ii) of A1; the FM-3 false-PASS remains |
-| BOVR -.bounds.-> STD4 | §24.4 | the overhead of formalizing criteria/ACCEPTED_RISKS/CHECK |
-| BDOM -.bounds.-> A1, A2 | §9 / §24.6 | the model applies ⟺ A1 ∧ A2 (the scope boundaries) |
-| BFAITH -.bounds.-> FM3 | §8 | the faithfulness residue: the domain-silent false-PASS, permanent |
-| BMETH -.bounds.-> E2 | §8 | decomposition-method quality — a **SPLIT** (§8): the faithfulness half is a boundary (Lemma 1), the generation-procedure half an open problem, closed as a PROCEDURE by E2 (`auto_decompose()`); the seam's faithfulness is the E3 blocker |
-| ROOT -.explain hole-i.-> FM1 | §2.2 (i) / §12.2 | a coverage hole (forgotten glue) = FM-1 — tagged FM-1.f, Pragmatic level, no a-priori CHECK: it breaks the DOMAIN face of the correspondence condition while the apparatus face passes — not FM-3 |
-| ROOT -.explain insensitive-ii.-> FM3 | §2.2 (ii) / §12 | an insensitive edge of Ŝ∖S = the FM-3 false-PASS |
-| SSHAT -.explain.-> ROOT | §2.2 | the root of any failure = a violated edge of `Ŝ_used ⊆ S` |
-| SUBST -.explain joints.-> NR | §5 | non-redundancy = a separator: x₀ ∉ Capt_{S∖B}(G) |
-| SUBST -.explain seam.-> JS | §5 / §11.1 | joint-sufficiency = the AND-soundness of basin chaining |
-| LINKS -.explain agent-needed.-> AI | §3.2 d6 / §15.3.7 | the agent is necessary as the carrier of domain Ŝ-content (Lemma 1) |
-| METH -.explain.-> STD4, COST | §7 | stop-and-replan + front-loaded FORM = a forced optimum; verify-vs-explore |
-| VAL -.explain.-> BASIS | §6.1–§6.2 | value = making-explicit: the basis is mandatory at every level; the plan becomes falsifiable |
-| SSHAT -.explain ii.-> BCAUS | §3.1 / §8 | half (ii) of A1 = causal correctness, uncertifiable by the apparatus |
-| CONST/CORE/CODE -.mirror.-> the canon | MEMORY mirrors | projections of the canon; the code `gfso/` carries the canon's v4.0 names, guarded (architecture.md) |
+| SEAM -.explain.-> SSHAT | §3.5 / §11.4 | "Contact is the one operation that reads S" |
+| SINGLE -.explain.-> SEAM | §3.3–3.5 | SINGLE-SEAM, Lemma 1 |
+| SEAM -.second reading.-> A1 | §3.7 | "A1 is the solvability of Contact's output." — a role added, not a derivation (legend) |
+| SEAM -.second reading.-> A2 | §3.7 | "A2 is the constructibility of Contact's input." — same status |
+| SINGLE -.explain ii.-> BCAUS | §3.5 / §20.2 | causal correctness a permanent boundary (Lemma 1) |
+| AXM → CHK | §9.1 / §20.5 | CA-Morris yields the three verification levels |
+| AXL → LINKS | §5.3 / §20.5 | CA-Links yields the five links |
+| ~~A1 → STRAT~~ **(removed)** | §19.5 step 2 | concreteness is a premise: "A1 bounds the time a check takes, not how abstract its predicate is" |
+| D → STRAT | §19.5 step 1 | deadline coherence along D |
+| BIN → INFO, D → INFO | §7.4 | Inf-A |
+| D → STD1 (ACCEPTED_RISKS) | §9.2 | STD-1, the register "the split's attribute"; "a register carried in the task's own fields … is task data, not the split's register" |
+| STD1/STD2/STD3 -.guard.-> FM1 | §9.10 / §9.3 | STD-1/3 coverage standards on FM-1's joint-sufficiency clause; "STD-2 is an admissibility criterion for omission" |
+| STD4 -.guard.-> FM-1, FM-2, FM-5 | §9.5 / §9.10 | "FM-1, FM-2 and FM-5 have structural guards" |
+| FSM -.guard.-> FM6 | §8.6 / §11.4 / §16.17 | FM-6's remedy "Defer the split until contact has made it definable"; a split's denial reaches its decomposer, §11.4 (ii) |
+| CHK -.guard L1.-> FM1, FM2 | §9.6 / §9.10 | CHECK-7 → FM-1.d apparatus face; CHECK-8 → FM-2 |
+| COST -.guard.-> STD4 | §9.9 | verify vs explore |
+| A1 -.form only, no guard.-> FM3 | §8.4 / §9.10 / §15.7 | "no structural CHECK guards FM-3" |
+| T1 -.no CHECK.-> FM4 | §9.10 / §12.8 / §15.7 | FM-4's departure from AND read off the log |
+| Q/𝒢 → TRIAGE (not drawn) | §15.9 | triage order, a heuristic under its premise |
+| BASIS → SIG, BASIS → FSM | §11.4 | the protocol derived through the failure modes to the signals |
+| SIG -.guard.-> FM1/FM2 | §11.4 | CHALLENGE's row (FM-1/2) |
+| SIG -.guard FM5.-> FM5 | §11.4 / §15.7 | BLOCK's and CANCEL's rows (FM-5) |
+| SIG -.guard FM3.-> FM3 | §11.4 | FAIL's row (FM-3) |
+| BIN → INV, FSM → INV | §12.8 / §12.4 / §12.12 | Inv-2 from binarity; Inv-6, Inv-5 over the machine |
+| INV -.guard.-> FM3 | §12.8 | Inv-3, failure transparency |
+| INV -.guard.-> FM5 | §12.3 / §15.7 | Inv-1 |
+| SOD -.guard IC.-> FM3 | §10.3 / §16.13 | at a public node "the verdict is signed independently, over a check that is not the executor's" |
+| SIG → GRAPH, FSM → GRAPH | §15.1 | the task graph |
+| GRAPH → q_* | §15.4 / §15.6 | Q, Thm 10 |
+| QT/QD -.detect.-> FM1 (QT → FM2) | §15.4 / §15.7 | q_T: "the spec defects CHALLENGE reports"; q_D: "the pattern a composition claim refuted at contact leaves, whatever caused it"; "FM-1 is guarded at runtime by CHALLENGE (counted by q_T) and q_D" |
+| QV -.detect.-> FM3, FM4 | §15.4 / §15.7 | "q_V reads every PASS a later fail finds, whatever made it untrue" — the two edges drawn are FM-3's false PASS and FM-4's dropped fail |
+| QDEP -.detect.-> FM5 | §15.7 | "q_Dep reads the undeclared couplings BLOCKs name, an FM-5 race among them" |
+| QDEL (no FM edge) | §15.4 | "q_Del answers none of the six modes" |
+| GRAPH → SELF | §15.6 | Thm 10, Cor 1 |
+| INV → TRANS, STD1 → TRANS | §11.6 | Thm 11 |
+| GRAPH → SOLVER, GRAPH → LLM | §17.1–17.2 | necessity from capacity |
+| SOLVER → CHK | §17.2 | the Solver runs CHECK-7 and CHECK-8 |
+| SOLVER -.guard FM1d.-> FM1 | §9.10 / §17.2 | CHECK-7 on FM-1.d's apparatus face |
+| LLM -.guard residual.-> FM2 | §17.2–17.4 | semantic consistency, reported by CHALLENGE |
+| SOLVER+LLM → XIMP | §17.3 | cross-impossibility |
+| SAFE -.guard signed-error.-> FM1 | §17.7 | "An LLM error with a formal signature is caught by the protocol" |
+| SAFE -.residual uncaught.-> BFAITH | §17.7 / §20.2 | integration cases (i) and (ii) not caught by the apparatus |
+| SIG/D/BASIS → SCRUM | §19.4 | Scrum embedded, a relaxation |
+| GRAPH →\|info structure\| P3 | §16.1–16.2 | ℐ(α), the projection garbling |
+| ~~INFO → P3~~ **(removed)** | §7.4 / §16.2 | **the canon does not run this edge** (How to read, Ch. 16) |
+| SIG → P8, INV → P8, STD1 → P8 | §16.10–16.12 | the rows of §16.10; the IC-critical features of §16.12 |
+| T1 → PCASC (the validation step) | §16.7 | "Thm 1 and what rests on it — Prop 7 …"; γ and Prop 7's premises defined there, γ = 1 where no criterion reveals the wall (§18.2) |
+| SIG →\|upward feedback channel\| BIBO | §16.7 | "CHALLENGE and BLOCK form upward feedback, BIBO-stable by the small-gain theorem" (by citation) |
+| ATTR → LOCAL | §7.3 | "Locality of correction — a correct upper node survives — follows from composition together with attribution" |
+| A2 -.latent.-> COST | §1.4 / §9.9 | A2 as a capacity cost |
+| AX1 → FM2, D → FM2 | §8.3 / §8.2 | FM-2's compatibility condition on the children's criteria, its grounding "belongs to CA1" (§8.3); no Dep → FM2: Dep is "a separate primitive" (§8.2), an omitted Dep coupling routed by §8.6 |
+| BRAT -.bounds.-> P3 | §16.2 / §20.5 | "Blackwell dominance presumes it" — a premise |
+| BADV -.bounds.-> P8 | §16.4 / §16.15 / §20.9 | a premise; the threat model |
+| BCAUS -.bounds.-> T1, FM3, PCASC | §7.3 / §16.7 / §20.2 | Thm 1 "holds given a correct decomposition and does not produce one"; Prop 7 rests on Thm 1, "conditional on the correctness of D" (§16.7) |
+| BOVR -.bounds.-> STD4 | §16.3 / §20.9 | around the theory |
+| BDOM -.bounds.-> A1, A2 | §2.1 / §16.17 | "The model is needed iff A1 ∧ A2" |
+| BFAITH -.bounds.-> FM3 | §3.5 / §20.2 | the faithfulness residue |
+| BMETH -.bounds.-> E2 | §20.2 / `EVIDENCE_LOG` | the faithfulness half of method quality, left to measurement (§20.8) |
+| ROOT -.explain hole-i.-> FM1 | §8.7 (i) | coverage hole — FM-1.f |
+| ROOT -.explain insensitive-ii.-> FM1 | §8.7 (ii) / §8.4 | insensitive edge — FM-1.d's domain face; its false PASS FM-3's |
+| SSHAT -.explain.-> ROOT | §3.2 | faithfulness and failure |
+| SUBST -.explain joints.-> NR | §6.7 | "Non-redundancy (Ch. 2) is the discrete shadow of separator-hood" |
+| SUBST -.explain seam.-> JS | §6.5 / §7.3 | AND-soundness |
+| LINKS -.explain agent-needed.-> AI | §4.1 / §17.8 | agent necessity vs the AI layer's capacity |
+| COST → METH, PCASC → METH | §18.1 | the two mechanisms forced by "(F2) error compounds down the tree, multiplicatively in Prop 7's model" and "(F3) … `c_check`, graded by level (Ch. 9)"; Mechanism 1 runs "to the level verify-vs-explore sets" |
+| VAL -.explain.-> BASIS | §19.3 | value = making-explicit |
+| SSHAT -.explain ii.-> BCAUS | §3.2 / §20.2 | clause (ii), causal correctness |
+| CONST/CORE/CODE -.mirror.-> the canon | — | projections; the code's names, `architecture.md` |
 
 <details>
 <summary>The full graph (for zooming)</summary>
@@ -684,156 +617,162 @@ flowchart TD
   classDef ground fill:#2b2b2b,stroke:#8a8a8a,color:#e8e8e8,stroke-dasharray:5 4;
   classDef emp fill:#102a2a,stroke:#4fb0b0,color:#e3f5f5;
   classDef bound fill:#3a1326,stroke:#c46a93,color:#f6e3ec,stroke-dasharray:3 3;
+  classDef premise fill:#262626,stroke:#b0a07a,color:#efe8d6,stroke-dasharray:2 2;
+  classDef around fill:#1e1e1e,stroke:#7a7a7a,color:#dcdcdc,stroke-dasharray:1 3;
   classDef mirror fill:#222018,stroke:#9a8f5a,color:#f1edda,stroke-dasharray:2 3;
+  classDef cited fill:#0f2030,stroke:#5b9bd5,color:#e6f0fa,stroke-dasharray:4 2;
 
-  subgraph AX["Axioms (§9) — A1, A2; the three covering axioms are the COV group (§1.4)"]
-    A1["A1 — Verifiability<br/>a finite set of decidable pass/fail<br/>predicates, each in finite time"]
-    A2["A2 — Decomposability<br/>some goals exceed one agent's capacity<br/>and require splitting"]
+  subgraph AX["Axioms §1.2"]
+    A1["A1 — Verifiability §1.2"]
+    A2["A2 — Decomposability §1.2"]
   end
   class A1,A2 axiom
 
-  subgraph PR["Primitives (§10–§10.2) — the basis T D Dep Del; V is derived"]
-    T["T — Task<br/>(spec, criteria, deadline)"]
-    D["D — Decomposition<br/>T → P(T), a DAG"]
-    Del["Del — Delegation<br/>T → A (the WHO axis, orthogonal)"]
-    Dep["Dep — Dependency<br/>criteria(t_β) references the output of t_α"]
-    V["V — Validation (DERIVED)<br/>V(t) = AND(criteria)"]
-    MIN["§10.2 Basis minimality<br/>remove any ⟹ a loss; no sixth found<br/>§26.9(a) uniqueness OPEN — σ-canonicity holds over the Beth class"]
+  subgraph PR["Primitives Ch. 2, §7.5"]
+    T["T — Task §2.2"]
+    D["D — Decomposition §2.4"]
+    Del["Del — Delegation §2.6"]
+    Dep["Dep — Dependency §2.7"]
+    V["V — Validation, derived §2.3"]
+    MIN["MIN — basis minimality §7.5"]
   end
   class T,D,Del,Dep prim
   class V derived
   class MIN derived
 
-  subgraph CMP["Correctness and composition (§10–§11.4)"]
-    JS["Joint sufficiency<br/>all children pass ⟹ every parent criterion"]
-    NR["Non-redundancy<br/>no removable subtask"]
-    BIN["§11.2 Binarity |L|=2<br/>SOURCE: A1 — V is a conjunction of<br/>2-valued predicates. The excluded-middle<br/>argument on intervene (|Act|=2, pigeonhole)<br/>is the DEFENCE against a graded scale"]
-    ANDu["§11.3 Uniqueness of AND<br/>commutative + associative + absorbing fail"]
-    T1["Theorem 1 (§11.1)<br/>V(parent) = AND(V(children))"]
-    INFO["§11.4 Informativeness<br/>binarity+decomposition is strictly more<br/>informative than a continuous score without D"]
+  subgraph CMP["Correctness and composition Ch. 2, 7"]
+    JS["JS — Joint sufficiency §2.4"]
+    NR["NR — Non-redundancy §2.4"]
+    BIN["BIN — Binarity |L|=2 §7.1"]
+    ANDu["ANDu — Uniqueness of AND §7.2"]
+    T1["T1 — Theorem 1 §7.3"]
+    INFO["INFO — Informativeness §7.4"]
   end
   class JS,NR,BIN,ANDu,T1,INFO derived
 
-  subgraph COV["Covering: CA1 + the causal order (§12.8)"]
-    AX1["CA1 — Evaluation Completeness<br/>a computation = denotational ⊕ operational<br/>no third independent axis (COVERING)"]
-    AX2["Causal order of events (§12.8/§27)<br/>3 phases before/concurrent/after by excluded middle —<br/>zero assumptions; the single clock (CA2) is discharged,<br/>the linear special case; under concurrency FM-5 generalizes"]
-    AXM["CA-Morris (§13.4) — morris_trichotomy<br/>syntax ⊕ semantics ⊕ pragmatics; no fourth<br/>⟹ the 3 verification levels"]
-    AXL["CA-Links (§4.2) — directed_action_completeness<br/>REPRESENTATION(3) ⊕ REALIZATION(2); no sixth<br/>⟹ the 5 links; the REPRESENTATIONAL branch alone is sub-CA1<br/>(REACHES-ternarity, the folded START residue)"]
+  subgraph COV["Covering axioms §20.5"]
+    AX1["CA1 — Evaluation Completeness §8.2"]
+    AX2["CA2 discharged — causal order §8.2"]
+    AXM["CA-Morris §9.1"]
+    AXL["CA-Links §5.3"]
   end
   class AX1,AXM,AXL axiom
   class AX2 derived
 
-  subgraph FMS["7 Failure Modes (§12) — the denotational axis (the function f)"]
-    FM1["FM-1 Correspondence<br/>arguments: membership (joint-suff + non-redund)<br/>sub: a b c d e f (§12.2)"]
-    FM2["FM-2 Consistency<br/>arguments: relations (the children's criteria are compatible)"]
-    FM3["FM-3 Veracity<br/>values: truth (both directions: false-PASS ∧ false-FAIL)"]
-    FM4["FM-4 Propagation<br/>rule: AND propagates fail"]
+  subgraph FMS["Failure modes — denotational §8.3–8.5"]
+    FM1["FM-1 Correspondence §8.3"]
+    FM2["FM-2 Consistency §8.3"]
+    FM3["FM-3 Veracity §8.4"]
+    FM4["FM-4 Propagation §8.5"]
   end
-  subgraph FMO["7 Failure Modes (§12) — the operational axis (time phases)"]
-    FM6["FM-6 Feasibility [before]<br/>D not yet definable"]
-    FM5["FM-5 Freshness [during]<br/>the spec changed, D not updated"]
-    FM7["FM-7 Feedback [after]<br/>a defect found, no channel to report it"]
+  subgraph FMO["Failure modes — operational §8.6"]
+    FM6["FM-6 Feasibility §8.6"]
+    FM5["FM-5 Freshness §8.6"]
   end
-  class FM1,FM2,FM3,FM4,FM5,FM6,FM7 fm
+  class FM1,FM2,FM3,FM4,FM5,FM6 fm
 
-  BASIS["§12.4 / §12.8 — {FM-1..7}<br/>a COMPLETE INDEPENDENT BASIS of failures<br/>CVC ≡ the conjunction of the seven conditions (by FM)<br/>(a basis, not a partition)"]
+  BASIS["BASIS — FM-1..6 §8.8"]
   class BASIS basis
 
-  ROOT["The failure root (§2.2 / §12)<br/>a used edge Ŝ∖S<br/>(the map promises a passage, reality denies it)"]
-  SEAM["Contact — the single seam (§2.4)<br/>Contact : (e, [e∈S]) ↦ (verdict, Ŝ′)<br/>the ONLY operation of the field that reads S"]
-  SINGLE["SINGLE-SEAM (§2.3–§2.5)<br/>the apparatus 𝒜 is syntactically S-free:<br/>every α ∈ 𝒜 is Ŝᵏ → Ŝ (Lemma 1)"]
+  ROOT["ROOT — the failure root §3.2/§8.1"]
+  SEAM["SEAM — Contact §3.5"]
+  SINGLE["SINGLE-SEAM §3.5, by Lemma 1 §3.4"]
   class ROOT,SEAM,SINGLE ground
 
-  subgraph STD["Standards and checks (§13) — FM GUARDS"]
-    STD1["STD-1 — explicit ACCEPTED_RISKS (§13.1)"]
-    STD2["STD-2 — predictability / admissibility of omission (§13.2)"]
-    STD3["STD-3 — risk grouping (§13.3)"]
-    STD4["STD-4 — form verification (§13.4)"]
-    CHK["CHECK-1,1b,2–8 = 9 + Solver (§13.4)<br/>Syntactic (L0) / Semantic (L1)"]
-    COST["§13.5 verify-vs-explore<br/>the checking cost c_check by the stakes"]
+  subgraph STD["Standards and checks Ch. 9"]
+    STD1["STD-1 ACCEPTED_RISKS §9.2"]
+    STD2["STD-2 predictability §9.3"]
+    STD3["STD-3 risk grouping §9.4"]
+    STD4["STD-4 form verification §9.5"]
+    CHK["CHECK battery §9.5–9.6"]
+    COST["COST verify vs explore §9.9"]
   end
   class STD1,STD2,STD3,STD4,CHK,COST guard
 
-  subgraph PROTO["Protocol §14 — the Issuer/Executor transaction"]
-    SIG["12 signals (§14.2)<br/>ASSIGN ACCEPT DELIVER PASS<br/>CHALLENGE BLOCK FAIL CANCEL<br/>ACCEPT_CHALLENGE REJECT_CHALLENGE<br/>RESOLVE_BLOCK CONFIRM_CANCEL"]
-    FSM["12-state FSM (§14.3)<br/>IDLE OFFERED CHALLENGED EXECUTING<br/>BLOCKED VALIDATING REWORKING CANCELLING<br/>DONE ABANDONED OVERDUE ESCALATED + system timeout"]
-    INV["Protocol invariants (§14.4)<br/>immutability (revision ≠ refusal) · binarity · failure transparency<br/>symmetry · finiteness · determinism · node-id stability"]
-    AGN["Agent-agnosticity (§14.5)<br/>any agent behind the interface;<br/>self-checking AT A SEAM breaks IC"]
+  subgraph PROTO["Protocol Ch. 10–12"]
+    SIG["SIG — 12 signals §11.2"]
+    FSM["FSM — 11 states §12.1"]
+    INV["INV — invariants §12.3–12.13"]
+    SOD["SOD — separation of duties §10.3"]
   end
-  class SIG,FSM,INV,AGN guard
+  class SIG,FSM,INV,SOD guard
 
-  subgraph MET["Metrics and transparency (§15.2, §21, §22)"]
-    GRAPH["The task graph 𝒢 (§15.1)<br/>a signal = a graph mutation"]
-    QT["q_T (§15.2) ← CHALLENGE/criteria-changed"]
-    QD["q_D (§15.2) ← child/parent pass-patterns"]
-    QV["q_V (§15.2) ← pass→later-fail (false-PASS only, §24.5)"]
-    QDEP["q_Dep (§15.2) ← declared vs discovered Dep"]
-    QDEL["q_Del (§15.2) ← reassignment events"]
-    SELF["Self-measurement §21<br/>Q computable from the trace, cost = 0"]
-    TRANS["Structural transparency §22<br/>R(d) = (author, spec, criteria, ACCEPTED_RISKS, ts)"]
+  subgraph MET["Metrics and transparency Ch. 15, §11.6"]
+    GRAPH["GRAPH — log and 𝒢 §15.1"]
+    QT["q_T §15.4"]
+    QD["q_D §15.4"]
+    QV["q_V §15.4"]
+    QDEP["q_Dep §15.4"]
+    QDEL["q_Del §15.4"]
+    SELF["SELF — Thm 10 §15.6"]
+    TRANS["TRANS — Thm 11 §11.6"]
   end
   class GRAPH,QT,QD,QV,QDEP,QDEL,SELF,TRANS guard
 
-  subgraph AI["AI layer (§15.3)"]
-    SOLVER["Solver — deduction (§15.3.2)<br/>CHECK-7/8, SMT; sound+complete; S-independent"]
-    LLM["LLM — induction+abduction (§15.3.2)<br/>Chollet Level ≥ 2; Bayes-optimal given the prior"]
-    XIMP["Cross-impossibility (§15.3.3)<br/>the Solver has no domain axioms / the LLM has P(error) > 0"]
-    SAFE["Safety net (§15.3.6)<br/>catches errors with a formal signature;<br/>does NOT catch the domain-silent false-PASS"]
+  subgraph AI["AI layer Ch. 17"]
+    SOLVER["SOLVER §17.2"]
+    LLM["LLM §17.2"]
+    XIMP["XIMP — cross-impossibility §17.3"]
+    SAFE["SAFE — safety net §17.7"]
   end
   class SOLVER,LLM,XIMP,SAFE guard
 
-  subgraph DER["Derivative results (§11.4, §25.1, §25.2)"]
-    STRAT["Adaptive stratification §25.1<br/>freq_challenge ↑ with depth<br/>(deadline coherence along D + A1 + environment stationarity)"]
-    SCRUM["Scrum ⊂ GFSO §25.2<br/>a special case: depth ≤ 2, ACCEPTED_RISKS = ∅,<br/>CHECK-7/8 off, audit informal"]
+  subgraph DER["Derivative results Ch. 19"]
+    STRAT["STRAT — stratification §19.5"]
+    SCRUM["SCRUM — embedded, a relaxation §19.4"]
   end
   class STRAT,SCRUM derived
 
-  subgraph RES["Part III results (§16–§22) — load-bearing derivations"]
-    P3["P3 — Blackwell dominance (§16.2 Prop 3)<br/>in ADHERENCE α: for α₂ &gt; α₁, ℰ_α₂ ≥_B ℰ_α₁<br/>garbling = proj_α₁, which discards the protocol<br/>signals of the tasks in (α₁, α₂]"]
-    P8["Prop 8 — Incentive compatibility (§19)<br/>honesty = a DOMINANT strategy, per observed state<br/>(state-contingent policy; ℙ(defect)&gt;0 is the ex-ante corollary)<br/>at a detection probability p: p=1 on the FSM-forced rows,<br/>1−∏(1−p_j) over the §26.3 cone on acceptance; p→0 = the L2 boundary<br/>IC-critical set = the §19.1 enumeration (11 features)"]
-    PCASC["The cascade bound (§18.3 Prop 7)<br/>(Λ·γ)ⁿ vs Λⁿ when Λ·γ &lt; 1<br/>from submultiplicativity of operator norms"]
-    BIBO["Feedback-channel stability (§18.3 Remark)<br/>small-gain (Zames 1966): gain↑ · gain↓ &lt; 1 ⟹ BIBO<br/>a DIFFERENT channel from Prop 7's cascade"]
-    LOCAL["Locality of correction (§3.5)<br/>a correct upper node survives —<br/>from composition/attribution, NOT from the bound"]
+  subgraph RES["Ch. 16 results"]
+    P3["P3 — Prop 3, information dominance §16.2"]
+    P8["P8 — Prop 8, incentive compatibility §16.11"]
+    PCASC["PCASC — Prop 7, scale bounds §16.7"]
+    BIBO["BIBO — small-gain, by citation §16.7"]
+    LOCAL["LOCAL — locality of correction §7.3"]
   end
-  class P3,P8,PCASC,BIBO,LOCAL derived
+  class P3,P8,PCASC,LOCAL derived
+  class BIBO cited
 
-  subgraph BND["Boundaries and assumptions (§24, §9, §8)"]
-    BRAT["§24.1 Rationality (the Blackwell premise)"]
-    BADV["§24.2 Non-adversarial (IC; a characterized STRATIFICATION,<br/>survives/imports; the incentivized core is an OPEN PROBLEM §26.3,<br/>only its p=0 limit is a boundary)"]
-    BCAUS["§24.3 / §8 L2 causal correctness<br/>= half (ii) of A1; the FM-3 false-PASS remains"]
-    BOVR["§24.4 Formalization overhead"]
-    BDOM["§9 / §24.6 Scope boundaries<br/>the model applies ⟺ A1 ∧ A2"]
-    BFAITH["§8 The faithfulness residue<br/>the domain-silent false-PASS, a permanent boundary"]
-    BMETH["§8 Decomposition-method quality — a SPLIT<br/>faithfulness half = boundary (Lemma 1);<br/>generation-procedure half = open problem,<br/>closed as a PROCEDURE by E2 (decompose); the seam's faithfulness = the E3 blocker"]
+  subgraph BND["Premises, boundaries, around §20.5, §20.8, §20.9"]
+    BRAT["BRAT — rationality §16.2"]
+    BADV["BADV — non-adversarial §16.4"]
+    BCAUS["BCAUS — causal correctness §7.3"]
+    BOVR["BOVR — overhead §16.3"]
+    BDOM["BDOM — scope A1∧A2 §2.1"]
+    BFAITH["BFAITH — faithfulness residue §20.2"]
+    BMETH["BMETH — method quality §20.2"]
+    BWALL["BWALL — carve wall §20.7"]
   end
-  class BRAT,BADV,BCAUS,BOVR,BDOM,BFAITH,BMETH bound
+  class BCAUS,BDOM,BFAITH,BMETH,BWALL bound
+  class BRAT,BADV premise
+  class BOVR around
 
-  subgraph TM["Theory-model §2–§3 + §7 — the FOUNDATION (the canon derives the apparatus from it; it does not re-prove T1 / the 7 FM)"]
-    SSHAT["S / Ŝ notation (§2.2, §9)<br/>S real-but-not-given; Ŝ built by the agent;<br/>faithfulness Ŝ_used ⊆ S"]
-    SUBST["§5 The continuous substrate<br/>ẋ = f(x,u); the basins Capt_S; separators;<br/>the discrete (t,{tⱼ}) ∈ S = the shadow of chaining"]
-    LINKS["§4 The five constitutive links<br/>goal · build-Ŝ · plan D · execution · contact<br/>the agent = an emergent scope-bundle"]
-    METH["§7 The forced methodology<br/>front-load FORM + STOP-MARK-RE-DERIVE;<br/>the optimum over c_check + E_FORM + E_FAITH"]
-    VAL["§6.1–§6.2 Value = making-explicit<br/>planning ⊂ GFSO; the machinery delta is narrow;<br/>the plan becomes falsifiable"]
-    ATTR["§3.5 Two-sided attribution<br/>forward = the cascade; backward = to the node<br/>with the broken compositional claim"]
+  subgraph TM["Theory-model — the foundation §20.11"]
+    SSHAT["SSHAT — S and Ŝ §3.1"]
+    SUBST["SUBST — continuous substrate Ch. 6"]
+    LINKS["LINKS — the five links Ch. 5"]
+    METH["METH — methodology §18.1"]
+    VAL["VAL — making-explicit §19.3"]
+    ATTR["ATTR — two-sided attribution §4.4"]
   end
   class SSHAT,SUBST,LINKS,METH,VAL,ATTR ground
 
-  subgraph EXP["Empirics and experiments"]
-    E1["E1 — 216 real post-mortems<br/>0 require an 8th FM<br/>(the residual NONEs are out of domain §9/§24, not an uncovered FM)"]
-    E2["E2 — convergence of decomposition to a reference (bare-SEARCH ⊕ gfso-AUDIT → decompose)<br/>the reference = completeness over the 7 FM"]
+  subgraph EXP["Empirics"]
+    E1["E1 — 216 post-mortems (EVIDENCE_LOG)"]
+    E2["E2 — decomposition method (EVIDENCE_LOG)"]
   end
   class E1,E2 emp
 
-  subgraph MIR["Canon mirrors (projections, not primitives)"]
-    CONST["Constitution method_gfso.md"]
-    CORE["CORE.md (the one-pager)"]
-    CODE["the code gfso/ (the canon's v4.0 names)"]
+  subgraph MIR["Canon mirrors"]
+    CONST["CONST — method_gfso.md"]
+    CORE["CORE.md"]
+    CODE["CODE — gfso/"]
   end
   class CONST,CORE,CODE mirror
 
   %% --- axioms → primitives ---
   A1 --> T
-  A1 --> V
+  T --> V
   A2 --> D
   A2 --> Del
   T --> Dep
@@ -861,7 +800,7 @@ flowchart TD
   NR --> AX1
   BIN --> AX1
   ANDu --> AX1
-  A1 -->|connectedness of the evaluation interval| AX2
+  A1 -->|connectedness §8.2| AX2
 
   %% --- the other two closures ---
   AXM --> CHK
@@ -870,19 +809,17 @@ flowchart TD
   %% --- each FM derived from its upstream result ---
   JS --> FM1
   NR --> FM1
-  Dep --> FM2
+  AX1 --> FM2
   D --> FM2
   BIN --> FM3
   A1 --> FM3
   ANDu --> FM4
   A1 --> FM6
   A1 --> FM5
-  A1 --> FM7
   AX2 --> FM5
   AX2 --> FM6
-  AX2 --> FM7
 
-  %% --- the 7 FM form a proved basis ---
+  %% --- the 6 FM form a proved basis ---
   AX1 --> BASIS
   FM1 --> BASIS
   FM2 --> BASIS
@@ -890,22 +827,20 @@ flowchart TD
   FM4 --> BASIS
   FM5 --> BASIS
   FM6 --> BASIS
-  FM7 --> BASIS
 
   %% --- E1 corroborates the covering axiom ---
   E1 -.->|corrob| AX1
   E1 -.->|corrob| BASIS
 
-  %% --- standards = guards of specific FMs (§13.6) ---
-  T -.->|ACCEPTED_RISKS| STD1
+  %% --- standards = guards of specific FMs (§9.10) ---
+  D -.->|ACCEPTED_RISKS, the split's register| STD1
   STD1 -.->|guard| FM1
   STD2 -.->|admissibility| FM1
   STD3 -.->|guard| FM1
   STD4 -.->|guard| FM1
   STD4 -.->|guard| FM2
-  STD4 -.->|guard| FM4
+  T1 -.->|departure from AND, no CHECK| FM4
   STD4 -.->|guard| FM5
-  STD4 -.->|guard| FM7
   A1 -.->|form only, no guard| FM3
   STD4 --> CHK
   CHK -.->|guard L1| FM1
@@ -913,21 +848,22 @@ flowchart TD
   COST -.->|guard| STD4
   A2 -.->|latent| COST
 
-  %% --- protocol: BASIS builds the signals; 4 of the 12 answer an FM, the rest close deadlocks/IC seams (§14.2) ---
+  %% --- protocol: BASIS builds the signals (§11.4) ---
   BASIS --> SIG
   BASIS --> FSM
   SIG --> FSM
-  SIG -.->|guard FM7| FM7
+  SIG -.->|guard at contact| FM1
+  SIG -.->|guard at contact| FM2
   SIG -.->|guard FM5| FM5
   SIG -.->|guard FM3| FM3
-  FSM -.->|guard: deferred decomposition| FM6
+  FSM -.->|guard: deferral §8.6| FM6
   INV -.->|guard| FM3
   INV -.->|guard| FM5
   BIN --> INV
   FSM --> INV
-  AGN -.->|guard IC| FM3
+  SOD -.->|guard IC at the seam| FM3
 
-  %% --- metrics: the graph from the protocol, the q's detect FMs (§15.2, §13.6) ---
+  %% --- metrics: the graph from the protocol, the q's detect FMs (§15.4, §15.7) ---
   SIG --> GRAPH
   FSM --> GRAPH
   GRAPH --> QT
@@ -936,15 +872,16 @@ flowchart TD
   GRAPH --> QDEP
   GRAPH --> QDEL
   QT -.->|detect| FM1
+  QT -.->|detect| FM2
   QD -.->|detect| FM1
   QV -.->|detect false-PASS only| FM3
-  QDEP -.->|detect| FM5
-  QDEL -.->|detect| FM7
+  QV -.->|detect a PASS over a dropped fail| FM4
+  QDEP -.->|detect a race| FM5
   GRAPH --> SELF
   INV --> TRANS
   STD1 --> TRANS
 
-  %% --- AI layer: guards of the residual FMs (§15.3) ---
+  %% --- AI layer: guards of the residual FMs (Ch. 17) ---
   GRAPH --> SOLVER
   GRAPH --> LLM
   SOLVER --> CHK
@@ -959,18 +896,17 @@ flowchart TD
 
   %% --- derivative results ---
   D --> STRAT
-  A1 --> STRAT
   SIG --> SCRUM
   D --> SCRUM
   BASIS --> SCRUM
 
-  %% --- Part III results ---
+  %% --- Ch. 16 results ---
   GRAPH -->|info structure| P3
   SIG --> P8
   INV --> P8
   STD1 --> P8
-  T1 -.->|the validation step whose gain γ&lt;1 is DEFINITIONAL in §18.3, not derived from T1| PCASC
-  SIG -->|feedback FM7 channel| BIBO
+  T1 -->|the validation step §16.7| PCASC
+  SIG -->|upward feedback channel| BIBO
   ATTR --> LOCAL
 
   %% --- boundaries hung on what they bound ---
@@ -978,34 +914,35 @@ flowchart TD
   BADV -.->|bounds| P8
   BCAUS -.->|bounds| T1
   BCAUS -.->|bounds| FM3
+  BCAUS -.->|bounds| PCASC
   BOVR -.->|bounds| STD4
   BDOM -.->|bounds| A1
   BDOM -.->|bounds| A2
   BFAITH -.->|bounds| FM3
   BMETH -.->|bounds| E2
 
-  %% --- the seam: the single place S enters; the second reading of the axioms (§2.6) ---
-  SEAM -.->|explain: epistemology glued to ontology at ONE seam| SSHAT
-  SINGLE -.->|explain: no a-priori discipline certifies faithfulness| SEAM
-  SEAM -.->|second reading §2.6: solvability of the OUTPUT — a STATUS CHANGE, not a derivation| A1
-  SEAM -.->|second reading §2.6: κ-constructibility of the INPUT — a STATUS CHANGE, not a derivation| A2
-  SINGLE -.->|explain ii: apparatus-uncertifiable| BCAUS
+  %% --- the seam: the single place S enters; the second reading of the axioms (§3.7) ---
+  SEAM -.->|explain: one seam| SSHAT
+  SINGLE -.->|explain: Lemma 1| SEAM
+  SEAM -.->|second reading §3.7: OUTPUT| A1
+  SEAM -.->|second reading §3.7: INPUT| A2
+  SINGLE -.->|explain ii| BCAUS
 
-  %% --- the theory-model = the FOUNDATION: it grounds; the canon derives the apparatus from it (Part II) ---
+  %% --- the theory-model = the FOUNDATION (§20.11) ---
   ROOT -.->|explain hole-i| FM1
-  ROOT -.->|explain insensitive-ii| FM3
+  ROOT -.->|explain insensitive-ii| FM1
   SSHAT -.->|explain| ROOT
   SUBST -.->|explain| SSHAT
   SUBST -.->|explain joints| NR
   SUBST -.->|explain seam| JS
   LINKS -.->|explain agent-needed| AI
   LINKS -.->|explain| SSHAT
-  METH -.->|explain| STD4
-  METH -.->|explain| COST
+  COST -->|F3 §18.1| METH
+  PCASC -->|F2 §18.1| METH
   VAL -.->|explain| BASIS
   SSHAT -.->|explain ii| BCAUS
 
-  %% --- E2 takes the 7 FM as the reference's completeness frame ---
+  %% --- E2 takes the 6 FM as the reference's completeness frame ---
   BASIS --> E2
 
   %% --- mirrors: projections of the canon ---

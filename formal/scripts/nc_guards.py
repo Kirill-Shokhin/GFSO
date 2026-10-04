@@ -50,7 +50,7 @@ CONTROLS = [
     ("a dangling canon § in the product tree", "gfso/core/graph/metrics.py",
      "\n# NC: §99.9\n", "check_refs.sh", True),
     ("a non-ascending § range in a test docstring", "tests/test_metrics.py",
-     "\n# NC: §14.4–2.1\n", "check_refs.sh", True),
+     "\n# NC: §12.3, §1.2\n", "check_refs.sh", True),
     ("a fabricated result label in a tool docstring", "gfso/tools.py",
      "\n# NC: FM-9\n", "check_refs.sh", True),
     # ── over-firing controls: these must stay GREEN ──────────────────────────────────────────────

@@ -1,5 +1,10 @@
 # Scrum ⊂ GFSO — Worked Examples (causal before/after)
 
+> *FM labels below are the E1 protocol's; its FM-7 ("detected, no channel") is not a mode of the
+> canon, which since 2026-09-27 counts six (Ch. 12: a channel to correct is the protocol's). A pre-verdict report
+> channel answers the mode it keeps from being computed over — CHALLENGE FM-1/2, BLOCK FM-5 (§14.2); the synthesis
+> table carries the protocol's labels.*
+>
 > Deepens §17.2 from *structural containment* (Scrum's parts map to GFSO primitives —
 > proven in E1 Track B, 0 unmapped) toward a *causal* reading: each rich Scrum case carries
 > a **before/after A/B** — a BEFORE failure (pre-Scrum, FM-classifiable) and an AFTER success
@@ -126,12 +131,12 @@ GFSO's unit of analysis (a verifiable handoff) and §17.2 containment hold outsi
 
 | Scrum primitive | GFSO mapping | Guards FM | Case(s) |
 |---|---|---|---|
-| Short sprint + per-sprint increment | T.deadline (short horizon) + DELIVER→V each cycle | FM-7, FM-1 | FBI |
-| Daily Scrum + board | CHALLENGE/BLOCK channel + dependency visibility | FM-7, FM-5 | House |
+| Short sprint + per-sprint increment | T.deadline (short horizon) + DELIVER→V each cycle | the correction channel (a verdict each cycle, so a refutation after one meets the next — the protocol's, not a mode), FM-1 | FBI |
+| Daily Scrum + board | CHALLENGE/BLOCK channel + dependency visibility | FM-1/2 and FM-5 by Ch. 12 (E1 protocol: FM-7, FM-5) | House |
 | Definition of Done | Criteria (explicit, binary V) | FM-1, FM-3 | Medco, eduScrum |
-| Owned impediment list | BLOCK → RESOLVE_BLOCK | FM-7 | Medco |
+| Owned impediment list | BLOCK → RESOLVE_BLOCK | FM-5 by Ch. 12 (E1 protocol: FM-7) | Medco |
 | Backlog (cut to essentials) | D: coverage + non-redundancy | FM-1 | Medco |
-| Stakeholder demo | CHALLENGE (spec defect surfaced early) | FM-7, FM-1 | FBI, eduScrum |
+| Stakeholder demo | CHALLENGE (spec defect surfaced early) | FM-1/2 by Ch. 12 (E1 protocol: FM-7, FM-1) | FBI, eduScrum |
 
 Every *working* Scrum primitive instantiates a GFSO mechanism that guards a specific FM — and
 the BEFORE failures cluster on exactly those FMs (FM-1, FM-5, FM-7).

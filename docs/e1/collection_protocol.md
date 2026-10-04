@@ -34,7 +34,7 @@ You MUST classify into exactly one of these. Read carefully.
 | **FM-4** | **Propagation** | A child's FAIL **didn't propagate** up to parent. Validation aggregation broken — parent shows PASS while a child is FAIL. |
 | **FM-5** | **Currency** | The spec **changed** but the decomposition wasn't updated. Children operate on stale assumptions; their outputs no longer compose to the new parent goal. |
 | **FM-6** | **Feasibility** | The decomposition was attempted **before the information needed to decompose correctly was available**. Pre-condition for D was not yet established. |
-| **FM-7** | **Feedback** | An error/blocker was detected by some executor but there **was no channel** to communicate it back. Error stayed invisible until too late. |
+| **FM-7** | **Feedback** | An error/blocker was detected by some executor but there **was no channel** to communicate it back. Error stayed invisible until too late. *(Not a mode of the canon, which since 2026-09-27 counts six: a channel to correct is the protocol's; a defect known before the verdict is FM-1/2/3/5 — see EVIDENCE_LOG, E1.)* |
 
 ### Disambiguation rules (apply in order if multiple plausible)
 

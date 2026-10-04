@@ -16,8 +16,8 @@
 #       canon ANCHOR that superseded it; if the anchor is gone from the canon, the entry is stale
 #       and the guard fails, so the list cannot rot into a lie. This half scans the CANON TOO, not
 #       only the mirrors: a canon that carries both the anchor and the wording it retired is
-#       self-contradictory, and scanning mirrors alone let exactly that survive twice (§14 preamble,
-#       §26.9(b)). The canon's **Changelog** is excluded from this scan and only from it — a
+#       self-contradictory, and scanning mirrors alone let exactly that survive twice (§12 preamble,
+#       §13.5(b)). The canon's **Changelog** is excluded from this scan and only from it — a
 #       changelog legitimately names the formulation it replaced, that being what provenance IS.
 #       The COUNT half never scans the canon: the canon is where the counts are read FROM.
 #
@@ -62,7 +62,7 @@ def derive(name, pattern, transform=lambda m: m.group(1)):
         return None
     return transform(m)
 
-# FM-1 sub-taxonomy: the letters actually present as rows of the §12.2 table.
+# FM-1 sub-taxonomy: the letters actually present as rows of the §8.3 table.
 subtypes = sorted(set(re.findall(r'\|\s*FM-1\.([a-z])\s', canon)))
 if not subtypes:
     fail.append("DERIVE FAIL [subtypes]: no `| FM-1.x` table rows found in the canon")
@@ -70,13 +70,15 @@ last_sub = subtypes[-1] if subtypes else None
 
 checks   = derive('checks',  r'counts \*\*(\w+)\*\* CHECKs')
 axioms   = derive('axioms',  r'yields \*\*exactly (\w+) covering axioms\*\*')
-classes  = derive('classes', r'the twelve states carry (\w+) behaviour classes')
+classes  = derive('classes', r'the eleven states carry (\w+) behaviour classes')
+# Over the log CHALLENGED splits by consent (§12.4): a second, larger count the canon states in its own words.
+classes_log = derive('classes over the log', r'over the log the machine has (\w+) behaviour classes')
 
-# The §14.2 signal defect split, read off the canon's own count line. It lives in five carriers
-# (canon §14.2 and Ch. 27, Protocol.lean's header/`defect_distribution`, formal/README, the
+# The §11.2 signal defect split, read off the canon's own count line. It lives in five carriers
+# (canon §11.2 and Ch. 20, Protocol.lean's header/`defect_distribution`, formal/README, the
 # dependency map), which is exactly the drift surface this guard exists for.
 split = derive('signal split',
-               r'FM \((\d+):[^)]*\), FSM deadlock \((\d+):[^)]*\), IC \((\d+):[^)]*\), '
+               r'FM \((\d+):[^)]*\), FSM \((\d+):[^)]*\), IC \((\d+):[^)]*\), '
                r'operation \((\d+):',
                lambda m: '/'.join(m.groups()))
 
@@ -85,7 +87,7 @@ WORD = {'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,
 def num(w):
     return WORD.get(w.lower()) if w and not w.isdigit() else (int(w) if w else None)
 
-n_checks, n_axioms, n_classes = num(checks), num(axioms), num(classes)
+n_checks, n_axioms, n_classes, n_classes_log = num(checks), num(axioms), num(classes), num(classes_log)
 
 # ---------------------------------------------------------------------------
 # (2) The contradiction scan. Each rule: a regex that MATCHES a statement, and a predicate that
@@ -140,15 +142,15 @@ if split:
         lambda m: '/'.join(m.groups()) != split and not re.search(
             r'(?:FM|Prop|Thm|Cor|Lemma|Inv|STD|CHECK|Link|Ch\.|Chapter|§)[-\s.]*[\d/]*$',
             m.string[:m.start()]),
-        f"the canon's §14.2 count line states the split {split}",   # spaced forms included
+        f"the canon's §11.2 count line states the split {split}",   # spaced forms included
     ))
 
 if n_classes:
     RULES.append((
         'behaviour-class count',
         re.compile(r'(\w+)\s+behaviour(?:al)? classes\b'),
-        lambda m: num(m.group(1)) not in (None, n_classes),
-        f"the canon measures {n_classes} behaviour classes over the twelve states",
+        lambda m: num(m.group(1)) not in (None, n_classes, n_classes_log),
+        f"the canon measures {n_classes} behaviour classes over the eleven states ({n_classes_log} over the log)",
     ))
 
 # ---------------------------------------------------------------------------
@@ -160,12 +162,13 @@ RETIRED = [
      "A1 fixes FM-3's verdict FORM, not its truth; no structural CHECK guards it",
      "no structural CHECK guards FM-3"),
     (r'each (?:of the 12 )?signals? answers? (?:a specific )?(?:an )?FM\b',
-     "4 of the 12 signals answer an FM; 4 close FSM deadlocks, 3 close IC seams, 1 initiates",
+     "4 of the 12 signals answer an FM; 4 are their states' only genuine exits (FSM), 3 close IC "
+     "seams, 1 initiates",
      "FM (4: CHALLENGE, BLOCK, FAIL, CANCEL)"),
     # The corrective sentence names both terms; only the ASSERTION that ACCEPT_CHALLENGE *is* FM-5
     # is retired, so the rule excludes any line that negates it ("is IC, not FM-5" / "not FM-5").
     (r'ACCEPT_CHALLENGE(?![^.\n]{0,80}(?:not FM-5|is IC))[^.\n]{0,60}(?<!not )FM-5',
-     "ACCEPT_CHALLENGE is IC, not FM-5: re-ASSIGN carries the spec update (Inv-1, §14.3); "
+     "ACCEPT_CHALLENGE is IC, not FM-5: re-ASSIGN carries the spec update (Inv-1, §12.10); "
      "what only it carries is the dispute's positive closure",
      "IC (3: ACCEPT, REJECT_CHALLENGE, ACCEPT_CHALLENGE)"),
     (r'no adoption threshold',
@@ -177,6 +180,21 @@ RETIRED = [
     (r'Timeouts on every state\b',
      "Inv-5 exempts IDLE by name",
      "every non-terminal state **except IDLE**"),
+    (r'\b4 ?\+ ?3\b(?! *=)|\b4 ?⊕ ?3\b',
+     "the FM geometry is 4 denotational ⊕ 2 operational; the after phase holds no mode (FM-7 withdrawn)",
+     "4 denotational ⊕ 2 operational"),
+    (r'\b(?:7|seven) (?:independence )?witnesses\b',
+     "six independence witnesses (FM-7 withdrawn)",
+     "six independence witnesses"),
+    (r'\b(?:8th|eighth) (?:failure )?(?:mode|FM)|\b(?:7|seven)[- ](?:failure|FMs?\b|mode\b)|\bseven (?:conditions|FMs?)\b|FM-1(?:\.\.|…|–)(?:FM-)?7\b|4 denotational ⊕ 3',
+     "the canon counts six failure modes; E1 reads as 0/216 needing a mode outside the six",
+     "six failure modes, proved complete as a basis"),
+    (r'FM-?1/2/4/5(?:/7)?\b',
+     "CHECK-2's two D clauses guard no mode; STD-4 covers FM-1/2/5",
+     "Its two D clauses guard no mode"),
+    (r'cyclic face',
+     "FM-4 has no structural guard: D's acyclicity guards the forest Ch. 2 requires, not a mode",
+     "FM-3, FM-4 and FM-6 are guarded by no structural CHECK"),
 ]
 
 for pat, why, anchor in RETIRED:

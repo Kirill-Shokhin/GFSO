@@ -1,5 +1,5 @@
 # The closure guard's whitelist. SIX entries = the 3 covering axioms + the 3 uninterpreted
-# predicates they quantify over — one fact at two granularities (canon §1.4). Order: axiom,
+# predicates they quantify over — one fact at two granularities (canon §20.4–§20.5). Order: axiom,
 # then its carrier(s).
 #
 # --- covering axioms (the "no further kind" claims) ---

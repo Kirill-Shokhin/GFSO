@@ -62,6 +62,13 @@ FILES=(../README.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependen
        ../gfso/**/*.py ../gfso/**/*.md ../gfso/web/index.html ../gfso/web/gfso.css
        ../tests/**/*.py
        ../docs/architecture.md)
+# THE SCOPE. A theory commit is pushed on its own and must pass on its own, so the formal workflow
+# runs this guard with GFSO_GUARD_SCOPE=theory: the canon's own surface (formal/ and the theory
+# mirrors). The product and its pages (gfso/, tests/, architecture, USING_GFSO, the embedding
+# contract, the task packet) are checked with the scope unset, by the tests workflow.
+if [[ "${GFSO_GUARD_SCOPE:-all}" == theory ]]; then
+  FILES=($(printf '%s\n' "${FILES[@]}" | grep -vE '^\.\./(gfso|tests)/|^\.\./docs/(architecture|USING_GFSO|embeddability_acceptance|TASK_PACKET)\.md$'))
+fi
 
 # ---------------------------------------------------------------------------
 # 0. FAIL-CLOSED PRE-FLIGHT: every watched file must exist.
@@ -144,6 +151,12 @@ PY
 # third member is the lowercase trigger), the literal `TIMEOUT state` / `state TIMEOUT`, the diagram
 # form `TIMEOUT →`, and the Russian `TIMEOUT-состояние`. A retired STATE-`TIMEOUT` outside these
 # contexts stays grep-invisible by design — that residue is disclosed, not hidden.
+# `AUTO` is watched in the retired term's own contexts only. v3.9's `AUTO` was a DONE REASON
+# (`DoneReason.AUTO` -> `AUTO_PASS`, since removed with the auto_pass cell); the product has since
+# given the word to a different, live term - the working mode `Mode.AUTO` (solo / semi / auto). A
+# bare `AUTO\b` watch fails on the mode, and licensing the mode's spellings one by one would license
+# the old reason wherever it looked the same. So the watch is keyed to where the reason stood: the
+# enum member, `DONE(AUTO)`, and a reason field set to it.
 handling_for() {
   case "$1" in
     'REVIEW')              echo $'WATCH	'"REVIEW\b|[Rr]eview →|review →" ;;
@@ -151,7 +164,7 @@ handling_for() {
     'CANCEL_ACK')          echo $'WATCH	'"CANCEL_ACK" ;;
     'REWORK')              echo $'WATCH	'"REWORK\b" ;;
     'NEGLECTED')           echo $'WATCH	'"NEGLECTED" ;;
-    'AUTO')                echo $'WATCH	'"AUTO\b" ;;
+    'AUTO')                echo $'WATCH	'"DoneReason\.AUTO\b|DONE\(AUTO\)|reason ?[=:] ?['\"]?AUTO\b|done_reason[^,;]{0,12}AUTO\b" ;;
     'HBP')                 echo $'WATCH	'"HBP" ;;
     'SOLITUDE')            echo $'WATCH	'"SOLITUDE" ;;
     'EMIT')                echo $'WATCH	'"EMIT\b" ;;
@@ -266,7 +279,7 @@ for e in "${EXTRA[@]}"; do PAIRS+=("$e"); done
 # Strip what may legitimately name a retired term:
 #  * `(v3.9: X)` / `v3.9 names: …` / `v3.9 carried this as "X"` — the canon's own provenance notes;
 #  * the pre-v3.7 `DoneReason.CANCELLED` legacy member, which names a spelling the storage layer
-#    still decodes on read (§14.3) and which no rename retired.
+#    still decodes on read (§12.4) and which no rename retired.
 # (The v3.9 read-shim once licensed here is gone: the migration is over and nothing writes or reads
 # the old spellings any more, so a region licensed to carry them would license a regression.)
 # Licensed regions are BLANKED, never deleted: `sed '…d'` shifts every later line number, which made

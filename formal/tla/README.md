@@ -1,136 +1,245 @@
 # formal/tla — the concurrent half of the protocol, model-checked
 
 The Lean development (`formal/GFSO/`) machine-checks the protocol's **static** half:
-per-node properties of the FSM table (determinism, timeout termination, the cancel
-handshake reaching a terminal). This directory checks what Lean cannot see — the
-**concurrent system half**: the engine's runtime composition, where many signal sources
-interleave through one queue and an asynchronous timeout monitor races the actors.
+per-node properties of the FSM table (determinism, Inv-8 ownership, pure timeout chains
+ending, the cancel handshake reaching a terminal). This directory checks what Lean cannot
+see — the **concurrent system half**: the engine's runtime composition, where many signal
+sources interleave through one queue and an asynchronous timeout monitor races the actors.
 
-Model premises are the canon's own (§14.3, and §11.1 for the atomicity of an evaluation):
-the evaluation act is atomic
-(one `process_signal` call = one model step) and time is the causal order of queue
-events — no global clock is assumed anywhere.
+Model premises are the canon's own (§12.4, and §12.8 for the atomicity of an evaluation):
+the evaluation act is atomic (one `process_signal` call = one model step) and time is the
+causal order of queue events — no global clock is assumed anywhere.
 
-## Spike — DONE
+## The table (`FsmTable.tla`) — v4.1, the table the engine carries
 
-`FsmSpike.tla` — ONE node, the full 12-signal alphabet, hostile actors (any P2P signal
-at any time; the engine's rejection path is part of the model), the timeout monitor as
-a separate process with its real semantics from `gfso/engine/loop.py::timeout_monitor`:
-per-(task, state) dedup, a monotone deadline clock, and **stale delivery** — a fired
-TIMEOUT rides the queue and may land after the state has moved.
+One shared image of `gfso/core/protocol/fsm.py::transition`, which every model EXTENDS.
+It carries the canon's v4.1 base machine, which the engine has landed cell for cell (declared in
+the module header, the same cells `formal/GFSO/Fsm.lean` declares):
+- the first timeouts of OFFERED, CHALLENGED, EXECUTING and REWORKING → ESCALATED — a missed bound
+  hands the decision over at once; OVERDUE is no state (not in `States`, not in `IssuerOwned`,
+  no row), in the table or in the engine;
+- (CHALLENGED, REJECT_CHALLENGE) → OFFERED when the executor has not consented to the current
+  packet version, EXECUTING when he has. The consent datum is `Step`'s `cons` argument,
+  maintained by `ConsentNext` (set by an accepted ACCEPT, cleared by a new version). FsmSpike and
+  FsmSystem carry it per node as a variable `cons`; FsmCascade3 passes FALSE, since its reduced
+  alphabet has no CHALLENGE and the cell is never reached there;
+- the post-consent CHALLENGE and VALIDATING's timeout → ESCALATED.
+`tests/test_model_conformance.py` parses this file and compares it with `fsm.py` on every cell,
+both sides of every guard. The module also carries Inv-8's owner
+sets and signal senders, and `NewVersion(sig)` — a re-ASSIGN or an ACCEPT_CHALLENGE, the
+only two ways a new packet version enters, both through OFFERED and both the issuer's.
 
-The transition function `Step` is a verbatim image of
-`gfso/core/protocol/fsm.py::transition`, including the iteration guard on
-VALIDATING+FAIL, the universal-CANCEL catch-all, revision (re-ASSIGN → OFFERED,
-§14.4 Inv-1) and the **R′ REOPEN edge** (§14.3): DONE/ABANDONED + ASSIGN under the
-double gate `¬consumed ∧ ro < MaxReopens` → OFFERED. `consumed` (the finality-gate
-verdict) is modeled as a monotone environment fact like `overdue` — it may land at
-any moment or never; the checked claim is finiteness over EVERY consumption
-trajectory. The reopen counter is spent in the same atomic step as the edge (Inv-7).
+## What is checked, and why not `Termination`
 
-Checked by TLC over the **complete** state space (86 616 distinct states,
-MaxReopens = 2):
+v4.0's models checked `Termination == <>[](state ∈ Terminal)`. Once ESCALATED is the
+issuer's live waiting state, that is the wrong property: the issuer may legitimately keep
+re-ASSIGNing a goal he means to continue (OFFERED → … → ESCALATED → re-ASSIGN → OFFERED),
+and a counter on that would re-create the ownerless state by fiat. It is replaced by three
+statements, each with its own ground:
 
-| Property | Meaning | Result |
+| Property | Meaning |
+|---|---|
+| `WaitsEnd` | F1, Inv-5 as written: no live state (non-terminal, not IDLE) is held forever with no signal processed. Read off (state, packet-version parity): every accepted transition either changes the state or is OFFERED's re-ASSIGN, which flips the parity |
+| `NoOwnerlessDivergence` | F2+F3 at run level: every behaviour comes to rest in a terminal (or in IDLE — never issued), or processes infinitely many NEW packet versions, each an issuer's act (re-ASSIGN or ACCEPT_CHALLENGE). No run cycles forever inside one contract, and no run unmakes verdicts without bound |
+| `OwnerHasMoveInv` | Inv-8 on every reachable state: the owner of the state the node is in has an admissible move of his own |
+| `ChildIssuedOnlyUnderLiveParent` (N ≥ 2) | §12.7 issuing children: a child's FIRST ASSIGN (IDLE → OFFERED) never happens under a CANCELLING or terminal parent — nothing is issued into a fired cascade. An ACTION property; see the N ≥ 2 section |
+
+`EscalatedAbsorbing` is dropped (ESCALATED is no longer absorbing). `FinalityAbsorbing`
+(FsmSpike) and `TerminalAbsorbing` (N ≥ 2) are kept.
+
+**The contract clock, per packet version.** `overdue` = "a bound of the CURRENT packet
+version has passed": monotone within a version, RESET on every new version (a re-ASSIGN is
+never born overdue). The rework counter `iter` counts FAILs under one version: it resets on
+every new version (first ASSIGN, revision incl. out of ESCALATED, ACCEPT_CHALLENGE, REOPEN)
+and NOT on REJECT_CHALLENGE. The monitor dedups per state VISIT, and a new version opens a
+new visit (loop.py's `(state, state_entered_at)` key).
+
+**Named abstractions of the clock — what these models cannot state.** One flag carries both
+the packet's deadline and the per-state answer bounds. So the models do NOT express: that
+VALIDATING is bounded by T_validate alone, counted from DELIVER, and never by the deadline;
+that a state entered after its bound has passed admits no signal before its timeout (here a
+signal already queued may still be processed first — e.g. a FAIL-entered REWORKING after
+the deadline is not forced to ESCALATED at once); or that a CHALLENGE re-sent after a
+REJECT_CHALLENGE under one version is bounded by the deadline alone. What they do check is
+that such loops end: the flag is not reset by them. No expiry is attributed to a party.
+
+## Spike — `FsmSpike.tla`
+
+ONE node, the full 12-signal alphabet, hostile actors (any P2P signal at any time; the
+engine's rejection path is part of the model), the timeout monitor as a separate process
+with its real semantics from `gfso/engine/loop.py::timeout_monitor` (per-visit dedup, stale
+delivery — a fired TIMEOUT rides the queue and may land after the state has moved), and the
+**R′ REOPEN edge** (§12.14): DONE/ABANDONED + ASSIGN under `¬consumed ∧ ro < MaxReopens`,
+with `consumed` a monotone environment fact that may land at any moment or never.
+
+TLC, complete state space, `MaxIterations = 2`, `MaxReopens = 2`, `QueueCap = 3`, one property
+per run: **480 008 states generated, 173 922 distinct, depth 35** (v4.0: 86 616 distinct —
+the packet-version parity doubles it).
+
+| Spec / cfg | Property | Result |
 |---|---|---|
-| `TypeOK` | state/iteration/queue/reopens stay well-typed and bounded | holds |
-| `Termination` | **Inv-5 at the system level, R′-strengthened to `<>[]`(terminal)**: every behavior eventually reaches a terminal state AND STAYS terminal — gated reopens included; max_reopens restores finiteness for the new outgoing edge exactly as §14.3 claims | holds |
-| `EscalatedAbsorbing` | ESCALATED stays fully terminal (the R′ edge exists only on DONE/ABANDONED) | holds |
-| `FinalityAbsorbing` | a FINAL quasi-terminal (consumed ∨ reopens exhausted) is absorbing — once the verdict is consumed or the counter is spent, the node is locked (§14.3) | holds |
+| `Spec` (`FsmSpike.cfg`) | `TypeOK` | holds |
+| | `OwnerHasMoveInv` | holds |
+| | `WaitsEnd` | holds (38 s) |
+| | `NoOwnerlessDivergence` | holds |
+| | `FinalityAbsorbing` | holds |
+| `SpecNoMonitor` (`FsmSpikeNoMonitor.cfg`) — negative control | `WaitsEnd` | **violated**, as it must be: a lasso holding OFFERED forever, overdue, the actors sending only rejected signals and the dead monitor never firing |
+| | `NoOwnerlessDivergence` | violated (the same stall) |
+| `SpecNoDeadline` (`FsmSpikeNoDeadline.cfg`) — negative control | `DivergenceUnlessStall` (= `WaitsEnd ⇒ NoOwnerlessDivergence`) | **violated**, as it must be: every wait ends and the node still cycles forever under ONE version — TLC's lasso is EXECUTING ↔ BLOCKED by BLOCK/RESOLVE_BLOCK with `iter` at its bound. No counter bounds that loop (nor the post-consent CHALLENGE ↔ REJECT_CHALLENGE one); the deadline does |
+| | (sanity) the same implication under `Spec` | holds |
 
-**R′ regression the model caught (and the code fix it forced).** With the reopen
-edge added, the FIRST run refuted `Termination`: the monitor's dedup keyed on the
-last-FIRED state, so a node could leave a fired-in state through a terminal and
-REOPEN back into it before any cleanup tick (…→ CANCELLING(fired) → ABANDONED →
-reopen → … → CANCELLING again) — the monitor stayed silent forever and a withheld
-CONFIRM_CANCEL stuck the node: an Inv-5 violation reachable only through R′, invisible
-to the unit tests. Fix in `loop.py::timeout_monitor`: dedup per state **VISIT** —
-key = (state, `state_entered_at`), every state change restamps the entry ⟹ a
-re-entered state fires again. The model mirrors this as `mark` resetting on every
-processed state change. The green run above is post-fix; the pre-fix table is the
-refuted artifact.
+**R′ regression the model caught earlier (kept as record).** With the reopen edge added,
+v4.0's first run refuted `Termination`: the monitor's dedup keyed on the last-FIRED state, so
+a node could leave a fired-in state through a terminal and REOPEN back into it before any
+cleanup tick — the monitor stayed silent and a withheld CONFIRM_CANCEL stuck the node. Fixed
+in `loop.py::timeout_monitor` (dedup per state VISIT); the models mirror it as `mark`
+resetting on every processed state change — and, in v4.1, on every new packet version.
 
-**Negative control** (`FsmSpikeNoMonitor.cfg`): the same system with a dead monitor
-(no fairness on `MonitorFire`). `Termination` fails with a lasso counterexample — the
-node sits in CANCELLING forever while the executor withholds CONFIRM_CANCEL. That is
-exactly the FSM-deadlock class §14.2 assigns to CONFIRM_CANCEL, and the live-observed
-stuck-node defect (probe-hardening G3). The instrument demonstrably fails on a broken
-system; the green run above is not vacuous.
+## System models — `FsmSystem.tla` (N = 2) and `FsmCascade3.tla` (depth 2)
 
-Named modeling choices:
-- One queue slot is reserved for the monitor (`ActorSend` caps at `QueueCap - 1`) —
-  the real queue is unbounded, so actors can never starve the monitor; the bound only
-  keeps the state space finite.
-- `overdue` eventually becomes true (weak fairness on `BecomeOverdue`) = "a deadline
-  or state-age bound exists". The deadline-less node with `GFSO_STATE_TIMEOUT=0` is
-  the KNOWN open end recorded at probe-hardening — excluded from the claim by
-  construction, not silently.
-- Bounds: `MaxIterations = 2`, `QueueCap = 3` (complete search within them).
+`FsmSystem`: root + child over ONE shared queue, the full alphabet, the CANCEL cascade, the
+per-node monitor, and **crash/recovery** (the crash loses exactly what the process keeps in
+memory — the in-flight queue, the monitor's dedup — and keeps what the code persists: graph
+state, iteration, deadlines, the log). `FsmCascade3`: root → mid → leaf, the cascade rule
+composing through an intermediate node, crash included; actor alphabet reduced to
+{ASSIGN, ACCEPT, CANCEL, CONFIRM_CANCEL} (a named choice — full hostility is at N = 1 and 2).
 
-## System model — first result
+v4.1 changes to both, besides the properties:
+- **The cascade fires on ENTERING CANCELLING by either route** — the issuer's CANCEL or
+  ESCALATED's timeout. It used to fire on CANCEL only, a model defect: the silence takes the
+  cancellation's path precisely so that the live subtree goes with it. `CascadeFor` skips
+  IDLE children (as well as terminal and already-cancelling ones), so the delta's case of a
+  cascade over unissued children does not arise in the models — consistent with nothing
+  being owed on a node that was never issued.
+- **Per-visit monitor dedup** (as FsmSpike) — the N ≥ 2 models used to keep the last-fired-
+  state dedup, adequate only while nothing could re-enter a state; ESCALATED's re-ASSIGN can.
+- **The monitor's queue guard is per node** (at most one pending TIMEOUT per node, a stale one
+  included). Under the old shared slot cap TLC refuted both liveness properties on FsmCascade3
+  with a starvation lasso: a descendant's issuer re-ASSIGNing forever (OFFERED → OVERDUE →
+  ESCALATED → re-ASSIGN) kept the bounded queue full at exactly the moments another node's
+  fire was enabled — root held in CANCELLING (`NoOwnerlessDivergence`) and in OFFERED
+  (`WaitsEnd`); enabled infinitely often, never continuously, so weak fairness let it starve.
+  The real queue is unbounded, so this was the model's artifact, not the protocol's. Strong
+  fairness on the shared-cap monitor was tried and dropped (its liveness check had not
+  finished after 36 min). With the per-node guard a fire is disabled only by its own pending
+  TIMEOUT, which the fair pump drains, so WF is adequate.
+  The guard also RESTRICTS the model: the engine can hold two pending TIMEOUTs for one node,
+  the model at most one. That is safe for `WaitsEnd` and `NoOwnerlessDivergence`: a TIMEOUT
+  edge only moves a node further down its timeout chain (toward ESCALATED, CANCELLING,
+  ABANDONED) and never creates a packet version, so an extra delivery can only end a wait,
+  never prolong one or add a version. What is NOT checked: a stale TIMEOUT crossing into a new
+  packet version. TIMEOUT carries no visit/version key, in the model or in the engine, so one
+  fired under the old version can send a fresh OFFERED to ESCALATED (v4.1; OVERDUE before); the model admits that run
+  and no property here rejects it. It is an engine item.
+- **Inv-8 across the graph (G1/G2)** — what is and is not checked. The models carry no Del
+  identities, so "a node's issuer is Del(parent)" is NOT model-checked. What is checked:
+  `OwnerHasMoveInv` gives every node in an issuer-owned state (CHALLENGED, BLOCKED,
+  VALIDATING, ESCALATED) an admissible issuer move in every reachable graph state,
+  and `ActorSend` puts no guard on the parent's state, so that move is sendable whatever the
+  parent is doing. `ProbeSettledParentWaitingChild` (a reachability probe, expected VIOLATED)
+  shows the case is exercised: a child waiting on its issuer under a settled, escalated or
+  cancelling parent is reachable.
+- **Issuing children (§12.7).** A child's FIRST ASSIGN (IDLE → OFFERED) is refused while its
+  parent is CANCELLING or terminal — a child issued after the cascade fired would escape it;
+  moves on children already issued stay admissible in every parent state. The rule is not a
+  table row (the table is per node): `FsmTable` names `IssuingBarred` and `FirstIssue`, and
+  each model's `Admissible(n, sig)` applies it with its own parent relation inside `Process`,
+  i.e. when the signal is PROCESSED, as the engine applies admissibility — a guard on the
+  actor's SEND would not do, since an ASSIGN sent under a live parent can be dequeued after
+  the cascade fired. `ChildIssuedOnlyUnderLiveParent` is an ACTION property (no history
+  variable records the parent's state at issuance): every child IDLE → OFFERED step is taken
+  under a parent outside `IssuingBarred`. `ProbeIssueUnderClosedParent` (expected VIOLATED)
+  shows the refusal is exercised: a child's first ASSIGN at the head of the queue under a
+  CANCELLING or terminal parent is reachable — only through a crash that lost the queued
+  ASSIGN (TLC's shortest trace: crash, CANCEL the still-IDLE root, send the child's ASSIGN).
+  *What the earlier results say about the guarded models.* Nothing, by transfer: the guard is
+  not a removed actor action but a changed outcome of `Process`, the action `WF_vars(Process)`
+  is about (a dequeued ASSIGN that used to issue the child is now rejected). So the
+  full-constant rows below were measured on the permissive model and are NOT claimed for the
+  guarded one; the guarded models were re-checked at `QueueCap = 3` (the table after the
+  constants). At that size FsmSystem's state counts coincide with the permissive model's
+  (the refused case needs the crash, which leaves little the refusal can change);
+  FsmCascade3's graph is smaller.
 
-`FsmSystem.tla` — the composition Lean cannot see: two nodes (root + child, E_D edge)
-over ONE shared queue, the CANCEL cascade (entering CANCELLING enqueues CANCEL per
-live descendant), the per-node monitor, and **crash/recovery**. The crash step loses
-exactly what the process keeps in memory (the in-flight signal queue, the monitor's
-dedup dict) and keeps exactly what the code persists (graph state, iteration, the
-audit log, deadlines) — `state = fold(log)`: the log is durable, the queue is not.
+Constants (repo cfgs): `MaxIterations = 1`, `MaxReopens = 1` (R′ disabled at N ≥ 2 —
+`consumed = TRUE`; the reopen edge is checked at N = 1), `QueueCap = 4`, `MaxCrashes = 1`.
 
-TLC over the **complete** state space — 16 156 261 distinct states, temporal checking
-over 113M states, no error (~44 min, 20 workers):
+Measured 2026-09-22, one property per run (see Running). Full constants (the repo cfgs):
+FsmSystem **47 759 264 states generated, 15 773 982 distinct, depth 34**; FsmCascade3
+**48 679 155 generated, 15 958 664 distinct, depth 33**. The liveness checks at these sizes
+run 35 min to hours each, so every liveness property was ALSO checked at `QueueCap = 3`
+(same other constants): FsmSystem 1 873 196 generated / 624 686 distinct, FsmCascade3
+3 513 499 generated / 1 174 176 distinct.
 
-| Property | Meaning | Result |
+| Model | Property | Full constants (`QueueCap = 4`) | `QueueCap = 3` |
+|---|---|---|---|
+| FsmSystem | `TypeOK` | holds | holds |
+| | `OwnerHasMoveInv` | holds | — |
+| | `ProbeSettledParentWaitingChild` (probe) | violated at depth 7, as intended | — |
+| | `NoOwnerlessDivergence` | NOT RUN to completion (queued) | holds (2 min) |
+| | `WaitsEnd` | NOT RUN to completion (queued) | holds (9 min) |
+| | `TerminalAbsorbing` | NOT RUN to completion (queued) | holds (1.5 min) |
+| FsmCascade3 | `TypeOK` | holds | — |
+| | `OwnerHasMoveInv` | holds | — |
+| | `ProbeSettledParentWaitingChild` (probe) | violated, as intended | — |
+| | `NoOwnerlessDivergence` | holds (35 min) | — |
+| | `WaitsEnd` | NOT completed (liveness phase still running at hand-off, > 35 min) | holds (22 min) |
+| | `TerminalAbsorbing` | NOT RUN to completion (queued) | holds (5 min) |
+
+**The guarded models (§12.7 issuing children), `QueueCap = 3`**, measured 2026-09-23, one
+property per run, `-lncheck final -workers 8`, 8 GB heap. FsmSystem **1 873 196 generated /
+624 686 distinct, depth 34** (the permissive counts); FsmCascade3 **3 476 787 generated /
+1 162 128 distinct, depth 33** (permissive: 3 513 499 / 1 174 176). The full-constant rows
+above are the permissive model's and are not claimed for this one (see *Issuing children*).
+
+| Property | FsmSystem | FsmCascade3 |
 |---|---|---|
-| `TypeOK` | well-typedness incl. queue bound (cascade appends net ≤ 0) | holds |
-| `Termination` | **Inv-5 through a crash**: every CREATED node reaches a terminal state — the monitor re-derives its pressure from persistent data (deadlines) and needs none of its lost memory; hostile actors, stale TIMEOUTs, revisions and a worst-point crash included | holds |
-| `TerminalAbsorbing` | terminals absorbing, per node | holds |
+| `TypeOK` | holds | holds |
+| `OwnerHasMoveInv` | holds | holds |
+| `ChildIssuedOnlyUnderLiveParent` (action) | holds | holds |
+| `ProbeIssueUnderClosedParent` (probe) | violated at depth 6, as intended | violated at depth 6, as intended |
+| `ProbeSettledParentWaitingChild` (probe) | violated at depth 7, as intended | violated at depth 10, as intended |
+| `NoOwnerlessDivergence` | holds (53 s) | holds (2.7 min) |
+| `WaitsEnd` | holds (5.6 min) | holds (18 min) |
+| `TerminalAbsorbing` | holds (57 s) | holds (3.4 min) |
 
-**Named boundary (found by construction):** an ASSIGN still in the queue at crash
-time is a task that NEVER EXISTED — creation is the processed ASSIGN transition, only
-then logged; no log entry → nothing to recover → the protocol cannot terminate what
-was never created (`Termination` quantifies over Terminal ∪ {IDLE}; a node leaves
-IDLE at most once, so the disjunct is no escape hatch). Signal-level seamlessness
-("no in-flight signal is ever lost") requires a write-ahead journal of INCOMING
-signals — an adapter-level extension, not an FSM change; candidate registered debt,
-adjacent to the parked finality/rollback question.
+**The current table (OVERDUE removed, REJECT_CHALLENGE reading consent), `QueueCap = 3`**, measured 2026-09-24,
+one property per run, 8 workers; the tables above were measured on the table WITH OVERDUE and are kept as its
+record. FsmSpike (`FsmSpike.cfg`): every property holds, 505 016 generated / 181 770 distinct, depth 35; its negative
+controls `SpecNoMonitor` and `SpecNoDeadline` are violated, as they must be. FsmSystem **2 274 136 generated /
+753 106 distinct, depth 33**; FsmCascade3 **2 320 559 generated / 751 088 distinct, depth 29**.
 
-**Dispatcher dedup (node×iteration) — subsumed, closed by argument + tests, not a
-new model.** The hostile-actor action already sends ARBITRARY signals at any time —
-which includes every duplicate/stale delivery a crashed-and-restarted dispatcher
-(its dedup sets are process memory) could ever produce. The green Termination/TypeOK
-therefore already prove the PROTOCOL safe under duplicated dispatch; the dispatcher's
-dedup keys are an EFFICIENCY discipline (don't burn duplicate LLM runs), not a safety
-mechanism — exercised live (probe-hardening G6: revision staleness) and unit-tested.
+| Property | FsmSystem | FsmCascade3 |
+|---|---|---|
+| `TypeOK` | holds | holds |
+| `OwnerHasMoveInv` | holds | holds |
+| `ChildIssuedOnlyUnderLiveParent` (action) | holds | holds |
+| `ProbeIssueUnderClosedParent` (probe) | violated at depth 7, as intended | violated at depth 7, as intended |
+| `ProbeSettledParentWaitingChild` (probe) | violated at depth 8, as intended | violated at depth 10, as intended |
+| `NoOwnerlessDivergence` | holds (71 s) | holds (1.9 min) |
+| `WaitsEnd` | holds (6.6 min) | holds (10.5 min) |
+| `TerminalAbsorbing` | holds (85 s) | holds (2.5 min) |
 
-**Cascade transitivity (`FsmCascade3.tla`) — the depth-2 chain, closed.** root→mid→leaf,
-the same cascade rule composing THROUGH an intermediate node, a crash allowed at any
-point (a queued cascade-CANCEL dies with the queue — the monitor terminates the
-orphans from persisted data). Complete 5 275 552-state search, temporal over 52.7M:
-no error. Actor alphabet reduced to the cancel/cascade core {ASSIGN, ACCEPT, CANCEL,
-CONFIRM_CANCEL} — a named choice: full hostility is proven at N=1 and N=2; the first
-full-alphabet attempt OOM'd the liveness graph (13.5M states × 10 branches), and the
-dropped branches only multiply that graph without touching the cascade mechanism.
+The full-constant (`QueueCap = 4`) runs were not repeated on the current table.
 
-**R′ at N≥2 — a named scope choice.** The N=2/N=3 models call
-`Step(…, MaxReopens, TRUE)`: the reopen edge is DISABLED there. Rationale: the edge
-is per-node (one re-ASSIGN row) and its system-level liveness incl. the monitor
-interaction is checked at N=1 with the full alphabet; the finality-gate's GRAPH
-predicate (consumption / cascade settlement / replanning) is not a transition-table
-object — it is unit-tested code (`tests/test_reopen.py`). With the arm unreachable,
-the N≥2 checked objects are semantically unchanged from their green runs (their
-`mark` also keeps the pre-R′ last-fired-state abstraction, which their runs proved
-adequate for a node that cannot exit a terminal; the code's per-visit dedup only
-fires MORE often, which is monotone for the liveness those runs claim).
+Negative control: with `Admissible` forced TRUE (the permissive model), TLC refutes
+`ChildIssuedOnlyUnderLiveParent` on both models in 6 steps (crash, CANCEL the IDLE root, the
+child's ASSIGN processed under the CANCELLING root) — the property has teeth.
 
-**Status: the modeled scope is CLOSED** — interleaving over a shared queue
-(N=2, full alphabet), the monitor as a live process (stale fires included), the
-cancel handshake and cascade through depth 2, crash/recovery (= signal loss),
-system-level liveness (Termination) and terminal absorption; R′ reopens at N=1
-(gated finality, absorption-in-the-limit); determinism is
-structural (Step is a function; Lean holds the per-node static half). The transition
-table has ONE shared image (`FsmTable.tla`) — models cannot drift apart.
-Runtimes: the spike config is CI-grade (seconds); `FsmSystem.cfg` ~45 min,
-`FsmCascade3.cfg` ~13 min (local/nightly; TLC heap 20g for the cascade run).
+Under the OLD shared-cap monitor guard (full constants, the refuted artifact, see above):
+FsmCascade3 `NoOwnerlessDivergence` and `WaitsEnd` VIOLATED (starvation lassos),
+`TerminalAbsorbing` held (46 min, 80.7M behaviour-graph nodes).
+
+
+**Named boundary (found by construction):** an ASSIGN still in the queue at crash time is a
+task that NEVER EXISTED — creation is the processed ASSIGN, only then logged; nothing to
+recover. The properties therefore exclude runs resting in IDLE. Signal-level seamlessness
+needs a write-ahead journal of incoming signals — an adapter-level extension, not an FSM change.
+
+**Dispatcher dedup (node×iteration) — subsumed.** The hostile-actor action already sends
+arbitrary signals at any time, which includes every duplicate/stale delivery a restarted
+dispatcher could produce; the dispatcher's dedup keys are an efficiency discipline, not a
+safety mechanism.
 
 ## Clock semantics (Inv-5's binding — answered from code, kept honest)
 
@@ -138,14 +247,16 @@ One engine process has ONE clock: the `ClockPort` (`SystemClock = time.time()`, 
 wall time) — the monitor compares ABSOLUTE persisted deadlines against it. Deadlines
 are data (ISO strings in SQLite), not running timers ⟹ process sleep/suspend for N
 hours is handled correctly by construction: on wake the next 10s tick sweeps every
-deadline that passed meanwhile (first fire → OVERDUE / spec-targets, a tick later →
-ESCALATED). Restart = the same shape (the model's Crash step): the monitor's memory
+deadline that passed meanwhile (the engine today: first fire → OVERDUE / spec-targets, a tick
+later → ESCALATED; the v4.1 table: first fire → ESCALATED). Restart = the same shape (the model's Crash step): the monitor's memory
 is disposable, pressure re-derives from persisted data.
 
 Trust boundary, named: the guarantee is exactly as strong as the server clock.
-Clock jumped FORWARD ⟹ mass overdue is indistinguishable from real overdue (incl.
-VALIDATING → DONE(auto_pass), §24.7 — a clock tamper can force auto-acceptance;
-T11 keeps the auto_pass provenance visible). Clock jumped BACKWARD ⟹ the monitor
+Clock jumped FORWARD ⟹ mass overdue is indistinguishable from real overdue. (Under
+v4.1's VALIDATING → ESCALATED a clock tamper can no longer
+force an acceptance, only hand the move back to the issuer. The engine's current behaviour,
+the v4.0 routing, still sends that timeout to DONE(auto_pass) until it lands the change, and
+there Thm 11 keeps the auto_pass provenance visible.) Clock jumped BACKWARD ⟹ the monitor
 goes silent until real time catches up (Inv-5 pressure suspended, nothing corrupted —
 log order is insertion order). Tamper-RESISTANT time (monotonic anchors, signed time)
 is the external-implementor open end recorded at probe-hardening — out of core scope.
@@ -163,5 +274,14 @@ scoop bucket add java && scoop install temurin-lts-jdk       # once
 # tools/tla2tools.jar: https://github.com/tlaplus/tlaplus/releases/latest/download/tla2tools.jar
 cd formal/tla
 java -cp tools/tla2tools.jar tlc2.TLC -workers auto -config FsmSpike.cfg FsmSpike.tla
-java -cp tools/tla2tools.jar tlc2.TLC -workers auto -config FsmSpikeNoMonitor.cfg FsmSpike.tla   # expect a violation
+java -cp tools/tla2tools.jar tlc2.TLC -workers auto -config FsmSpikeNoMonitor.cfg FsmSpike.tla    # expect WaitsEnd violated
+java -cp tools/tla2tools.jar tlc2.TLC -workers auto -config FsmSpikeNoDeadline.cfg FsmSpike.tla   # expect a violation
+java -Xmx20g -cp tools/tla2tools.jar tlc2.TLC -lncheck final -workers 16 -config FsmCascade3.cfg FsmCascade3.tla
+java -Xmx20g -cp tools/tla2tools.jar tlc2.TLC -lncheck final -workers 16 -config FsmSystem.cfg FsmSystem.tla
 ```
+
+The numbers above were measured one property per run (a scratch cfg holding the repo cfg's
+SPECIFICATION and CONSTANTS and exactly one INVARIANT or PROPERTY line); the N ≥ 2 runs with
+`-lncheck final` (liveness checked once, on the complete graph — the periodic checks roughly
+double a run). The full-constant FsmSystem liveness runs and FsmCascade3's `WaitsEnd` /
+`TerminalAbsorbing` had not completed when this was written; they are the pending rows above.

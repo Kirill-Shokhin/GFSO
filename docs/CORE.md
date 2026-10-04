@@ -11,8 +11,8 @@
 **GFSO is a formal language for the minimum a verifiable task-handoff
 transaction must carry**, derived from two axioms (verifiability +
 decomposability). Each element of the basis is shown necessary; that the
-basis is the ONLY one is open (§26.9, `formal/README.md`) — "minimal", not
-"proven unique".
+basis is the ONLY one cannot be derived from inside — a named boundary
+(§20.8, §20.7, `formal/README.md`) — "minimal", not "proven unique".
 
 Analog: TCP/IP for hierarchical work coordination, or Codd 1970 for
 relational databases. Tractable math; the framing enables a domain.
@@ -20,29 +20,35 @@ relational databases. Tractable math; the framing enables a domain.
 ## Unpacked
 
 GFSO is a **mathematically defined** structure (with primitives,
-operations, laws), the **smallest possible** (nothing can be removed
+operations, laws), **minimal** (nothing can be removed
 without losing expressiveness), describing **what must be present** in
 one handoff of a task from an issuer to an executor **so that the
-handoff can be verified and composed**. It is **not chosen** — it is
-**derived** from two simple statements: that goals are verifiable and
-that complex work decomposes. If those two statements hold for a
-domain, GFSO necessarily describes its handoffs. If they don't, GFSO
-doesn't apply, and that boundary is explicit (§9).
+handoff can be verified and composed**. It is **derived**, not assembled —
+from two simple statements: that goals are verifiable and
+that complex work decomposes — with three covering axioms, relative to
+eleven named design decisions (§20.5), the choices it does make. If those two statements hold for a
+domain, GFSO describes its handoffs — the basis minimal, and complete as far as the search has gone (§7.5). A goal within one agent's
+capacity is inside but needs none of it; a goal failing A1, or above capacity with no split into parts within
+it, is outside, and that boundary is explicit (§2.1).
 
 The unit of analysis is **one handoff transaction**, not a project,
 not a process, not a team. Everything else (hierarchy, multi-agent,
-organization) is composition of such transactions.
+organization) is composition of such transactions. One goal's graph
+composes them under one root, whose verdict is the verdict on the goal
+(§15.2).
 
 What it must carry: a Spec, a finite set of decidable Criteria, a
 Deadline, a Delegation, and — when it is decomposed — an explicit
 ACCEPTED_RISKS register (the register belongs to the split, so a leaf
-has none: §13.1), Dependencies plus a composition function. Drop any of
-these and a specific failure mode (of the seven proven exhaustive
-as a basis, modulo the covering CA1 — §12.8) becomes unavoidable.
+has none: §9.2), Dependencies, and — where a criterion's securing is not plain conjunction — the composition function CHECK-7 then uses (§2.4, §9.6). Drop the criteria, the
+register, the deadline or the dependencies and a failure mode (of the six
+proven exhaustive as a basis, modulo the covering CA1 — §8.8) loses its
+guard; drop the delegation and the handoff loses its accountable party
+(Ch. 2), which guards no mode.
 
 When a critic attacks one part, the theory has a defense ready —
 constructive counterexamples for minimality, exhaustive case splits
-for completeness, the §9 boundary for "doesn't apply to my case".
+for completeness, the §2.1 boundary for "doesn't apply to my case".
 If those defenses don't satisfy the critic, the disagreement is
 about scope, not about the math.
 
@@ -54,7 +60,7 @@ about scope, not about the math.
 2. A **discipline shift**: criteria-articulation responsibility moves
    from Executor (who currently has to guess) to Issuer (who must
    specify before delegation)
-3. A **standardized vocabulary** (12 signals, 12 FSM states, 7 failure
+3. A **standardized vocabulary** (12 signals, 11 FSM states, 6 failure
    modes) usable across any hierarchical work system
 4. A **compositional law**: `V(parent) = AND(V(children))` under
    explicit correctness conditions (joint sufficiency + non-redundancy).
@@ -63,9 +69,9 @@ about scope, not about the math.
    rewritten sub-step (planning ⊂ GFSO), the agent's necessity as
    source of domain content is *derived* (not assumed), and the primary
    value is **making-explicit** — moving decomposition discipline out of
-   private, unchecked intuition into one axiom-derived, consistency- and
-   faithfulness-checkable system. The new *mechanic* is narrow; the
-   value is the universalized checkable discipline (§6.1–§6.2, §2–3).
+   private, unchecked intuition into one axiom-derived, consistency-checkable,
+   faithfulness-graded system. The new *mechanic* is narrow; the
+   value is the universalized checkable discipline (§19.2–19.3, §3–4).
 
 ---
 
@@ -91,11 +97,11 @@ Audit trails exist. What none of them give together:
 | Piece | Where GFSO uniquely formalizes it |
 |---|---|
 | Compositional validation | Theorem 1 with explicit correctness conditions |
-| Failure taxonomy | 7 FM, a basis provably exhaustive modulo the covering CA1 (falsifiable claim) |
+| Failure taxonomy | 6 FM, a basis provably exhaustive modulo the covering CA1 (falsifiable claim) |
 | Spec quality forcing function | Forced binary V — defects pushed out, no "warning" |
-| Protocol vocabulary | 12 signals (minimal) × 12 states (induced) |
-| Self-measurement | Q metrics computed from audit graph alone |
-| Adaptive stratification | §25.1, derived from deadline coherence along D (§3.4 item 6) + A1, under a named premise (environmental stationarity across levels) |
+| Protocol vocabulary | 12 signals (minimal) × 11 states (induced; the table forced over the log, up to REWORKING's attribution label, by the four clauses of §13.4 — three carrying adopted parts — with Inv-8's adopted edge clause, relative to two design decisions, the alternative reading of the decision's routes and named per-state inputs, §20.5 (d)) |
+| Self-measurement | Q metrics computed from the protocol's log alone, bar the post-hoc runs of q_V's later-fail term |
+| Adaptive stratification | §19.5, derived from deadline coherence along D (§4.5 item 6) under four named premises (concreteness, sensitivity, environmental stationarity across levels, routing of divergence to CHALLENGE) |
 
 ---
 
@@ -108,30 +114,43 @@ Audit trails exist. What none of them give together:
 
 Almost everything else is a consequence — but not *everything*, and the canon
 refuses the tidy version: "how many postulates does GFSO have" has no single
-number (§1.4). Three kinds:
-- **Three covering axioms** — CA1 (the 7 FM, §12.8), CA-Morris (the 3 verification
-  levels, §13.4), CA-Links (the 5 constitutive links, §4.2). Each carries a
+number (§20.5). Four kinds:
+- **Three covering axioms** — CA1 (the 6 FM, §8.2), CA-Morris (the 3 verification
+  levels, §9.1), CA-Links (the 5 constitutive links, §5.3). Each carries a
   "there is no further kind" claim; none follows from A1 ∧ A2.
-- **Definitional** — A1, A2 themselves, and |Act| = 2, baked into the types.
-- **Hypothesis-form** — dischargeable, carried in theorem signatures (Lemma 2,
-  luck-instability, the single clock — the last one already discharged).
+- **Definitional** — A1, A2 themselves, |Act| = 2 and the d3/d4 source space (its exhaustiveness
+  derived by nested excluded middle), baked into the types.
+- **Hypothesis-form** — dischargeable, carried in theorem signatures (act-surjectivity
+  and act-injectivity for |L| = 2's defense; no-declaration (Lemma 2's regress), no-luck and
+  not-apparatus — the arms of agent necessity; the single clock — the last one already discharged).
+- **Adopted** — eleven design decisions (the deadline, the uniqueness of Del, Inv-4's reading,
+  terminality, R′'s form, the moment of R′'s threshold, no expiry attributed to a party, `max_iterations` as a packet field, a split's admission
+  and a root's creation as acts, an implementation's default deadline, q_V's scope), the clauses Ch. 12 adopts with its
+  invariants (§12.11–§12.13), and one alternative reading; the forced protocol machine is relative to two of the decisions (Inv-4's
+  reading, terminality), to the adopted clauses and to the alternative reading.
 
-If A1 ∧ A2 hold for a domain, GFSO applies. If not, GFSO is out of scope.
+Outside the four kinds stands one covering principle the formal development does not carry: the AI layer's
+three inference types (§17.2).
+
+A goal for which A1 ∧ A2 hold needs GFSO. A goal within one agent's capacity is inside but needs none
+of it; a goal failing A1, or above one agent's capacity with no split into parts within it, is out of
+scope (§2.1).
 
 ---
 
 ## Where GFSO applies
 
-| | Applies? | Why |
+Membership is read off the goal, not the domain (§2.1, §16.17); the rows give the typical case.
+
+| | Inside the model? | Why |
 |---|---|---|
-| Hierarchical work with multiple agents | YES | A1 ∧ A2 both hold |
-| Compliance-heavy domains (medical, aviation, banking) | YES | Audit trail + binary V already required by law |
-| Multi-team code projects | YES | Decomposition + cross-team interfaces |
-| Multi-agent LLM systems | YES | This is what we're testing |
-| Solo work on a single task | OVERHEAD > VALUE | A2 doesn't apply |
-| Exploratory product development (Scrum's domain) | OPTIONAL | Special case of GFSO with constraints (§25.2) |
-| Creative work without verifiable criteria | NO | A1 fails |
-| Pure research / open-ended exploration | NO | A1 fails |
+| Hierarchical work with multiple agents | YES, needed | its goals typically meet A1 and exceed one agent's capacity |
+| Compliance-heavy domains (medical, aviation, banking) | YES, needed | decidable acceptance and an audit trail are already required |
+| Multi-team code projects | YES, needed | decomposition + cross-team interfaces |
+| Multi-agent LLM systems | YES where the goal has decidable criteria | A1 is a property of the goal, not of the agents |
+| Solo work on a task within one agent's capacity (one act) | YES, not needed | inside, A2's split unneeded (§2.1) |
+| Exploratory product development (Scrum's domain) | YES | A1 weak, criteria articulated late, not ¬A1; Scrum's practice a relaxation of GFSO (§19.4) |
+| Creative work, open-ended exploration with no verifiable outcome | NO | A1 fails |
 
 ---
 
@@ -142,22 +161,23 @@ If A1 ∧ A2 hold for a domain, GFSO applies. If not, GFSO is out of scope.
    dormant. Value sits in Issuer-side spec articulation + compositional
    validation across decomposition.
 
-2. **"GFSO is alternative to Scrum"** — NO. Scrum is a special case of
-   GFSO under specific constraints (§25.2). Where Scrum's constraints
-   are cheap (exploratory, small team, low stakes), Scrum is fine.
-   Where they're costly (large org, multi-team, compliance), Scrum
-   breaks and GFSO's missing pieces matter.
+2. **"GFSO is alternative to Scrum"** — not as an account: Scrum's
+   components are GFSO's, with some freedoms restricted and some
+   requirements relaxed — the risk register, the per-decision log,
+   the deadline rules (§19.4). Where that is cheap (exploratory, small
+   team, low stakes), Scrum is fine. Where it is costly (large org,
+   multi-team, compliance), Scrum breaks and GFSO's missing pieces matter.
 
 3. **"This is just TDD/contracts/composition"** — NO at the integration
    level. DBC describes the atom (predicate on function). GFSO describes
    the molecule (structure of the transaction itself). And only GFSO
-   has the formal correctness conditions for decomposition + 7 FM
+   has the formal correctness conditions for decomposition + 6 FM
    completeness + standardized protocol.
 
 4. **"Bench result +34pp validates GFSO"** — NO. That result is about
    the Issuer-side discipline of explicit criteria — a known principle
    in spirit (TDD/DBC). It is good empirical signal for ONE component
-   of GFSO. It is not validation of: 7 FM exhaustiveness, compositional
+   of GFSO. It is not validation of: 6 FM exhaustiveness, compositional
    theorem, multi-agent decomposition benefit, q-metrics calibration.
 
 5. **"Test it on a benchmark"** — only if criteria for that benchmark
@@ -184,33 +204,31 @@ at that substrate.
 ## What is settled empirically, and what is not
 
 Empirically, **E1 (postmortem taxonomy validation) is closed** (0/216
-cases need an 8th failure mode). **E2 (decomposition convergence) ran**:
+cases need a mode outside the six). **E2 (decomposition convergence) ran**:
 it established the convergence *method* — bare SEARCH ⊕ gfso
 AUDIT, iterated, productized as `auto_decompose()` — but **not** the method's value
 over bare (coverage-to-a-bare-built reference can't read it; that is **E3**).
-**E3 (multi-agent compositional validation, under execution) ran its first
-pair in which a false "done" can arise at all** (`EVIDENCE_LOG` §13.15,
-§13.16). Every earlier cell handed the arm its visible suite — the issuer's
-work already done, so the arm's own check coincides with the oracle and
-saturation follows; `EVIDENCE_LOG` §13.12, §13.12-bis record that fact and
-are not a reading on value. With the suite withheld from both arms on one task (`c_compiler`,
-one contract digest, n=1 per arm): bare 0.632 held-out, the same agent over
-the product 0.816, and 0.903 once each criterion carried its own pinned
-decision procedure. What that third tree is claimed to show is not the score
-but its content — an independent 205-probe corpus, written from the statement
-with the procedures stripped, finds 16 divergences against the previous
-tree's 35, of which 10 are criteria whose own procedure is blind (FM-3), 6
-were excluded by the contract in advance, and **none** is a requirement
-nobody named. The boundaries are named there too: n=1, three things moved at
-once, and one classifier bucket was added after seeing the data. The system
-is not claimed to produce defect-free work and did not; what it is claimed to
-do is leave no unnamed hole in what it promised.
+**E3 (multi-agent compositional validation, under execution) ran its first pair in which a false "done" can arise
+at all** (`EVIDENCE_LOG` §13.15, §13.16). Earlier cells handed the arm its visible suite — the issuer's work already
+done — so the arm's own check coincided with the oracle and saturation followed (`EVIDENCE_LOG` §13.14, §13.12-ter); they are not a
+reading on value. With the suite withheld on one task (`c_compiler`, one contract digest, n=1 per arm): bare 0.632
+held-out, the same agent over the product 0.816, and 0.903 once each criterion carried a pinned decision procedure.
+No tree closed in that third run: the root carrying the decomposition ended ESCALATED and a childless third root
+passed — the recovery gap the canon's v4.1 closes (§12.5). An independent 205-probe corpus, written from the
+contract before any procedure existed, finds 15 real divergences in that workspace against 34 in the previous one;
+all 15 are FM-3 false passes on a criterion that names the behaviour — 9 where the pinned procedure is blind to it,
+6 contract requirements the executor filed as accepted risks after the first FAIL, which §9.2 does not admit as
+exclusions. None is a requirement no criterion writes — at this atomic root no failure mode but the goal's
+setting (§8.3) — which says little here: one criterion names the whole contract. Five things moved at once — procedures, the root authored by `auto_decompose`, a rework bound of 3, two
+replacement roots, a stronger validator model. The first delegated cell (`json_parser`, `EVIDENCE_LOG` §13.17) validated every seam with
+its pinned procedures; its plan was a linear chain, so parallel execution is untested. E3's own question — how often
+a false "done" arises with the structure and without it, no suite handed over — has one run per arm and no rate yet.
 
 ---
 
 ## Reading order, and the test that settles an argument
 
-`applied_gfso_v4_en.md` §1 + §9–§11 (the axioms and the composition theorem) is the framework
+`applied_gfso_v4_en.md` the Introduction + Ch. 1, 2 and 7 (the axioms and the composition theorem) is the framework
 itself; `EVIDENCE_LOG.md` §4 is what has and has not been shown.
 
 The operational test for any claim made in GFSO's name: **can it be stated as "if X, then Y,

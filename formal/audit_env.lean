@@ -1,28 +1,20 @@
 /-
-  ENVIRONMENT AUDITOR — fail-closed. Run: `lake env lean audit_env.lean`.
+  ENVIRONMENT AUDITOR — fail-closed. Run: `lake env lean audit_env.lean`; `scripts/check_closure.sh` acts
+  on its three reports (§20.4):
 
-  Three things are reported, and `scripts/check_closure.sh` acts on all three:
+    DECL_AXIOM  <n>   an `axiom` declared in a GFSO module
+    DECL_OPAQUE <n>   an `opaque` declared in a GFSO module (an assumption `#print axioms` cannot see —
+                      always a violation)
+    USES        <n>   an axiom used, transitively, by some GFSO declaration
 
-    DECL_AXIOM  <n>   an `axiom` we declared under GFSO.*
-    DECL_OPAQUE <n>   an `opaque` we declared under GFSO.*  (an uninterpreted assumption that
-                      `#print axioms` cannot see — always a violation)
-    USES        <n>   an axiom actually USED, transitively, by SOME theorem under GFSO.*
+  Each design choice closes a fail-open path: every declaration is enumerated from the environment, not
+  a hand list (a forgotten theorem would hide its axiom); `def`/`instance` bodies are audited beside
+  theorems (they can hold a `sorry`); axioms are reported by use, wherever declared, not by namespace —
+  the script then rejects anything outside {propext, Quot.sound, Classical.choice} ∪ whitelist, which
+  catches `sorryAx` and `native_decide`'s `Lean.ofReduceBool`/`ofReduceNat`.
 
-  Why all three. Earlier versions were fail-OPEN three times over:
-    * `#print axioms` on a HAND-LISTED set of theorems — forget to list a theorem and its axiom hides.
-      Fixed: we enumerate every declaration in `GFSO.*` from the environment and collect its axioms.
-    * a DECLARATION-KIND filter — we walked `.thmInfo` only, so a proof written as `def foo : P := by
-      sorry` (or an `instance`) was never inspected and its `sorryAx` never surfaced. That reinstated
-      the same fail-open one level down. Fixed: `.defnInfo` is audited too — the audited set is now
-      every GFSO declaration that can carry a proof, not every declaration that happens to be spelled
-      `theorem`.
-    * a namespace filter — an axiom declared OUTSIDE `GFSO.*` (say `Externals.smuggled : 2 = 3`) but
-      used by a GFSO theorem was invisible. Fixed: `USES` reports axioms by USE, wherever they live.
-      The script then rejects anything outside {propext, Quot.sound, Classical.choice} ∪ whitelist —
-      which also catches `sorryAx` (a hole) and `Lean.ofReduceBool`/`ofReduceNat` (i.e. `native_decide`).
-
-  Note: presence of an axiom in the environment is NOT use. `sorryAx`, `lcProof` and friends are always
-  *declared* by Lean core; only `USES` tells you whether a proof leaned on one.
+  An axiom present in the environment is not one used: Lean core always declares `sorryAx`, `lcProof`
+  and friends; only `USES` says a proof leaned on one.
 -/
 import Lean
 import GFSO
@@ -31,9 +23,8 @@ open Lean Elab Command
 
 #eval show CommandElabM Unit from do
   let env ← getEnv
-  -- Membership is by MODULE, not by namespace: everything this package's modules declare is audited,
-  -- whatever its author called it. (A name-prefix filter let a foreign-namespace `sorry` sitting in
-  -- our own source file go uninspected — see the header.)
+  -- Membership is by module, not namespace: a foreign-namespace declaration in our own source is
+  -- audited too.
   let ours : Name → Bool := fun n =>
     match env.getModuleIdxFor? n with
     | some idx =>
@@ -58,8 +49,7 @@ open Lean Elab Command
   for n in declOp.qsort (fun a b => toString a < toString b) do
     IO.println s!"DECL_OPAQUE {n}"
 
-  -- Transitive axiom footprint of EVERY declaration in this package's modules that can carry a
-  -- proof. No hand list, and no namespace filter.
+  -- Transitive axiom footprint of every declaration in our modules that can carry a proof.
   let mut used : NameSet := {}
   for t in thms do
     let axs ← liftCoreM <| Lean.collectAxioms t
