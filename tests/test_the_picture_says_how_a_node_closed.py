@@ -8,7 +8,7 @@ The engine has known it by name since 2026-09-04 (`closures_by_hand`, `hand_over
 about the node under the cursor.
 
 So: one per-node owner (`Engine.closure_of`), the three lists derived from it, and both node reads
-carrying it. The negative controls are the point — a node an instrument judged must not acquire a
+carrying it. The negative controls are the point — a node an instrument validated must not acquire a
 qualifier it did not earn, and a node that has not settled has no closure at all.
 """
 from __future__ import annotations
@@ -18,10 +18,10 @@ from fastapi.testclient import TestClient
 from gfso import tools as T
 from gfso.api.server import create_app
 from gfso.core.types import TaskId
-from tests.support import criterion, make_engine, UNMODELLED_FAULT
+from tests.support import criterion, make_engine, REGISTER
 
 _CRIT = [criterion("c", "C")]
-_RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISKS = REGISTER
 
 
 def _leaf(e, tid, assignee="exec-1"):
@@ -69,7 +69,7 @@ def test_a_node_closed_by_hand_says_so_on_both_reads():
     e.stop()
 
 
-def test_a_node_an_instrument_judged_carries_no_qualifier():
+def test_a_node_an_instrument_validated_carries_no_qualifier():
     """The negative control: an earned green must not be drawn like a signed one."""
     e = make_engine()
     e.start()
@@ -98,23 +98,21 @@ def test_a_node_that_has_not_settled_has_no_closure():
     e.stop()
 
 
-def test_a_hand_verdict_that_displaced_an_instrument_is_visible_on_the_node():
-    """The fact wave 26 could not see anywhere: legitimate (§14.5), uncheckable (§13.6), and said."""
+def test_a_hand_verdict_cannot_displace_an_instruments_fail():
+    """Wave 26 could not see a hand PASS that displaced an instrument's FAIL; since 2026-09-27 there is
+    none to see — an observed divergence is the criterion's value (Inv-2), and the node does not close."""
     e = make_engine()
     e.start()
     _leaf(e, "over")
     _instrument_verdict(e, "over", "FAIL", failed=["c"])
-    T.record_verdict(e, "over", "PASS", reviewer="me",
-                     observed={"c": {"note": "I looked at it myself and it is fine", "ran": ["check c"]}})
+    out = T.record_verdict(e, "over", "PASS", reviewer="me",
+                           observed={"c": {"note": "I looked at it myself and it is fine", "ran": ["check c"]}})
     T.signal(e, "over", "PASS", "exec-1")
     e.wait_idle()
-    c = _client(e)
 
-    cl = c.get("/api/tasks/over").json()["closure"]
-
-    assert cl["overruled"] is True, cl
-    assert "FAIL" in str(cl["overruled_verdict"]), cl
-    assert e.hand_overruled_closures() == ["over"], "the list is the same predicate, not a second one"
+    assert "Inv-2" in str(out), out
+    assert _client(e).get("/api/tasks/over").json()["state"] != "DONE"
+    assert e.hand_overruled_closures() == []
     e.stop()
 
 

@@ -19,7 +19,8 @@ name: tests
 # CHANGELOG, MANIFEST.in or a workflow itself ran nothing at all. (Written out twice because GitHub
 # Actions does not resolve YAML anchors.)
 # README and the canon's surface are the theory's: a theory push runs only the formal workflow and
-# passes there on its own; the product's canon citations and names are guarded by the job below.
+# passes there on its own; the product's canon citations and names — in its code and in the product pages
+# the guards read — are guarded by the job below.
 on:
   push:
     paths:
@@ -30,6 +31,11 @@ on:
       - 'MANIFEST.in'
       - 'CHANGELOG.md'
       - 'SECURITY.md'
+      - 'docs/architecture.md'
+      - 'docs/USING_GFSO.md'
+      - 'docs/TASK_PACKET.md'
+      - 'docs/embeddability_acceptance.md'
+      - '.github/workflows/tests.yml'
   pull_request:
     paths:
       - 'gfso/**'
@@ -39,6 +45,11 @@ on:
       - 'MANIFEST.in'
       - 'CHANGELOG.md'
       - 'SECURITY.md'
+      - 'docs/architecture.md'
+      - 'docs/USING_GFSO.md'
+      - 'docs/TASK_PACKET.md'
+      - 'docs/embeddability_acceptance.md'
+      - '.github/workflows/tests.yml'
   workflow_dispatch:
 
 jobs:

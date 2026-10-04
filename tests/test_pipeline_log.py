@@ -9,7 +9,7 @@ from tests.support import criterion, make_engine
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
 from gfso import tools as T
-from gfso.tools_llm import _last_deliver_result
+from gfso.packets import _last_deliver_result
 
 
 def _eng(storage=None):

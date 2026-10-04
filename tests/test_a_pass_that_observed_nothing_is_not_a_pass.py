@@ -26,9 +26,9 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import criterion, make_engine
+from tests.support import criterion, emptied, make_engine, REGISTER
 
-_RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 def _graph():
@@ -37,14 +37,10 @@ def _graph():
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
                               "criteria": [criterion("g", "G holds")]},
                   assignee="agent")
-    T.create_task(e, "A", {"description": "producer",
-                           "criteria": [criterion("a", "A holds")]},
-                  assignee="agent", parent_id="root")
-    T.create_task(e, "B", {"description": "consumer",
-                           "criteria": [criterion("b", "B holds")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "A", "g")
-    T.map_criterion(e, "root", "B", "g")
+    T.decompose(e, "root", [{"task_id": "A", "spec": {"description": "producer",
+                           "criteria": [criterion("a", "A holds")]}, "assignee": "agent", "covers": ["g"]},
+        {"task_id": "B", "spec": {"description": "consumer",
+                           "criteria": [criterion("b", "B holds")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
     return e
 
 
@@ -56,8 +52,10 @@ def _delivered(e, node="B"):
 def test_a_node_left_holding_only_glue_cannot_be_passed():
     e = _graph()
     T.add_dependency(e, "A", "B")
-    T.edit_criteria(e, "B", [])                       # the contract is wiped; `dep__A` survives
-    assert [c.name for c in e.get_task("B").spec.criteria] == ["dep__A"], \
+    with pytest.raises(ValueError, match="NONEMPTY"):   # the door no longer wipes it (§2.2)…
+        T.edit_criteria(e, "B", [])
+    emptied(e, "B", seams=True)                       # …so the contract is wiped as stored before; `dep__A` survives
+    assert [c.name for c in e.graph.get_task("B").spec.criteria] == ["dep__A"], \
         "the setup no longer produces the shape under test — re-derive it before trusting the rest"
     _delivered(e)
 
@@ -67,7 +65,7 @@ def test_a_node_left_holding_only_glue_cannot_be_passed():
         "itself, which is the rule's absence wearing its name"
     assert "obligation of its own" in out.get("error", ""), \
         "the refusal must name the CONTRACT as the defect; a verdict cannot repair one"
-    assert e.get_task("B").state.name == "VALIDATING", "the node must not have closed"
+    assert e.graph.get_task("B").state.name == "VALIDATING", "the node must not have closed"
     e.stop()
 
 

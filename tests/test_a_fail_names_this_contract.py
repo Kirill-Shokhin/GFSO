@@ -2,7 +2,7 @@
 
 `validate_fail_has_criteria` was `len(signal_data.failed_criteria) > 0`, so any string satisfied it.
 A FAIL naming "the tests", or a typo of a real criterion, was admitted: the node moved to REWORKING,
-one of its bounded iterations (§14.3) was spent, and the executor was handed a list of obligations
+one of its bounded iterations (§12.4) was spent, and the executor was handed a list of obligations
 that do not exist and cannot be fixed.
 
 The identical rule was already binding one file over, for the machine validator's report -- *"'X' is
@@ -13,8 +13,8 @@ AND THIS IS THE TYPE OF THE FIELD, NOT ENFORCEMENT ADDED ON TOP -- checked delib
 audit that found this also found the opposite defect (F4: a rule the canon gives no CHECK for had
 acquired the authority to refuse execution), and closing one by committing the other would be worse
 than leaving both. The canon writes the signal as `FAIL(criteria[])`, "cite the failed criteria",
-and §10 defines V(t) as the conjunction over t's OWN criteria -- so a false conjunct IS a criterion
-of t, and a name outside the contract denotes nothing at all. The worked example (§14.3) fails a root
+and §2 defines V(t) as the conjunction over t's OWN criteria -- so a false conjunct IS a criterion
+of t, and a name outside the contract denotes nothing at all. The worked example (§14.4) fails a root
 on `[c2, c3]`, its own two. Membership is what `failed_criteria` MEANS.
 """
 from __future__ import annotations
@@ -23,9 +23,9 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.protocol.invariants import fail_names_this_contract
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 @pytest.fixture(autouse=True)
@@ -45,10 +45,10 @@ def _delivered():
 
 
 def _fail(e, names):
-    """The signal alone: Inv-3 is a rule about the FAIL PAYLOAD, checked before anything is judged.
+    """The signal alone: Inv-3 is a rule about the FAIL PAYLOAD, checked before anything is validated.
 
     Signed by the node's ISSUER, which for a root is its own assignee. The first cut of this sent it
-    as `judge` and every negative assertion here went green — on "judge is not issuer for n", a
+    as `validator` and every negative assertion here went green — on "validator is not issuer for n", a
     refusal that never reached the rule under test.
     """
     out = T.signal(e, "n", "FAIL", "worker", failed_criteria=list(names))
@@ -61,7 +61,7 @@ def test_a_fail_naming_something_else_is_refused():
     out = _fail(e, ["the tests"])
     assert out.get("accepted") is False, "rework was spent on an obligation that does not exist"
     assert "not criteria of this node" in str(out.get("error") or ""), out
-    assert e.get_state("n").name == "VALIDATING"
+    assert e.graph.get_state("n").name == "VALIDATING"
     e.stop()
 
 
@@ -76,7 +76,7 @@ def test_a_fail_on_a_real_criterion_still_works():
     """The control. Without it the rule above is satisfied by a gate that refuses every FAIL."""
     e = _delivered()
     assert _fail(e, ["parses"]).get("accepted") is True
-    assert e.get_state("n").name == "REWORKING"
+    assert e.graph.get_state("n").name == "REWORKING"
     e.stop()
 
 

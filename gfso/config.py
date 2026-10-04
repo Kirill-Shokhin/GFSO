@@ -63,8 +63,12 @@ LOOPBACK = "127.0.0.1"
 #: different, and the MCP schema shows its default to the agent reading it. Collapsing them into one
 #: number would be a decision about measurement wearing the clothes of a cleanup, so what is shared
 #: here is the NAME, not a single value.
-MODEL_DEFAULT = "sonnet"          # every door's current default; change one door by naming another
-MODEL_VALIDATOR_RETRY = "opus"    # …the DEFAULT tier of that retry; `validator_retry_model()` decides
+# A full id, not the `sonnet` alias: the alias resolves by the installed CLI's age — a container's 2.1.272 ran
+# claude-sonnet-5 while the author meant the current one (2026-10-07) — and a row must say what ran
+# `GFSO_SYSTEM_MODEL` moves every door at once — the plan's author, its reviewer, the issuer's function, and any
+# executor or validator whose roster entry names no model: the user who chooses a cheaper model for the system
+# chooses it for every role the system plays, or a stronger one holds the work through the doors left behind
+MODEL_DEFAULT = os.environ.get("GFSO_SYSTEM_MODEL") or "claude-sonnet-5-5"
 
 # HOW MANY READINGS OF THE GOAL the sufficiency check takes before it answers. Not a quality knob:
 # measured on the MCP door 2026-08-21, the check discovered its objections SERIALLY — eight review
@@ -113,6 +117,11 @@ def agent_id() -> str:
 ACTIVE_PROJECT_FILE = "active_project"
 
 
+def project_by_env() -> str:
+    """The project the deployment names (`GFSO_PROJECT`), or ''."""
+    return os.environ.get("GFSO_PROJECT", "")
+
+
 def active_project() -> str:
     """The project a session starts in when it names none.
 
@@ -120,7 +129,7 @@ def active_project() -> str:
     the last project this installation was SWITCHED to, which survives a restart; and `default` when
     nothing has been chosen yet.
     """
-    if named := os.environ.get("GFSO_PROJECT"):
+    if named := project_by_env():
         return named
     try:
         remembered = (data_dir() / ACTIVE_PROJECT_FILE).read_text(encoding="utf-8").strip()
@@ -153,33 +162,98 @@ def state_timeout() -> float:
         return 0.0
 
 
+#: §12.2: which bound fires where. Work states (EXECUTING, REWORKING) run on the packet deadline;
+#: ANSWER states — one party waiting on the other — run on the deadline AND their own bound,
+#: whichever comes first; VALIDATING runs on T_validate ALONE, counted from DELIVER, so that a
+#: last-moment delivery cannot be pushed to ESCALATED unvalidated through the deadline; the PROTOCOL
+#: states carry their own bound only. The canon requires the bounds to exist and fire (Inv-5) and
+#: fixes no numbers: these are defaults, each overridable by its own variable, and their adequacy is
+#: a disclosed residue (§12.13) — a bound shorter than an answer takes satisfies the invariant and
+#: puts every report into §16's issuer-response exception.
+_STATE_BOUND_DEFAULTS = {
+    # the answer states: generous, because what they wait for is a party's decision
+    "OFFERED": 86_400.0, "CHALLENGED": 86_400.0, "BLOCKED": 86_400.0,
+    # T_validate. A validation of a rich contract has been measured at 312 s at the top tier
+    # (§9.9 / the batch note), so an hour is the wait before the issuer is asked again rather
+    # than the time a verdict takes.
+    "VALIDATING": 3_600.0,
+    # the protocol states. CANCELLING waits for a handshake reply; ESCALATED waits for the issuer's
+    # own decision.
+    "CANCELLING": 120.0, "ESCALATED": 86_400.0,
+}
+
+
+def state_bound(state_name: str) -> float:
+    """The per-state bound in seconds — `GFSO_BOUND_<STATE>`, 0 = none for that state."""
+    try:
+        return float(os.environ.get(f"GFSO_BOUND_{state_name}",
+                                    _STATE_BOUND_DEFAULTS.get(state_name, 0.0)))
+    except ValueError:
+        return _STATE_BOUND_DEFAULTS.get(state_name, 0.0)
+
+
+def agent_trace_dir() -> str:
+    """Where each agent run's raw stream is kept — `GFSO_AGENT_TRACE_DIR`; empty = not kept."""
+    return os.environ.get("GFSO_AGENT_TRACE_DIR", "")
+
+
+def default_deadline_s() -> float:
+    """How far ahead the engine writes a deadline the issuer did not type — `GFSO_DEFAULT_DEADLINE_S`.
+
+    §2.5: every entry into OFFERED carries a deadline that lies ahead of it, and "the canon requires
+    the packet to carry a deadline, not the issuer to type one": an implementation may write a
+    default, logged as supplied. 0 = write none (the pre-v4.1 behaviour)."""
+    try:
+        return float(os.environ.get("GFSO_DEFAULT_DEADLINE_S", 86_400.0))
+    except ValueError:
+        return 86_400.0
+
+
 def validation_batch() -> int:
-    """How many criteria one validator run judges — `GFSO_VALIDATION_BATCH`, default 12, `0` = one
-    run over the whole contract.
+    """How many PROBES one validator run owes at most — `GFSO_VALIDATION_BATCH`, default 16, `0` = one run over
+    the whole validation. A run owes its criteria's pinned probes, the parts' pinned probes they rest on (each once)
+    and their regression lines; a criterion owing none counts one (`tools_llm._scope_batches`).
 
     A dial rather than a constant because it is the knob of a MEASURED trade: batching unblocked
-    acceptance on rich contracts (a report must speak to every criterion, §11.2, and on long ones it
-    stopped doing so), and the batches now run concurrently, so the size decides how much of a
-    judgement happens in parallel. Contracts have been coming out at 10–21 criteria against a
-    threshold of 12, which is why the parallel path fires on some runs and not others; the number
-    has to be movable to be measured (2026-08-22)."""
+    acceptance on rich contracts (a report must speak to every criterion, §2.3, and on long ones it
+    stopped doing so), and the batches run concurrently, so the size decides how much of a
+    validation happens in parallel. It counted CRITERIA until 2026-10-11, and a criterion is not a unit
+    of work: the c_compiler root (GB_c_compiler_tmqn88552, every role on claude-haiku-5-5) had 4 criteria,
+    one batch, and owed 75 probes (4 pinned, 33 distinct part probes, 38 regression lines) — 17 reports in
+    55 minutes were not a verdict, 15 of them for probes left out. In the same run the same model's reports
+    over lists of at most 16 owed probes (the ten parts; root.vec's reached 16) were verdicts 16 times of 18,
+    and the root's, over 37 and more, 2 times of 19. The default is the largest list it was seen to cover."""
     try:
         return max(0, int(os.environ.get("GFSO_VALIDATION_BATCH", VALIDATION_BATCH)))
     except ValueError:
         return VALIDATION_BATCH
 
 
-def validator_retry_model() -> str | None:
-    """Which tier judges the RETRY after a validator returns no verdict — `GFSO_VALIDATOR_RETRY_MODEL`,
-    default `opus`, and `off` (or `none`) to refuse the escalation entirely.
+#: Model sessions one server runs at once (`max_sessions`).
+MAX_SESSIONS = 8
 
-    A ⊥ report is usually a coverage-discipline gap, and a bigger model is what closes it — so the
-    retry escalates by default. But it escalated with nothing able to stop it: a person who
-    registered their validator as `sonnet` got an opus bill on every node that refused once, and no
-    door said so or offered a way to say no (measured on the human door 2026-08-22). Off means the
-    retry runs on the node's own tier; the node then parks for a person exactly as it does when the
-    escalated retry also fails."""
-    _m = os.environ.get("GFSO_VALIDATOR_RETRY_MODEL", MODEL_VALIDATOR_RETRY).strip()
+
+def max_sessions() -> int:
+    """How many model sessions the dispatcher runs at once — executors, validators and the issuer's answers alike —
+    `GFSO_MAX_SESSIONS`, default 8. It bounds the user's machine and the account, nothing in the protocol: every
+    independent part may run at once (§10.4, the frontier). Four, fixed, made a plan of eight independent parts run
+    in two waves, and a delivered part waited for its validator behind them (AUTO haiku coreutils, 2026-10-10)."""
+    try:
+        return max(1, int(os.environ.get("GFSO_MAX_SESSIONS", MAX_SESSIONS)))
+    except ValueError:
+        return MAX_SESSIONS
+
+
+def validator_retry_model() -> str | None:
+    """Which tier validates the RETRY after a validator returns no verdict — `GFSO_VALIDATOR_RETRY_MODEL`,
+    default none: the retry runs on the node's own tier.
+
+    It used to escalate to opus by default, on the reading that a ⊥ report is a coverage gap a bigger
+    model closes. It is a patch over the gap, not its repair, and a costly one: once a node refused
+    once, every later delivery of it validated on opus — on the automatic `json_parser` run
+    (2026-09-27) 13 of 19 validations, $7.76 of $17.83, on a task one sonnet agent finishes in five
+    minutes. The ⊥ is fixed where it arises; an installation that wants the escalation names a tier."""
+    _m = os.environ.get("GFSO_VALIDATOR_RETRY_MODEL", "").strip()
     return None if _m.lower() in ("off", "none", "") else _m
 
 
@@ -188,6 +262,27 @@ def validator_retry_model() -> str | None:
 #: that disagrees between the door and the store is a page that silently ends early.
 PIPELINE_PAGE = 500       # the signal ledger: a graph's whole history is usually well under this
 USAGE_PAGE = 5000         # the spend ledger: one run makes hundreds of records, a project thousands
+
+#: How much prose ONE criterion's entry may carry back through a tool door before it is trimmed.
+#: A verdict read is not a page — every criterion must come back, because an entry that is missing
+#: reads exactly like a criterion nobody validated (⊥, §2.3), which is the one thing this surface
+#: exists to make visible. So the read never drops an entry; it shortens the two fields that carry
+#: the bulk (the narrated evidence, a probe's captured output) and says so in place.
+#: Measured on the delegated `json_parser` cell (2026-09-22): three validations returned no verdict,
+#: the driving agent called `get_verdict` to find out why, the response came back ~85 KB — past the
+#: client's own cap — and it escalated BLIND. The refused reports were the evidence and nobody ever
+#: read them. A surface that answers "why was this refused" is worth nothing if the answer does not
+#: fit through the door it answers at.
+VERDICT_FIELD_CHARS = 2000
+
+#: …and the WHOLE response's budget, as a multiple of the field bound. A per-field limit is not a
+#: limit on the read: nothing bounds how many criteria a contract has, and one node can carry a
+#: current verdict, an overruled one, the record it closed on AND a refused report, each with an
+#: entry per criterion. Every field can sit inside its own bound while the sum sails past the
+#: door's cap — the same blindness reached by addition. Past this, the per-criterion DETAIL folds
+#: to the criterion NAMES (never to nothing: the names are what tell a reader which one to ask for)
+#: and `criterion=<name>` still returns any single entry whole.
+VERDICT_RESPONSE_MULTIPLE = 12
 
 #: How much of a node's description stands in for its name in a one-line listing.
 LABEL_CHARS = 40
@@ -254,10 +349,28 @@ def seed_demo() -> bool:
     return _flag("GFSO_SEED")
 
 
+def serving() -> bool:
+    """Is this process the gfso server (`GFSO_SERVING`)? Set by the server itself and inherited by a
+    `--reload` worker, which uvicorn starts in a fresh interpreter."""
+    return _flag("GFSO_SERVING")
+
+
+def mark_serving() -> None:
+    """Declare this process — and the processes it starts — the server (`serving`)."""
+    os.environ["GFSO_SERVING"] = "1"
+
+
 def validate_internal() -> bool:
-    """Run the independent instrument on INTERNAL nodes too (§14.5 D6 says their guarantee rides on
-    the public result; this is the measurement dial that overrides that)."""
-    return _flag("GFSO_VALIDATE_INTERNAL")
+    """Observe EVERY delivery with the independent instrument, internal nodes inside a scope included —
+    off by default, on for measurement (`GFSO_VALIDATE_INTERNAL=1`).
+
+    Where a validation stands is decided by κ, not by this dial (`validation.observed_here`): at every seam
+    and at the top of every scope one executor session carries, which in SOLO means below the root too
+    wherever the plan is larger than one session. It was on by default from 2026-09-27, read as "SOLO must
+    not bypass the system"; what SOLO lacked was a validation at each κ-scope, not one per piece, and a
+    validation per piece is what turned a 2.6-minute task into 39 and 70 (§10.2 permits a check on every
+    delivery; it does not require one)."""
+    return _flag("GFSO_VALIDATE_INTERNAL", "0")
 
 
 def with_mcp() -> bool:
@@ -280,14 +393,13 @@ def ui_address() -> tuple[str, int]:
     return (os.environ.get("GFSO_UI_HOST", LOOPBACK), int(os.environ.get("GFSO_UI_PORT", "8000")))
 
 
-# HOW MANY CRITERIA ONE VALIDATION RUN JUDGES. V(t) = ⋀ cᵢ (§10), so judging a contract in disjoint
-# batches and taking the conjunction is the same verdict — provided every criterion is judged exactly
-# once, which is what the merge enforces. It exists because the coverage discipline the engine
-# demands (a probe per behaviour of every criterion) is what a report fails on a rich contract:
-# measured 2026-08-21, 44 refused reports against 57 recorded verdicts, and two E3 runs stalled at
-# 25 and 42 root criteria — the bottleneck moved from "the contract is thin" to "acceptance cannot
-# discharge a rich one". 0 = one run for the whole contract, whatever its size.
-VALIDATION_BATCH = 12          # …the DEFAULT; `validation_batch()` decides (a measured dial)
+# HOW MANY PROBES ONE VALIDATION RUN OWES. V(t) = ⋀ cᵢ (§2), so validating a contract in disjoint
+# batches and taking the conjunction is the same verdict — provided every owed probe is carried exactly
+# once and a criterion split between runs is read as their conjunction, which the merge enforces. It exists
+# because the coverage discipline the engine demands (a probe per behaviour of every criterion) is what a
+# report fails on a rich contract: measured 2026-08-21, 44 refused reports against 57 recorded verdicts,
+# and two E3 runs stalled at 25 and 42 root criteria. 0 = one run for the whole validation, whatever its size.
+VALIDATION_BATCH = 16          # …the DEFAULT; `validation_batch()` decides (a measured dial)
 
 
 def narrate() -> bool:
@@ -304,7 +416,7 @@ def narrate() -> bool:
 # SUFFICIENCY_READINGS and the same evidence: with the contract no longer inflating, the checker
 # still returned exactly one NEW finding per round for three rounds and the run died in the gate
 # (E3, 2026-08-22). A doubt raised by any reading is a doubt to answer; later rounds read once,
-# because by then the plan has changed and what they judge is the change. 1 = the old behaviour.
+# because by then the plan has changed and what they validate is the change. 1 = the old behaviour.
 CHECKER_READINGS = 3
 
 
@@ -329,10 +441,10 @@ HEARTBEAT_SECONDS = 30
 
 
 # HOW LONG A VALIDATION CLAIM IS HONOURED WITH NOBODY BEHIND IT. The claim that stops two validators
-# judging one delivery is released in a `finally`, so an orderly end always frees it — and a run that
-# dies without unwinding cannot. The node then reads as "being judged" everywhere while nothing runs,
+# validating one delivery is released in a `finally`, so an orderly end always frees it — and a run that
+# dies without unwinding cannot. The node then reads as "being validated" everywhere while nothing runs,
 # and `validate_result` refuses the re-run its own refusal advises (agent door, 2026-09-02: fifteen
-# minutes of dead polling on each of two nodes). Longer than any single judging run this product
+# minutes of dead polling on each of two nodes). Longer than any single validation run this product
 # waits for, so a live run is never reclaimed out from under itself.
 VALIDATION_CLAIM_TTL = 1800.0
 
@@ -414,6 +526,12 @@ def subprocess_env(*, keep_key: bool, extra: dict | None = None) -> dict:
     env = (dict(os.environ) if keep_key else
            {k: v for k, v in os.environ.items()
             if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")})
+    # …and the server's mark: a model child is not the server, and a gfso it runs (a probe running
+    # this product's own suite) must not treat itself as one and end its own children.
+    env.pop("GFSO_SERVING", None)
+    # …and room to answer: the CLI's default 32k output cap cut a plan of 14 parts, and the model's re-emission after
+    # the cut is what was kept (AUTO haiku 4.5 sql_database, GB_sql_database_tmu9cb784)
+    env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000")
     if extra:
         env.update({k: str(v) for k, v in extra.items() if v is not None})
     return env

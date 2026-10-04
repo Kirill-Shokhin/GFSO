@@ -22,23 +22,25 @@ from __future__ import annotations
 from gfso import tools as T
 from gfso.critic.runner import _criterion_stamps
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _parent_with_one_covering_child(e):
+    """`parse_contract` covered by one child; a second criterion, `x`, by another — the room an unrelated sibling
+    is admitted into (§11.5: every child of a split covers a criterion of its parent)."""
     T.create_task(e, "root", {"description": "goal",
-                              "criteria": [{"name": "parse_contract",
-                                            "description": "parse_kv raises ValueError on a missing "
-                                                           "separator and on an empty key"}],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "criteria": [criterion("parse_contract",
+                                                     "parse_kv raises ValueError on a missing "
+                                                     "separator and on an empty key"), criterion("x", "X")]},
                   assignee="agent")
-    T.create_task(e, "root.kv", {"description": "the kv child",
-                                 "criteria": [{"name": "parse_behaviour",
-                                               "description": "parse_kv raises ValueError on a "
-                                                              "missing separator and on an empty key"}]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "root.kv", "parse_contract")
+    T.decompose(e, "root", [
+        {"task_id": "root.kv", "spec": {"description": "the kv child",
+                                        "criteria": [criterion("parse_behaviour",
+                                                               "parse_kv raises ValueError on a "
+                                                               "missing separator and on an empty key")]},
+         "assignee": "agent", "covers": ["parse_contract"]},
+        {"task_id": "root.x", "spec": {"description": "x", "criteria": [criterion("x", "X")]},
+         "assignee": "agent", "covers": ["x"]}], accepted_risks=REGISTER)
     e.wait_idle()
 
 
@@ -46,12 +48,12 @@ def test_rewriting_a_child_criterion_under_the_same_name_changes_the_stamp():
     e = make_engine()
     e.start()
     _parent_with_one_covering_child(e)
-    before = _criterion_stamps(e, e.get_task(TaskId("root")))
+    before = _criterion_stamps(e, e.graph.get_task(TaskId("root")))
 
-    T.edit_criteria(e, "root.kv", [{"name": "parse_behaviour",           # the SAME name
-                                    "description": "parse_kv exists and is callable."}], "agent")
+    T.edit_criteria(e, "root.kv", [criterion("parse_behaviour",           # the SAME name
+                                             "parse_kv exists and is callable.")], "agent")
     e.wait_idle()
-    after = _criterion_stamps(e, e.get_task(TaskId("root")))
+    after = _criterion_stamps(e, e.graph.get_task(TaskId("root")))
 
     assert before != after, (
         "the plan changed under the review and the stamp did not move — the next round will hand "
@@ -65,7 +67,7 @@ def test_the_stamp_carries_the_text_and_not_only_the_name():
     e.start()
     _parent_with_one_covering_child(e)
 
-    stamp = _criterion_stamps(e, e.get_task(TaskId("root")))["parse_contract"]
+    stamp = _criterion_stamps(e, e.graph.get_task(TaskId("root")))["parse_contract"]
 
     flat = repr(stamp)
     assert "parse_behaviour" in flat, "the child's criterion NAME is part of the question"
@@ -78,13 +80,13 @@ def test_a_plan_nobody_touched_still_keeps_its_decisions():
     e = make_engine()
     e.start()
     _parent_with_one_covering_child(e)
-    before = _criterion_stamps(e, e.get_task(TaskId("root")))
+    before = _criterion_stamps(e, e.graph.get_task(TaskId("root")))
 
     T.create_task(e, "root.other", {"description": "an unrelated sibling",
-                                    "criteria": [{"name": "x", "description": "X"}]},
-                  assignee="agent", parent_id="root")
+                                    "criteria": [criterion("x", "X")]},
+                  assignee="agent", parent_id="root", covers=["x"])
     e.wait_idle()
 
-    assert _criterion_stamps(e, e.get_task(TaskId("root")))["parse_contract"] == \
+    assert _criterion_stamps(e, e.graph.get_task(TaskId("root")))["parse_contract"] == \
         before["parse_contract"], "an edit elsewhere in the plan re-litigated an untouched criterion"
     e.stop()

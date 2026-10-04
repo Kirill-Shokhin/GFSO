@@ -10,19 +10,14 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-import os
-import sys
-import threading
 import typing
 import weakref
 from pathlib import Path
 from typing import Optional
 
 import anyio
-import uvicorn
 
-from gfso.api.server import create_app
-from gfso.delegate import default_agents, ensure_dispatcher
+from gfso.config import DEFAULT_PROJECT, project_by_env
 from gfso.engine import Engine
 from gfso.runtime import ProjectRegistry
 from gfso.tools import _agent_id
@@ -100,6 +95,16 @@ def _resolver(engine_or_registry):
         def _res(project=None, ctx=None):
             key = _session_key(ctx)
             name = project or (_SESSION_PROJECTS.get(key) if key is not None else None)
+            # A SESSION THAT NAMES NO PROJECT WHERE THE FALLBACK IS `default` AND OTHER PROJECTS EXIST is asked which: an
+            # AUTO customer told its project by name called `get_graph` and `auto_decompose` without it, was answered
+            # "No mode set" from the empty default, and its plan was built where nothing executes
+            # (GB_sql_database_tmwpw7028, 2026-10-15). A project switched to stands (it survives a restart); `default`
+            # is chosen per session, or by `GFSO_PROJECT` — read off a remembered file it latched the hole open.
+            if not name and engine_or_registry.active == DEFAULT_PROJECT and not project_by_env() and (
+                    others := [p for p in engine_or_registry.list()["projects"] if p != DEFAULT_PROJECT]):
+                raise ValueError(f"this session names no project, and this server holds {len(others)} besides "
+                                 f"`default`: {', '.join(others[:10])} — name yours with `use_project` (`default` "
+                                 f"included), or pass `project=`")
             return engine_or_registry.engine(name)
         return _res
     return lambda project=None, ctx=None: engine_or_registry   # bare Engine — ignored
@@ -112,18 +117,23 @@ def _resolver(engine_or_registry):
 _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
                  "edit_accepted_risks": ("agent",), "edit_criteria": ("agent",),
                  "record_verdict": ("reviewer",),
-                 # reopen re-earns a TERMINAL node under R′ (§14.3) — as load-bearing an act as any
+                 # the mode is the user's choice, relayed by their agent — recorded under who set it
+                 "set_mode": ("agent",),
+                 # reopen re-earns a TERMINAL node under R′ (§12.14) — as load-bearing an act as any
                  # signal, and it was the one whose actor the caller still chose freely, so it
                  # landed in the audit log attributed to whatever name the model wrote.
-                 "reopen": ("agent",)}
+                 "reopen": ("agent",),
+                 # who authors a split decides whether the node's contract may be re-authored (only by its issuer,
+                 # Inv-1) — a name the caller chose would let any agent claim to be any node's issuer
+                 "auto_decompose": ("author",)}
 
 
 # The verbs an agent calls when it ENTERS a graph — the moment a human would want to look at it.
 # The address lived only in the agent's instructions, so no tool RESULT carried it and the link was
 # offered only if the model happened to remember one; here it rides back with the act itself.
-from gfso import tools as _T                      # UI_LINK_VERBS / ui_link live on the verb surface
-from gfso.config import HEARTBEAT_SECONDS as _HEARTBEAT, MODEL_DEFAULT, ROOT_ID, ui_enabled, ui_address
-_UI_LINK_VERBS = _T.UI_LINK_VERBS                 # ONE list, both doors
+from gfso import tools as _T
+from gfso.serverctl import UI_LINK_VERBS as _UI_LINK_VERBS, ui_link as _ui_link   # ONE list, both doors
+from gfso.config import HEARTBEAT_SECONDS as _HEARTBEAT
 
 
 def _brief(listing: dict, active: str, keep: int = 12) -> dict:
@@ -151,7 +161,7 @@ def _with_ui_link(name: str, out, project=None, ctx=None):
     try:
         _k = _session_key(ctx)
         name_ = project or out.get("active") or (_SESSION_PROJECTS.get(_k) if _k is not None else None)
-        out["ui"] = _T.ui_link(name_)
+        out["ui"] = _ui_link(name_)
     # the docstring's contract: a link is a convenience, and the verb's result is already correct
     # without it
     except Exception:
@@ -173,6 +183,11 @@ def _bind(engine_or_registry, fn):
     resolve = _resolver(engine_or_registry)
     multi = hasattr(engine_or_registry, "engine")
     pinned = _PINNED_ACTOR.get(fn.__name__, ())
+    # A verb that takes `_progress` runs for minutes (a decomposition, a validator run): it streams its stages and a
+    # heartbeat to the client. It was bound by two hand-written wrappers whose signatures drifted from the verbs —
+    # `validate_result` lost `validator`, `auto_decompose` lost `max_iterations` (ortho audit, D-F15); the schema
+    # comes from the verb here like every other's.
+    long = "_progress" in inspect.signature(fn).parameters
     hints = typing.get_type_hints(fn)
     sig = inspect.signature(fn)
     params = [
@@ -182,7 +197,7 @@ def _bind(engine_or_registry, fn):
         and p.name not in pinned                    # actor identity is the door's, not the caller's claim
     ]
     Context = None
-    if multi:
+    if multi or long:
         try:
             # LEFT: the MCP SDK is optional AT IMPORT — this module must import without it so
             # `create_server` can raise its readable RuntimeError (and the HTTP door degrade).
@@ -190,15 +205,15 @@ def _bind(engine_or_registry, fn):
             Context = _Ctx
         except ImportError:  # SDK absent (direct _bind unit use) — no session scoping
             pass
+    # KEYWORD_ONLY must precede a VAR_KEYWORD (e.g. `**payload`) or the signature is invalid
+    var_kw = next((i for i, p in enumerate(params) if p.kind == inspect.Parameter.VAR_KEYWORD), len(params))
     if multi and "project" not in {p.name for p in params}:
-        # KEYWORD_ONLY must precede a VAR_KEYWORD (e.g. `**payload`) or the signature is invalid
-        var_kw = next((i for i, p in enumerate(params) if p.kind == inspect.Parameter.VAR_KEYWORD),
-                      len(params))
         params.insert(var_kw, inspect.Parameter("project", inspect.Parameter.KEYWORD_ONLY,
                                                 default=None, annotation=typing.Optional[str]))
-        if Context is not None:  # the SDK injects ctx (Context-typed params are schema-invisible)
-            params.insert(var_kw + 1, inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY,
-                                                        default=None, annotation=Context))
+        var_kw += 1
+    if (multi or long) and Context is not None:  # the SDK injects ctx (Context-typed params are schema-invisible)
+        params.insert(var_kw, inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY,
+                                                default=None, annotation=Context))
 
     # ASYNC, and the body runs in a worker thread. The SDK awaits a synchronous tool INLINE on the
     # event loop, so any tool that blocks blocks the whole process: `review_decomposition` spawns a
@@ -217,8 +232,12 @@ def _bind(engine_or_registry, fn):
         if pinned:
             for name in pinned:
                 kwargs[name] = _agent_id()
-        out = await anyio.to_thread.run_sync(
-            functools.partial(fn, resolve(project, ctx), *args, **kwargs))
+        try:
+            engine = resolve(project, ctx)
+        except ValueError as e:              # whose graph this call is about is not settled: said, not raised
+            return {"error": str(e)}
+        call = functools.partial(fn, engine, *args, **kwargs)
+        out = await (_with_progress(ctx, f"[{fn.__name__}]", call) if long else anyio.to_thread.run_sync(call))
         return _with_ui_link(fn.__name__, out, project, ctx)
 
     wrapper.__signature__ = sig.replace(
@@ -226,9 +245,25 @@ def _bind(engine_or_registry, fn):
     wrapper.__annotations__ = {k: v for k, v in hints.items() if k != "engine" and k not in pinned}
     if multi:
         wrapper.__annotations__["project"] = typing.Optional[str]
-        if Context is not None:
-            wrapper.__annotations__["ctx"] = Context
+    if (multi or long) and Context is not None:
+        wrapper.__annotations__["ctx"] = Context
     return wrapper
+
+
+async def _with_progress(ctx, label: str, call):
+    """Run a minutes-long verb that takes `_progress`: each stage it reports goes to the client, and a heartbeat
+    between them (`_awaited_with_a_heartbeat`)."""
+    loop, step = asyncio.get_running_loop(), {"n": 0}
+
+    def prog(msg: str) -> None:  # called from the worker thread
+        """Push one stage line to the client."""
+        step["n"] += 1
+        if ctx is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(ctx.report_progress(step["n"], None, f"{label} {msg}"), loop)
+            except Exception:
+                pass  # progress is presentation — never break the pipeline
+    return await _awaited_with_a_heartbeat(loop, ctx, label, step, functools.partial(call, _progress=prog))
 
 
 async def _awaited_with_a_heartbeat(loop, ctx, label: str, step: dict, call):
@@ -253,91 +288,6 @@ async def _awaited_with_a_heartbeat(loop, ctx, label: str, step: dict, call):
                                           f"{label} still working ({step['n'] * _HEARTBEAT}s)")
             except Exception:
                 pass          # progress is presentation — never break the pipeline
-
-
-def _bind_auto_decompose(engine_or_registry):  # pragma: no cover — exercised live over MCP
-    """auto_decompose runs for minutes (several headless one-shots) — bind it ASYNC with an MCP Context so
-    each pipeline stage streams to the client as a progress notification instead of a silent multi-minute
-    wait. Presentation plumbing only: the logic stays in tools.auto_decompose (`_progress` is its
-    transport-internal callback; stderr keeps logging regardless)."""
-    # LEFT: the MCP SDK is optional AT IMPORT (see `_bind`) — the annotation is needed only when
-    # a server is actually being built.
-    from mcp.server.fastmcp import Context
-    resolve = _resolver(engine_or_registry)
-
-    async def auto_decompose(request: str, root_id: str = ROOT_ID, assignee: str = None,
-                             executor: str = None,
-                             depth: int = 1, model: str = MODEL_DEFAULT, fast: bool = False,
-                             project: str = None, ctx: Context = None) -> dict:
-        """Author or refine a verified subtree, reporting progress while the model runs.
-
-        Minutes-long: the heartbeat below exists because a client that hears nothing for that
-        long aborts a call the server is still serving.
-        """
-        loop = asyncio.get_running_loop()
-        step = {"n": 0}
-
-        def prog(msg: str) -> None:  # called from the executor thread
-            """Push one progress line to the client from the worker thread."""
-            step["n"] += 1
-            if ctx is not None:
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        ctx.report_progress(step["n"], None, f"[decompose] {msg}"), loop)
-                except Exception:
-                    pass  # progress is presentation — never break the pipeline
-
-        out = await _awaited_with_a_heartbeat(loop, ctx, "[decompose]", step, functools.partial(
-            T.TOOLS["auto_decompose"], resolve(project, ctx), request, root_id=root_id, assignee=assignee,
-            executor=executor, depth=depth, model=model, fast=fast, _progress=prog))
-        return _with_ui_link("auto_decompose", out, project, ctx)
-
-    auto_decompose.__doc__ = T.auto_decompose.__doc__
-    # `from __future__ import annotations` stringifies hints and Context is imported locally — hand the
-    # SDK real types so its schema introspection can evaluate the signature.
-    auto_decompose.__annotations__ = {"request": str, "root_id": str, "assignee": Optional[str],
-                                      "executor": Optional[str],
-                                      "depth": int, "model": str, "fast": bool,
-                                      "project": Optional[str], "ctx": Context, "return": dict}
-    return auto_decompose
-
-
-def _bind_validate_result(engine_or_registry):  # pragma: no cover — exercised live over MCP
-    """validate_result spawns a tool-using validator agent (minutes when it runs real test suites) — same
-    async + progress-notification binding as auto_decompose, for the same MCP-timeout reason."""
-    # LEFT: the MCP SDK is optional AT IMPORT (see `_bind`).
-    from mcp.server.fastmcp import Context
-    resolve = _resolver(engine_or_registry)
-
-    async def validate_result(task_id: str, deliverable: str = None, model: str = MODEL_DEFAULT,
-                            workdir: str = None, project: str = None, ctx: Context = None) -> dict:
-        """Run the independent validator over a delivery and record the verdict it produces.
-
-        Minutes-long for the same reason as the decomposition verb above; the verdict it records
-        is the instrument's, never the caller's.
-        """
-        loop = asyncio.get_running_loop()
-        step = {"n": 0}
-
-        def prog(msg: str) -> None:  # called from the executor thread
-            """Push one progress line to the client from the worker thread."""
-            step["n"] += 1
-            if ctx is not None:
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        ctx.report_progress(step["n"], None, f"[validate_result] {msg}"), loop)
-                except Exception:
-                    pass  # progress is presentation — never break the pipeline
-
-        return await _awaited_with_a_heartbeat(loop, ctx, "[validate_result]", step, functools.partial(
-            T.TOOLS["validate_result"], resolve(project, ctx), task_id, deliverable=deliverable, model=model,
-            workdir=workdir, _progress=prog))
-
-    validate_result.__doc__ = T.validate_result.__doc__
-    validate_result.__annotations__ = {"task_id": str, "deliverable": Optional[str], "model": str,
-                                     "workdir": Optional[str], "project": Optional[str],
-                                     "ctx": Context, "return": dict}
-    return validate_result
 
 
 def _mount_project_delete(server, reg) -> None:
@@ -409,7 +359,14 @@ def _mount_project_verbs(server, reg) -> None:
         # full last-active map, several thousand tokens of noise into the caller's context on
         # every switch, for a one-line action. The count is kept so the trim is visible rather
         # than silent, and `list_projects` remains the verb for the full inventory.
-        return _with_ui_link("use_project", _brief(reg.list(), name))
+        out = _brief(reg.list(), name)
+        try:   # where the graph stands and what it waits on — entering a project is a move like a signal
+            e = reg.engine(name)
+            out["mode"] = e.mode()
+            out.update(_T.next_for(e, _agent_id(), entering=True))
+        except Exception:   # gives up only the hint; the switch stands
+            pass
+        return _with_ui_link("use_project", out)
 
     def list_projects(limit: int = 25, match: str = "", ctx: _Ctx = None) -> dict:
         """{active, projects, total}: the isolated project graphs this server owns (one DB file
@@ -462,88 +419,10 @@ def create_server(engine_or_registry):
     # is ever missing, a traceback is the correct outcome.
     protocol = (Path(__file__).parent / "ORCHESTRATOR.md").read_text(encoding="utf-8")
     server = FastMCP("gfso", instructions=protocol)
-    # NOTE: the two bindings below call `T.TOOLS[...]`, not the module functions — the registry
-    # entries are the ones wrapped to announce themselves in INFLIGHT. Bound to the bare functions,
-    # `/api/runtime` reported `busy: []` throughout a decomposition or a validator run, which is
-    # exactly the window in which another session's reconcile must not restart the server.
-    long_running = {"auto_decompose": _bind_auto_decompose, "validate_result": _bind_validate_result}
+    # Bound from `T.TOOLS[...]`, not the module functions — the registry entries are the ones wrapped to announce
+    # themselves in INFLIGHT; bound to the bare functions, `/api/runtime` reported `busy: []` through a decomposition.
     for name, fn in T.TOOLS.items():
-        if name in long_running:  # minutes-long: async + MCP progress notifications
-            server.add_tool(long_running[name](engine_or_registry), name=name,
-                            description=(fn.__doc__ or "").strip())
-            continue
         server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip())
     if hasattr(engine_or_registry, "use"):    # ProjectRegistry → the project verbs
         _mount_project_verbs(server, engine_or_registry)
-    _add_agent_verbs(server, engine_or_registry)
     return server
-
-
-def _add_agent_verbs(server, engine_or_registry) -> None:
-    """The delegation roster: register_agent / list_agents + the autostart dispatchers. Delegation is
-    NOT a verb — the issuer's only act is setting Del (assignee) to a registered llm-executor; the
-    dispatcher picks the node up from the frontier, spawns the executor, wraps its signals, and
-    auto-validates the delivery with the registered llm-validator (verdict auto-signals; an unparsed
-    verdict escalates)."""
-    resolve = _resolver(engine_or_registry)
-    # ProjectRegistry engines attach their dispatchers at creation (runtime); a BARE engine
-    # (tests / single-project embedding) gets one here.
-    if not hasattr(engine_or_registry, "engine"):
-        ensure_dispatcher(engine_or_registry, default_agents())
-
-    def register_agent(agent_id: str, kind: str, model: str = MODEL_DEFAULT,
-                       workdir: str = None, validator: str = None,
-                       oracle_map: str = None, max_turns: int = None,
-                       client: str = None, project: str = None, ctx=None) -> dict:
-        """Register a non-human participant — the shared verb, presented on this door."""
-        return T.TOOLS["register_agent"](
-            resolve(project, ctx), agent_id, kind, model=model, workdir=workdir,
-            validator=validator, oracle_map=oracle_map, max_turns=max_turns, client=client)
-
-    def list_agents(project: str = None, match: str = "", limit: int = 25, ctx=None) -> dict:
-        """The delegation roster — the shared verb, presented on this door."""
-        return T.TOOLS["list_agents"](resolve(project, ctx), match=match, limit=limit)
-
-    # One implementation, four doors: the verbs live in the shared registry (`gfso.tools_llm`) and
-    # this binding only presents them. They used to live HERE and nowhere else, so a person on the
-    # CLI or the HTTP API could not register a role at all — while the log told them to reassign
-    # work to one (measured 2026-08-21).
-    register_agent.__doc__ = T.TOOLS["register_agent"].__doc__ or T.register_agent.__doc__
-    list_agents.__doc__ = T.list_agents.__doc__
-    register_agent.__annotations__ = {"agent_id": str, "kind": str, "model": str,
-                                      "workdir": Optional[str], "validator": Optional[str],
-                                      "oracle_map": Optional[str], "max_turns": Optional[int],
-                                      "client": Optional[str], "project": Optional[str],
-                                      "return": dict}
-    list_agents.__annotations__ = {"project": Optional[str], "match": str, "limit": int,
-                                   "return": dict}
-    server.add_tool(register_agent, name="register_agent", description=(register_agent.__doc__ or "").strip())
-    server.add_tool(list_agents, name="list_agents", description=(list_agents.__doc__ or "").strip())
-
-
-def _serve_ui(registry, host: str, port: int) -> None:  # pragma: no cover
-    """Serve the HTTP + UI + WebSocket over the SAME registry in a daemon thread, so the human watches the
-    agent's MCP mutations LIVE (and follows use_project switches). All logging → stderr: stdout is the MCP
-    stdio channel and MUST stay clean (a stray print would corrupt the JSON-RPC stream)."""
-    # with_mcp=False — the MCP surface is this stdio process; the app is UI-only
-    app = create_app(registry.engine(), registry=registry)
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning",
-                            access_log=False, log_config=None)  # log_config=None → root logger (stderr)
-    threading.Thread(target=uvicorn.Server(config).run, daemon=True).start()
-    print(f"[gfso mcp] UI live at http://{host}:{port}", file=sys.stderr)
-
-
-def main() -> None:  # pragma: no cover
-    """Serve the MCP surface over stdio against this installation's project registry."""
-    registry = ProjectRegistry()
-    registry.engine()  # materialize the default project up front
-    if ui_enabled():
-        try:
-            _serve_ui(registry, *ui_address())
-        except Exception as e:
-            print(f"[gfso mcp] UI not started ({e}) — MCP tools still work", file=sys.stderr)
-    create_server(registry).run()  # blocks on the stdio MCP loop
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

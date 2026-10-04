@@ -6,6 +6,8 @@ name: formal (Lean)
 # one-off snapshot. (`docs/**.md` is a deliberate superset — it also matches the frozen RU draft and
 # the E1/E2 instruments, which merely costs an extra run: the GUARD excludes them, and its exclusion
 # list is the single authority. Enumerating the mirrors here too would let the two drift apart.)
+# …LESS THE PRODUCT'S OWN PAGES, which no theory-scoped guard reads (GFSO_GUARD_SCOPE=theory drops them; the
+# product's job in tests.yml guards them): an engineering push touching only those ran the Lean build as well.
 on:
   push:
     paths:
@@ -13,12 +15,24 @@ on:
       - 'docs/**.md'
       - 'README.md'
       - '.github/workflows/formal.yml'
+      - '!docs/EVIDENCE_LOG.md'
+      - '!docs/architecture.md'
+      - '!docs/USING_GFSO.md'
+      - '!docs/TASK_PACKET.md'
+      - '!docs/embeddability_acceptance.md'
+      - '!docs/e1/**'
   pull_request:
     paths:
       - 'formal/**'
       - 'docs/**.md'
       - 'README.md'
       - '.github/workflows/formal.yml'
+      - '!docs/EVIDENCE_LOG.md'
+      - '!docs/architecture.md'
+      - '!docs/USING_GFSO.md'
+      - '!docs/TASK_PACKET.md'
+      - '!docs/embeddability_acceptance.md'
+      - '!docs/e1/**'
   workflow_dispatch:
 
 # The theory push passes on its own: the guards here read the canon's own surface; the product's

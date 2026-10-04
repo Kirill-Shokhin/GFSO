@@ -3,8 +3,8 @@
 `usage` returns a total and a split by stage. The question a bill actually raises -- what is the
 expensive part, and how much of it -- was one division away and nobody did it. That is not a
 hypothetical reader: on 2026-09-05 I read an instrument's `usage_inner_agent_only` as a run's total
-and was out by 3x, on a measurement whose PRE-REGISTERED question was precisely the judge's share of
-spend, with the true split ($2.33 of $3.44, 68% on judging) sitting inside the same object.
+and was out by 3x, on a measurement whose PRE-REGISTERED question was precisely the validator's share of
+spend, with the true split ($2.33 of $3.44, 68% on validation) sitting inside the same object.
 
 A surface whose stated doctrine is that a metric arrives with what it means owes the division too.
 """

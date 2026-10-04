@@ -19,11 +19,11 @@ from gfso.core.types import (State, Signal, SignalData, GuardContext, TaskId, Ag
                              TERMINAL_STATES, DEFAULT_MAX_ITERATIONS)
 from gfso import tools as T
 from gfso.tools import _spec_from
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 TLA_TABLE = Path(__file__).resolve().parent.parent / "formal" / "tla" / "FsmTable.tla"
 
-SPEC_DICT = {"description": "x", "criteria": [{"name": "a", "description": "A"}]}
+SPEC_DICT = {"description": "x", "criteria": [criterion("a", "A")]}
 
 
 # ── the model, parsed from its own source ────────────────────────────────────
@@ -48,12 +48,17 @@ def _parse_model():
                      r'THEN "(\w+)" ELSE "(\w+)"', text, re.S)
     cancel = re.search(r'\\notin Terminal.*?sig = "CANCEL"\s*-> "(\w+)"', text, re.S)
     reassign = re.search(r'\\in Reassignable\s+/\\ sig = "ASSIGN"\s*-> "(\w+)"', text, re.S)
-    # R' REOPEN (§14.3): QuasiTerminal + ASSIGN under ~consumed /\ ro < MaxReopens
+    # R' REOPEN (§12.14): QuasiTerminal + ASSIGN under ~consumed /\ ro < MaxReopens
     reopen = re.search(r'\\in QuasiTerminal\s+/\\ sig = "ASSIGN"\s*'
                        r'/\\ ~consumed\s*/\\ ro < MaxReopens\s*-> "(\w+)"', text, re.S)
     assert fail and cancel and reassign and reopen, "special rows not found in FsmTable.tla"
+    # E2 (§12.4): REJECT_CHALLENGE returns to the wait the challenge interrupted, read off consent
+    reject = re.search(r's = "CHALLENGED"\s+/\\ sig = "REJECT_CHALLENGE"\s*->\s*'
+                       r'IF cons THEN "(\w+)" ELSE "(\w+)"', text, re.S)
 
-    def step(s, sig, it, max_it, ro=0, max_ro=1, consumed=True):
+    def step(s, sig, it, max_it, ro=0, max_ro=1, consumed=True, consented=False):
+        if reject and (s, sig) == ("CHALLENGED", "REJECT_CHALLENGE"):
+            return reject.group(1) if consented else reject.group(2)
         if (s, sig) in rows:
             return rows[(s, sig)]
         if s == "VALIDATING" and sig == "FAIL":
@@ -66,21 +71,35 @@ def _parse_model():
             return reopen.group(1)
         return "REJECT"
 
-    return step, terminal
+    def agreed(s, sig, it, max_it, ro=0, max_ro=1, consumed=True, consented=False):
+        # THE AGREED E1/E2 DELTA (theory stream, 2026-09-24), which the engine carries ahead of the
+        # model's text; applied only while the model still has OVERDUE, so it goes by itself once
+        # FsmTable.tla is synced. E1: a wait's first timeout goes to ESCALATED. E2: REJECT_CHALLENGE
+        # returns to OFFERED without an ACCEPT of the current version, to EXECUTING with one.
+        if pending_delta and sig == "TIMEOUT" and s in ("OFFERED", "CHALLENGED", "EXECUTING",
+                                                         "REWORKING"):
+            return "ESCALATED"
+        if pending_delta and (s, sig) == ("CHALLENGED", "REJECT_CHALLENGE"):
+            return "EXECUTING" if consented else "OFFERED"
+        return step(s, sig, it, max_it, ro, max_ro, consumed, consented)
+
+    pending_delta = ("OVERDUE", "TIMEOUT") in rows
+    return agreed, terminal
 
 
 MODEL_STEP, MODEL_TERMINAL = _parse_model()
 
 
 def _code_step(state: State, sig: Signal, it: int, max_it: int,
-               ro: int = 0, max_ro: int = 1, consumed: bool = True) -> str:
+               ro: int = 0, max_ro: int = 1, consumed: bool = True, consented: bool = False) -> str:
     # ASSIGN carries a spec: both live branches (CREATE on IDLE, revision on reassignable)
     # require one; the model's ASSIGN rows are exactly those two. (The R' reopen branch also
     # accepts spec=None — reopen under the standing contract — covered by the replay walk.)
     sd = SignalData(signal=sig, task_id=TaskId("t"),
                     spec=_spec_from(SPEC_DICT) if sig == Signal.ASSIGN else None)
     res = transition(state, sd, GuardContext(iteration=it, max_iterations=max_it,
-                                             reopens=ro, max_reopens=max_ro, consumed=consumed))
+                                             reopens=ro, max_reopens=max_ro, consumed=consumed,
+                                             consented=consented))
     return "REJECT" if res is None else res[0].name
 
 
@@ -93,13 +112,14 @@ def test_table_equivalence_exhaustive():
             for it in (0, 3):  # both sides of the iteration guard (max_iterations=3)
                 for ro in (0, 1):  # both sides of the reopen counter (max_reopens=1)
                     for consumed in (False, True):  # both sides of the finality-gate
-                        expect = MODEL_STEP(state.name, sig.name, it, 3, ro, 1, consumed)
-                        got = _code_step(state, sig, it, 3, ro, 1, consumed)
-                        assert got == expect, (
-                            f"DRIFT at ({state.name}, {sig.name}, iter={it}, "
-                            f"ro={ro}, consumed={consumed}): model={expect} code={got}")
-                        checked += 1
-    assert checked == len(State) * len(Signal) * 2 * 4
+                        for ok in (False, True):     # both sides of consent (E2)
+                            expect = MODEL_STEP(state.name, sig.name, it, 3, ro, 1, consumed, ok)
+                            got = _code_step(state, sig, it, 3, ro, 1, consumed, ok)
+                            assert got == expect, (
+                                f"DRIFT at ({state.name}, {sig.name}, iter={it}, ro={ro}, "
+                                f"consumed={consumed}, consented={ok}): model={expect} code={got}")
+                            checked += 1
+    assert checked == len(State) * len(Signal) * 2 * 4 * 2
 
 
 def test_model_terminals_match_code():
@@ -111,12 +131,12 @@ def test_model_terminals_match_code():
 def _walk(e: Engine, tid: str, seed: int, steps: int = 200):
     T.create_task(e, tid, SPEC_DICT, "w")
     e.wait_idle()
-    assert e.get_state(TaskId(tid)).name == "OFFERED"
+    assert e.graph.get_state(TaskId(tid)).name == "OFFERED"
 
     # The walk's single node has no parent and no Dep consumers ⟹ the graph's finality-gate
     # computes consumed=False on its quasi-terminals — the model mirrors that; reopens live
     # (max_reopens defaults to 1), so the walk exercises the R' edge AND its exhaustion.
-    model_state, model_iter, model_ro = "OFFERED", 0, 0
+    model_state, model_iter, model_ro, model_ok = "OFFERED", 0, 0, False
     rng = random.Random(seed)
     alphabet = list(Signal)
     absorbed = 0
@@ -128,15 +148,17 @@ def _walk(e: Engine, tid: str, seed: int, steps: int = 200):
         e.wait_idle()
 
         ns = MODEL_STEP(model_state, sig.name, model_iter, DEFAULT_MAX_ITERATIONS,
-                        model_ro, 1, False)
+                        model_ro, 1, False, model_ok)
         if ns != "REJECT":
             if model_state == "VALIDATING" and sig.name == "FAIL" and model_iter < DEFAULT_MAX_ITERATIONS:
                 model_iter += 1
             if model_state in ("DONE", "ABANDONED") and sig.name == "ASSIGN":
                 model_ro += 1  # the REOPEN mutation spends the counter
+            # consent to the current version: cleared by every entry into OFFERED, set by ACCEPT
+            model_ok = False if ns == "OFFERED" else (model_ok or sig.name == "ACCEPT")
             model_state = ns
 
-        got = e.get_state(TaskId(tid)).name
+        got = e.graph.get_state(TaskId(tid)).name
         assert got == model_state, f"seed {seed} step {step} ({sig.name}): " \
                                    f"model={model_state} engine={got}"
         if model_state in MODEL_TERMINAL and model_ro >= 1:
@@ -151,7 +173,7 @@ def test_trace_replay_through_live_engine():
     object (role/issuer checks are a stricter outer filter, not table semantics);
     monitor idle (huge interval) so trajectories are deterministic."""
     # ONE ENGINE PER WALK. Each walk drives a parentless node, and a project has exactly one root
-    # (§14.3-bis's companion rule): five walks in one graph is five roots, which the engine refuses.
+    # (§15.2): five walks in one graph is five roots, which the engine refuses.
     # The walks were always independent — sharing the engine was only ever a saving.
     for i, seed in enumerate((11, 22, 33, 44, 55)):
         e = make_engine(llm=None, validate_signals=False, check_interval=10_000)

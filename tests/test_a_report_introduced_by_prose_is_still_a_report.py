@@ -2,13 +2,13 @@
 
 Two honest runs on the same afternoon (2026-09-05), one through each door, drove real libraries to a
 green root. Neither hit a single report refused for naming behaviours it never probed — the class
-that had been 140 of 151 wasted judgements. What they hit instead, twice in one run, was a paid
-judging round that produced `verdict: null` because the report **did not parse**.
+that had been 140 of 151 wasted validations. What they hit instead, twice in one run, was a paid
+validation round that produced `verdict: null` because the report **did not parse**.
 
 One of the two diagnoses in those reports was wrong, and checking it is why this test exists: a
 ```json fence parses fine and always did. What does not is a report that writes a sentence and then
 emits its JSON with no fence at all — `json.loads` meets the prose and fails, the engine records no
-verdict, and the node waits for a judgement that was sitting in the reply.
+verdict, and the node waits for a validation that was sitting in the reply.
 
 What is recovered is a VALID object introduced by prose. Nothing is repaired: malformed JSON, an
 unterminated object and a reply with no object at all all still produce no verdict, because ⊥ is not

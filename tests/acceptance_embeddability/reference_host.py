@@ -33,6 +33,7 @@ from gfso.core.types.ports import AgentPort, ClockPort, StoragePort
 from gfso.core.types.primitives import (
     AgentId, CheckResult, DepEdge, DispatchPayload, Recommendation, SignalData, Task, TaskId,
 )
+from gfso.engine.admission import admit
 from gfso.engine.audit import AuditLog
 from gfso.engine.events import EventBus
 from gfso.engine.loop import process_signal
@@ -260,6 +261,17 @@ class Host:
             if seen > 500:                       # a host must not spin forever on follow-ups
                 raise RuntimeError("signal pump did not reach quiescence")
 
+    def admit(self, parent_id: str, assigns: list, register, by: str) -> None:
+        """A split's admission (§11.5) — the decomposer's act, outside the twelve signals: `admission.admit`, the one act
+        the engine performs too, its ASSIGNs and CANCELs through this host's pump."""
+        def send(sd):
+            self.send(sd)
+            return None
+        admit(self.graph, self.storage, lambda: len(self.audit), TaskId(parent_id),
+              [(a.task_id, a.spec, a.assignee, a.deadline) for a in assigns],
+              {str(a.task_id): tuple(a.covers) for a in assigns}, register=register, send=send,
+              max_iterations=next((a.max_iterations for a in assigns if a.max_iterations), None))
+
     # --- observations the suite asks for
     def state(self, task_id: str) -> Optional[str]:
         st = self.graph.get_state(TaskId(task_id))
@@ -276,14 +288,17 @@ class Host:
 
     def record_verdict(self, task_id: str, verdict: str, failed: list, reviewer: str) -> None:
         """An independent reviewer's verdict on the current delivery — what the self-PASS gate reads.
-        The independence rule is the engine's (§14.5); a host records, it does not adjudicate."""
+        The independence rule is the engine's (§10.3); a host records, it does not adjudicate. The record carries
+        its place in the signal log (`log_at`): whether anything the node is built from moved since is read off
+        the log's order, which a clock ticking in seconds cannot tell."""
         task = self.storage.get_task(TaskId(task_id))
         if task is not None and task.assignee and str(reviewer) == str(task.assignee):
             raise ValueError(f"reviewer {reviewer!r} is the node's executor (verifier ≠ executor)")
         self.storage.store_exec_verdict(TaskId(task_id), json.dumps({
             "verdict": verdict, "failed_criteria": list(failed or ()), "validator": str(reviewer),
             "iteration": getattr(task, "iteration", 0), "reopens": getattr(task, "reopens", 0),
-            "per_criterion": [], "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
+            "per_criterion": [], "ts": datetime.now().isoformat(sep=" ", timespec="seconds"),
+            "log_at": len(self.audit)}))
 
     def advance_clock(self, seconds: float) -> None:
         """Move virtual time and let the timeout machinery run exactly one pass."""

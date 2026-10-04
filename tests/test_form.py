@@ -80,7 +80,7 @@ BASE = {
     # place where two modules cannot be read, tested or replaced apart, and it is why 16 imports in
     # this package must stay inside functions (the A2 floor above says so in its own words).
     # The floor is 0: an acyclic import graph is reachable here, unlike A2's 16.
-    "F_modules_in_an_import_cycle": 9,
+    "F_modules_in_an_import_cycle": 3,
     # 0: every package and module says what it owns — the first thing a stranger reads
     "A1_module_without_docstring": 0,
     # 188: `llm_factory` moved to the import section — it was imported inside two functions
@@ -101,7 +101,7 @@ BASE = {
     # mounting, and the optional-SDK import is a per-function constraint — the same
     # reason, spelled where it binds. A floor that RISES with a legitimate split is the
     # instrument working, not drifting.
-    "A2_import_inside_a_function": 17,
+    "A2_import_inside_a_function": 14,
     "A3_module_imported_two_ways": 1,   # this test OWNS the number; the standalone tool counts
                                         # `from X import y` spellings too and says 16 — one rule, one owner
     # 181: `/api/projects` gained one — the filter it now takes needs saying (2026-09-02)
@@ -118,7 +118,10 @@ BASE = {
     # 53: `_why` asks an exception whether it HAS `.exceptions` — a group does, a plain
     # one does not, and a default over an attribute that genuinely may be absent is the
     # legitimate case this number's floor exists for.
-    "B3_declared_field_read_defensively": 53,   # ← `authorized_validators`, `_roster` declared (2026-08-22)
+    # 50: every spawned session's "tag the call, hand back its records" and every validation's "which
+    # tools, which model" have one owner each (`tools_llm.session_calls`, `_instrument_of`) — four
+    # runners were each asking the provider the same two questions in their own words (2026-09-28)
+    "B3_declared_field_read_defensively": 42,   # ← `authorized_validators`, `_roster` declared (2026-08-22); the frontier asks `parked_validations` (2026-10-04)
     "C2_chain_dispatch_over_constants": 1,
     "D1_swallowed_failure": 1,   # only the UNEXPLAINED ones: every other swallow now says what
                                  # it gives up, or logs instead of losing it (2026-09-02)
@@ -130,7 +133,7 @@ BASE = {
     # 10: the biggest is 48 statements now — it was 272 when the ratchet was installed
     # 0 (2026-09-03): the last three were each within four statements of the ceiling, and each one
     # was hiding a second owner rather than a long body. `_frontier` asked three questions at once —
-    # does this node's PLAN gate its children (§13.4), is it waiting on work already in flight, what
+    # does this node's PLAN gate its children (§11.5), is it waiting on work already in flight, what
     # step does it offer — and the first two are now their own methods. `_dispatch_steps` wrote the
     # rule "say a refusal once, keyed by what it is about" out by hand five times, and seven sites
     # across `delegate.py` did; `_say_once` owns it. `signal` sent the signal AND authored the whole
@@ -382,17 +385,23 @@ def _measure(root: Path) -> tuple[dict[str, int], dict[str, list[str]]]:
             _FSTART = getattr(tokenize, "FSTRING_START", None)
             _FEND = getattr(tokenize, "FSTRING_END", None)
             _in_fstring = 0
+            _lines = src.splitlines(keepends=True)
+            _at = lambda pos: sum(len(x) for x in _lines[:pos[0] - 1]) + pos[1]   # (row, col) → offset in src
             for tok in tokenize.generate_tokens(io.StringIO(src).readline):
                 if _FSTART is not None and tok.type == _FSTART:
+                    # the OUTER f-string is one literal the author wrote, measured WHOLE as 3.11 sees it (so a quote
+                    # forced by what it holds is forced); one nested in a replacement field is not measured at all
+                    if not _in_fstring:
+                        _fstart = tok
                     _in_fstring += 1
-                    # the OUTER quote is one the author wrote, so it is measured like any other;
-                    # what is skipped below is only what lives INSIDE the replacement fields
-                    _q = tok.string[len(re.match(r"^[A-Za-z]*", tok.string).group(0)):]
-                    if _q[:3] not in _TRIPLES and _q[:1] == _SINGLE and not _forced(_q):
-                        hit("F_single_quoted_literals", f"{path.name}:{tok.start[0]}")
                     continue
                 if _FEND is not None and tok.type == _FEND:
                     _in_fstring = max(0, _in_fstring - 1)
+                    if not _in_fstring:
+                        _whole = src[_at(_fstart.start):_at(tok.end)]
+                        _q = _whole[len(re.match(r"^[A-Za-z]*", _whole).group(0)):]
+                        if _q[:3] not in _TRIPLES and _q[:1] == _SINGLE and not _forced(_q):
+                            hit("F_single_quoted_literals", f"{path.name}:{_fstart.start[0]}")
                     continue
                 if tok.type != tokenize.STRING or _in_fstring:
                     continue

@@ -1,7 +1,7 @@
 """NodeProjection: typed DATA layer + pure render at the markdown boundary."""
 from gfso.core.types import (
     Task, TaskId, AgentId, Spec, Criteria, CriterionMapping, DepEdge,
-    AcceptedRiskItem, Predictability, CheckResult,
+    AcceptedRiskItem, Predictability, CheckResult, Register,
 )
 from gfso.core.graph.projection import (
     build, render, render_node_projection,
@@ -12,8 +12,9 @@ from gfso.core.graph.projection import (
 def _node():
     parent = Task(
         id=TaskId("p"),
-        spec=Spec("ship", (Criteria("tested", "all pass"), Criteria("fast", "p99<1s")),
-                  (AcceptedRiskItem("legacy", Predictability.STATISTICAL, "rare", "if IE returns"),)),
+        spec=Spec("ship", (Criteria("tested", "all pass"), Criteria("fast", "p99<1s"))),
+        # the split's register, its decomposer's (canon v4.1 §9.2) — not the packet's pre-fill
+        register=Register((AcceptedRiskItem("legacy", Predictability.STATISTICAL, "rare", "if IE returns"),)),
         assignee=AgentId("pm"),
         criterion_mappings=(CriterionMapping("tested", TaskId("c1")),),  # 'fast' unmapped
     )

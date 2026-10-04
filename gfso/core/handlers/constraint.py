@@ -5,7 +5,7 @@ Capability honesty (the embedder's contract): what this tier cannot machine-chec
 numeric bounds (`metric < 200`-style; sums vs the parent bound, upper/lower contradictions).
 Beyond this tier: arbitrary-formula entailment/consistency is a DECLARED extension point
 (SMT — the `gfso-core[solver]` extra); its absence degrades to a visible skip, and the
-semantic (causal) half of sufficiency is L2 by design (§13.4), never this check's claim.
+semantic (causal) half of sufficiency is L2 by design (§9.1), never this check's claim.
 (A vestigial `import z3` flag that no code read was removed — the module never called Z3;
 claiming otherwise in the header was exactly the silent-degradation this contract forbids.)
 """
@@ -29,17 +29,83 @@ def _parse_numeric_bound(desc: str) -> tuple[str, str, float] | None:
     return None
 
 
-def _weigh_the_numeric_bounds(task, child_by_id) -> tuple[list, int, int]:
-    """The numeric tier of CHECK-7: sum the mapped children's bounds against the parent's.
+#: THE COMPOSITION FUNCTIONS THIS TIER CAN EVALUATE — §9.6's fᵢ, as far as arithmetic reaches.
+#: Anything else the issuer declares (a set union, a boolean substitution, prose) is a real
+#: declaration this tier cannot check, and it is reported beyond-tier by NAME rather than
+#: quietly summed.
+_COMPOSITIONS = {"sum": sum, "max": max, "min": min}
 
-    Returns (violations, how many were actually verified, how many this tier cannot reach).
-    The counts are returned rather than accumulated in the caller because "beyond this tier"
-    is a capability statement about the CHECK, and it is what keeps a skipped criterion from
-    reading as a green one.
+#: What the criterion is checked under when its `composition` is blank. §9.9 puts the Semantic
+#: level *where a composition function is declared*, and the engine has always checked everywhere —
+#: with summation wired in as if it were the only one. It stays the fallback, because a tier that
+#: went silent on every undeclared criterion would be a tier that never fires (nothing declares one
+#: yet), but it is now SAID: a breach found under an assumed composition names the assumption, so a
+#: parallel fan-out's author can see that the arithmetic, not their plan, is what disagrees.
+_ASSUMED = "sum"
+
+
+def _compose(fn: str, bounds: list[tuple[str, float]], upper: bool) -> tuple[float, bool]:
+    """The children's bounds under fᵢ: the composed bound, and whether it is STRICT.
+
+    Strictness is not decoration (§9.6 states the example with "both child bounds STRICT"), and
+    which children decide it depends on the function. Under `sum` every child contributes, so ONE
+    strict term makes Σ strict. Under an extremum only the children AT the extremum decide, and the
+    direction settles whether one of them is enough: for `max` under an upper bound the composed
+    value is attained by any of them, so every one must be strict; for `max` under a lower bound one
+    strict child already carries the maximum past it. `min` is the same argument mirrored.
+    """
+    values = [v for _, v in bounds]
+    strict = [("=" not in op) for op, _ in bounds]
+    if fn == "sum":
+        return sum(values), any(strict)
+    composed = _COMPOSITIONS[fn](values)
+    at = [s for s, (_, v) in zip(strict, bounds) if v == composed]
+    return composed, (all(at) if (fn == "max") == upper else any(at))
+
+
+def _child_bounds(task, child_by_id, criterion_name: str, metric: str) -> list | None:
+    """Each mapped child's own bound on `metric` — or None where this tier cannot read them all.
+
+    None covers two different absences and both are beyond-tier, never a green and never a zero:
+    a child that states no bound on the metric at all, and NO mapped child to read. Nothing to
+    compose is not a composition over nothing: with no child mapped to the criterion the total
+    came out 0.0 and `0.0 < 2.0` was reported as "children sum 0.0 < parent bound 2.0" — an
+    arithmetic false positive on a criterion nobody had covered yet, which is CHECK-1's finding and
+    stated correctly there. An ordinary user met it on their first plan ("output contains only
+    content-equivalence classes of size >= 2") and reworded a perfectly good criterion to get around
+    it (wave 25, 2026-09-05). ⊥ is not zero — the rule this codebase applies to every metric it
+    publishes, applied to the check that publishes one.
+
+    THE CHILDREN'S OPERATORS TRAVEL WITH THEIR NUMBERS: strictness is part of what they entail
+    (§9.6's own example turns on it), and the tier used to read the value and drop the operator.
+    """
+    bounds: list[tuple[str, float]] = []
+    for m in [m for m in task.criterion_mappings if m.criterion_name == criterion_name]:
+        child = child_by_id.get(m.child_id)
+        if not child:
+            continue
+        for cc in child.spec.criteria:
+            cb = _parse_numeric_bound(cc.description)
+            if cb and cb[0].strip() == metric:
+                bounds.append((cb[1], cb[2]))
+                break
+        else:
+            return None
+    return bounds or None
+
+
+def _weigh_the_numeric_bounds(task, child_by_id) -> tuple[list, int, int, list]:
+    """The numeric tier of CHECK-7: the mapped children's bounds, composed under fᵢ, against the parent's.
+
+    Returns (violations, how many were actually verified, how many this tier cannot reach, which
+    criteria were checked under an ASSUMED composition). The counts are returned rather than
+    accumulated in the caller because "beyond this tier" is a capability statement about the CHECK,
+    and it is what keeps a skipped criterion from reading as a green one.
     """
     violations: list = []
     checked = 0
     beyond_tier = 0
+    assumed: list = []
     for parent_crit in task.spec.criteria:
         parent_bound = _parse_numeric_bound(parent_crit.description)
         if not parent_bound:
@@ -48,66 +114,50 @@ def _weigh_the_numeric_bounds(task, child_by_id) -> tuple[list, int, int]:
 
         p_metric, p_op, p_val = parent_bound
 
-        mapped_children = [
-            m.child_id for m in task.criterion_mappings
-            if m.criterion_name == parent_crit.name
-        ]
-
-        # NOTHING TO SUM IS NOT A SUM OF ZERO. With no child mapped to this criterion the loop below
-        # adds nothing, and `0.0 < 2.0` was then reported as "children sum 0.0 < parent bound 2.0" —
-        # an arithmetic false positive on a criterion nobody had covered yet, which is CHECK-1's
-        # finding and stated correctly there. An ordinary user met it on their first plan ("output
-        # contains only content-equivalence classes of size >= 2") and reworded a perfectly good
-        # criterion to get around it (wave 25, 2026-09-05). ⊥ is not zero — the same rule this
-        # codebase applies to every metric it publishes, applied to the check that publishes one.
-        if not mapped_children:
+        # WHICH FUNCTION SECURES THIS CRITERION — the issuer's declaration (§10.1), not the tier's
+        # habit. A declared composition this tier cannot evaluate is a fact about the CHECK's reach
+        # and is reported as one; it is never downgraded to summation, which would be the check
+        # answering a question nobody asked it.
+        fn = (parent_crit.composition or "").strip().lower()
+        if fn and fn not in _COMPOSITIONS:
             beyond_tier += 1
             continue
+        if not fn:
+            fn = _ASSUMED
 
-        child_sum = 0.0
-        # THE CHILDREN'S STRICTNESS IS PART OF WHAT THEY ENTAIL, not decoration on the number.
-        # `m < c` for at least one child makes the sum STRICTLY below Σc; all-non-strict children
-        # only give `m ≤ Σc`. §13.4 annotates its own worked example with exactly this — "the bound
-        # 100 + 100 ≤ 200 with both child bounds STRICT; the non-strict test alone would not entail
-        # the strict parent criterion" — and the tier used to read the value and drop the operator,
-        # so `<= 100` twice under a parent `< 200` was reported as a verified bound. A false green
-        # on the Semantic level is the one thing this tier exists to prevent.
-        strict_sum = False
-        parseable = True
-        for cid in mapped_children:
-            child = child_by_id.get(cid)
-            if not child:
-                continue
-            for cc in child.spec.criteria:
-                cb = _parse_numeric_bound(cc.description)
-                if cb and cb[0].strip() == p_metric.strip():
-                    child_sum += cb[2]
-                    strict_sum = strict_sum or "=" not in cb[1]
-                    break
-            else:
-                parseable = False
-
-        if not parseable:
+        child_bounds = _child_bounds(task, child_by_id, parent_crit.name, p_metric.strip())
+        if child_bounds is None:
             beyond_tier += 1
             continue
 
         checked += 1
-        # Reached: `m < Σc` when some child is strict, `m ≤ Σc` otherwise. At Σc = P that entails a
-        # strict parent bound only in the first case; below P, and for a non-strict parent, either
-        # case does.
-        beyond = child_sum > p_val if "<" in p_op else child_sum < p_val
-        at_the_bound = child_sum == p_val and not (strict_sum or "=" in p_op)
+        upper = "<" in p_op
+        composed, strict = _compose(fn, child_bounds, upper)
+        if not parent_crit.composition.strip():
+            assumed.append(parent_crit.name)
+        # Reached: `m < f(c)` when the children's operators make it strict, `m ≤ f(c)` otherwise. At
+        # f(c) = P that entails a strict parent bound only in the first case; below P, and for a
+        # non-strict parent, either case does.
+        beyond = composed > p_val if upper else composed < p_val
+        at_the_bound = composed == p_val and not (strict or "=" in p_op)
         if beyond or at_the_bound:
-            violations.append(f"{p_metric}: children sum {child_sum} does not entail {p_op} {p_val}"
-                              + ("" if beyond else " (no child bound is strict)"))
-    return violations, checked, beyond_tier
+            violations.append(
+                f"{p_metric}: children {fn} {composed} does not entail {p_op} {p_val}"
+                + ("" if beyond else " (no child bound is strict)")
+                + ("" if parent_crit.composition.strip() else
+                   f" — checked under an ASSUMED {_ASSUMED}: this criterion declares no composition "
+                   f"function (§2.4), so if the children secure it some other way (max for a "
+                   f"parallel fan-out, min, …) say so with `composition` and the check will use it"))
+    return violations, checked, beyond_tier, assumed
 
 
 def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
-    """CHECK-7: children's criteria sufficient for parent's criteria.
+    """CHECK-7: ⋀{criteria(tⱼ) mapped to cᵢ} ⊨ cᵢ, under the composition function cᵢ declares (§9.6).
 
-    For numeric bounds (e.g. response_time < 200ms): sums child bounds
-    and checks against parent bound. For non-numeric: skipped.
+    For numeric bounds (e.g. response_time < 200ms): composes the child bounds under fᵢ — `sum`,
+    `max`, `min` — and checks the result against the parent's. A declared function outside that set
+    is beyond this tier; an UNDECLARED one is checked under an assumed sum and the assumption is
+    named in the answer. For non-numeric: skipped.
     """
     if not children or not task.spec.criteria:
         return CheckResult("CHECK-7:sufficiency", True, "leaf task", skipped=True)
@@ -116,7 +166,7 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
         return CheckResult("CHECK-7:sufficiency", True, "no mappings", skipped=True)
 
     child_by_id = {c.id: c for c in children}
-    violations, checked, beyond_tier = _weigh_the_numeric_bounds(task, child_by_id)
+    violations, checked, beyond_tier, assumed = _weigh_the_numeric_bounds(task, child_by_id)
 
     if violations:
         return CheckResult("CHECK-7:sufficiency", False, "; ".join(violations))
@@ -128,6 +178,11 @@ def check_sufficiency(task: Task, children: list[Task]) -> CheckResult:
     detail = f"verified {checked} numeric bound(s)"
     if beyond_tier:
         detail += f"; {beyond_tier} criteria beyond this tier (formula/causal — solver capability / L2)"
+    # A GREEN THAT RESTS ON AN ASSUMPTION SAYS SO. The pass is only as good as the composition it
+    # was computed under, and the tier's own choice of one is not the issuer's declaration (§10.1).
+    if assumed:
+        detail += (f"; {', '.join(assumed)} checked under an ASSUMED {_ASSUMED} (no composition "
+                   f"function declared — `composition` on the criterion says which fᵢ secures it)")
     return CheckResult("CHECK-7:sufficiency", True, detail)
 
 

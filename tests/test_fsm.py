@@ -3,7 +3,7 @@ import pytest
 from gfso.core.types import (
     State, Signal, DoneReason, GuardContext, SignalData, TaskId,
     MutateGraph, RunChecks, Recommend, Dispatch,
-    NON_TERMINAL_STATES,
+    NON_TERMINAL_STATES, state_named,
 )
 from gfso.core.protocol.fsm import transition, _LOOKUP
 
@@ -22,24 +22,27 @@ def _transition(state, signal, ctx=CTX, **kw):
 
 # === Table row count ===
 
-def test_table_has_22_explicit_rows():
+def test_table_has_23_explicit_rows():
     # 19 + (CANCELLING, CONFIRM_CANCEL) + (CANCELLING, TIMEOUT) — v3.7 §6.3 two-step cancellation —
     # + (ESCALATED, TIMEOUT): the issuer's waiting state is live, so Inv-5 applies to it again, and
     # its silence settles the node in ABANDONED rather than drifting anywhere near a pass.
-    # There is NO (IDLE, TIMEOUT) row: Inv-5 exempts IDLE by name (§14.4) — the pre-contract state
+    # There is NO (IDLE, TIMEOUT) row: Inv-5 exempts IDLE by name (§12.12) — the pre-contract state
     # carries no clock, and a crash orphan is recovered by finishing its interrupted ASSIGN.
     # Plus the catch-alls in transition(): universal CANCEL → CANCELLING, revision re-ASSIGN →
-    # OFFERED, and the R′ REOPEN (quasi-terminal re-ASSIGN under the finality gate, §14.3).
-    assert len(_LOOKUP) == 22
+    # OFFERED, and the R′ REOPEN (quasi-terminal re-ASSIGN under the finality gate, §12.14).
+    # …and the two post-consent CHALLENGE rows (EXECUTING, REWORKING → CHALLENGED, §12.4): a spec
+    # defect met at contact keeps the dispute's own two closures instead of travelling as a BLOCK.
+    # …less (OVERDUE, TIMEOUT): the waits' first timeouts hand over to ESCALATED directly (E1).
+    assert len(_LOOKUP) == 23
 
 
 def test_idle_has_no_timeout_row():
-    """IDLE is the ONE non-terminal Inv-5 exempts (§14.4): no clock before the contract."""
+    """IDLE is the ONE non-terminal Inv-5 exempts (§12.12): no clock before the contract."""
     assert (State.IDLE, Signal.TIMEOUT) not in _LOOKUP
 
 
 def test_signal_alphabet_frozen_at_12_p2p_plus_timeout():
-    """The protocol alphabet is CLOSED: 12 canonical P2P signals (§14.2) + the system TIMEOUT. Authoring
+    """The protocol alphabet is CLOSED: 12 canonical P2P signals (§11.2) + the system TIMEOUT. Authoring
     operations (create / revise / abandon) are NOT signals — they desugar to these. This lock makes a 13th
     signal impossible by construction, so neither a new agent nor a reader can mistake an authoring op for
     a protocol primitive."""
@@ -75,7 +78,7 @@ def test_review_challenge():
 
 def test_review_timeout():
     new_state, effects = _transition(State.OFFERED, Signal.TIMEOUT)
-    assert new_state == State.OVERDUE
+    assert new_state == State.ESCALATED
 
 
 # === CHALLENGED ===
@@ -86,7 +89,7 @@ def test_challenged_accept_challenge():
     assert any(isinstance(e, RunChecks) for e in effects)
 
 def test_challenged_accept_challenge_with_new_spec_applies():
-    """The sanctioned spec-revision channel (§14.2/§14.6): ACCEPT_CHALLENGE(new_spec) must APPLY the
+    """The sanctioned spec-revision channel (§11.2/§14.3): ACCEPT_CHALLENGE(new_spec) must APPLY the
     renegotiated spec (may change criteria) — emits an APPLY_SPEC mutation, not a guarded SET_STATE."""
     new = Spec("revised", (Criteria("c2", "tighter"),))
     new_state, effects = _transition(State.CHALLENGED, Signal.ACCEPT_CHALLENGE, new_spec=new)
@@ -94,13 +97,19 @@ def test_challenged_accept_challenge_with_new_spec_applies():
     applied = [e for e in effects if isinstance(e, MutateGraph) and e.mutation == MutationType.APPLY_SPEC]
     assert len(applied) == 1 and applied[0].spec is new
 
-def test_challenged_reject_challenge():
-    new_state, effects = _transition(State.CHALLENGED, Signal.REJECT_CHALLENGE)
-    assert new_state == State.EXECUTING
+@pytest.mark.parametrize("consented,back", [(False, State.OFFERED), (True, State.EXECUTING)])
+def test_challenged_reject_challenge_returns_to_the_interrupted_wait(consented, back):
+    """E2: back to OFFERED when the executor had not ACCEPTed the current version, to EXECUTING
+    when he had — and the contract untouched either way: no new version, no rework step."""
+    ctx = GuardContext(iteration=1, max_iterations=3, consented=consented)
+    new_state, effects = _transition(State.CHALLENGED, Signal.REJECT_CHALLENGE, ctx)
+    assert new_state == back
+    assert [e.mutation for e in effects if isinstance(e, MutateGraph)] == [MutationType.SET_STATE]
+    assert any(isinstance(e, Dispatch) for e in effects)
 
 def test_challenged_timeout():
     new_state, effects = _transition(State.CHALLENGED, Signal.TIMEOUT)
-    assert new_state == State.OVERDUE  # canon §14.3: escalate, do NOT auto-accept the challenge
+    assert new_state == State.ESCALATED  # canon §12.4: escalate, do NOT auto-accept the challenge
 
 
 # === EXECUTING ===
@@ -115,7 +124,7 @@ def test_executing_block():
 
 def test_executing_timeout():
     new_state, effects = _transition(State.EXECUTING, Signal.TIMEOUT)
-    assert new_state == State.OVERDUE
+    assert new_state == State.ESCALATED
 
 
 # === BLOCKED ===
@@ -126,7 +135,7 @@ def test_blocked_resolve():
 
 def test_blocked_timeout():
     new_state, _ = _transition(State.BLOCKED, Signal.TIMEOUT)
-    assert new_state == State.ESCALATED  # direct, no OVERDUE intermediate
+    assert new_state == State.ESCALATED
 
 
 # === VALIDATING ===
@@ -143,8 +152,8 @@ def test_validating_fail_rework():
     assert new_state == State.REWORKING
 
 def test_validating_fail_exhausted_escalates():
-    """Exhausting the rework loop ESCALATES (§14.3) — it does not settle as DONE: the canon has no
-    terminal for "V = fail, settled", and DONE is reached through acceptance only (§12.2). The
+    """Exhausting the rework loop ESCALATES (§12.5) — it does not settle as DONE: the canon has no
+    terminal for "V = fail, settled", and DONE is reached through acceptance only (§12.1). The
     verdict is carried onto the terminal so this escalation stays distinguishable from a timeout."""
     ctx = GuardContext(iteration=3, max_iterations=3)
     new_state, effects = _transition(State.VALIDATING, Signal.FAIL, ctx, failed_criteria=("c1",))
@@ -152,11 +161,11 @@ def test_validating_fail_exhausted_escalates():
     mg = [e for e in effects if isinstance(e, MutateGraph) and e.done_reason is not None][0]
     assert mg.done_reason == DoneReason.FAIL
 
-def test_validating_timeout():
+def test_validating_timeout_hands_the_decision_back_and_passes_nothing():
+    """§16.14: the issuer did not validate in time, and the clock invents no verdict for him."""
     new_state, effects = _transition(State.VALIDATING, Signal.TIMEOUT)
-    assert new_state == State.DONE
-    mg = [e for e in effects if isinstance(e, MutateGraph) and e.done_reason is not None][0]
-    assert mg.done_reason == DoneReason.AUTO_PASS
+    assert new_state == State.ESCALATED
+    assert not [e for e in effects if isinstance(e, MutateGraph) and e.done_reason is not None]
     assert any(isinstance(e, Dispatch) for e in effects)  # executor notified
 
 
@@ -172,17 +181,19 @@ def test_rework_block():
 
 def test_rework_timeout():
     new_state, _ = _transition(State.REWORKING, Signal.TIMEOUT)
-    assert new_state == State.OVERDUE
-
-
-# === OVERDUE ===
-
-def test_timeout_repeated_timeout():
-    new_state, _ = _transition(State.OVERDUE, Signal.TIMEOUT)
     assert new_state == State.ESCALATED
 
 
-# === Cancellation — two-step handshake (v3.7 §14.3) ===
+# === OVERDUE, retired (E1) ===
+
+def test_overdue_is_not_a_state_and_its_stored_name_reads_as_escalated():
+    """The transit is gone from the machine; a name stored by the machine that had it still reads."""
+    assert "OVERDUE" not in State.__members__
+    assert state_named("OVERDUE") is State.ESCALATED
+    assert state_named("EXECUTING") is State.EXECUTING
+
+
+# === Cancellation — two-step handshake (v3.7 §12.6) ===
 
 @pytest.mark.parametrize("state", sorted(NON_TERMINAL_STATES - {State.CANCELLING}, key=lambda s: s.name))
 def test_cancel_from_any_non_terminal_opens_handshake(state):
@@ -192,7 +203,7 @@ def test_cancel_from_any_non_terminal_opens_handshake(state):
 
 
 def test_cancelling_rejects_re_cancel():
-    """CANCELLING's sole staffed exit is CONFIRM_CANCEL (§14.3) — a repeated CANCEL is not a row."""
+    """CANCELLING's sole staffed exit is CONFIRM_CANCEL (§12.6) — a repeated CANCEL is not a row."""
     assert _transition(State.CANCELLING, Signal.CANCEL) is None
 
 
@@ -203,7 +214,7 @@ def test_cancelling_confirm_cancel_settles():
 
 
 def test_cancelling_timeout_settles():
-    """Cancellation is authoritative (§14.3): executor silence completes it via timeout."""
+    """Cancellation is authoritative (§12.6): executor silence completes it via timeout."""
     new_state, _ = _transition(State.CANCELLING, Signal.TIMEOUT)
     assert new_state == State.ABANDONED
 
@@ -213,7 +224,7 @@ def test_cancelling_rejects_progress_signals():
         assert _transition(State.CANCELLING, sig) is None, f"CANCELLING should reject {sig.name}"
 
 
-# === Revision — re-ASSIGN same id (v3.7 §14.4 Inv-1) ===
+# === Revision — re-ASSIGN same id (v3.7 §12.3 Inv-1) ===
 
 from gfso.core.types import Spec, Criteria, MutationType, REASSIGNABLE_STATES
 
@@ -230,14 +241,14 @@ def test_reassign_live_node_is_revision_to_offered(state):
     assert any(isinstance(e, RunChecks) for e in effects)
 
 
-def test_no_revision_from_timeout_or_cancelling():
-    """OVERDUE accepts no progress signals; CANCELLING's sole exit is CONFIRM_CANCEL (§14.3)."""
-    assert _transition(State.OVERDUE, Signal.ASSIGN, spec=_NEW_SPEC) is None
+def test_no_revision_from_cancelling():
+    """CANCELLING's sole exit is CONFIRM_CANCEL (§12.6); every other live state but IDLE revises."""
     assert _transition(State.CANCELLING, Signal.ASSIGN, spec=_NEW_SPEC) is None
+    assert REASSIGNABLE_STATES == NON_TERMINAL_STATES - {State.IDLE, State.CANCELLING}
 
 
 def test_no_revision_of_terminal_nodes():
-    """Terminal is terminal (§14.3) — incl. ABANDONED: no resurrect-by-re-ASSIGN (revision is for live
+    """Terminal is terminal (§12.14) — incl. ABANDONED: no resurrect-by-re-ASSIGN (revision is for live
     nodes). The R′ REOPEN is the named exception and carries its own gate; a bare revision is not it.
 
     ESCALATED is deliberately absent from this list now: it is not a terminal but the issuer's waiting

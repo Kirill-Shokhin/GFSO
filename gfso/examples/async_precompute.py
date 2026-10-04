@@ -19,8 +19,8 @@ def main() -> None:
     # ── somewhere ELSE (another process, another machine, another planner) ──────────────────────
     precomputed = {
         "root": {"description": "Ship the landing page",
-                 # A1/§10: a criterion carries the procedure that decides it, authored here —
-                 # before anything is built — so no judge has to invent one later.
+                 # A1/§2: a criterion carries the procedure that decides it, authored here —
+                 # before anything is built — so no validator has to invent one later.
                  "criteria": [{"name": "content", "description": "copy approved",
                                "check": [{"behaviour": "the approved copy is what ships",
                                           "command": "diff -u approved/copy.md site/index.md",
@@ -29,11 +29,16 @@ def main() -> None:
                                "check": [{"behaviour": "the public URL answers 200",
                                           "command": "curl -s -o /dev/null -w '%{http_code}' "
                                                      "https://example.com/landing",
-                                          "expect": "200"}]}],
-                 # STD-1: a decomposed node without a ACCEPTED_RISKS register is a visible hole (CHECK-4)
-                 "accepted_risks": [{"item": "traffic spike on launch day", "predictability": "statistical",
-                                "justification": "static page behind a CDN",
-                                "invalidation_condition": "launch coincides with a campaign"}]},
+                                          "expect": "200"}]}]},
+        # STD-1: a split without an ACCEPTED_RISKS register is not admitted (CHECK-4, §11.5) — each entry with its
+        # estimate, and the split's own denial by S beside them (§9.5). The SPLIT's, its decomposer's (§9.2): it
+        # rides the decomposition, not the root's packet.
+        "register": [{"item": "traffic spike on launch day", "predictability": "statistical",
+                      "p": 0.05, "impact": "the page is slow or down for part of the launch",
+                      "justification": "static page behind a CDN",
+                      "invalidation_condition": "launch coincides with a campaign"},
+                     {"denial": True, "p": 0.1,
+                      "justification": "a three-step launch split; no record of comparable splits yet"}],
         "children": [
             {"task_id": "copy", "assignee": "host",
              "spec": {"description": "Write the copy",
@@ -61,7 +66,8 @@ def main() -> None:
     e.start()
 
     T.create_task(e, "page", precomputed["root"], assignee="host")
-    T.decompose(e, "page", precomputed["children"], mappings=precomputed["mappings"])
+    T.decompose(e, "page", precomputed["children"], mappings=precomputed["mappings"],
+                accepted_risks=precomputed["register"])
 
     holes = T.list_holes(e, "page")["holes"]
     print("holes after applying the precomputed structure:", holes)

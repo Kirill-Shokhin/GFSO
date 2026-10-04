@@ -8,7 +8,7 @@ from gfso.api.server import create_app
 from gfso.api.models import CheckResultOut
 import gfso.tools as T
 import gfso.tools_llm as TL
-from tests.support import make_engine
+from tests.support import criterion, make_engine, pinned
 from gfso import tools as T
 
 
@@ -29,7 +29,7 @@ def test_index_serves_html():
 def test_create_task():
     c = _client()
     r = c.post("/api/run/create_task", json={
-        "spec": {"description": "build feature", "criteria": [{"name": "works", "description": "it works"}]},
+        "spec": {"description": "build feature", "criteria": [criterion("works", "it works")]},
         "assignee": "dev",
     })
     assert r.status_code == 200
@@ -41,8 +41,8 @@ def test_create_task():
 def test_list_tasks():
     c = _client()
     # One root, and the second node under it: a project has exactly one parentless node.
-    a = c.post("/api/run/create_task", json={"spec": {"description": "a"}, "assignee": "d1"}).json()
-    c.post("/api/run/create_task", json={"spec": {"description": "b"}, "assignee": "d2",
+    a = c.post("/api/run/create_task", json={"spec": {"description": "a", "criteria": [criterion("c", "C")]}, "assignee": "d1"}).json()
+    c.post("/api/run/create_task", json={"spec": {"description": "b", "criteria": [criterion("c", "C")]}, "assignee": "d2",
                                          "parent_id": a["id"]})
     r = c.get("/api/tasks")
     assert len(r.json()) == 2
@@ -50,9 +50,9 @@ def test_list_tasks():
 
 def test_list_tasks_filter_assignee():
     c = _client()
-    a = c.post("/api/run/create_task", json={"spec": {"description": "a"},
+    a = c.post("/api/run/create_task", json={"spec": {"description": "a", "criteria": [criterion("c", "C")]},
                                              "assignee": "alice"}).json()
-    c.post("/api/run/create_task", json={"spec": {"description": "b"}, "assignee": "bob",
+    c.post("/api/run/create_task", json={"spec": {"description": "b", "criteria": [criterion("c", "C")]}, "assignee": "bob",
                                          "parent_id": a["id"]})
     r = c.get("/api/tasks?assignee=alice")
     tasks = r.json()
@@ -64,25 +64,27 @@ def test_upper_authoring_endpoints():
     """The upper-layer authoring verbs over the generic dispatch (same surface UI + MCP ride): RMW edits."""
     c = _client()
     c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "node",
-           "criteria": [{"name": "k", "description": "keep"}]}, "assignee": "alice"})
+           "criteria": [criterion("k", "keep")]}, "assignee": "alice"})
 
-    r = c.post("/api/run/edit_accepted_risks", json={"task_id": "n", "accepted_risks": [{"item": "out of scope"}], "agent": "alice"})
-    assert r.status_code == 200 and r.json()["accepted_risks"] == ["out of scope"]
+    r = c.post("/api/run/edit_accepted_risks", json={"task_id": "n", "accepted_risks": [{"item": "out of scope", "p": 0.01, "impact": "the run stops and is resumed", "justification": "no precedent in this environment", "invalidation_condition": "one occurs"}], "agent": "alice"})
+    # on a leaf its issuer's word on risks is the packet's pre-fill, not a split's register (canon v4.1 §9.2)
+    assert r.status_code == 200 and [x["item"] for x in r.json()["accepted_risks_recorded"]] == ["out of scope"]
+    assert "pre-filled" in r.json()["written_as"] and r.json()["accepted_risks"] == []
 
     r = c.post("/api/run/edit_criteria",
-               json={"task_id": "n", "criteria": [{"name": "k2", "description": "tighter"}], "agent": "alice"})
+               json={"task_id": "n", "criteria": [criterion("k2", "tighter")], "agent": "alice"})
     assert r.status_code == 200 and [x["name"] for x in r.json()["criteria"]] == ["k2"]
 
     # `revise` replaces the WHOLE contract, so the register set two calls up has to be passed again
     # to survive — omitting it is now REFUSED rather than performed silently (a person lost a
     # five-criterion contract that way on 2026-08-21).
     gone = c.post("/api/run/revise", json={"task_id": "n", "spec": {"description": "node2",
-                  "criteria": [{"name": "k3", "description": "d"}]}, "agent": "alice"})
+                  "criteria": [criterion("k3", "d")]}, "agent": "alice"})
     assert gone.status_code == 422 and gone.json()["would_delete"] == ["ACCEPTED_RISKS"]
 
     r = c.post("/api/run/revise", json={"task_id": "n", "spec": {"description": "node2",
-               "criteria": [{"name": "k3", "description": "d"}],
-               "accepted_risks": [{"item": "out of scope"}]}, "agent": "alice"})
+               "criteria": [criterion("k3", "d")],
+               "accepted_risks": [{"item": "out of scope", "p": 0.01, "impact": "the run stops and is resumed", "justification": "no precedent in this environment", "invalidation_condition": "one occurs"}]}, "agent": "alice"})
     assert r.status_code == 200 and r.json()["description"] == "node2"
 
     r = c.post("/api/run/reassign", json={"task_id": "n", "assignee": "bob"})
@@ -93,7 +95,7 @@ def test_get_task_detail():
     c = _client()
     r = c.post("/api/run/create_task", json={
         "task_id": "t1",
-        "spec": {"description": "build", "criteria": [{"name": "c1", "description": "d1"}]},
+        "spec": {"description": "build", "criteria": [criterion("c1", "d1")]},
         "assignee": "dev",
     })
     r = c.get("/api/tasks/t1")
@@ -112,7 +114,7 @@ def test_get_task_not_found():
 
 def test_send_signal():
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x"}, "assignee": "dev"})
+    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x", "criteria": [criterion("c", "C")]}, "assignee": "dev"})
     # Task is in OFFERED after create. Send ACCEPT.
     r = c.post("/api/run/signal", json={"task_id": "t1", "signal": "ACCEPT", "source": "dev"})
     assert r.status_code == 200
@@ -124,7 +126,7 @@ def test_send_signal():
 
 def test_send_signal_rejected():
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x"}, "assignee": "dev"})
+    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x", "criteria": [criterion("c", "C")]}, "assignee": "dev"})
     # PASS is not admitted in OFFERED → the FSM answers "no", which is a call this door PROCESSED:
     # HTTP 200 with the answer in the body. The act not happening is what the CLI's exit code says.
     r = c.post("/api/run/signal", json={"task_id": "t1", "signal": "PASS", "source": "dev"})
@@ -135,7 +137,7 @@ def test_send_signal_rejected():
 
 def test_graph_endpoint():
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "root"}, "assignee": "dev"})
+    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "root", "criteria": [criterion("c", "C")]}, "assignee": "dev"})
     r = c.get("/api/graph")
     assert r.status_code == 200
     g = r.json()
@@ -153,7 +155,7 @@ def test_metrics_endpoint():
 
 def test_audit_endpoint():
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x"}, "assignee": "dev"})
+    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x", "criteria": [criterion("c", "C")]}, "assignee": "dev"})
     r = c.get("/api/audit?task_id=t1")
     assert r.status_code == 200
     assert len(r.json()) >= 1
@@ -161,7 +163,7 @@ def test_audit_endpoint():
 
 def test_full_flow_via_api():
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x"}, "assignee": "dev"})
+    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x", "criteria": [criterion("c", "C")]}, "assignee": "dev"})
     c.post("/api/run/signal", json={"task_id": "t1", "signal": "ACCEPT", "source": "dev"})
     c.post("/api/run/signal", json={"task_id": "t1", "signal": "DELIVER", "source": "dev", "result": "done"})
     r = c.post("/api/run/signal", json={"task_id": "t1", "signal": "PASS", "source": "dev"})
@@ -171,12 +173,12 @@ def test_full_flow_via_api():
 
 def test_decompose():
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "p", "spec": {"description": "parent", "criteria": [{"name": "perf", "description": "fast"}]}, "assignee": "pm"})
+    c.post("/api/run/create_task", json={"task_id": "p", "spec": {"description": "parent", "criteria": [criterion("perf", "fast")]}, "assignee": "pm"})
     r = c.post("/api/run/decompose", json={
         "parent_id": "p",
         "children": [
-            {"task_id": "c1", "spec": {"description": "child 1"}, "assignee": "dev1"},
-            {"task_id": "c2", "spec": {"description": "child 2"}, "assignee": "dev2"},
+            {"task_id": "c1", "spec": {"description": "child 1", "criteria": [criterion("c", "C")]}, "assignee": "dev1"},
+            {"task_id": "c2", "spec": {"description": "child 2", "criteria": [criterion("c", "C")]}, "assignee": "dev2"},
         ],
     })
     assert r.status_code == 200
@@ -196,7 +198,7 @@ def test_unified_app_shares_one_engine_with_mcp_tools():
     app = create_app(engine, with_mcp=True)          # SDK absent here → no /mcp mount, must not raise
     assert app.state.engine is engine                # HTTP surface holds the shared engine
     T.create_task(engine, "shared",                  # agent authors on the SAME object
-                  {"description": "shared", "criteria": [{"name": "a", "description": "A"}]}, "alice")
+                  {"description": "shared", "criteria": [criterion("a", "A")]}, "alice")
     r = TestClient(app).get("/api/tasks/shared")
     assert r.status_code == 200 and r.json()["id"] == "shared"   # UI reads the agent's write
 
@@ -204,22 +206,43 @@ def test_unified_app_shares_one_engine_with_mcp_tools():
 def test_the_verdict_reads_the_same_through_either_door():
     """`get_verdict` and `/api/tasks/{id}/verdict` answered with two different schemas.
 
-    The verb carries state, currency, the delivery it judged and any refused reports; the endpoint
+    The verb carries state, currency, the delivery it validated and any refused reports; the endpoint
     returned the raw record. A caller moving from one door to the other crashed on `KeyError:
     'state'` (measured on the human door 2026-08-22: "same fact, two schemas")."""
     c = _client()
     c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x",
-           "criteria": [{"name": "c1", "description": "d"}]}, "assignee": "dev"})
+           "criteria": [criterion("c1", "d")]}, "assignee": "dev"})
     c.post("/api/run/signal", json={"task_id": "t1", "signal": "ACCEPT", "source": "dev"})
     c.post("/api/run/signal", json={"task_id": "t1", "signal": "DELIVER", "source": "dev",
                                     "result": "did it"})
     c.post("/api/run/record_verdict", json={"task_id": "t1", "verdict": "PASS",
                                             "reviewer": "someone-else",
-                                            "observed": {"c1": "ran it, it printed what it should"}})
+                                            # …naming the procedure the contract pins: a note that
+                                            # does not say what was run is ⊥, not a PASS (§2.3).
+                                            "observed": {"c1": {
+                                                "note": "ran it, it printed what it should",
+                                                "ran": [p.command for p in pinned("c1")]}}})
     door = c.get("/api/tasks/t1/verdict").json()
     verb = c.post("/api/run/get_verdict", json={"task_id": "t1"}).json()
     assert door == verb and door["state"] == "VALIDATING" and door["verdict"] == "PASS"
     assert door["current"] is True and door["delivered"] == "did it"
+
+
+def test_holes_graph_metrics_usage_and_actions_read_the_same_through_either_door():
+    """One serializer per object (ortho audit, D-F16): each of these endpoints answered by hand — the holes as a bare
+    list where the verb answers {holes, count}, the usage with its call count overwritten by the rows, the metrics with
+    what a response model left undeclared dropped, the actions by a filter of their own and no reasons."""
+    c = _client()
+    c.post("/api/run/create_task", json={"task_id": "t1", "spec": {"description": "x",
+           "criteria": [criterion("c1", "d")]}, "assignee": "dev"})
+    run = lambda verb, **body: c.post(f"/api/run/{verb}", json=body).json()
+    drop = lambda d: {k: v for k, v in d.items() if k != "project"}     # the run door names the scope; so does /usage
+    assert c.get("/api/holes").json() == drop(run("list_holes"))
+    assert c.get("/api/graph").json() == drop(run("get_graph"))
+    assert c.get("/api/metrics").json() == drop(run("metrics"))
+    assert drop(c.get("/api/usage?detail=true").json()) == drop(run("usage", detail=True))
+    assert drop(c.get("/api/tasks/t1/actions?role=dev").json()) == drop(run("available_actions", task_id="t1",
+                                                                             agent="dev"))
 
 
 def test_the_roster_answers_with_a_map_of_roles_and_nothing_else_in_it():
@@ -280,7 +303,7 @@ def test_the_audit_door_answers_with_the_time_it_stored():
     repairing it. The field the reporter looked for (`ts`) is the STORAGE spelling; the door's is
     `timestamp`, and nothing on this door has ever been called `ts`."""
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "x"},
+    c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "x", "criteria": [criterion("c", "C")]},
                                          "assignee": "dev"})
     c.post("/api/run/signal", json={"task_id": "n", "signal": "ACCEPT", "source": "dev"})
     events = c.get("/api/audit").json()
@@ -300,7 +323,7 @@ def test_every_act_names_the_project_it_acted_on():
     with nothing in either body saying whose. Same defect the money total had (`/api/usage`), same
     owner for the answer (`_scope_name`)."""
     c = _client()
-    acted = c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "x"},
+    acted = c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "x", "criteria": [criterion("c", "C")]},
                                                  "assignee": "dev"})
     assert acted.json()["project"] == "default"
     # A REFUSAL IS AN ANSWER ABOUT A GRAPH TOO — it is the one a typo produces, so it needs the
@@ -327,9 +350,9 @@ def test_the_audit_door_carries_the_contract_each_assign_installed():
     had been) — and this door's row never listed the field, so the version was reachable only from
     inside the process. A revision is exactly the event a reader comes to the audit for."""
     c = _client()
-    c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "first"},
+    c.post("/api/run/create_task", json={"task_id": "n", "spec": {"description": "first", "criteria": [criterion("c", "C")]},
                                          "assignee": "dev"})
-    c.post("/api/run/revise", json={"task_id": "n", "spec": {"description": "revised"},
+    c.post("/api/run/revise", json={"task_id": "n", "spec": {"description": "revised", "criteria": [criterion("c", "C")]},
                                     "agent": "dev"})
     assigns = [e for e in c.get("/api/audit?task_id=n").json() if e["signal"] == "ASSIGN"]
     assert [json.loads(e["spec"])["description"] for e in assigns] == ["first", "revised"]

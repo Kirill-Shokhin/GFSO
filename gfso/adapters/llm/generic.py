@@ -9,7 +9,7 @@ either side: schema enforcement is ours (`structured.py`), any text-returning pr
 Status: architecturally complete, NOT live-tested against a real provider (we don't run one) —
 the code path mirrors the headless adapter 1:1 (same port, same stats shape, same structured
 machinery + one repair retry). Frozen prompts are calibrated on Claude: before trusting another
-provider's OUTPUT, re-run the frozen T01 judge protocol (runs/v2_t01/).
+provider's OUTPUT, re-run the frozen T01 validator protocol (runs/v2_t01/).
 """
 from __future__ import annotations
 

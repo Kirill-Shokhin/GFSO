@@ -9,21 +9,28 @@ The claim now carries a token; `end_review` drops the slot only when the token i
 
 Control: have `end_review` pop by key regardless of the token, and the last case goes red.
 """
+import time
+
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import make_engine, UNMODELLED_FAULT
+from gfso.core.types.ports import ClockPort
+from tests.support import make_engine, REGISTER
 
-_RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISKS = REGISTER
 
 
-class _Clock:
-    """A clock the test moves by hand — the TTL is 1800 s and no test may wait for it."""
+class _Clock(ClockPort):
+    """A clock the test moves by hand — the TTL is 1800 s and no test may wait for it. A port, so a
+    missing method fails here: without `wait` the engine's timeout monitor died on its first cycle."""
 
     def __init__(self):
         self.t = 1_000_000.0
 
     def now(self) -> float:
         return self.t
+
+    def wait(self, seconds: float) -> None:
+        time.sleep(0.05)
 
 
 def _engine():
@@ -39,34 +46,34 @@ def _engine():
 
 def test_a_second_review_is_refused_while_the_first_is_alive():
     e, _ = _engine()
-    first = e.begin_review(TaskId("root"))
+    first = e.claims.begin_review(TaskId("root"))
     assert first is not None
-    assert e.begin_review(TaskId("root")) is None, "two model runs over one unchanged plan"
-    assert e.review_in_flight(TaskId("root")) is True
+    assert e.claims.begin_review(TaskId("root")) is None, "two model runs over one unchanged plan"
+    assert e.claims.review_in_flight(TaskId("root")) is True
     e.stop()
 
 
 def test_a_claim_nobody_is_behind_any_more_is_reclaimed():
     e, clock = _engine()
-    first = e.begin_review(TaskId("root"))
+    first = e.claims.begin_review(TaskId("root"))
     clock.t += 1801
-    assert e.review_in_flight(TaskId("root")) is False, "a claim past its TTL is not a live run"
-    assert e.begin_review(TaskId("root")) is not None, "the slot was never reclaimable"
+    assert e.claims.review_in_flight(TaskId("root")) is False, "a claim past its TTL is not a live run"
+    assert e.claims.begin_review(TaskId("root")) is not None, "the slot was never reclaimable"
     e.stop()
 
 
 def test_the_reclaimed_predecessor_does_not_free_the_live_claim():
     e, clock = _engine()
-    first = e.begin_review(TaskId("root"))
+    first = e.claims.begin_review(TaskId("root"))
     clock.t += 1801
-    second = e.begin_review(TaskId("root"))          # the slot is taken over
+    second = e.claims.begin_review(TaskId("root"))          # the slot is taken over
     assert second is not None
 
-    e.end_review(first)                              # …and now the slow original returns
-    assert e.review_in_flight(TaskId("root")) is True, \
+    e.claims.end_review(first)                              # …and now the slow original returns
+    assert e.claims.review_in_flight(TaskId("root")) is True, \
         "the reclaimed run freed the claim that replaced it — a third review could start"
-    assert e.begin_review(TaskId("root")) is None
+    assert e.claims.begin_review(TaskId("root")) is None
 
-    e.end_review(second)                             # the live one releases normally
-    assert e.review_in_flight(TaskId("root")) is False
+    e.claims.end_review(second)                             # the live one releases normally
+    assert e.claims.review_in_flight(TaskId("root")) is False
     e.stop()

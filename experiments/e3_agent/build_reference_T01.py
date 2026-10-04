@@ -668,8 +668,8 @@ projection = engine.project(TaskId("billing"))
 sys.stdout.buffer.write(projection.encode("utf-8", errors="replace") + b"\n")
 
 # ─── Summary ────────────────────────────────────────────────────────────────
-root = engine.get_task(TaskId("billing"))
-child_list = engine.get_children(TaskId("billing"))
+root = engine.graph.get_task(TaskId("billing"))
+child_list = engine.graph.get_children(TaskId("billing"))
 dep_list = engine.get_dependencies()
 sibling_deps = [
     e for e in dep_list

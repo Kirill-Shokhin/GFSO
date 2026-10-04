@@ -1,6 +1,6 @@
 """A report the engine refuses as a verdict is KEPT, and its place is named in the log.
 
-⊥ is not pass (§10): a refused report stops the node's automatic progress and hands the decision to
+⊥ is not pass (§2): a refused report stops the node's automatic progress and hands the decision to
 the issuer — so that report is precisely the evidence the issuer needs, and it was the one thing
 thrown away. `validate_result` returned it to its caller; under delegation the caller is the
 dispatcher, which reads a verdict and drops the rest, while its log line said the report was "kept in

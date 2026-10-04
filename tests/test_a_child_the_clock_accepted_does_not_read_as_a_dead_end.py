@@ -6,7 +6,7 @@ the children (Thm 1) can never be satisfied and nothing said so. It was installe
 three directions at once:
 
 * **AUTO_PASS.** `passed` refuses the timeout close, which the canon counts AS acceptance
-  (§12.2, §14.3, §24.7) and which the PASS gate itself accepts. So a child accepted by the clock was
+  (§16.14) and which the PASS gate itself accepts. So a child accepted by the clock was
   reported as "settled WITHOUT passing", and the run was told to FAIL the parent and re-decompose —
   over a graph whose very next PASS the engine accepts. A guard that mints a destructive instruction
   on a healthy graph is worse than the stall it replaced.
@@ -29,9 +29,9 @@ red; read `get_children` there and the tombstone case does; put `passed` back in
 import pytest
 
 from gfso import tools as T
-from gfso.core.types import DoneReason, State, TaskId
+from gfso.core.types import AgentId, CriterionMapping, DoneReason, State, TaskId
 from gfso.engine import Engine
-from tests.support import criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 @pytest.fixture
@@ -44,19 +44,20 @@ def engine():
         e.stop()
 
 
+def _split(engine, parent, kids, crit="c"):
+    """`parent`'s split admitted whole (§11.5): kid i covers `{crit}{i}`, the register its decomposer's (§9.2)."""
+    T.decompose(engine, parent, [{"task_id": k, "spec": {"description": k, "criteria": [criterion("x", "x d")]},
+                                  "assignee": "worker", "covers": [f"{crit}{i}"]} for i, k in enumerate(kids)],
+                accepted_risks=REGISTER)
+    engine.wait_idle()
+
+
 def _graph(engine, kids=("k1",)):
     """root with `kids` beneath it, each covering one of root's criteria."""
-    risks = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
     T.create_task(engine, "root", {"description": "root",
                                    "criteria": [criterion(f"c{i}", f"c{i} d")
-                                                for i, _ in enumerate(kids)],
-                                   "accepted_risks": risks}, assignee="boss")
-    for i, k in enumerate(kids):
-        T.create_task(engine, k, {"description": k,
-                                  "criteria": [criterion("x", "x d")]},
-                      assignee="worker", parent_id="root")
-        T.map_criterion(engine, "root", k, f"c{i}")
-    engine.wait_idle()
+                                                for i, _ in enumerate(kids)]}, assignee="boss")
+    _split(engine, "root", kids)
 
 
 def _close(engine, node_id, reason):
@@ -71,8 +72,8 @@ def test_a_child_accepted_by_the_clock_is_not_a_dead_end(engine: Engine):
     _close(engine, "k1", DoneReason.AUTO_PASS)
     engine.wait_idle()
 
-    assert engine._never_passes(TaskId("root")) == [], \
-        "a child the clock accepted still satisfies its parent's AND (§12.2, §24.7)"
+    assert engine.frontier._never_passes(TaskId("root")) == [], \
+        "a child the clock accepted still satisfies its parent's AND (§16.14)"
     answer = engine.next_step()
     assert not (answer.get("stuck") and "settled WITHOUT passing" in answer.get("directive", "")), \
         f"the guard fired over an accepted child: {answer.get('directive')}"
@@ -82,7 +83,7 @@ def test_an_escalated_child_is_a_wait_on_the_issuer_not_a_dead_end(engine: Engin
     """ESCALATED stops the parent just as hard, but it is NOT the dead end the guard names.
 
     ESCALATED left `TERMINAL_STATES`: it is the issuer's waiting state, symmetric to OFFERED, and it
-    admits three acts (§14.3) — re-ASSIGN through a revision (including one carrying only
+    admits three acts (§12.5) — re-ASSIGN through a revision (including one carrying only
     `max_iterations`), the universal CANCEL that cascades the live subtree, and its own TIMEOUT,
     which closes the task and never drifts to PASS. So `_never_passes` — whose sentence is "this
     child can never satisfy the parent's AND, settle the parent NEGATIVE" — must not claim it: the
@@ -104,7 +105,7 @@ def test_an_escalated_child_is_a_wait_on_the_issuer_not_a_dead_end(engine: Engin
     engine._graph.save_task(t)
     engine.wait_idle()
 
-    assert engine._never_passes(TaskId("root")) == [], \
+    assert engine.frontier._never_passes(TaskId("root")) == [], \
         "ESCALATED is a wait on the issuer, not a settlement — it is not a node that can never pass"
 
     answer = engine.next_steps()
@@ -126,12 +127,12 @@ def test_a_cancelled_child_left_the_decomposition_and_does_not_block_it(engine: 
     engine._graph.save_task(t)
     engine.wait_idle()
 
-    assert engine._never_passes(TaskId("root")) == [], \
+    assert engine.frontier._never_passes(TaskId("root")) == [], \
         "an ABANDONED tombstone is provenance (§15.1), not an unsatisfied conjunct"
 
 
 def test_a_root_closed_by_the_clock_is_complete_and_says_how(engine: Engine):
-    risks = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
+    risks = REGISTER
     T.create_task(engine, "root", {"description": "root",
                                    "criteria": [criterion("c", "c d")],
                                    "accepted_risks": risks}, assignee="boss")
@@ -155,24 +156,16 @@ def test_work_in_flight_does_not_hide_a_stranded_node(engine: Engine):
     and the in-flight branch — whose test is `state in (EXECUTING, REWORKING)` plus a roster kind,
     i.e. a property of Del — answered `stuck: false`, "poll again in a minute".
 
-    What changed with §14.3-bis: g2 is no longer a DEAD end but a node waiting for its ISSUER, so
+    What changed with §12.5: g2 is no longer a DEAD end but a node waiting for its ISSUER, so
     the right answer is not "stuck" — it is a STEP, on g2, naming the decision he owes. The masking
     is what this test guards, and masking a live decision is the same defect as masking a dead node:
     either way the reader is told to poll while the graph waits on someone."""
-    risks = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
     T.create_task(engine, "root", {"description": "root",
-                                   "criteria": [criterion("c", "c d")],
-                                   "accepted_risks": risks}, assignee="boss")
-    T.create_task(engine, "mid", {"description": "mid",
-                                  "criteria": [criterion("m0", "m0 d"), criterion("m1", "m1 d")],
-                                  "accepted_risks": risks}, assignee="worker", parent_id="root")
-    T.map_criterion(engine, "root", "mid", "c")
-    for i, g in enumerate(("g1", "g2")):
-        T.create_task(engine, g, {"description": g,
-                                  "criteria": [criterion("x", "x d")]},
-                      assignee="worker", parent_id="mid")
-        T.map_criterion(engine, "mid", g, f"m{i}")
-    engine.wait_idle()
+                                   "criteria": [criterion("c", "c d")]}, assignee="boss")
+    T.decompose(engine, "root", [{"task_id": "mid", "spec": {"description": "mid",
+                                  "criteria": [criterion("m0", "m0 d"), criterion("m1", "m1 d")]},
+                                  "assignee": "worker", "covers": ["c"]}], accepted_risks=REGISTER)
+    _split(engine, "mid", ("g1", "g2"), crit="m")
 
     _close(engine, "g1", DoneReason.PASS)
     g2 = engine._graph.get_task(TaskId("g2"))
@@ -182,7 +175,7 @@ def test_work_in_flight_does_not_hide_a_stranded_node(engine: Engine):
         t = engine._graph.get_task(TaskId(node))
         t.state = State.EXECUTING
         engine._graph.save_task(t)
-    engine._roster = {"worker": "llm-executor", "boss": "llm-executor"}
+    engine.workforce.publish_roster({"worker": "llm-executor", "boss": "llm-executor"})
     engine.wait_idle()
 
     answer = engine.next_steps()
@@ -203,8 +196,10 @@ def test_a_tombstone_does_not_pre_empt_work_in_flight(engine: Engine):
     the destructive advice to re-decompose around a node somebody had deliberately cancelled, while
     an independent verdict was mid-flight.
 
-    The shape is the live one: one child delivered with a judge already claimed on it (so it offers
-    no step and IS in flight), one child passed, one cancelled.
+    The shape is the live one: one child delivered with a validator already claimed on it (so it offers
+    no step and IS in flight), one child passed, one cancelled. Canon v4.1: a cancelled child whose criterion
+    nobody else covers is a hole flagged on its decomposer's plan (§12.10) — a step, so the question would not
+    arise; the tombstone here left the split by its re-decomposition, which handed its criterion on (§11.5).
 
     CONTROL: let the pre-emption test read `stranded` instead of `_blocking` and this goes red.
     """
@@ -214,23 +209,27 @@ def test_a_tombstone_does_not_pre_empt_work_in_flight(engine: Engine):
     T.signal(engine, "k1", "DELIVER", "worker", result="out")
     engine.wait_idle()
     assert engine._graph.get_task(TaskId("k1")).state is State.VALIDATING
-    claim = engine.begin_validation(TaskId("k1"))       # a judge is running on this delivery
+    claim = engine.claims.begin_validation(TaskId("k1"))       # a validator is running on this delivery
     assert claim is not None
+    k2 = engine._graph.get_task(TaskId("k2"))
+    engine.decompose_task(TaskId("root"), [(k2.id, k2.spec, AgentId("worker"))],      # cancelled, covering nothing now
+                          [CriterionMapping(c, TaskId(k)) for c, k in (("c0", "k1"), ("c1", "k2"), ("c2", "k2"))],
+                          drops=(TaskId("k3"),))
+    T.signal(engine, "k3", "CONFIRM_CANCEL", "worker")
+    engine.wait_idle()
+    assert engine._graph.get_task(TaskId("k3")).state is State.ABANDONED
     _close(engine, "k2", DoneReason.PASS)
-    k3 = engine._graph.get_task(TaskId("k3"))
-    k3.state, k3.done_reason = State.ABANDONED, None    # cancelled, and covering nothing now
-    engine._graph.save_task(k3)
     engine.wait_idle()
 
     answer = engine.next_steps()
     assert not answer.get("steps"), f"a step exists, so the pre-emption question does not arise: {answer}"
     assert not answer.get("stuck"),         f"a tombstone was read as a node the graph cannot move past: {answer.get('directive')}"
-    assert answer.get("in_flight"), f"the judge that IS running was not reported: {answer}"
+    assert answer.get("in_flight"), f"the validator that IS running was not reported: {answer}"
 
     # …AND WHEN NOTHING IS IN FLIGHT EITHER, the tombstone still must not be the answer. The first
     # repair put the reading only on the pre-emption test, so `blocked_by` and the directive beside
     # it went on naming the cancelled node and prescribing a re-decomposition around it.
-    engine.end_validation(claim)
+    engine.claims.end_validation(claim)
     quiet = engine.next_steps()
     assert "k3" not in (quiet.get("blocked_by") or []),         f"a tombstone was named as what the graph is blocked by: {quiet}"
     assert "ABANDONED" not in (quiet.get("directive") or ""), quiet.get("directive")

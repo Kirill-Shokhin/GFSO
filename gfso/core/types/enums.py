@@ -15,10 +15,9 @@ class State(Enum):
     BLOCKED = auto()
     VALIDATING = auto()
     REWORKING = auto()
-    CANCELLING = auto()   # cancellation handshake in flight (§14.3): CANCEL received, CONFIRM_CANCEL pending
+    CANCELLING = auto()   # cancellation handshake in flight (§12.6): CANCEL received, CONFIRM_CANCEL pending
     DONE = auto()
-    ABANDONED = auto()    # terminal, V=⊥ — task abandoned (§14.3), distinct from DONE(pass/fail)
-    OVERDUE = auto()
+    ABANDONED = auto()    # terminal, V=⊥ — task abandoned (§12.6), distinct from DONE(pass/fail)
     ESCALATED = auto()
 
 
@@ -30,30 +29,36 @@ class State(Enum):
 # parties equally accountable to the protocol, so a machine with one and not the other is asymmetric
 # in the invariant's own terms. The old reading ("its resolution is outside the FSM") treated one
 # issuer act as extra-protocol while ASSIGN, PASS, FAIL, CANCEL and REJECT_CHALLENGE are all inside
-# it; nothing in §14.3 derives that, and §26.9(b)'s "free decoration" verdict is a verdict about the
+# it; nothing in §12.4 derives that, and §13.3's "free decoration" verdict is a verdict about the
 # machine in which the issuer owes no answer. Once the obligation exists, ESCALATED is forced by IC
-# exactly as CANCELLING is (§26.9(b): "CANCELLING is forced by IC (Inv-4), not by deadlock").
+# exactly as CANCELLING is (§13.3: "CANCELLING is forced by IC (Inv-4), not by deadlock").
 TERMINAL_STATES = frozenset({State.DONE, State.ABANDONED})
 NON_TERMINAL_STATES = frozenset(s for s in State if s not in TERMINAL_STATES)
 
-# R′ (§14.3 "Финальность"): DONE and ABANDONED are QUASI-terminal — a named extension of the
+# R′ (§12.14 "Финальность"): DONE and ABANDONED are QUASI-terminal — a named extension of the
 # admissible set (Inv-6): re-ASSIGN (REOPEN) is admitted under a double gate (finality-gate of
 # consumption + max_reopens). ESCALATED is not here and needs nothing from R′: finality is a property
 # of settlements, and a handover is not one — its exits are ordinary live-node edges.
 QUASI_TERMINAL_STATES = frozenset({State.DONE, State.ABANDONED})
 
-# States a live node can be re-ASSIGNed (revised) from — §14.4 Inv-1: revision = re-ASSIGN same id → OFFERED.
-# OVERDUE accepts no progress signals (§14.3); CANCELLING's sole staffed exit is CONFIRM_CANCEL (§14.3).
-# ESCALATED is here because re-ASSIGN is exactly what two of the issuer's three moves ARE — raising the
-# rework bound and changing or narrowing the criteria are both packet fields, and Inv-1 types any packet
-# change as a re-ASSIGN. The third move (close it) is the universal CANCEL, which ESCALATED now carries by
-# being non-terminal. OVERDUE stays out: there the miss has not yet been handed to anyone, and the canon's
-# "no-return path to escalation" is what routes it here first.
-REASSIGNABLE_STATES = frozenset({
-    State.OFFERED, State.CHALLENGED, State.EXECUTING,
-    State.BLOCKED, State.VALIDATING, State.REWORKING,
-    State.ESCALATED,
-})
+# States a live node can be re-ASSIGNed (revised) from — §12.3 Inv-1: revision = re-ASSIGN same id → OFFERED.
+# Every non-terminal but two: IDLE has no packet yet (its ASSIGN is the first, not a revision) and
+# CANCELLING's sole staffed exit is CONFIRM_CANCEL (§12.6). ESCALATED is here because re-ASSIGN is
+# exactly what two of the issuer's three moves ARE — raising the rework bound and changing or narrowing
+# the criteria are both packet fields, and Inv-1 types any packet change as a re-ASSIGN. The third move
+# (close it) is the universal CANCEL, which ESCALATED carries by being non-terminal.
+REASSIGNABLE_STATES = NON_TERMINAL_STATES - {State.IDLE, State.CANCELLING}
+
+# A state name a database may still carry from a machine that had it, and the state it now is. Read
+# once, at open, and rewritten there (`SqliteStorage`); the audit log keeps its rows as written and
+# reads the name through this map. OVERDUE was the transit between a wait's first timeout and the
+# handover: the handover now happens at the first timeout.
+RETIRED_STATES = {"OVERDUE": State.ESCALATED}
+
+
+def state_named(name: str) -> State:
+    """The State a stored name denotes — including a retired one, read as what it became."""
+    return RETIRED_STATES.get(name) or State[name]
 
 
 class Action(StrEnum):
@@ -118,7 +123,7 @@ class DoneReason(Enum):
 
 
 class Verdict(StrEnum):
-    """V's two values, §11.2 — the WORD, owned once.
+    """V's two values, §7.1 — the WORD, owned once.
 
     A `StrEnum`: the wire form is the same byte string every record, report and signal already
     carries ("PASS" / "FAIL"), so nothing serialized changes and a comparison against a stored
@@ -130,7 +135,7 @@ class Verdict(StrEnum):
 
 
 class CriticVerdict(StrEnum):
-    """What the Level-2 checker says about ONE criterion of a plan (§13.4) — the word, owned once.
+    """What the Level-2 checker says about ONE criterion of a plan (§9.1) — the word, owned once.
 
     Only `SUFFICIENT` closes a finding; both other values leave it open, and that asymmetry was
     written as `!= "sufficient"` in four modules — the checker, the gate, the frontier and the
@@ -172,28 +177,45 @@ class Stage(StrEnum):
     AUTHORING_OBLIGATIONS = "authoring-obligations"
     VALIDATE_RESULT = "validate_result"
     VALIDATOR = "validator"
+    # The ISSUER answering a dispute (§12.4's two exits of CHALLENGED). Its own line in the ledger
+    # because it is its own act by its own party: a run where the disputes cost more than the work
+    # is a statement about the plan, and it is unreadable if the adjudication hides inside the
+    # executor's or the validator's spend.
+    ISSUER = "issuer"
 
 
 class RevisionReason(Enum):
-    """Causal type of a revision (re-ASSIGN, §14.4 Inv-1) — §24.5: the causally-typed members of
+    """Causal type of a revision (re-ASSIGN, §12.3 Inv-1) — §15.4: the causally-typed members of
     q_T («criteria изменены по дефекту спеки») and q_Del (re-ASSIGN(capability_mismatch)) require
     the revision reason typed in the packet. Optional: an untyped revision keeps each metric's
     documented bias (q_T under-approximates — counts challenges only; q_Del over-approximates —
     counts every Del change)."""
     SPEC_DEFECT = auto()          # criteria changed because the contract itself was defective → q_T member
-    SCOPE_EXPANSION = auto()      # sanctioned goal re-ASSIGN with new criteria (§13.1/§21) — NOT a defect
+    SCOPE_EXPANSION = auto()      # sanctioned goal re-ASSIGN with new criteria (§12.3/§15.4) — NOT a defect
     CAPABILITY_MISMATCH = auto()  # Del change because the executor could not do the work → q_Del member
     OTHER = auto()                # routine (load, handoff, restructure) — counted by neither metric
 
 
 class FM(Enum):
+    """The six failure modes, a complete basis modulo CA1 (Ch. 8) — FM-1 … FM-6 in order."""
     CORRESPONDENCE = auto()
     CONSISTENCY = auto()
     VERACITY = auto()
     PROPAGATION = auto()
     FRESHNESS = auto()
     FEASIBILITY = auto()
-    FEEDBACK = auto()
+
+
+class Mode(StrEnum):
+    """WHO HOLDS WHICH NODES — the user's one choice, a depth boundary b over the goal's tree.
+
+    The user-agent holds the levels above b, registered system executors hold b and below; the only
+    consistent assignments are a connected top part of the tree (else a machine would be the issuer
+    of the agent). SOLO is b = ∞, AUTO is b = 0, SEMI holds the top half of the plan's actual depth
+    unless the user moves b. The user-agent is the root's issuer — the customer — in every mode."""
+    SOLO = "solo"
+    SEMI = "semi"
+    AUTO = "auto"
 
 
 class AutonomyLevel(Enum):
@@ -203,7 +225,7 @@ class AutonomyLevel(Enum):
 
 
 class Predictability(Enum):
-    """STD-2 (§5.2): predictability class of an accepted-risk factor.
+    """STD-2 (§9.3): predictability class of an accepted-risk factor.
 
     ORDINARY      — regular in domain, P estimable → MUST be in decomposition (never acceptable as a risk).
     STATISTICAL   — P estimable but rare → acceptable as a risk only WITH justification.
@@ -217,11 +239,11 @@ class Predictability(Enum):
 class MutationType(Enum):
     CREATE_TASK = auto()
     SET_STATE = auto()
-    APPLY_SPEC = auto()       # sanctioned spec revision via ACCEPT_CHALLENGE (§14.2/§14.6) — may change criteria
+    APPLY_SPEC = auto()       # sanctioned spec revision via ACCEPT_CHALLENGE (§11.2/§14.3) — may change criteria
     INCREMENT_ITERATION = auto()
     STORE_CHECK_RESULTS = auto()
     STORE_RECOMMENDATION = auto()
-    RECORD_DEP = auto()       # BLOCK named a prerequisite node → provisional discovered-Dep edge (§14.2/§15.2)
-    ADJUDICATE_DEP = auto()   # RESOLVE_BLOCK adjudicates the provisional: confirm / re-attribute / retract (§14.2)
-    REOPEN = auto()           # R′ (§14.3): gated re-ASSIGN out of a quasi-terminal — spends a reopen,
+    RECORD_DEP = auto()       # BLOCK named a prerequisite node → provisional discovered-Dep edge (§11.3/§15.5)
+    ADJUDICATE_DEP = auto()   # RESOLVE_BLOCK adjudicates the provisional: confirm / re-attribute / retract (§11.3)
+    REOPEN = auto()           # R′ (§12.14): gated re-ASSIGN out of a quasi-terminal — spends a reopen,
                               # drops the stale verdict (V=pass is re-earned in OFFERED, never carried forward)

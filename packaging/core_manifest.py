@@ -29,6 +29,9 @@ CORE_FILES = (
     # the same reason it is admissible from every layer — the core reads where its data lives and
     # what a node defaults to, and the alternative is each layer spelling those answers itself.
     "gfso/config.py",
+    # Where a path is: the second leaf the layer gate admits from every layer, the core's included
+    # (tests/test_layering.py `_LEAVES`) — so it ships where the core does, stdlib only, as config does.
+    "gfso/places.py",
     "gfso/tools.py",
     "gfso/adapters/__init__.py",
     "gfso/adapters/storage/__init__.py",
@@ -47,8 +50,3 @@ def core_paths(root: pathlib.Path) -> list[pathlib.Path]:
     for pkg in CORE_PACKAGES:
         out.extend(sorted((root / pkg).rglob("*.py")))
     return out
-
-
-def covered_module_prefixes() -> set[str]:
-    """gfso-import prefixes (two dotted segments) the manifest covers — the closure boundary."""
-    return {"gfso.core", "gfso.engine", "gfso.tools", "gfso.adapters", "gfso.config"}

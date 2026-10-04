@@ -17,7 +17,7 @@ import time
 import pytest
 from pathlib import Path
 
-from gfso.delegate import AgentRegistry
+from gfso.roster import AgentRegistry
 
 
 def test_a_concurrent_reader_never_sees_a_partial_roster(tmp_path):

@@ -53,8 +53,8 @@ def run_gfso(client, model: str, task: BenchTask,
     engine.assign_task(tid, task.spec, AgentId("haiku"), max_iterations=max_iterations)
     engine.wait_idle()
 
-    final_state = engine.get_state(tid)
-    fsm_task = engine.get_task(tid)
+    final_state = engine.graph.get_state(tid)
+    fsm_task = engine.graph.get_task(tid)
 
     # Best iteration by criteria pass count (symmetric to A's best-of-k)
     history = agent.code_history.get(tid, [])

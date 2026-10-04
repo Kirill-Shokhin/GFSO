@@ -1,6 +1,6 @@
 ﻿"""Tests for handlers/structural.py — CHECK-1 through CHECK-6."""
 from datetime import datetime, timedelta
-from gfso.core.types import (
+from gfso.core.types import (Register,
     Task, TaskId, AgentId, Spec, Criteria, CriterionMapping,
     AcceptedRiskItem, Predictability,
 )
@@ -14,13 +14,21 @@ from gfso.core.handlers.structural import (check_vertical_deadlines,
 from gfso.core.handlers.constraint import _parse_numeric_bound, check_sufficiency, check_consistency
 from gfso.engine.validation import _EXEC_GATING_CHECKS
 from gfso import tools as T
-from tests.support import make_engine
+from tests.support import DENIAL, criterion, make_engine
 
 
-def _task(tid: str, desc: str = "", criteria=(), accepted_risks=(), assignee=None, deadline=None, mappings=(), risk_components=()) -> Task:
+def _entry(item, pred, why="P<1%, out of budget", **kw) -> AcceptedRiskItem:
+    """A register entry with every STD-1 field filled (§9.2)."""
+    return AcceptedRiskItem(item, pred, why, kw.get("revisit", "it is seen once"), kw.get("p", 0.01),
+                            kw.get("impact", "the release slips a day"), kw.get("component", ""))
+
+
+def _task(tid: str, desc: str = "", criteria=(), accepted_risks=(), assignee=None, deadline=None, mappings=(), risk_components=(), covers_risks=()) -> Task:
     return Task(
         id=TaskId(tid),
-        spec=Spec(desc, tuple(Criteria(c, c) for c in criteria), tuple(accepted_risks), tuple(risk_components)),
+        spec=Spec(desc, tuple(Criteria(c, c) for c in criteria), covers_risks=tuple(covers_risks)),
+        # the split's register, its decomposer's own carrier (§9.2) — not the packet's pre-fill
+        register=Register(tuple(accepted_risks), tuple(risk_components)) if accepted_risks or risk_components else None,
         assignee=AgentId(assignee) if assignee else None,
         deadline=deadline,
         criterion_mappings=tuple(mappings),
@@ -35,7 +43,7 @@ def test_coverage_pass():
         CriterionMapping("security", TaskId("c2")),
     ])
     # A COVERER CARRIES CRITERIA. A child with none decides nothing, so it cannot secure a
-    # parent criterion (A1, §10) — these fixtures used to assert the opposite by accident.
+    # parent criterion (A1, §2) — these fixtures used to assert the opposite by accident.
     c1 = _task("c1", desc="perf optimization", criteria=["p1"])
     c2 = _task("c2", desc="security audit", criteria=["s1"])
     assert check_coverage(parent, [c1, c2]).passed
@@ -95,8 +103,8 @@ def test_dag_empty():
     assert check_dag([], []).passed
 
 def test_dag_checks_D_not_only_dep():
-    """§13.4's row is "the graph of D is a DAG" — which this check did not look at at all: it walked
-    the Dep edges and reported them under CHECK-2, so §10's "a cycle → infinite recursion → an A1
+    """§9.5's row is "the graph of D is a DAG" — which this check did not look at at all: it walked
+    the Dep edges and reported them under CHECK-2, so §15.3's "a cycle → infinite recursion → an A1
     violation" was verified nowhere. What one split can decide: a node that is its own child, and a
     child repeated in the split."""
     parent = _task("p")
@@ -125,10 +133,10 @@ def test_deadlines_violated():
     assert not result.passed
 
 
-# === CHECK-4: ACCEPTED_RISKS (v3.7 §13.1: gates DECOMPOSED nodes only — per-decomposition) ===
+# === CHECK-4: ACCEPTED_RISKS (v3.7 §9.2: gates DECOMPOSED nodes only — per-decomposition) ===
 
 def test_accepted_risks_present():
-    t = _task("t", accepted_risks=[AcceptedRiskItem("api rate limit", Predictability.EXTRAORDINARY)])
+    t = _task("t", accepted_risks=[_entry("api rate limit", Predictability.EXTRAORDINARY), DENIAL])
     assert check_accepted_risks(t, [_task("c1")]).passed
 
 def test_accepted_risks_empty_on_decomposed_fails():
@@ -136,7 +144,7 @@ def test_accepted_risks_empty_on_decomposed_fails():
     assert not check_accepted_risks(t, [_task("c1")]).passed
 
 def test_accepted_risks_leaf_skipped():
-    """A leaf (D=∅) has no decomposition → ACCEPTED_RISKS vacuous, CHECK-4 does not gate it (§13.1)."""
+    """A leaf (D=∅) has no decomposition → ACCEPTED_RISKS vacuous, CHECK-4 does not gate it (§9.2)."""
     assert check_accepted_risks(_task("t"), []).skipped
 
 
@@ -144,16 +152,36 @@ def test_accepted_risks_leaf_skipped():
 
 def test_risk_nodes_covered():
     t = _task("t", risk_components=["drought", "supply_chain"])
-    c1 = _task("c1", desc="handle drought mitigation")
-    c2 = _task("c2", desc="supply_chain backup plan")
+    c1 = _task("c1", desc="handle drought mitigation", covers_risks=["drought"])
+    c2 = _task("c2", desc="supply_chain backup plan", covers_risks=["supply_chain"])
     assert check_risk_nodes(t, [c1, c2]).passed
 
 def test_risk_nodes_uncovered():
     t = _task("t", risk_components=["drought", "supply_chain"])
-    c1 = _task("c1", desc="handle drought mitigation")
+    c1 = _task("c1", desc="handle drought mitigation", covers_risks=["drought"])
     result = check_risk_nodes(t, [c1])
     assert not result.passed
     assert "supply_chain" in result.details
+
+def test_a_component_named_in_a_child_s_prose_is_not_a_coverage_claim():
+    """The check read `component.lower() in child.description.lower()`, so a node that MENTIONED
+    the word covered the risk and a node that mitigated it under another name did not. Coverage is
+    recorded by the split's author (`covers_risks`), never inferred from a description."""
+    t = _task("t", risk_components=["drought"])
+    mentions = _task("c1", desc="assumes no drought in the trial window",
+                     covers_risks=["supply_chain"])
+    result = check_risk_nodes(t, [mentions])
+    assert not result.passed, "a word in a description is not a claim that the node covers the risk"
+    assert "drought" in result.details
+
+def test_a_component_nothing_records_is_undecided_not_green():
+    """Nothing in this product declares coverage yet, and a check that answered `passed` over an
+    empty record would be exactly the vacuous green this codebase keeps finding in itself. ⊥ is
+    reported as the skip it is, with the field to fill named (§2.3)."""
+    t = _task("t", risk_components=["drought"])
+    result = check_risk_nodes(t, [_task("c1", desc="handle drought mitigation")])
+    assert result.skipped, "nothing was decided here"
+    assert "covers_risks" in result.details and "drought" in result.details
 
 def test_risk_nodes_no_components():
     t = _task("t")
@@ -177,15 +205,15 @@ def test_delegation_missing():
     assert "c2" in result.details
 
 def test_delegation_quantifies_over_leaves_only():
-    """§13.4: "∀ leaf t: Del(t) ≠ ∅". A child that decomposes FURTHER is accountable through its own
-    children (§10 Del is per node); demanding an executor for it reads Del as a label. Without the
+    """§9.5: "∀ leaf t: Del(t) ≠ ∅". A child that decomposes FURTHER is accountable through its own
+    children (§2 Del is per node); demanding an executor for it reads Del as a label. Without the
     caller's leaf information every child is treated as a leaf — the conservative read."""
     children = [_task("leaf", assignee="a1"), _task("branch")]
     assert check_delegation(children, None, {"branch"}).passed
     assert not check_delegation(children, None, set()).passed
 
 def test_delegation_covers_the_node_itself_when_it_is_a_leaf():
-    """The literal case §13.4 names, and the one nobody ran: a leaf with no parent to check it."""
+    """The literal case §9.5 names, and the one nobody ran: a leaf with no parent to check it."""
     assert not check_delegation([], _task("root")).passed
     assert check_delegation([], _task("root", assignee="a1")).passed
 
@@ -209,40 +237,75 @@ def test_non_redundancy_leaf_skipped():
     assert check_non_redundancy(_task("p", criteria=["x"]), []).skipped
 
 
-# === CHECK-4 record form (§13.1: an incomplete record is not an ACCEPTED_RISKS record) ===
+# === CHECK-4 record form (§9.2: an incomplete record is not an ACCEPTED_RISKS record) ===
 
 def _task_neg(accepted_risks):
-    return Task(id=TaskId("t"), spec=Spec("t", (), tuple(accepted_risks)))
+    return Task(id=TaskId("t"), spec=Spec("t", ()), register=Register(tuple(accepted_risks)))
 
 _KID = [Task(id=TaskId("k"), spec=Spec("k", ()))]  # decomposed → CHECK-4 gates
 
 def test_accepted_risks_record_unclassified_fails_on_decomposed():
-    """The predictability verdict is mandatory per factor (§13.1) — it doubles as the risk-vs-scope
+    """The predictability verdict is mandatory per factor (§9.2) — it doubles as the risk-vs-scope
     discriminator: no materialization P → scope boundary (goal criteria/CHECK-1), not ACCEPTED_RISKS."""
-    r = check_accepted_risks(_task_neg([AcceptedRiskItem("x")]), _KID)
+    r = check_accepted_risks(_task_neg([AcceptedRiskItem("x"), DENIAL]), _KID)
     assert not r.passed and "predictability" in r.details
 
 def test_accepted_risks_record_ordinary_contradiction_fails():
-    """A self-declared ORDINARY factor in ACCEPTED_RISKS is an internal contradiction of the record (§13.2)."""
-    r = check_accepted_risks(_task_neg([AcceptedRiskItem("drought", Predictability.ORDINARY)]), _KID)
+    """A self-declared ORDINARY factor in ACCEPTED_RISKS is an internal contradiction of the record (§9.3)."""
+    r = check_accepted_risks(_task_neg([_entry("drought", Predictability.ORDINARY), DENIAL]), _KID)
     assert not r.passed and "ORDINARY" in r.details
 
 def test_accepted_risks_record_statistical_needs_justification():
-    bad = _task_neg([AcceptedRiskItem("rare outage", Predictability.STATISTICAL)])
+    bad = _task_neg([_entry("rare outage", Predictability.STATISTICAL, why=""), DENIAL])
     assert not check_accepted_risks(bad, _KID).passed
-    ok = _task_neg([AcceptedRiskItem("rare outage", Predictability.STATISTICAL, "P<1%, out of budget")])
+    ok = _task_neg([_entry("rare outage", Predictability.STATISTICAL), DENIAL])
     assert check_accepted_risks(ok, _KID).passed
 
 def test_accepted_risks_record_extraordinary_ok():
-    t = _task_neg([AcceptedRiskItem("meteorite", Predictability.EXTRAORDINARY)])
+    t = _task_neg([_entry("meteorite", Predictability.EXTRAORDINARY), DENIAL])
     assert check_accepted_risks(t, _KID).passed
+
+
+def test_every_entry_carries_its_estimate():
+    """STD-1's four fields, its estimate filled — a P in (0, 1] and an impact (§9.2, CHECK-4 §9.5)."""
+    for missing in ({"p": None}, {"p": 0}, {"p": 1.5}, {"impact": ""}, {"revisit": ""}):
+        r = check_accepted_risks(_task_neg([_entry("outage", Predictability.STATISTICAL, **missing), DENIAL]), _KID)
+        assert not r.passed, missing
+
+
+def test_a_split_carries_its_own_denial():
+    """Every split is a pre-registered hypothesis, so its register states the odds of its own denial by S (§9.5):
+    absent, with no P, or grouped into a component, CHECK-4 refuses — the decomposer's own entry lifts it."""
+    fault = _entry("outage", Predictability.STATISTICAL)
+    r = check_accepted_risks(_task_neg([fault]), _KID)
+    assert not r.passed and "own denial by S" in r.details
+    assert not check_accepted_risks(_task_neg([fault, AcceptedRiskItem.denial_of(None, "a guess")]), _KID).passed
+    grouped = AcceptedRiskItem(**{**DENIAL.__dict__, "component": "vendor"})
+    assert not check_accepted_risks(_task_neg([fault, grouped]), _KID).passed
+    assert check_accepted_risks(_task_neg([fault, DENIAL]), _KID).passed
+    assert check_accepted_risks(_task_neg([DENIAL]), _KID).passed, "the denial alone makes the register nonempty"
+
+
+def test_a_component_is_met_by_its_grouped_entry():
+    """CHECK-5: a risk node, or the component's grouped ACCEPTED_RISKS entry (§9.4)."""
+    grouped = _entry("vendor down", Predictability.STATISTICAL, component="vendor")
+    t = _task("t", accepted_risks=[grouped, DENIAL], risk_components=["vendor"])
+    assert check_risk_nodes(t, [_task("c1")]).passed
+    t2 = _task("t", accepted_risks=[DENIAL], risk_components=["vendor"])
+    assert not check_risk_nodes(t2, [_task("c1", covers_risks=["other"])]).passed
+    # …only where STD-2 grades it statistical: a component groups historical problems (critic r4, 2026-10-04)
+    for grade in (Predictability.EXTRAORDINARY, None):
+        t3 = _task("t", accepted_risks=[_entry("vendor down", grade, component="vendor"), DENIAL],
+                   risk_components=["vendor"])
+        r = check_risk_nodes(t3, [_task("c1", covers_risks=["other"])])
+        assert not r.passed and "not graded STATISTICAL" in r.details, (grade, r.details)
 
 
 def test_accepted_risks_naming_own_criterion_is_a_contract_amendment_not_a_risk():
     """Measured live (BCB/93, 2026-07-17): the agent wrote ACCEPTED_RISKS = "test_values criterion cannot
     pass — canonical test has design flaw" (EXTRAORDINARY, well-formed by every other rule) while
     `test_values` stayed a criterion of the SAME node; the validator then excused the red criterion by
-    it → false PASS. A criterion is the obligation (§2.2), not an acceptable risk factor (§5.1) — the
+    it → false PASS. A criterion is the obligation (§2.3), not an acceptable risk factor (§9.2) — the
     canon path for a criterion believed defective is CHALLENGE or the issuer's revision."""
     t = _task("t", criteria=["test_values", "shape"],
               accepted_risks=[AcceptedRiskItem("test_values criterion cannot pass - test has a design flaw",
@@ -260,30 +323,30 @@ def test_accepted_risks_about_a_real_external_factor_still_passes():
     """The guard is word-boundary exact on THIS node's criterion names — a genuine risk record that
     merely shares vocabulary with the domain is not touched (no ritual, no false gate)."""
     t = _task("t", criteria=["docs", "tests_green"],
-              accepted_risks=[AcceptedRiskItem("the vendor's docs_portal may be down at release",
-                                       Predictability.STATISTICAL, "P<5%, mirror available")])
+              accepted_risks=[_entry("the vendor's docs_portal may be down at release",
+                                     Predictability.STATISTICAL, "P<5%, mirror available"), DENIAL])
     assert check_accepted_risks(t, _KID).passed
 
 
 # === Full run ===
 
 def test_run_structural_returns_all_checks():
-    # The check set is the CANON's L0 list (§13.4): CHECK-1, 1b, 2–6 — no invented check names.
+    # The check set is the CANON's L0 list (§9.5): CHECK-1, 1b, 2–6 — no invented check names.
     parent = _task("p", criteria=["perf"], accepted_risks=["risks"], mappings=[
         CriterionMapping("perf", TaskId("c1")),
     ])
     child = _task("c1", desc="perf work", assignee="a1")
     results = run_structural(parent, [child])
     names = [r.check_name for r in results]
-    # Seven canon rows, plus §3.4(6) — a canon RULE with no canon CHECK — plus A1:procedure, a
+    # Seven canon rows, plus §4.5(6) — a canon RULE with no canon CHECK — plus A1:procedure, a
     # DESIGN DECISION operationalizing A1 on the node's own contract (A1 asks that a decidable
-    # predicate exist, "not which one it is" — §2.1; this asks it to be written down, before the
+    # predicate exist, "not which one it is" — §4.1; this asks it to be written down, before the
     # work). Each extra is reported under its OWN name and never folded into a CHECK row.
     assert len(results) == 9
     for expected in (
         "CHECK-1:coverage", "CHECK-1b:no_orphan", "CHECK-2:dag",
         "CHECK-3:deadlines", "CHECK-4:accepted_risks",
-        "CHECK-5:risk_nodes", "CHECK-6:delegation", "§3.4(6):vertical_deadlines",
+        "CHECK-5:risk_nodes", "CHECK-6:delegation", "§4.5(6):vertical_deadlines",
         "A1:procedure",
     ):
         assert expected in names
@@ -312,12 +375,12 @@ def test_check7_survives_markdown_criteria():
 
 
 def test_a_child_outliving_its_parent_is_reported_under_its_own_rule():
-    """The VERTICAL deadline rule (§3.4 item 6) — a canon RULE with no canon CHECK.
+    """The VERTICAL deadline rule (§4.5 item 6) — a canon RULE with no canon CHECK.
 
     A child whose deadline is not before its parent's cannot compose into it in time: the plan
     promises a passage the clock denies. It used to be reported inside CHECK-3's own result, tagged
-    only in the details — and the execution gate matches on the NAME, so a rule §13.4 does not carry
-    refused execution citing §13.4, which `formal/README.md` #6 forbids in prose and the gate's own
+    only in the details — and the execution gate matches on the NAME, so a rule §9.5 does not carry
+    refused execution citing §9.5, which `formal/README.md` #6 forbids in prose and the gate's own
     comment forbids in principle. It now has its own name and is not in the gate.
     """
     now = datetime(2026, 1, 1)
@@ -327,49 +390,51 @@ def test_a_child_outliving_its_parent_is_reported_under_its_own_rule():
 
     bad = check_vertical_deadlines(parent, [late])
     assert not bad.passed and "child late" in bad.details
-    assert bad.check_name.startswith("§3.4(6)")
+    assert bad.check_name.startswith("§4.5(6)")
     assert check_vertical_deadlines(parent, [ok]).passed
     # …and CHECK-3 keeps to the row it actually is: the horizontal Dep rule.
     assert check_deadlines(parent, [late], []).passed
 
 
 def test_check3_stays_silent_when_no_deadlines_are_set():
-    """A deadline is a design decision, not a mandatory field (§10) — absence is not a violation."""
+    """A deadline is a design decision, not a mandatory field (§2) — absence is not a violation."""
     parent = _task("p", criteria=["c1"])
     assert check_deadlines(parent, [_task("k", criteria=["k1"])], []).passed
 
 
-# === The gate IS the canon's Syntactic level (§13.4) ===
+# === The gate IS the canon's Syntactic level (§11.5) ===
 
 def test_the_execution_gate_is_exactly_the_canons_syntactic_level():
-    """§13.4 lists seven checks at Level 0 and then rules: "a decomposition that fails the Syntactic
+    """§9.5/§11.5 lists seven checks at Level 0 and then rules: "a decomposition that fails the Syntactic
     level is not admitted to execution". So the gate is the level — not a selection from it.
 
     Four of the seven used to gate. CHECK-4/5/6 were called "completeness documentation" and only
-    surfaced, which made an empty ACCEPTED_RISKS register admissible where §13.1 says a decomposition
+    surfaced, which made an empty ACCEPTED_RISKS register admissible where §9.2 says a decomposition
     without one is incomplete by definition. This pins both directions: every canon row gates, and
     CHECK-1c — an engineering addition with no canon row — does not.
     """
     canon_level_0 = {"CHECK-1", "CHECK-1b", "CHECK-2", "CHECK-3", "CHECK-4", "CHECK-5", "CHECK-6"}
     gated = {p.rstrip(":") for p in _EXEC_GATING_CHECKS}
-    assert gated == canon_level_0
+    # …less CHECK-3, which v4.1 gates only at the ADMISSION that sets the deadlines and flags afterwards (§11.5,
+    # §12.10) — `admission.deadlines_the_act_sets`
+    assert gated == canon_level_0 - {"CHECK-3"}
 
     # THE BATTERY MAY SAY MORE THAN THE GATE ENFORCES, and what it adds must be NAMED. Two extras,
     # for two different reasons: `CHECK-1c` is an engineering addition with no canon rule behind it,
-    # and `§3.4(6)` is a canon RULE the canon gives no CHECK for (`formal/README.md` #6). Neither
+    # and `§4.5(6)` is a canon RULE the canon gives no CHECK for (`formal/README.md` #6). Neither
     # gates. The vertical deadline rule used to ride inside CHECK-3's own result, tagged only in the
     # details — and since the gate matches on the NAME, it refused execution under a canon check's
     # name, which is the one thing this test exists to forbid (audited 2026-09-05, F4).
     produced = {r.check_name.split(":")[0] for r in run_structural(_task_neg(()), [])}
-    assert produced - {"CHECK-1c", "§3.4(6)", "A1"} <= canon_level_0
-    assert "§3.4(6)" in produced, "the vertical rule must still be SAID, just not enforced here"
-    assert not any(p.startswith("§3.4") for p in _EXEC_GATING_CHECKS)
+    assert produced - {"CHECK-1c", "§4.5(6)", "A1"} <= canon_level_0
+    assert "§4.5(6)" in produced, "the vertical rule must still be SAID, just not enforced here"
+    assert not any(p.startswith("§4.5") for p in _EXEC_GATING_CHECKS)
     assert "CHECK-1c" not in gated                          # …and it stays out of the gate
     # A1:procedure DOES refuse execution — and not through this filter. Stated at its real grade:
     # it is NOT a canon row, and it is not A1 read off the canon either (A1 asserts a decidable
-    # predicate exists, not that it is written down — §2.1). It is a product rule with a canon
+    # predicate exists, not that it is written down — §4.1). It is a product rule with a canon
     # PARENT: the demand that the procedure be fixed before the work is Inv-1's pre-registration
-    # (§14.4). The finding this test was written for is a rule acquiring a canon check's authority
+    # (§12.3). The finding this test was written for is a rule acquiring a canon check's authority
     # under that check's NAME; this one refuses under its own name, visible as its own clause in
     # `_accept_rules` / `execution_blocked_by`, and the battery filter stays exactly the seven.
     # Whether a product rule may gate at all is the author's call, and it is flagged to him as one.
@@ -380,15 +445,15 @@ def test_the_agent_door_can_declare_a_scope_boundary():
     """`scope` must be readable on input, not only reported on output.
 
     A scope BOUNDARY (a capability the goal deliberately excludes) has no materialization
-    probability, so CHECK-4 refuses it in the risk register by design (§13.1). With the Syntactic
+    probability, so CHECK-4 refuses it in the risk register by design (§9.2). With the Syntactic
     level gating execution, a door that could not set `scope` left the agent nowhere legal to put
     one: the register the gate demands would have had to hold what the register forbids.
     """
     e = make_engine(llm=None)
     e.start()
     out = T.create_task(e, "goal", {"description": "billing computation",
-                                    "criteria": [{"name": "c", "description": "totals are right"}],
+                                    "criteria": [criterion("c", "totals are right")],
                                     "scope": ["payment gateway — a separate goal"]}, "alice")
     assert out["scope"] == ["payment gateway — a separate goal"]
-    assert e.get_task(T.TaskId("goal")).spec.scope == ("payment gateway — a separate goal",)
+    assert e.graph.get_task(T.TaskId("goal")).spec.scope == ("payment gateway — a separate goal",)
     e.stop()

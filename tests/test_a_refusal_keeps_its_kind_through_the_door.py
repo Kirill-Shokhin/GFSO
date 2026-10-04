@@ -22,9 +22,9 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.types import Signal, TaskId
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 def _root(state: str):
@@ -40,7 +40,7 @@ def _root(state: str):
     return e
 
 
-# ASSIGN is admitted in every one of these states (§14.3: a re-ASSIGN is the revision edge) and its
+# ASSIGN is admitted in every one of these states (§12.10: a re-ASSIGN is the revision edge) and its
 # guard wants a contract, which `signal` cannot carry — so it is the refusal that is a GUARD in every
 # state the FSM reassigns from, and the one the round trip corrupted.
 @pytest.mark.parametrize("state", ["OFFERED", "EXECUTING", "VALIDATING"])

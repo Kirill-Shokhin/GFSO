@@ -29,7 +29,8 @@ import urllib.request
 from urllib.parse import quote
 
 from gfso.runtime import build_engine_from_env
-from gfso import tools as _T     # the verb surface: UI_LINK_VERBS / ui_link live there
+from gfso import tools as _T     # the verb surface
+from gfso.serverctl import UI_LINK_VERBS, ui_link
 from gfso.config import agent_id, narrate, select_project
 from gfso import serverctl
 from gfso import tools_llm as T  # the COMPLETE registry (structural + LLM verbs)
@@ -293,7 +294,7 @@ def _how_a_node_reads(state: str, closure: dict | None) -> tuple:
 
     Three kinds a bare `[x]` used to hide: a PASS its own current verdict contradicts, a closure by
     hand OVER an instrument that said otherwise, and a closure on a person's word where no instrument
-    spoke. The last keeps its tick — it is the documented solo path (§14.5's degenerate case) — and
+    spoke. The last keeps its tick — it is the documented solo path (§10.3's degenerate case) — and
     the first two do not. Module level rather than nested, because a nested body counts toward its
     enclosing function and the size rule is measuring the tree, not the indentation.
 
@@ -492,7 +493,7 @@ def run(argv: list[str]) -> int:
 
     # THROUGH THE RUNNING SERVER when there is one. This used to open the database directly,
     # always, and that is a second writer against a file whose single-sequencer property is what
-    # the log's guarantees rest on: Inv-7 gives one non-branching history, and §14.3 requires the
+    # the log's guarantees rest on: Inv-7 gives one non-branching history, and §12.14 requires the
     # consumption check and the edge it authorizes to be ONE log-serialized step. Two engines over
     # one file are two sequencers, and the interleaving that breaks it is exactly the one nobody
     # would reproduce on purpose. It also meant a CLI write appeared in the UI only on a reload, and
@@ -504,9 +505,9 @@ def run(argv: list[str]) -> int:
         out = _locally(fn, project, pos, kw)
     # …and tell the caller where to LOOK. The agent door attaches this and the human door did not,
     # so the person the UI exists for was the one never given its address.
-    if name in _T.UI_LINK_VERBS and isinstance(out, dict) and "ui" not in out:
+    if name in UI_LINK_VERBS and isinstance(out, dict) and "ui" not in out:
         try:
-            out["ui"] = _T.ui_link(project or out.get("active"))
+            out["ui"] = ui_link(project or out.get("active"))
         # the link is attached to a result already produced — never a reason to fail the call that
         # produced it
         except Exception:

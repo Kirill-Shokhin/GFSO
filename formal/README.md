@@ -267,7 +267,7 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    deliberately, with the proxy named as a proxy rather than dressed up as the condition.
 
 8. **§15.9's triage ORDER is not what `next_step` implements — named, not silently adopted.**
-   `Engine._frontier` orders by action priority and then by id, not by §15.9's order. The gap is real
+   `Frontier._frontier` orders by action priority and then by id, not by §15.9's order. The gap is real
    and the fix is cheap — but it changes the ORDER in which an agent is driven through a graph, which is
    a measured quantity of the E3 arm (C3 cost, and through it C1/C2 attribution). Landing it inside a
    naming migration would confound the next measurement with a behavioural change, so it is recorded
@@ -286,17 +286,23 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    (`gfso/engine/validation.py`), pinned in both directions by `tests/test_structural.py` — every canon
    row gates, and CHECK-1c (anti-mock, an engineering addition with no canon row) does not. Cost,
    measured: 45 test fixtures were building decomposed nodes with no register and now carry one.
-   **Open — not the level exactly:** §11.5's reported exception is not implemented (the engine examines a
-   Dep edge at a split holding both its ends and routes no report to an outside consumer's issuer); and
-   the engine's CHECK-4 is narrower than §9.5's (corner 13), so it admits a register the canon's
-   Syntactic level refuses. **Open, on placement:** the canon puts the level at the split's admission,
-   the decomposer's own act (§11.5); the engine refuses the child's ACCEPT instead, a refusal its sender
-   can lift by no move of his own wherever the decomposer and the child's executor are different parties
-   — non-conforming there under §12.16 (ii) (§16.12).
+   **Closed since (2026-10-04):** CHECK-3 gates only the admission that sets the deadlines, where some choice of them
+   orders every edge (`Engine._refuse_deadlines_the_admission_cannot_order`); met afterwards it is §12.10's flag,
+   named in the frontier's step as the consumer's issuer's with his two moves and in `list_holes` as `kind: flag`
+   (`validation.hole_kind`). The Syntactic-level gate on a whole's PASS binds only where the whole's issuer is its Del
+   (`validation.whole_waits_for_its_parts`); at a seam the PASS lands and the departure from AND is said (§12.8).
+   **Placement closed (2026-10-05):** the level runs at the split's admission, the decomposer's own act (§11.5), over
+   the split as it will stand — its children, their coverage, its register — and refuses the split whole, no child
+   issued (`gfso/engine/admission.py`, every door that adds a child or changes the register). The child's ACCEPT no
+   longer reads its parent's Level-0 holes. What breaks a split admitted clean — a revision of the contract, a child
+   cancelled — is §12.10's flag on the decomposer's plan, never a hold on issued work. **Residue:** with the Level-2
+   gate on (corner 10) a revision of the contract, or a child's settled cancellation, stales the review, and no fresh
+   one runs while a Level-0 hole stands — so an unstarted child the decomposer executes himself waits for his
+   repair; another executor's child goes on.
 
 10. **The pre-execution Level-2 gate is an ENGINEERING corner, declared — not a canon row.**
    The engine refuses a child's first ACCEPT while its parent's decomposition carries no current,
-   dispositioned causal review (`GFSO_L2_GATE`, on by default). The canon licenses no such gate:
+   dispositioned causal review (`GFSO_L2_GATE`, on by default) — where the child's executor is the decomposer. The canon licenses no such gate:
    admission is the Syntactic level (§11.5), and the Pragmatic level is checkable only by execution
    (§9.1, §20.2). What the gate enforces is therefore weaker than its name suggested and is stated as
    such in the code: **not** the checker's verdict but the verify-vs-explore decision (§9.9) taken once
@@ -304,8 +310,12 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    must have been either repaired or disputed in writing (`dispute_finding`). The verdict stays
    advisory; contact keeps the last word (q_D). `GFSO_L2_GATE=0` is the explicit EXPLORE branch, chosen
    by configuration rather than by an agent skipping a step. The grade: an engineering discipline
-   consistent with §9.9 in what it asks, carrying no canon authority, and placed like corner 9's gate on
-   the child's ACCEPT — conforming only where the decomposer is the child's executor (§12.16 (ii));
+   consistent with §9.9 in what it asks, carrying no canon authority. It refuses the child's ACCEPT only where the
+   decomposer is the child's executor, who lifts it by his own moves — the review and the disposition of its
+   findings (§12.16 (ii)); another executor's child is not refused, and the system holds its own spawn there instead
+   (`Engine.execution_blocked_by`, read by the dispatcher), a person taking it exploring (§9.9). A review is current
+   for one version of the plan: an admission, a revision of the parent's or a child's contract, and a child's
+   settled cancellation each stale it;
    measured on the live substrate (BCB/120: three L0-clean plans, every planted entailment hole named,
    zero false gaps). Two earlier citations claimed more — an address, **13.4-bis**, that exists in no
    version of the canon, and the label "Level 2" used as if §9.5 gated the Pragmatic level. Both are
@@ -344,28 +354,17 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    field + a migration of 149 stored graphs + the CHECK-7 dispatch + the authoring verb and its prompt.
    **Not started; declared here so the Semantic level is not read as more than it is.**
 
-13. **The risk record carries no `estimate⟨P, impact⟩`, so §9.4's roll-up is not computable.**
-   `AcceptedRiskItem` is `⟨item, predictability, justification, invalidation_condition⟩` — no P, no
-   impact — so the roll-up exists in the canon (§9.4) and nowhere in the code, and what the engine's
-   CHECK-4 verifies is a form of its own (a predictability verdict per factor, no self-declared
-   ORDINARY, a justification for STATISTICAL). `invalidation_condition` is stored and surfaced but never
-   checked, in either direction: neither its presence nor whether it has fired. The canon's CHECK-4
-   (§9.5) refuses admission without the four STD-1 fields and the estimate (§11.5): an entry with no
-   estimate passes the engine's CHECK-4 and fails the canon's — the engine diverges from the canon here,
-   not the canon from it. The discriminator between a scope boundary, an entry and an omissible
-   extraordinary event (§9.2, §9.3) is carried by the *predictability verdict*, a proxy for the
-   estimate rather than the estimate. Closing it: two fields, the roll-up as a graph query beside the
-   metrics, and a decision on what a missing estimate means for an existing register (the same
-   migration surface as #12). **Not started.**
+13. **The register carries STD-1's estimate; §9.4's roll-up is not computed.** `AcceptedRiskItem` carries `p` and
+   `impact` (STD-1's estimate), STD-3's `component`, and the split's own denial entry (§9.5), and CHECK-4 refuses an
+   entry without them on a decomposed node. What is still nowhere is the roll-up P(≥ 1) = 1 − ∏(1 − Pᵢ) over STD-3's
+   components (§9.4), and `invalidation_condition` is stored and surfaced but never checked for having fired.
+   **Open.**
 
-14. **`risk_components` is free text matched by substring — not the STD-3 factorization.**
-   STD-3 (§9.4) groups correlated factors into components, each handled as §9.4 states. The code holds components as bare strings, and CHECK-5 once counted one
-   covered when its lowercased text appeared **inside a child's description** — which is neither the
-   grouping nor a coverage relation: it passes on an accidental word match and fails on a child that
-   addresses the component under any other wording. It is a placeholder with a check-shaped surface.
-   The honest option space is either the real object (components as first-class records, factors
-   assigned to them, coverage declared by mapping rather than guessed from prose) or a demotion of
-   CHECK-5 to what it can decide. Either way it is a design decision, not a repair. **Not started.**
+14. **STD-3 components are records; their factorization is the author's.** A component is named on the split
+   (`risk_components`), and a child's claim to mitigate it is recorded on that child (`covers_risks`), as `covers`
+   records a criterion's; CHECK-5 reads the record and is ⊥, not met, where none exists — the substring match over
+   descriptions is gone. Which factors group into which component stays the decomposer's statement (§9.4: the grouping
+   method is an implementation choice), unchecked beyond its form.
 
 15. **Inv-4 (Obligation-Symmetry) has no code object; its checkable content is Inv-8.** Of the eight
    invariants, seven are enforced or machine-checked: Inv-1, Inv-2, Inv-3, Inv-5 (pure timeout chains in

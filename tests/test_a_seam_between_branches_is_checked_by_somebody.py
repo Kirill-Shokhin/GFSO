@@ -1,6 +1,6 @@
 """CHECK-2 and CHECK-3 quantify over Dep, not over siblings — and `vacuous` describes what was seen.
 
-The canon states both rows over the whole relation (§13.4: `CHECK-2 (acyclicity): the graph of D is
+The canon states both rows over the whole relation (§9.5: `CHECK-2 (acyclicity): the graph of D is
 a DAG`, `CHECK-3 (deadlines): ∀ (t_a, t_b) ∈ Dep: deadline(t_a) < deadline(t_b)`). The implementation
 quantified over a strict subset:
 
@@ -27,9 +27,7 @@ from gfso.core.graph.model import dep_scope
 from gfso.core.handlers.structural import check_deadlines
 from gfso.engine.validation import _l0_holes
 from gfso.core.types import AgentId, Criteria, Spec, Task, TaskId
-from tests.support import criterion, make_engine
-
-RISKS = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _crit(*names):
@@ -41,20 +39,13 @@ def two_branches():
     """root -> {P -> a1, Q -> b1}: a seam between a1 and b1 crosses two parents."""
     e = make_engine()
     e.start()
-    T.create_task(e, "root", {"description": "root", "criteria": _crit("gP", "gQ"),
-                              "accepted_risks": RISKS},
+    T.create_task(e, "root", {"description": "root", "criteria": _crit("gP", "gQ")},
                   assignee="agent", deadline="2030-01-20T00:00:00")
-    for branch, covered in (("P", "gP"), ("Q", "gQ")):
-        T.create_task(e, branch, {"description": branch, "criteria": _crit(branch + "1"),
-                                  "accepted_risks": RISKS},
-                      assignee="agent", parent_id="root", deadline="2030-01-10T00:00:00")
-        T.map_criterion(e, "root", branch, covered)
-    T.create_task(e, "a1", {"description": "a1", "criteria": _crit("ca1")},
-                  assignee="agent", parent_id="P", deadline="2030-01-09T00:00:00")
-    T.create_task(e, "b1", {"description": "b1", "criteria": _crit("cb1")},
-                  assignee="agent", parent_id="Q", deadline="2030-01-02T00:00:00")
-    T.map_criterion(e, "P", "a1", "P1")
-    T.map_criterion(e, "Q", "b1", "Q1")
+    T.decompose(e, "root", [{"task_id": branch, "spec": {"description": branch, "criteria": _crit(branch + "1")},
+                             "assignee": "agent", "covers": [covered], "deadline": "2030-01-10T00:00:00"}
+                            for branch, covered in (("P", "gP"), ("Q", "gQ"))], accepted_risks=REGISTER)
+    T.decompose(e, "P", [{"task_id": "a1", "spec": {"description": "a1", "criteria": _crit("ca1")}, "assignee": "agent", "covers": ["P1"], "deadline": "2030-01-09T00:00:00"}], accepted_risks=REGISTER)
+    T.decompose(e, "Q", [{"task_id": "b1", "spec": {"description": "b1", "criteria": _crit("cb1")}, "assignee": "agent", "covers": ["Q1"], "deadline": "2030-01-02T00:00:00"}], accepted_risks=REGISTER)
     e.wait_idle()
     try:
         yield e
@@ -83,9 +74,10 @@ def test_a_cross_branch_deadline_violation_is_named_at_every_door(two_branches):
     assert holes["count"] >= 1, holes
     assert any("CHECK-3" in h["check"] and h["task_id"] == "root" for h in holes["holes"]), holes
 
+    # …a FLAG, not a gate: a Dep declared after the split is a re-author of its consumer, and a crossing met after the
+    # admission goes to the consumer's issuer (v4.1 §11.5, §12.10) — gated, it refused the root's PASS forever
     gate = _l0_holes(two_branches._graph, two_branches._graph.get_task(TaskId("root")))
-    assert any(c.check_name.startswith("CHECK-3") for c in gate), \
-        "the execution gate admitted a plan whose seam runs backwards in time (FM-5)"
+    assert not any(c.check_name.startswith("CHECK-3") for c in gate), gate
 
     cached = [c for c in T.get_checks(two_branches, "root") if c["check"].startswith("CHECK-3")]
     assert cached and cached[0]["passed"] is False, cached
@@ -122,19 +114,22 @@ def test_a_cycle_closed_across_two_branches_is_named(two_branches):
     T.add_dependency(two_branches, "a1", "b1", glue="b1 links the object a1 emits")
     two_branches.wait_idle()
     T.signal(two_branches, "a1", "ACCEPT", source="agent")
-    T.signal(two_branches, "a1", "BLOCK", source="agent",
-             reason="a1 cannot start without b1's schema", blocker_task_ids=["b1"])
+    out = T.signal(two_branches, "a1", "BLOCK", source="agent",
+                   reason="a1 cannot start without b1's schema", blocker_task_ids=["b1"])
+    # …and its sender is told, though the split whose order it refutes is not a1's parent but root
+    assert "cannot finish before it" in out.get("plan_order_refuted", ""), out
     two_branches.wait_idle()
 
     edges = {(d["producer"], d["consumer"]) for d in T.get_dependencies(two_branches)}
     assert edges == {("a1", "b1"), ("b1", "a1")}, edges
 
-    holes = T.list_holes(two_branches)
-    assert any(h["check"].startswith("CHECK-2") and h["task_id"] == "root"
-               for h in holes["holes"]), holes
+    # NAMED at the split both branches sit in — as its ORDER refuted by contact (§15.5), not as a
+    # CHECK-2 hole: the record is provisional, not an edge of E_Dep, and freezing the plan over it
+    # froze every sibling of a live run (AUTO json_parser, 2026-09-25)
+    order = two_branches.order_refuted_by(TaskId("a1"))
+    assert order and "`a1` needs `b1`" in order, order
     gate = _l0_holes(two_branches._graph, two_branches._graph.get_task(TaskId("root")))
-    assert any(c.check_name.startswith("CHECK-2") for c in gate), \
-        "the execution gate admitted a plan with a live Dep cycle (FM-4)"
+    assert not any(c.check_name.startswith("CHECK-2") for c in gate)
 
 
 def test_an_edge_naming_a_node_that_does_not_exist_leaves_the_green_vacuous(two_branches):

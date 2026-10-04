@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import hashlib
 import inspect
 import json
 import os
@@ -18,12 +17,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from gfso import __version__
-from gfso.core.graph import DIAGNOSTIC_MEANS, Q_MEANS
 from gfso.tools import PARAM_CHOICES
 from gfso.core.handlers import solver_findings
 from gfso.core.handlers.recommend import suggest_criteria
 from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
-from gfso.core.types import TaskId, AgentId, State
+from gfso.core.types import TaskId, AgentId, State, RETIRED_STATES
 from gfso.delegate import default_agents
 from gfso.runtime import data_dir
 from gfso.serverctl import home as _home
@@ -37,20 +35,22 @@ try:
     _CODE_VERSION = _sfp()
 except Exception:                                    # never let a diagnostic field break the server
     _CODE_VERSION = "unknown"
-from gfso.core.protocol.validation import required_role
 from gfso.engine.validation import l2_gate_on as _l2_gate_on
 from gfso.tools_llm import validate_internal_on as _validate_internal_on
+from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso import config as _config
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
 from gfso.engine import Engine
-from gfso import tools_llm as _tools  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
+from gfso import tools_llm as _tools
+from gfso.tools import task_out
+from gfso.inflight import in_flight  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
 
 from .models import (
-    TaskOut, TaskDetailOut, CheckResultOut, RecommendationOut,
-    GraphOut, GraphNode, GraphEdge, MetricsOut, AuditEntryOut,
+    CheckResultOut,
+    AuditEntryOut,
     SuggestCriteriaRequest, SuggestCriteriaResponse, CriteriaIn,
-    ActionOut, SolverItem, SolverOut, ProjectionOut,
-    task_to_out, audit_to_out,
+    SolverItem, SolverOut, ProjectionOut,
+    audit_to_out,
 )
 
 WEB_DIR = Path(__file__).parent.parent / "web"
@@ -267,7 +267,7 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
         except (ValueError, KeyError) as ex:
             raise HTTPException(422, str(ex))
 
-    # === Per-role actions (§14.2) ===
+    # === Per-role actions (§11.2) ===
 
     # === AI Suggest ===
 
@@ -289,9 +289,9 @@ def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
     asked about)."""
     @app.get("/api/check_map")
     def get_check_map():
-        """The canon's CHECK → failure-mode routing (§13.4) and the FM names (§12.6), served so the
+        """The canon's CHECK → failure-mode routing (§9.5) and the FM names (§8.10), served so the
         UI renders the product's table instead of a copy of it — the copy drifted (CHECK-6 shown as
-        FM-1 where the canon routes it to FM-7). Guarded against the canon in
+        FM-1 where the canon routes it to no failure mode). Guarded against the canon in
         `tests/test_canon_check_map.py`."""
         return {"check_to_fm": CHECK_TO_FM, "fm_label": FM_LABEL}
 
@@ -303,25 +303,21 @@ def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
         `costed_calls` is carried beside `cost_usd` on purpose: a transport that reports no price
         contributes zero, and a money total that cannot tell "free" from "not reported" is the same
         ⊥-as-zero error the metrics refuse elsewhere."""
-        e: Engine = _e()
-        out = e.usage_totals()
+        # …THE VERB'S OWN ANSWER (ortho audit, D-F16): served by hand, `detail` overwrote the call COUNT with the call
+        # rows under one key, and the per-node split and the largest stage never reached this door.
         # WHICH PROJECT THIS IS ABOUT. Without `?project=` the scope falls back to the registry's
         # ACTIVE project — which is server-wide, so it can easily be somebody else's — and the answer
         # was a plausible small number with nothing saying whose. Measured on the human door
         # 2026-08-21: a person read $0.54 for a run that had spent $7.08, and only found out by
         # passing the parameter. A money total has to name its scope.
-        out["project"] = _scope_name()
-        if detail:
-            out["calls"] = e._graph._storage.get_usage()
-        return out
+        return _naming_the_scope(_tools.TOOLS["usage"](_e(), detail=detail), _scope_name())
 
-    @app.get("/api/metrics", response_model=MetricsOut)
+    @app.get("/api/metrics")
     def get_metrics():
         """The five quality metrics of this project's graph — q_T, q_D, q_V, q_Dep, q_Del — beside
-        `false_fail_share`, a diagnostic that is deliberately NOT part of Q (§24.5; high means
+        `false_fail_share`, a diagnostic that is deliberately NOT part of Q (§15.4; high means
         over-strict validation). A null is ⊥: the population was empty, not a score of zero."""
-        m = _e().metrics()
-        return MetricsOut(**m, means={k: v for k, v in {**Q_MEANS, **DIAGNOSTIC_MEANS}.items() if k in m})
+        return _tools.TOOLS["metrics"](_e())   # the verb's answer — a response model dropped what it did not declare
 
     # === Audit ===
 
@@ -354,7 +350,7 @@ def _mount_plan_reads(app, _e) -> None:
         run. A read about the PLAN, not about the work — nothing here says whether anything was
         executed."""
         e: Engine = _e()
-        if e.get_task(TaskId(task_id)) is None:
+        if e.graph.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
         return ProjectionOut(node_id=task_id, projection=e.project(TaskId(task_id)))
 
@@ -367,20 +363,20 @@ def _mount_plan_reads(app, _e) -> None:
         review has run — not a review that found nothing; the two are the same colour to anything
         that reads only the findings."""
         e: Engine = _e()
-        t = e.get_task(TaskId(task_id))
+        t = e.graph.get_task(TaskId(task_id))
         if t is None:
             raise HTTPException(404, f"task {task_id} not found")
         return {"verified": t.verified, "critique": e.get_critique(TaskId(task_id))}
 
-    # === Solver (§15.3 — deterministic, separate from LLM) ===
+    # === Solver (§17.2 — deterministic, separate from LLM) ===
 
     @app.get("/api/tasks/{task_id}/solver", response_model=SolverOut)
     def get_solver(task_id: str):
-        """The DETERMINISTIC half of plan review (§15.3): the structural checks this node fails
+        """The DETERMINISTIC half of plan review (§17.2): the structural checks this node fails
         right now, one finding each, computed without a model call. Empty means every applicable
         check passed — unlike `critique`, where empty can also mean nobody looked."""
         e: Engine = _e()
-        if e.get_task(TaskId(task_id)) is None:
+        if e.graph.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
         ctx = e.graph.build_context(TaskId(task_id))
         return SolverOut(recommendations=[SolverItem(**f) for f in solver_findings(ctx)])
@@ -388,8 +384,7 @@ def _mount_plan_reads(app, _e) -> None:
     @app.get("/api/holes")
     def get_holes(root_id: Optional[str] = None):
         """Every unmet structural check across the graph (or a subtree) — the whole-graph gap list."""
-        e: Engine = _e()
-        return e.graph_holes(TaskId(root_id) if root_id else None)
+        return _tools.TOOLS["list_holes"](_e(), root_id)   # {holes, count}, as every door answers (ortho audit, D-F16)
 
 
 def _named(tool: str, p) -> str:
@@ -465,35 +460,6 @@ def _no_such_project(name: str) -> HTTPException:
              f"(`create_task`, `auto_decompose`).")
 
 
-def _graph_for_drawing(e: Engine) -> GraphOut:
-    """The project shaped for a picture: nodes with state and Del, parent edges, Dep edges.
-
-    Shaping, not mounting — it sat inside the read that serves it, which is why the
-    function that registers the reads was the size of the reads themselves.
-    """
-    all_tasks = e.all_tasks()
-    nodes = []
-    edges = []
-    children_set = set()
-    for t in all_tasks:
-        if t.parent_id:
-            children_set.add(t.parent_id)
-    for t in all_tasks:
-        has_children = t.id in children_set or bool(e.get_children(t.id))
-        nodes.append(GraphNode(
-            id=t.id, label=(t.spec.name or t.spec.description[:_config.LABEL_CHARS]),
-            state=t.state.name, assignee=t.assignee,
-            parent_id=t.parent_id, has_children=has_children,
-            done_reason=t.done_reason.name if t.done_reason else None,
-            closure=e.closure_of(t.id),
-        ))
-        if t.parent_id:
-            edges.append(GraphEdge(source=t.parent_id, target=t.id, type="parent-child"))
-    for dep in e.get_dependencies():
-        edges.append(GraphEdge(source=dep.from_id, target=dep.to_id, type="dependency", discovered=dep.discovered))
-    return GraphOut(nodes=nodes, edges=edges)
-
-
 def _mount_reads(app, _e, _req_project, _scope_name) -> None:
     """Every READ of a graph: nodes, checks, review, holes, metrics, the two ledgers.
 
@@ -503,42 +469,46 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
     the assembly, and the routes it registers are unchanged.
     """
 
-    @app.get("/api/tasks", response_model=list[TaskOut])
+    @app.get("/api/tasks")
     def list_tasks(state: Optional[str] = None, assignee: Optional[str] = None):
         """The project's nodes, flat: all of them, or those in one `state` (a State name, e.g.
         `EXECUTING`) or held by one `assignee`. `state` wins when both are given. Summary shape —
         criteria, checks, audit and children come from the per-node read."""
         e: Engine = _e()
         if state:
+            if state not in State.__members__:
+                raise HTTPException(422, (
+                    f"'{state}' is a retired state; nodes that were in it are now "
+                    f"{RETIRED_STATES[state].name}" if state in RETIRED_STATES else
+                    f"no state is called '{state}'")
+                    + " — the states are " + ", ".join(State.__members__))
             tasks = e.tasks_by_state(State[state])
         elif assignee:
             tasks = e.tasks_by_assignee(AgentId(assignee))
         else:
             tasks = e.all_tasks()
-        return [task_to_out(t) for t in tasks]
+        # the one shaping of a node, without the plan reads a polled list does not owe (`task_out`, D-F16)
+        return [task_out(t) for t in tasks]
 
-    @app.get("/api/tasks/{task_id}", response_model=TaskDetailOut)
+    @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str):
         """One node with everything that hangs off it: its structural checks, the stored
         recommendation, its full audit trail, its direct children. The read the UI's detail panel
         is built from; an unknown id is a 404, never an empty body."""
         e: Engine = _e()
-        t = e.get_task(TaskId(task_id))
+        t = e.graph.get_task(TaskId(task_id))
         if t is None:
             raise HTTPException(404, f"task {task_id} not found")
         checks = e.get_checks(TaskId(task_id))
         rec = e.graph._storage.get_recommendation(TaskId(task_id))
         audit = e.audit_log(TaskId(task_id))
-        children = e.get_children(TaskId(task_id))
-        out = task_to_out(t)
-        return TaskDetailOut(
-            **out.model_dump(),
-            closure=e.closure_of(TaskId(task_id)),
-            checks=[CheckResultOut.of(c) for c in checks],
-            recommendation=RecommendationOut(suggestions=list(rec.suggestions)) if rec else None,
-            audit=[audit_to_out(a) for a in audit],
-            children=[task_to_out(c) for c in children],
-        )
+        children = e.graph.get_children(TaskId(task_id))
+        return {**task_out(t, e),
+                "closure": e.closure_of(TaskId(task_id)),
+                "checks": [CheckResultOut.of(c).model_dump() for c in checks],
+                "recommendation": {"suggestions": list(rec.suggestions)} if rec else None,
+                "audit": [audit_to_out(a).model_dump() for a in audit],
+                "children": [task_out(c) for c in children]}
 
     # === Unified authoring surface: every gfso tool over HTTP (the SAME gfso.tools.TOOLS that MCP + CLI bind) ===
     # Adding an authoring verb = ONE Engine method + ONE gfso.tools entry → it appears HERE, on MCP, and on the
@@ -550,17 +520,19 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
     _mount_ledgers(app, _e, _req_project, _scope_name)
 
 
-    @app.get("/api/tasks/{task_id}/actions", response_model=list[ActionOut])
+    @app.get("/api/tasks/{task_id}/actions")
     def get_actions(task_id: str, role: Optional[str] = None):
         """Which signals this node admits in the state it is in — narrowed, when `role` is given, to
         the ones that role may send (executor = the node's assignee, issuer = its parent's).
         Empty is an answer, not a gap: a settled node admits nothing. System signals (TIMEOUT)
         are never offered."""
         e: Engine = _e()
-        if e.get_task(TaskId(task_id)) is None:
+        if e.graph.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
-        sigs = e.available_actions(TaskId(task_id), AgentId(role) if role else None)
-        return [ActionOut(signal=s.name, role=required_role(s).name) for s in sigs]
+        # …THE VERB'S ANSWER, with its reasons: this door filtered the machine's list by a rule of its own (a refusal kept
+        # where it was only the caller's role) and said nothing of why a move was missing (ortho audit, D-F1, D-F16).
+        # `role` names the party asking; none is every party's view.
+        return _tools.TOOLS["available_actions"](e, task_id, role or "*")
 
     # === Projection (read-only critic input contract) ===
 
@@ -568,13 +540,11 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
 
     # === Graph ===
 
-    @app.get("/api/graph", response_model=GraphOut)
+    @app.get("/api/graph")
     def get_graph():
-        """The whole project shaped for drawing: every node with its state and Del, parent-child
-        edges, and dependency edges — `discovered` marking the ones execution found rather than
-        the plan declaring. `has_children` separates a leaf from a node whose children merely are
-        not drawn yet."""
-        return _graph_for_drawing(_e())
+        """The whole project as the `get_graph` verb answers it — the page draws what every door reads (one shaping;
+        a second one here drifted: `label` for the verb's `name`, no `awaiting`, no mode — ortho audit, D-F16)."""
+        return _tools.TOOLS["get_graph"](_e())
 
 def _mount_pages(app) -> None:
     """The page and its assets — the human door's own surface.
@@ -689,9 +659,12 @@ def _mount_projects(app, _e) -> None:
         """The projects a caller can stand in — filtered, because the full list is a download
         (`_projects_page` carries the measurement and the meaning of `total`)."""
         reg = app.state.registry
-        return _projects_page(reg.list() if reg else
+        page = _projects_page(reg.list() if reg else
                               {"active": DEFAULT_PROJECT, "projects": [DEFAULT_PROJECT]},
                               prefix, limit)
+        # Each listed project's root, so a picker can say which are finished without opening them.
+        # Only the page's names: the whole installation is hundreds of files.
+        return {**page, "roots": reg.roots(page["projects"])} if reg else page
 
     @app.post("/api/projects/use")
     def use_project(body: dict = Body(...)):
@@ -741,7 +714,7 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                          "one server. `project=` selects the GRAPH, never the roster."}
 
     @app.get("/api/tasks/{task_id}/verdict")
-    def get_task_verdict(task_id: str):
+    def get_task_verdict(task_id: str, criterion: str = ""):
         """The stored independent verdict for the node's current delivery, evidence included.
 
         `record_exec_verdict` persists the per-criterion evidence precisely so the trail shows WHAT
@@ -751,23 +724,29 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
         the FAIL signal, and handing it the validator's reasoning would change what a run measures.
         """
         # ONE SHAPE, WHICHEVER DOOR ASKS. This returned the raw record while `get_verdict` — the
-        # verb the CLI and the agent door use — answers with state, currency, the delivery it judged
+        # verb the CLI and the agent door use — answers with state, currency, the delivery it validated
         # and the refused reports beside it. A caller moving between the two crashed on `KeyError:
         # 'state'` (measured on the human door 2026-08-22: "same fact, two schemas").
         e: Engine = _e()
-        if e.get_task(TaskId(task_id)) is None:
+        if e.graph.get_task(TaskId(task_id)) is None:
             raise HTTPException(404, f"task {task_id} not found")
         # …and the scope rides with it, because ONE SHAPE means one shape: the verb's answer over
         # `/api/run` now names the graph it read, and a read door that dropped that would be the
         # same two-schemas defect this endpoint exists to have closed.
-        return _naming_the_scope(_tools.TOOLS["get_verdict"](e, task_id), _scope_name())
+        # …AND THIS DOOR IS NOT BOUNDED, because the reader on the other side of it is a PAGE.
+        # `get_verdict` shortens long evidence for the agent door, whose client has a cap of its
+        # own and got NOTHING when a record passed it. A browser has no such cap, and this panel
+        # already had a 300-character cut REMOVED by name — it landed mid-word, with no ellipsis
+        # and nothing to click, and evidence is the whole point of the panel. Bounding it here
+        # would put that defect back and, worse, tell the reader to run a verb this door does not
+        # serve. `criterion=` is accepted for a caller who wants one entry, and changes nothing
+        # about the whole read being whole.
+        return _naming_the_scope(
+            _tools.TOOLS["get_verdict"](e, task_id, criterion=criterion, _trim=False), _scope_name())
 
     def _hash_registry_file() -> str:
-        path = str(_config.agents_path())
-        try:
-            return hashlib.sha256(open(path, "rb").read()).hexdigest()[:12] if path else ""
-        except OSError:
-            return "missing"
+        # the stamp `up` compares it with, by the one function that makes it (D-F18: two hand copies)
+        return _serverctl.agents_fingerprint(str(_config.agents_path()))
 
     # Stamped ONCE, at startup, for the same reason `code_version` is: the question is what this
     # PROCESS loaded, not what is on disk now. Read per request it answered with the file's current
@@ -795,13 +774,14 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
         """The switches that are PROCESS-scoped, so a client can see what this server actually does.
 
         Both change behaviour a caller would otherwise have to infer from silence: with
-        `validate_internal` off, a node inside one Del scope self-verifies (§14.5 D6) and no
+        `validate_internal` off, a node inside one Del scope self-verifies (§10.3) and no
         independent verdict ever arrives — indistinguishable, from the outside, from a validator
         that is merely slow; with the L2 gate off, execution starts on an unreviewed plan (the
-        canon's EXPLORE branch, §13.5). They are set per PROCESS, so a restart can silently drop
+        canon's EXPLORE branch, §9.9). They are set per PROCESS, so a restart can silently drop
         one — which is exactly how a measurement run stalled for 25 minutes waiting on a verdict
         that was never going to come.
         """
+        work = in_flight()
         return {"version": __version__,   # the RELEASE; `code_version` below is the source hash
                 # WHERE this process keeps state, and WHETHER the agent door is mounted. Both were
                 # invisible, and both are ways the live server can differ from the installation
@@ -811,16 +791,18 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 "home": str(_home()),
                 "data_dir": str(data_dir()),
                 # Who else is on this server, and is it working. A reconcile that restarts the one
-                # server without asking either question ends someone else's run mid-flight — and a
-                # killed process does not take its `claude` children with it, so they go on writing
-                # into a working directory with nobody left to receive the report.
+                # server without asking either question ends someone else's run mid-flight: its
+                # `claude` children die with it (`gfso.adapters.children`), and their work with them.
                 "sessions": len(_live_leases()),
                 # SERVER-WIDE, and said so: this counts the long verbs running in THIS process for
                 # every session and project, so a reader saw `review_decomposition` beside their own
                 # idle graph and read it as theirs (measured 2026-08-21).
-                "busy": sorted(_tools.INFLIGHT),
+                "busy": sorted({w["verb"] for w in work}),
                 "busy_note": ("long-running verbs in flight on this server across ALL sessions and "
                               "projects — not necessarily yours"),
+                # …and each piece of that work with the project and node it is on, which is what
+                # lets a reader count ITS OWN project's work rather than the server's.
+                "in_flight": work,
                 "with_mcp": _config.with_mcp(),
                 "autoexit": _config.autoexit(),
                 # THE EFFECTIVE VALUES, read from the code that obeys them — not from the
@@ -836,6 +818,15 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 # parallel — so a cost measured without it recorded is a cost measured against an
                 # unknown setting. Read from the owner, like the two switches above.
                 "validation_batch": _config.validation_batch(),
+                "max_sessions": _config.max_sessions(),
+                # …in ITS unit: it counted criteria before 2026-10-11, and a row that recorded 12 then is not 12 now
+                "validation_batch_unit": "owed probes",
+                # …AND WHICH MODEL PLAYS THE SYSTEM'S ROLES: a server started for another model would be reused
+                # by a run that asked for this one, and its rows would say a model that did not run
+                "system_model": _config.MODEL_DEFAULT,
+                # where each agent run's raw stream is kept — empty: not kept (an audit of what the
+                # workforce ran needs it, and it is a property of how the server was started)
+                "agent_trace_dir": _config.agent_trace_dir(),
                 # …AND WHO THIS DOOR'S CALLER IS BY DEFAULT. The page shipped a box reading `pm` — an
                 # id registered nowhere — so a person's first Pass/Fail was signed as a stranger and
                 # refused, correctly and uselessly (read as a user, 2026-09-02). The identity the
@@ -860,7 +851,7 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     statements; the routes it registers are unchanged.
     """
     app.state.leases = {}
-    app.state.exit_fn = (lambda: os._exit(0))
+    app.state.exit_fn = end_this_process
 
     LEASE_GRACE = 12.0
 
@@ -936,6 +927,25 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     _mount_runtime(app, _e, _live_leases, _scope_name)
 
 
+def _lifespan(mcp):
+    """The app's lifespan: hold the MCP session manager open for as long as the sub-app is mounted
+    (the streamable transport needs it running), and end the server's children when it stops.
+    uvicorn reaches this shutdown on Ctrl-C, on SIGTERM and in a --reload worker, after its grace
+    period; on SIGTERM it then re-raises the default action, which would kill with no reap."""
+    @asynccontextmanager
+    async def lifespan(_app):
+        """Run the app; reap the server's children however it stops."""
+        try:
+            if mcp is None:
+                yield
+            else:
+                async with mcp.session_manager.run():
+                    yield
+        finally:
+            reap_children()
+    return lifespan
+
+
 def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI:
     """Assemble the HTTP door: the pages, the reads, the acts, the ledgers, the lifecycle, the events.
 
@@ -945,15 +955,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     """
     mcp, mcp_asgi = _build_mcp(registry or engine) if with_mcp else (None, None)
 
-    lifespan = None
-    if mcp is not None:
-        @asynccontextmanager
-        async def lifespan(_app):  # the streamable transport needs its session manager running
-            """Hold the MCP session manager open for as long as the sub-app is mounted."""
-            async with mcp.session_manager.run():
-                yield
-
-    app = FastAPI(title="GFSO", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="GFSO", version=__version__, lifespan=_lifespan(mcp))
     app.state.engine = engine
     app.state.registry = registry
     app.state.ws_clients = set()      # one asyncio.Queue per live WS — for GLOBAL broadcasts (project list)

@@ -1,4 +1,4 @@
-"""The CHECK battery of §13.4 — the a-priori half of correctness, run over the map alone.
+"""The CHECK battery of §9.5 — the a-priori half of correctness, run over the map alone.
 
 Syntactic (topology, coverage, DAG, deadlines) and Semantic (formal entailment, satisfiability).
 What they cannot reach is the Pragmatic level, and a check that cannot decide says `skipped`
@@ -18,8 +18,8 @@ def run_checks(task: Task, children: list[Task], dep_edges: list[tuple[str, str]
     """Run all checks: structural (CHECK-1-6) + constraints (CHECK-7-8).
 
     `non_leaf_ids` = the children that decompose further, which only a caller holding the graph can
-    know; CHECK-6 quantifies over LEAVES (§13.4) and reads it. `deadlines` covers every endpoint of
-    `dep_edges`, not only the children — CHECK-3 quantifies over Dep (§13.4), and a seam between two
+    know; CHECK-6 quantifies over LEAVES (§9.5) and reads it. `deadlines` covers every endpoint of
+    `dep_edges`, not only the children — CHECK-3 quantifies over Dep (§9.5), and a seam between two
     branches has an endpoint no list of siblings holds."""
     results = run_structural(task, children, dep_edges, non_leaf_ids, deadlines)
     results.extend(run_constraints(task, children))

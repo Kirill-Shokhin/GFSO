@@ -17,12 +17,12 @@ from datetime import datetime
 import pytest
 
 import gfso.tools as T
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, REGISTER
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.api.models import CheckResultOut
 from gfso.core.types import CheckResult
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 @pytest.fixture(autouse=True)
@@ -30,62 +30,60 @@ def _no_plan_gate(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "0")
 
 
-def _decomposed(kid_deadline, parent_deadline="2026-10-01"):
+def _decomposed(kid_deadline, parent_deadline="2099-10-01"):
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "goal",
-                              "criteria": [{"name": "a", "description": "A"}],
+                              "criteria": [criterion("a", "A")],
                               "accepted_risks": _RISK}, assignee="me", deadline=parent_deadline)
     kid = {"task_id": "root.x",
-           "spec": {"description": "x", "criteria": [{"name": "x1", "description": "X"}]},
+           "spec": {"description": "x", "criteria": [criterion("x1", "X")]},
            "assignee": "me", "covers": ["a"]}
     if kid_deadline:
         kid["deadline"] = kid_deadline
-    T.decompose(e, "root", [kid])
+    T.decompose(e, "root", [kid], accepted_risks=REGISTER)
     e.wait_idle()
-    # BY THE RULE, NOT BY THE ROW IT USED TO RIDE IN. §3.4(6) is a canon RULE the canon gives no
+    # BY THE RULE, NOT BY THE ROW IT USED TO RIDE IN. §4.5(6) is a canon RULE the canon gives no
     # CHECK for, so it reports under its own name and does not gate (F4, same audit).
-    check = [c for c in T.get_checks(e, "root") if "3.4(6)" in c["check"]][0]
-    out = (e.get_task("root.x").deadline, check["verdict"], check["details"])
+    check = [c for c in T.get_checks(e, "root") if "4.5(6)" in c["check"]][0]
+    out = (e.graph.get_task("root.x").deadline, check["verdict"], check["details"])
     e.stop()
     return out
 
 
 def test_a_child_keeps_the_deadline_it_was_given():
-    deadline, _, _ = _decomposed("2026-09-10")
-    assert deadline == datetime.fromisoformat("2026-09-10"), (
+    deadline, _, _ = _decomposed("2099-09-10")
+    assert deadline == datetime.fromisoformat("2099-09-10"), (
         "the verb dropped the field, so CHECK-3's subject could not exist")
 
 
-def test_the_vertical_rule_can_now_actually_fire():
-    """A child that may finish after its parent cannot compose into it (§3.4(6)). Before this, the
-    only reachable answer on a product-built plan was `met` — the field never arrived."""
-    _, verdict, details = _decomposed("2026-12-01")
-    assert verdict == "unmet", verdict
-    assert "root.x" in details
+def test_the_vertical_rule_gates_the_admission_that_sets_the_deadline():
+    """A child that may finish after its parent cannot compose into it (§4.5(6)), and v4.1 §11.5 gates item (6) over
+    the deadlines the admission sets while the parent's is ahead: the decomposer gives one inside it."""
+    with pytest.raises(ValueError, match=r"item \(6\)"):
+        _decomposed("2099-12-01")
 
 
 def test_a_child_inside_its_parent_still_passes():
     """The control: the check must be answering the question, not refusing every plan with a date."""
-    assert _decomposed("2026-09-10")[1] == "met"
+    assert _decomposed("2099-09-10")[1] == "met"
 
 
-def test_declaring_no_deadline_is_still_not_a_defect():
-    """Absence stays silent (`formal/README.md` #6) -- this fix carries a declared value, it does not
-    invent an obligation to declare one.
-
-    The word is `met_vacuously`: still not a defect, and no longer the same green as a check that
-    ordered real deadlines. A row of ticks that verified nothing is what a leaf's panel showed
-    (looked at the page, 2026-09-06)."""
+def test_a_packet_the_issuer_left_undated_still_carries_a_bound():
+    """v4.1 §12.4: every entry into OFFERED carries a live deadline, and the canon asks the PACKET
+    to carry one rather than the issuer to type one — the engine writes its default, marked as
+    supplied. The default is written INSIDE the parent's own deadline, so §4.5(6) is satisfied by
+    construction rather than by absence — where the rule used to have no subject at all."""
     deadline, verdict, _ = _decomposed(None)
-    assert deadline is None and verdict == "met_vacuously"
+    assert deadline is not None and deadline < datetime.fromisoformat("2099-10-01")
+    assert verdict == "met"
 
 
 def test_a_datetime_passes_through_unparsed():
     """The engine's own callers hand a `datetime`; only the doors hand a string. One owner parses,
     and it must not choke on the value that needs no parsing -- `str >= datetime` RAISED inside the
     structural gate when the string went through unparsed, which is a crash where a check belongs."""
-    assert _decomposed(datetime.fromisoformat("2026-09-10"))[1] == "met"
+    assert _decomposed(datetime.fromisoformat("2099-09-10"))[1] == "met"
 
 
 def test_a_green_over_nothing_says_so():

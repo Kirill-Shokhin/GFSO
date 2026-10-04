@@ -7,12 +7,12 @@ import json
 
 from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, Signal,
                              SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
-from tests.support import criterion, make_engine
+from tests.support import REGISTER_SPLIT, criterion, make_engine, pinned, REGISTER
 from gfso import tools as T
 
 
 def _sp(d, *c):
-    return Spec(d, tuple(Criteria(n, t) for n, t in c))
+    return Spec(d, tuple(Criteria(n, t, check=pinned(n)) for n, t in c))
 
 
 def _drive(e: Engine, root: TaskId, agent: AgentId, max_steps: int = 50):
@@ -45,12 +45,12 @@ def test_next_step_drives_to_completion_children_before_parent():
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), _sp("b", ("y", "y")), A)],
-                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))]); e.wait_idle()
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))], register=REGISTER_SPLIT); e.wait_idle()
 
     order = _drive(e, TaskId("root"), A)
 
     assert e.next_step(TaskId("root"))["complete"]                    # reached COMPLETE
-    assert e.get_state(TaskId("root")).name == "DONE"
+    assert e.graph.get_state(TaskId("root")).name == "DONE"
     # children fully done BEFORE the parent aggregates (deliver)
     root_deliver = next(i for i, (a, t) in enumerate(order) if t == "root" and a == "deliver")
     last_a = max(i for i, (a, t) in enumerate(order) if t == "a")
@@ -68,7 +68,7 @@ def test_next_step_gate_blocks_early_completion():
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     e.decompose_task(TaskId("root"), [(TaskId("a"), _sp("a", ("x", "x")), A)],
-                     [CriterionMapping("ra", TaskId("a"))]); e.wait_idle()
+                     [CriterionMapping("ra", TaskId("a"))], register=REGISTER_SPLIT); e.wait_idle()
     # child still in OFFERED → not complete, directive points at the child
     s = e.next_step(TaskId("root"))
     assert not s.get("complete")
@@ -83,10 +83,10 @@ def test_next_step_respects_dependency_order():
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
-    b_spec = Spec("b", (Criteria("y", "y"), Criteria("dep__a", "needs a's output", depends_on=TaskId("a"))))
+    b_spec = Spec("b", (Criteria("y", "y", check=pinned("y")), Criteria("dep__a", "needs a's output", depends_on=TaskId("a"))))
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), b_spec, A)],
-                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))]); e.wait_idle()
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))], register=REGISTER_SPLIT); e.wait_idle()
     for cid in ("a", "b"):  # both EXECUTING leaves now
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
 
@@ -105,7 +105,7 @@ def test_next_step_re_accepts_reauthored_parent_first():
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     e.decompose_task(TaskId("root"), [(TaskId("a"), _sp("a", ("x", "x")), A)],
-                     [CriterionMapping("ra", TaskId("a"))]); e.wait_idle()
+                     [CriterionMapping("ra", TaskId("a"))], register=REGISTER_SPLIT); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"), source=A)); e.wait_idle()  # a EXECUTING
     e.edit_accepted_risks(TaskId("root"), (), A); e.wait_idle()               # re-author → root back to OFFERED, child kept
     s = e.next_step(TaskId("root"))
@@ -131,12 +131,12 @@ def test_next_steps_parallel_frontier():
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b"), ("rc", "c")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     # a and b are independent leaves; c consumes a's output (dep-gated until a PASSES)
-    c_spec = Spec("c", (Criteria("z", "z"), Criteria("dep__a", "needs a", depends_on=TaskId("a"))))
+    c_spec = Spec("c", (Criteria("z", "z", check=pinned("z")), Criteria("dep__a", "needs a", depends_on=TaskId("a"))))
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), _sp("b", ("y", "y")), A),
                       (TaskId("c"), c_spec, A)],
                      [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b")),
-                      CriterionMapping("rc", TaskId("c"))]); e.wait_idle()
+                      CriterionMapping("rc", TaskId("c"))], register=REGISTER_SPLIT); e.wait_idle()
     for cid in ("a", "b", "c"):
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
 
@@ -165,7 +165,7 @@ def test_next_steps_orders_issuer_actions_before_executes():
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), _sp("b", ("y", "y")), A)],
-                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))]); e.wait_idle()
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))], register=REGISTER_SPLIT); e.wait_idle()
     for cid in ("a", "b"):
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
     # a delivers → VALIDATING; frontier = validate(a) BEFORE execute(b)
@@ -186,13 +186,10 @@ def test_frontier_is_del_aware(monkeypatch):
     # `mine1` is the project's one root; his node hangs under it as a child with its coverage
     # declared, so what holds `his1` back on the frontier is Del and nothing else.
     T.create_task(e, "mine1", {"description": "agent node",
-                               "criteria": [criterion("a", "A")],
-                               "accepted_risks": [{"item": "an unmodelled environment fault",
-                                                   "predictability": "EXTRAORDINARY"}]})    # Del=claude-main
-    T.create_task(e, "his1", {"description": "human node",
-                              "criteria": [criterion("b", "B")]}, assignee="kirill",
-                  parent_id="mine1")
-    T.map_criterion(e, "mine1", "his1", "a")
+                               "criteria": [criterion("a", "A")]})    # Del=claude-main
+    T.decompose(e, "mine1", [{"task_id": "his1", "spec": {"description": "human node",
+                                                         "criteria": [criterion("b", "B")]},
+                              "assignee": "kirill", "covers": ["a"]}], accepted_risks=REGISTER)
     steps = T.next_steps(e)["steps"]
     by_id = {s["task_id"]: s for s in steps}
     assert by_id["mine1"]["mine"] is True and by_id["mine1"]["assignee"] == "claude-main"
@@ -215,7 +212,7 @@ def test_a_refused_signal_says_which_kind_of_refusal_it_was():
     """
     e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
-    T.create_task(e, "n", {"description": "node", "criteria": [{"name": "c", "description": "C"}]},
+    T.create_task(e, "n", {"description": "node", "criteria": [criterion("c", "C")]},
                   assignee="human")
 
     guard = T.signal(e, "n", "ASSIGN", "human")          # state-valid, guard says no
@@ -252,17 +249,13 @@ def test_the_frontier_speaks_the_action_vocabulary_and_the_wire_form_is_unchange
 def test_a_step_names_who_would_sign_it():
     """A directive names the exact next command, and on a door that requires a signer it was
     incomplete: "signal ACCEPT to put it back to work" → `signal needs source` (CLI door,
-    2026-09-02). The engine knows whose move it is (§14.2: a validate is the issuer's, work is the
+    2026-09-02). The engine knows whose move it is (§11.2: a validate is the issuer's, work is the
     executor's), so the step says so and a door that takes the signer can copy it."""
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
-                              "accepted_risks": [{"item": "an unmodelled environment fault",
-                                                  "predictability": "EXTRAORDINARY"}]},
-                  assignee="boss")
-    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
-                  assignee="worker", parent_id="root")
-    T.map_criterion(e, "root", "kid", "c")
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")]}, assignee="boss")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]},
+                             "assignee": "worker", "covers": ["c"]}], accepted_risks=REGISTER)
 
     step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
     assert step["signed_by"] == "worker", "taking and doing the work is the executor's signature"

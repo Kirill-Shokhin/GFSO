@@ -19,8 +19,10 @@ import json
 
 import pytest
 
+import gfso.decompose as _dec
 from gfso import tools_llm as TL
-from tests.support import criterion, make_engine
+from gfso.adapters.llm.stub import StubLLM
+from tests.support import criterion, make_engine, DENIAL_ENTRY
 
 # Verbs whose whole job is to spawn a model run. They are still called (their argument guards are
 # the point), with an id that exists and a state that stops them before any transport is touched.
@@ -28,6 +30,14 @@ _LLM_VERBS = {"auto_decompose", "review_decomposition", "validate_result"}
 
 _GOOD_SPEC = {"name": "leaf", "description": "a leaf",
               "criteria": [criterion("c", "C")]}
+
+
+@pytest.fixture(autouse=True)
+def _stub_models(monkeypatch):
+    """A verb with good arguments is ENTITLED to reach its model — that is its job — so it gets a stub:
+    this table exercises the door's guards, not a model (the suite never starts a live one, conftest)."""
+    monkeypatch.setattr(_dec, "_default_llm", lambda *a, **k: StubLLM())
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: StubLLM())
 
 
 def _engine():
@@ -41,8 +51,7 @@ def _seeded(e):
     TL.TOOLS["create_task"](e, "root", {
         "name": "root", "description": "the goal",
         "criteria": [criterion("c1", "the thing")],
-        "accepted_risks": [{"item": "an unmodelled fault", "predictability": "extraordinary",
-                            "justification": "accepted here", "invalidation_condition": "never"}]},
+        "accepted_risks": [{"item": "an unmodelled fault", "predictability": "extraordinary", "justification": "accepted here", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]},
         "agent")
     TL.TOOLS["create_task"](e, "kid", dict(_GOOD_SPEC), assignee="agent", parent_id="root")
     TL.TOOLS["map_criterion"](e, "root", "kid", "c1")
@@ -64,6 +73,8 @@ _GOOD: dict[str, dict] = {
     "usage": {},
     "list_agents": {},
     "register_agent": {"agent_id": "probe-exec", "kind": "external"},   # no workdir needed for these
+    "unregister_agent": {"agent_id": "probe-exec"},
+    "set_mode": {"mode": "solo"},
     "create_task": {"task_id": "fresh", "spec": dict(_GOOD_SPEC), "assignee": "agent",
                     "parent_id": "root"},
     "decompose": {"parent_id": "kid", "children": [{"task_id": "kid.a", "spec": dict(_GOOD_SPEC),
@@ -71,12 +82,11 @@ _GOOD: dict[str, dict] = {
     "revise": {"task_id": "kid", "spec": dict(_GOOD_SPEC), "agent": "agent",
                "reason": "spec_defect"},
     "edit_accepted_risks": {"task_id": "root", "agent": "agent",
-                            "accepted_risks": [{"item": "another fault",
-                                                "predictability": "extraordinary",
-                                                "justification": "accepted", "invalidation_condition": "never"}]},
+                            "accepted_risks": [{"item": "another fault", "predictability": "extraordinary", "justification": "accepted", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]},
     "edit_scope": {"task_id": "root", "agent": "agent",
                    "scope": ["it does not ship a GUI"]},
     "claim_drift": {"task_id": "kid"},
+    "probe_inputs": {"task_id": "kid"},
     "edit_criteria": {"task_id": "kid", "agent": "agent",
                       "criteria": [criterion("c", "C, sharper")]},
     "reassign": {"task_id": "kid", "assignee": "someone", "reason": "capability_mismatch"},
@@ -111,14 +121,16 @@ _BAD: dict[str, dict] = {
     "usage": {},
     "list_agents": {},
     "register_agent": {"agent_id": "probe-exec", "kind": ["not", "a", "kind"]},
+    "unregister_agent": {"agent_id": ["not", "an", "id"]},
+    "set_mode": {"mode": ["not", "a", "mode"]},
     "create_task": {"task_id": "bad", "spec": "just do the thing"},
     "decompose": {"parent_id": "root", "children": "not-a-list"},
     "revise": {"task_id": "kid", "spec": "a sentence", "agent": "agent"},
-    "edit_accepted_risks": {"task_id": "root", "accepted_risks": [{"item": "x",
-                                                                   "predictability": "HIGH"}],
+    "edit_accepted_risks": {"task_id": "root", "accepted_risks": [{"item": "x", "predictability": "HIGH", "p": 0.01, "impact": "the run stops and is resumed", "justification": "no precedent in this environment", "invalidation_condition": "one occurs"}, DENIAL_ENTRY],
                             "agent": "agent"},
     "edit_scope": {"task_id": "no-such-node", "scope": "a sentence", "agent": "agent"},
     "claim_drift": {"task_id": "no-such-node"},
+    "probe_inputs": {"task_id": "no-such-node"},
     "edit_criteria": {"task_id": "kid", "criteria": "one criterion", "agent": "agent"},
     "reassign": {"task_id": "no-such-node", "assignee": "someone"},
     "reopen": {"task_id": "no-such-node", "agent": "agent"},

@@ -15,7 +15,7 @@ product ships a checker that names it: *"the criterion sets no requirement that 
 exercise billing or migration logic at all."* Their sentence for it is the one worth keeping: **the
 one that says done is the one that never asks.**
 
-This does not withhold `complete`. The checker is an a-priori approximation (§13.5) and the real
+This does not withhold `complete`. The checker is an a-priori approximation (§9.9) and the real
 Level-2 verdict belongs to contact — a leaf whose review is merely unanswered is not thereby unfinished.
 What it stops is the silence.
 """
@@ -25,15 +25,14 @@ import json
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _a_leaf_that_passed_with_its_review_unanswered(e):
     T.create_task(e, "leaf", {"description": "Ship the billing rewrite",
                               "criteria": [criterion("suite_green",
                                                      "pytest -q exits 0 with >= 400 passed")],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     # A review that RAN and named a gap — the shape `review_decomposition` stores for a leaf.
@@ -42,17 +41,17 @@ def _a_leaf_that_passed_with_its_review_unanswered(e):
         "undecided_obligations": [{"obligation": "the tests must exercise billing",
                                    "admits": "400 `assert True` tests satisfy the criterion"}],
         "conflicts": [], "plan_generation": [0, ["suite_green"], []]}))
-    t = e.get_task(TaskId("leaf"))
+    t = e.graph.get_task(TaskId("leaf"))
     t.verified = True
     e._graph.save_task(t)
     T.signal(e, "leaf", "ACCEPT", "exec-1")
     T.signal(e, "leaf", "DELIVER", "exec-1", result="400 tests, all passing")
-    T.record_verdict(e, "leaf", "PASS", reviewer="judge",
+    T.record_verdict(e, "leaf", "PASS", reviewer="validator",
                      observed={"suite_green": {"note": "ran `pytest -q`: 400 passed, exit 0",
                                                "ran": ["check suite_green"]}})
     T.signal(e, "leaf", "PASS", "exec-1")
     e.wait_idle()
-    assert e.get_state(TaskId("leaf")).name == "DONE"
+    assert e.graph.get_state(TaskId("leaf")).name == "DONE"
     # …ASSERTED ON THE FINDINGS, not on the gate's answer. `execution_admitted` says whether the
     # machine will let children start, and that depends on a deployment switch (`GFSO_L2_GATE`,
     # which this suite turns off — the canon's EXPLORE branch). What this test is about is the
@@ -80,13 +79,12 @@ def test_a_leaf_whose_review_was_answered_carries_nothing():
     e.start()
     T.create_task(e, "ok", {"description": "a leaf",
                             "criteria": [criterion("c", "C")],
-                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                "predictability": "EXTRAORDINARY"}]},
+                            "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, "ok", "ACCEPT", "exec-1")
     T.signal(e, "ok", "DELIVER", "exec-1", result="built it")
-    T.record_verdict(e, "ok", "PASS", reviewer="judge",
+    T.record_verdict(e, "ok", "PASS", reviewer="validator",
                      observed={"c": {"note": "ran the check, it printed OK",
                                      "ran": ["check c"]}})
     T.signal(e, "ok", "PASS", "exec-1")

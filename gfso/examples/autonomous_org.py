@@ -13,7 +13,8 @@ from gfso.examples import scratch
 from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.delegate import AgentRegistry, Dispatcher
+from gfso.delegate import Dispatcher
+from gfso.roster import AgentRegistry
 from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.config import MODEL_DEFAULT
@@ -36,7 +37,7 @@ def main() -> None:
 
     agents = AgentRegistry(path=scratch("agents.json"))
     # TWO executors, and that is the point rather than a detail. A subtree delegated entirely to ONE
-    # role has no SEAM in it: every child's Del equals its parent's, which §14.5 D6 calls an internal
+    # role has no SEAM in it: every child's Del equals its parent's, which §10.3 calls an internal
     # node — it self-verifies, no independent validator fires, and the node then waits for its issuer
     # to sign. Measured 2026-08-20 with a single role: the delivery landed in 57 seconds and the
     # graph stood still for half an hour. An org with one worker is a degenerate org; this one has
@@ -57,7 +58,7 @@ def main() -> None:
 
     # THE COORDINATOR'S OWN STEP, which this demo used to skip. `auto_decompose` verifies the plan
     # STRUCTURALLY (Level 0: coverage, mappings, the DAG); execution is gated on Level 2 as well
-    # (§13.4 — do the children's criteria causally carry the parent's?), and nothing starts until
+    # (§9.1 — do the children's criteria causally carry the parent's?), and nothing starts until
     # that verdict exists. Measured 2026-08-20: without this call the demo sat with two children in
     # OFFERED and an empty workspace until its own clock ran out, while the frontier was saying
     # "CHECK THE PLAN of 'job'" the whole time and the loop below never asked it.
@@ -85,16 +86,16 @@ def main() -> None:
     # invent a verdict), and this loop would then spin for as long as the reader let it. The example
     # says what it is waiting on and returns.
     deadline = time.monotonic() + 1800
-    # The ends are the SETTLEMENTS. ESCALATED is the issuer waiting (§14.3-bis), which is not
+    # The ends are the SETTLEMENTS. ESCALATED is the issuer waiting (§12.5), which is not
     # an end, and stopping there while never stopping on ABANDONED was both at once.
-    while e.get_state(T.TaskId("job")).name not in ("DONE", "ABANDONED"):
+    while e.graph.get_state(T.TaskId("job")).name not in ("DONE", "ABANDONED"):
         d.dispatch_once()
         if time.monotonic() > deadline:
             print("stopped after 30 min without a terminal root — the graph as it stands:")
             break
         time.sleep(5)
-    print("root:", e.get_state(T.TaskId("job")).name)
-    if parked := sorted(getattr(e, "_validation_parked", ())):
+    print("root:", e.graph.get_state(T.TaskId("job")).name)
+    if parked := sorted(e.parking.parked_validations()):
         print("nodes whose automatic validation gave up (they need their issuer):", ", ".join(parked))
     for n in T.get_graph(e)["nodes"]:
         print(f"  {n['id']}: {n['state']}")

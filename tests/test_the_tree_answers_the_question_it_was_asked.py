@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from gfso import driver
 from gfso import tools as T
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISKS = REGISTER
 
 
 def _one_branch_closed_by_hand(e):
@@ -30,23 +30,18 @@ def _one_branch_closed_by_hand(e):
     SUBTREE against its project, which is exactly what `signed` and `live` are now.
     """
     T.create_task(e, "goal", {"description": "the goal",
-                              "criteria": [criterion("c", "C"), criterion("d", "D")],
-                              "accepted_risks": _RISKS}, assignee="exec-1")
-    T.create_task(e, "signed", {"description": "signed off",
-                                "criteria": [criterion("c", "C")],
-                                "accepted_risks": _RISKS}, assignee="exec-1", parent_id="goal")
-    T.create_task(e, "live", {"description": "still going",
-                              "criteria": [criterion("d", "D")],
-                              "accepted_risks": _RISKS}, assignee="somebody-else", parent_id="goal")
-    T.map_criterion(e, "goal", "signed", "c")
-    T.map_criterion(e, "goal", "live", "d")
+                              "criteria": [criterion("c", "C"), criterion("d", "D")]}, assignee="exec-1")
+    # …both children are admitted in one act, covering the goal, the split's register with them (§11.5, §9.2)
+    T.decompose(e, "goal", [
+        {"task_id": "signed", "spec": {"description": "signed off", "criteria": [criterion("c", "C")]},
+         "assignee": "exec-1", "covers": ["c"]},
+        {"task_id": "live", "spec": {"description": "still going", "criteria": [criterion("d", "D")]},
+         "assignee": "somebody-else", "covers": ["d"]}], accepted_risks=_RISKS)
     e.wait_idle()
-    # …both children exist and cover the goal before either moves: a child cannot execute under a
-    # plan that is not L0-verified, and coverage is what verifies it (§13.4).
     T.signal(e, "signed", "ACCEPT", "exec-1")
     T.signal(e, "signed", "DELIVER", "exec-1", result="claimed done")
-    # A criterion now carries the procedure that decides it (A1/§10), so the hand closure names
-    # WHICH pinned command was run — nothing is decided by a probe invented at judging time.
+    # A criterion now carries the procedure that decides it (A1/§2), so the hand closure names
+    # WHICH pinned command was run — nothing is decided by a probe invented at validation time.
     T.record_verdict(e, "signed", "PASS", reviewer="inspector",
                      observed={"c": {"note": "I ran it myself and read OK",
                                      "ran": ["check c"]}})

@@ -1,6 +1,6 @@
 ﻿"""Read-only projection of a node's decomposition — the critic's input contract.
 
-Renders the unit a semantic critic (analyst + judge) reasons over: a node's goal,
+Renders the unit a semantic critic (analyst + validator) reasons over: a node's goal,
 its proposed breakdown (subtasks, their criteria, criterion-coverage, seams,
 ACCEPTED_RISKS) and the already-run structural (Solver / L0–L1) checks.
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from gfso.core.types import Task, CheckResult, DepEdge, Predictability, Verdict
+from gfso.core.types import AcceptedRiskItem, Task, CheckResult, DepEdge, Verdict, register_of, set_aside_of
 
 
 # === Sentinel markers — typed values, not bare string literals at use-sites ===
@@ -39,9 +39,14 @@ class CriterionView:
     name: str
     description: str
     # WHAT WILL BE RUN TO DECIDE IT. A projection that shows the criterion and not its procedure
-    # shows an intention; the judge then writes its own, at judging time, which is the defect the
-    # pinned `check` exists against (A1/§10, Inv-1 §14.4).
-    check: tuple[tuple[str, str, str], ...] = ()     # (behaviour, command, expect)
+    # shows an intention; the validator then writes its own, at validation time, which is the defect the
+    # pinned `check` exists against (A1/§2, Inv-1 §12.3).
+    # (behaviour, command, expect, [the paths the probe pins]) — the NAMES, not the bodies: a
+    # projection is what a model reads to repair a plan, and a corpus of eighty programs inlined
+    # into it would crowd out the plan itself. What it must not do is hide that `{inputs}` HAS a
+    # referent — a reader who cannot see the files writes the next version of the command without
+    # them.
+    check: tuple[tuple, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,14 +76,6 @@ class SeamView:
 
 
 @dataclass(frozen=True)
-class AcceptedRiskView:
-    item: str
-    predictability: Optional[Predictability]
-    justification: str
-    invalidation_condition: str
-
-
-@dataclass(frozen=True)
 class CheckView:
     check_name: str
     passed: bool
@@ -103,8 +100,8 @@ class NodeProjection:
     mappings_declared: bool = False
     coverage: tuple[CoverageView, ...] = ()
     seams: tuple[SeamView, ...] = ()
-    accepted_risks: tuple[AcceptedRiskView, ...] = ()
-    scope: tuple[str, ...] = ()  # §13.1 declared scope-boundary exclusions on the goal
+    accepted_risks: tuple[AcceptedRiskItem, ...] = ()
+    scope: tuple[str, ...] = ()  # §9.2 declared scope-boundary exclusions on the goal
     checks: tuple[CheckView, ...] = ()
 
 
@@ -123,7 +120,8 @@ def build(
     """
     criteria = tuple(
         CriterionView(c.name, c.description,
-                      tuple((p.behaviour, p.command, p.expect) for p in (c.check or ())))
+                      tuple((p.behaviour, p.command, p.expect, [x for x, _ in p.inputs])
+                            for p in (c.check or ())))
         for c in node.spec.criteria
     )
 
@@ -139,10 +137,11 @@ def build(
             description=c.spec.description,
             assignee=c.assignee,
             criteria=tuple(CriterionView(cc.name, cc.description,
-                                         tuple((p.behaviour, p.command, p.expect)
+                                         tuple((p.behaviour, p.command, p.expect,
+                                                [x for x, _ in p.inputs])
                                                for p in (cc.check or ())))
                            for cc in c.spec.criteria),
-            accepted_risks=tuple(n.item for n in c.spec.accepted_risks),
+            accepted_risks=tuple(n.item for n in set_aside_of(c)),
             name=c.spec.name,
         )
         for c in children
@@ -170,15 +169,7 @@ def build(
         if e.from_id in child_ids and e.to_id in child_ids
     )
 
-    accepted_risks = tuple(
-        AcceptedRiskView(
-            item=n.item,
-            predictability=n.predictability,
-            justification=n.justification,
-            invalidation_condition=n.invalidation_condition,
-        )
-        for n in node.spec.accepted_risks
-    )
+    accepted_risks = tuple(register_of(node).items)
 
     checks = tuple(
         CheckView(r.check_name, r.passed, r.skipped, r.details) for r in check_results
@@ -230,10 +221,10 @@ def _render_split(p, out: list) -> None:
     out.append("## Dependencies (Dep) — declared seams between subtasks")
     if p.seams:
         for e in p.seams:
-            # A discovered edge is runtime GROUND TRUTH (a BLOCK named a real prerequisite);
-            # provisional = recorded, awaiting adjudication — still contact, not a guess.
-            tag = (" (discovered by contact — ground truth, provisional)" if e.discovered and e.provisional
-                   else " (discovered by contact — ground truth)" if e.discovered else "")
+            # A CONFIRMED discovery is contact's verdict on the plan; a provisional one is an executor's report
+            # its issuer has not answered — a claim (§11.3), and a reviewer told "ground truth" reads it as one
+            tag = (" (discovered by a BLOCK — reported, not yet answered by its issuer)" if e.discovered and e.provisional
+                   else " (discovered by contact — confirmed)" if e.discovered else "")
             out.append(f"- `{e.to_id}` depends on `{e.from_id}`{tag}")
             glue = e.glue.value if isinstance(e.glue, GlueMarker) else e.glue
             out.append(f"  - glue (what must match / what breaks): {glue}")
@@ -246,18 +237,28 @@ def _render_declared(p, out: list) -> None:
     the structural checks already run. Split from the head — goal, criteria, split — because
     the reader of a projection is asking two different questions and the second half is the
     one that is about what the plan says it does NOT do."""
-    out.append("## ACCEPTED_RISKS — declared scope-exclusions for this node")
-    if p.accepted_risks:
-        for n in p.accepted_risks:
-            pr = n.predictability.name if n.predictability else "unclassified"
+    out.append("## ACCEPTED_RISKS — the split's register: the uncertain events it accepts")
+    events = [n for n in p.accepted_risks if not n.denial]
+    if events:
+        for n in events:
+            pr = f"predictability: {n.predictability.name if n.predictability else 'unclassified'}"
+            est = f"; P {n.p}" if n.p is not None else ""
+            imp = f"; impact: {n.impact}" if n.impact else ""
+            grp = f"; component: {n.component}" if n.component else ""
             j = f"; justification: {n.justification}" if n.justification else ""
             inv = f"; invalidation: {n.invalidation_condition}" if n.invalidation_condition else ""
-            out.append(f"- {n.item}  [predictability: {pr}{j}{inv}]")
+            out.append(f"- {n.item}  [{pr}{est}{imp}{grp}{j}{inv}]")
     else:
         out.append("- (none declared)")
     out.append("")
+    # …and BESIDE it, the split's own denial: its odds of being refuted, not an event it accepts — it covers no gap
+    # (§9.2: not admitted, it licenses nothing; critic r4 — under the register it read as covering every gap)
+    for n in (n for n in p.accepted_risks if n.denial):
+        out.append(f"## The split's denial by S — its stated odds of refutation at contact (P {n.p}), NOT an accepted "
+                   f"risk: it covers no gap and excuses no criterion (§9.2, §9.5)")
+        out.append("")
 
-    # SCOPE is an OPTIONAL goal-level mark (canon §13.1: помечается «когда исключение неочевидно»),
+    # SCOPE is an OPTIONAL goal-level mark (canon §9.2: помечается «когда исключение неочевидно»),
     # unlike ACCEPTED_RISKS (mandatory for a decomposed node, CHECK-4) — render only when declared: an
     # empty section on a child would misread a goal-level object as that child's missing register.
     if p.scope:
@@ -290,8 +291,11 @@ def render(projection: NodeProjection) -> str:
     if p.criteria:
         for c in p.criteria:
             out.append(f"- **{c.name}**: {c.description or '(no description)'}")
-            for beh, cmd, exp in (c.check or ()):
-                out.append(f"    - pinned check — {beh}: `{cmd}` → expect: {exp}")
+            for beh, cmd, exp, *rest in (c.check or ()):
+                files = rest[0] if rest else []
+                out.append(f"    - pinned check — {beh}: `{cmd}` → expect: {exp}"
+                           + (f" (`{{inputs}}` = {len(files)} file(s) pinned with this probe: "
+                              f"{', '.join(files)})" if files else ""))
     else:
         out.append("- (none declared)")
     out.append("")

@@ -1,6 +1,6 @@
 """A severed validation is severed, whichever of its batches came back last.
 
-A contract with more criteria than the batch size is judged in CONCURRENT batches, and every batch
+A contract with more criteria than the batch size is validated in CONCURRENT batches, and every batch
 pushes its stats onto one list in completion order. Asked of the last entry, "was this call cut?"
 therefore depended on a race: the same torn transport was recognised as cut when its batch finished
 last and read as "answered badly" when it did not. That reading is expensive — a cut call gets a
@@ -21,7 +21,7 @@ def test_a_torn_batch_is_seen_wherever_it_lands():
     assert the_call_was_cut(_Fake(False, True, False), "")
 
 
-def test_a_judgement_that_answered_is_not_cut():
+def test_a_validation_that_answered_is_not_cut():
     assert not the_call_was_cut(_Fake(False, False, False), "{}")
 
 

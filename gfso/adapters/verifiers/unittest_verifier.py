@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 
+from gfso.adapters import children
 from gfso.core.types import TaskId, Spec, CheckResult, StoragePort, VerifierPort, Verdict
 
 log = logging.getLogger(__name__)
@@ -79,11 +80,8 @@ def _run_suite(model_code: str, test_code: str, timeout: float = 60.0) -> list[d
         f.write(full)
         path = f.name
     try:
-        r = subprocess.run(
-            [sys.executable, path],
-            capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace",
-        )
+        r = children.run([sys.executable, path], timeout=timeout, text=True,
+                         encoding="utf-8", errors="replace")
         out = r.stdout or ""
         if "__GFSO_VERIFIER_LOAD_FAIL__" in out:
             err = out.split("__GFSO_VERIFIER_LOAD_FAIL__:", 1)[1].strip()

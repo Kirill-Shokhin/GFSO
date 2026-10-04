@@ -22,10 +22,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from gfso.adapters.llm.stats import _hint, _stat_line, _tag
+from gfso.adapters.llm.stats import _hint, _stat_line, tag_stage
 from gfso.core.types import LLMProviderPort, Stage
 from gfso.config import MODEL_DEFAULT
-from gfso.runtime import llm_factory
+from gfso.llm import llm_factory
 
 
 def _progress(msg: str, cb=None) -> None:
@@ -59,13 +59,13 @@ AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8")
 _NAME_DESC = {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"},
     # THE PROCEDURE, WRITTEN WITH THE CRITERION AND BEFORE ANY WORK. A criterion is a DECIDABLE
-    # predicate (§10, A1); "for any accepted program the output matches gcc" decides nothing on its
-    # own, and what used to close that gap was the validator inventing a probe set at judging time —
-    # a different one each round, so a PASS said only what the judge felt like checking. Authoring
+    # predicate (§2, A1); "for any accepted program the output matches gcc" decides nothing on its
+    # own, and what used to close that gap was the validator inventing a probe set at validation time —
+    # a different one each round, so a PASS said only what the validator felt like checking. Authoring
     # it here is the issuer side's job and nobody else's: the user writes the requirement, the
     # system writes the procedure that makes it decidable, and it is fixed before the executor
-    # starts (Inv-1, §14.4). Measured on `c_compiler` (2026-09-19/20): the root closed PASS by an
-    # independent judge and 205 probes written from the same contract found 34 real divergences.
+    # starts (Inv-1, §12.3). Measured on `c_compiler` (2026-09-19/20): the root closed PASS by an
+    # independent validator and 205 probes written from the same contract found 34 real divergences.
     "check": {"type": "array", "description":
         "THE DECISION PROCEDURE for this criterion — what will actually be run to decide it, written "
         "NOW, before the work exists. Each item: {behaviour: the conjunct it observes, command: how "
@@ -76,12 +76,43 @@ _NAME_DESC = {"type": "object", "properties": {
         "away. Refer to the promised interface (the binary, the endpoint, the file) even though it "
         "does not exist yet; that is exactly what makes the check a pre-registered claim. Never "
         "write a command that only restates the criterion ('review the code') — it must produce an "
-        "observation someone else can compare with `expect`.",
+        "observation someone else can compare with `expect`. Test data the command reads (programs "
+        "to compile, documents to parse, request bodies) goes into the probe's own `inputs` and the "
+        "command names their directory `{inputs}` (e.g. `for f in {inputs}/*.c; do …; done`): the "
+        "system writes them at validation time, so they cannot move under the check. A probe program longer "
+        "than a one-line expression, or one carrying quoted data inside a quoted command, is an input too: "
+        "put it in `inputs` as a file and run it from `{inputs}` so it still sees the working directory's modules "
+        "(`PYTHONPATH=. python {inputs}/edge_cases.py`, each program its own file name) — inlined, one lost "
+        "escape makes the probe check the "
+        "quoting. Scratch files are the run's own (`T=$(mktemp -d); … > $T/out`), never a fixed `/tmp/x` — "
+        "nodes are validated at once. Never point a "
+        "command at test data the executor will write — its object would change while the check "
+        "reads as unchanged.",
         "items": {"type": "object", "properties": {
             "behaviour": {"type": "string"}, "command": {"type": "string"},
-            "expect": {"type": "string"}},
+            "expect": {"type": "string"},
+            "inputs": {"type": "array", "description":
+                       "files the command reads, pinned with it: relative paths under `{inputs}`",
+                       "items": {"type": "object", "properties": {
+                           "path": {"type": "string"}, "content": {"type": "string"}},
+                           "required": ["path", "content"]}}},
             "required": ["behaviour", "command", "expect"]}}},
     "required": ["name", "description", "check"]}
+
+# THE SEAM'S INPUT, COUNTED IN THE SAME CALL. A seam — an independent validation, and a wait for it — belongs
+# where one agent's capacity ends (κ bounds executing AND checking, §3.7; a node is a leaf when within it, the
+# root not exempt, §15.2; below it an agent self-verifies and presents one result, §10.3). Nobody but the
+# decomposer has the plan in view, and estimating a piece of work is the obvious count anyone makes; so it
+# writes the volume and its judgement against the named executor, and the build places the seams from them.
+_VOLUME = ("the obvious count of the work: roughly how much has to be written (lines, files) and how many "
+           "checks run — the ground for the judgement beside it")
+_FITS = ("can ONE session of the executor named under # EXECUTOR write this subtask AND run every one of its "
+         "checks directly, holding all its requirements at once? Judged from the volume you counted, "
+         "against that executor")
+_WHOLE_FITS = ("the same question for the WHOLE node being split — every subtask together with the "
+               "integration: could one session of the named executor build and check all of it? The node is "
+               "split for the plan either way; this decides whether its pieces are validated each on its "
+               "own or once, at the node, as one executor's work")
 
 # AUDIT structured output: the decomposition as graph spec (the graph is the artifact; its one
 # textual read is Engine.project — the model never emits prose).
@@ -91,15 +122,19 @@ AUDIT_SCHEMA = {
         "name": {"type": "string", "description":
             "A SHORT title (≤6 words) for the whole node — the UI label; the request text is the full description."},
         "root_criteria": {"type": "array", "description":
-            "The SPANNING invariants — V criteria that span multiple subtasks / belong to the whole node.",
+            "The node's WHOLE contract: its spanning invariants, AND for each component the goal names requirements "
+            "of, one criterion listing those requirements as the goal states them (mapped to that child) — every "
+            "requirement of the goal is decided by a criterion here, never only by a child's.",
             "items": _NAME_DESC},
         "subtasks": {"type": "array", "description":
             "The D components. Each: a stable snake_case id, a SHORT name (≤6 words, the node title), a fuller "
-            "description, and its own node-local criteria (boundary-state / single-component V items it owns).",
+            "description, and its own concrete criteria (the requirements of its piece, each with its probes).",
             "items": {"type": "object", "properties": {
                 "id": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"},
-                "criteria": {"type": "array", "items": _NAME_DESC}},
-                "required": ["id", "name", "description", "criteria"]}},
+                "criteria": {"type": "array", "items": _NAME_DESC},
+                "volume": {"type": "string", "description": _VOLUME},
+                "fits_one_session": {"type": "boolean", "description": _FITS}},
+                "required": ["id", "name", "description", "criteria", "volume", "fits_one_session"]}},
         "mappings": {"type": "array", "description":
             "Coverage: which subtask establishes which root criterion (every root criterion → >=1 subtask; "
             "every subtask → >=1 mapping).",
@@ -116,15 +151,26 @@ AUDIT_SCHEMA = {
             "decomposition ignores. predictability verdict per event: STATISTICAL = P estimable but rare "
             "(justification must state why carrying it as an accepted risk is acceptable); EXTRAORDINARY = genuinely "
             "unprecedented (no precedent AND not derivable from known models); ORDINARY events may NOT be "
-            "accepted_risks — they must be a subtask instead. A deliberate SCOPE BOUNDARY (a capability the goal "
+            "accepted_risks — they must be a subtask instead. An entry never decides how the result behaves on an "
+            "input the goal describes ('lone surrogates are accepted rather than rejected'): that is a behaviour, "
+            "certain once built, so it is decided in a criterion, which the validator then checks — an input of a "
+            "kind the goal names stays the goal's however large or deep it is, at sizes the environment holds; only "
+            "the arrival of what the "
+            "goal does not describe at all (load on a scale it never mentions, a failing environment) is an event. "
+            "A deliberate SCOPE BOUNDARY (a capability the goal "
             "does not include) is NOT a risk — it has no P: put it in the `scope` field (objectified on the "
             "goal, visible in the graph), NOT here; it also shapes which root_criteria exist.",
             "items": {"type": "object", "properties": {
                 "item": {"type": "string"},
                 "predictability": {"type": "string", "enum": ["STATISTICAL", "EXTRAORDINARY"]},
                 "justification": {"type": "string"},
-                "invalidation": {"type": "string", "description": "when to revisit this accepted risk"}},
-                "required": ["item", "predictability", "justification", "invalidation"]}},
+                "invalidation": {"type": "string", "description": "when to revisit this accepted risk"},
+                "p": {"type": "number", "description": "your estimate of the probability the event materializes "
+                      "during this goal's run, in (0, 1] — the register's roll-up reads it (§9.4)"},
+                "impact": {"type": "string", "description": "what it costs the goal when it does"},
+                "component": {"type": "string", "description": "the risk component (a group of correlated factors "
+                              "with one root cause) this entry accepts as a group, where it does; else empty"}},
+                "required": ["item", "predictability", "justification", "invalidation", "p", "impact"]}},
         "scope": {"type": "array", "description":
             "Deliberate SCOPE-BOUNDARY exclusions — capabilities the goal does NOT include (no materialization "
             "probability; NOT risks, distinct from `accepted_risks`). Each: the excluded capability + why it is "
@@ -133,8 +179,18 @@ AUDIT_SCHEMA = {
             "items": {"type": "object", "properties": {
                 "item": {"type": "string"}, "why_out": {"type": "string"}},
                 "required": ["item", "why_out"]}},
+        "denial": {"type": "object", "description":
+            "This split's own denial by S: the probability that its composition claim is refuted at contact — "
+            "the whole FAILs while every child passes. Use the recorded refutation rate of comparable splits when "
+            "you were given one; else your estimate, and say what it rests on.",
+            "properties": {"p": {"type": "number", "description": "in (0, 1]"},
+                           "justification": {"type": "string"}},
+            "required": ["p", "justification"]},
+        "whole_volume": {"type": "string", "description": _VOLUME + " — for the WHOLE node being split"},
+        "whole_fits_one_session": {"type": "boolean", "description": _WHOLE_FITS},
     },
-    "required": ["name", "root_criteria", "subtasks", "mappings", "deps", "accepted_risks"],
+    "required": ["name", "root_criteria", "subtasks", "mappings", "deps", "accepted_risks", "denial",
+                 "whole_volume", "whole_fits_one_session"],
 }
 
 # The repair call PATCHES: every field optional — the corrective audit re-emits ONLY what it changes
@@ -170,6 +226,9 @@ FOLD_SCHEMA = {
         "remove_accepted_risks_items": {"type": "array", "items": {"type": "string"}},
         "add_scope": {"type": "array", "items": AUDIT_SCHEMA["properties"]["scope"]["items"]},
         "remove_scope_items": {"type": "array", "items": {"type": "string"}},
+        "denial": AUDIT_SCHEMA["properties"]["denial"],
+        "whole_volume": AUDIT_SCHEMA["properties"]["whole_volume"],
+        "whole_fits_one_session": AUDIT_SCHEMA["properties"]["whole_fits_one_session"],
     },
     "required": [],
 }
@@ -189,7 +248,7 @@ SEARCH_FAST = ("Pace note: this is a SIMPLE task — keep the enumeration TIGHT:
 AUDIT_FAST = ("Pace note: this is a SIMPLE task — keep the reduction TIGHT: no narration or "
               "self-check text (the structure carries the checks). Names EXACT — drop nothing; the "
               "ACCEPTED_RISKS risk register stays COMPLETE (each risk with its predictability verdict, "
-              "justification, invalidation). NB: reworded 2026-07-09 for the prose-free loop; the "
+              "its estimate p and impact, justification, invalidation). NB: reworded 2026-07-09 for the prose-free loop; the "
               "measured 63-77s numbers below are from the prose-era wording.")
 
 
@@ -208,8 +267,21 @@ def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False
     return llm.complete(user, SEARCH_PROMPT)
 
 
+def executor_line(executor: str) -> str:
+    """The input fact the fit is judged against — which executor runs one session."""
+    # …AND WHAT A SESSION IS. Named by its model alone, the haiku decomposer judged coreutils (~1900 lines) beyond one
+    # session three times of three, where one bare haiku session had written 1611 lines and run its checks in 38
+    # turns; told that a session is an agent working turn by turn with files and a shell, it judged it within (probe,
+    # 2026-10-12). The fit places the seams, so a session misdescribed puts seams below κ that the work pays for.
+    return ("\n\n# EXECUTOR\nEach session is one run of " + (executor or "the user's own agent (its model is not "
+            "known to the system — judge against one session of a current coding agent)")
+            + ": an agent with file-editing and shell tools working turn by turn — each turn can write or edit a "
+              "whole file, or build and run any number of checks — within its turn budget where one is named. "
+              "Judge `fits_one_session` / `whole_fits_one_session` against that session.")
+
+
 def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
-                fast: bool = False) -> dict:
+                fast: bool = False, executor: str = "") -> dict:
     """THE audit call — every round is the same operation (state, findings) → fold-patch; round 1 is
     just the empty-state case (the whole enumeration reduces to the canonical basis as adds). The
     orchestrator carries the full state and merges deterministically — the audit emits ONLY what
@@ -224,7 +296,7 @@ def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
             "fold-patch — omitted content is kept verbatim by the orchestrator. Keep the state "
             "well-formed: an added root criterion or subtask carries its coverage (add_mappings); an "
             "added seam names existing subtask ids. If nothing new carries a distinct falsifier, emit "
-            "an empty patch.")
+            "an empty patch.") + executor_line(executor)
     if fast:
         user += "\n\n" + AUDIT_FAST
     return llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
@@ -280,10 +352,15 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
     if patch.get("name") and patch["name"] != s.get("name"):
         s["name"] = patch["name"]
         ops.append("name")
+    for k in ("denial", "whole_volume", "whole_fits_one_session"):
+        if k in patch and patch[k] != s.get(k):
+            s[k] = patch[k]
+            ops.append(k)
 
     _apply_removals(s, patch, ops)
 
-    upd = {str(c.get("id")): c for c in patch.get("update_subtasks", [])}
+    upd = {str(c.get("id")): _keeping_the_pinned_inputs(c, s["subtasks"])
+           for c in patch.get("update_subtasks", [])}
     changed = [str(c.get("id")) for c in s["subtasks"] if str(c.get("id")) in upd and upd[str(c.get("id"))] != c]
     if changed:
         s["subtasks"] = [upd.get(str(c.get("id")), c) for c in s["subtasks"]]
@@ -306,7 +383,44 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
     return s, ops
 
 
-def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[str]) -> dict:
+def _keeping_the_pinned_inputs(replacement: dict, current: list) -> dict:
+    """A rewritten subtask keeps the FILES its probes pinned, where the command still reads them.
+
+    An update replaces a subtask wholesale, and the model that writes it reads the projection —
+    which shows a probe's command and not the corpus behind `{inputs}`. So a refine round that
+    touched a subtask for any reason returned criteria whose commands still said `{inputs}` and
+    whose inputs were gone: at validation time nothing is laid down, the token is never substituted,
+    and the validator is handed a literal `{inputs}`. This is one level deeper than the class
+    `extract.py` already records paying for — "one refine round stripped every pinned check off a
+    contract that had just been authored with one".
+
+    Matched by criterion name and command, which is what makes it a CARRY rather than a merge: an
+    issuer who genuinely moves the corpus writes a different command, or edits the criterion through
+    the door that says so."""
+    was = {str(c.get("id")): c for c in current}.get(str(replacement.get("id")))
+    if not was:
+        return replacement
+    pinned = {(str(c.get("name")), str(p.get("command"))): p.get("inputs")
+              for c in (was.get("criteria") or []) for p in (c.get("check") or []) if p.get("inputs")}
+    if not pinned:
+        return replacement
+    out = dict(replacement)
+    # "absent" and "empty" are different acts: an issuer who writes `inputs: []` under the same
+    # command has decided to drop the corpus, and writing the old one back would undo his decision
+    # silently — the mirror of the loss this carry exists against.
+    def _probe(c, p) -> dict:
+        if "inputs" in p:
+            return p
+        was = pinned.get((str(c.get("name")), str(p.get("command"))))
+        return dict(p, inputs=was) if was else p
+
+    out["criteria"] = [dict(c, check=[_probe(c, p) for p in (c.get("check") or [])])
+                       for c in (replacement.get("criteria") or [])]
+    return out
+
+
+def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[str],
+               executor: str = "") -> dict:
     """The builder's repair call — a PATCH: the built graph exposed structural holes / lost items; the
     audit corrects its own transcription by re-emitting ONLY the fields it changes (the caller merges).
     Content stays the audit's; this only repairs STRUCTURE (a mapping name that drifted from a criterion
@@ -317,17 +431,17 @@ def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[st
             + "\n".join(f"- {p}" for p in problems)
             + "\n\nEmit a PATCH: re-emit ONLY the top-level fields you change, complete (a re-emitted field "
               "REPLACES the old one wholesale; omitted fields are kept as-is). Fix ONLY what the problems "
-              "require — exact-match mapping/criterion names, add missing predictability verdicts, restore "
+              "require — exact-match mapping/criterion names, add missing predictability verdicts and STD-1 fields (p, impact, justification, invalidation), restore "
               "lost items; do not rework converged content. Any subtask criteria you re-emit must pass the "
               "per-node completeness test (no Result may pass them all yet fail the node's obligation) — a "
               "patched node carries its concrete obligation, not a coarse restatement; do not re-open "
-              "converged nodes you are not patching.")
+              "converged nodes you are not patching.") + executor_line(executor)
     return llm.complete_structured(AUDIT_PROMPT, user, AUDIT_SCHEMA_PATCH)
 
 
 def decompose_spec(request: str, model: str = MODEL_DEFAULT,
                    llm: LLMProviderPort | None = None, progress=None,
-                   fast: bool = False, label: str = "1/1") -> dict:
+                   fast: bool = False, label: str = "1/1", executor: str = "") -> dict:
     """THE INIT ROUND — one search + one fold over the EMPTY state: the exhaustive enumeration reduces
     to the canonical basis (spec form). This is the single spec-space operation; every further
     refinement is the SAME operation applied to the BUILT GRAPH as the state (`refine` in
@@ -340,7 +454,7 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
 
     `fast` appends the measured pace-suffixes (SEARCH_FAST/AUDIT_FAST — user content, cores untouched):
     wordfreq simple task 106s/9.8k → 63-77s/5.6-7.4k out with holes==[], 0 repairs, shape parity
-    (runs/v2_speed/). Content quality vs the frozen judge is UNMEASURED — the author's Pareto call;
+    (runs/v2_speed/). Content quality vs the frozen validator is UNMEASURED — the author's Pareto call;
     default stays False."""
     if llm is None:
         llm = llm_factory(model)
@@ -349,12 +463,12 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     _progress(f"{label} searcher…", progress)
     _hint(llm, f"{label} searcher")
     holes = _search(llm, request, "", fast=fast)
-    _tag(llm, Stage.SEARCH)
+    tag_stage(llm, Stage.SEARCH)
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     _progress(f"{label} auditor (fold, first round)…", progress)
     _hint(llm, f"{label} auditor")
-    patch = _audit_fold(llm, request, "", holes, fast=fast) or {}
-    _tag(llm, Stage.AUDIT_FOLD)
+    patch = _audit_fold(llm, request, "", holes, fast=fast, executor=executor) or {}
+    tag_stage(llm, Stage.AUDIT_FOLD)
     spec, ops = _fold_merge({}, patch)
     if not ops:
         _progress(f"{label} auditor {_stat_line(llm)} · empty fold — no basis emitted (failed first round)",

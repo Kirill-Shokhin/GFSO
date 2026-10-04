@@ -15,20 +15,25 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId, Verdict
-from tests.support import criterion, instrument_passes, make_engine, UNMODELLED_FAULT
+from tests.support import criterion, instrument_passes, make_engine, parts_held, REGISTER
 
-_RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISKS = REGISTER
+
+
+def _admit(e, *kids):
+    """Root's split, admitted whole (§11.5): each `(child, criterion it covers)` issued in one act, the register
+    written with it (§9.2)."""
+    T.decompose(e, "root", [{"task_id": kid, "spec": {"description": "a part", "criteria": [criterion("k1", "K1")]},
+                             "assignee": "agent", "covers": [crit]} for kid, crit in kids], accepted_risks=_RISKS)
 
 
 def _parent_failed_over_untouched_children():
     """A root whose criterion FAILed while its only covering child stands passed and untouched."""
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "the whole", "criteria": [criterion("c1", "C1 over the integrated whole")],
-                              "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, "root.kid", {"description": "a part", "criteria": [criterion("k1", "K1")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "root.kid", "c1")
+    T.create_task(e, "root", {"description": "the whole", "criteria": [criterion("c1", "C1 over the integrated whole")]},
+                  assignee="agent")
+    _admit(e, ("root.kid", "c1"))
     e.wait_idle()
 
     T.signal(e, "root.kid", "ACCEPT", "agent")
@@ -45,7 +50,8 @@ def _parent_failed_over_untouched_children():
                                           "evidence": "ran the integrated whole: c1 does not hold",
                                           "behaviours": ["C1 holds over the whole"],
                                           "probe": [{"command": "run the whole", "expect": "C1",
-                                                     "behaviour": "C1 holds over the whole"}]}])
+                                                     "behaviour": "C1 holds over the whole"}]
+                                          + parts_held(e, "root", "c1")}])
     T.signal(e, "root", "FAIL", "agent", failed_criteria=["c1"])
     e.wait_idle()
     return e
@@ -61,12 +67,11 @@ def test_the_directive_names_the_repair_the_engine_will_accept():
     # the repair the arm actually attempted: a revision that did NOT touch the failed criterion
     # (it reworded the goal), then re-accept and try to aggregate again.
     T.revise(e, "root", {"description": "the whole, restated",
-                         "criteria": [criterion("c1", "C1 over the integrated whole")],
-                         "accepted_risks": _RISKS}, agent="agent")
+                         "criteria": [criterion("c1", "C1 over the integrated whole")]}, agent="agent")
     e.wait_idle()
     T.signal(e, "root", "ACCEPT", "agent")
     e.wait_idle()
-    assert e.get_state(TaskId("root")).name == "EXECUTING", "the live shape is an EXECUTING parent"
+    assert e.graph.get_state(TaskId("root")).name == "EXECUTING", "the live shape is an EXECUTING parent"
 
     step = e.next_step(TaskId("root"))
     refused = T.signal(e, "root", "DELIVER", "agent", result="re-integrated, nothing else changed")
@@ -82,11 +87,8 @@ def test_a_node_the_gate_would_admit_is_still_told_to_deliver():
     """The negative control: an ordinary aggregate must keep its ordinary directive."""
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "the whole", "criteria": [criterion("c1", "C1")],
-                              "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, "root.kid", {"description": "a part", "criteria": [criterion("k1", "K1")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "root.kid", "c1")
+    T.create_task(e, "root", {"description": "the whole", "criteria": [criterion("c1", "C1")]}, assignee="agent")
+    _admit(e, ("root.kid", "c1"))
     e.wait_idle()
     T.signal(e, "root.kid", "ACCEPT", "agent")
     T.signal(e, "root.kid", "DELIVER", "agent", result="built it; ran the check, it printed OK",
@@ -106,8 +108,9 @@ def test_it_does_not_advise_a_PASS_the_plan_gate_refuses():
 
     `pass_blocked_by` is the one owner of "why a PASS here is refused whoever signs it", and the
     VALIDATING branch — the only branch that ever advises a PASS — did not consult it. The shape:
-    the parent is delivered, every active child has passed (so the AND is satisfied), and a covering
-    child is then CANCELled, leaving a mapping to a node that has left the decomposition. The plan
+    the parent is delivered, every active child has passed (so the AND is satisfied), and the sole
+    coverer of a criterion is then CANCELled, leaving that criterion covered by no active child (§12.6 —
+    a co-covered one leaves no hole: a mapping onto a node out of the plan covers nothing). The plan
     stops passing the Syntactic level, which is the second of the three grounds `validation.py`
     refuses a PASS on and the one the affordance surface never modelled. The frontier said
     "signal PASS if every criterion holds"; every PASS came back refused.
@@ -118,14 +121,9 @@ def test_it_does_not_advise_a_PASS_the_plan_gate_refuses():
     e = make_engine(check_interval=10_000)
     e.start()
     T.create_task(e, "root", {"description": "the whole",
-                              "criteria": [criterion("c1", "C1"),
-                                           criterion("c2", "C2")],
-                              "accepted_risks": _RISKS}, assignee="agent")
-    for kid, crit in (("root.kid", "c1"), ("root.other", "c2")):
-        T.create_task(e, kid, {"description": "a part",
-                               "criteria": [criterion("k1", "K1")]},
-                      assignee="agent", parent_id="root")
-        T.map_criterion(e, "root", kid, crit)
+                              "criteria": [criterion("c1", "C1"), criterion("c2", "C2"),
+                                           criterion("c3", "C3")]}, assignee="agent")
+    _admit(e, ("root.kid", "c1"), ("root.other", "c2"), ("root.spare", "c3"))
     e.wait_idle()
     for kid in ("root.kid", "root.other"):
         T.signal(e, kid, "ACCEPT", "agent")
@@ -136,16 +134,12 @@ def test_it_does_not_advise_a_PASS_the_plan_gate_refuses():
     T.signal(e, "root", "ACCEPT", "agent")
     T.signal(e, "root", "DELIVER", "agent", result="assembled the parts")
     e.wait_idle()
-    assert e.get_state(TaskId("root")).name == "VALIDATING"
+    assert e.graph.get_state(TaskId("root")).name == "VALIDATING"
 
-    T.create_task(e, "root.spare", {"description": "a spare part",
-                                    "criteria": [criterion("s1", "S1")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "root.spare", "c2")
-    e.wait_idle()
     T.signal(e, "root.spare", "CANCEL", "agent", reason="the part is not wanted after all")
+    T.signal(e, "root.spare", "CONFIRM_CANCEL", "agent", in_flight="nothing begun")   # settled: out of the plan
     e.wait_idle()
-    assert e.get_state(TaskId("root")).name == "VALIDATING"
+    assert e.graph.get_state(TaskId("root")).name == "VALIDATING"
     assert e.pass_blocked_by(TaskId("root")) is not None
 
     step = e.next_step(TaskId("root"))
@@ -172,14 +166,9 @@ def test_a_recorded_verdict_is_not_hidden_behind_a_plan_repair():
     e = make_engine(check_interval=10_000)
     e.start()
     T.create_task(e, "root", {"description": "the whole",
-                              "criteria": [criterion("c1", "C1"),
-                                           criterion("c2", "C2")],
-                              "accepted_risks": _RISKS}, assignee="agent")
-    for kid, crit in (("root.kid", "c1"), ("root.other", "c2")):
-        T.create_task(e, kid, {"description": "a part",
-                               "criteria": [criterion("k1", "K1")]},
-                      assignee="agent", parent_id="root")
-        T.map_criterion(e, "root", kid, crit)
+                              "criteria": [criterion("c1", "C1"), criterion("c2", "C2"),
+                                           criterion("c3", "C3")]}, assignee="agent")
+    _admit(e, ("root.kid", "c1"), ("root.other", "c2"), ("root.spare", "c3"))   # spare: c3's sole coverer
     e.wait_idle()
     for kid in ("root.kid", "root.other"):
         T.signal(e, kid, "ACCEPT", "agent")
@@ -191,19 +180,17 @@ def test_a_recorded_verdict_is_not_hidden_behind_a_plan_repair():
     T.signal(e, "root", "DELIVER", "agent", result="assembled the parts")
     e.wait_idle()
 
-    # an independent instrument has already judged THIS delivery, and it said FAIL
-    e.record_exec_verdict(TaskId("root"), "FAIL", ["c1"], "judge",
+    # an independent instrument has already validated THIS delivery, and it said FAIL
+    e.record_exec_verdict(TaskId("root"), "FAIL", ["c1"], "validator",
                           per_criterion=[{"criterion": "c1", "verdict": "fail",
                                           "evidence": "ran it; c1 does not hold"},
                                          {"criterion": "c2", "verdict": "pass",
-                                          "evidence": "ran it; c2 holds"}])
-    # …and only then does the plan go red under it
-    T.create_task(e, "root.spare", {"description": "a spare part",
-                                    "criteria": [criterion("s1", "S1")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "root.spare", "c2")
-    e.wait_idle()
+                                          "evidence": "ran it; c2 holds"},
+                                         {"criterion": "c3", "verdict": "pass",
+                                          "evidence": "ran it; c3 holds"}])
+    # …and only then does the plan go red under it: c3's sole coverer leaves the plan (§12.6)
     T.signal(e, "root.spare", "CANCEL", "agent", reason="not wanted after all")
+    T.signal(e, "root.spare", "CONFIRM_CANCEL", "agent", in_flight="nothing begun")   # settled: out of the plan
     e.wait_idle()
     assert e.pass_blocked_by(TaskId("root")) is not None, "the shape needs a blocked PASS"
 

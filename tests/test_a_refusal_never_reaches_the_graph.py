@@ -2,7 +2,7 @@
 
 Found on the agent door 2026-09-02, as one report that looked like three. A tester passed
 `depends_on` as a LIST of producers. The rule that forbids it exists and is written down
-(`tools._dep_of`: a Dep is carried by ONE criterion per seam, §10, and a list once surfaced as an
+(`tools._dep_of`: a Dep is carried by ONE criterion per seam, §2, and a list once surfaced as an
 edge whose `from` was a list) — but `edit_criteria` spelled the same rule a second time, as
 `TaskId(c["depends_on"])`, and `TaskId` is a string alias: it returned the list untouched. So:
 
@@ -20,19 +20,16 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import AgentId, Criteria, TaskId
-from tests.support import criterion, make_engine
+from tests.support import criterion, make_engine, pinned, REGISTER
 
 
 def _graph():
     e = make_engine(check_interval=10_000)
     e.start()
     T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
-                              "accepted_risks": [{"item": "an unmodelled environment fault",
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "accepted_risks": REGISTER},
                   assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "kid", "c")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]}, "assignee": "agent", "covers": ["c"]}], accepted_risks=REGISTER)
     return e
 
 
@@ -42,8 +39,8 @@ def test_edit_criteria_refuses_a_list_of_producers_at_the_door():
     out = T.edit_criteria(e, "kid", [{"name": "dep__p", "description": "d",
                                       "depends_on": ["root", "other"]}], agent="agent")
     assert out.get("refused") or out.get("error"), "a list of producers is refused, not stored"
-    assert "one criterion" in str(out.get("error", "")).lower() or "§10" in str(out.get("error", ""))
-    kept = [c.name for c in e.get_task("kid").spec.criteria]
+    assert "one criterion" in str(out.get("error", "")).lower() or "§2" in str(out.get("error", ""))
+    kept = [c.name for c in e.graph.get_task("kid").spec.criteria]
     assert kept == ["k1"], "…and the contract it refused to change is untouched"
     e.stop()
 
@@ -57,7 +54,8 @@ def test_the_engine_survives_the_step_that_actually_killed_it():
     that was never consulted."""
     e = _graph()
     with pytest.raises(ValueError) as refusal:
-        e.edit_criteria(TaskId("kid"), (Criteria("dep__p", "d", depends_on=["root"]),),
+        e.edit_criteria(TaskId("kid"), (Criteria("k1", "K", check=pinned("k1")),
+                                         Criteria("dep__p", "d", depends_on=["root"])),
                         AgentId("agent"))
     # …and the refusal does not blame a rule that was never consulted
     assert "the FSM refused" not in str(refusal.value)
@@ -65,12 +63,12 @@ def test_the_engine_survives_the_step_that_actually_killed_it():
 
     T.signal(e, "kid", "ACCEPT", "agent")            # …the engine is still serving
     e.wait_idle()
-    assert e.get_task("kid").state.name == "EXECUTING"
+    assert e.graph.get_task("kid").state.name == "EXECUTING"
     e.stop()
 
 
 def test_taking_a_node_says_what_it_still_waits_for():
-    """§14.3 admits ACCEPT whatever the seams say, and the engine is not narrower than the canon.
+    """§12.4 admits ACCEPT whatever the seams say, and the engine is not narrower than the canon.
 
     What the reply owed and did not give was the rest of the truth: two testers watched a graph show
     EXECUTING for nodes that provably could not start, and their executor found out by hitting a

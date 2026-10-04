@@ -1,10 +1,10 @@
 """The Level-0 gate was a precondition on one instant, not a property of the run.
 
-§13.4: "a decomposition that fails the Syntactic level is not admitted to execution." That gate fired
+§11.5: "a decomposition that fails the Syntactic level is not admitted to execution." That gate fired
 in exactly one place -- a CHILD's ACCEPT, read against its PARENT's plan. Break the plan afterwards
 and nothing re-read it; and a ROOT, having no parent, was gated by it nowhere at any point in its life.
 
-Thm 1 (§11.1) makes a parent's PASS the conjunction over its children, and that conjunction
+Thm 1 (§7.3) makes a parent's PASS the conjunction over its children, and that conjunction
 establishes the PARENT only because the children jointly cover its criteria -- which is what L0
 checks. So the letter held while the purpose did not, and two ordinary supported calls demonstrate it
 (audited and probed 2026-09-05, F2):
@@ -22,9 +22,9 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import criterion, make_engine, UNMODELLED_FAULT
+from tests.support import criterion, make_engine, procedure_under, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +45,7 @@ def _two_children():
          "assignee": "w", "covers": ["c1"]},
         {"task_id": "r.b", "spec": {"description": "b",
                                     "criteria": [criterion("k", "K")]},
-         "assignee": "w", "covers": ["c2"]}])
+         "assignee": "w", "covers": ["c2"]}], accepted_risks=REGISTER)
     e.wait_idle()
     for n in ("r.a", "r.b"):
         T.signal(e, n, "ACCEPT", "w")          # …both admitted while the plan is clean
@@ -54,9 +54,10 @@ def _two_children():
 
 def _pass(e, node, signer, observed):
     # what a person says they saw, criterion by criterion — including which of the commands the
-    # contract pinned they ran by hand, since a PASS that sweeps none of them is not one
-    pinned = {c.name: [p.command for p in (c.check or ())]
-              for c in e.get_task(node).spec.criteria}
+    # contract pinned they ran by hand, since a PASS that sweeps none of them is not one — a whole's own
+    # and those of the parts done under it
+    pinned = {c.name: [p.command for p in procedure_under(e, node, c)]
+              for c in e.graph.get_task(node).spec.criteria}
     e.record_reviewer_verdict(
         node, "PASS", [], reviewer=signer,
         observed={k: {"note": v, "ran": pinned.get(k, [])} for k, v in observed.items()})
@@ -70,7 +71,7 @@ def _finish(e, live):
     e.wait_idle()
     T.signal(e, "r", "ACCEPT", "me")
     T.signal(e, "r", "DELIVER", "me", result="aggregate")
-    return _pass(e, "r", "judge", {c.name: "ok" for c in e.get_task("r").spec.criteria})
+    return _pass(e, "r", "validator", {c.name: "ok" for c in e.graph.get_task("r").spec.criteria})
 
 
 def test_a_cancelled_coverer_stops_the_aggregate():
@@ -82,7 +83,7 @@ def test_a_cancelled_coverer_stops_the_aggregate():
     out = _finish(e, ["r.a"])
 
     assert out.get("accepted") is False, "c2 was covered by nothing and the root closed anyway"
-    assert e.get_state("r").name == "VALIDATING"
+    assert e.graph.get_state("r").name == "VALIDATING"
     assert "Syntactic level NOW" in (out.get("error") or "")
     assert T.list_holes(e, "r"), "the hole the gate refused on must also be listable"
     e.stop()
@@ -102,10 +103,10 @@ def test_an_uncovered_criterion_added_later_stops_it_too():
     e.wait_idle()
     T.signal(e, "r", "ACCEPT", "me")
     T.signal(e, "r", "DELIVER", "me", result="aggregate")
-    out = _pass(e, "r", "judge", {c.name: "ok" for c in e.get_task("r").spec.criteria})
+    out = _pass(e, "r", "validator", {c.name: "ok" for c in e.graph.get_task("r").spec.criteria})
 
     assert out.get("accepted") is False
-    assert e.get_state("r").name == "VALIDATING"
+    assert e.graph.get_state("r").name == "VALIDATING"
     e.stop()
 
 
@@ -115,7 +116,7 @@ def test_a_plan_that_stayed_whole_still_closes():
     e = _two_children()
     out = _finish(e, ["r.a", "r.b"])
     assert out.get("accepted") is True, out.get("error")
-    assert e.get_state("r").name == "DONE"
+    assert e.graph.get_state("r").name == "DONE"
     e.stop()
 
 
@@ -132,5 +133,5 @@ def test_a_childless_node_has_no_plan_to_read():
     e.record_reviewer_verdict("leaf", "PASS", [], reviewer="me",
                               observed={"k": {"note": "ran it, green", "ran": ["check k"]}})
     assert T.signal(e, "leaf", "PASS", "w").get("accepted") is True
-    assert e.get_state("leaf").name == "DONE"
+    assert e.graph.get_state("leaf").name == "DONE"
     e.stop()

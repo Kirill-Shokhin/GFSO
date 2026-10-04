@@ -17,7 +17,9 @@ from pathlib import Path
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from gfso.delegate import AgentRegistry, Dispatcher, run_executor
+from gfso.delegate import Dispatcher
+from gfso.sessions import run_executor
+from gfso.roster import AgentRegistry
 from tests.support import make_engine, criterion
 
 
@@ -66,9 +68,9 @@ def test_the_node_is_left_where_it_was(tmp_path, engine):
     roster = tmp_path / "agents.json"
     roster.write_text(json.dumps({
         "exec-1": {"kind": "llm-executor", "workdir": str(tmp_path / "gone")}}), encoding="utf-8")
-    before = engine.get_task("n1").state
+    before = engine.graph.get_task("n1").state
     run_executor(engine, TaskId("n1"), "exec-1", AgentRegistry(str(roster)), _llm=_LoudLLM())
-    assert engine.get_task("n1").state == before
+    assert engine.graph.get_task("n1").state == before
 
 
 def test_a_directory_deleted_after_registration_is_caught(tmp_path, engine):
@@ -147,7 +149,7 @@ def test_the_dispatcher_does_not_start_a_node_whose_place_is_gone(tmp_path, engi
     # EXECUTING 1.5 s later).
     for _ in range(60):
         time.sleep(0.01)
-        assert engine.get_task("n1").state.name == "OFFERED", "the node was started with nowhere to work"
+        assert engine.graph.get_task("n1").state.name == "OFFERED", "the node was started with nowhere to work"
     engine.wait_idle()
 
 

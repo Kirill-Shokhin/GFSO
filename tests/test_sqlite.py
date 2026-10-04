@@ -119,6 +119,14 @@ def test_dep_edges():
     assert edges[1].discovered is True
 
 
+def test_a_dep_record_keeps_its_order_and_its_refutation():
+    """What q_Dep's classes rest on (§15.5): whether the pair was declared before the record's first BLOCK, and a
+    refutation kept rather than deleted — both survive the store."""
+    s = _storage()
+    s.add_dep_edge(DepEdge(TaskId("a"), TaskId("b"), discovered=True, declared_first=True, refuted=True))
+    assert s.get_dep_edges() == [DepEdge(TaskId("a"), TaskId("b"), discovered=True, declared_first=True, refuted=True)]
+
+
 def test_criterion_mappings():
     s = _storage()
     t = _task()

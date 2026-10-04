@@ -19,6 +19,7 @@ class MemoryStorage(StoragePort):
         self._recommendations: dict[TaskId, Recommendation] = {}
         self._dep_edges: list[DepEdge] = []
         self._critiques: dict[TaskId, str] = {}
+        self._settings: dict[str, str] = {}
         self._exec_verdicts: dict[TaskId, str] = {}
         self._usage: list[dict] = []
         self._deliver_results: dict[TaskId, str] = {}
@@ -69,6 +70,12 @@ class MemoryStorage(StoragePort):
 
     def get_critique(self, task_id: TaskId) -> Optional[str]:
         return self._critiques.get(task_id)
+
+    def store_setting(self, key: str, value: str) -> None:
+        self._settings[key] = value
+
+    def get_setting(self, key: str) -> Optional[str]:
+        return self._settings.get(key)
 
     def store_exec_verdict(self, task_id: TaskId, verdict_json: str) -> None:
         self._exec_verdicts[task_id] = verdict_json

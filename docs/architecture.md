@@ -8,10 +8,10 @@ Guards are simple predicates on graph state, read off `GuardContext` (`iteration
 
 **Division of responsibility:** FSM decides WHICH effects. Graph provides DATA. Handlers EXECUTE. The composition root (`gfso/runtime.py::build_engine_from_env`, entered through `gfso/cli.py`) COMPOSES.
 
-## FSM Transition Table (from paper §14 + vision doc)
+## FSM Transition Table (from paper §12 + vision doc)
 
 > **Canon names = code identifiers (the v4.0 naming lag is CLOSED).** The enum migration landed:
-> the code ships `OFFERED`, `REWORKING`, `ABANDONED`, `OVERDUE` (the system trigger keeps the
+> the code ships `OFFERED`, `REWORKING`, `ABANDONED` (the system trigger keeps the
 > lowercase name `timeout`), `CONFIRM_CANCEL`, the register field `ACCEPTED_RISKS`, `AUTO_PASS`, and
 > FM-3 `Veracity` / FM-5 `Freshness` — so a name in this document is the canon's and the code's at
 > once. The read-shim that decoded the pre-migration spellings is gone with the migration that
@@ -22,16 +22,16 @@ Guards are simple predicates on graph state, read off `GuardContext` (`iteration
 > **The two rows that diverged from the canon in SHAPE are closed** (corners #3 and #1 of
 > `formal/README.md`), so the table below is canon-shaped and no longer carries a declared gap.
 >
-> **(1)** `(VALIDATING, FAIL, iter >= max)` now targets **ESCALATED**, as §14.3 routes the exhausted
-> `FAIL↔REWORKING` loop and as §12.2 requires ("DONE is reached through acceptance (PASS ∨ auto_pass),
-> **never through fail**"). The canon has no "V = fail, settled" terminal — its negatives are
-> ABANDONED = ⊥ and ESCALATED = attention — exhausting the retry loop IS the escalation trigger (§1.1:
+> **(1)** `(VALIDATING, FAIL, iter >= max)` now targets **ESCALATED**, as §12.5 routes the exhausted
+> `FAIL↔REWORKING` loop and as §8.3 requires ("DONE is reached through acceptance (PASS), **never through fail**" — v4.1; the
+> parenthesis read "PASS ∨ auto_pass" while auto_pass existed). The canon has no "V = fail, settled" terminal — its negatives are
+> ABANDONED = ⊥ and ESCALATED = attention — exhausting the retry loop IS the escalation trigger (§19.1:
 > automatic handling failed ⟹ the "trust, but see" attention mode), and a DONE(fail) would additionally
 > be consumable under R′, letting a Dep consumer read-and-build on a failure. The terminal carries
 > `done_reason=FAIL`, so a verdict-escalation stays distinguishable from a timeout one and the
 > standing-FAIL metric populations (q_D's exhausted arm, `false_fail_share`) still see it.
 >
-> **(2)** `(IDLE, timeout)` is **removed**: v4.0 Inv-5 exempts IDLE **by name** (§14.4), the pre-contract
+> **(2)** `(IDLE, timeout)` is **removed**: v4.0 Inv-5 exempts IDLE **by name** (§12.12), the pre-contract
 > state having no clock of its own and its starvation surfacing as the parent's timeout. The motive the
 > row was written for — a crash orphan, observable in IDLE because CREATE_TASK persisted while the
 > ASSIGN's landing did not — is met where the defect lives: `Engine._recover_orphans` finishes the
@@ -43,52 +43,56 @@ Guards are simple predicates on graph state, read off `GuardContext` (`iteration
 (IDLE, ASSIGN)                   → OFFERED        [MutateGraph, RunChecks, Dispatch]   # Recommend removed
 (OFFERED, ACCEPT)                 → EXECUTING     [MutateGraph, Dispatch]
 (OFFERED, CHALLENGE)              → CHALLENGED    [MutateGraph, Dispatch]
-(OFFERED, timeout)                → OVERDUE       [MutateGraph]
+(OFFERED, timeout)                → ESCALATED     [MutateGraph]          # the lapse hands over at once
 (CHALLENGED, ACCEPT_CHALLENGE)   → OFFERED        [MutateGraph, RunChecks, Dispatch]
-(CHALLENGED, REJECT_CHALLENGE)   → EXECUTING     [MutateGraph, Dispatch]
-(CHALLENGED, timeout)            → OVERDUE       [MutateGraph]          # escalates §14.3 (no auto-accept)
+(CHALLENGED, REJECT_CHALLENGE, consented)  → EXECUTING  [MutateGraph, Dispatch] # back to the interrupted wait
+(CHALLENGED, REJECT_CHALLENGE, ¬consented) → OFFERED    [MutateGraph, Dispatch] # no ACCEPT of this version yet
+(CHALLENGED, timeout)            → ESCALATED     [MutateGraph]          # escalates §12.5 (no auto-accept)
 (EXECUTING, DELIVER)             → VALIDATING    [MutateGraph, Dispatch]
-(EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP per named blocker (§14.2)
-(EXECUTING, timeout)             → OVERDUE       [MutateGraph]
-(BLOCKED, RESOLVE_BLOCK)         → EXECUTING     [MutateGraph(ADJUDICATE_DEP), MutateGraph, Dispatch] # confirm/re-attribute/retract (§14.2)
+(EXECUTING, BLOCK)               → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP per named blocker (§11.2)
+(EXECUTING, timeout)             → ESCALATED     [MutateGraph]
+(BLOCKED, RESOLVE_BLOCK)         → EXECUTING     [MutateGraph(ADJUDICATE_DEP), MutateGraph, Dispatch] # confirm/re-attribute/retract (§11.2)
 (BLOCKED, timeout)               → ESCALATED     [MutateGraph]          # direct, see below
 (VALIDATING, PASS)               → DONE          [MutateGraph, Dispatch]
 (VALIDATING, FAIL, iter < max)   → REWORKING        [MutateGraph, Dispatch]
-(VALIDATING, FAIL, iter >= max)  → ESCALATED     [MutateGraph, Dispatch] # reason=fail carried onto the handover (§14.3)
-(VALIDATING, timeout)            → DONE          [MutateGraph, Dispatch] # reason=auto in mutation
+(VALIDATING, FAIL, iter >= max)  → ESCALATED     [MutateGraph, Dispatch] # reason=fail carried onto the handover (§12.2)
+(VALIDATING, timeout)            → ESCALATED     [MutateGraph, Dispatch] # T_validate alone, from DELIVER (§16.14)
+(EXECUTING, CHALLENGE)           → CHALLENGED    [MutateGraph, Dispatch] # the post-consent dispute (§12.4)
+(REWORKING, CHALLENGE)           → CHALLENGED    [MutateGraph, Dispatch]
 (REWORKING, DELIVER)                → VALIDATING    [MutateGraph, Dispatch]
 (REWORKING, BLOCK)                  → BLOCKED       [MutateGraph, Dispatch] # +RECORD_DEP as above
-(REWORKING, timeout)                → OVERDUE       [MutateGraph]
-(OVERDUE, timeout)               → ESCALATED     [MutateGraph]          # repeated timeout
-(ESCALATED, timeout)             → ABANDONED     [MutateGraph]          # the issuer's silence CLOSES (§14.3-bis)
+(REWORKING, timeout)                → ESCALATED     [MutateGraph]
+(ESCALATED, timeout)             → CANCELLING    [MutateGraph, Dispatch] # the issuer's silence CLOSES, and the subtree cascades (§12.5)
 (ESCALATED, ASSIGN)              → OFFERED       [MutateGraph(APPLY_SPEC), …]  # his revision: raise the bound / change the criteria
 (CANCELLING, CONFIRM_CANCEL)         → ABANDONED     [MutateGraph, Dispatch] # in_flight logged (T11)
-(CANCELLING, timeout)            → ABANDONED     [MutateGraph]          # cancellation is authoritative (§14.3)
-(ANY_NON_TERM \ CANCELLING, CANCEL) → CANCELLING [MutateGraph, Dispatch] # opens the handshake; cascades CANCEL to subtree (§14.2)
+(CANCELLING, timeout)            → ABANDONED     [MutateGraph]          # cancellation is authoritative (§12.6)
+(ANY_NON_TERM \ CANCELLING, CANCEL) → CANCELLING [MutateGraph, Dispatch] # opens the handshake; cascades CANCEL to subtree (§11.2)
 (REASSIGNABLE, ASSIGN+spec)      → OFFERED        [MutateGraph(APPLY_SPEC), MutateGraph, RunChecks, Dispatch]
-                                                 # REVISION (§14.4 Inv-1): re-ASSIGN same id, no cascade; excluded: OVERDUE, CANCELLING, terminals
+                                                 # REVISION (§12.3 Inv-1): re-ASSIGN same id, no cascade; excluded: IDLE, CANCELLING, terminals
 (DONE|ABANDONED, ASSIGN,
    ¬consumed ∧ reopens<max)      → OFFERED        [MutateGraph(REOPEN), MutateGraph, RunChecks, Dispatch]
-                                                 # R′ REOPEN (§14.3): a gated re-ASSIGN, NOT a 13th signal — see below
+                                                 # R′ REOPEN (§12.10): a gated re-ASSIGN, NOT a 13th signal — see below
 ```
 
-Terminal states: DONE (with reason: pass/auto — acceptance only, §12.2) and ABANDONED (V=⊥). **ESCALATED
-is NOT terminal** (§14.3-bis): it is the ISSUER's waiting state, the mirror under Inv-4 of OFFERED, where
+Terminal states: DONE (with reason: pass/auto — acceptance only, §8.3) and ABANDONED (V=⊥). **ESCALATED
+is NOT terminal** (§12.5): it is the ISSUER's waiting state, the mirror under Inv-4 of OFFERED, where
 the EXECUTOR owes the answer. It carries reason=fail when it was reached by the exhausted validation loop
 rather than by a clock, and it admits his three answers — re-ASSIGN (raise the bound / change the
 criteria, one act by Inv-1), CANCEL (close it, cascading the live subtree), and its own timeout, which
-settles it in ABANDONED because silence must close rather than drift toward a pass. **DONE and ABANDONED
-are QUASI-terminal (R′, §14.3):** a re-ASSIGN out of them is admitted under a DOUBLE gate — (i) the
-finality-gate: the terminal is not CONSUMED in the graph (positive: the parent has not DELIVERed the
-aggregate that presumes this pass AND no Dep-consumer has ACCEPTed into work on the result; negative:
-the cascade has not settled OR the parent has not replanned around the hole — a sibling covering the
-same criterion); (ii) `reopens < max_reopens` (ONE sign-agnostic per-node counter next to
+closes it through CANCELLING — silence must close rather than drift toward a pass, and must take
+the live subtree with it, which escalation never touched. **DONE and ABANDONED
+are QUASI-terminal (R′, §12.10):** a re-ASSIGN out of them is admitted under a DOUBLE gate — (i) the
+finality-gate: the terminal is not CONSUMED, read off the log from the moment it settled and, once
+logged, standing (§12.14) — the parent has not DELIVERed since (a later FAIL does not give the child back),
+no Dep-consumer has stood in work on the result since, no re-admission since has given a criterion it is
+mapped to a new covering child (a sibling co-covering from the first admission consumes nothing), and the
+parent's current version still maps it to a criterion; a settled cascade alone consumes nothing); (ii) `reopens < max_reopens` (ONE sign-agnostic per-node counter next to
 max_iterations, default 1 — restores Inv-5 finiteness for the new outgoing edge). Both gate inputs ride
 GuardContext, computed by the graph in the SAME `process_signal` step as the edge — gate+edge are one
 log-serialized atomic act (Inv-7, no TOCTOU with a concurrent DELIVER). The REOPEN mutation spends the
 counter, drops `done_reason` (V=pass is RE-EARNED in OFFERED, never resurrected), and generation-stamps
 stale the recorded independent verdict. The generation is `(iteration, reopens, revisions)` — the third
-member because §14.3 admits a re-ASSIGN from VALIDATING and §6.3 voids the pending delivery with it,
+member because §12.10 admits a re-ASSIGN from VALIDATING and §19.7 voids the pending delivery with it,
 while neither of the first two moves on a revision; and it is captured when a validation RUN STARTS
 (`Engine.generation_of`, handed to `record_exec_verdict`), because a verdict is about the delivery the
 validator read, not about whatever the node has become by the time it finishes. The self-PASS gate
@@ -97,28 +101,42 @@ FAILs sets `false_positive` — exactly q_V's pass→later-fail member. ESCALATE
 finality is a property of settlements, and its exits are ordinary live-node edges.
 
 DONE is one state; completion reason is metadata in the MutateGraph mutation. Cancellation is NOT a DONE
-reason — canon §14.3 gives it its own two-step handshake `CANCEL→CANCELLING→CONFIRM_CANCEL→ABANDONED`
+reason — canon §12.6 gives it its own two-step handshake `CANCEL→CANCELLING→CONFIRM_CANCEL→ABANDONED`
 (mirror of ASSIGN→ACCEPT; CONFIRM_CANCEL = the sole staffed exit from CANCELLING, an FSM-deadlock signal
-carrying the executor's in-flight report). **12 states in enum**: IDLE, OFFERED, CHALLENGED, EXECUTING,
-BLOCKED, VALIDATING, REWORKING, CANCELLING, DONE, ABANDONED, OVERDUE, ESCALATED. Pre-v3.7 DBs stored
-cancellation as DONE(reason=CANCELLED) — migrated on read in the SQLite adapter.
+carrying the executor's in-flight report). **11 states in enum**: IDLE, OFFERED, CHALLENGED, EXECUTING,
+BLOCKED, VALIDATING, REWORKING, CANCELLING, DONE, ABANDONED, ESCALATED. Pre-v3.7 DBs stored
+cancellation as DONE(reason=CANCELLED) — migrated on read in the SQLite adapter. A node stored in the
+retired OVERDUE is moved to ESCALATED when the database opens, logged as a migration (not a signal);
+audit rows that name OVERDUE keep their text and read as ESCALATED (`RETIRED_STATES`).
 
-ESCALATED resolution is INSIDE the FSM (§14.3-bis). It was written as outside it, which singled out one issuer act as extra-protocol while ASSIGN, PASS, FAIL, CANCEL and REJECT_CHALLENGE are all inside — and left a state meaning "someone must decide" admitting no act of the decider. Measured cost: an agent whose root escalated built a second root beside it, then a third, and closed the goal on a childless leaf.
+ESCALATED resolution is INSIDE the FSM (§12.5). It was written as outside it, which singled out one issuer act as extra-protocol while ASSIGN, PASS, FAIL, CANCEL and REJECT_CHALLENGE are all inside — and left a state meaning "someone must decide" admitting no act of the decider. Measured cost: an agent whose root escalated built a second root beside it, then a third, and closed the goal on a childless leaf.
 
-**Discovered-Dep (§14.2/§15.2, two-phase):** a BLOCK naming undeclared prerequisite NODE(s)
+**Discovered-Dep (§11.2/§15.4, two-phase):** a BLOCK naming undeclared prerequisite NODE(s)
 (`blocker_task_ids`; `blocker_task_id` = single-blocker shorthand) emits RECORD_DEP PER named node —
 provisional discovered edges (provenance = the BLOCK, T11; one BLOCK may surface several prerequisites,
 an edge each); RESOLVE_BLOCK adjudicates the set: payload-free = confirm all, `blocker_task_ids` = the
 corrected FULL set (SET semantics — unlisted provisionals retract, listed sources confirm), `external` =
 retract all (non-producible blocker → the FM-5 freshness line). An escalated-unresolved provisional stays
-counted — this is what feeds q_Dep's denominator.
+counted — this is what feeds q_Dep's denominator. Records and E_Dep are two reads of one store:
+`Graph.dep_edges()` returns every record (q_Dep, the projections); `dep_edges(adopted=True)` returns E_Dep —
+the declared edges and the confirmed discoveries that close no cycle — and it is what CHECK-2/3, the
+execution order, consumption and the dispatcher read. A record is OPEN while the BLOCK that made it stands;
+when the node leaves BLOCKED with the record unanswered (a re-ASSIGN, a CANCEL, the bound) it is CLOSED —
+counted, never adopted, asking nothing. An asking record (open, or confirmed and not adopted) on a cycle of
+live waits — E_Dep, the asking records, a parent's wait on its children, each while its producer is
+unfinished — is what cannot come first (`dep_order_refutations`): an open one is the blocked node's
+issuer's to answer (`order_refuted_by`; its BLOCK does not clear itself; a refutation retracts it and the
+node resumes); one confirmed (a confirmed producer later reopened) or raised again after a block of the
+same contract was answered refutes the plan's order at the split both ends sit under (`dep_order_refuted`),
+whose issuer re-decomposes. `dep_edges()` leaves closed records out — only q_Dep reads them
+(`dep_edges(closed=True)`).
 
 ## Design Decisions
 
-**Validation at the SEAM (§14.5).** A node is PUBLIC ⟺ it is a delegation seam: a root, or
+**Validation at the SEAM (§10.3).** A node is PUBLIC ⟺ it is a delegation seam: a root, or
 Del(child) ≠ Del(parent). The gate (engine/validation.py) demands a recorded independent verdict for
 the delivery that stands ONLY there — and it asks about the NODE, not about the name signing: an
-issuer is no more entitled to a bare PASS than the executor is, since §14.5 asks for independent
+issuer is no more entitled to a bare PASS than the executor is, since §10.3 asks for independent
 validation rather than for a different signature. The record can come from the instrument
 (`validate_result`) or from a person stating what they observed (`record_verdict`, whose records carry
 `by_hand` so nothing downstream reads a self-named party as an instrument). An authorized instrument
@@ -130,11 +148,20 @@ product already writes its verdict before signing it, so what the narrowing remo
 standing on nothing. What the dispatcher may NOT do is reuse an executor's own
 self-report as that verdict: the record names who produced it, and the executor's signature is not an
 independent one. An INTERNAL node (same Del as its parent — the executor's own private
-decomposition) legitimately self-verifies (its DELIVER carries `self_validation`), and its guarantee is
-carried by the validation of the public result it rolls up into (T1 non-redundancy). The dispatcher's
-auto-validation instrument follows the same rule (`GFSO_VALIDATE_INTERNAL=1` = the opt-in
-every-delivery dial for measurement runs). The ROOT is always a seam: "done" (root DONE/PASS) never
-completes on a self-stamp. Revision reasons are typed in the packet (§24.5:
+decomposition) has no seam of its own: its guarantee is carried by the validation of the public result
+it rolls up into (T1 non-redundancy). Where the validation stands is decided by κ (§3.7, §10.3):
+`auto_decompose` records, per node, the volume of its work and whether one session of the executor's model
+builds and checks it; the instrument validates at every seam and at the top of every scope one session
+carries, and a node inside such a scope is covered by that scope's validation (`validation.observed_here`).
+Where a registered executor holds the whole scope, the dispatcher runs it as one piece: one executor
+session over every open node in build order (`delegate.run_scope_executor`), then one validator run over
+every delivered node, each node's own verdict recorded and signed parts first (`tools_llm.validate_scope`,
+`delegate._sign_scope`); a failing part fails the wholes above it on the criteria mapped to it. A childless
+node judged larger than one session gets no session: its split is owed (`validation.split_owed`), and where
+the system moves for its executor the machine issuer's `split` question runs the refine round on it.
+Under a mode a PASS at an observed node stands on an appointed observer's record, never on the executor's
+`self_validation`. `GFSO_VALIDATE_INTERNAL=1` observes every delivery, for measurement. The ROOT is always a seam: "done" (root DONE/PASS) never
+completes on a self-stamp. Revision reasons are typed in the packet (§15.8:
 `spec_defect | scope_expansion | capability_mismatch | other`) — q_T counts typed spec-defect criteria
 changes, q_Del narrows to capability_mismatch where typed and keeps its documented over-approximation
 where untyped.
@@ -163,25 +190,25 @@ runs of "the same agent" under different caps are not the same agent.
 
 **Guarded transition (VALIDATING + FAIL).** One of two guarded families (the other is REOPEN under the R′ finality gate). Iteration counter lives in graph task node, not FSM state — FSM stays memoryless except for this one predicate read. Alternative was splitting FAIL/FAIL_FINAL into two signals, but that inflates the signal set for what is a single semantic action (validation failed).
 
-**DONE is one state.** DONE(pass) and DONE(auto) are the same FSM state with different metadata in the graph. Simplifies the FSM — terminal is terminal. Reason is recorded by MutateGraph for metrics. What DONE does NOT carry is a verdict of fail: acceptance is its only route in (§12.2), the exhausted rework loop hands the node to its issuer in ESCALATED(fail) instead, and DONE(cancelled) is a pre-v3.7 encoding migrated on read.
+**DONE is one state.** DONE is reached by PASS alone since v4.1 (a timed-out validation goes to ESCALATED); rows written before that change carry DONE(auto) as metadata in the graph, and it is the same FSM state. Simplifies the FSM — terminal is terminal. Reason is recorded by MutateGraph for metrics. What DONE does NOT carry is a verdict of fail: acceptance is its only route in (§8.3), the exhausted rework loop hands the node to its issuer in ESCALATED(fail) instead, and DONE(cancelled) is a pre-v3.7 encoding migrated on read.
 
-**BLOCKED timeout → ESCALATED directly.** Other timeouts go through OVERDUE state first. BLOCKED skips this: the block itself IS the escalation signal. The team already knows there's a problem. Adding a OVERDUE intermediate is unnecessary indirection.
+**Every wait's timeout → ESCALATED directly.** OFFERED, CHALLENGED, EXECUTING, REWORKING, BLOCKED and VALIDATING all hand a lapse to the issuer at once. There used to be a transit, OVERDUE, between a first and a second timeout: it admitted no progress signal and no revision, so its owner held only CANCEL, and its one exit was the second timeout into the state where the decision is actually made. It is gone, and re-ASSIGN is admitted in every live state but IDLE and CANCELLING.
 
-**CHALLENGED timeout → OVERDUE (escalates, §14.3).** A pending challenge that times out is an unresolved spec dispute, not a benign event — it escalates via the standard timeout sub-FSM (→ OVERDUE → ESCALATED), never auto-accepts. (Earlier drafts auto-accepted → OFFERED; that silently resolved a dispute in the issuer's favour and was removed — matches table row and canon §14.3.)
+**CHALLENGED timeout → ESCALATED (§12.2).** A pending challenge that times out is an unresolved spec dispute, not a benign event — it goes to its issuer, never auto-accepts. (Earlier drafts auto-accepted → OFFERED; that silently resolved a dispute in the issuer's favour and was removed.)
 
-**VALIDATING timeout now includes Dispatch.** Executor must be notified that their delivery was auto-accepted. Symmetry with all other terminal transitions.
+**VALIDATING timeout hands the decision back, and accepts nothing.** The issuer who did not validate within T_validate is asked again in ESCALATED; the delivery stays in the log and his re-ASSIGN re-presents it (§16.14). Until v4.1 this closed `DONE(auto_pass)` — the one timeout that invented a verdict, and one a parent's executor could obtain over his own child by letting its VALIDATING lapse. `DoneReason.AUTO_PASS` stays a member because rows written before this change carry it; nothing produces it any more.
 
-**OVERDUE is transient.** OVERDUE state exists between first and second timeout. If CANCEL arrives before the next timeout monitor tick, task goes to CANCELLING instead of ESCALATED. This is a natural intervention window (one tick), not a designed guarantee. OVERDUE accepts no progress signals (§14.3) — only repeated timeout or the universal CANCEL.
+**CONFIRM_CANCEL — two-step handshake (canon §12.6; code synced at v3.7).** Cancellation is `CANCEL(issuer)→CANCELLING→CONFIRM_CANCEL(executor)→ABANDONED`, mirroring ASSIGN→ACCEPT. CONFIRM_CANCEL is an FSM-deadlock signal: the sole staffed exit from CANCELLING, carrying the executor's in-flight state (`SignalData.in_flight`) onto the audit log (T11). `CANCELLING--timeout-->ABANDONED` — cancellation is authoritative, executor silence still completes it (without the in-flight report). The cascade fires on CANCEL (entering CANCELLING): every live descendant gets its own CANCEL and runs its own handshake.
 
-**CONFIRM_CANCEL — two-step handshake (canon §14.3; code synced at v3.7).** Cancellation is `CANCEL(issuer)→CANCELLING→CONFIRM_CANCEL(executor)→ABANDONED`, mirroring ASSIGN→ACCEPT. CONFIRM_CANCEL is an FSM-deadlock signal: the sole staffed exit from CANCELLING, carrying the executor's in-flight state (`SignalData.in_flight`) onto the audit log (T11). `CANCELLING--timeout-->ABANDONED` — cancellation is authoritative, executor silence still completes it (without the in-flight report). The cascade fires on CANCEL (entering CANCELLING): every live descendant gets its own CANCEL and runs its own handshake.
+**Revision = re-ASSIGN, same id (canon §12.3 Inv-1; code synced at v3.7).** A packet change on a live node is ONE re-ASSIGN under the same id → OFFERED (the executor re-ACCEPTs/CHALLENGEs); the APPLY_SPEC mutation re-authors in place and the superseded version lives in the append-only log (Inv-7). No CANCEL signal, no CANCELLING pass, no cascade — subtree retained; staleness surfaces via CHECK-1/CHECK-1b/CHECK-3. Not accepted from IDLE (no packet yet), CANCELLING, or terminals.
 
-**Revision = re-ASSIGN, same id (canon §14.4 Inv-1; code synced at v3.7).** A packet change on a live node is ONE re-ASSIGN under the same id → OFFERED (the executor re-ACCEPTs/CHALLENGEs); the APPLY_SPEC mutation re-authors in place and the superseded version lives in the append-only log (Inv-7). No CANCEL signal, no CANCELLING pass, no cascade — subtree retained; staleness surfaces via CHECK-1/CHECK-1b/CHECK-3. Not accepted from OVERDUE (no progress signals), CANCELLING, or terminals.
+**The dispute is open after consent (v4.1).** EXECUTING and REWORKING admit CHALLENGE (§12.4): the defects the a-priori battery cannot see — FM-1.d, FM-2, FM-3's form — are met in the work, and routed through BLOCK the dispute lost both of its §16.12 closures (REJECT_CHALLENGE's justification and ACCEPT_CHALLENGE's positive one). What ACCEPT protects is untouched: the contract binds until the issuer answers, and REJECT_CHALLENGE returns the node to the wait the challenge interrupted under the same packet version, deadline and rework count — EXECUTING when an ACCEPT of the current version stands in the log, OFFERED when none does (a challenge raised from the offer; sending it to EXECUTING would put the executor to work on terms he never accepted). Consent is read off the log (`engine.audit.consented_on_current_version`: an ACCEPT after the latest version-installing event — an ASSIGN in any form, including a revision and a REOPEN, or an ACCEPT_CHALLENGE; a pre-consent REJECT_CHALLENGE enters OFFERED and installs nothing), into `GuardContext.consented`. The same reading says whether a node is reworking (`Engine.in_rework`: a FAIL on the current version, in EXECUTING or REWORKING), so a rework resumed in EXECUTING by a rejected challenge or a resolved block keeps its failed-criteria pointer in the packet and the directive.
 
-**REWORKING has no CHALLENGE.** REWORKING criteria = same criteria as original ASSIGN (immutable per protocol invariant). Challenging criteria you already executed against is incoherent. REWORKING only accepts DELIVER or BLOCK.
+**BLOCKED → RESOLVE_BLOCK always → EXECUTING.** Even if entered from REWORKING. EXECUTING and REWORKING have identical allowed signals (DELIVER, BLOCK, **CHALLENGE** since v4.1, timeout). The iteration counter in graph state preserves rework context. No semantic difference.
 
-**BLOCKED → RESOLVE_BLOCK always → EXECUTING.** Even if entered from REWORKING. EXECUTING and REWORKING have identical allowed signals (DELIVER, BLOCK, timeout). The iteration counter in graph state preserves rework context. No semantic difference.
+RESOLVE_BLOCK is the PURE-UNBLOCK edge: it reports that the blocker is gone. Where the blocker stands, the engine refuses it and the refusal names what the node's ISSUER — BLOCKED's owner under Inv-8 — can do himself: `external=true` if he worked around it, a corrected `blocker_task_ids` if the edge was misattributed (both adjudicate a PROVISIONAL edge only), `remove_dependency` and a revision where the contract no longer needs that input, or CANCEL. Waiting, where none of those is true, is the honest state rather than a further move: BLOCKED carries its own bound and its expiry hands the decision to the issuer at ESCALATED. §12.16's conformance clause (ii) is why the list is the issuer's own moves — a refusal whose only lift is the counterparty's act does not conform.
 
-**Iteration counter in graph task node.** `task.iteration: int`. Incremented on REWORKING entry. Checked by FSM guard on FAIL. Counter is graph state, not FSM state.
+**Iteration counter in graph task node.** `task.iteration: int`. Incremented on REWORKING entry, checked by the FSM guard on FAIL, and reset by every new packet version — a revision, an ACCEPT_CHALLENGE or a REOPEN (Φ3, §12.3): `max_iterations` is the issuer's forecast for ONE contract, so counting a previous contract's refusals against a repaired one spends the new forecast before the work begins. Counter is graph state, not FSM state.
 
 ## Typed Effects
 
@@ -273,9 +300,9 @@ gfso/
                             # and the ANSWERS the system gives: SignalOutcome/Refusal (what a refused
                             # transition says: kind · why · route) and Wait (why a node is not on the
                             # frontier and what would open it)
-      enums.py              # State(12; DONE/ABANDONED quasi-terminal §14.3), Signal(13 = 12 protocol
+      enums.py              # State(12; DONE/ABANDONED quasi-terminal §12.6), Signal(13 = 12 protocol
                             # + TIMEOUT), Verdict, CriticVerdict, Stage (the ledger's roles),
-                            # FM(7), RevisionReason (§24.5 typing)
+                            # FM(7), RevisionReason (§15.8 typing)
       effects.py            # MutateGraph (incl. dep_from/dep_froms), RunChecks, Recommend, Dispatch
       ports.py              # StoragePort (mandatory core incl. the append-only signal log),
                             # LLMProviderPort, AgentPort, VerifierPort, ClockPort, RunnerPort
@@ -291,6 +318,11 @@ gfso/
   engine/                   ← L1: the reference runtime (imports CORE ONLY — the layer gate)
     loop.py                 # process_signal = the substrate-free protocol step; event_loop = the
                             # default pump; timeout_monitor reads the ClockPort (Inv-5)
+    frontier.py             # what the graph owes next: `NodeSteps` (the move one node owes, its words) and
+                            # `Frontier` (the walk: every owed move in order, or why nothing is open)
+    claims.py · joins.py    # in-memory state the engine holds beside the log: who runs a model over a node
+    workforce.py            # now (`Claims`), where a passed result stands (`Joins`), who works here as the
+    parking.py              # dispatcher published it (`Workforce`), what waits on an undecided park (`Parking`)
     __init__.py             # Engine facade (takes clock=/runner= ports); audit.py; events.py; verdicts.py
                             # (one writer of the verdict record); validation.py — the gates, one rule
                             # family per signal (`_pass_rules` / `_accept_rules` / `_resolve_block_rules`
@@ -356,16 +388,16 @@ mcp|api|web|cli|driver|main|doctor     → everything (and NOTHING below imports
 
 No upward dependencies, and the matrix above is the one the gate enforces (`tests/test_layering.py`) — including the part this prose used to round off: `gfso.adapters` may import `gfso.core` and other adapters, and binding (`mcp`/`api`/`web`/`cli`/`driver`/`main`/`doctor`) is the only place allowed to import binding.
 
-## The Level-2 review — the ONE map (canon §13.4)
+## The Level-2 review — the ONE map (canon §9.5)
 
 ⚠ Naming collision, named explicitly: the CODE LAYERS above are L0 `core/` · L1 `engine/`,
 `tools.py` · L2 `tools_llm.py`, `decompose/`, `critic/`, `delegate.py`, `runtime.py` · L3
 `adapters/`, with binding above all of them. The canon's VERIFICATION LEVELS are a different scale
-entirely (§13.4, Morris: **Syntactic** = level 0, topology · **Semantic** = level 1, formal
+entirely (§9.5, Morris: **Syntactic** = level 0, topology · **Semantic** = level 1, formal
 entailment · **Pragmatic** = level 2, causal correctness, pre-contact) — the collision is at "2",
 where a code layer and a verification level share a number and mean nothing alike. Note also that
 "semantic" belongs to verification level 1 — what `review_decomposition` reaches for is the
-Pragmatic level, which the canon marks a permanent boundary rather than a solved check (Ch. 8), so
+Pragmatic level, which the canon marks a permanent boundary rather than a solved check (Ch. 20), so
 what runs here is an approximation to it, not the level itself. (The collision feeds the parked
 naming-overhaul; until then this section is the disambiguation.)
 
@@ -378,18 +410,18 @@ it lives in refine and only there):
 | Surface | Question it asks | Where | Who needs it |
 |---|---|---|---|
 | **L2-inside-decompose** | "what is missing from the space" (recall) | `decompose/loop.py` search↔audit at build/refine time | every `auto_decompose` graph — the DEFAULT path; on-demand re-runs = the "AI refine" button / refine rounds |
-| **Standalone L2 CHECKER** | "does the DECLARED mapping causally entail" (§13.4's own question): per parent criterion — mapped children's criteria taken as facts ⇒ sufficient / insufficient-with-named-gap / uncertain; + semantic FM-2 conflicts CHECK-8 can't see | `critic/runner.py` (frozen role `critic/prompts/checker.md`), exposed as `review_decomposition` (MCP · `POST /api/run/review_decomposition` · CLI; the name split is deliberate: `review_*` = pre-contact over the PLAN, `validate_result` = post-contact over the RESULT) | externally-authored / hand-edited graphs that never passed through decompose |
+| **Standalone L2 CHECKER** | "does the DECLARED mapping causally entail" (§9.5's own question): per parent criterion — mapped children's criteria taken as facts ⇒ sufficient / insufficient-with-named-gap / uncertain; + semantic FM-2 conflicts CHECK-8 can't see | `critic/runner.py` (frozen role `critic/prompts/checker.md`), exposed as `review_decomposition` (MCP · `POST /api/run/review_decomposition` · CLI; the name split is deliberate: `review_*` = pre-contact over the PLAN, `validate_result` = post-contact over the RESULT) | externally-authored / hand-edited graphs that never passed through decompose |
 | **UI door** | the same checker, one click | the sidebar "AI review" button; per-criterion verdicts rendered, ADVISORY (fix via FSM verbs or declare ACCEPTED_RISKS) | the pure-UI human — the ONLY consumer for whom the standalone checker is load-bearing |
-| **Runtime detection** | "did a mapping that LOOKED sufficient fail live" | `core/graph/metrics.py::q_D` | everyone — **the real Level-2 verdict**: the axis is checkable only by execution (§13.5) |
+| **Runtime detection** | "did a mapping that LOOKED sufficient fail live" | `core/graph/metrics.py::q_D` | everyone — **the real Level-2 verdict**: the axis is checkable only by execution (§9.9) |
 
-Epistemic status, held everywhere (§13.5 / Ch. 8's Level-2 boundary): no pre-contact instrument VERIFIES Level 2 —
+Epistemic status, held everywhere (§9.9 / Ch. 20's Level-2 boundary): no pre-contact instrument VERIFIES Level 2 —
 the checker is the canon's LLM-review APPROXIMATION (an a-priori estimate over the faithfulness
 axis; its own verdict is itself a Level-2 claim), which is why it is advisory by construction
 and q_D keeps the last word. Staging (critic/runner.py): the L0/L1 structural gate BLOCKS the
 checker — L2 presupposes a structurally complete graph; the verdict never auto-fixes; an
 INCOMPLETE per-criterion verdict is treated as NO verdict (never read as clean). Run economics
-follow §13.5's marginal rule (VERIFY while marginal c_check < prevented FORM-risk): L0 is
-mandated, the checker is ON-DEMAND — spent where the caller judges the risk worth one call
+follow §9.9's marginal rule (VERIFY while marginal c_check < prevented FORM-risk): L0 is
+mandated, the checker is ON-DEMAND — spent where the caller deems the risk worth one call
 (hand-authored graphs, external issuers, load-bearing seams), never auto-fired per ASSIGN.
 `validate_result` is NOT on this map: it is EXECUTION validation, post-contact — the contact
 itself, not a pre-contact check level (a recurring conflation, named here on purpose).
@@ -403,7 +435,7 @@ itself, not a pre-contact check level (a recurring conflation, named here on pur
 | Graph access | Receives hydrated GraphContext | No graph access |
 | Replaceable | No (or at own risk) | Yes, fully pluggable |
 | Effect type | Recommend | Dispatch |
-| Paper section | §15.3 (AI layer) | §14.5 (agent-agnostic role filler) |
+| Paper section | §17.1 (AI layer) | §10.3 (agent-agnostic role filler) |
 
 Both use LLMProviderPort (in core/types/ports.py). Different roles, different locations, shared provider.
 
@@ -411,12 +443,19 @@ Both use LLMProviderPort (in core/types/ports.py). Different roles, different lo
 
 - **Engine** (engine/) receives signals via `send_signal()` or `assign_task()` → queue
 - **Event loop** (engine/loop.py) validates → FSM transition → pre-validates effects → executes → audit → events
-- **Timeout monitor** (background) fires on the node deadline AND — opt-in — on per-state age: every
-  state change stamps `state_entered_at`, and a state older than `GFSO_STATE_TIMEOUT` seconds emits
-  the timeout trigger. **Default 0 = OFF**: the mechanism for Inv-5 finiteness beyond node deadlines
-  is built and tested, but the clock-binding question is OPEN (a real deployment should anchor to
-  real UTC dates or stronger — tamper-resistant time is an implementor's open end); a deadline-less
-  node therefore waits indefinitely unless the knob is set. Deduplicated per state VISIT —
+- **Timeout monitor** (background) fires on the bound §11.2 gives each state: the packet deadline in
+  the WORK states (EXECUTING, REWORKING); the deadline and the state's own bound, whichever comes
+  first, in the ANSWER states (OFFERED, CHALLENGED, BLOCKED); **T_validate alone**, counted from
+  DELIVER, in VALIDATING; the state's own bound only in the PROTOCOL states (CANCELLING,
+  ESCALATED). The per-state bounds are protocol parameters — defaults in `config._STATE_BOUND_DEFAULTS`,
+  each overridable by `GFSO_BOUND_<STATE>` — and they are ON, because a bound that can be switched off
+  is not a bound. Every entry into OFFERED carries a live deadline: `GFSO_DEFAULT_DEADLINE_S` (24 h)
+  is written into a packet the issuer left undated, inside the parent's own deadline and marked
+  `deadline_supplied`, so CHECK-3 does not read the engine's default as the issuer's ordering claim.
+  `GFSO_STATE_TIMEOUT` remains as the opt-in age clock over ALL states (0 = off); the clock-binding
+  question stays OPEN (a real deployment should anchor to real UTC dates or stronger — tamper-resistant
+  time is an implementor's open end). A bound already passed fires ON ENTRY, so a state entered after
+  its bound admits no signal before its timeout (§11.5). Deduplicated per state VISIT —
   (task, state, `state_entered_at`): keying on the last-fired state alone went silent when an R′
   reopen re-entered a fired-in state through a terminal (an Inv-5 hole found by the TLC spike model,
   see `formal/tla/README.md`); a state change restamps the entry, so a re-entered state fires again.
@@ -465,22 +504,22 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 |---|---|---|
 | create | `ASSIGN` (IDLE → CREATE_TASK effect) | node creation IS the ASSIGN effect (logged) |
 | decompose | one `ASSIGN` per child (+ `covers` → parent mapping effect) | mappings = the child's declaration, logged; a FULL mappings list SETS the parent's coverage (pairs absent from it are removed — reconcile); `None` adds without wiping |
-| **revise** | re-`ASSIGN` (SAME id) → OFFERED | revision per Inv-1 §14.4: NOT a CANCEL; version appended to the log (Inv-7); **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1/1b/3; issuer-gated |
+| **revise** | re-`ASSIGN` (SAME id) → OFFERED | revision per Inv-1 §12.3: NOT a CANCEL; version appended to the log (Inv-7); **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1/1b/3; issuer-gated |
 | edit_accepted_risks / edit_criteria | revise (RMW) | change one field, carry the rest |
-| add_dependency (declared) | re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§10); edge derived |
-| map_criterion | re-`ASSIGN` of the child carrying `covers` | binds an existing child to a parent criterion (logged) |
+| add_dependency (declared) | re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§2); edge derived |
+| map_criterion | a re-admission of the parent's split (§11.5), no child signal | binds an existing child to a parent criterion — the mapping is the split's (§2.4); logged as the admission it is |
 | reassign | re-`ASSIGN` with a new executor | Del change per Inv-1 (q_Del) |
-| **reopen** | re-`ASSIGN` out of DONE/ABANDONED → OFFERED | R′ (§14.3): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |
-| **abandon** | `CANCEL` → CANCELLING → `CONFIRM_CANCEL` → ABANDONED | two-step handshake (§14.3); **cascades CANCEL to subtree**; never deleted (§15.3.1) |
+| **reopen** | re-`ASSIGN` out of DONE/ABANDONED → OFFERED | R′ (§12.15): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |
+| **abandon** | `CANCEL` → CANCELLING → `CONFIRM_CANCEL` → ABANDONED | two-step handshake (§12.6); **cascades CANCEL to subtree**; never deleted (§17.1) |
 
-**Surface-don't-destroy** (canon §14.3; code synced at v3.7). abandon = `CANCEL` → opens the handshake and cascades the
+**Surface-don't-destroy** (canon §12.6; code synced at v3.7). abandon = `CANCEL` → opens the handshake and cascades the
 subtree (its sub-work served a contract that no longer exists, §15.1); each node settles CANCELLING→ABANDONED
 on its executor's CONFIRM_CANCEL (or timeout — cancellation is authoritative). revise = re-`ASSIGN` (same id) →
 the node continues under a new contract in OFFERED: its **subtree is RETAINED, no cascade**; coverage staleness
 (uncovered new criterion / dangling mapping) is SURFACED by CHECK-1 / non-redundancy for the agent to resolve
 ∨ declare, not destroyed. The only IN-PLACE spec change is `ACCEPT_CHALLENGE`.
 
-## Decomposition surface — one operation over graph state (canon §15.3; code synced at v3.8)
+## Decomposition surface — one operation over graph state (canon §17.1; code synced at v3.8)
 
 `auto_decompose` is the single decomposition verb, dispatched by the target's state; `depth` N ≡ init +
 (N−1) refine applications of the same operation:
@@ -499,7 +538,7 @@ the node continues under a new contract in OFFERED: its **subtree is RETAINED, n
   untouched child receives ZERO signals (an executing node keeps executing); each operation authors only its
   own level — the target node's criteria/ACCEPTED_RISKS/scope and the children's contracts + coverage + seams;
   the children's Del and their OWN registers belong to other authors (the issuer; the child's own
-  decomposer, §13.1) and pass through untouched.
+  decomposer, §9.2) and pass through untouched.
 - **Removal is surfaced, never silent:** coverage reconciles to the decomposer's full mapping set, so a
   child the auditor dropped becomes an unmapped (non-redundancy) hole — visible in the streamed fold ops,
   the returned `holes`, and `list_holes`/UI/frontier — and abandoning the work itself stays the issuer's
@@ -514,7 +553,7 @@ the node continues under a new contract in OFFERED: its **subtree is RETAINED, n
   `save_task`) was DELETED — one build path, no offline authored-state write.
 - **Discovered-Dep is signal-driven (closed at v3.7):** BLOCK carrying `blocker_task_ids` (or the singular
   shorthand) emits RECORD_DEP per named blocker (provisional edges), RESOLVE_BLOCK emits ADJUDICATE_DEP
-  (confirm all / corrected full set / retract all) — both through `mutations.apply` (§14.2/§15.2).
+  (confirm all / corrected full set / retract all) — both through `mutations.apply` (§11.2/§15.4).
   `add_dependency(discovered=True)` remains as a test/offline convenience only, off every HTTP/MCP/CLI
   surface.
 - **Derived caches** (check results, `verified`, critique, recommendation) persist but carry NO authored-contract
@@ -543,8 +582,12 @@ method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-a
   Every setting it reads is owned by `gfso/config.py` — the one module that touches the environment
   (`GFSO_L2_GATE` stays a direct read at its enforcement point, deliberately): the provider and its
   billing mode, storage and model tiers, paths, and the measured dials — `GFSO_VALIDATION_BATCH`
-  (how many criteria one validator run judges, and so how much of a judgement runs in parallel) and
-  `GFSO_VALIDATOR_RETRY_MODEL` (`off` refuses the escalation a ⊥ report would otherwise buy). The
+  (how many probes one validator run owes at most — pinned, the parts' pinned ones each once, regression lines —
+  and so how much of a validation runs in parallel; a criterion owing more is split between runs and read as their
+  conjunction) and
+  `GFSO_VALIDATOR_RETRY_MODEL` (a tier for the retry after a ⊥ report; unset, the retry stays on the node's own tier), and
+  `GFSO_SYSTEM_MODEL` (the model every system-side role runs on — the plan's author and reviewer, the issuer's function,
+  and any executor or validator whose roster entry names none; read when the server starts). The
   declaration in `data/serve.json` is applied through `config.fill_env_gaps` wherever a server is
   started — it fills what nobody said and never overrules an explicit export, which is what lets a
   measurement run turn a switch off and keep it off.
@@ -578,7 +621,7 @@ and the rewrite happens BEHIND them; the FSM table, mutations, checks and metric
 
 - **Operational trichotomy needs no global clock (happens-before is already enough).** The three
   operational phases (before / concurrent / after an evaluation event) are a partition by a strict
-  CAUSAL order — no single clock is assumed (canon §12.8: CA2, the single clock, is redundant *for the operational taxonomy* — the phase count is
+  CAUSAL order — no single clock is assumed (canon §8.2: CA2, the single clock, is redundant *for the operational taxonomy* — the phase count is
   axiom-free). Distributed time = happens-before partial order IS that causal order, so the taxonomy
   holds directly; the middle cell just reads as "concurrent" (FM-5 = a read/write race) instead of
   "during". Watermarks/partition-local validation events are needed only for the optional *linear*

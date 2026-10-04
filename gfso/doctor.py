@@ -26,62 +26,9 @@ from pathlib import Path
 
 from gfso import __version__
 from gfso import serverctl
+from gfso.serverctl import port_state
 from gfso import config as _config
 from gfso.config import db_path as _config_db_path
-from gfso.config import LOOPBACK as _LOOPBACK
-
-
-def _address() -> tuple[str, int]:
-    return serverctl.BASE, serverctl.PORT
-
-
-def port_state() -> tuple[str, str]:
-    """(state, detail) — `free`, `gfso`, or `foreign`.
-
-    The distinction the launcher does not make: an OPEN port is not a running gfso. When something
-    else holds it, `ensure_server` sees a live socket, spawns nothing, and reports the server
-    started — measured: 114 seconds of silence and then a success line quoting a code fingerprint
-    for a process that does not exist.
-    """
-    base, port = _address()
-    if not serverctl.port_open(_LOOPBACK, port, timeout=1.0):
-        return "free", f"nothing is listening on :{port}"
-    if serverctl.runtime() is not None:
-        return "gfso", f"a gfso server answers at {base}"
-    return "foreign", (f":{port} is held by another process ({_port_holder(port)}) that is not a "
-                       f"gfso server — stop it, or point GFSO_SHARED_URL elsewhere")
-
-
-def _port_holder(port: int) -> str:
-    """Best effort, and honest when it fails: naming the process is a convenience, not a contract.
-
-    Every child read here names its encoding. `text=True` alone decodes with the console code page,
-    and a single byte outside it raised UnicodeDecodeError *inside the diagnostic* — the one command
-    whose whole job is to still work when everything else does not.
-    """
-    try:
-        if os.name == "nt":
-            out = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True,
-                                 encoding="utf-8", errors="replace", timeout=10).stdout
-            pids = {line.split()[-1] for line in out.splitlines()
-                    if f":{port} " in line and "LISTENING" in line}
-            if pids:
-                pid = pids.pop()
-                name = subprocess.run(["tasklist", "/fi", f"pid eq {pid}", "/nh"],
-                                      capture_output=True, text=True, encoding="utf-8",
-                                      errors="replace", timeout=10).stdout.split()
-                return f"pid {pid}" + (f", {name[0]}" if name else "")
-        else:
-            pid = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
-                                 capture_output=True, text=True, encoding="utf-8",
-                                 errors="replace", timeout=10).stdout.split()
-            if pid:
-                return f"pid {pid[0]}"
-    # who holds the port is a DIAGNOSTIC FIELD — no tasklist/lsof, or one that refuses, gives "pid
-    # unknown" below; it must not stop the report the user ran this for
-    except Exception:
-        pass
-    return "pid unknown"
 
 
 def claude_cli() -> tuple[bool, str]:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import gfso.tools as T
 from gfso.driver import _parse_args
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 
 def _refusal(verb, argv):
@@ -55,22 +55,23 @@ def test_a_negative_number_is_data_not_a_flag():
 
 
 def test_a_node_created_with_no_contract_says_what_it_is():
-    """`gfso run create_task` with nothing after it CREATES a node -- a generated id, an empty spec,
-    in whatever graph the session stands in. That is legal (authoring later is supported and
-    `spec` is optional on purpose), and the reply was a success line that said none of it. Typed to
+    """`gfso run create_task` with nothing after it CREATED a node -- a generated id, an empty spec,
+    in whatever graph the session stands in -- and the reply was a success line that said none of it. Typed to
     see the shape of the verb, it leaves an unusable node behind: two such strays sit in this
-    machine's `default` project. The node can never be judged -- V is the conjunction over its
+    machine's `default` project. The node can never be validated -- V is the conjunction over its
     criteria and over an empty set that is vacuously true, which the engine refuses at the record --
-    so the reply now says that, and how to author it.
+    so the reply said that; since the admission holds §2.2 the door refuses it and makes no stray.
     """
     e = make_engine()
     e.start()
     bare = T.TOOLS["create_task"](e)
-    assert "NO criteria" in bare["note"] and "revise(" in bare["note"]
+    assert "§2.2" in bare.get("error", "") and not e.all_tasks(), (
+        "a node over no criteria is no packet (§2.2): the door refuses it rather than leaving a stray")
+    bare = T.TOOLS["create_task"](e, "bare", {"description": "g", "criteria": [criterion("b", "B")]})
     # …the authored one hangs under it: a project has exactly one root, and which node is the root
     # is beside the question here — the reply is about the CONTRACT the caller did or did not give.
     authored = T.TOOLS["create_task"](e, "x", {"description": "g",
-                                               "criteria": [{"name": "c", "description": "C"}]},
+                                               "criteria": [criterion("c", "C")]},
                                       parent_id=bare["id"])
     assert "note" not in authored, "a node with a contract must not be lectured about not having one"
     e.stop()

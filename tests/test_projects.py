@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from gfso.api.server import create_app, _start_reaper
 from gfso.mcp.server import create_server, _bind
 from gfso.runtime import ProjectRegistry
+from gfso.core.types import AgentId, Mode
 from gfso import tools as T
 from gfso.adapters.llm.stub import StubLLM
 from tests.support import criterion, make_engine
@@ -41,8 +42,8 @@ def test_projects_are_isolated_graphs(monkeypatch, tmp_path):
     reg = ProjectRegistry()                            # default project never materialized here
     a, b = reg.engine("proj_a"), reg.engine("proj_b")
     _mk(a, "t1")
-    assert a.get_task(T.TaskId("t1")) is not None
-    assert b.get_task(T.TaskId("t1")) is None          # physical isolation
+    assert a.graph.get_task(T.TaskId("t1")) is not None
+    assert b.graph.get_task(T.TaskId("t1")) is None          # physical isolation
     assert (tmp_path / "proj_a.db").exists() and (tmp_path / "proj_b.db").exists()
     # same name → same engine (cached, one owner per process)
     assert reg.engine("proj_a") is a
@@ -91,7 +92,7 @@ def test_mcp_bind_gains_project_param_and_routes(monkeypatch, tmp_path):
     assert "project" in params and params["project"].default is None
     _mk(reg.engine("p1"), "n1")
     assert _call(w, "n1", project="p1")["id"] == "n1"         # explicit per-call routing
-    assert _call(w, "n1").get("error")                        # active = default — isolated
+    assert "p1" in _call(w, "n1").get("error", "")           # no project chosen yet — told which exist
     reg.use("p1")
     assert _call(w, "n1")["id"] == "n1"                        # follows the active switch
     for e in list(reg._engines.values()):
@@ -247,9 +248,12 @@ def test_mcp_session_scoped_project_resolution(monkeypatch, tmp_path):
     s1, s2 = _Ctx(), _Ctx()
     S._SESSION_PROJECTS[S._session_key(s1)] = "sess_one"
     _mk(res(None, s1), "t_one")                          # lands in sess_one
-    assert res(None, s1).get_task(T.TaskId("t_one")) is not None
-    assert res(None, s2).get_task(T.TaskId("t_one")) is None      # s2 → global active (default)
-    assert res("sess_one", s2).get_task(T.TaskId("t_one")) is not None  # explicit param outranks
+    assert res(None, s1).graph.get_task(T.TaskId("t_one")) is not None
+    with pytest.raises(ValueError, match="sess_one"):     # s2 named none, the fallback is `default`: told, not defaulted
+        res(None, s2)
+    assert res("sess_one", s2).graph.get_task(T.TaskId("t_one")) is not None  # explicit param outranks
+    monkeypatch.setenv("GFSO_PROJECT", "default")        # a deployment that says `default` is heard
+    assert res(None, s2).graph.get_task(T.TaskId("t_one")) is None      # s2 → global active (default)
     for e in list(reg._engines.values()):
         e.stop()
 
@@ -307,6 +311,43 @@ def test_projects_are_listed_newest_first_with_their_stamps(tmp_path, monkeypatc
     assert listing["last_active"]["new_run"] >= listing["last_active"]["old_run"]
 
 
+def test_a_project_written_through_its_wal_is_listed_as_recent(tmp_path, monkeypatch):
+    """A WAL-mode database takes its writes in `-wal` until a checkpoint, so the file's own stamp is
+    the last CHECKPOINT: a project worked in all afternoon was listed from two weeks earlier, below a
+    hundred finished probes (2026-09-24). An empty WAL is not a write — a read-only open makes one."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    now = time.time()
+    for name, age in (("worked_today", 900), ("merely_looked_at", 300)):
+        (tmp_path / f"{name}.db").write_bytes(b"")
+        os.utime(tmp_path / f"{name}.db", (now - age, now - age))
+    (tmp_path / "worked_today.db-wal").write_bytes(b"frames")
+    (tmp_path / "merely_looked_at.db-wal").write_bytes(b"")
+    os.utime(tmp_path / "merely_looked_at.db-wal", (now + 60, now + 60))
+    assert ProjectRegistry().list()["projects"][:2] == ["worked_today", "merely_looked_at"]
+
+
+def test_the_project_list_says_where_each_root_stands(monkeypatch, tmp_path):
+    """A picker of bare names could not say which project is finished — each had to be opened. The
+    root answers it, read from the engine when the project is loaded and PEEKED at on disk when it
+    is not (building its engine would start its dispatcher), and the peek leaves nothing behind."""
+    reg = _reg(monkeypatch, tmp_path)
+    monkeypatch.delenv("GFSO_STORAGE")                  # named projects: real sqlite files
+    for n in ("loaded", "closed"):
+        _mk(reg.engine(n), "root")
+    reg.engine("bare")
+    eng = reg._engines.pop("closed")
+    eng.stop()
+    eng._graph._storage.close()
+    app = create_app(reg.engine(), registry=reg)
+    with TestClient(app) as c:
+        root = c.get("/api/projects").json()["roots"]
+    assert root["closed"] == root["loaded"] and root["loaded"]["state"]
+    assert root["bare"] is None
+    assert not list(tmp_path.glob("closed.db-*")), "the peek left WAL files beside a closed project"
+    for e in list(reg._engines.values()):
+        e.stop()
+
+
 def test_use_project_takes_the_word_every_other_verb_uses():
     """Every verb spells it `project`; this one alone wanted `name`.
 
@@ -318,6 +359,44 @@ def test_use_project_takes_the_word_every_other_verb_uses():
     use = next(t for t in srv._tool_manager.list_tools() if t.name == "use_project")
     params = set(use.parameters.get("properties", {}))
     assert {"name", "project"} <= params
+
+
+def test_entering_a_project_says_the_move_the_graph_waits_on():
+    """An agent on claude-sonnet-5-5, told to run the work through a gfso project, switched into the empty project,
+    heard only a project list back, and did the whole task outside the graph — its "done" a chat line no verdict
+    stands behind (GB_coreutils_tmlowg001, 2026-10-09). Entering a project is a move like a signal, and its reply
+    carries the next one, from the same reader the signals use (`tools.next_for`).
+
+    CONTROL: return `_brief(...)` alone from `use_project` and this goes red."""
+    reg = ProjectRegistry(default_storage="memory", default_llm="stub", seed=False)
+    use = next(t for t in create_server(reg)._tool_manager.list_tools() if t.name == "use_project")
+    empty = use.fn(project="fresh")
+    assert empty["active"] == "fresh" and empty["mode"] is None
+    # the mode before the plan: who holds the work is the user's choice, asked first
+    assert empty["next"].index("set_mode") < empty["next"].index("auto_decompose"), empty["next"]
+    reg.engine("fresh").set_mode(Mode.SOLO, None, AgentId("agent"))
+    chosen = use.fn(project="fresh")
+    assert chosen["mode"]["mode"] == "solo" and "set_mode" not in chosen["next"] and "auto_decompose" in chosen["next"]
+    T.create_task(reg.engine("fresh"), "root", {"description": "a goal", "criteria": [criterion("c1", "holds")]},
+                  assignee="agent")
+    reg.engine("fresh").wait_idle()
+    staged = use.fn(project="fresh")
+    assert staged["next"] and "auto_decompose" not in staged["next"], "the reply names the graph as it now stands"
+    for e in list(reg._engines.values()):
+        e.stop()
+
+
+def test_entering_a_finished_project_does_not_hear_its_own_work_finished(monkeypatch):
+    """"Execution finished" answers a signal about work just done; said to one entering the project it is about a
+    goal that is not theirs, and reads as a done no verdict of theirs stands behind (critic, 2026-10-09)."""
+    reg = ProjectRegistry(default_storage="memory", default_llm="stub", seed=False)
+    e = reg.engine("old")
+    monkeypatch.setattr(e, "next_step", lambda *a, **k: {"complete": True,
+                                                         "directive": "COMPLETE — root 'r' is DONE/PASS. Execution finished."})
+    entered = T.next_for(e, "agent", entering=True)["next"]
+    assert entered.startswith("this project's graph is finished") and "A new goal is a new root" in entered
+    assert T.next_for(e, "agent", about="r")["next"].startswith("COMPLETE"), "a signal's reply is unchanged"
+    e.stop()
 
 
 def test_the_project_list_can_be_asked_a_question_instead_of_downloaded(monkeypatch, tmp_path):
@@ -360,3 +439,50 @@ def test_a_scoped_act_names_the_scope_it_was_given(monkeypatch, tmp_path):
         assert out["project"] == "tab_b"
     for e in list(reg._engines.values()):
         e.stop()
+
+
+def test_the_mode_is_set_before_the_plan_on_every_door(monkeypatch, tmp_path):
+    """The mode is the user's choice made BEFORE the plan (ORCHESTRATOR: ask, then `set_mode`), and once a
+    project has work in it a change needs the user's own words. The MCP door creates a project on
+    `use_project`; the HTTP and CLI doors answered `set_mode` on a new name with "no such project", so a
+    caller there could set a mode only AFTER authoring — measured 2026-09-27: the E3 harness's solo arm
+    never started (`use_project` is not on the HTTP door, `set_mode` 404)."""
+    reg = _reg(monkeypatch, tmp_path)
+    app = create_app(reg.engine(), registry=reg)
+    with TestClient(app) as c:
+        refused = c.post("/api/run/set_mode?project=fresh_one", json={"mode": "solo"}).json()
+        assert refused.get("refused") and "validator" in refused["error"], refused   # observed in every mode
+        c.post("/api/run/register_agent?project=fresh_one",
+               json={"agent_id": "fresh-val", "kind": "llm-validator", "workdir": str(tmp_path)})
+        # …and solo DISPATCHES by default: the holder's nodes run in a session of this project's executor
+        refused = c.post("/api/run/set_mode?project=fresh_one", json={"mode": "solo"}).json()
+        assert refused.get("refused") and "dispatch" in refused["error"], refused
+        c.post("/api/run/register_agent?project=fresh_one",
+               json={"agent_id": "fresh-exec", "kind": "llm-executor", "workdir": str(tmp_path)})
+        out = c.post("/api/run/set_mode?project=fresh_one", json={"mode": "solo"}).json()
+        assert (out.get("mode"), out.get("perform"), out.get("hands")) == ("solo", "dispatch", "fresh-exec"), out
+        assert "fresh_one" in c.get("/api/projects").json()["projects"]
+    for e in list(reg._engines.values()):
+        e.stop()
+
+
+def test_a_session_that_names_no_project_is_told_the_projects_where_none_was_ever_chosen(monkeypatch, tmp_path):
+    """An AUTO customer told its project by name called `get_graph` and `auto_decompose` without it; the server
+    answered "No mode set" from the empty default and built the plan where nothing executes
+    (GB_sql_database_tmwpw7028, 2026-10-15). Where nobody ever chose a project and others exist, the
+    unnamed session is refused with their names, `default` among the ways out; a project switched to stands, and
+    switching to `default` does not latch the question shut for every later session."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    monkeypatch.delenv("GFSO_STORAGE", raising=False)
+    reg = ProjectRegistry()
+    reg.engine("gb-row").stop()
+    res = S._resolver(reg)
+    with pytest.raises(ValueError, match="gb-row"):
+        res()
+    assert res("gb-row") is reg.engine("gb-row"), "a named project resolves as before"
+    reg.use("default")
+    with pytest.raises(ValueError, match="`default` included"):
+        res()
+    reg.use("gb-row")
+    assert res() is reg.engine("gb-row"), "a project switched to is where an unnamed session lands"

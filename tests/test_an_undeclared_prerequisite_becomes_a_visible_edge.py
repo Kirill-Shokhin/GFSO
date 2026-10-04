@@ -1,4 +1,4 @@
-"""§11.4, second half: a prerequisite nobody declared becomes a DISCOVERED edge, and it is counted.
+"""§15.5: a prerequisite nobody declared becomes a DISCOVERED edge, and it is counted.
 
 The unit tests cover the multi-blocker mechanics. What had never been read end to end is the trio a
 person actually sees: the edge appears and says it was discovered at runtime, `q_Dep` leaves ⊥ and
@@ -13,24 +13,19 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _two_leaves_and_no_declared_dependency(e):
     T.create_task(e, "root", {"description": "two leaves",
                               "criteria": [criterion("g", "G holds"),
                                            criterion("p", "P holds")],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "accepted_risks": REGISTER},
                   assignee="agent")
-    T.create_task(e, "root.cons", {"description": "consumer",
-                                   "criteria": [criterion("c", "C")]},
-                  assignee="cons-x", parent_id="root")
-    T.create_task(e, "root.prod", {"description": "producer",
-                                   "criteria": [criterion("pp", "PP")]},
-                  assignee="prod-x", parent_id="root")
-    T.map_criterion(e, "root", "root.cons", "g")
-    T.map_criterion(e, "root", "root.prod", "p")
+    T.decompose(e, "root", [{"task_id": "root.cons", "spec": {"description": "consumer",
+                                   "criteria": [criterion("c", "C")]}, "assignee": "cons-x", "covers": ["g"]},
+        {"task_id": "root.prod", "spec": {"description": "producer",
+                                   "criteria": [criterion("pp", "PP")]}, "assignee": "prod-x", "covers": ["p"]}], accepted_risks=REGISTER)
     e.wait_idle()
 
 
@@ -92,5 +87,5 @@ def test_the_frontier_offers_the_producer_and_the_resolution_not_a_rewrite(monke
 
     assert ("root.prod", "accept") in offered, offered
     assert ("root.cons", "resolve") in offered, offered
-    assert e.get_state(TaskId("root.cons")).name == "BLOCKED"
+    assert e.graph.get_state(TaskId("root.cons")).name == "BLOCKED"
     e.stop()

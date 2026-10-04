@@ -8,19 +8,15 @@ import threading
 import time
 
 from gfso import tools as T
-from tests.support import make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _graph():
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [{"name": "c", "description": "C"}],
-                              "accepted_risks": [{"item": "an unmodelled environment fault",
-                                                  "predictability": "EXTRAORDINARY"}]},
-                  assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [{"name": "k1", "description": "K"}]},
-                  assignee="someone-else", parent_id="root")
-    T.map_criterion(e, "root", "kid", "c")
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")]}, assignee="agent")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]},
+                             "assignee": "someone-else", "covers": ["c"]}], accepted_risks=REGISTER)
     return e
 
 

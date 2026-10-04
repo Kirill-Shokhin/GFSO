@@ -1,7 +1,7 @@
 """Human-only: the whole protocol with ZERO AI — and the gate that makes it honest.
 
 Two humans: `ann` issues and executes, `bob` reviews. The engine REJECTS ann's PASS on her own
-work until an independent verdict is RECORDED (verifier ≠ executor, §14.5) — the same flow the
+work until an independent verdict is RECORDED (verifier ≠ executor, §10.3) — the same flow the
 web UI drives with the Pass/Fail/Record-verdict buttons."""
 from gfso.examples import scratch
 from gfso.engine import Engine
@@ -23,8 +23,8 @@ def main() -> None:
 
     T.create_task(e, "report", {
         "description": "Quarterly report",
-        # Each criterion carries the procedure that decides it (A1, §10) — written with the
-        # criterion and before the work, so nobody has to invent one while judging. A human-grade
+        # Each criterion carries the procedure that decides it (A1, §2) — written with the
+        # criterion and before the work, so nobody has to invent one while validating. A human-grade
         # procedure is still a procedure: it says what to open and what it must show.
         "criteria": [{"name": "numbers", "description": "figures match the ledger",
                       "check": [{"behaviour": "every figure ties to the ledger export",
@@ -45,7 +45,7 @@ def main() -> None:
 
     # Bob says WHAT HE CHECKED, one line per criterion. A verdict is a claim about the world, and
     # the human door asks for the same thing as the machine one — at human grade: a sentence rather
-    # than a re-runnable command. With no independent seam this record IS the guarantee (§14.5).
+    # than a re-runnable command. With no independent seam this record IS the guarantee (§10.3).
     print(T.record_verdict(e, "report", "PASS", reviewer="bob", observed={
         # …and WHICH of the pinned checks he actually ran. Not a command he had to invent: the
         # contract already said what to do, and he names the one he did.
@@ -56,7 +56,7 @@ def main() -> None:
                  "ran": ["search the sent folder for the board thread"]}}))
     print("after bob's record:", T.signal(e, "report", "PASS", "ann"))  # now the PASS lands
 
-    print("final:", e.get_state(T.TaskId("report")).name)
+    print("final:", e.graph.get_state(T.TaskId("report")).name)
     e.stop()
     store.close()   # Windows keeps the .db locked until the connection closes
 

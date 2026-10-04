@@ -1,6 +1,6 @@
 """An executor that FAILED its own delivery closed the node DONE, with a recorded verdict of PASS.
 
-§14.2 puts a WORD in `self_validation` -- the executor's own verdict -- and §14.5 D6 rests an internal
+§11.2 puts a WORD in `self_validation` -- the executor's own verdict -- and §10.3 rests an internal
 node's completion on it. The human door has always insisted on that word (`_self_check_verdict` raises
 on anything else). The delegated door took a free string and asked a different question: is it empty.
 Every non-empty answer became PASS.
@@ -17,12 +17,12 @@ import tempfile
 import pytest
 
 import gfso.tools as T
-from gfso import delegate as D
+from gfso import reports as D
 from gfso.core.types import Verdict
-from tests.support import criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 from tests.test_delegate import _agents
 
-_RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 @pytest.fixture(autouse=True)
@@ -35,17 +35,15 @@ def _delivered(said):
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     _agents(pathlib.Path(tempfile.mkdtemp()), ("exec-1", "llm-executor"))
-    T.create_task(e, "par", {"description": "p", "criteria": [criterion("g", "G")],
-                             "accepted_risks": _RISK}, assignee="exec-1")
-    T.create_task(e, "kid", {"description": "w", "criteria": [criterion("k", "K")]},
-                  assignee="exec-1", parent_id="par")
-    T.map_criterion(e, "par", "kid", "g")
+    T.create_task(e, "par", {"description": "p", "criteria": [criterion("g", "G")]}, assignee="exec-1")
+    T.decompose(e, "par", [{"task_id": "kid", "spec": {"description": "w", "criteria": [criterion("k", "K")]},
+                            "assignee": "exec-1", "covers": ["g"]}], accepted_risks=_RISK)
     T.signal(e, "kid", "ACCEPT", "exec-1")
-    D._report_into_signals(e, "kid", "exec-1", e.get_task("kid"),
+    D._report_into_signals(e, "kid", "exec-1", e.graph.get_task("kid"),
                            {"status": "delivered", "summary": "did it", "self_validation": said},
                            "delivered", type("L", (), {"calls": []})(), lambda *a, **k: None)
     e.wait_idle()
-    out = (e.get_state("kid").name, (e.get_exec_verdict("kid") or {}).get("verdict"))
+    out = (e.graph.get_state("kid").name, (e.get_exec_verdict("kid") or {}).get("verdict"))
     e.stop()
     return out
 
@@ -57,7 +55,7 @@ def test_a_self_reported_FAIL_does_not_close_the_node():
 
 
 def test_a_self_reported_PASS_still_closes_it():
-    """The control. §14.5 D6 is why this path exists at all: without it a subtree delegated to one
+    """The control. §10.3 is why this path exists at all: without it a subtree delegated to one
     role deadlocks, nothing independent fires (correctly) and nothing signs."""
     assert _delivered("PASS") == ("DONE", Verdict.PASS)
 
@@ -68,7 +66,7 @@ def test_a_verdict_word_with_a_reason_after_it_is_still_a_verdict():
 
 @pytest.mark.parametrize("said", ["the tests do not pass", "checked", "looks fine", ""])
 def test_prose_decides_nothing_and_nothing_is_guessed(said):
-    """⊥ is not a pass (§11.2), and it is not a fail either: the node waits for its issuer, which is
+    """⊥ is not a pass (§2.3), and it is not a fail either: the node waits for its issuer, which is
     exactly what the empty field already did. Nothing here reads intent out of prose."""
     state, recorded = _delivered(said)
     assert (state, recorded) == ("VALIDATING", None), (said, state, recorded)

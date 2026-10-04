@@ -16,8 +16,9 @@ import time
 
 import gfso.delegate as D
 import gfso.tools as T
-from gfso.delegate import AgentRegistry, Dispatcher, default_agents
-from tests.support import make_engine, criterion
+from gfso.delegate import Dispatcher, default_agents
+from gfso.roster import AgentRegistry
+from tests.support import make_engine, criterion, DENIAL_ENTRY
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
 from tests.test_integration import _engine
@@ -25,19 +26,14 @@ from tests.test_integration import _engine
 
 def _graph_with_one_leaf(e) -> None:
     T.create_task(e, "root", {"name": "goal", "description": "a goal",
-                              "criteria": [criterion("c1", "the thing is done")],
-                              # a split carries its register (§13.1) — without it CHECK-4 stands and
-                              # the plan is never admitted to execution, so nothing would dispatch
-                              # for reasons that have nothing to do with what is under test
-                              "accepted_risks": [{"item": "the thing may be harder than it looks",
-                                                  "predictability": "statistical",
-                                                  "justification": "accepted for this fixture",
-                                                  "invalidation_condition": "it turns out impossible"}]},
+                              "criteria": [criterion("c1", "the thing is done")]},
                   "alice")
-    T.create_task(e, "leaf", {"name": "leaf", "description": "do the thing",
-                              "criteria": [criterion("k", "the thing is done")]},
-                  "worker", parent_id="root")
-    T.map_criterion(e, "root", "leaf", "c1")
+    T.decompose(e, "root", [{"task_id": "leaf", "assignee": "worker", "covers": ["c1"],
+                             "spec": {"name": "leaf", "description": "do the thing",
+                                      "criteria": [criterion("k", "the thing is done")]}}],
+                # a split carries its register (§9.2), its decomposer's — without it CHECK-4 refuses the
+                # admission (§11.5) and nothing would dispatch for reasons unrelated to what is under test
+                accepted_risks=[{"item": "the thing may be harder than it looks", "predictability": "statistical", "justification": "accepted for this fixture", "invalidation_condition": "it turns out impossible", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY])
     T.signal(e, "root", "ACCEPT", "alice")
 
 
@@ -45,11 +41,11 @@ def _settle(e, spawned, secs: float = 2.5):
     """Wait for the dispatch thread to finish moving the graph.
 
     The dispatcher spawns in a THREAD and now sends ACCEPT there too (ACCEPT fixes the start of the
-    obligation, §14.2), so the state a test reads immediately after `dispatch_once` depends on
+    obligation, §11.2), so the state a test reads immediately after `dispatch_once` depends on
     scheduling. These tests are about the RULE, not about timing, so they read a settled graph.
     """
     for _ in range(int(secs / 0.05)):
-        if spawned and e.get_task("leaf").state.name != "OFFERED":
+        if spawned and e.graph.get_task("leaf").state.name != "OFFERED":
             return
         time.sleep(0.05)
 
@@ -191,7 +187,7 @@ def test_a_settled_graph_produces_no_lapse_at_all(tmp_path):
     T.signal(e, "leaf", "ACCEPT", "worker")
     T.signal(e, "leaf", "DELIVER", "worker", result="done")
     # …saying which pinned run was made: a criterion now carries the procedure that decides it
-    # (A1/§10), so an observation that names none is ⊥ and does not settle the node.
+    # (A1/§2), so an observation that names none is ⊥ and does not settle the node.
     T.record_verdict(e, "leaf", "PASS", [], "alice",                # the parent's Del is the issuer here
                      observed={"k": {"note": "checked by hand", "ran": ["check k"]}})
     T.signal(e, "leaf", "PASS", "alice")

@@ -34,7 +34,7 @@
     <button class="queue-toggle" id="queue-toggle" onclick="toggleMineOnly()">Mine only</button>
     <div class="role-select">
         <label for="project-select">Project</label>
-        <select id="project-select" onchange="switchProject(this.value)" style="max-width:140px"></select>
+        <select id="project-select" onchange="switchProject(this.value)" style="max-width:260px"></select>
     </div>
     <div class="role-select">
         <label for="current-role">You are</label>
@@ -127,7 +127,7 @@ const T_ACC       = tok('--acc');
 // (`'Hanken Grotesk', …` invalid · `Hanken Grotesk, …` fine).
 const T_FONT_BODY = tok('--font-body').replace(/['"]/g, '').replace(/\s+/g, ' ').trim();
 
-// Five buckets — a direct translation of canon §11.2 + §12. See gfso.css.
+// Five buckets — a direct translation of canon §7.1 + §8. See gfso.css.
 // WHAT IS RUNNING MUST NOT LOOK LIKE WHAT IS DEAD. `EXECUTING` — the one state that means an agent
 // is working right now — shared the palest style with IDLE and ABANDONED, while an untouched OFFERED
 // node was drawn MORE prominently: the question "what is being worked on" was the one the colours
@@ -137,7 +137,7 @@ const BUCKET = {
     IDLE: 'quiet', EXECUTING: 'busy',
     OFFERED: 'attend', VALIDATING: 'busy',
     REWORKING: 'fail', CHALLENGED: 'fail',
-    BLOCKED: 'pathology', OVERDUE: 'pathology', ESCALATED: 'pathology', CANCELLING: 'pathology',
+    BLOCKED: 'pathology', ESCALATED: 'pathology', CANCELLING: 'pathology',
 };
 const bucketOf = (s) => BUCKET[s] || 'quiet';
 
@@ -167,21 +167,21 @@ const NODE_STYLE = {
 const styleOf = (s) => NODE_STYLE[bucketOf(s)];
 
 // A CLOSED NODE IS NOT ONE KIND OF THING. Three doors said the same in wave 26 (2026-09-06): the
-// page drew a node judged by an instrument against reproducible probes exactly like a node closed
+// page drew a node validated by an instrument against reproducible probes exactly like a node closed
 // on a name invented in the same command, and a hand verdict that DISPLACED an instrument's
 // opposite one was not visible anywhere at all. The drawing carries what the record carries.
 //   contradicted (refuted ∨ overruled) → the accent, ringed: something here is owed an answer
-//   asserted by hand                   → dashed in paper: closed, and on somebody's word (§13.6)
+//   asserted by hand                   → dashed in paper: closed, and on somebody's word (§15.7)
 const closureStyle = (st, cl) => !cl ? st
     : (cl.refuted || cl.overruled) ? { ...st, bw: 3, bc: T_ACC,   bs: 'solid',  bo: 1 }
     : cl.by_hand                   ? { ...st, bw: 2, bc: T_PAPER, bs: 'dotted', bo: 1 }
     : st;
-// What the drawing above is saying, in words, for the reader who has to weigh it (§13.6).
+// What the drawing above is saying, in words, for the reader who has to weigh it (§15.7).
 const closureNote = (cl) => !cl ? ''
     : cl.refuted  ? 'PASS CONTRADICTED by its own current record'
     : cl.overruled ? `asserted by hand over an instrument's ${cl.overruled_verdict || 'opposite'}`
     : cl.by_hand  ? `asserted by hand — ${cl.validator || 'someone'}, not an instrument`
-    : cl.provenance === 'self' ? 'self-reported by its own executor (§14.5 internal node)'
+    : cl.provenance === 'self' ? 'self-reported by its own executor (§10.3 internal node)'
     : '';
 
 // Stats-bar dot lives on dark chrome — done needs cream override since ink-on-ink disappears.
@@ -191,21 +191,20 @@ const DOT_ON_CHROME = {
 
 const STATE_LABEL = {
     // `OFFERED` is ASSIGNED AND NOT YET TAKEN — nobody has touched it. It was labelled "In Review",
-    // the opposite of what it means, while VALIDATING (where a judge really is reviewing) got
+    // the opposite of what it means, while VALIDATING (where a validator really is reviewing) got
     // "Validating": a user watched a node blocked on a dependency for 25 minutes believing someone
     // was reviewing it (2026-09-02).
     IDLE:'Waiting', OFFERED:'Not started', CHALLENGED:'Challenged', EXECUTING:'In Progress',
     BLOCKED:'Blocked', VALIDATING:'Validating', REWORKING:'Rework', DONE:'Done',
-    CANCELLING:'Cancelling', ABANDONED:'Cancelled',
-    OVERDUE:'Timeout', ESCALATED:'Escalated'
+    CANCELLING:'Cancelling', ABANDONED:'Cancelled', ESCALATED:'Escalated'
 };
-// A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO_PASS — canon §14): show it directly.
+// A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO_PASS — canon §12): show it directly.
 const statusLabel = (state, done_reason) =>
     (state === 'DONE' && done_reason) ? done_reason : (STATE_LABEL[state] || state);
-// §14.3: a re-ASSIGN (a revision, Inv-1) is admitted from every non-terminal state except IDLE,
-// CANCELLING and OVERDUE. Editing a contract IS that signal, so this is the set the Edit control
-// belongs on — one list, read from the canon's own table rather than guessed per button.
-const REASSIGNABLE = ['OFFERED', 'CHALLENGED', 'EXECUTING', 'BLOCKED', 'VALIDATING', 'REWORKING'];
+// §12.3: a re-ASSIGN (a revision, Inv-1) is admitted from every non-terminal state except IDLE and
+// CANCELLING. Editing a contract IS that signal, so this is the set the Edit control belongs on —
+// one list, read from the canon's own table rather than guessed per button.
+const REASSIGNABLE = ['OFFERED', 'CHALLENGED', 'EXECUTING', 'BLOCKED', 'VALIDATING', 'REWORKING', 'ESCALATED'];
 // EVERY STRING ON THIS PAGE THAT A MODEL WROTE GOES THROUGH HERE. Panels are built by string
 // concatenation and interpolated RAW, so a validator's own evidence is parsed as markup: the
 // lexer criterion of the closed `javascript_engine` run quotes the operator soup
@@ -223,26 +222,26 @@ const ACTIONS = {
     BLOCKED:    [{s:'RESOLVE_BLOCK',cls:'btn-blue',label:'Resolve Block',prompt:'action'}],
     VALIDATING: [{s:'PASS',cls:'btn-green',label:'Pass'},{s:'FAIL',cls:'btn-red',label:'Fail',needsCriteria:true}],
     REWORKING:     [{s:'DELIVER',cls:'btn-blue',label:'Re-deliver',prompt:'result'},{s:'BLOCK',cls:'btn-red',label:'Block',prompt:'reason'}],
-    // §6.3 handshake settlement: the executor confirms the cancellation, reporting in-flight state (Thm 11).
+    // §12.6 handshake settlement: the executor confirms the cancellation, reporting in-flight state (Thm 11).
     CANCELLING: [{s:'CONFIRM_CANCEL',cls:'btn-muted',label:'Confirm Cancel',prompt:'in_flight'}],
 };
 
 let cy, selectedTaskId = null, decomposeTaskId = null, allTasksCache = [];
-let graphClosures = [];   // the closed nodes a reader must weigh (§13.6), from the last graph read
+let graphClosures = [];   // the closed nodes a reader must weigh (§15.7), from the last graph read
 let mineOnly = false;
 // Cache parent task's criteria for decompose modal (drives mapping UI).
 let decomposeParentCriteria = [];
 
 // ---- Theory derivations ----
-// V(t) derivation per §11.2: pass = DONE, fail = REWORKING/CHALLENGED, ⊥ otherwise.
+// V(t) derivation per §2.3: pass = DONE, fail = REWORKING/CHALLENGED, ⊥ otherwise.
 // V is the central concept of the protocol; FSM state is the process layer.
 const V_OF = { DONE: 'pass', REWORKING: 'fail', CHALLENGED: 'fail' };
 const vOf = (state) => V_OF[state] || 'undef';
 const V_SYMBOL = { pass: '✓', fail: '✗', undef: '⊥' };
 
-// CHECK → failure-mode routing (§13.4) and the FM names (§12.6) come FROM THE PRODUCT
+// CHECK → failure-mode routing (§9.5) and the FM names (§8.10) come FROM THE PRODUCT
 // (/api/check_map), never from a copy kept here: the copy drifted — it routed CHECK-6 to FM-1 where
-// the canon routes leaf delegation to FM-7, and never learned CHECK-1b/7/8. The table is guarded
+// the canon routes leaf delegation to no failure mode, and never learned CHECK-1b/7/8. The table is guarded
 // against the canon itself in tests/test_canon_check_map.py; this page only renders it.
 let FM_LABEL = {};
 let CHECK_TO_FM = {};
@@ -258,8 +257,16 @@ async function loadCheckMap() {
 // the guard that compares the map against the canon in both directions would go red if it were
 // added. The page printed `FM-?` at the reader, which reads as a defect in the product rather than
 // as the honest fact that this check answers to no canon mode (measured in the UI 2026-08-23).
-const fmOf = (checkName) => CHECK_TO_FM[checkName] || null;
+// A battery row may also guard NO mode (CHECK-6, §9.5: an unowned leaf is an unissued one) — present
+// in the map with an empty list, which is a different fact from being absent from it.
 const FM_NONE = 'engineering checks (outside the canon battery)';
+const FM_NO_MODE = 'battery checks that guard no failure mode';
+const fmOf = (checkName) => {
+    const fm = CHECK_TO_FM[checkName];
+    if (!fm) return null;
+    if (Array.isArray(fm) && !fm.length) return FM_NO_MODE;
+    return Array.isArray(fm) ? fm.join(' · ') : fm;   // one check may guard several modes
+};
 
 // Short names for the stats bar. What each metric MEANS is NOT written here: the server sends it
 // with the numbers (`means`), from the module that computes them. This block held its own copy until
@@ -408,26 +415,61 @@ window.fetch = (url, opts) => {                      // tab scope rides every sa
     }
     return _rawFetch(url, opts);
 };
+let CUR_PROJECT = TAB_PROJECT;     // the project this tab shows; the server's active one until the list says
+let INFLIGHT_NOW = [];             // the server's in-flight registry, last read (`pollInFlight`)
+let _projectsRead = null;
+// How many pieces of long work each project has running, from the one registry the server keeps.
+const busyByProject = () => INFLIGHT_NOW.reduce((m, w) => (m[w.project] = (m[w.project] || 0) + 1, m), {});
 async function refreshProjects() {
     try {
-        const d = await (await fetch('/api/projects')).json();
-        const cur = TAB_PROJECT || d.active;
-        const sel = document.getElementById('project-select');
-        // Newest first (the server orders by when each project was last worked in) and capped: an
-        // installation with a history had 271 entries here, alphabetical, with the live project 69th —
-        // a picker that cannot show you what you are on. The rest stay reachable by name: the current
-        // one is always in the list, and `?project=<name>` opens any of them directly.
-        const recent = d.projects.slice(0, 25);  // the page IS the endpoint's page now
-        if (cur && !recent.includes(cur)) recent.unshift(cur);
-        // …COUNTED AGAINST THE TOTAL, not against the page. The endpoint pages now (a full list was
-        // 19KB for a question that wanted a handful of names), so `d.projects` IS the page and
-        // subtracting from its length would report "25 older" on an installation with 354.
-        const hidden = (d.total ?? d.projects.length) - recent.length;
-        sel.innerHTML = recent.map(p =>
-            `<option value="${p}"${p === cur ? ' selected' : ''}>${p}</option>`).join('')
-            + (hidden > 0 ? `<option value="" disabled>… ${hidden} older (open by ?project=)</option>` : '')
-            + '<option value="__new__">+ new…</option>';
+        _projectsRead = await (await fetch('/api/projects')).json();
+        renderProjects();
     } catch (e) { /* single-project server */ }
+}
+function renderProjects() {
+    const d = _projectsRead;
+    if (!d) return;
+    const cur = CUR_PROJECT = TAB_PROJECT || d.active;
+    const sel = document.getElementById('project-select');
+    // Newest first (the server orders by when each project was last worked in) and capped: an
+    // installation with a history had 271 entries here, alphabetical, with the live project 69th —
+    // a picker that cannot show you what you are on. The rest stay reachable by name: the current
+    // one is always in the list, and `?project=<name>` opens any of them directly.
+    const recent = d.projects.slice(0, 25);  // the page IS the endpoint's page now
+    if (cur && !recent.includes(cur)) recent.unshift(cur);
+    // …COUNTED AGAINST THE TOTAL, not against the page. The endpoint pages now (a full list was
+    // 19KB for a question that wanted a handful of names), so `d.projects` IS the page and
+    // subtracting from its length would report "25 older" on an installation with 354.
+    const hidden = (d.total ?? d.projects.length) - recent.length;
+    // …AND WHERE EACH ONE STANDS. A list of bare names could not answer the two questions a
+    // person opens it with — which of these is finished, and which is running right now — so
+    // every entry had to be opened to find out (author, 2026-09-24). The root's state is the
+    // project's verdict; running is the in-flight registry's count, the same one the
+    // observation strip reads.
+    const busy = busyByProject(), root = d.roots || {};
+    const label = p => p + (p in root ? ` · ${root[p] ? statusLabel(root[p].state, root[p].done_reason) : 'empty'}` : '')
+                         + (busy[p] ? ` · ⟳ ${busy[p]} running` : '');
+    sel.innerHTML = recent.map(p =>
+        `<option value="${esc(p)}"${p === cur ? ' selected' : ''}>${esc(label(p))}</option>`).join('')
+        + (hidden > 0 ? `<option value="" disabled>… ${hidden} older (open by ?project=)</option>` : '')
+        + '<option value="__new__">+ new…</option>';
+    if (plS) plHeader();
+}
+// THE COUNT OF WORK IN FLIGHT IS THE SERVER'S, not inferred from the stream. It was the number of
+// token TICKS seen in the last 12 s, keyed by source and stage: an executor running tools sends no
+// ticks, so it dropped out of the count mid-run, and two parallel runs of one stage merged into one
+// (author, 2026-09-24). The server registers every long run at its start and removes it at its end,
+// with the project and node it is on — so this reads that, for THIS tab's project.
+async function pollInFlight() {
+    try {
+        const rt = await (await fetch('/api/runtime')).json();
+        const before = JSON.stringify(busyByProject());
+        INFLIGHT_NOW = rt.in_flight || [];
+        // A run starting or ending elsewhere changes that project's line in the picker, and one that
+        // ended has usually moved its root: re-read the list rather than repaint a stale one.
+        if (JSON.stringify(busyByProject()) !== before) refreshProjects();
+        if (plS) plHeader();
+    } catch (e) { /* the strip keeps its last count; the socket banner says when the server is gone */ }
 }
 async function switchProject(name) {
     // A NAME IS REQUIRED, and the function must be total. The "… N older" row is already `disabled`,
@@ -502,7 +544,7 @@ async function _refreshGraph() {
             if (isCancelled) cancelled.add(n.id);
             if (n.closure && (n.closure.by_hand || n.closure.refuted || n.closure.overruled))
                 graphClosures.push({ id: n.id, ...n.closure });
-            cy.add({ data: { id: n.id, label: readableLabel(n.label), state: n.state, bucket: bucketOf(n.state),
+            cy.add({ data: { id: n.id, label: readableLabel(n.name), state: n.state, bucket: bucketOf(n.state),
                              bg: st.bg, fg: st.fg, bw: st.bw, bc: st.bc, bs: st.bs, bo: st.bo },
                      classes: isCancelled ? 'cancelled' : undefined });
         }
@@ -566,7 +608,7 @@ async function _refreshStats() {
     if (!allTasksCache.length) { el.innerHTML = ''; return; }
     const counts = {};
     allTasksCache.forEach(t => { counts[t.state] = (counts[t.state]||0) + 1; });
-    const order = ['DONE','EXECUTING','OFFERED','BLOCKED','REWORKING','CHALLENGED','VALIDATING','IDLE','CANCELLING','ABANDONED','OVERDUE','ESCALATED'];
+    const order = ['DONE','EXECUTING','OFFERED','BLOCKED','REWORKING','CHALLENGED','VALIDATING','IDLE','CANCELLING','ABANDONED','ESCALATED'];
     el.innerHTML = order.filter(s => counts[s]).map(s =>
         `<span class="stat"><span class="stat-dot" style="background:${DOT_ON_CHROME[bucketOf(s)]}"></span>${counts[s]} ${STATE_LABEL[s]||s}</span>`
     ).join('');
@@ -581,7 +623,7 @@ async function _refreshStats() {
         el.innerHTML += `<span class="stat" title="${byHand.map(c => c.id + ' — ' + closureNote(c)).join(' · ').replace(/"/g,'&quot;')}">`
             + `<span class="stat-dot" style="background:${T_PAPER}"></span>${byHand.length} closed by hand</span>`;
     // …AND WHAT THE GRAPH IS WAITING FOR, which the counts cannot say. A watcher seeing VALIDATING 3
-    // cannot tell "three judges are running" from "three nodes nobody will ever judge", and that is
+    // cannot tell "three validators are running" from "three nodes nobody will ever validate", and that is
     // the difference between a graph that is working and one that is stuck — the frontier knows it
     // and every driver of this product had to ask it from a terminal (measured on all four doors,
     // waves 18-19). Same three lists the agent door reads, in the place a person is already looking.
@@ -653,7 +695,7 @@ async function refreshMetrics() {
     try {
         const m = await (await fetch('/api/metrics')).json();
         const means = m.means || {};
-        // §24.5: a low q_D is read TOGETHER with the false-FAIL share — an over-strict validator
+        // §15.4: a low q_D is read TOGETHER with the false-FAIL share — an over-strict validator
         // inflates q_D's numerator, so the same red number means different things depending on it.
         // The page showed q_D in red with no way to ask, because the door was not serving the share.
         const ffs = m.false_fail_share;
@@ -664,7 +706,7 @@ false-FAIL share: ${(ffs*100).toFixed(0)}% — ${means.false_fail_share || ''}`;
         document.getElementById('metrics').innerHTML = Object.keys(Q_SHORT).map((k) => {
             const v = m[k], short = Q_SHORT[k];
             const full = (means[k] || k).replace(/"/g, '&quot;');
-            if (v === null || v === undefined) // ⊥: empty population (canon §21) — a dash, not a fake 100%
+            if (v === null || v === undefined) // ⊥: empty population (canon §15.4) — a dash, not a fake 100%
                 return `<div class="metric" title="${full}
 
 No observations yet — this is ⊥, not a score of zero."><div class="metric-val" style="color:var(--ink-faint)">—</div><div class="metric-label">${short}</div></div>`;
@@ -694,6 +736,9 @@ async function selectTask(taskId) {
         const d = await (await fetch(`/api/tasks/${encodeURIComponent(taskId)}`)).json();
         const sb = document.getElementById('sidebar');
         sb.classList.remove('hidden');
+        // The panel is rebuilt on every transition anywhere in the graph, so a check the reader
+        // unfolded would fold itself shut under them mid-read; what was open stays open.
+        const unfolded = new Set([...sb.querySelectorAll('details[open][data-key]')].map(x => x.dataset.key));
         const role = myRole();
 
         const v = vOf(d.state);
@@ -702,7 +747,7 @@ async function selectTask(taskId) {
         let h = `<div class="sidebar-header"><h2>${esc(d.name || d.description)}</h2><button class="sidebar-close" onclick="closeSidebar()">&times;</button></div>`;
         if (d.name && d.description && d.name !== d.description) h += `<p class="node-desc" style="color:var(--text-dim,#888);margin:0 0 8px;font-size:13px">${esc(d.description)}</p>`;
         h += `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">`;
-        h += `<span class="v-badge v-${v}" title="V(t) — validation outcome §11.2"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`;
+        h += `<span class="v-badge v-${v}" title="V(t) — validation outcome §2.3"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`;
         h += `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, d.done_reason)}</span>`;
         if (dl) h += `<span class="deadline-chip${dl.overdue ? ' overdue':''}" title="deadline">⏱ ${dl.text}</span>`;
         h += `</div>`;
@@ -713,27 +758,37 @@ async function selectTask(taskId) {
         if (note) {
             const bad = d.closure.refuted || d.closure.overruled;
             h += `<div class="${bad ? 'check-fail' : 'check-skip'}" style="margin:-2px 0 8px">${bad ? '⚠ ' : ''}${note}`
-               + `${bad ? ' — legitimate (§14.5) and nothing can check it (§13.6); read the verdict below.' : ''}</div>`;
+               + `${bad ? ' — legitimate (§10.3) and nothing can check it (§15.7); read the verdict below.' : ''}</div>`;
         }
 
         if (d.criteria.length) {
-            h += `<div class="section"><div class="section-title">Criteria</div><ul class="item-list">`;
+            // NOT `.item-list`: that one is a flex ROW, built for an icon beside one body, and a
+            // criterion handed it three children — name, description, probes — so they stood side
+            // by side as three columns and the probe column ran off the panel (author, 2026-09-24).
+            // A criterion reads top to bottom: name, what it asks, and how it will be decided.
+            h += `<div class="section"><div class="section-title">Criteria</div><ul class="criteria-list">`;
             // ESCAPED, like everything else a model wrote. Live on the page, 2026-09-12:
             // `root.lexer`'s `full_operator_tokens` reads "never split into shorter tokens (e.g.
             // a<" and stops — the rest of the sentence was parsed as a tag and never drawn.
             // …AND WHAT WILL BE RUN TO DECIDE IT. A page that shows the criterion alone shows an
-            // intention; the pinned procedure is what makes it a contract (A1, §10), and a person
+            // intention; the pinned procedure is what makes it a contract (A1, §2), and a person
             // watching the graph is exactly who needs to see whether one was ever written.
+            // FOLDED, because it is the longest part of a criterion by far: open, a handful of
+            // probes pushes every other criterion below the fold.
             d.criteria.forEach(c => {
-                h += `<li><strong>${esc(c.name)}</strong> — ${esc(c.description)}`;
+                h += `<li><strong>${esc(c.name)}</strong><div class="crit-desc">${esc(c.description)}</div>`;
                 if (c.check && c.check.length) {
-                    h += `<ul class="facet-list">`;
-                    c.check.forEach(p => h += `<li><code>${esc(p.command)}</code> → ${esc(p.expect)}`
-                        + `${p.behaviour ? ` <span class="hint">(${esc(p.behaviour)})</span>` : ''}</li>`);
-                    h += `</ul>`;
+                    const n = c.check.length, key = `${d.id}|${c.name}`;
+                    h += `<details class="crit-check" data-key="${esc(key)}"${unfolded.has(key) ? ' open' : ''}><summary>check (${n} probe${n === 1 ? '' : 's'})</summary><pre>`
+                       + c.check.map(p => [p.behaviour && `# ${p.behaviour}`, `$ ${p.command}`,
+                                           `→ ${p.expect}`,
+                                           Object.keys(p.inputs || {}).length
+                                               && `inputs: ${Object.keys(p.inputs).join(', ')}`]
+                                          .filter(Boolean).map(esc).join('\n')).join('\n\n')
+                       + `</pre></details>`;
                 } else {
                     h += `<div class="check-fail">no pinned check — nothing decides this criterion `
-                       + `but a probe improvised at validation time (A1, §10)</div>`;
+                       + `but a probe improvised at validation time (A1, §2)</div>`;
                 }
                 h += `</li>`;
             });
@@ -771,14 +826,14 @@ async function selectTask(taskId) {
             h += `</div></div>`;
         }
 
-        // Checks grouped by FM (§12 failure modes)
+        // Checks grouped by FM (§8 failure modes)
         const realChecks = d.checks.filter(c => !c.skipped);
         if (realChecks.length) {
             const byFm = {};
             realChecks.forEach(c => { const fm = fmOf(c.check_name) || FM_NONE; (byFm[fm] = byFm[fm] || []).push(c); });
             h += `<div class="section"><div class="section-title">Checks by failure mode</div>`;
             Object.keys(byFm).sort().forEach(fm => {
-                const isFm = fm !== FM_NONE;
+                const isFm = fm !== FM_NONE && fm !== FM_NO_MODE;
                 h += `<div class="fm-group"><div class="fm-label">${isFm ? `<span class="fm-code">${fm}</span>${FM_LABEL[fm] || ''}` : fm}</div><ul class="item-list">`;
                 byFm[fm].forEach(c => {
                     // A SKIPPED CHECK SAYS NOTHING — it is neither met nor unmet, and reading the
@@ -811,7 +866,7 @@ async function selectTask(taskId) {
 
         // THE EXECUTION VERDICT, AND WHAT KIND OF PARTY PRODUCED IT. The one thing this product
         // promises is that nothing closes on impression — and the page that a person watches said
-        // nothing about who judged a node or on what. A tester answering "did anything close without
+        // nothing about who validated a node or on what. A tester answering "did anything close without
         // proof" had to read `/api/tasks/{id}/verdict` by hand to find `by_hand`, `validator` and the
         // per-criterion probe commands (HTTP door, 2026-09-02). If it is legible there it belongs here.
         try {
@@ -819,8 +874,8 @@ async function selectTask(taskId) {
             if (vr && vr.verdict) {
                 const who = vr.by_hand
                     ? `asserted by hand — ${esc(vr.validator || 'someone')}, not an instrument`
-                    : `judged by ${esc(vr.validator || 'an instrument')}${vr.validator_model ? ' · ' + esc(vr.validator_model) : ''}`;
-                const stale = vr.current === false ? ' <span class="check-fail">(judged an EARLIER delivery)</span>' : '';
+                    : `validated by ${esc(vr.validator || 'an instrument')}${vr.validator_model ? ' · ' + esc(vr.validator_model) : ''}`;
+                const stale = vr.current === false ? ' <span class="check-fail">(validated an EARLIER delivery)</span>' : '';
                 h += `<div class="section"><div class="section-title">Verdict on the work</div>`;
                 h += `<div class="${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${vr.verdict} — ${who}${stale}</div>`;
                 if ((vr.failed_criteria || []).length)
@@ -866,11 +921,20 @@ async function selectTask(taskId) {
                 });
                 h += `</ul></div>`;
             } else if (vr && vr.refused_report) {
-                // ⊥ IS NOT "NOT VALIDATED". A judge ran, reported, and the engine refused the report:
+                // ⊥ IS NOT "NOT VALIDATED". A validator ran, reported, and the engine refused the report:
                 // that is a decision the issuer owes, and it used to be invisible on this page.
                 h += `<div class="section"><div class="section-title">Verdict on the work</div>`
+                   // …READING THE NOTE WHERE IT ACTUALLY LIVES. `note` is a field of
+                   // `refused_report`, not of the response, so this always rendered the fallback
+                   // and the reader never saw WHY the report was refused — which is the one thing
+                   // the panel exists to hand them. `why_it_is_not_a_verdict` is the engine's own
+                   // reason and belongs beside it.
                    + `<div class="check-fail">a validator reported and the report was REFUSED as ⊥ —`
-                   + ` ${vr.note || 'the issuer decides'}</div></div>`;
+                   + ` ${vr.refused_report.note || 'the issuer decides'}</div>`
+                   + (vr.refused_report.why_it_is_not_a_verdict
+                      ? `<div class="verdict-evidence">${esc(vr.refused_report.why_it_is_not_a_verdict)}</div>`
+                      : ``)
+                   + `</div>`;
             }
         } catch (e) { /* a node with no verdict yet is the ordinary case, not an error */ }
 
@@ -918,7 +982,7 @@ async function selectTask(taskId) {
         } catch(e) {}
 
         const acts = ACTIONS[d.state] || [];
-        // ESCALATED is the ISSUER's waiting state (§14.3-bis), not a terminal — and the page showed
+        // ESCALATED is the ISSUER's waiting state (§12.5), not a terminal — and the page showed
         // it with no actions at all, which is the same hole the engine had: a node that says "someone
         // must decide" and offers the decider nothing. Say whose move it is and what the moves are.
         if (d.state === 'ESCALATED') {
@@ -929,7 +993,7 @@ async function selectTask(taskId) {
                + `is what is wrong; or <b>close it</b> (Cancel — it cascades the live subtree). `
                + `Silence closes it too, by this state's own timeout; it never drifts to a pass.</div></div>`;
         }
-        const noCancel = ['DONE','ABANDONED','CANCELLING'];  // §14.3: no re-CANCEL from CANCELLING; terminals reject all
+        const noCancel = ['DONE','ABANDONED','CANCELLING'];  // §12.6: no re-CANCEL from CANCELLING; terminals reject all
         if (acts.length || !noCancel.includes(d.state)) {
             h += `<div class="section"><div class="section-title">Actions</div><div class="actions">`;
             // …and a place for the forms those actions need. The page asked for a delivery report
@@ -952,7 +1016,7 @@ async function selectTask(taskId) {
                 // the subtree; already-decomposed → one refine round over what exists.
                 const hasKids = allTasksCache.some(t => t.parent_id === d.id && t.state !== 'ABANDONED');
                 h += `<button class="btn btn-sm btn-purple" onclick="aiDecompose('${d.id}')">${hasKids ? 'AI refine' : 'AI decompose'}</button>`;
-                // The standalone L2 door (§13.4 Level 2): hand-authored/edited graphs never pass
+                // The standalone L2 door (§9.1 Level 2): hand-authored/edited graphs never pass
                 // through decompose's built-in semantic pass — this button is their only L2.
                 if (hasKids)
                     h += `<button class="btn btn-sm btn-purple" onclick="aiReview('${d.id}')">AI review</button>`;
@@ -961,7 +1025,7 @@ async function selectTask(taskId) {
             // It was drawn on OFFERED alone, so a Level-2 review that says "fix the criteria this
             // names" arrived on an EXECUTING root whose panel had no way to fix anything: the page
             // stated the remedy and withheld the control (page door, wave 27, 2026-09-06 — the
-            // tester was trapped there and the run ended). §14.3 admits a re-ASSIGN from every
+            // tester was trapped there and the run ended). §12.3 admits a re-ASSIGN from every
             // reassignable state; those are the states this button belongs on.
             if (REASSIGNABLE.includes(d.state))
                 h += `<button class="btn btn-sm btn-muted" onclick="openEdit('${d.id}')">Edit</button>`;
@@ -1031,10 +1095,10 @@ async function aiReview(id) {
             notice((d.semantic_covered ? 'L2 checker: no gaps found (advisory — the real Level-2 verdict is execution; q_D watches it).\n\n'
                                       // Two discharges — and the register is NOT one of them: a parent
                                       // criterion the children's criteria do not carry is FM-1.d, repaired
-                                      // on the PLAN or refuted in writing. §13.1's register holds risk
+                                      // on the PLAN or refuted in writing. §9.2's register holds risk
                                       // EVENTS with an estimable P; writing an uncovered entailment into it
-                                      // forbids nothing and closes nothing (§2.1).
-                                      : 'L2 verdicts (advisory — repair the PLAN (edit criteria / map or add a child), or record why the finding is wrong (dispute_finding). NOT the risk register — §13.1 holds risk events, not uncovered entailment):\n\n')
+                                      // forbids nothing and closes nothing (§1.3).
+                                      : 'L2 verdicts (advisory — repair the PLAN (edit criteria / map or add a child), or record why the finding is wrong (dispute_finding). NOT the risk register — §9.2 holds risk events, not uncovered entailment):\n\n')
                   + lines.join('\n').slice(0, 1800));
         }
         else if (d.semantic_findings) notice('L2 (advisory):\n\n' + d.semantic_findings.slice(0, 1500));
@@ -1298,7 +1362,7 @@ async function createTask() {
     const assignee = document.getElementById('new-assignee').value.trim();
     if (!desc || !assignee) {
         notice(!desc ? 'Describe the task first — a node is its contract, and this is its goal.'
-                     : 'Name an assignee: every task has exactly one accountable executor (Del, §10). '
+                     : 'Name an assignee: every task has exactly one accountable executor (Del, §2). '
                        + 'Put your own name here if it is yours.', 'bad');
         (document.getElementById(!desc ? 'new-desc' : 'new-assignee')).focus();
         return;
@@ -1337,17 +1401,24 @@ async function openDecompose(id) {
 function closeModal() { document.getElementById('decompose-modal').classList.remove('active'); }
 
 // === Edit node (upper-layer authoring: RMW over revise/edit_accepted_risks/reassign endpoints) ===
-let editTaskId = null, editOrigAssignee = '', editOrigCriteria = [], editOrigRisks = [];
+let editTaskId = null, editOrigAssignee = '', editOrigCriteria = [], editOrigRisks = [], editRecordedRisks = {};
 async function openEdit(id) {
     editTaskId = id;
     const d = await (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json();
     editOrigAssignee = d.assignee || '';
     editOrigCriteria = (d.criteria || []).map(c => ({name: c.name, description: c.description}));
-    editOrigRisks = (d.accepted_risks || []).slice();
+    // WHOSE list this form edits is whose word it writes (§9.2, §10.1): the node's executor over its own split edits
+    // the split's register; anyone else — its issuer — the packet's pre-fill. The server routes the same way.
+    const ownSplit = myRole() === (d.assignee || '') && (d.children || []).length > 0;
+    const risks = ownSplit ? (d.accepted_risks_recorded || []) : (d.prefilled_accepted_risks || []);
+    editOrigRisks = risks.map(n => n.item);
+    // an entry carries its estimate, component and denial mark beside its text: a kept row posts its recorded
+    // form, so an edit elsewhere does not strip them (critic r4, 2026-10-04: bare strings wiped P, impact, denial)
+    editRecordedRisks = Object.fromEntries(risks.map(n => [n.item, n]));
     const cr = document.getElementById('edit-criteria-rows'); cr.innerHTML = '';
     (d.criteria || []).forEach(c => addEditCriterion(c.name, c.description));
     const nl = document.getElementById('edit-accepted_risks-list'); nl.innerHTML = '';
-    (d.accepted_risks || []).forEach(n => addEditAcceptedRisk(n));
+    editOrigRisks.forEach(n => addEditAcceptedRisk(n));
     document.getElementById('edit-assignee').value = d.assignee || '';
     document.getElementById('edit-modal').classList.add('active');
 }
@@ -1387,14 +1458,15 @@ async function submitEdit() {
     const criteria = Array.from(document.querySelectorAll('#edit-criteria-rows .criterion-row')).map(r => ({
         name: r.querySelector('.ec-name').value.trim(), description: r.querySelector('.ec-desc').value.trim(),
     })).filter(c => c.name && c.description);
-    const accepted_risks = Array.from(document.querySelectorAll('#edit-accepted_risks-list .list-item input')).map(i => i.value.trim()).filter(Boolean);
+    const riskItems = Array.from(document.querySelectorAll('#edit-accepted_risks-list .list-item input')).map(i => i.value.trim()).filter(Boolean);
+    const accepted_risks = riskItems.map(item => editRecordedRisks[item] || item);
     const newAssignee = document.getElementById('edit-assignee').value.trim();
     const post = (tool, body) => fetch(`/api/run/${tool}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task_id:editTaskId, ...body})});
     // ONE ACT, ONE REVISION. Each of these verbs is a re-ASSIGN (Inv-1), and the form posted all of
     // them every time — so editing a description sent the node back to OFFERED twice and wrote two
     // identical ASSIGNs into the log (wave 26, 2026-09-06). Only what CHANGED is sent.
     const critsMoved = JSON.stringify(criteria) !== JSON.stringify(editOrigCriteria);
-    const risksMoved = JSON.stringify(accepted_risks) !== JSON.stringify(editOrigRisks);
+    const risksMoved = JSON.stringify(riskItems) !== JSON.stringify(editOrigRisks);
     try {
         let r = {ok: true};
         if (critsMoved) r = await post('edit_criteria', {criteria, agent});
@@ -1513,7 +1585,7 @@ async function submitDecompose() {
     }
     const noRisks = children.filter(c => !(c.spec.accepted_risks || []).length);
     if (noRisks.length === children.length) {
-        notice('a decomposition needs its ACCEPTED_RISKS register (CHECK-4, §13.1: a decomposition '
+        notice('a decomposition needs its ACCEPTED_RISKS register (CHECK-4, §9.2: a decomposition '
              + 'without one is incomplete by definition). Add at least one factor — `+ accepted_risks` '
              + 'on a subtask — or say in it that none is known.', 'bad');
         return;
@@ -1550,10 +1622,15 @@ function plShow(open) {
     document.getElementById('pl-arrow').textContent = open ? '▾' : '▸';
 }
 function plHeader() {
-    const n = plS.active.size;
-    document.getElementById('pl-count').textContent =
-        (n ? `${n} active · ` : '') + `${plS.runs} runs · Σ today ${plS.dayTok.toFixed(1)}k tokens`
+    // THIS project's, and it says whose: the registry is server-wide, and a count of another
+    // project's validator beside an idle graph reads as work on this one.
+    const mine = INFLIGHT_NOW.filter(w => w.project === CUR_PROJECT);
+    const el = document.getElementById('pl-count');
+    el.textContent = (mine.length ? `${mine.length} in flight in ${CUR_PROJECT} · ` : '')
+        + `${plS.runs} runs · Σ today ${plS.dayTok.toFixed(1)}k tokens`
         + (plS.spend ? ` · ${plS.spend}` : '');
+    const now = Date.now() / 1000;
+    el.title = mine.map(w => `${w.verb} on ${w.task_id || '—'} · ${Math.round(now - w.since)}s`).join('\n');
 }
 
 // What the model calls of THIS project have cost, per role. It belongs HERE and not beside the
@@ -1623,7 +1700,9 @@ async function plEnsure() {
         plS.manual = true;
         plShow(document.getElementById('pl-body').style.display === 'none');
     };
-    setInterval(() => {                                // a process that stopped ticking (>12s) is not active
+    pollInFlight();
+    setInterval(pollInFlight, 5000);
+    setInterval(() => {                                // a line that stopped ticking (>12s) is no longer live
         const cut = Date.now() - 12000;
         let dropped = false;
         for (const [k, v] of plS.active) if (v.t < cut) { plS.active.delete(k); dropped = true; }

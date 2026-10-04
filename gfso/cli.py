@@ -9,12 +9,13 @@ import logging
 import os
 import runpy
 import sys
+import traceback
 import threading
 import time
 import urllib.parse
 import urllib.request
-import webbrowser
 
+from gfso.adapters.children import bind_this_process, end_this_process, open_outside
 from gfso import __version__, serverctl
 from gfso.config import LOOPBACK, install_mcp_env, install_serve_env
 from gfso import serverctl
@@ -371,15 +372,18 @@ def _down():
 
 
 def _mcp(args):
+    bind_this_process()          # the stdio server spawns `claude` children too
     install_mcp_env(db_path=args.db_path, llm=args.llm, model=args.model)
-    # LEFT: `gfso.mcp.server` needs the optional `mcp` SDK, and importing it raises the whole HTTP
+    # LEFT: `gfso.mcp.stdio` needs the optional `mcp` SDK, and importing it raises the whole HTTP
     # stack (fastapi + uvicorn + `gfso.api.server`) that the other subcommands do not pay for.
-    from gfso.mcp.server import main as mcp_main
+    from gfso.mcp.stdio import main as mcp_main
     mcp_main()
 
 
 def _serve(args):
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(message)s")
+    # The server's descendants — executors, validators, their probes — die with it, however it ends.
+    bind_this_process()
 
     # Store config in env for reload mode
     # Whatever raises the server — `gfso up`, a session's connect.py, or this command typed by hand
@@ -395,7 +399,7 @@ def _serve(args):
             f"gfso: could not read the declared server config ({ex})"))
 
     if not args.no_browser:
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{args.host}:{args.port}")).start()
+        threading.Timer(1.5, lambda: open_outside(f"http://{args.host}:{args.port}")).start()
 
     try:
         # LEFT: the except below is what turns a missing `uvicorn` into the line under it; hoisted,
@@ -424,6 +428,7 @@ def _serve(args):
             loop="none",
             reload=args.reload,
             reload_dirs=["gfso"] if args.reload else None,
+            timeout_graceful_shutdown=_GRACE_S,
         )
         loop = asyncio.SelectorEventLoop()
         asyncio.set_event_loop(loop)
@@ -431,15 +436,37 @@ def _serve(args):
             loop.run_until_complete(uvicorn.Server(config).serve())
         finally:
             loop.close()
-        return
+            _end_with_the_children()
 
-    uvicorn.run(
-        "gfso.api.server:app",
-        host=args.host, port=args.port,
-        log_level=args.log_level.lower(),
-        reload=args.reload,
-        reload_dirs=["gfso"] if args.reload else None,
-    )
+    try:
+        uvicorn.run(
+            "gfso.api.server:app",
+            host=args.host, port=args.port,
+            log_level=args.log_level.lower(),
+            reload=args.reload,
+            reload_dirs=["gfso"] if args.reload else None,
+            timeout_graceful_shutdown=_GRACE_S,
+        )
+    finally:
+        _end_with_the_children()
+
+
+# A stop means stop, the way `/api/shutdown` already does it. uvicorn waits for open requests with
+# no bound by default, and a long verb's request is open for as long as its paid `claude` child runs,
+# so a Ctrl-C or SIGTERM waited out every call; then the interpreter joined the worker threads
+# blocked on those children, and on Windows the job never closed because the process never ended.
+_GRACE_S = 5
+
+
+def _end_with_the_children():
+    """Exit at once, children first — keeping a failed start's traceback and exit code (called from a
+    `finally`, so an exception may be on its way out)."""
+    exc = sys.exc_info()[1]
+    code = 0 if exc is None or isinstance(exc, KeyboardInterrupt) else (
+        (exc.code if isinstance(exc.code, int) else 1) if isinstance(exc, SystemExit) else 1)
+    if code and not isinstance(exc, SystemExit):
+        traceback.print_exc()
+    end_this_process(code)
 
 
 if __name__ == "__main__":

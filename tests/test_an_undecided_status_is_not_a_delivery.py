@@ -12,9 +12,9 @@ Probed 2026-09-08:
                                                          → DELIVER sent
                                                          → node EXECUTING → VALIDATING
 
-so an executor disclaiming its own work put the node where a validator is then paid to judge the
+so an executor disclaiming its own work put the node where a validator is then paid to validate the
 artifact its author said does not exist. A word the contract does not define decides nothing, and
-⊥ is not a delivery (§11.2).
+⊥ is not a delivery (§2.3).
 
 WHERE THE GUARD SITS is half the repair. The first version of it checked the status in the CALLER,
 one frame above the dispatch — and the probe that had just found the defect, which calls
@@ -29,11 +29,12 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.types import TaskId
-from gfso.delegate import EXECUTOR_SCHEMA, _decided_status, _report_into_signals
+from gfso.sessions import EXECUTOR_SCHEMA
+from gfso.reports import _decided_status, _report_into_signals
 from gfso.adapters.llm.structured import parse_structured
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 class _NoCalls:
@@ -52,11 +53,11 @@ def _accepted_node():
 
 def _report(e, report: dict):
     said: list[str] = []
-    _report_into_signals(e, TaskId("n"), "worker", e.get_task("n"), report,
+    _report_into_signals(e, TaskId("n"), "worker", e.graph.get_task("n"), report,
                          _decided_status(report.get("status")) or str(report.get("status")),
                          _NoCalls(), said.append)
     e.wait_idle()
-    return e.get_task("n").state.name, " ".join(said)
+    return e.graph.get_task("n").state.name, " ".join(said)
 
 
 @pytest.mark.parametrize("word", ["failed", "give_up", "error", "done", "partial", "", "  "])
@@ -103,17 +104,16 @@ def test_a_block_still_blocks() -> None:
     assert state == "BLOCKED"
 
 
-def test_a_challenge_from_executing_is_still_contested_not_swallowed() -> None:
-    """The third word's path is unchanged, including the case where the FSM refuses it.
+def test_a_challenge_from_executing_travels_as_the_signal_not_as_an_undecided_report() -> None:
+    """The third word's path, which v4.1 made shorter.
 
-    §14.3 admits CHALLENGE from OFFERED only; an executor disputing the contract mid-work has its
-    reason recorded and the node left in its hands (`engine.contest`). That is a different thing
-    from an undecided word, and this test exists so the two do not get merged by a later tidy-up.
-    """
+    §12.4 now admits CHALLENGE after consent (EXECUTING, REWORKING), so a dispute met in the work
+    moves the node to CHALLENGED and its issuer owes one of the two closures. What this test keeps
+    apart is the pair that must never merge: a disputed contract is not an undecided report."""
     e = _accepted_node()
     state, said = _report(e, {"status": "challenge", "reason": "the spec is ambiguous"})
 
-    assert state == "EXECUTING"
+    assert state == "CHALLENGED"
     assert "none of delivered / blocked / challenge" not in said, (
-        "a CHALLENGE the FSM refuses is a contested contract, not an undecided report"
+        "a CHALLENGE is a disputed contract, not an undecided report"
     )

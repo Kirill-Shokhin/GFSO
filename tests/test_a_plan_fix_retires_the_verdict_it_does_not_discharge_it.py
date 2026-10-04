@@ -22,7 +22,7 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 @pytest.fixture(autouse=True)
 def _l2_gate_on(monkeypatch):
@@ -30,7 +30,7 @@ def _l2_gate_on(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
 
 
-_RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISKS = REGISTER
 _FINDING = {"semantic_covered": False, "gate_passed": True,
             "criteria_verdicts": [{"criterion": "c1", "verdict": "insufficient",
                                    "why": "the child does not carry c1"}],
@@ -43,12 +43,10 @@ def _reviewed_plan():
     e.start()
     T.create_task(e, "root", {"description": "r", "criteria": [criterion("c1", "C1")],
                               "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K1")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "kid", "c1")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K1")]}, "assignee": "agent", "covers": ["c1"]}], accepted_risks=REGISTER)
     e.wait_idle()
     e._graph._storage.store_critique(TaskId("root"), json.dumps(_FINDING))
-    node = e.get_task(TaskId("root"))
+    node = e.graph.get_task(TaskId("root"))
     node.verified = True
     e._graph.save_task(node)
     assert e.open_l2_findings(TaskId("root")) == ["c1"]
@@ -63,7 +61,7 @@ def test_fixing_the_parents_own_criteria_retires_the_verdict():
                                ).get("error")
     e.wait_idle()
 
-    assert e.get_task(TaskId("root")).verified is False, "the fix staled the review"
+    assert e.graph.get_task(TaskId("root")).verified is False, "the fix staled the review"
     assert e.open_l2_findings(TaskId("root")) is None, (
         "NOT `[]` — the finding is not discharged, the verdict is retired: no current verdict is "
         "fail-closed, which is the whole reason a fix cannot silently admit execution")
@@ -80,9 +78,7 @@ def test_fixing_a_child_or_adding_one_retires_it_too():
     e.stop()
 
     e = _reviewed_plan()
-    T.create_task(e, "kid2", {"description": "k2", "criteria": [criterion("k2", "K2")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "kid2", "c1")
+    T.decompose(e, "root", [{"task_id": "kid2", "spec": {"description": "k2", "criteria": [criterion("k2", "K2")]}, "assignee": "agent", "covers": ["c1"]}], accepted_risks=REGISTER)
     e.wait_idle()
     assert e.open_l2_findings(TaskId("root")) is None
     e.stop()

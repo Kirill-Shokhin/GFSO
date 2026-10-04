@@ -9,4 +9,4 @@ Not to be confused with the server's `code_version` (`gfso.serverctl.source_fing
 a hash of the sources on disk and answers "is the running process the current code", not "which
 release is this".
 """
-__version__ = "0.1.0"
+__version__ = "0.2.0"

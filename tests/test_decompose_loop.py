@@ -10,12 +10,15 @@ import json
 
 import pytest
 
+import gfso.decompose as _D
+import gfso.tools_llm as _TL
+
 from gfso import decompose as D, tools_llm as T
 from gfso.core.types import Verdict, TaskId, AgentId, AcceptedRiskItem, SignalData, Signal, State
 from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
 from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, _fold_merge, shape,
                                  SEARCH_FAST, AUDIT_FAST)
-from tests.support import criterion, make_engine
+from tests.support import criterion, make_engine, procedure_under
 
 
 class FakeLLM:
@@ -38,7 +41,7 @@ def _graph_state(mappings=None, accepted_risks=None):
     """The graph-form state after a successful first fold (also the shape build_graph_live consumes)."""
     return {
         "name": "Thing",
-        # …AND EVERY CRITERION CARRIES ITS PROCEDURE. The AUDIT schema requires `check` now (A1/§10):
+        # …AND EVERY CRITERION CARRIES ITS PROCEDURE. The AUDIT schema requires `check` now (A1/§2):
         # a model reply without it is a contract nothing decides, and `build` would land criteria the
         # graph reports as holes — so the fake model emits what the real one is now asked for.
         "root_criteria": [criterion("rc1", "A done"), criterion("rc2", "B done")],
@@ -49,7 +52,9 @@ def _graph_state(mappings=None, accepted_risks=None):
         "mappings": mappings or [{"criterion": "rc1", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}],
         "deps": [{"from": "a", "to": "b", "glue": "B reads A's output"}],
         "accepted_risks": accepted_risks or [{"item": "provider outage", "predictability": "STATISTICAL",
-                                    "justification": "P<1%", "invalidation": "outage seen"}],
+                                    "justification": "P<1%", "invalidation": "outage seen",
+                                    "p": 0.01, "impact": "the run waits for the provider"}],
+        "denial": {"p": 0.1, "justification": "the suite's stated estimate for a fixture split"},
     }
 
 
@@ -57,7 +62,8 @@ def _init_patch(mappings=None, accepted_risks=None):
     """The round-1 (empty-state) fold: the same content as _graph_state(), expressed as adds."""
     s = _graph_state(mappings=mappings, accepted_risks=accepted_risks)
     return {"name": s["name"], "add_root_criteria": s["root_criteria"], "add_subtasks": s["subtasks"],
-            "add_mappings": s["mappings"], "add_deps": s["deps"], "add_accepted_risks": s["accepted_risks"]}
+            "add_mappings": s["mappings"], "add_deps": s["deps"], "add_accepted_risks": s["accepted_risks"],
+            "denial": s["denial"]}
 
 
 _ADD_C = {"add_subtasks": [{"id": "c", "name": "C", "description": "do C",
@@ -120,7 +126,7 @@ def test_depth2_refines_over_the_built_graph():
     # the refine searcher read the graph's REAL projection (checks section is unique to it)
     assert "Structural checks already run" in fake.calls[2][1]
     e = res.engine
-    assert e.get_task(TaskId("root.c")) is not None            # fold landed in the LIVE graph
+    assert e.graph.get_task(TaskId("root.c")) is not None            # fold landed in the LIVE graph
     assert res.holes == []
     assert {c["id"] for c in res.spec["subtasks"]} == {"a", "b", "c"}
 
@@ -146,7 +152,7 @@ def test_public_refine_applies_one_iteration_to_existing_graph():
     e = res.engine
     fake2 = FakeLLM(texts=["found: C is missing"], specs=[_ADD_C])
     res2 = refine(e, root_id="root", llm=fake2)
-    assert e.get_task(TaskId("root.c")) is not None
+    assert e.graph.get_task(TaskId("root.c")) is not None
     assert res2.holes == []
     assert "Structural checks already run" in fake2.calls[0][1]   # searcher saw the real projection
 
@@ -160,8 +166,8 @@ def test_refine_preserves_existing_children_del():
     e.reassign(TaskId("root.a"), AgentId("bob"))                  # issuer delegates a to bob
     fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
     refine(e, root_id="root", llm=fake2)
-    assert e.get_task(TaskId("root.a")).assignee == AgentId("bob")   # Del survived the rebuild
-    assert e.get_task(TaskId("root.c")) is not None
+    assert e.graph.get_task(TaskId("root.a")).assignee == AgentId("bob")   # Del survived the rebuild
+    assert e.graph.get_task(TaskId("root.c")) is not None
 
 
 def test_one_verb_dispatches_to_refine_on_decomposed_node():
@@ -174,12 +180,12 @@ def test_one_verb_dispatches_to_refine_on_decomposed_node():
     res2 = decompose_into(e, "", root_id="root", depth=1, llm=fake2)     # same verb, no request
     assert [k for k, _ in fake2.calls] == ["search", "fold"]             # refine path, not init
     assert "Structural checks already run" in fake2.calls[0][1]          # over the real projection
-    assert e.get_task(TaskId("root.c")) is not None
+    assert e.graph.get_task(TaskId("root.c")) is not None
     assert res2.holes == []
 
 
 def test_rebuild_preserves_child_own_registers():
-    """A child's OWN ACCEPTED_RISKS belongs to the CHILD'S decomposer (§13.1) — a parent-level rebuild
+    """A child's OWN ACCEPTED_RISKS belongs to the CHILD'S decomposer (§9.2) — a parent-level rebuild
     must not wipe it (same class as Del preservation)."""
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
@@ -187,7 +193,7 @@ def test_rebuild_preserves_child_own_registers():
     e.edit_accepted_risks(TaskId("root.a"), (AcceptedRiskItem("a-risk"),), AgentId("human"))
     fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
     refine(e, root_id="root", llm=fake2)
-    a = e.get_task(TaskId("root.a"))
+    a = e.graph.get_task(TaskId("root.a"))
     assert [n.item for n in a.spec.accepted_risks] == ["a-risk"]              # survived the rebuild
 
 
@@ -201,30 +207,30 @@ def test_refine_leaves_untouched_children_in_place():
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.a"),
                                   source=AgentId("human")))
     e.wait_idle()
-    assert e.get_state(TaskId("root.a")) == State.EXECUTING
+    assert e.graph.get_state(TaskId("root.a")) == State.EXECUTING
     n_signals_a = len(e.audit_log(TaskId("root.a")))
     fake2 = FakeLLM(texts=["found: C"], specs=[_ADD_C])
     refine(e, root_id="root", llm=fake2)
-    assert e.get_state(TaskId("root.a")) == State.EXECUTING          # untouched → still executing
+    assert e.graph.get_state(TaskId("root.a")) == State.EXECUTING          # untouched → still executing
     assert len(e.audit_log(TaskId("root.a"))) == n_signals_a         # zero signals on the child
-    assert e.get_task(TaskId("root.c")) is not None                  # the change landed
+    assert e.graph.get_task(TaskId("root.c")) is not None                  # the change landed
 
 
 def test_refine_frozen_terminal_children_surface_as_holes():
     """SETTLED work is FROZEN: a fold update targeting a DONE child cannot apply (a terminal node
-    admits no revision, §14.3) — the intent must NOT vanish into rejected signals (observed live):
+    admits no revision, §12.3) — the intent must NOT vanish into rejected signals (observed live):
     the searcher sees the frozen list, the unapplied change surfaces as an honest hole, and the
     child's state/audit stay untouched.
 
     "Settled" is DONE or ABANDONED and no longer ESCALATED, which is the issuer waiting rather than
-    the work finishing (§14.3-bis) — a refine round may restructure around such a child, and that is
+    the work finishing (§12.5) — a refine round may restructure around such a child, and that is
     the issuer's own second move."""
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
     # drive root.a to DONE: executor signals by its Del (human), verdict by an authorized validator.
     # The DELIVER carries `self_validation`, which is what the canon asks of an INTERNAL node
-    # (§14.5 D6) and what records the verdict this PASS then stands on. It was omitted while a PASS
+    # (§10.3) and what records the verdict this PASS then stands on. It was omitted while a PASS
     # from a roster id closed such a node over no record at all; that hole was closed 2026-09-08,
     # and this setup — which only needs a DONE child to test refine against — reached DONE through it.
     for sig in (Signal.ACCEPT, Signal.DELIVER):
@@ -232,11 +238,11 @@ def test_refine_frozen_terminal_children_surface_as_holes():
                                       result="a done" if sig is Signal.DELIVER else None))
     e._graph.authorized_validators = {"vx"}
     # …and the validator RECORDS before it signs, which is what the real one does
-    # (`delegate._judge_with` → `record_exec_verdict` on both its branches). Omitted, this setup
+    # (`delegate._validate_with` → `record_exec_verdict` on both its branches). Omitted, this setup
     # reached DONE through a hole closed 2026-09-08: a PASS from a roster id closed an INTERNAL
     # node over no verdict record at all. The subject of this test is refine over a FROZEN child,
     # so how the child froze is setup — but setup that stands on a defect goes green with it.
-    # …AND IT NAMES THE PINNED RUN. A criterion carries the procedure that decides it (A1/§10), so a
+    # …AND IT NAMES THE PINNED RUN. A criterion carries the procedure that decides it (A1/§2), so a
     # PASS that does not account for it is demoted to ⊥ — the node would never freeze.
     e.record_exec_verdict(TaskId("root.a"), Verdict.PASS, [], "vx",
                           per_criterion=[{"criterion": "a1", "verdict": "pass",
@@ -244,7 +250,7 @@ def test_refine_frozen_terminal_children_surface_as_holes():
                                           "probe": criterion("a1")["check"]}])
     e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root.a"), source=AgentId("vx")))
     e.wait_idle()
-    assert e.get_state(TaskId("root.a")) == State.DONE
+    assert e.graph.get_state(TaskId("root.a")) == State.DONE
     n_signals_a = len(e.audit_log(TaskId("root.a")))
     upd_a = {"update_subtasks": [{"id": "a", "name": "A", "description": "do A DIFFERENTLY",
                                   "criteria": [criterion("a1", "A ok"),
@@ -253,7 +259,7 @@ def test_refine_frozen_terminal_children_surface_as_holes():
     res2 = refine(e, root_id="root", llm=fake2)
     assert "COMPLETED SUBTASKS — contracts FROZEN" in fake2.calls[0][1]      # searcher saw the freeze
     assert "root.a" in fake2.calls[0][1]
-    a = e.get_task(TaskId("root.a"))
+    a = e.graph.get_task(TaskId("root.a"))
     assert a.state == State.DONE and "DIFFERENTLY" not in a.spec.description  # untouched
     assert len(e.audit_log(TaskId("root.a"))) == n_signals_a                  # zero signals emitted
     assert any("settled" in str(h) or "frozen" in str(h) for h in res2.holes)  # honest residue
@@ -264,22 +270,22 @@ def test_refine_on_terminal_target_refused():
     instead of crashing on the root's own re-author, and names `reopen` as the way back.
 
     An ESCALATED goal is deliberately NOT refused: it is the issuer waiting, and narrowing the
-    criteria is his move (§14.3-bis). This refusal used to fire on it too and told him, by name, to
+    criteria is his move (§12.5). This refusal used to fire on it too and told him, by name, to
     "start a NEW goal (new root)" — the literal act that broke a measured run, twice."""
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
     e._graph.authorized_validators = {"vx"}
 
-    def _judged_pass(tid):
+    def _validated_pass(tid):
         """A seam closes on a RECORD, not on a name. This setup signed as a registered id and
         recorded nothing, which used to be enough — the hole that let two ordinary calls close a
         root that had delivered nothing (audited 2026-09-05). The subject of this test is the
-        refusal to refine a terminal node; getting there now takes the judging it always implied."""
-        t = e.get_task(TaskId(tid))
+        refusal to refine a terminal node; getting there now takes the validation it always implied."""
+        t = e.graph.get_task(TaskId(tid))
         e.record_reviewer_verdict(TaskId(tid), Verdict.PASS, [], reviewer="vx",
                                   observed={c.name: {"note": "ran it, it printed what it should",
-                                                     "ran": [p.command for p in (c.check or ())]}
+                                                     "ran": [p.command for p in procedure_under(e, tid, c)]}
                                             for c in t.spec.criteria})
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId(tid), source=AgentId("vx")))
 
@@ -287,12 +293,12 @@ def test_refine_on_terminal_target_refused():
         for sig in (Signal.ACCEPT, Signal.DELIVER):
             e.send_signal_sync(SignalData(signal=sig, task_id=TaskId(tid), source=AgentId("human"),
                                           result="done" if sig is Signal.DELIVER else None))
-        _judged_pass(tid)
+        _validated_pass(tid)
     e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"),
                                   source=AgentId("human"), result="aggregate"))
-    _judged_pass("root")
+    _validated_pass("root")
     e.wait_idle()
-    assert e.get_state(TaskId("root")) == State.DONE
+    assert e.graph.get_state(TaskId("root")) == State.DONE
     with pytest.raises(ValueError, match="settled goal is frozen"):
         decompose_into(e, "", root_id="root", llm=FakeLLM(texts=[], specs=[]))
     # …and the refusal points at the act that exists, never at a second root.
@@ -338,7 +344,7 @@ def test_refine_note_when_request_ignored():
     assert res3.note is None
 
 
-def test_fold_removal_unmaps_but_never_kills():
+def test_fold_removal_unmaps_and_cancels_the_dropped_child():
     """The auditor's removal opinion is RECORDED and VISIBLE, the kill is not its to make: a fold
     remove drops the child's coverage (reconciled on rebuild) → the node surfaces as an unmapped
     hole (non-redundancy guard) for the ISSUER to CANCEL or re-map — it is never destroyed and its
@@ -350,11 +356,15 @@ def test_fold_removal_unmaps_but_never_kills():
               "add_mappings": [{"criterion": "rc2", "child_id": "a"}]}   # coverage re-homed onto a
     fake2 = FakeLLM(texts=["found: b is ballast"], specs=[drop_b])
     res2 = refine(e, root_id="root", llm=fake2)
-    b = e.get_task(TaskId("root.b"))
-    assert b is not None and b.state == State.OFFERED                 # alive, state untouched
-    root = e.get_task(TaskId("root"))
+    b = e.graph.get_task(TaskId("root.b"))
+    # §11.5 (v4.1): a re-decomposition that DROPS an issued child cancels it — the child's contract
+    # does not lapse because the plan moved, so the drop travels as the issuer's own CANCEL with its
+    # handshake, instead of leaving a node working, unmapped, for a goal nobody aggregates it into.
+    assert b is not None and b.state in (State.CANCELLING, State.ABANDONED)
+    root = e.graph.get_task(TaskId("root"))
     assert all(m.child_id != TaskId("root.b") for m in root.criterion_mappings)   # unmapped
-    assert any("b" in str(h) for h in res2.holes)                    # surfaced as an honest hole
+    assert any("root.b: dropped by the re-decomposition" in str(h) for h in res2.holes), res2.holes   # said, not refused
+    assert not any("refused" in str(h) for h in res2.holes), res2.holes
 
 
 def test_extract_spec_roundtrips_build():
@@ -431,7 +441,7 @@ def test_decompose_into_repairs_to_clean():
     assert res.holes == []
     repair_user = [u for k, u in fake.calls if k == "repair"][0]
     assert "rc1_typo" in repair_user
-    root = res.engine.get_task(TaskId("root"))
+    root = res.engine.graph.get_task(TaskId("root"))
     assert {(m.criterion_name, m.child_id) for m in root.criterion_mappings} == \
         {("rc1", TaskId("root.a")), ("rc2", TaskId("root.b"))}
 
@@ -503,10 +513,51 @@ def test_refine_sees_the_open_level_2_findings():
         "conflicts": [], "undecided_obligations": [{"obligation": "the package imports"}],
         "iteration": 0, "reopens": 0, "revisions": 0,
     }))
-    root = eng.get_task(TaskId("root")); root.verified = True; eng._graph.save_task(root)
+    root = eng.graph.get_task(TaskId("root")); root.verified = True; eng._graph.save_task(root)
 
     fake2 = FakeLLM(texts=["ALREADY-COVERED"], specs=[])
     refine(eng, root_id="root", rounds=1, llm=fake2)
     view = fake2.calls[0][1]
     assert "OPEN LEVEL-2 FINDINGS" in view
     assert "- c1" in view and "undecided: the package imports" in view
+
+
+def test_a_given_plan_is_built_as_it_stands_with_no_model_call(monkeypatch):
+    """ONE plan executed twice is what compares two modes (EVIDENCE_LOG §13.22's pair compared two plans: solo did
+    not split, auto decomposed into five nodes). A plan read off one graph builds into another with no
+    search, no fold and no authoring call — and reads back as the same plan."""
+    src = decompose_into(_eng(), "task", root_id="root", llm=FakeLLM(texts=["h"], specs=[_init_patch()]))
+    plan = extract_spec(src.engine, "root")
+    silent = FakeLLM(texts=[], specs=[])
+    res = decompose_into(_eng(), "task", root_id="root", llm=silent, spec=plan)
+    assert silent.calls == [] and not res.holes
+    assert extract_spec(res.engine, "root") == plan
+    with pytest.raises(ValueError, match="already decomposed"):
+        decompose_into(res.engine, "task", root_id="root", llm=silent, spec=plan)
+
+
+def test_a_given_plan_is_not_refined_whatever_the_depth():
+    """"As it stands" holds at every depth: a refine round is a search, and a given plan buys none."""
+    src = decompose_into(_eng(), "task", root_id="root", llm=FakeLLM(texts=["h"], specs=[_init_patch()]))
+    silent = FakeLLM(texts=[], specs=[])
+    decompose_into(_eng(), "task", root_id="root", depth=3, llm=silent, spec=extract_spec(src.engine, "root"))
+    assert silent.calls == []
+
+
+def test_what_the_plan_spent_is_on_the_record_when_the_build_raises(monkeypatch):
+    """A build that raised took its calls with it: a row's ledger showed no plan while its author and auditors had
+    spent $0.56 (GB_sql_database_tmu9cb784). The spend is drained on every path."""
+    class Spent:
+        calls = [{"stage": "search-1", "cost_usd": 0.1}]
+
+    def boom(*a, **k):
+        raise ValueError("the build refused the split")
+
+    monkeypatch.setattr(_D, "_default_llm", lambda model: Spent())
+    monkeypatch.setattr(_TL, "decompose_into", boom)
+    e = make_engine()
+    seen = []
+    monkeypatch.setattr(e, "record_llm_usage", lambda stage, llm, node=None: seen.extend(getattr(llm, "calls", ())))
+    with pytest.raises(ValueError):
+        _TL.auto_decompose(e, "goal")
+    assert seen == Spent.calls

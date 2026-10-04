@@ -24,9 +24,9 @@
          quiet     = V=⊥,    ¬intervene   — IDLE, EXECUTING
          attend   = V=⊥,    intervene    — OFFERED, VALIDATING
          fail      = V=fail, intervene    — REWORKING, CHALLENGED        (only acc)
-         pathology = V=⊥ + FM, intervene  — BLOCKED, OVERDUE, ESCALATED
+         pathology = V=⊥ + FM, intervene  — BLOCKED, ESCALATED
 
-       Axes (§11.2 + §12):
+       Axes (§7.1 + §8):
          A {intervene, ¬intervene} → fill weight (faint outline vs solid)
          V {pass, fail, ⊥}         → fill identity (ink vs acc)
          FM {present, absent}      → structural marker (dashed outline) */
@@ -407,6 +407,46 @@ body {
     color: var(--ui-text-soft);
     white-space: pre-wrap;        /* a command is read as written, and it wraps */
     overflow-wrap: anywhere;
+}
+/* A CRITERION IS A COLUMN, not a row: name, then what it asks at the panel's full width, then its
+   pinned check folded under it. `min-width: 0` for the same reason as `.verdict-body`. */
+.criteria-list { list-style: none; }
+.criteria-list > li {
+    padding: 6px 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ui-text-soft);
+    min-width: 0;
+    border-bottom: 1px solid var(--hair);
+}
+.criteria-list > li:last-child { border-bottom: none; }
+.criteria-list strong { color: var(--ui-text); font-weight: 500; overflow-wrap: anywhere; }
+.crit-desc { overflow-wrap: anywhere; }
+.crit-check { margin-top: 4px; }
+.crit-check summary {
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: var(--tr-mono);
+    color: var(--ui-text-soft);
+}
+.crit-check pre {
+    margin-top: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.45;
+    padding: 6px 8px;
+    border-radius: 2px;
+    background: var(--ui-card);
+    color: var(--ui-text-soft);
+    white-space: pre-wrap;        /* a command is read as written, and it wraps */
+    overflow-wrap: anywhere;
+    /* …CHARACTER FOR CHARACTER. The mono face draws `==` `<=` `->` `!=` as the ligatures ═ ≤ → ≠,
+       so `a<=b` in a probe showed as `a≤b` — a command nobody can type (seen on the page, 2026-09-24). */
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+    max-height: 24em;
+    overflow-y: auto;
 }
 /* THE CLASS ITSELF CARRIED NO COLOUR — only its icon did. Seven elements wear `check-fail` with no
    `.check-icon` child, the verdict HEADLINE among them, so a node that FAILED and a node that PASSED

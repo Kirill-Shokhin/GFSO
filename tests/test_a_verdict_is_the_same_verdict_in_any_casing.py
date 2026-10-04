@@ -17,6 +17,7 @@ import pytest
 
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, unrun_probes,
                                            verdict_report_defects)
+from gfso.core.protocol.procedure import refuting_probes
 from gfso.core.types import Verdict
 
 _RED = [{"criterion": "c1", "verdict": "fail", "evidence": "it broke"}]
@@ -45,7 +46,7 @@ def test_the_word_is_coerced_to_the_enum(word, want):
 
 @pytest.mark.parametrize("word", ["maybe", "", None, "PASSED", "ok"])
 def test_a_third_word_is_refused_rather_than_stored(word):
-    """V is two-valued (§11.2). A third word decides nothing — and stored verbatim it leaves the
+    """V is two-valued (§7.1). A third word decides nothing — and stored verbatim it leaves the
     node waiting for a signal nobody can send."""
     with pytest.raises(ValueError, match="not a verdict"):
         decided_verdict(word)
@@ -54,6 +55,25 @@ def test_a_third_word_is_refused_rather_than_stored(word):
 def test_the_per_criterion_reader_is_one_reader():
     assert spoken_verdict("PASS") == spoken_verdict("pass") == spoken_verdict(" Pass ") == "pass"
     assert spoken_verdict(None) == ""
+
+
+def test_failed_is_a_fail_for_the_battery_and_for_every_reader_after_it():
+    """The battery records a FAIL citing a criterion spoken `failed` (non-pass is red); its readers must then read
+    the same word as the same fail, or the refuting probe is not kept for the next round (critic, 2026-10-07).
+    `passed` is not read as a pass: a word taken as a pass could close a node."""
+    entry = {"criterion": "c", "verdict": "Failed", "evidence": "it broke",
+             "probe": [{"command": "./check c", "expect": "ok"}]}
+    assert spoken_verdict("Failed") == "fail"
+    assert list(refuting_probes([entry])) == ["c"]
+    assert spoken_verdict("passed") != "pass"
+
+
+def test_a_criterion_spoken_twice_passes_only_if_every_entry_passes():
+    """Read by its last entry, a fail followed by a pass let a PASS through the battery (Inv-2: one observed
+    non-pass is the criterion's value)."""
+    twice = [{"criterion": "c1", "verdict": "fail", "evidence": "it broke"},
+             {"criterion": "c1", "verdict": "pass", "evidence": "fine"}]
+    assert verdict_report_defects(["c1"], "PASS", twice, [])
 
 
 def test_a_fail_is_still_a_fail_in_lower_case():

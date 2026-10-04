@@ -24,15 +24,17 @@ class MutateGraph:
     assignee: AgentId | None = None
     parent_id: TaskId | None = None      # CREATE_TASK: parent link
     deadline: datetime | None = None     # CREATE_TASK: T deadline
+    deadline_supplied: bool = False      # CREATE_TASK: that deadline is a default the implementation wrote (§2.5)
     # CREATE_TASK: the rework bound. APPLY_SPEC also carries it, where None means KEEP —
     # a revision that does not mention the budget is not a revision that resets it.
     max_iterations: Optional[int] = DEFAULT_MAX_ITERATIONS
-    covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§10)
-    dep_from: TaskId | None = None       # RECORD_DEP: prerequisite node; ADJUDICATE_DEP: corrected source (§14.2)
-    dep_froms: tuple[TaskId, ...] = ()   # ADJUDICATE_DEP: corrected FULL source set (SET semantics, §14.2)
-    dep_external: bool = False           # ADJUDICATE_DEP: retract — blocker non-producible (FM-5 line, §14.2)
+    covers: tuple[str, ...] = ()        # CREATE_TASK: parent criteria this child maps to (§2)
+    dep_from: TaskId | None = None       # RECORD_DEP: prerequisite node; ADJUDICATE_DEP: corrected source (§11.3)
+    dep_froms: tuple[TaskId, ...] = ()   # ADJUDICATE_DEP: corrected FULL source set (SET semantics, §11.3)
+    dep_external: bool = False           # ADJUDICATE_DEP: retract — blocker non-producible (FM-5 line, §11.3)
+    dep_unanswered: bool = False         # ADJUDICATE_DEP: also the records closed unanswered (a re-ASSIGN/CANCEL, §15.5)
     glue: str = ""                       # RECORD_DEP: provenance text (the BLOCK reason)
-    revision_reason: RevisionReason | None = None  # APPLY_SPEC/REOPEN: causal type of the revision (§24.5)
+    revision_reason: RevisionReason | None = None  # APPLY_SPEC/REOPEN: causal type of the revision (§15.4)
 
 
 @dataclass(frozen=True)
