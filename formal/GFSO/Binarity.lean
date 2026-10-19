@@ -1,56 +1,31 @@
 /-
-  GFSO — Binarity of validation: the impossibility of |L| ≠ 2 (§11.2).
-
-  Canon `docs/applied_gfso_v4_en.md` §11.2:
-
-    V: T → L, act: L → Act. Requirements:
-      (1) |Act| = 2                    (excluded middle on "changes the trajectory")
-      (2) Completeness: act surjective (both actions reachable)
-      (3) Non-redundancy: act injective (distinct V values → distinct actions)
-    Then |L| = 2.  Proof: |L| ≥ 2 from (2); |L| ≤ 2 from (3) by pigeonhole. ∎
-    NB (§11.2 "Source versus defense"): the SOURCE of |L|=2 is A1 (a conjunction of two-valued
-    predicates is two-valued); the argument above is the DEFENSE against a graded scale.
-
-  We formalize this as a genuine structural argument — no mathlib, no `decide` over the abstract
-  scale `L`. `|Act|=2` is the architectural input (§11.2: excluded middle gives the two actions,
-  granularity of action is pushed into the tree, not into extra L-values); injectivity is forced
-  by decision-relevance (§11.2 "Injectivity (3) is forced, not assumed"). We take (2),(3) as the hypotheses
-  the canon names and derive that `L` has EXACTLY two elements.
+  GFSO — Tier 2: the defense of |L| = 2 against a graded scale (§7.1). Its source is A1 (the `Bool`
+  verdict type, `Ontology.Verdict`); here the pigeonhole: for `act : L → Act` with |Act| = 2,
+  surjectivity and injectivity — the hypotheses of `L_forced_two`, kind (c) of §20.5 — force |L| = 2.
+  |Act| = 2 is the two-constructor type `Act`, kind (b). No mathlib, no `decide` over the abstract `L`.
 -/
 
 namespace GFSO.Binarity
 
-/-- Injectivity, spelled out (mathlib-free): different inputs ⟹ different outputs, in the
-    contrapositive form Lean likes. This is §11.2 requirement (3), "Non-redundancy". -/
+/-- Injectivity, mathlib-free (§7.1: distinct values, distinct actions). -/
 def Injective {α β : Type} (f : α → β) : Prop := ∀ ⦃x y⦄, f x = f y → x = y
 
-/-- Surjectivity, spelled out: every action is reached by some verdict. §11.2 requirement (2),
-    "Completeness". -/
+/-- Surjectivity (§7.1: both actions reachable). -/
 def Surjective {α β : Type} (f : α → β) : Prop := ∀ b, ∃ a, f a = b
 
-/-- **Action space A (§11.2).** Exactly two actions — the excluded middle on "does the agent
-    action change the task trajectory or not". `|Act| = 2` is architectural (the canon's design
-    choice: action granularity lives in the decomposition tree, retry-hysteresis in the FSM
-    state — not in extra values of the validation scale). -/
+/-- **Act (§7.1)**: intervene, and its negation, waiting. |Act| = 2 is a covering claim (§7.1), carried
+    by this type (§20.5 (b)). -/
 inductive Act | intervene | wait
 deriving DecidableEq, Repr
 
-/-- `|Act| = 2`, stated elementarily as "two distinct elements, and nothing else". -/
+/-- `|Act| = 2`: two distinct elements, and nothing else. -/
 theorem Act_has_two : ∃ a b : Act, a ≠ b ∧ ∀ x : Act, x = a ∨ x = b := by
   refine ⟨Act.intervene, Act.wait, by decide, ?_⟩
   intro x; cases x <;> decide
 
 /--
-**Theorem (impossibility of |L| ≠ 2, §11.2).**  Let `act : L → Act` be the decision map from a
-validation scale `L` into the two-element action space. If
-
-* `complete` — `act` is **surjective** (requirement (2): both actions are actually reachable), and
-* `nonredundant` — `act` is **injective** (requirement (3): different verdicts must drive
-  different actions — forced by decision-relevance, §11.2),
-
-then `L` has **exactly two** elements. `|L| ≥ 2` comes from surjectivity onto the 2-element `Act`;
-`|L| ≤ 2` from injectivity (Dirichlet / pigeonhole). Here both directions are one elementary
-argument: surjectivity hands us two witnesses, injectivity forces everything to be one of them.
+**|L| = 2 (§7.1, the pigeonhole).** Surjectivity (`complete`) gives two witnesses, |L| ≥ 2; injectivity
+(`nonredundant`) pins every value to one of them, |L| ≤ 2.
 -/
 theorem L_forced_two {L : Type} (act : L → Act)
     (complete : Surjective act) (nonredundant : Injective act) :
@@ -70,14 +45,12 @@ theorem L_forced_two {L : Type} (act : L → Act)
     | intervene => left;  apply nonredundant; rw [hx, ha]
     | wait      => right; apply nonredundant; rw [hx, hb]
 
-/-! ### The matching existence half (|L| ≥ 2 is realizable): `Bool` is a valid scale
+/-! ### Attainment: `Bool` meets the requirements
 
-The impossibility above is the *upper* pressure (can't exceed 2). The canon also needs both
-actions genuinely reachable (else the system is defective, §11.2 table row (2)). The canonical
-scale `L = Bool` (pass/fail) with the obvious decision map realizes this — so 2 is not merely an
-upper bound but achieved. Together: the validation scale is forced to be exactly two-valued. -/
+The pass/fail scale with its decision map is surjective and injective, so two is attained, not only
+bounded. -/
 
-/-- The canonical decision map: `pass ↦ wait` (no intervention needed), `fail ↦ intervene`. -/
+/-- The decision map: `pass ↦ wait`, `fail ↦ intervene`. -/
 def boolAct : Bool → Act
   | true  => Act.wait
   | false => Act.intervene
@@ -90,7 +63,7 @@ theorem boolAct_surjective : Surjective boolAct := by
   · exact ⟨false, rfl⟩
   · exact ⟨true, rfl⟩
 
-/-- `Bool` (the pass/fail scale) satisfies the §11.2 requirements — so |L| = 2 is attained. -/
+/-- `Bool` meets §7.1's requirements: |L| = 2 is attained. -/
 theorem bool_scale_valid :
     ∃ a b : Bool, a ≠ b ∧ ∀ x : Bool, x = a ∨ x = b :=
   L_forced_two boolAct boolAct_surjective boolAct_injective

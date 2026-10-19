@@ -8,3 +8,6 @@ defaultTargets = ["GFSO"]
 
 [[lean_lib]]
 name = "GFSO"
+# The log kernel's `decide +kernel` proofs are memory-heavy: cap each lean process so a runaway check fails
+# instead of exhausting the machine.
+moreLeanArgs = ["--memory=12288"]

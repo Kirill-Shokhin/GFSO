@@ -39,7 +39,7 @@ if [[ ! -f "$CANON_FILE" ]]; then
 fi
 
 # The haystack is the canon's BODY — everything before the Changelog. The Changelog names the OLD
-# numbering as provenance ("formerly §18.10–§18.11, §17.4–§17.6"), and searching it would let a
+# numbering as provenance ("formerly §16–16, §16–16"), and searching it would let a
 # mirror cite exactly the sections v4 dissolved — the four highest-risk tokens — and pass.
 CANON="$(mktemp)"
 trap 'rm -f "$CANON"' EXIT
@@ -63,7 +63,7 @@ done
 # §-refs that must NOT be resolved against the canon. Three kinds, each carrying an explicit marker:
 # `EVIDENCE_LOG §N` / `§N of the evidence log` = that log's section; `§N этого дока` = the vision
 # doc's own section; `v3.9's §N` = the OLD numbering named as provenance (the canon does this once,
-# at "v3.9's §17.4–§17.6 — are developed in Chapter 6"; those sections do not exist in v4 and must
+# at "v3.9's §17.4–§17.6 — are developed in Chapter 19"; those sections do not exist in v4 and must
 # not be blessed by the mention). The marker sits on EITHER side, and a range carries two refs.
 # The newline→space fold is load-bearing: a foreign ref may straddle a line break ("…(EVIDENCE_LOG\n
 # §9.1 …"), which a line-oriented filter would miss and then report as canon drift.
@@ -75,11 +75,19 @@ shopt -s globstar nullglob
 PRODUCT=(../gfso/**/*.py ../gfso/**/*.md
          ../gfso/web/index.html ../gfso/web/gfso.css ../tests/**/*.py
          ../docs/embeddability_acceptance.md ../docs/TASK_PACKET.md)
+# THE SCOPE. A theory commit is pushed on its own and must pass on its own, so the formal workflow
+# runs this guard with GFSO_GUARD_SCOPE=theory: the canon's own surface (formal/ and the theory
+# mirrors). The product and its pages (gfso/, tests/, architecture, USING_GFSO, the embedding
+# contract, the task packet) are checked with the scope unset, by the tests workflow.
+if [[ "${GFSO_GUARD_SCOPE:-all}" == theory ]]; then
+  PRODUCT=()
+  MIRRORS=($(printf '%s\n' "${MIRRORS[@]}" | grep -vE '^\.\./docs/(architecture|USING_GFSO)\.md$'))
+fi
 
-# …INCLUDING A CITATION CONTINUED BY A COMMA. "`EVIDENCE_LOG` §13.12, §13.12-bis" stripped only its
-# first half, and the surviving `, §13.12-bis` was read as a canon reference: the guard went red on
+# …INCLUDING A CITATION CONTINUED BY A COMMA. "`EVIDENCE_LOG` §13.12, §9" stripped only its
+# first half, and the surviving `, §9` was read as a canon reference: the guard went red on
 # two pushed commits over a line that cites no canon at all. Only a bare `, §N…` run is eaten, and
-# only directly after a foreign citation — a continuation that names its own document ("…, §11.2 of
+# only directly after a foreign citation — a continuation that names its own document ("…, §7.1 of
 # the canon") keeps its own name and is collected as before.
 strip_foreign() {
   tr '\n' ' ' \
@@ -90,7 +98,7 @@ strip_foreign() {
 
 # Both citation forms count — the canon's own prose overwhelmingly says "Chapter N", so a mirror that
 # adopts that form must not thereby fall out of the guard's sight. Rather than teach every check both
-# forms (an earlier version taught only the §-check, and `Chapters 8–2` sailed through the range
+# forms (an earlier version taught only the §-check, and `Ch. 20, Ch. 3` sailed through the range
 # check), normalise `Chapter(s) N` / `Ch. N` to `§N` ONCE, up front; everything downstream then sees
 # one form. Case-insensitive: the form is prose, and prose gets typed in lower case.
 # KNOWN LIMIT, not covered: a comma continuation — the canon writes "(Ch. 15, 21)", and only the
@@ -100,11 +108,11 @@ normalize_chapters() { sed -E 's/(Chapters?|Ch\.) ?([0-9]+(\.[0-9]+)*)/§\2/gI';
 
 collect() { grep -ohE '§[0-9]+(\.[0-9]+)*' || true; }
 
-# A citation RANGE must ascend. A range's TAIL carries no § of its own ("§12.2–4.8": the head moved
+# A citation RANGE must ascend. A range's TAIL carries no § of its own ("§8.3, §5": the head moved
 # to v4, the tail stayed in the old numbering), so the §-only collector above cannot see it, and both
 # endpoints may exist in the canon while the range is nonsense — existence is not the test, order is.
 # HONEST LIMIT: this catches only ranges that do not ascend. A half-remap that happens to stay
-# ascending (§2.1–3.2) is invisible here and no cheap check finds it — that half stays a reading job.
+# ascending (§1.2–4.1) is invisible here and no cheap check finds it — that half stays a reading job.
 # Two encoding traps, both of which made an earlier version of this guard silently pass:
 #  * do NOT put both dashes in one bracket expression — `[–-]` is read as a character RANGE;
 #  * do NOT write `§?` — `§` is a two-byte UTF-8 char, so `?` binds to its second byte and
@@ -141,7 +149,7 @@ for r in $REFS; do
   # A section exists iff the canon HAS one: a numbered heading, or a bold-lead item for the few
   # sub-items carried that way (26.5-bis). Deliberately NOT "the canon mentions §r somewhere" —
   # that test is defeated twice over: the canon names the OLD numbering as provenance in its own
-  # body ("v3.9's §17.4–§17.6 — are developed in Chapter 6"), which would bless the very sections
+  # body ("v3.9's §17.4–§17.6 — are developed in Chapter 19"), which would bless the very sections
   # v4 dissolved; and a ref collected FROM the canon would resolve against its own citation,
   # making the self-citation check vacuous.
   if grep -qE "^#{1,4} +${r//./\\.}\." "$CANON" \
@@ -159,7 +167,7 @@ check_ranges || MISSING=1
 
 # LABELS. A citation is not only a §: the canon's results carry names, and a mirror can cite a name
 # the canon does not have. This is not hypothetical — an audit found `Prop 1–2` fabricated in a
-# mirror, against a canon that says in §1.2 "P1/P2 are NOT members of this series". The §-collector
+# mirror, against a canon that says in the Introduction "P1/P2 are NOT members of this series". The §-collector
 # is blind to it: the sentence carrying `Prop 1–2` cited a § that exists.
 # Rule: every Thm/Prop/Cor/FM/Inv/STD/CHECK/Link number cited must exist in the canon's body. The
 # canon spells them both long and short (Theorem 1 / Thm 1, Corollary 5 / Cor 5) — accept both.

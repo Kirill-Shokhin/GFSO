@@ -1,41 +1,35 @@
 /-
-  GFSO — the CANON table of the protocol FSM (Ch. 14.3), as distinct from `Fsm.lean`.
+  GFSO — the canon's table of the protocol machine (§12.4), the base machine. `Fsm.lean` is the
+  engine's conformance mirror, so claims about the canon live here; `mirror_agrees_with_canon` ties the
+  two tables cell for cell, so a change to either side breaks a proof.
 
-  WHY A SECOND FILE. `Fsm.lean` states in its header that its transition table is `fsm.py`'s —
-  a conformance mirror of the engine, deliberately encoding the code even where the code diverges
-  from the canon ("Do not 'fix' it here"). Claims ABOUT THE CANON therefore cannot live there.
-  This file transcribes the table from the canon's own prose and diagram (Ch. 14.3) and proves
-  the canon-side facts; the divergence between the two tables is stated here as a theorem rather
-  than left as prose, so that changing either side breaks a proof instead of drifting silently.
+  SCOPE. R′ (§12.14) is excluded: "R′'s gate reads consumption, a log fact, not a state-resident datum,
+  so no finite composite of states and counters is a deterministic automaton on it" (§12.14).
+  The states are §12.1's eleven (`canonSt`). The constructor `St.OVERDUE` survives only for the frozen
+  table of `Forcing.lean` and the lapse record's image in `LogLanguageAgrees`: here its row is empty,
+  its owner `none`, no cell enters it, and canon-side statements quantify over `canonSt`.
 
-  SCOPE — the BASE machine. Ch. 14.3 draws two: the base protocol, and the R' extension
-  (REOPEN: DONE -> OFFERED, ABANDONED -> OFFERED), which the canon marks "over the base; NOT part
-  of the 12-signal minimum". R' is excluded, and the exclusion is load-bearing twice: R' is gated
-  on CONSUMPTION, a graph fact (the parent staked the AND, or a Dep consumer read-and-built) and
-  not a state-resident datum, so no finite (state, counters) composite is an automaton over the
-  signal alphabet on the R' machine; and under R' the three terminals are no longer one block
-  (ESCALATED is no longer one of them at all: it is the ISSUER's waiting state, §14.3-bis,
-  and carries its own row in the BASE machine — ASSIGN, CANCEL and its own timeout).
-
-  TRANSCRIPTION SOURCE, per row (Ch. 14.3): the diagram, plus the prose catch-alls -- universal
-  CANCEL from any non-terminal except CANCELLING; re-ASSIGN (Inv-1) from the reassignable states;
-  the system timeout with its three special targets (BLOCKED -> ESCALATED, CANCELLING -> ABANDONED,
-  VALIDATING -> DONE(auto_pass)) and OVERDUE as the first-timeout target elsewhere; IDLE carries no
-  clock of its own.
-  NOTE on (REWORKING, BLOCK): Ch. 14.3's diagram omits it, but Ch. 14.2 FORCES it — BLOCK exists so
-  that "the executor can report a blocker", and REWORKING is a work-active state under the same
-  contract (Inv-1), so without the edge a blocker found during rework is unreportable (FM-7). The
-  diagram's silence is a drafting gap, not a denial; `fsm.py` has the row and is right. Consequence
-  proved below: the twelve states carry ELEVEN behaviour classes.
-  The exhausted rework loop goes to ESCALATED (the canon's target; `formal/README.md` corner #3).
+  BIT ABSTRACTION. The table's Bool input `b` is the retry guard at FAIL (rounds left under `max_iterations`)
+  and the consent datum at REJECT_CHALLENGE (§13.1), ignored elsewhere. Every statement below explores both values of `b` in
+  every state, so a fact that needs the log (that `b = true` at REJECT_CHALLENGE presupposes an ACCEPT)
+  is not visible here: it is `LogLanguage.lean`'s, which forces the table over the log and proves it
+  agrees with this one (`LogLanguage.agrees_with_the_canon`). v4.0's auto_pass cell survives as §13.2's
+  witness (`variantStep`). Inv-8 is checked below (`owner`, `inv8_canon`).
 -/
 import GFSO.Fsm
 
 namespace GFSO.FsmCanon
 open GFSO.Fsm GFSO.Fsm.St GFSO.Fsm.Sig
 
-/-- The canon's transition table (Ch. 14.3, base machine). `canRework` = the retry guard. -/
-def canonStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
+/-- The canon's eleven states: `allSt` without OVERDUE. -/
+def canonSt : List St := allSt.filter (fun s => s != OVERDUE)
+
+theorem canonSt_eleven : canonSt.length = 11 ∧ canonSt.contains OVERDUE = false := by decide
+
+/-- The canon's transition table (§12.4, base machine). `b`: at FAIL, rounds remain; at
+    REJECT_CHALLENGE, consent (an ACCEPT) is logged on the current packet version; ignored
+    elsewhere. -/
+def canonStep (s : St) (sig : Sig) (b : Bool) : Option St :=
   match s with
   | IDLE => match sig with
     | ASSIGN => some OFFERED
@@ -44,21 +38,22 @@ def canonStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
   | OFFERED => match sig with
     | ACCEPT => some EXECUTING
     | CHALLENGE => some CHALLENGED
-    | Sig.TIMEOUT => some OVERDUE
+    | Sig.TIMEOUT => some ESCALATED
     | CANCEL => some CANCELLING
     | ASSIGN => some OFFERED
     | _ => none
   | CHALLENGED => match sig with
     | ACCEPT_CHALLENGE => some OFFERED
-    | REJECT_CHALLENGE => some EXECUTING
-    | Sig.TIMEOUT => some OVERDUE
+    | REJECT_CHALLENGE => some (if b then EXECUTING else OFFERED)   -- the interrupted wait (§12.4)
+    | Sig.TIMEOUT => some ESCALATED
     | CANCEL => some CANCELLING
     | ASSIGN => some OFFERED
     | _ => none
   | EXECUTING => match sig with
     | DELIVER => some VALIDATING
     | BLOCK => some BLOCKED
-    | Sig.TIMEOUT => some OVERDUE
+    | CHALLENGE => some CHALLENGED     -- C-1, the post-consent CHALLENGE (§13.3)
+    | Sig.TIMEOUT => some ESCALATED
     | CANCEL => some CANCELLING
     | ASSIGN => some OFFERED
     | _ => none
@@ -70,215 +65,257 @@ def canonStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
     | _ => none
   | VALIDATING => match sig with
     | PASS => some DONE
-    | FAIL => some (if canRework then REWORKING else ESCALATED)   -- canon target (corner #3)
-    | Sig.TIMEOUT => some DONE                                     -- auto_pass
+    | FAIL => some (if b then REWORKING else ESCALATED)   -- `docs/architecture.md` corner #3
+    | Sig.TIMEOUT => some ESCALATED
     | CANCEL => some CANCELLING
     | ASSIGN => some OFFERED
     | _ => none
   | REWORKING => match sig with
     | DELIVER => some VALIDATING
-    | BLOCK => some BLOCKED        -- FORCED by Ch. 14.2: without it a blocker found during
-                                   -- rework is unreportable (the defect BLOCK exists to preclude; FM-7)
-    | Sig.TIMEOUT => some OVERDUE
+    | BLOCK => some BLOCKED        -- §12.4's rule: REWORKING carries BLOCK and CHALLENGE
+    | CHALLENGE => some CHALLENGED -- as EXECUTING does
+    | Sig.TIMEOUT => some ESCALATED
     | CANCEL => some CANCELLING
     | ASSIGN => some OFFERED
     | _ => none
   | CANCELLING => match sig with
     | CONFIRM_CANCEL => some ABANDONED
-    | Sig.TIMEOUT => some CANCELLING     -- silence IS his cancellation; the subtree goes too
+    | Sig.TIMEOUT => some ABANDONED
     | _ => none
-  | OVERDUE => match sig with
-    | Sig.TIMEOUT => some ESCALATED
-    | CANCEL => some CANCELLING
-    | _ => none
+  | OVERDUE => none                  -- no canon state
   | DONE => none
   | ABANDONED => none
-  -- The issuer's waiting state (§14.3-bis), mirror of OFFERED under Inv-4: raising the rework
-  -- bound and changing the criteria are both packet fields, hence ONE act by Inv-1; closing it is
-  -- the universal CANCEL; and the timeout keeps the wait finite by CLOSING, never by passing.
+  -- The issuer's decision (§12.5), held by Inv-4's reading, clause (2) (§12.9).
   | ESCALATED => match sig with
     | ASSIGN => some OFFERED
     | CANCEL => some CANCELLING
-    | Sig.TIMEOUT => some CANCELLING     -- silence IS his cancellation; the subtree goes too
+    | Sig.TIMEOUT => some CANCELLING     -- silence takes the closing's path (§12.5)
     | _ => none
 
-/-- The settlement mode: the terminal label (Ch. 14.3). It is NOT the verdict V — under V both
-    ABANDONED and a timeout-settled node carry ⊥ and would be indistinguishable.
-
-    ESCALATED is `live` here, not a settlement mode of its own: nothing has settled while the issuer
-    still owes an answer (§14.3-bis). The timeout attribution it used to carry now lands where the
-    node actually comes to rest — ABANDONED, whether by the issuer's CANCEL or by his silence. -/
-inductive Settle | pass | abandoned | timeout | live
+/-- The settlement mode, the observable's second part (§12.11): DONE ↦ pass, ABANDONED ↦ abandoned,
+    every non-terminal `live` — ESCALATED included (§12.5). Which route closed an ABANDONED (CANCEL or
+    the issuer's silence), like whether EXECUTING was entered through a FAIL, is log data the state does
+    not carry (Inv-7, §12.11). -/
+inductive Settle | pass | abandoned | live
 deriving DecidableEq, Repr
 
 def settle : St → Settle
   | DONE => Settle.pass | ABANDONED => Settle.abandoned
   | _ => Settle.live
 
-/-! ### The canon-side facts -/
+/-! ### The v4.1 cells -/
 
-/-- EXECUTING and REWORKING agree on EVERY signal at BOTH guard values: with the forced BLOCK edge
-    they are one behaviour class. REWORKING is an ATTRIBUTION label (a FAIL was consumed — a property
-    of the log's last edge), not a behaviour. -/
+/-- OVERDUE's row is empty, and no cell at either value of `b` enters it (§12.12). -/
+theorem canon_never_enters_overdue :
+    (allSt.all (fun s => allSig.all (fun g => [false, true].all (fun b =>
+      canonStep s g b != some OVERDUE)))) = true
+    ∧ (allSig.all (fun g => [false, true].all (fun b => (canonStep OVERDUE g b).isNone))) = true := by
+  decide
+
+/-- §12.4's timeout rule for the party waits: every canon non-terminal but IDLE, ESCALATED and
+    CANCELLING times out to ESCALATED. -/
+theorem canon_first_timeouts_hand_over :
+    (canonSt.all (fun s => isTerminal s || (s == IDLE) || (s == ESCALATED) || (s == CANCELLING)
+      || (canonStep s Sig.TIMEOUT false == some ESCALATED))) = true := by
+  decide
+
+/-- §12.4's REJECT_CHALLENGE rule at both values of the consent bit. -/
+theorem canon_reject_returns_to_the_wait :
+    canonStep CHALLENGED REJECT_CHALLENGE false = some OFFERED
+    ∧ canonStep CHALLENGED REJECT_CHALLENGE true = some EXECUTING := by
+  decide
+
+/-! ### The behavioural quotient (§12.11) -/
+
+/-- EXECUTING and REWORKING agree on every signal at both values of `b`: one behaviour class,
+    REWORKING an attribution label (§12.11). -/
 theorem canon_exec_rework_same :
     (allSig.all (fun g => [false, true].all (fun b =>
       canonStep EXECUTING g b == canonStep REWORKING g b))) = true := by
   decide
 
-/-- The OTHER eleven are pairwise separated by their transition rows alone (no output needed). -/
+/-- The other canon non-terminals are pairwise separated by their rows alone. -/
 theorem canon_others_pairwise_distinct :
-    (allSt.all (fun s => allSt.all (fun t =>
+    (canonSt.all (fun s => canonSt.all (fun t =>
       (s == t) || isTerminal s || isTerminal t
       || ((s == EXECUTING) && (t == REWORKING)) || ((s == REWORKING) && (t == EXECUTING))
       || !(allSig.all (fun g => [false, true].all (fun b =>
              canonStep s g b == canonStep t g b)))))) = true := by
   decide
 
-/-- The three terminals share the empty row: one behavioural block, separated by the settlement mode
-    ALONE — so the observable must carry it; the verdict V does not suffice. -/
+/-- The two terminals share the empty row; only the settlement mode separates them
+    (`canon_settlement_separates_terminals`), so the observable must carry it. -/
 theorem canon_terminals_share_rows :
-    (allSt.all (fun s => allSt.all (fun t =>
+    (canonSt.all (fun s => canonSt.all (fun t =>
       !(isTerminal s && isTerminal t) ||
       allSig.all (fun g => [false, true].all (fun b => canonStep s g b == canonStep t g b))))) = true := by
   decide
 
 theorem canon_settlement_separates_terminals :
-    (allSt.all (fun s => allSt.all (fun t =>
+    (canonSt.all (fun s => canonSt.all (fun t =>
       (s == t) || !(isTerminal s && isTerminal t) || (settle s != settle t)))) = true := by
   decide
 
-/-- The FULL joint observable (settlement mode ⊕ transition row) distinguishes **every** pair among the
-    eleven states other than REWORKING — covering all three categories in ONE check: nonterminal×
-    nonterminal (by row), terminal×terminal (by settle), and the cross nonterminal×terminal pairs
-    (a nonterminal has `settle = live` and a non-empty row; a terminal has neither). This backs the
-    "eleven pairwise-distinct under the admissible-set ⊕ settlement-mode observable" claim in full,
-    including the cross-pairs the row-only and settle-only lemmas each skip. -/
-theorem canon_eleven_pairwise_distinct :
-    (allSt.all (fun s => allSt.all (fun t =>
+/-- The joint observable (settlement mode ⊕ row) separates every pair of canon states other than
+    REWORKING in one check: non-terminal pairs by row, terminal pairs by settlement, cross pairs by both.
+    With `canon_exec_rework_same`: eleven states, ten behaviour classes, under the bit abstraction; over
+    the log CHALLENGED splits by consent (§12.11). -/
+theorem canon_ten_pairwise_distinct :
+    (canonSt.all (fun s => canonSt.all (fun t =>
       (s == t) || (s == REWORKING) || (t == REWORKING)
       || (settle s != settle t)
       || !(allSig.all (fun g => [false, true].all (fun b =>
              canonStep s g b == canonStep t g b)))))) = true := by
   decide
 
-/-- The engine mirror agrees with the corrected canon on this row: there is NO divergence here. -/
+/-- Inside the engine mirror EXECUTING and REWORKING agree too (the canon-vs-mirror identity is
+    `mirror_agrees_with_canon`). -/
 theorem engine_agrees_on_rework_row :
     (allSig.all (fun g => [false, true].all (fun b =>
       step EXECUTING g b == step REWORKING g b))) = true := by
   decide
 
-/-- NEGATIVE CONTROL — the same shape of check is able to come out `false`, so the theorems
-    above are not vacuously green. -/
+/-- The two tables agree on every cell (state × signal × `b`), OVERDUE's included. The engine side is
+    cross-checked by `tests/test_model_conformance.py`, not by Lean. -/
+theorem mirror_agrees_with_canon :
+    (allSt.all (fun s => allSig.all (fun g => [false, true].all (fun b =>
+      step s g b == canonStep s g b)))) = true := by
+  decide
+
+/-- C-1: CHALLENGE from both work states into CHALLENGED. -/
+theorem canon_challenge_after_consent :
+    canonStep EXECUTING CHALLENGE false = some CHALLENGED
+    ∧ canonStep REWORKING CHALLENGE false = some CHALLENGED
+    ∧ canonStep REWORKING CHALLENGE true = some CHALLENGED := by
+  decide
+
+/-! ### Inv-8 (Obligation-Ownership), §12.13 — the per-state clause
+
+`owner` is a per-state stipulation transcribing §12.13's owner table, not read off the transitions: at
+ESCALATED the owner's moves are catch-alls, so a "whose exits are these" test would be vacuous there.
+Decided: the stipulated owner has an admissible signal of his own in every state of the domain, at both
+values of `b` — a move's existence, not its adequacy. The timeout has no sender, so it is never the
+owner's move. The edge clause is not checked here; over the log it is `LogLanguage.pInv8Edges`. -/
+
+/-- The two roles of the transaction (§10.1). -/
+inductive Party | issuer | executor
+deriving DecidableEq, Repr
+
+/-- Who sends each signal (§11.2's two tables). The system timeout has no sender. -/
+def sender : Sig → Option Party
+  | ACCEPT | CHALLENGE | BLOCK | DELIVER | CONFIRM_CANCEL => some Party.executor
+  | ASSIGN | ACCEPT_CHALLENGE | REJECT_CHALLENGE | PASS | FAIL | CANCEL | RESOLVE_BLOCK =>
+      some Party.issuer
+  | Sig.TIMEOUT => none
+
+/-- §12.13's owner table. `none` exactly outside Inv-8's domain — IDLE and the two terminals — and at
+    OVERDUE, which is no canon state. -/
+def owner : St → Option Party
+  | OFFERED | EXECUTING | REWORKING | CANCELLING => some Party.executor
+  | CHALLENGED | BLOCKED | VALIDATING | ESCALATED => some Party.issuer
+  | IDLE | DONE | ABANDONED | OVERDUE => none
+
+/-- `p` holds an admissible move of his own in `s`, at EVERY value of `b` (the bit is state-resident
+    data, not a choice of the party). -/
+def hasMove (f : St → Sig → Bool → Option St) (s : St) (p : Party) : Bool :=
+  [false, true].all (fun b => allSig.any (fun g => (sender g == some p) && (f s g b).isSome))
+
+/-- Inv-8 over a given list of states. -/
+def inv8On (f : St → Sig → Bool → Option St) (ss : List St) : Bool :=
+  ss.all (fun s => match owner s with
+    | none => true
+    | some p => hasMove f s p)
+
+/-- Inv-8 over the whole table — every canon state, reachable or not. -/
+def inv8 (f : St → Sig → Bool → Option St) : Bool := inv8On f canonSt
+
+/-- Over `canonSt` the owner is undefined exactly at IDLE and the two terminals. -/
+theorem owner_domain :
+    (canonSt.all (fun s => (owner s).isNone == ((s == IDLE) || isTerminal s))) = true
+    ∧ owner OVERDUE = none := by
+  decide
+
+/-- **Inv-8's per-state clause holds of the canon's base machine.** -/
+theorem inv8_canon : inv8 canonStep = true := by decide
+
+/-- …and of the engine mirror. -/
+theorem inv8_mirror : inv8 step = true := by decide
+
+/-- NEGATIVE CONTROL — v4.0's terminal ESCALATED (§12.13): an empty row, whose owner has nothing to
+    send. Inv-8 fails, and only there. -/
+def v40EscalatedStep (s : St) (sig : Sig) (b : Bool) : Option St :=
+  match s with
+  | ESCALATED => none
+  | _ => canonStep s sig b
+
+theorem control_inv8_fails_on_empty_escalated :
+    inv8 v40EscalatedStep = false
+    ∧ inv8On v40EscalatedStep (canonSt.filter (fun s => s != ESCALATED)) = true := by
+  decide
+
+/-- NEGATIVE CONTROL — the row-comparison shape can come out `false`. -/
 theorem control_exec_blocked_differ :
     (allSig.all (fun g => [false, true].all (fun b =>
       canonStep EXECUTING g b == canonStep BLOCKED g b))) = false := by
   decide
 
-/-! ### §26.9(b): adequacy does not determine the behaviour map — a machine-checked witness
+/-! ### §13.2: bare adequacy pins no destination — the auto_pass witness
 
-Adequacy ("addresses the 7 FMs under the Ch. 14 invariants") forces, on the finiteness axis, that
-every non-terminal has a timeout *exit* (deadlock-freedom / Inv-5). It does NOT force the exit's
-*destination*: §14.2/§14.3 mark VALIDATING → DONE(auto_pass) as a "direct special target", and §24.7
-lists auto-PASS in "Assumptions and limitations" with countermeasures — a design choice, not a
-consequence of the FMs. The `variant` below routes VALIDATING-timeout to ESCALATED (escalate issuer
-inaction rather than auto-accept) and is otherwise `canonStep`. It satisfies the SAME finiteness
-condition, yet differs behaviourally on the VALIDATING-timeout history — so bare adequacy leaves the
-behaviour map underdetermined, and the §26.9(b) closing lemma is FALSE over bare adequacy. -/
+`variantStep` is the canon table with v4.0's cell (VALIDATING, timeout) → DONE(auto_pass). Decided: it
+has the canon's timeout exits and satisfies Inv-8, agrees with the canon off that cell, and is
+observably distinct on it. -/
 
-def variantStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
+def variantStep (s : St) (sig : Sig) (b : Bool) : Option St :=
   match s, sig with
-  | VALIDATING, Sig.TIMEOUT => some ESCALATED      -- the sole edit: escalate, not auto-pass
-  | _, _ => canonStep s sig canRework
+  | VALIDATING, Sig.TIMEOUT => some DONE           -- the sole edit: auto_pass, not escalate
+  | _, _ => canonStep s sig b
 
-/-- Both tables satisfy the finiteness/deadlock-freedom adequacy condition (every non-terminal
-    except IDLE has a defined timeout — the same condition `Fsm.timeout_defined` states of the
-    engine): adequacy on this axis is shared. -/
+/-- Both tables give every canon non-terminal but IDLE a timeout exit — Inv-5's first clause, stated of
+    the mirror as `Fsm.timeout_defined`. -/
 theorem variant_and_canon_both_timeout_defined :
-    (allSt.all (fun s => isTerminal s || (s == IDLE) ||
+    (canonSt.all (fun s => isTerminal s || (s == IDLE) ||
         ((canonStep s Sig.TIMEOUT false).isSome && (variantStep s Sig.TIMEOUT false).isSome))) = true := by
   decide
 
-/-- Yet they disagree — on exactly the VALIDATING-timeout edge, and the disagreement is a
-    settlement difference (canon DONE = pass; variant ESCALATED = timeout), hence a genuine
-    behavioural difference under the settlement-mode observable. -/
+/-- They differ observably on that cell: a live wait in ESCALATED, its row non-empty, against a
+    settled DONE. -/
 theorem variant_differs_on_validating_timeout :
-    canonStep VALIDATING Sig.TIMEOUT false = some DONE
-    ∧ variantStep VALIDATING Sig.TIMEOUT false = some ESCALATED
-    ∧ settle DONE ≠ settle ESCALATED := by
+    canonStep VALIDATING Sig.TIMEOUT false = some ESCALATED
+    ∧ variantStep VALIDATING Sig.TIMEOUT false = some DONE
+    ∧ settle ESCALATED = Settle.live ∧ settle DONE = Settle.pass
+    ∧ (canonStep ESCALATED ASSIGN false).isSome = true := by
   decide
 
-/-- ... and the difference is confined to that single edge — the variant is otherwise the canon,
-    so it is not some wholesale different protocol but a minimal adequate perturbation. -/
+/-- Both satisfy Inv-8: the free cell survives Inv-8's place in adequacy (§13.1). -/
+theorem variant_and_canon_both_inv8 : inv8 canonStep = true ∧ inv8 variantStep = true := by
+  decide
+
+/-- Off that cell the variant is the canon: a one-cell perturbation. -/
 theorem variant_agrees_off_validating_timeout :
     (allSt.all (fun s => allSig.all (fun g =>
       ((s == VALIDATING) && (g == Sig.TIMEOUT)) ||
       [false, true].all (fun b => canonStep s g b == variantStep s g b)))) = true := by
   decide
 
-/-! ### §26.9(b): the skeleton/decoration cut — OVERDUE is a free decoration, not a forced state
+/-! ### §13.3: the backbone, and ESCALATED's fold
 
-Adequacy pins a minimality-forced SKELETON (the backbone every adequate protocol shares, grounded in
-the four §14.2 defect types: initiation, accept→work, deliver→validate, pass→complete, block→report,
-challenge→dispute, accept-challenge→re-offer, cancel→abandon, re-ASSIGN→offer — plus the
-issuer's own waiting state, ESCALATED, forced by IC exactly as CANCELLING is: TEN forced states).
-The design-freedom is confined to DECORATIONS on it. OVERDUE is one such: the timeout INTERMEDIATE, and
-a protocol may route every first-timeout DIRECTLY to ESCALATED, omitting OVERDUE, and stay adequate
-(deadlock-free + finite) — the `noOverdue` table below (a uniform relabeling of OVERDUE→ESCALATED over
-the timeout cells; machine-checked on finiteness, full adequacy argued). With `variant` (the free
-timeout destination) and the argued `max_iterations` (the rework-loop bound → REWORKING), this confines
-the underdetermination to the decoration cells; the ten-state backbone is canonical up to behavioural
-equivalence (a lower bound, argued — not machine-checked). NB ESCALATED is NOT itself a decoration (it is IC-forced, below) — it is a
-forced state: it is separated from ABANDONED only by the settlement mode (both V=⊥), a free observable. -/
+The rows force the backbone's roles, not distinct states (§13.3); the states, with the whole table, are
+forced over the log (`LogLanguage.lean`). Decided here: OVERDUE is out of the table
+(`canon_never_enters_overdue`) and REWORKING is the one label (`canon_ten_pairwise_distinct`).
 
-def noOverdueStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
-  match canonStep s sig canRework with
-  | some OVERDUE => some ESCALATED      -- first timeout goes direct to escalation; no intermediate
-  | other => other
+`noEscalatedStep` routes every entry into ESCALATED to ABANDONED. It still gives every non-terminal state
+but IDLE a timeout (`noEscalated_still_timeout_defined`) — a check a timeout self-loop would also pass,
+so its deadlock-freedom is derived (§12.13), not decided — and satisfies Inv-8 over its reachable states
+(`witnesses_satisfy_inv8`). What the fold removes, and why the state stays, is §12.13's and §13.3's:
+Inv-4's reading, clause (2), the same ground as CANCELLING's. -/
 
-/-- The OVERDUE-free protocol is still adequate on the finiteness axis: every non-terminal except
-    IDLE still times out. So OVERDUE is not forced by deadlock-freedom. -/
-theorem noOverdue_still_timeout_defined :
-    (allSt.all (fun s => isTerminal s || (s == IDLE) ||
-        (noOverdueStep s Sig.TIMEOUT false).isSome)) = true := by
-  decide
-
-/-- ... and in it OVERDUE is never a target — no cell maps to it — so it is genuinely omitted, an
-    unreachable (hence removable) state. The forced backbone cannot contain OVERDUE. -/
-theorem noOverdue_omits_overdue :
-    (allSt.all (fun s => allSig.all (fun g =>
-      [false, true].all (fun b => noOverdueStep s g b != some OVERDUE)))) = true := by
-  decide
-
-/-- The canon, by contrast, DOES reach OVERDUE (e.g. from EXECUTING on timeout) — so OVERDUE is a
-    decoration the canon adds, not a state adequacy forces: two adequate protocols, one with the
-    intermediate and one without. -/
-theorem canon_reaches_overdue :
-    canonStep EXECUTING Sig.TIMEOUT false = some OVERDUE := by decide
-
-/-! ### ESCALATED is NOT a decoration — forced by IC, the way CANCELLING is (§14.3-bis)
-
-This section used to read the other way, and the reading was right about a machine in which the
-ISSUER owes no answer. In that machine ESCALATED is separated from ABANDONED only by the settlement
-mode (both carry V = ⊥), and folding it in gives up an *attribution* distinction, not a channel.
-
-It is not that machine. ESCALATED is the issuer's waiting state: the executor stopped, and the
-decision — raise the bound, change the criteria, or close it — is his. `noEscalatedStep` still
-`decide`s deadlock-free, because deadlock-freedom is not the axis this state sits on. What the fold
-removes is the CHANNEL through which the issuer answers: every act out of ESCALATED lands on
-ABANDONED instead, so the exhausted-rework path settles with nobody asked. That is the *same*
-grounding §26.9(b) gives CANCELLING — "forced by IC (Inv-4), not by deadlock; what holds it in the
-skeleton is the executor's CONFIRM_CANCEL acknowledgment" — with the parties swapped. The theorems
-below are kept because what they check is still true and still worth checking: the fold survives the
-finiteness axis. They no longer witness REMOVABILITY, and the forced backbone is ten states, not
-nine, with OVERDUE the one remaining free timeout-geometry decoration. -/
-
-def noEscalatedStep (s : St) (sig : Sig) (canRework : Bool) : Option St :=
-  match canonStep s sig canRework with
-  | some ESCALATED => some ABANDONED     -- fold the attention terminal into the cancel terminal
+def noEscalatedStep (s : St) (sig : Sig) (b : Bool) : Option St :=
+  match canonStep s sig b with
+  | some ESCALATED => some ABANDONED     -- fold the issuer's waiting state into the cancel terminal
   | other => other
 
 theorem noEscalated_still_timeout_defined :
-    (allSt.all (fun s => isTerminal s || (s == IDLE) ||
+    (canonSt.all (fun s => isTerminal s || (s == IDLE) ||
         (noEscalatedStep s Sig.TIMEOUT false).isSome)) = true := by
   decide
 
@@ -287,25 +324,17 @@ theorem noEscalated_omits_escalated :
       [false, true].all (fun b => noEscalatedStep s g b != some ESCALATED)))) = true := by
   decide
 
-/-- The canon reaches ESCALATED (e.g. an exhausted validation loop, corner-#3 target) — so the fold
-    above genuinely removes a state the canon has, rather than one it never reaches. What it removes
-    is a CHANNEL, not a decoration: this is the twin of `canon_reaches_overdue`, and the two differ
-    exactly where the section header says they do (§14.3-bis — OVERDUE carries no FM and no IC and
-    is free; ESCALATED is held by IC, as CANCELLING is, with the parties swapped). -/
+/-- The canon reaches ESCALATED (the exhausted rework loop), so the fold removes a state the canon has. -/
 theorem canon_reaches_escalated :
     canonStep VALIDATING FAIL false = some ESCALATED := by decide
 
-/-! ### §26.9(b): a forced skeleton exit is load-bearing — a canon-internal reachability witness
 
-    SCOPE, honestly. The forcedness of the ten-state skeleton over *every* adequate protocol is an
-    argued lower bound (a universal over an unbounded protocol class + semantic FM-hypotheses, outside
-    `decide`) — this does NOT machine-check that. It checks the weaker **canon-internal necessary
-    condition**: a forced exit is load-bearing for the canon's own success-reachability. Illustrated on
-    the cleanest case, DELIVER (EXECUTING → VALIDATING): removing it leaves DONE unreachable from
-    EXECUTING. It is NOT uniform — the catch-alls (timeout → DONE(auto_pass), re-ASSIGN → OFFERED) give
-    alternate DONE-paths for some other exits (PASS, RESOLVE_BLOCK), so their load-bearingness is not a
-    pure reachability fact. This witness corroborates the argued forcedness at one clean point; it is
-    not the forcedness theorem. -/
+/-! ### §13.3: a removed exit strands success — a canon-internal witness
+
+Not checked: the distinctness of the backbone states over every adequate protocol — a universal over an
+unbounded protocol class, outside `decide`. Checked: the weaker canon-internal necessary condition at
+one point, DELIVER — without it DONE is unreachable from EXECUTING. Reachability does not give this
+uniformly: the catch-alls (re-ASSIGN, the timeouts) leave paths around some exits (RESOLVE_BLOCK, ACCEPT). -/
 
 def succsC (step : St → Sig → Bool → Option St) (s : St) : List St :=
   (allSig.filterMap (fun g => step s g false)) ++ (allSig.filterMap (fun g => step s g true))
@@ -323,41 +352,29 @@ def reachesDONE (step : St → Sig → Bool → Option St) (s : St) : Bool :=
 def noDeliver (s : St) (g : Sig) (b : Bool) : Option St :=
   match s, g with | EXECUTING, DELIVER => none | _, _ => canonStep s g b
 
-/-- In the canon, DONE is reachable from EXECUTING; removing the forced DELIVER exit strands it. So
-    DELIVER is load-bearing for success-reachability (a necessary condition for its being a forced
-    skeleton edge — not the over-all-protocols forcedness itself). -/
+/-- DONE is reachable from EXECUTING in the canon and not without DELIVER: a necessary condition of
+    DELIVER's being forced, not the forcedness over all protocols. -/
 theorem canon_exec_reaches_done : reachesDONE canonStep EXECUTING = true := by decide
 theorem nodeliver_strands_done : reachesDONE noDeliver EXECUTING = false := by decide
 
-/-! ### §26.9(b) INNER: per-edge forced/free classification over the FIXED canonical alphabet
+/-! ### §11.4's removal grades over the fixed alphabet
 
-This upgrades the single `nodeliver_strands_done` witness to a per-edge classification. Each
-signal-destination cell is graded on two axes (below): whether its EXISTENCE is forced (a non-timeout
-adequacy source — an FM channel, an invariant, or the transaction role — vs. only exit-existence, the
-free timeout/retry cells witnessed above: OVERDUE, `variant`, `max_iterations` — ESCALATED left
-that list, §14.3-bis), and whether
-its DESTINATION is forced (some are existence-forced but destination-FREE — the resume-vs-re-consent
-decorations). Forced edges carry a canon-INTERNAL necessary-condition witness. This is the INNER
-(fixed-alphabet, finite) statement; the OUTER frame (undelimited alphabets/observables) stays the
-boundary of the first kind (§26.9 "the wall").
-
-HONEST CEILING (held visible): each theorem below is a canon-INTERNAL necessary condition — removing the
-edge degrades the CANON's own adequacy. The OUTER universal — "necessary ⟹ forced over EVERY adequate
-protocol" — is a universal over an unbounded protocol class + semantic FM-hypotheses, outside `decide`;
-it stays ARGUED, exactly as the ten-state forcedness does.
-
-TWO STRENGTH TIERS (orthogonal to the a/b/c FUNCTION split — do not conflate them):
- • FATAL — removal makes the target UNREACHABLE (the strong witness): ASSIGN, BLOCK, CHALLENGE, CANCEL,
-   DELIVER. These pin the initiation, the FM channels, and the terminals.
- • SOLE/GENUINE-PROVIDER — the target stays reachable via a catch-all, so removal is NOT fatal; the
-   witness is only that the edge is the sole content/genuine provider of its function: ACCEPT, and all of
-   kind (b) and kind (c). For kind (b) this means EXISTENCE-in-canon, with the DESTINATION free (the
-   resume-vs-re-consent decoration). This weaker tier is the content, not a defect.
-FAIL is FREE (destination), symmetric to kind (b): a revision (re-ASSIGN from VALIDATING) supplies a
-reject-by-revision path, so adequacy does not pin FAIL's non-rework destination — unlike PASS, whose
-kind-(c) genuineness witness has no non-degenerate substitute. "Free cells" is therefore LARGER than the
-timeout geometry + retry bound: it also contains the kind-(b)/FAIL destination freedom — matching the
-canon's own decoration hedge, not overriding it. -/
+Each theorem below is a canon-internal necessary condition of a §11.4 grade — removing the edge degrades
+the canon's own table — read under the bit abstraction. That every adequate protocol needs the edge
+quantifies over an unbounded class of protocols and is not derived (§20.4, §20.7).
+ • FATAL — cut the signal and its target is unreachable: ASSIGN, BLOCK, CHALLENGE, DELIVER
+   (`nodeliver_strands_done`), PASS (`noPass_strands_done`). ACCEPT, fatal in §11.4, is on this table only the sole content edge
+   into consent: the table admits REJECT_CHALLENGE at `b = true` into EXECUTING, and that `b = true`
+   presupposes a logged ACCEPT is visible only over the log (`LogLanguage.accept_fatal`).
+ • SOLE-PROVIDER — the target still reached through a catch-all; decided is which content edges carry
+   the source to the target: CANCEL, CONFIRM_CANCEL, RESOLVE_BLOCK, REJECT_CHALLENGE, ACCEPT_CHALLENGE
+   (`acceptChallenge_sole_content_reoffer`). FAIL's grade is derived in the canon and witnessed by no
+   theorem here.
+ • INVARIANT-FORCED, orthogonal to strength — the removal leaves a reachable state whose owner has no
+   move: CONFIRM_CANCEL alone (`inv8_forces_exactly`).
+The kinds (a)–(c) below group the witnesses by what they show, orthogonally to these tiers. Destinations
+(§13.2): re-ASSIGN's and ACCEPT_CHALLENGE's are fixed by §12.4's third rule; RESOLVE_BLOCK's,
+REJECT_CHALLENGE's and FAIL's are free under bare adequacy and forced over the log (§13.4). -/
 
 def dropEdge (f : St → Sig → Bool → Option St) (s0 : St) (sig0 : Sig) :
     St → Sig → Bool → Option St :=
@@ -370,17 +387,13 @@ def dropSig (f : St → Sig → Bool → Option St) (sig0 : Sig) :
 def reaches (f : St → Sig → Bool → Option St) (src tgt : St) : Bool :=
   (reachN f 12 [src]).contains tgt
 
-/-- The three universal catch-alls (ASSIGN = re-ASSIGN/revision, CANCEL, TIMEOUT) are present on nearly
-    every state and are NOT content recovery — they must be excluded when asking whether a CONTENT
-    signal is the sole provider of a transition (else re-ASSIGN masks every in-contract edge, the
-    non-uniformity the file's DELIVER note already flags). -/
+/-- §12.4's catch-alls — re-ASSIGN (as `ASSIGN`; used only at sources other than IDLE), CANCEL, the
+    timeout — excluded when asking whether a content signal is the sole provider of a transition, else
+    re-ASSIGN masks every in-contract edge. -/
 def isCatchAll (g : Sig) : Bool := (g == ASSIGN) || (g == CANCEL) || (g == Sig.TIMEOUT)
 
-/-! KIND (a) — channel-existence: the FM's target state goes UNREACHABLE when the edge is cut
-    (reachability-fatal). ASSIGN (initiation), BLOCK (blocker channel), CHALLENGE (dispute channel);
-    DELIVER is `nodeliver_strands_done` above. ACCEPT is NOT reachability-fatal (the
-    CHALLENGE→REJECT_CHALLENGE detour reaches EXECUTING) — the file's non-uniformity — so its honest
-    witness is sole-CONTENT-provider of the consent edge. -/
+/-! KIND (a) — channel existence: cut the edge and its target is unreachable from IDLE. DELIVER's is
+    `nodeliver_strands_done` above. -/
 
 theorem canon_idle_reaches_validating : reaches canonStep IDLE VALIDATING = true := by decide
 theorem noAssign_strands_start :
@@ -394,74 +407,53 @@ theorem canon_reaches_challenged : reaches canonStep IDLE CHALLENGED = true := b
 theorem noChallenge_strands_challenged :
     reaches (dropSig canonStep CHALLENGE) IDLE CHALLENGED = false := by decide
 
-/-- CANCEL used to be reachability-FATAL for the ABANDONED terminal — its only in-edges ran through
-    CANCELLING, whose only in-edges were the CANCEL cells. It no longer is, and the reason is exactly
-    §14.3-bis: ESCALATED is a live state, so Inv-5 gives it a timeout, and the issuer's silence
-    settles the node in ABANDONED without any CANCEL. So CANCEL drops one tier — from *fatal* to
-    *sole genuine provider*: what is lost by cutting it is not the terminal but the ACKNOWLEDGED and
-    authoritative route to it (CONFIRM_CANCEL carries the in-flight state, Thm 11), leaving only the
-    degenerate one where nobody answered. That is the same tier, and the same reason, §26.9(b)
-    already records for PASS (DONE stays reachable by auto_pass) — the enumeration is unchanged in
-    shape, and one cell moved within it. -/
+/-- CANCEL is not fatal for ABANDONED: ESCALATED's timeout opens the closing without it. What the
+    removal loses is §11.4's CANCEL row; CONFIRM_CANCEL's in-flight report survives on the clock's route. -/
 theorem canon_reaches_abandoned : reaches canonStep IDLE ABANDONED = true := by decide
-/-- …and what survives without CANCEL is the DEGENERATE route only: the issuer's silence, which is
-    the single remaining cell that opens the handshake. Stated cell-wise rather than by reachability
-    because that is the content — every OTHER state loses its way in. -/
+/-- …and that route is the only one left: stated cell-wise, because every other state loses its way
+    into CANCELLING. -/
 theorem noCancel_keeps_the_silence :
     dropSig canonStep CANCEL ESCALATED Sig.TIMEOUT false = some CANCELLING := by decide
 
 theorem noCancel_leaves_only_the_silence :
-    (allSt.all (fun s => (s == ESCALATED) || (s == CANCELLING) || allSig.all (fun g =>
+    (allSt.all (fun s => (s == ESCALATED) || allSig.all (fun g =>
       [false, true].all (fun b =>
         dropSig canonStep CANCEL s g b != some CANCELLING)))) = true := by decide
 
-/-- CONTRACT-CHANGE → OFFERED is Inv-1-FORCED (re-consent), over every adequate protocol — a changed
-    contract may not silently bind a working node (§14.4). Two edges carry a contract change and are thus
-    destination-FORCED, NOT free decorations: re-ASSIGN (revision — `Fsm.reassign_to_offered`) and
-    ACCEPT_CHALLENGE (which by definition delivers `new_spec`, §14.2 — the unconditional instance of the
-    same phenomenon that makes a contract-changing RESOLVE_BLOCK route to OFFERED). The *existence* of
-    revision is a separate argued question; the *destination*, when the edge is present, is pinned. -/
+/-- The contract-changing edges go to OFFERED (§12.4's third rule): re-ASSIGN from every
+    reassignable state (also `Fsm.reassign_to_offered`) and ACCEPT_CHALLENGE, whose `new_spec` is a
+    revision (`acceptChallenge_dest_inv1_forced`). Decided: the canon table carries them; that every adequate protocol must is not
+    machine-checked. -/
 theorem canon_reassign_to_offered :
-    (allSt.all (fun s => !(isReassignable s) || (canonStep s ASSIGN false == some OFFERED))) = true := by
+    (canonSt.all (fun s => !(isReassignable s) || (canonStep s ASSIGN false == some OFFERED))) = true := by
   decide
-theorem acceptChallenge_dest_inv1_forced : canonStep CHALLENGED ACCEPT_CHALLENGE false = some OFFERED := by
+theorem acceptChallenge_dest_inv1_forced :
+    canonStep CHALLENGED ACCEPT_CHALLENGE false = some OFFERED
+    ∧ canonStep CHALLENGED ACCEPT_CHALLENGE true = some OFFERED := by
   decide
 
-/-- ACCEPT is the sole CONTENT edge taking OFFERED to work (catch-alls excluded). NOTE (strength): like
-    every sole-content/genuine-provider witness below (kind b, kind c), this is NOT reachability-fatal —
-    EXECUTING stays reachable via the CHALLENGE→REJECT_CHALLENGE detour. It witnesses that ACCEPT is the
-    unique CONSENT edge, not that its removal is fatal. -/
+/-- ACCEPT is the sole content edge from OFFERED into EXECUTING (catch-alls excluded) — not a fatality
+    claim (the grades above). -/
 theorem accept_sole_content_consent :
     (allSig.all (fun g => [false, true].all (fun b =>
       isCatchAll g || !(canonStep OFFERED g b == some EXECUTING) || (g == ACCEPT)))) = true := by decide
--- ...and ACCEPT is NOT fatal: EXECUTING stays reachable after its removal, via the
--- CHALLENGE→REJECT_CHALLENGE detour — the positive half of the sole/genuine-provider strength tier
--- (measured, not asserted; the same non-fatality holds for kind (b)/(c) targets via their catch-alls).
-set_option maxRecDepth 4000 in
-theorem accept_not_fatal :
-    reaches (dropEdge canonStep OFFERED ACCEPT) IDLE EXECUTING = true := by decide
 
-/-! KIND (b) — resolution: the edge's EXISTENCE is forced (the source must have some resolution exit,
-    else the FSM-deadlock defect "stuck in BLOCKED/CHALLENGED", §14.2). The DESTINATION splits: it is
-    FREE — the resume-vs-re-consent decoration the canon names (§26.9(b) l.1773) — ONLY for the edges that
-    carry NO contract change: **RESOLVE_BLOCK (pure-unblock)** and **REJECT_CHALLENGE** (the spec stands).
-    ACCEPT_CHALLENGE is NOT here — it delivers a new spec ⟹ Inv-1-forced to OFFERED (above). What is
-    machine-checked is the weaker, honest fact: each edge is the sole CONTENT provider of the source's
-    progress transition IN THE FLAT CANON (catch-alls {ASSIGN, CANCEL, TIMEOUT} excluded — re-ASSIGN is a
-    REVISION; excluding it is a STIPULATION whose lifting IS the destination-forcedness question). The
-    sole-content witness for ACCEPT_CHALLENGE is kept as its EXISTENCE fact; its destination is pinned by
-    `acceptChallenge_dest_inv1_forced`, not free. -/
+/-! KIND (b) — resolution: the edge is the sole content provider of its source's progress transition in
+    this table, catch-alls excluded. Excluding re-ASSIGN is a stipulation whose lifting is the
+    destination question (§13.2); REJECT_CHALLENGE's destination is `canon_reject_returns_to_the_wait`,
+    forced over the log in `LogLanguage.lean`. -/
 
 theorem resolveBlock_sole_content_resume :
     (allSig.all (fun g => [false, true].all (fun b =>
       isCatchAll g || !(canonStep BLOCKED g b == some EXECUTING) || (g == RESOLVE_BLOCK)))) = true := by
   decide
 
-/-- ACCEPT_CHALLENGE is the sole content edge into OFFERED from CHALLENGED (its EXISTENCE fact); its
-    DESTINATION is Inv-1-forced (`acceptChallenge_dest_inv1_forced`), NOT the free kind-(b) decoration. -/
+/-- The content edges from CHALLENGED into OFFERED: ACCEPT_CHALLENGE at either `b`, and REJECT_CHALLENGE
+    exactly at `b = false` (no consent logged). -/
 theorem acceptChallenge_sole_content_reoffer :
     (allSig.all (fun g => [false, true].all (fun b =>
-      isCatchAll g || !(canonStep CHALLENGED g b == some OFFERED) || (g == ACCEPT_CHALLENGE)))) = true := by
+      isCatchAll g || !(canonStep CHALLENGED g b == some OFFERED) || (g == ACCEPT_CHALLENGE)
+      || ((g == REJECT_CHALLENGE) && !b)))) = true := by
   decide
 
 theorem rejectChallenge_sole_content_resume :
@@ -469,56 +461,136 @@ theorem rejectChallenge_sole_content_resume :
       isCatchAll g || !(canonStep CHALLENGED g b == some EXECUTING) || (g == REJECT_CHALLENGE)))) = true := by
   decide
 
-/-! KIND (c) — genuineness / IC: a catch-all keeps the terminal reachable (removal NOT fatal), so the
-    witness is that only the DEGENERATE (timeout/inaction) route into the terminal survives removal. -/
-
-/-- Cut PASS and the ONLY edge into DONE is the VALIDATING timeout (auto_pass, issuer inaction) — no
-    GENUINE acceptance edge remains. -/
-theorem noPass_only_autopass_into_done :
-    (allSt.all (fun s => allSig.all (fun g => [false, true].all (fun b =>
-      !((dropEdge canonStep VALIDATING PASS) s g b == some DONE)
-      || ((s == VALIDATING) && (g == Sig.TIMEOUT)))))) = true := by decide
+/-- PASS — fatal: "DONE is entered only through PASS" (§12.4), so DONE is unreachable without it. -/
+theorem canon_reaches_done : reaches canonStep IDLE DONE = true := by decide
+theorem noPass_strands_done : reaches (dropSig canonStep PASS) IDLE DONE = false := by decide
 theorem canon_pass_is_genuine : canonStep VALIDATING PASS false = some DONE := by decide
 
-/-- Cut CONFIRM_CANCEL and the ONLY edge into ABANDONED is the CANCELLING timeout — the in-flight report
-    (Thm 11 provenance) and the executor's acknowledgment (IC, Inv-4) are lost. -/
+/-- Contrast: in the variant DONE stays reachable without PASS, and only through the auto_pass cell —
+    PASS's fatality is that cell's absence (`variant_noPass_only_autopass_into_done`). -/
+theorem variant_noPass_keeps_done : reaches (dropSig variantStep PASS) IDLE DONE = true := by decide
+theorem variant_noPass_only_autopass_into_done :
+    (allSt.all (fun s => allSig.all (fun g => [false, true].all (fun b =>
+      !((dropEdge variantStep VALIDATING PASS) s g b == some DONE)
+      || ((s == VALIDATING) && (g == Sig.TIMEOUT)))))) = true := by decide
+
+/-! KIND (c) — genuineness: a catch-all keeps the terminal reachable, and only the degenerate route into
+    it survives the removal. -/
+
+/-- Without CONFIRM_CANCEL the only edge into ABANDONED is CANCELLING's timeout, which carries no
+    in-flight report (§12.6). CONFIRM_CANCEL is FSM-typed (§11.4) and Inv-8-forced
+    (`noConfirm_breaks_inv8`). -/
 theorem noConfirm_only_timeout_into_abandoned :
     (allSt.all (fun s => allSig.all (fun g => [false, true].all (fun b =>
       !((dropEdge canonStep CANCELLING CONFIRM_CANCEL) s g b == some ABANDONED)
       || (g == Sig.TIMEOUT))))) = true := by decide
 theorem canon_confirm_is_genuine : canonStep CANCELLING CONFIRM_CANCEL false = some ABANDONED := by decide
 
-/-! ### S1 — CANCELLING is forced by IC, NOT by deadlock (why it is skeleton and OVERDUE is not)
+/-! ### CANCELLING's fold: the one-step cancel (§13.3)
 
-A ONE-STEP cancel (CANCEL → ABANDONED directly; no CANCELLING, no CONFIRM_CANCEL) is still deadlock-free
-+ finite — so on the SAME finiteness axis on which the file witnesses OVERDUE removable,
-CANCELLING is ALSO removable. Hence CANCELLING's forcedness is NOT deadlock: it is IC (the CONFIRM_CANCEL
-kind-(c) witness above — the executor acknowledges and reports in-flight state). OVERDUE has
-no FM/IC attached (pure timeout geometry) and are genuinely free; CANCELLING is grounded, so it is
-skeleton. This makes precise the file's "grounded in the four defect types" as a PER-CELL basis. -/
+`oneStepCancel` settles a CANCEL directly in ABANDONED, with no CANCELLING and no CONFIRM_CANCEL. It
+still gives every non-terminal state but IDLE a timeout (`oneStepCancel_still_timeout_defined`) and
+satisfies Inv-8 over its reachable states; its deadlock-freedom and finiteness are derived (§12.13,
+§20.4), not decided. So deadlock does not hold CANCELLING; Inv-4's reading, clause (2), does (§12.13),
+and given it Inv-8 makes CONFIRM_CANCEL its owner's move (`noConfirm_breaks_inv8`). -/
 
-def oneStepCancel (s : St) (sig : Sig) (canRework : Bool) : Option St :=
+def oneStepCancel (s : St) (sig : Sig) (b : Bool) : Option St :=
   match s, sig with
   | CANCELLING, _ => none                                       -- CANCELLING no longer exists
+  | OVERDUE, _ => none                                          -- no canon state
   | _, CANCEL => if isTerminal s then none else some ABANDONED  -- cancel settles in one step
-  -- …and the issuer's silence settles in one step too, for the same reason: in a protocol with no
-  -- handshake there is nothing for it to open, so it goes straight to the settlement.
+  -- The issuer's silence settles in one step too: with no closing there is nothing for it to open.
   | ESCALATED, Sig.TIMEOUT => some ABANDONED
-  | _, _ => canonStep s sig canRework
+  | _, _ => canonStep s sig b
 
 theorem oneStepCancel_still_timeout_defined :
-    (allSt.all (fun s => isTerminal s || (s == IDLE) || (s == CANCELLING) ||
+    (canonSt.all (fun s => isTerminal s || (s == IDLE) || (s == CANCELLING) ||
         (oneStepCancel s Sig.TIMEOUT false).isSome)) = true := by decide
 theorem oneStepCancel_omits_cancelling :
     (allSt.all (fun s => allSig.all (fun g =>
       [false, true].all (fun b => oneStepCancel s g b != some CANCELLING)))) = true := by decide
 
-/-! NEGATIVE CONTROLS — the classification shapes can come out the OTHER way, so the greens above are
+/-! ### Every §13.3 witness satisfies Inv-8
+
+A witness omits a state (ESCALATED, CANCELLING), and a row it keeps for an unreachable state binds
+nobody, so the check reads the states reachable from IDLE (`inv8Reach`). The canon passes the table-wide
+`inv8` too. -/
+
+/-- Inv-8 over the states reachable from IDLE. -/
+def inv8Reach (f : St → Sig → Bool → Option St) : Bool := inv8On f (reachN f 12 [IDLE])
+
+set_option maxRecDepth 4000 in
+theorem witnesses_satisfy_inv8 :
+    inv8Reach canonStep = true
+    ∧ inv8Reach variantStep = true
+    ∧ inv8Reach noEscalatedStep = true
+    ∧ inv8Reach oneStepCancel = true := by
+  decide
+
+/-- The reachable-state restriction does no work for the canon or the relabeling witnesses: they pass
+    table-wide. Only `oneStepCancel` needs it — its CANCELLING row is empty by construction, and
+    CANCELLING is unreachable there (`oneStepCancel_omits_cancelling`). -/
+theorem witnesses_inv8_tablewide :
+    inv8 variantStep = true ∧ inv8 noEscalatedStep = true
+    ∧ inv8 oneStepCancel = false := by
+  decide
+
+/-! ### Inv-8-forced: CONFIRM_CANCEL
+
+Without CONFIRM_CANCEL, CANCELLING stays reachable (by CANCEL, and through ESCALATED's timeout) but its owner, the
+executor, holds only the timeout. The target is not stranded, so the strength grade stands; Inv-8 breaks
+instead. Canon-internal, like every witness here. -/
+
+set_option maxRecDepth 4000 in
+theorem noConfirm_breaks_inv8 :
+    inv8Reach (dropSig canonStep CONFIRM_CANCEL) = false
+    ∧ reaches (dropSig canonStep CONFIRM_CANCEL) IDLE CANCELLING = true
+    ∧ hasMove (dropSig canonStep CONFIRM_CANCEL) CANCELLING Party.executor = false := by
+  decide
+
+set_option maxRecDepth 8000 in
+/-- Exactly one: over the whole alphabet, the single-signal removal that breaks Inv-8 on a reachable
+    state is CONFIRM_CANCEL. ASSIGN passes vacuously: without it only IDLE, CANCELLING and ABANDONED are
+    reachable, where Inv-8 holds for want of anything else. -/
+theorem inv8_forces_exactly :
+    allSig.filter (fun g => !(inv8Reach (dropSig canonStep g))) = [CONFIRM_CANCEL] := by
+  decide
+
+/-! ### C-1's edges are not forced by the timeout axis or by Inv-8
+
+`preC1Step` is the canon without (EXECUTING|REWORKING, CHALLENGE) → CHALLENGED. It keeps the timeout exit
+of every canon non-terminal but IDLE and Inv-8 (the executor keeps DELIVER and BLOCK), and CHALLENGED
+stays reachable through OFFERED. Decided: the timeout axis and Inv-8 do not force the two edges. What forces them is argued,
+not decided: CHALLENGE's row read in every work-active state (§13.3) and the dispute's closures after
+consent (§16.12). -/
+
+def preC1Step (s : St) (sig : Sig) (b : Bool) : Option St :=
+  match s, sig with
+  | EXECUTING, CHALLENGE => none
+  | REWORKING, CHALLENGE => none
+  | _, _ => canonStep s sig b
+
+set_option maxRecDepth 4000 in
+theorem preC1_adequate_without_the_edges :
+    (canonSt.all (fun s => isTerminal s || (s == IDLE) || (preC1Step s Sig.TIMEOUT false).isSome)) = true
+    ∧ inv8 preC1Step = true ∧ inv8Reach preC1Step = true
+    ∧ reaches preC1Step IDLE CHALLENGED = true := by
+  decide
+
+/-- …and it differs from the canon on at most those two cells; that it differs on both is
+    `canon_challenge_after_consent`. -/
+theorem preC1_differs_only_on_the_c1_cells :
+    (allSt.all (fun s => allSig.all (fun g =>
+      (((s == EXECUTING) || (s == REWORKING)) && (g == CHALLENGE)) ||
+      [false, true].all (fun b => canonStep s g b == preC1Step s g b)))) = true := by
+  decide
+
+/-! NEGATIVE CONTROLS — the classification shapes can come out the other way, so the greens above are
     not vacuous. -/
 
 theorem control_reaches_nonvacuous : reaches canonStep IDLE DONE = true := by decide
-/-- The sole-content-provider shape with the WRONG signal (CHALLENGE, which goes to CHALLENGED not
-    EXECUTING) is FALSE — the `.all` genuinely discriminates. -/
+/-- The sole-content-provider shape with the wrong signal (CHALLENGE, which goes to CHALLENGED, not
+    EXECUTING) is false — the `.all` discriminates. -/
 theorem control_sole_content_false :
     (allSig.all (fun g => [false, true].all (fun b =>
       isCatchAll g || !(canonStep OFFERED g b == some EXECUTING) || (g == CHALLENGE)))) = false := by

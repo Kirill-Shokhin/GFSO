@@ -74,6 +74,6 @@ N_AX="$(printf '%s\n' "$WHITELIST" | grep -c .)"
 N_THM="$(grep -oE 'declarations audited: [0-9]+' <<<"$ENVDUMP" | awk '{print $3}')"
 echo "ok: $N_THM GFSO declarations (every one that can carry a proof, not just those spelled"
 echo "    \`theorem\`) use only {propext, Quot.sound, Classical.choice} + the whitelist: $N_AX entries ="
-echo "    the 3 covering axioms + the 3 uninterpreted predicates they quantify over (canon §1.4)"
+echo "    the 3 covering axioms + the 3 uninterpreted predicates they quantify over (canon §20.5)"
 echo
 echo "CLOSURE HOLDS."

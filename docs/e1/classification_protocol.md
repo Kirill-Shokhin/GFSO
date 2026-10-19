@@ -33,11 +33,11 @@ This protocol incorporates fixes surfaced by the initial 13-record trial.
 |---|---|---|
 | FM-1 | Correspondence | Children of D don't correctly correspond to parent's criteria. *Insufficiency* (a parent criterion has no responsible child) or *redundancy* (a child addresses no parent criterion). **Tag a sub-type** (see below). |
 | FM-2 | Consistency | Two+ children's criteria conflict; joint satisfaction impossible. |
-| FM-3 | Verifiability | A validation value didn't reflect reality — **either direction**. *false-PASS*: PASS where reality is fail. *false-FAIL*: FAIL where reality is pass (over-rejection, e.g. a healthy node judged dead → needless failover). The defect is at the *value*; if a wrong verdict also mis-propagates, that is additionally FM-4. |
+| FM-3 | Verifiability | A validation value didn't reflect reality — **either direction**. *false-PASS*: PASS where reality is fail. *false-FAIL*: FAIL where reality is pass (over-rejection, e.g. a healthy node declared dead → needless failover). The defect is at the *value*; if a wrong verdict also mis-propagates, that is additionally FM-4. |
 | FM-4 | Propagation | A child's FAIL didn't propagate up; parent shows PASS while a child is FAIL. |
 | FM-5 | Currency | Spec changed but D wasn't updated; children compute on stale assumptions. |
 | FM-6 | Feasibility | D attempted before the information needed to decompose correctly existed. |
-| FM-7 | Feedback | An executor detected a defect but had no channel to surface/correct it in time. |
+| FM-7 | Feedback | An executor detected a defect but had no channel to surface/correct it in time. *(Not a mode of the canon, which since 2026-09-27 counts six: a channel to correct is the protocol's — see EVIDENCE_LOG, E1.)* |
 
 ### Mapping the incident to GFSO
 

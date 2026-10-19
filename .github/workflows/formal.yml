@@ -6,30 +6,39 @@ name: formal (Lean)
 # one-off snapshot. (`docs/**.md` is a deliberate superset — it also matches the frozen RU draft and
 # the E1/E2 instruments, which merely costs an extra run: the GUARD excludes them, and its exclusion
 # list is the single authority. Enumerating the mirrors here too would let the two drift apart.)
+# …LESS THE PRODUCT'S OWN PAGES, which no theory-scoped guard reads (GFSO_GUARD_SCOPE=theory drops them; the
+# product's job in tests.yml guards them): an engineering push touching only those ran the Lean build as well.
 on:
   push:
     paths:
       - 'formal/**'
       - 'docs/**.md'
       - 'README.md'
-      # The naming and reference guards now watch the PRODUCT tree (the enum migration landed and
-      # their exclusions are gone). Without these paths the guards would never run on the very
-      # surface they were extended to cover — an invariant nobody enforces is not an invariant.
-      - 'gfso/**'
-      - 'tests/**'
       - '.github/workflows/formal.yml'
+      - '!docs/EVIDENCE_LOG.md'
+      - '!docs/architecture.md'
+      - '!docs/USING_GFSO.md'
+      - '!docs/TASK_PACKET.md'
+      - '!docs/embeddability_acceptance.md'
+      - '!docs/e1/**'
   pull_request:
     paths:
       - 'formal/**'
       - 'docs/**.md'
       - 'README.md'
-      # The naming and reference guards now watch the PRODUCT tree (the enum migration landed and
-      # their exclusions are gone). Without these paths the guards would never run on the very
-      # surface they were extended to cover — an invariant nobody enforces is not an invariant.
-      - 'gfso/**'
-      - 'tests/**'
       - '.github/workflows/formal.yml'
+      - '!docs/EVIDENCE_LOG.md'
+      - '!docs/architecture.md'
+      - '!docs/USING_GFSO.md'
+      - '!docs/TASK_PACKET.md'
+      - '!docs/embeddability_acceptance.md'
+      - '!docs/e1/**'
   workflow_dispatch:
+
+# The theory push passes on its own: the guards here read the canon's own surface; the product's
+# citations and names are guarded by the tests workflow, which runs them over everything.
+env:
+  GFSO_GUARD_SCOPE: theory
 
 jobs:
   verify:
@@ -80,3 +89,10 @@ jobs:
       # rule carries the canon anchor that superseded it, so the list cannot rot into a lie.
       - name: Claim guard (no count or retired-formulation drift)
         run: bash formal/scripts/check_claims.sh
+
+      # The fourth drift surface: the canon and its mirrors cite Lean results and TLA properties BY
+      # NAME. §-refs, counts and retired names are guarded above; a RENAMED THEOREM would rot every
+      # citation of it in silence. This checks existence only — that a statement says what the prose
+      # claims stays human work, as Chapter 27 says of the development as a whole.
+      - name: Formal-name guard (no rename drift in citations)
+        run: bash formal/scripts/check_lean_refs.sh
