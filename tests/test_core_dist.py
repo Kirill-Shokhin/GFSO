@@ -6,33 +6,30 @@ Two proofs over packaging/core_manifest.py (the single cut-line source the build
 non-stdlib package; (2) a live protocol drive on the STAGED tree alone, with site-packages
 stripped from sys.path — the core runs a full ASSIGN→ACCEPT→DELIVER→PASS cycle on the bare
 standard library."""
-import ast
 import pathlib
 import shutil
 import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "packaging"))
-from core_manifest import core_paths, covered_module_prefixes  # noqa: E402
+from core_manifest import core_paths  # noqa: E402
+from tests.support import imports_of, module_reached  # noqa: E402
 
 ROOT = pathlib.Path(__file__).parent.parent
 
 
 def _imports(py: pathlib.Path) -> tuple[set[str], set[str]]:
-    tree = ast.parse(py.read_text(encoding="utf-8-sig"))
-    gfso, external = set(), set()
-    for n in ast.walk(tree):
-        names = ()
-        if isinstance(n, ast.Import):
-            names = tuple(a.name for a in n.names)
-        elif isinstance(n, ast.ImportFrom) and n.module and n.level == 0:
-            names = (n.module,)
-        for name in names:
-            if name.startswith("gfso"):
-                gfso.add(".".join(name.split(".")[:2]))
-            else:
-                external.add(name.split(".")[0])
-    return gfso, external
+    """(gfso modules reached; top-level non-gfso packages) — resolved, so `from gfso import x` and a relative import
+    are edges too (`support.imports_of`)."""
+    found = imports_of(py, ROOT)
+    return ({module_reached(ROOT, m, n) for _, m, n in found if m.startswith("gfso")},
+            {m.split(".")[0] for _, m, _ in found if not m.startswith("gfso")})
+
+
+def _shipped() -> set[str]:
+    """The modules the manifest ships, by full name — the closure's boundary is what is IN the wheel: a prefix such as
+    `gfso.adapters` admitted an import of an adapter the wheel leaves out (critic G2)."""
+    return {".".join(p.relative_to(ROOT).with_suffix("").parts).removesuffix(".__init__") for p in core_paths(ROOT)}
 
 
 def test_manifest_files_exist():
@@ -41,7 +38,7 @@ def test_manifest_files_exist():
 
 
 def test_core_dist_is_a_closed_zero_dependency_set():
-    allowed = covered_module_prefixes() | {"gfso"}
+    allowed = _shipped()
     stdlib = sys.stdlib_module_names
     violations = []
     for py in core_paths(ROOT):
@@ -57,7 +54,6 @@ def test_core_dist_is_a_closed_zero_dependency_set():
 
 _SMOKE = r"""
 import sys
-sys.path = [p for p in sys.path if "site-packages" not in p and "dist-packages" not in p]
 sys.path.insert(0, sys.argv[1])
 
 from gfso.engine import Engine
@@ -82,10 +78,10 @@ e.record_exec_verdict(TaskId("n"), "PASS", [], "host-verifier",
                                       "evidence": "the host's verifier ran it and it holds",
                                       "probe": [{"behaviour": p.behaviour, "command": p.command,
                                                  "expect": p.expect} for p in c.check]}
-                                     for c in e.get_task(TaskId("n")).spec.criteria])
+                                     for c in e.graph.get_task(TaskId("n")).spec.criteria])
 e.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("n"), source=w))
 e.wait_idle()
-print(e.get_state(TaskId("n")).name)
+print(e.graph.get_state(TaskId("n")).name)
 e.stop()
 """
 
@@ -96,7 +92,9 @@ def test_staged_core_drives_the_protocol_on_bare_stdlib(tmp_path):
         dst = staged / src.relative_to(ROOT)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-    out = subprocess.run([sys.executable, "-c", _SMOKE, str(staged)],
+    # `-I -S`: no site, so no editable install's finder — it serves a direct child of `gfso` the wheel left out from
+    # the repository (critic G2: with `gfso/config.py` dropped from the manifest, the smoke still printed DONE)
+    out = subprocess.run([sys.executable, "-I", "-S", "-c", _SMOKE, str(staged)],
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().endswith("DONE")

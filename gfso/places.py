@@ -110,7 +110,7 @@ def disk_place(p):
     """The same normal form as `text_place`, but with the filesystem consulted - or `None` when it
     cannot be. This is the half that sees through 8.3 short names, junctions and `subst` drives, and
     the half that costs something, so it is named separately: a caller comparing ONE path against
-    many (the judge tie-break) derives its own side once instead of per candidate."""
+    many (the validator tie-break) derives its own side once instead of per candidate."""
     if not p or not cheap_to_ask(p):
         return None                    # see `cheap_to_ask`: a network path answers by text alone
     try:
@@ -131,7 +131,7 @@ def same_place(a, b) -> bool:
     TEXT FIRST, DISK ONLY IF THAT FAILS. Case, separators, `..` and trailing separators are settled
     without asking the filesystem; only when the two still differ is `resolve()` spent, which is what
     sees through 8.3 short names, junctions and `subst` drives. The order is not a micro-optimization:
-    this runs once per candidate judge inside `validator_for`, which runs on every dispatch pass and
+    this runs once per candidate validator inside `validator_for`, which runs on every dispatch pass and
     on every `list_agents`, and resolving unconditionally cost 12.9 ms per call against a roster of
     25 (measured) where the text answer costs 0.05 ms.
 
@@ -143,7 +143,7 @@ def same_place(a, b) -> bool:
     """
     # NO PLACE IS NOT A PLACE. An empty side normalizes to the process cwd - and the server normally
     # stands in the project, so `same_place(None, <the executor's workdir>)` came out TRUE and a
-    # judge with no workdir at all joined the set of judges standing in the work, to be picked off it
+    # validator with no workdir at all joined the set of validators standing in the work, to be picked off it
     # alphabetically. The question "one place written two ways" is undefined for "no place", and the
     # honest answer is no.
     if not a or not b:

@@ -1,6 +1,6 @@
 """CHECK-7 and CHECK-8 read the bound's NUMBER and dropped its operator — in both directions.
 
-§13.4 annotates its own worked example with the exact trap: `backend < 100 ∧ frontend < 100 ⟹ sum
+§9.6 annotates its own worked example with the exact trap: `backend < 100 ∧ frontend < 100 ⟹ sum
 < 200 ✓` holds *"with both child bounds STRICT; the non-strict test alone would not entail the
 strict parent criterion"*. The tier summed the values and never looked at `<` versus `<=`, so two
 children bounded `<= 100` under a parent bounded `< 200` came back as `verified 1 numeric bound(s)`
@@ -44,7 +44,7 @@ def _children(bound):
 def test_two_non_strict_children_do_not_entail_a_strict_parent_bound():
     loose = check_sufficiency(_parent(), _children("response_time <= 100"))
     assert not loose.passed, \
-        "100 + 100 under `< 200` holds only if a child bound is strict — §13.4 says so in the " \
+        "100 + 100 under `< 200` holds only if a child bound is strict — §9.6 says so in the " \
         "line that states the example"
     assert "strict" in loose.details, \
         "the reader is told a sum was rejected but not that the operators are why"
@@ -52,7 +52,7 @@ def test_two_non_strict_children_do_not_entail_a_strict_parent_bound():
     canon = check_sufficiency(_parent(), _children("response_time < 100"))
     assert canon.passed and not canon.skipped, \
         "the canon's own worked example must still pass — a rule that rejects everything is not " \
-        "a rule (§13.4)"
+        "a rule (§9.6)"
 
     over = check_sufficiency(_parent(), _children("response_time < 150"))
     assert not over.passed, "150 + 150 > 200 is the arithmetic breach CHECK-7 already caught"

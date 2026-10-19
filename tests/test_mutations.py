@@ -49,7 +49,7 @@ def test_set_state_done_with_reason():
 
 
 def test_cancel_cascade_fires_on_entering_cancelling():
-    """v3.7 §14.2: the cascade fires on CANCEL (= entering CANCELLING) — non-terminal, not-yet-cancelling
+    """v3.7 §12.6: the cascade fires on CANCEL (= entering CANCELLING) — non-terminal, not-yet-cancelling
     children are returned for the loop to CANCEL (each runs its own handshake)."""
     g = _graph()
     parent = _task("parent", state=State.EXECUTING)
@@ -71,9 +71,9 @@ def test_cancel_cascade_fires_on_entering_cancelling():
 
 
 def test_active_children_excludes_cancellation():
-    """ABANDONED nodes persist (provenance, §15.1) but leave the ACTIVE decomposition — at CANCEL
-    already (cancellation is authoritative, §14.3), so CANCELLING is excluded too. DONE(PASS/FAIL)
-    stay active (delivered work)."""
+    """ABANDONED nodes persist (provenance, §15.1) but leave the ACTIVE decomposition — when the cancellation SETTLES
+    (§12.6: "a child is active unless ABANDONED or dropped"), so a CANCELLING child still stands in it until it is
+    acknowledged or its bound passes. DONE(PASS/FAIL) stay active (delivered work)."""
     g = _graph()
     parent = _task("parent", state=State.EXECUTING)
     active = _task("a1c", state=State.EXECUTING, parent_id="parent")
@@ -88,7 +88,7 @@ def test_active_children_excludes_cancellation():
     active_ids = {c.id for c in g.get_active_children(TaskId("parent"))}
 
     assert all_ids == {TaskId("a1c"), TaskId("a2c"), TaskId("a3c"), TaskId("a4c")}  # provenance keeps all
-    assert active_ids == {TaskId("a1c"), TaskId("a2c")}   # cancellation (both phases) excluded from active
+    assert active_ids == {TaskId("a1c"), TaskId("a2c"), TaskId("a4c")}   # only a SETTLED cancellation leaves
 
 
 def test_increment_iteration():

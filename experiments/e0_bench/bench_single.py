@@ -266,8 +266,8 @@ def run_gfso(problem, bench_input, hidden_tests):
     engine.assign_task(task_id, spec, AgentId("haiku"), max_iterations=3)
     engine.wait_idle()
 
-    final_state = engine.get_state(task_id)
-    task = engine.get_task(task_id)
+    final_state = engine.graph.get_state(task_id)
+    task = engine.graph.get_task(task_id)
 
     # Pick best iteration by criteria pass count (symmetric to one-shot best-of-k)
     history = agent.code_history.get(task_id, [])

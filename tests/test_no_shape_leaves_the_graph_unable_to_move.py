@@ -22,21 +22,19 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.types import Signal, SignalData, TaskId
-from tests.support import (UNMODELLED_FAULT, assert_the_graph_can_still_move, criterion,
+from tests.support import (REGISTER, assert_the_graph_can_still_move, criterion,
                            make_engine)
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 def _two_children(e):
-    T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [criterion("g", "G holds")]},
+    T.create_task(e, "root", {"description": "a goal", "criteria": [criterion("g", "G holds")]},
                   assignee="agent")
-    for kid in ("a", "b"):
-        T.create_task(e, kid, {"description": f"work {kid}",
-                               "criteria": [criterion(kid, f"{kid} holds")]},
-                      assignee="agent", parent_id="root")
-        T.map_criterion(e, "root", kid, "g")
+    T.decompose(e, "root", [{"task_id": kid, "spec": {"description": f"work {kid}",
+                                                      "criteria": [criterion(kid, f"{kid} holds")]},
+                             "assignee": "agent", "covers": ["g"]} for kid in ("a", "b")],
+                accepted_risks=_RISK)
     return e
 
 
@@ -52,22 +50,22 @@ def _accepted(out, what, node):
 
 def _delivered(e, node):
     # ACCEPT only where the state admits it: a node in REWORKING is already under contract and
-    # re-delivers directly (§14.3). Sending it anyway made the rework loop refuse on its first turn,
+    # re-delivers directly (§12.4). Sending it anyway made the rework loop refuse on its first turn,
     # so the shape named "spent its rework bound and escalated" never escalated — and that is the
     # one shape a root's conjunction cannot survive.
-    if e.get_task(node).state.name == "OFFERED":
+    if e.graph.get_task(node).state.name == "OFFERED":
         _accepted(T.signal(e, node, "ACCEPT", "agent"), "ACCEPT", node)
     _accepted(T.signal(e, node, "DELIVER", "agent", result=f"{node} done"), "DELIVER", node)
 
 
-def _judged(e, node, verdict="PASS", failed=()):
-    # …NAMING THE PINNED RUNS. A criterion carries the procedure that decides it (A1/§10), and a
+def _validated(e, node, verdict="PASS", failed=()):
+    # …NAMING THE PINNED RUNS. A criterion carries the procedure that decides it (A1/§2), and a
     # report that does not account for it is ⊥, not a verdict — so a sweep that skipped them would
-    # be walking shapes in which every judgement was refused, which is not the subject here.
+    # be walking shapes in which every validation was refused, which is not the subject here.
     T.record_verdict(e, node, verdict, reviewer="rev", failed_criteria=list(failed),
                      observed={c.name: {"note": f"ran the check for {c.name}",
                                         "ran": [p.command for p in (c.check or ())]}
-                               for c in e.get_task(node).spec.criteria if not c.depends_on})
+                               for c in e.graph.get_task(node).spec.criteria if not c.depends_on})
     _accepted(T.signal(e, node, verdict, "agent",
                        **({"failed_criteria": list(failed)} if failed else {})), verdict, node)
 
@@ -86,15 +84,15 @@ def _claim_the_aggregate(e):
     the lock deliberately restored. A guard blind to its own subject is the defect it guards
     against, wearing a name.
     """
-    if e.get_task("root").state.name == "OFFERED":
+    if e.graph.get_task("root").state.name == "OFFERED":
         T.signal(e, "root", "ACCEPT", "agent")
-    if e.get_task("root").state.name == "EXECUTING":
+    if e.graph.get_task("root").state.name == "EXECUTING":
         T.signal(e, "root", "DELIVER", "agent", result="the aggregate")
-    if e.get_task("root").state.name == "VALIDATING":
+    if e.graph.get_task("root").state.name == "VALIDATING":
         T.record_verdict(e, "root", "PASS", reviewer="rev",
                          observed={"g": {"note": "read what the children produced; it holds",
                                          "ran": [p.command for p in
-                                                 (e.get_task("root").spec.criteria[0].check or ())]}})
+                                                 (e.graph.get_task("root").spec.criteria[0].check or ())]}})
         T.signal(e, "root", "PASS", "agent")
 
 
@@ -114,17 +112,17 @@ def _walk(e, steps):
     ("one child delivered and awaiting a verdict",
      [lambda e: _delivered(e, "a")]),
     ("one child passed, the other not started",
-     [lambda e: _delivered(e, "a"), lambda e: _judged(e, "a")]),
+     [lambda e: _delivered(e, "a"), lambda e: _validated(e, "a")]),
     ("one child accepted BY THE CLOCK — the lock of 2026-09-07",
      [lambda e: _delivered(e, "a"),
       lambda e: e.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("a"))),
       lambda e: e.wait_idle()]),
     ("a child in rework",
-     [lambda e: _delivered(e, "a"), lambda e: _judged(e, "a", "FAIL", ("a",))]),
+     [lambda e: _delivered(e, "a"), lambda e: _validated(e, "a", "FAIL", ("a",))]),
     ("a child that spent its rework bound and escalated",
      [lambda e: _delivered(e, "a"),
-      lambda e: [(_delivered(e, "a") if e.get_task("a").state.name == "REWORKING" else None,
-                  _judged(e, "a", "FAIL", ("a",)))
+      lambda e: [(_delivered(e, "a") if e.graph.get_task("a").state.name == "REWORKING" else None,
+                  _validated(e, "a", "FAIL", ("a",)))
                  for _ in range(4)]]),
     ("a child blocked on a sibling",
      [lambda e: T.signal(e, "a", "ACCEPT", "agent"),
@@ -138,8 +136,8 @@ def _walk(e, steps):
     # satisfied, so no verdict arrives — and the frontier used to answer "the graph is working,
     # poll again in a minute" over it, for ever.
     ("a child settled without passing while its sibling is done",
-     [lambda e: [(_delivered(e, "a"), _judged(e, "a", "FAIL", ("a",))) for _ in range(4)],
-      lambda e: _delivered(e, "b"), lambda e: _judged(e, "b")]),
+     [lambda e: [(_delivered(e, "a"), _validated(e, "a", "FAIL", ("a",))) for _ in range(4)],
+      lambda e: _delivered(e, "b"), lambda e: _validated(e, "b")]),
     ("both children accepted by the clock",
      [lambda e: _delivered(e, "a"), lambda e: _delivered(e, "b"),
       lambda e: e.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("a"))),

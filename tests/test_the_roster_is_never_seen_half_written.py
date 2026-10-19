@@ -17,7 +17,7 @@ import time
 import pytest
 from pathlib import Path
 
-from gfso.delegate import AgentRegistry
+from gfso.roster import AgentRegistry
 
 
 def test_a_concurrent_reader_never_sees_a_partial_roster(tmp_path):
@@ -54,8 +54,17 @@ def test_a_concurrent_reader_never_sees_a_partial_roster(tmp_path):
     threads = [threading.Thread(target=_reader, daemon=True) for _ in range(4)]
     for t in threads:
         t.start()
+    # …and a move the readers starve is REFUSED out loud and repeated, as its message says: four readers starved it past
+    # the half second on a loaded Windows runner (CI, 2026-10-18), failing a test whose subject is the torn read
     for i in range(60):
-        reg.register(f"exec-{i % 40:02d}", "llm-executor", workdir=str(work))
+        for _ in range(100):
+            try:
+                reg.register(f"exec-{i % 40:02d}", "llm-executor", workdir=str(work))
+                break
+            except OSError as e:
+                assert "could not put the roster in place" in str(e), e
+        else:
+            pytest.fail("a registration was refused a hundred times running")
     time.sleep(0.2)
     stop = True
     for t in threads:

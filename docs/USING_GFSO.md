@@ -14,7 +14,7 @@ There are two ways to get a graph, and they are not equal in what they cost you.
   when the goal is generic enough that a model's weights already carry its structure.
 * **The manual mode** — you study the context and build the graph yourself, then run the checks over
   it. This is the mode below, and it is the primary one for work on a codebase you know and a model
-  does not: a decomposition is an estimate `Ŝ` of a real structure `S` (§2.2), and the estimate can
+  does not: a decomposition is an estimate `Ŝ` of a real structure `S` (§3.1), and the estimate can
   only come from contact with the domain. Nothing in the apparatus can supply that for you.
 
 The two mix. Hand-build the parts that need your context, let `auto_decompose` refine over what you
@@ -25,7 +25,7 @@ revision rather than replacing your structure.
 
 ## 1. Say what "done" is, before anything else
 
-A node carries a spec, a finite set of criteria, a deadline and an owner (§10). The criteria are the
+A node carries a spec, a finite set of criteria, a deadline and an owner (§2). The criteria are the
 whole contract: they are what a validator will run, and they are the only thing a `PASS` can be
 about.
 
@@ -45,7 +45,7 @@ hand over the answer to the work itself.
 The exact keys an authoring call reads are [`TASK_PACKET.md`](TASK_PACKET.md).
 
 Where a node is split, it also carries an **accepted-risks register**: the assumptions the split
-rests on, each with what would invalidate it (§13.1). A leaf has none. An empty register on a
+rests on, each with what would invalidate it (§9.2). A leaf has none. An empty register on a
 decomposed node is a hole the engine will show you, not a clean bill.
 
 ## 2. Build the graph
@@ -56,10 +56,11 @@ the UI they are the Decompose and Edit Node panels. Same engine, same audit log,
 ```
 create_task("api", {"name": "…", "description": "…", "criteria": [
     {"name": "…", "description": "…",
-     # what will be RUN to decide it — pinned now, before the work (A1, §10)
+     # what will be RUN to decide it — pinned now, before the work (A1, §2)
      "check": [{"behaviour": "…", "command": "…", "expect": "…"}]}]})
-decompose("api", children=[{"task_id": "schema", "spec": {…}}, …], mappings=[…])
-map_criterion("api", "schema", "…")     # bind a child to a parent criterion after the fact
+decompose("api", children=[{"task_id": "schema", "spec": {…}, "covers": ["…"]}, …],
+          accepted_risks=[…])           # the split admitted whole: every criterion covered, its register given
+decompose("api", children=[…], accepted_risks=[…], drops=["old"])   # re-admit: a hole a revision left
 edit_criteria("api", [...])             # replace criteria, carry the rest
 add_dependency("schema", "handlers", glue="handlers deserialize the published schema")
 edit_scope("api", ["a capability this goal deliberately does NOT include — and why"])
@@ -74,7 +75,7 @@ cannot sign an act as someone else. From the CLI, the unpinned developer door, y
 yourself (`gfso run signal schema DELIVER human`).
 
 Every parent criterion must be **mapped** to the child that delivers it. That mapping is the claim
-the whole composition rests on: the parent passes exactly when its children do (§11.1), so an
+the whole composition rests on: the parent passes exactly when its children do (§7.3), so an
 unmapped criterion is a parent obligation nobody has agreed to carry.
 
 Assign a node to someone else only when the work is really theirs. Ownership is load-bearing: a node
@@ -83,8 +84,8 @@ not know simply waits for that person — which is the honest state of the graph
 
 ## 3. Check the plan before writing any code
 
-Two levels, and the engine will not let a child start executing until both are clear for its
-parent's decomposition.
+Two levels: the engine admits a split only whole and clean at Level 0, and a child does not start executing
+until its parent's decomposition has a current Level-2 verdict.
 
 **Level 0 — structure.** `list_holes()` answers `{holes, count}` — every unmet structural check
 across the graph at once: an uncovered criterion, an orphan child, a cycle, incoherent deadlines, a missing risk
@@ -95,7 +96,7 @@ failure mode each one guards.) A check answers one of four words, not two: `met`
 such as deadline coherence on a plan with no dependency edges. True, and true of nothing; the page
 draws it `∅` rather than a tick, because a row of ticks that verified nothing is not a checked plan.
 
-**Level 2 — causality (§13.4).** `review_decomposition(node)` asks, per parent criterion, whether
+**Level 2 — causality (§9.5).** `review_decomposition(node)` asks, per parent criterion, whether
 the mapped children's criteria — taken as facts about the world — actually *carry* it, and names the
 gap where they do not. Structure cannot see this: a criterion with a covering child passes Level 0
 even when that child's criteria could not possibly deliver it, and you would then meet the hole in
@@ -115,15 +116,15 @@ enforces is that you *ran* it and dispositioned what it said — never that it w
 **If you have no checker.** The review needs a model — the Claude CLI on your `PATH`, signed in. With
 none, `review_decomposition` answers with no verdict, and no verdict is never read as clean: the gate
 stays shut and nothing executes. That is deliberate and it is not the only supported way to run. The
-canon's other branch (§13.5, EXPLORE) buys the plan's verification with *contact* instead of with a
+canon's other branch (§9.9, EXPLORE) buys the plan's verification with *contact* instead of with a
 checker, and it is a deployment setting rather than a skipped step:
 
 ```jsonc
 // data/serve.json — the switches the one server is raised with; then `gfso up` reconciles it
-{ "GFSO_VALIDATE_INTERNAL": "1", "GFSO_L2_GATE": "0" }
+{ "GFSO_L2_GATE": "0" }
 ```
 
-Under it the Syntactic level (Level 0) still gates every start, so the plan is still refused for an
+Under it the Syntactic level (Level 0) still gates every admission, so a split is still refused for an
 uncovered criterion, an orphan, a cycle or a missing register — what you give up is the causal
 pre-check, and you meet those gaps at the delivery instead. Choose it knowingly; the reason it is a
 switch and not a default is that an agent must never be able to reach it by skipping a step.
@@ -138,7 +139,7 @@ is the hole-hunt for content that is missing altogether. They answer different q
 
 Work the frontier: `next_steps(root)` returns every actionable node at once, ordered, marking which
 are yours and which the graph is waiting on someone else for. An empty list is not a dead graph: what
-is being judged or worked on comes back under `in_flight`, what a node waits on and what would open it
+is being validated or worked on comes back under `in_flight`, what a node waits on and what would open it
 under `waiting`, and `stuck` means what it says — nothing is running and nothing is takeable. Loop it
 until it reports complete — "done" is the root at `DONE/PASS` in the graph, never a summary in a chat
 window.
@@ -165,12 +166,30 @@ register_agent("val-1",  "llm-validator", workdir="<a scratch dir>")
 reassign("parser", "exec-1")      # …and then just watch the graph
 ```
 
+The roster is the server's, shared by every session on it, so take your roles off when you are done:
+`unregister_agent("exec-1", workdir="<project dir>")` removes the role only while it still points at
+that directory (without `workdir` it removes it unconditionally, and refuses a role another project
+registered — a guard against accidents, not an owner check; a role registered with no project can be
+removed by anyone). The answer lists your live nodes the role was carrying or had issued.
+
+Where the project dir is the top of a git repository with a commit, each node an executor runs gets a
+place of its own: a worktree beside it (`../.gfso-nodes-<dir>/<project>/<node>`, branch
+`gfso/<project>/<node>`), made from where its parent works when its first session starts and reused on
+rework. Its delivery is committed there, its validation reads it there — never a sibling's half-edited
+file — and when it PASSes its branch is merged into its parent's place (the parent's worktree once it
+has one, else the project dir). A merge that conflicts is aborted and left to the whole: the parent's
+session is told which branches did not join, and integrating them is its work. When the root PASSes,
+the worktrees whose branches joined are removed; the others stay and are named. A project dir that is
+not a repository is shared by every executor as it stands, and the log says so once.
+
 One thing decides whether that is safe, and it is a property of your PLAN, not of the machinery: two
 nodes that will write the same file are not independent, whatever their topics. Give each node its
-own artifact, or declare the dependency between them — otherwise both run and the later write
-silently takes the earlier one's work. If it happens anyway, `BLOCK` is how it becomes visible: the
-blocked node names the one that got in its way, the edge the plan omitted appears in the graph, and
-`q_Dep` counts it.
+own artifact, or declare the dependency between them — otherwise both run, and the later one's join
+conflicts (in a shared directory: the later write silently takes the earlier one's work). Build
+products belong in `.gitignore`: a delivery commits everything else it finds, interpreter and compiler caches
+(`__pycache__`, `*.pyc`, `*.o`) excepted. If it happens anyway,
+`BLOCK` is how it becomes visible: the blocked node names the one that got in its way, the edge the
+plan omitted appears in the graph, and `q_Dep` counts it.
 
 What all this costs is on the record: `/api/usage` totals the model calls per project, split by the
 role that made them — decomposer, plan review, validator, executor. The UI shows it in the observation
@@ -198,7 +217,7 @@ The actor a signal is signed as is decided by the door, not guessed:
 ## 5. The verdict is not yours to sign
 
 Validation fires at the **seams** — the root, and every node whose executor differs from its parent's
-(§14.5). There, a `PASS` needs a verdict for the delivery that stands, **whoever signs it**: being
+(§10.3). There, a `PASS` needs a verdict for the delivery that stands, **whoever signs it**: being
 someone other than the executor is a rule about the signature, not evidence about the work. A stale
 verdict does not count — a rework, a reopen or a revision under it makes the record about an earlier
 delivery.
@@ -208,7 +227,7 @@ delivery.
   `FAIL(failed_criteria=[…])`. A report with no verdict is never a pass.
 * With a registered `llm-validator`, that happens automatically on every delivery.
 * With people: the reviewer presses Record verdict in the UI (`record_verdict`), which is also how you
-  put your OWN observation on the record when you judged by hand — one line per criterion, saying what
+  put your OWN observation on the record when you validated by hand — one line per criterion, saying what
   you ran and what it showed. At a seam the engine refuses a reviewer who is the node's executor, and
   it refuses a verdict with nothing observed behind it. What it cannot check is whether the party who
   named themselves is independent of the work, so it does not pretend to: a record made this way
@@ -216,8 +235,12 @@ delivery.
   Observations that name no criterion of the node are kept out of the verdict and named back to you.
 
 A node whose executor is the same as its parent's is *internal* — your own private decomposition. It
-self-verifies on evidence you put in the delivery, and its guarantee is carried by the seam above it.
-Independent validation is for the seams, and the root is always one.
+has no seam of its own — its guarantee is carried by the seam above it, and the root is always one —
+but where it is not covered by one session's scope it is observed: the system's validator validates at
+every seam and at the top of every part of the plan larger than one session (the plan's author judges
+each part against the executor's model), and under a mode a PASS there stands on that observer's record,
+not on the evidence the executor put in the delivery. Inside one session's scope the scope's validation at
+its top runs every criterion of its pieces; `GFSO_VALIDATE_INTERNAL=1` observes every delivery.
 
 **A green that is not green does not stay quiet.** A signature can land before the instrument's
 verdict does — you sign, and the validator that was already running reports `FAIL` a few seconds later at
@@ -231,27 +254,28 @@ Two things follow from that, and both are deliberate. A verdict arriving after a
 BESIDE the one it closed on rather than replacing it (`closed_on`) — a later record is evidence about
 the same delivery, never a substitute for the one that was acted on. And a report the engine refused
 as ⊥ is named beside a completion rather than withholding it: a validator that could not decide is not
-a validator that decided against you (§11.2).
+a validator that decided against you (§7.1).
 
 **What is asked of an observation, and what is not.** A `PASS` whose text per criterion only restates
 the verdict — `"ok"`, `"looks green"` — is refused the way a `PASS` with no text at all already was;
 so is a Level-2 finding discharged with `"nah"`. This is a floor on ASSERTION, not a test of evidence.
 It cannot refuse a sentence naming a command that was never run, and it does not pretend to: at a door
-where you name yourself, the explicit record IS the guarantee (§14.5), and it carries your name.
+where you name yourself, the explicit record IS the guarantee (§10.3), and it carries your name.
 
 **When a criterion fails, the rework flows down, not around.** If the failed criteria are covered by
 children, the engine refuses a re-delivery over an untouched subtree: contact refuted the split, not
-the aggregate (§15.2). Reopen the covering child, fix it there — or revise its contract, remap it, or
+the aggregate (§15.4). Reopen the covering child, fix it there — or revise its contract, remap it, or
 add a child that covers the gap — and re-aggregate.
 
 ## 6. When reality disagrees with the plan
 
 | Situation | Verb | What it means |
 |---|---|---|
-| You need something that does not exist yet | `signal(…, "BLOCK", blocker_task_ids=[…])` | Every blocker named; an unlisted one is an invisible edge (§14.2) |
-| The contract is wrong | `CHALLENGE`, or `revise` / `edit_criteria` | Same node id, subtree retained — a spec change is a revision, not an abandonment |
+| You need something that does not exist yet | `signal(…, "BLOCK", blocker_task_ids=[…])` | Every blocker named; an unlisted one is an invisible edge (§11.2) |
+| The contract is wrong | `CHALLENGE` — before you consent AND while you work | The issuer answers it: a new contract (you consent again), or a rejection with its reason |
+| You are the ISSUER and the contract is wrong | `revise` / `edit_criteria` | Same node id, subtree retained — a spec change is a revision, not an abandonment |
 | The goal is genuinely dropped | `CANCEL` | Cascades to the subtree; this is `⊥`, not "done" |
-| A closed node has to be re-earned | `reopen(task_id)` | Only while nothing has been staked on it, and only within its reopen budget (§14.3) |
+| A closed node has to be re-earned | `reopen(task_id)` | Only while nothing has been staked on it, and only within its reopen budget (§12.14) |
 
 A node in `ESCALATED` is asking its ISSUER, and asking is the design: the automatic path stopped and
 says so rather than closing something to look finished. It is not a dead end — the issuer has three
@@ -259,6 +283,14 @@ answers, and the graph names them on the node. Raise the rework bound (`revise(i
 max_iterations=…)`) if the forecast was short rather than the plan wrong; change or narrow the
 criteria (`revise`) if the plan is what is wrong; or close it (`signal(id, "CANCEL")`, which cascades
 the live subtree). Silence closes it too, by the state's own timeout — it never drifts to a pass.
+
+**Every state has a clock.** The packet carries a deadline — you give one or the engine writes a
+default inside the parent's — and each waiting state has its own bound as well: an answer you owe
+(`OFFERED`, `CHALLENGED`, `BLOCKED`) and the issuer's decision in `ESCALATED` are each a day by
+default, a verdict in `VALIDATING` an hour, counted from the delivery. When `VALIDATING` runs out the
+node is handed back to its issuer, never accepted: the clock does not sign a verdict for anyone. Set
+`GFSO_BOUND_<STATE>` (seconds, `0` = no bound for that state) and `GFSO_DEFAULT_DEADLINE_S` to your
+own working rhythm — the numbers are ours, the rule that a wait ends is the canon's.
 
 `metrics()` reads the quality vector off the execution trace — including `q_D`, which is where a
 decomposition that looked fine and did not hold shows up after the fact.

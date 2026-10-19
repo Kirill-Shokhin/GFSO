@@ -7,6 +7,7 @@ directly from its own loop — no engine thread, no blocking queue — and the F
 underneath behave identically.
 """
 import asyncio
+import hashlib
 import importlib
 import json
 import os
@@ -29,6 +30,7 @@ from gfso import tools as T
 from tests.support import criterion, make_engine, pinned
 from gfso import serverctl, config, doctor, tools_llm as TL
 from gfso.serverctl import drift, declared
+from gfso.inflight import in_flight
 from gfso.mcp import connect
 from gfso.doctor import port_state
 from gfso.cli import build_parser
@@ -59,35 +61,35 @@ def _mk(e, tid="n"):
 def _await_state(e, tid, names, timeout=3.0):
     dl = time.time() + timeout
     while time.time() < dl:
-        st = e.get_state(TaskId(tid))
+        st = e.graph.get_state(TaskId(tid))
         if st and st.name in names:
             return st.name
         time.sleep(0.01)
-    return e.get_state(TaskId(tid)).name
+    return e.graph.get_state(TaskId(tid)).name
 
 
 def test_fake_clock_drives_inv5_state_age_in_milliseconds():
     """An HOUR-scale state_timeout enforced through virtual time: the deadline-less node cannot
-    sit in OFFERED forever; the sub-FSM escalates (OFFERED → OVERDUE → ESCALATED → CANCELLING →
-    ABANDONED, one TIMEOUT per step) — all in milliseconds of wall time, because Inv-5 reads the ClockPort, not
+    sit in OFFERED forever; the table escalates (OFFERED → ESCALATED → CANCELLING → ABANDONED,
+    one TIMEOUT per step) — all in milliseconds of wall time, because Inv-5 reads the ClockPort, not
     the wall clock.
 
     The chain no longer stops at ESCALATED: that is the ISSUER's waiting state, and its own timeout
     is the issuer's silence closing the task — through CANCELLING, since escalation cascades
     nothing and the subtree has to go with it. So the end of an unanswered escalation is
-    ABANDONED (V=⊥); it never drifts to DONE. Four virtual hours, four TIMEOUTs, nothing after."""
+    ABANDONED (V=⊥); it never drifts to DONE. Three TIMEOUTs, nothing after."""
     e = make_engine(llm=None, validate_signals=True,
                      check_interval=1800, state_timeout=3600, clock=FakeClock())
     e.start()
     _mk(e)
-    got = _await_state(e, "n", {"OVERDUE", "ESCALATED", "ABANDONED"})
-    assert got in ("OVERDUE", "ESCALATED", "ABANDONED")
+    got = _await_state(e, "n", {"ESCALATED", "CANCELLING", "ABANDONED"})
+    assert got in ("ESCALATED", "CANCELLING", "ABANDONED")
     assert _await_state(e, "n", {"ABANDONED"}) == "ABANDONED"   # repeated virtual timeouts
-    # FOUR: OFFERED → OVERDUE → ESCALATED → CANCELLING → ABANDONED. The deadline path now ends in a
-    # HANDOVER (the issuer's waiting state, §14.3-bis) and then in a CANCELLATION before it ends in a
+    # THREE: OFFERED → ESCALATED → CANCELLING → ABANDONED. The deadline path now ends in a
+    # HANDOVER (the issuer's waiting state, §12.5) and then in a CANCELLATION before it ends in a
     # settlement — his silence is his cancellation, and it takes the whole subtree with it.
     assert [a.signal for a in e.audit_log(TaskId("n"))
-            if not a.rejected].count(Signal.TIMEOUT) == 4       # one per step, and the chain rests
+            if not a.rejected].count(Signal.TIMEOUT) == 3       # one per step, and the chain rests
     e.stop()
 
 
@@ -107,7 +109,7 @@ def test_runner_port_is_the_spawn_seam():
     e.start()
     assert sorted(r.spawned) == ["gfso-event-loop", "gfso-timeout-monitor"]
     _mk(e)                                             # and the engine WORKS over that substrate
-    assert e.get_state(TaskId("n")).name == "OFFERED"
+    assert e.graph.get_state(TaskId("n")).name == "OFFERED"
     e.stop()
 
 
@@ -164,6 +166,22 @@ def test_source_fingerprint_moves_with_the_tree(tmp_path, monkeypatch):
     (pkg / "__pycache__" / "junk.py").write_text("noise", encoding="utf-8")
     assert serverctl.source_fingerprint() != first          # caches are not sources
     assert serverctl.source_fingerprint() == serverctl.source_fingerprint()
+
+
+def test_source_fingerprint_is_the_same_on_every_platform(tmp_path, monkeypatch):
+    """The same bytes are the same build wherever they are read. Ordered by `Path`, Windows sorted
+    case-insensitively and Linux did not, so one tree mounted into the Linux container fingerprinted
+    differently from the host and a row could not say which product ran (measured 2026-10-07)."""
+    pkg = tmp_path / "gfso"
+    pkg.mkdir()
+    for name, text in (("a.py", "x = 1"), ("B.py", "y = 2")):        # "B" < "a" bytewise, not caselessly
+        (pkg / name).write_text(text, encoding="utf-8")
+    monkeypatch.setattr(serverctl, "ROOT", tmp_path)
+    h = hashlib.sha256()
+    for rel in sorted(("gfso/B.py", "gfso/a.py")):
+        h.update(rel.encode())
+        h.update((tmp_path / rel).read_bytes())
+    assert serverctl.source_fingerprint() == h.hexdigest()[:12]
 
 
 def test_drift_names_every_way_the_live_server_can_be_wrong():
@@ -470,11 +488,28 @@ def test_busy_counts_concurrent_calls_of_one_verb():
     """`busy` decides whether a reconcile leaves the server alone. As a SET, the first of two
     concurrent validations to finish cleared the flag while the second was still running — and
     since every tool now runs in its own thread, concurrent calls of one verb are ordinary."""
+    verbs = lambda: [w["verb"] for w in in_flight()]
     with TL._inflight("validate_result"):
         with TL._inflight("validate_result"):
-            assert sorted(TL.INFLIGHT) == ["validate_result"]
-        assert sorted(TL.INFLIGHT) == ["validate_result"], "the inner exit cleared the outer's flag"
-    assert sorted(TL.INFLIGHT) == []
+            assert verbs() == ["validate_result"] * 2
+        assert verbs() == ["validate_result"], "the inner exit cleared the outer's flag"
+    assert verbs() == []
+
+
+def test_work_in_flight_is_registered_under_its_project_and_node():
+    """The page counts ITS project's work from this registry. By verb name alone, two parallel runs
+    of one verb were one fact and no run said whose project it was on — so the page fell back to
+    counting token ticks, and lost every executor that ran tools instead of streaming."""
+    e = make_engine()
+    e.project_name = "p1"
+    seen = []
+    TL._tracked("validate_result", lambda engine, task_id, model="m": seen.extend(in_flight()))(e, "root.a")
+    assert [(w["verb"], w["project"], w["task_id"]) for w in seen] == [("validate_result", "p1", "root.a")]
+    assert in_flight() == []
+    with TL._inflight("delegated_execution", e, "root.b"):
+        rt = TestClient(create_app(e)).get("/api/runtime").json()
+    assert rt["busy"] == ["delegated_execution"]
+    assert [(w["project"], w["task_id"]) for w in rt["in_flight"]] == [("p1", "root.b")]
 
 
 def test_a_reconcile_leaves_an_occupied_server_alone_but_force_does_not(reconciling):

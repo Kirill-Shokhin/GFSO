@@ -12,10 +12,10 @@ Layer map (§3A audit / architecture.md):
   L3  gfso.adapters   → core + adapters only (port implementations)
   Binding (mcp/api/web/cli/driver/main) is the ONLY place allowed to import binding.
 """
-import ast
 import pathlib
 
 import gfso
+from tests.support import imports_of, module_reached
 
 ROOT = pathlib.Path(gfso.__file__).parent
 
@@ -25,12 +25,15 @@ ROOT = pathlib.Path(gfso.__file__).parent
 # reach into a higher one; a leaf that answers "where does this product keep its data, which model
 # does it run by default" inverts nothing. Without this row every layer keeps its own spelling of
 # those answers, which is the defect the config owner exists to remove.
-_CONFIG = {"gfso.config"}
+# `gfso.places` is the same kind of leaf — where a path is, asked without waiting on a file server — and
+# `docs/architecture.md` says so; the gate admitted only `gfso.config`, so the document and the gate disagreed about
+# one module (sync audit, D-F17). A leaf stays one: `test_the_leaves_import_no_gfso` holds them to it.
+_LEAVES = {"gfso.config", "gfso.places"}
 RULES = {
-    "gfso.core": {"gfso.core"} | _CONFIG,
-    "gfso.engine": {"gfso.core", "gfso.engine"} | _CONFIG,
-    "gfso.tools": {"gfso.core", "gfso.engine"} | _CONFIG,
-    "gfso.adapters": {"gfso.core", "gfso.adapters"} | _CONFIG,
+    "gfso.core": {"gfso.core"} | _LEAVES,
+    "gfso.engine": {"gfso.core", "gfso.engine"} | _LEAVES,
+    "gfso.tools": {"gfso.core", "gfso.engine"} | _LEAVES,
+    "gfso.adapters": {"gfso.core", "gfso.adapters"} | _LEAVES,
 }
 
 # gfso.doctor is binding: it reports on the doors, and `setup` drives them (it imports gfso.mcp).
@@ -38,14 +41,9 @@ BINDING = {"gfso.mcp", "gfso.api", "gfso.web", "gfso.cli", "gfso.driver", "gfso.
 
 
 def _imports(py: pathlib.Path) -> set[str]:
-    tree = ast.parse(py.read_text(encoding="utf-8-sig"))
-    out = set()
-    for n in ast.walk(tree):
-        if isinstance(n, ast.Import):
-            out |= {a.name for a in n.names if a.name.startswith("gfso")}
-        elif isinstance(n, ast.ImportFrom) and n.module and n.module.startswith("gfso"):
-            out.add(n.module)
-    return {".".join(i.split(".")[:2]) for i in out}
+    """Every gfso module this file imports, resolved (`support.imports_of`), cut to its first two segments."""
+    return {".".join(module_reached(ROOT.parent, m, n).split(".")[:2])
+            for _, m, n in imports_of(py, ROOT.parent) if m.startswith("gfso")}
 
 
 def _modules():
@@ -76,3 +74,9 @@ def test_binding_imported_only_by_binding():
         if bad:
             violations.append(f"{mod} imports binding layer {sorted(bad)}")
     assert not violations, "binding-layer violations:\n" + "\n".join(violations)
+
+
+def test_the_leaves_import_no_gfso():
+    """What every layer may import must itself import nothing of gfso, or the admission is a back door upward."""
+    bad = {mod: sorted(_imports(py) - {"gfso"}) for mod, py in _modules() if mod in _LEAVES and _imports(py) - {"gfso"}}
+    assert not bad, f"a leaf imports gfso modules: {bad}"

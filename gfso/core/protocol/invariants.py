@@ -3,7 +3,7 @@
 NB Invariant 1 (criteria immutability) has NO named function here BY DESIGN: it is enforced
 structurally — every in-place criteria change on a SET_STATE raises InvariantViolation at the
 mutation chokepoint (core/graph/mutations.py::_set_state), and the only sanctioned change paths
-are revision (re-ASSIGN, §14.4 Inv-1) and the pre-acceptance CHALLENGE channel (APPLY_SPEC).
+are revision (re-ASSIGN, §12.3 Inv-1) and the pre-acceptance CHALLENGE channel (APPLY_SPEC).
 A `validate_criteria_immutable` helper used to live here, defined but never called — dead code
 that read as protection; removed (visibility ≠ enforcement)."""
 from __future__ import annotations
@@ -14,15 +14,15 @@ from typing import Mapping, Sequence
 
 from gfso.core.types import SignalData, Signal, Verdict
 
-_DEGENERATE = re.compile(r"^\s*(echo|printf|true|/bin/true)\b[^|;&$`]*$", re.I)
+_DEGENERATE = re.compile(r"^\s*(echo|printf|true|/bin/true)\b[^|;&$`\n\r]*$", re.I)   # one line: a second runs work
 
 
 def emits_a_constant(command: str) -> bool:
     """Can this command come out false at all? A floor, never a verdict on sensitivity.
 
-    `echo ok` observes nothing, so the criterion it pins forbids nothing (§2.1 — a claim with an
+    `echo ok` observes nothing, so the criterion it pins forbids nothing (§1.3 — a claim with an
     empty fail-extension is empty). Whether a probe that DOES run something is sensitive to a
-    real divergence is FM-3, and §13.6 says no structural check guards it: this stays
+    real divergence is FM-3, and §15.7 says no structural check guards it: this stays
     deliberately literal — a constant emitter with nothing piped behind it. It NAMES a hollow
     pinned procedure, and stops such a probe standing in for a behaviour nobody observed. One
     definition, because two spellings of "this observes nothing" would drift apart.
@@ -47,7 +47,7 @@ def fail_names_this_contract(failed_criteria: Sequence[str],
 
     Inv-3 was `len(failed_criteria) > 0` and nothing else, so ANY string satisfied it: a FAIL naming
     `"the tests"` or a typo was admitted, sent the node to REWORKING, and burnt one of its bounded
-    iterations (§14.3) against an obligation that does not exist — while the executor read a list it
+    iterations (§12.4) against an obligation that does not exist — while the executor read a list it
     could not act on. The identical rule is already binding one file over for the machine
     validator's report ("'X' is not a criterion of this node — the contract's criteria are the
     entire obligation"), so this was one rule enforced for the instrument and advisory for the
@@ -60,6 +60,22 @@ def fail_names_this_contract(failed_criteria: Sequence[str],
     return [n for n in (str(f) for f in failed_criteria) if n not in known] if known else []
 
 
+def probes_of(entry: Mapping) -> list:
+    """A report entry's probes, as mappings — THE one reading of its `probe` field (a list, or one probe written bare);
+    seven readers spelled it by hand (ortho audit, D-F6)."""
+    raw = entry.get("probe")
+    return ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
+            else [raw] if isinstance(raw, Mapping) else [])
+
+
+def good_probes(entry: Mapping) -> list:
+    """The entry's probes a reader can re-run: a command, and what it expects — or, under a FAIL with evidence, an
+    observed absence, which has no expected line to quote. One rule for the record and for the coverage count."""
+    refuting = spoken_verdict(entry.get("verdict")) == "fail" and str(entry.get("evidence", "")).strip()
+    return [p for p in probes_of(entry)
+            if str(p.get("command", "")).strip() and (str(p.get("expect", "")).strip() or refuting)]
+
+
 def spoken_verdict(raw) -> str:
     """A per-criterion verdict word, normalized ONCE — `pass` / `fail` / anything else, lower-case.
 
@@ -70,8 +86,25 @@ def spoken_verdict(raw) -> str:
     (`unrun_probes`) skipped the criterion and a PASS whose probe was never run was RECORDED, and
     with `"FAIL"` a genuine refutation was refused for carrying no reproducible probe and thrown
     away. One rule, one reader.
+
+    `failed` reads as `fail`, and no other tense is read: a word taken as a fail can only cost a round (a false FAIL
+    is guarantee-safe, §8.4), one taken as a pass could close a node — so `passed` stays a non-pass. Three readers
+    took `failed` as a fail while this one did not, and the battery recorded a FAIL citing the criterion whose
+    refuting probe was then never kept (critic, 2026-10-07).
     """
-    return str(raw if raw is not None else "").strip().lower()
+    word = str(raw if raw is not None else "").strip().lower()
+    return "fail" if word == "failed" else word
+
+
+def verdict_word(raw, lenient: bool = False) -> "Verdict | None":
+    """THE one reading of a verdict word — PASS, FAIL, or None where none was decided (⊥, §2.3). Any casing; `lenient`
+    (a model's free report) also reads a leading word with a reason after it (`PASS — all green`), and prose that
+    decides nothing is None, never guessed at. It never raises: a door that must refuse a non-verdict says so in its
+    own words. Three hand copies disagreed — the human door, the delegated door and the record (ortho audit, D-F5)."""
+    word = str(raw if raw is not None else "").strip().upper()
+    if lenient and word:
+        word = word.replace("—", " ").replace("-", " ").replace(":", " ").split()[0].strip(".,;")
+    return Verdict[word] if word in (Verdict.PASS, Verdict.FAIL) else None
 
 
 def decided_verdict(raw) -> str:
@@ -84,42 +117,55 @@ def decided_verdict(raw) -> str:
     a verdict. The human door has always coerced here (`tools._self_check_verdict`); the record did
     not, and the record is where every door lands.
     """
-    word = str(raw if raw is not None else "").strip().upper()
-    if word in (Verdict.PASS, Verdict.FAIL):
-        return Verdict[word]
+    if (v := verdict_word(raw)) is not None:
+        return v
     raise ValueError(
         f"not a verdict: {raw!r} is neither {Verdict.PASS} nor {Verdict.FAIL}. V is two-valued "
-        f"(§11.2) and a third word decides nothing — it would disarm every check that asks which "
+        f"(§7.1) and a third word decides nothing — it would disarm every check that asks which "
         f"of the two this is, and leave the node waiting for a signal nobody can send.")
+
+
+def probe_held(v) -> bool | None:
+    """A probe's reported `held` — True, False, or None where the report does not say."""
+    s = str(v).strip().lower() if v is not None else ""
+    return True if s in ("true", "yes", "1") else False if s in ("false", "no", "0") else None
+
+
+def _says_something(entry: Mapping) -> bool:
+    """Does a report entry observe anything — a non-pass word, a probe, a behaviour or a divergence?"""
+    return (spoken_verdict(entry.get("verdict")) != "pass"
+            or bool(entry.get("probe") or entry.get("behaviours") or entry.get("divergences")))
 
 
 def verdict_report_defects(criteria: Sequence[str], verdict: str,
                            per_criterion: Sequence[Mapping],
                            failed_criteria: Sequence[str],
                            require_probe: bool = False) -> list[str]:
-    """Is this validation report a VERDICT at all? (§10 V(t) = ⋀ᵢ cᵢ over the node's criteria.)
+    """Is this validation report a VERDICT at all? (§2 V(t) = ⋀ᵢ cᵢ over the node's criteria.)
 
     A verdict is the conjunction over the WHOLE contract. So a report is not a verdict — it is ⊥,
-    an absence of value (§10/§11.2: ⊥ is not a third scale value, and it is not pass) — when it:
+    an absence of value (§2.3: ⊥ is not a third scale value, and it is not pass) — when it:
       - leaves a criterion unspoken (an unevaluated conjunct is ⊥, never pass);
       - speaks of something that is not a criterion of this node (it answers another contract);
       - disagrees with itself: `verdict` PASS while a conjunct is not pass, or `failed_criteria`
-        ≠ the non-pass conjuncts (the issuer's FAIL payload must BE the report's own red set).
+        ≠ the non-pass conjuncts (the issuer's FAIL payload must BE the report's own red set);
+      - marks a criterion `pass` while recording a `divergences` entry against it — an observed
+        divergence IS that criterion's value, and it is fail (Inv-2, §12.8).
 
     Measured live (BCB/93, the false-PASS this rule closes): the validator ran the suite correctly,
     reported `test_values: fail` with real failing evidence, and still returned verdict PASS with
     empty failed_criteria — excusing the red conjunct as "ACCEPTED_RISKS-declared, out of scope". A
-    node's criteria ARE its obligation (§10); ACCEPTED_RISKS holds risk factors of the DECOMPOSITION
-    (§13.1) and can never retire a criterion — that path is CHALLENGE (spec defect → the issuer
+    node's criteria ARE its obligation (§2); ACCEPTED_RISKS holds risk factors of the DECOMPOSITION
+    (§9.2) and can never retire a criterion — that path is CHALLENGE (spec defect → the issuer
     resolves) or revision, both logged. Returns the defect lines (empty = a well-formed verdict).
 
     `require_probe` adds the EVIDENCE-INSTRUMENT clause — off for a human reviewer, on for the LLM
     validator: every criterion's entry must carry a PROBE, a command to run plus the observation
-    expected of it, so the claim can be RE-RUN against the judged artifact instead of believed.
+    expected of it, so the claim can be RE-RUN against the validated artifact instead of believed.
     Measured live (`EVIDENCE_LOG` §13.5): replaying the checkable claims of one run against the
-    exact snapshot they judged, **four of seven described behaviour the artifact did not have**
+    exact snapshot they validated, **four of seven described behaviour the artifact did not have**
     ("returns two blocks", "the helpers are absent", an IndexError that does not occur). The
-    validator's own contract already says executed evidence outranks judgment; nothing checked that
+    validator's own contract already says executed evidence outranks assessment; nothing checked that
     an execution happened. This is A1's decidability clause one level down: a criterion whose check
     cannot be re-run mechanically is not decided by this report.
     """
@@ -130,20 +176,63 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
     verdict = str(verdict if verdict is not None else "").strip().upper()
     names = [str(c) for c in criteria]
     known = set(names)
-    spoken = {str(e.get("criterion")): spoken_verdict(e.get("verdict")) for e in per_criterion}
+    # A criterion spoken twice is a pass only if every entry says pass: one observed non-pass is its value (Inv-2) —
+    # read by its last entry, a fail followed by a pass passed here while `_report_contradicts_itself` read it red
+    spoken: dict = {}
+    for e in per_criterion:
+        if spoken.get(name := str(e.get("criterion")), "pass") == "pass":
+            spoken[name] = spoken_verdict(e.get("verdict"))
     defects = []
 
     for missing in [n for n in names if n not in spoken]:
-        defects.append(f"criterion '{missing}' has no verdict — V = AND over ALL criteria (§10); "
-                       f"an unevaluated criterion is ⊥, not pass")
-    for foreign in [n for n in spoken if n not in known]:
+        # …SAYING WHAT TO ADD: a seam criterion covered only in the free-text `seams` note was refused here as
+        # "no verdict" (AUTO coreutils, 2026-10-10) — that note carries no verdict word and no probe, so it is read as none
+        defects.append(f"criterion '{missing}' has no verdict — V = AND over ALL criteria (§2); "
+                       f"an unevaluated criterion is ⊥, not pass. Speak to it under its exact name — in a "
+                       f"validator's report, its own `per_criterion` entry {{criterion: '{missing}', verdict, "
+                       f"evidence, behaviours, probe, divergences}}; a `dep__*` seam criterion too, since the "
+                       f"`seams` note is free text and decides no criterion")
+    # …SAVE AN EMPTY PASS: about a non-criterion it observes nothing, no conjunct of V; "every criterion spoken" guards.
+    # Refused, one `placeholder` entry voided a root's validation of seven criteria (GB_coreutils_tmsq57348).
+    for foreign in [n for n in spoken if n not in known
+                    and any(str(e.get("criterion")) == n and _says_something(e) for e in per_criterion)]:
         defects.append(f"'{foreign}' is not a criterion of this node — the contract's criteria are "
                        f"the entire obligation ({', '.join(names) or 'none'})")
+
+    # A DIVERGENCE THE VALIDATOR OBSERVED **IS** THAT CRITERION'S VALUE, AND IT IS FAIL (Inv-2,
+    # §12.8). The rule above catches a report that marks a conjunct non-pass and passes anyway; this
+    # catches the shape one step earlier, where the divergence is written down and the conjunct is
+    # marked `pass` beside it, waived in prose. Measured on `c_compiler` (2026-09-20/21): the
+    # closing verdict recorded every criterion "pass" while its own text set aside observed
+    # divergences by citing the ACCEPTED_RISKS register — six of them behaviours the contract
+    # REQUIRES. A register entry holds a risk factor of the decomposition (§9.2) and cannot empty
+    # an observation; only the issuer's own act moves a criterion (edit_criteria / a revision), and
+    # a pass is not one of those acts.
+    for e in per_criterion:
+        name = str(e.get("criterion"))
+        div = [str(d).strip() for d in (e.get("divergences") or ()) if str(d).strip()]
+        if name in known and div and spoken_verdict(e.get("verdict")) == "pass":
+            defects.append(
+                f"criterion '{name}' is marked pass while the report itself records a divergence "
+                f"from what it states ({'; '.join(div)}) — that divergence IS the criterion's "
+                f"value, and it is fail (Inv-2, §12.8). No register entry turns it into a pass: "
+                f"ACCEPTED_RISKS (§9.2) holds risk factors of the decomposition and retires no "
+                f"criterion. If the criterion itself is wrong, the issuer changes it "
+                f"(`edit_criteria`) or accepts the gap by his own act — a verdict cannot")
+        # …AND A PROBE THE REPORT ITSELF SAYS DID NOT HOLD: a part's pinned check reported `held: false` is an
+        # observation that the criterion resting on it fails on this delivery (Inv-2) — the same shape, one field over
+        # (critic r2, 2026-10-04: a PASS over it was recorded and the node closed DONE).
+        unheld = [str(p.get("id") or p.get("command") or "").strip()
+                  for p in probes_of(e) if probe_held(p.get("held")) is False]
+        if name in known and unheld and spoken_verdict(e.get("verdict")) == "pass":
+            defects.append(f"criterion '{name}' is marked pass while the report says its probe did not hold "
+                           f"({'; '.join(unheld)}) — what the probe showed is the criterion's value, and it is "
+                           f"fail (Inv-2, §12.8)")
 
     red = {n for n, v in spoken.items() if n in known and v != "pass"}
     if verdict == Verdict.PASS and red:
         defects.append(f"verdict PASS contradicts the report's own evidence: {', '.join(sorted(red))} "
-                       f"did not pass. A criterion is the obligation (§10) — ACCEPTED_RISKS (§13.1) holds "
+                       f"did not pass. A criterion is the obligation (§2) — ACCEPTED_RISKS (§9.2) holds "
                        f"risks of the decomposition and never retires one; to change the contract, "
                        f"CHALLENGE it (spec defect) — a verdict cannot excuse it")
     if verdict == Verdict.FAIL and not red:
@@ -163,9 +252,7 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
             # ranges) and one honest, reproducing probe over the first — the second failed against
             # the reference implementation. Reproducibility is not coverage, so the report must
             # enumerate what the criterion demands and carry a probe for each.
-            raw = e.get("probe")
-            probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
-                      else [raw] if isinstance(raw, Mapping) else [])
+            probes = probes_of(e)
             # A REFUTATION'S EXPECTED OUTPUT CAN BE NOTHING. `expect` is what makes a probe
             # re-runnable, and for a criterion the report FAILED the observation is often an
             # absence — "`grep -r flush tests/` prints nothing" — which has no expected line to
@@ -173,17 +260,14 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
             # right and its FAIL was refused at the report level over empty `expect` fields, so bad
             # work went back looking accepted. A command with a stated verdict of `fail` and
             # evidence behind it is a probe; it is only a PASS that needs the expectation spelled.
-            _refuting = spoken_verdict(e.get("verdict")) == "fail" and str(e.get("evidence", "")).strip()
-            good = [p for p in probes
-                    if str(p.get("command", "")).strip()
-                    and (str(p.get("expect", "")).strip() or _refuting)]
+            good = good_probes(e)
             behaviours = [b for b in (e.get("behaviours") or []) if str(b).strip()]
             if not good:
                 defects.append(
                     f"criterion '{name}' carries no reproducible probe — a verdict states what it "
                     f"OBSERVED, so every criterion needs `probe: [{{command, expect}}]`: the command "
                     f"to re-run against the delivered artifact, and what its output must show. "
-                    f"Judgment with no re-runnable observation is not evidence. When the behaviour "
+                    f"An assessment with no re-runnable observation is not evidence. When the behaviour "
                     f"IS an absence — nothing printed, no file written, no second line — make the "
                     f"absence PRINT: pipe through `wc -l` and expect `0`, `echo \"EXIT=$?\"`, or "
                     f"`test ! -e x && echo ABSENT`. An empty `expect` is not an observation of "
@@ -210,9 +294,7 @@ def probes_that_expected_nothing(per_criterion: Sequence[Mapping]) -> dict[str, 
     """
     out: dict[str, list[str]] = {}
     for e in per_criterion or ():
-        raw = e.get("probe")
-        probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
-                  else [raw] if isinstance(raw, Mapping) else [])
+        probes = probes_of(e)
         empty = [str(p.get("command", "")).strip() for p in probes
                  if str(p.get("command", "")).strip() and not str(p.get("expect", "")).strip()]
         if empty:
@@ -238,7 +320,7 @@ def unrun_probes(per_criterion: Sequence[Mapping], tools_used: Mapping | None) -
       decision; it is left alone.
     • ONLY WHEN THE LEDGER IS KNOWN. An EMPTY ledger is ⊥ about the ledger, not evidence that nothing
       ran: transports that do not report tool events would otherwise refute every verdict they carry.
-      ⊥ ≠ 0 (§11.2) applies to the instrument's own instruments too.
+      ⊥ ≠ 0 (§2.3) applies to the instrument's own instruments too.
     """
     if not isinstance(tools_used, Mapping) or not tools_used:
         return []
@@ -248,9 +330,7 @@ def unrun_probes(per_criterion: Sequence[Mapping], tools_used: Mapping | None) -
     for e in per_criterion or ():
         if spoken_verdict(e.get("verdict")) != "pass":
             continue
-        raw = e.get("probe")
-        probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
-                  else [raw] if isinstance(raw, Mapping) else [])
+        probes = probes_of(e)
         if any(str(p.get("command", "")).strip() for p in probes):
             out.append(str(e.get("criterion")))
     return out
@@ -262,19 +342,14 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
     NOT a malformed report: the verdict is well-formed, its EVIDENCE is short of what the criterion
     demands. So this is not ⊥ at the report level (that would stall the node and end the run over an
     incomplete proof), it is ⊥ at the CRITERION level — an unobserved conjunct is not decided, so it
-    cannot be `pass` (§11.2: ⊥ is not pass), and the node goes back for rework naming exactly what
+    cannot be `pass` (§2.3: ⊥ is not pass), and the node goes back for rework naming exactly what
     was never observed. Measured: a criterion naming three behaviours passed on one honest probe of
     the first, and the delivery closed as done with the second broken.
     """
     out: dict[str, list[str]] = {}
     for e in per_criterion or ():
-        raw = e.get("probe")
-        probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
-                  else [raw] if isinstance(raw, Mapping) else [])
-        _refuting = spoken_verdict(e.get("verdict")) == "fail" and str(e.get("evidence", "")).strip()
-        good = [p for p in probes
-                if str(p.get("command", "")).strip()
-                and (str(p.get("expect", "")).strip() or _refuting)]   # an absence has no `expect`
+        probes = probes_of(e)
+        good = good_probes(e)   # an absence has no `expect`
         behaviours = [str(b).strip() for b in (e.get("behaviours") or []) if str(b).strip()]
         if not behaviours:
             continue
@@ -293,8 +368,8 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
             # counting to matching, so a MIXED report — some probes labelled, some not — had its
             # unlabelled probes drop out of the reckoning entirely and was demoted for behaviours
             # it had in fact observed. That mixture is now the NORMAL shape: a contract pins its
-            # probes in the CONTRACT's wording while the judge enumerates behaviours in its own,
-            # so the pinned probe arrives labelled beside the judge's unlabelled ones and the mode
+            # probes in the CONTRACT's wording while the validator enumerates behaviours in its own,
+            # so the pinned probe arrives labelled beside the validator's unlabelled ones and the mode
             # flipped on its presence. A rule that fires because evidence was ADDED teaches its
             # reader to send less of it. (Found twice, independently, while the suite was brought
             # onto the pinned-procedure contract — before a paid run could pay for it.)
@@ -310,7 +385,7 @@ def underprobed(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
             # clean report on a criterion naming three behaviours and probing one (reproduced by a
             # reviewer through the real door, after the first bound was added). What separates
             # them is not how many probes there are but whether a probe could observe anything at
-            # all — a constant emitter forbids nothing (§2.1), so it is not spare capacity.
+            # all — a constant emitter forbids nothing (§1.3), so it is not spare capacity.
             _spare = (len([p for p in good
                            if not str(p.get("behaviour", "")).strip()
                            and not emits_a_constant(p.get("command", ""))])
@@ -366,13 +441,13 @@ def _unobserved_by_label(behaviours: list, claimed: set) -> list:
     # "names behaviours it never observed", which was false about it, and the caller paid a
     # wasted run plus a three-times-costlier retry.
     # The floor keeps the loosened arm honest: a label of one or two words would otherwise
-    # match anything, so it must carry at least three content words to be judged this way.
+    # match anything, so it must carry at least three content words to be validated this way.
     def _covered(b: str) -> bool:
         bl = b.strip().lower()
         if any(bl in c or c in bl for c in claimed):
             return True
         bw = _words(bl)
-        if len(bw) < 2:              # too little content to judge overlap on
+        if len(bw) < 2:              # too little content to validate overlap on
             return False
         for c in claimed:
             cw = _words(c)
@@ -413,7 +488,7 @@ def is_pure_assent(text: str) -> bool:
     THE LIMIT, stated rather than papered over. This is a floor on ASSERTION, not a test for
     EVIDENCE: it refuses text that says "it passed" in other words, and it cannot refuse text that
     says something false. "dave says it works" passes, and so does any invented sentence naming a
-    command — because separating a short true observation from a short false one means judging
+    command — because separating a short true observation from a short false one means validation
     content, and no decidable rule does that.
 
     A tester put it precisely (MCP door, 2026-09-02): the check is keyed on whether the text asserts
@@ -421,7 +496,7 @@ def is_pure_assent(text: str) -> bool:
     message asks for. That gap is real and is not closed here, because the positive form would refuse
     honest observations ("no output, exit 0" names nothing but is a true report of a run). What is
     closed is the case where nothing was written down; what remains is a person choosing to write a
-    false sentence, which the record then carries under their name (§14.5).
+    false sentence, which the record then carries under their name (§11.6).
     """
     words = [w.strip(".-/") for w in "".join(ch if ch.isalnum() or ch in "/-. " else " "
                                               for ch in str(text).lower()).split()]
@@ -467,9 +542,7 @@ def probe_labels(per_criterion: Sequence[Mapping]) -> dict[str, list[str]]:
     """
     out: dict[str, list[str]] = {}
     for e in per_criterion or ():
-        raw = e.get("probe")
-        probes = ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
-                  else [raw] if isinstance(raw, Mapping) else [])
+        probes = probes_of(e)
         labels = sorted({str(p.get("behaviour", "")).strip() for p in probes
                          if str(p.get("behaviour", "")).strip()})
         if labels:

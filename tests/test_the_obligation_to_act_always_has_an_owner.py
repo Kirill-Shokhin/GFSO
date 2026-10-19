@@ -14,6 +14,7 @@ leaves open is either a stall or an invention by an executor who cannot see the 
 """
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime
 
@@ -26,7 +27,24 @@ from gfso.core.types import (
     DoneReason, GuardContext, Signal, SignalData, State, TaskId,
     TERMINAL_STATES, NON_TERMINAL_STATES,
 )
-from tests.support import make_engine
+from tests.support import criterion, make_engine
+
+
+def _shorten_the_bounds(seconds: float) -> dict:
+    """The per-state bounds are protocol PARAMETERS (§12.2), set by environment; a test that waits
+    for one shortens it rather than waiting a day."""
+    was = {k: os.environ.get(f"GFSO_BOUND_{k}") for k in ("ESCALATED", "CANCELLING")}
+    for k in was:
+        os.environ[f"GFSO_BOUND_{k}"] = str(seconds)
+    return was
+
+
+def _restore_the_bounds(was: dict) -> None:
+    for k, v in was.items():
+        if v is None:
+            os.environ.pop(f"GFSO_BOUND_{k}", None)
+        else:
+            os.environ[f"GFSO_BOUND_{k}"] = v
 
 
 SETTLEMENTS = {State.DONE, State.ABANDONED}
@@ -88,7 +106,7 @@ def test_the_frontier_names_the_owner_and_the_acts_of_an_escalated_node():
     e.start()
     try:
         T.create_task(e, "root", {"description": "the goal",
-                                  "criteria": [{"name": "c", "description": "d"}]})
+                                  "criteria": [criterion("c", "d")]})
         t = e._graph.get_task(TaskId("root"))
         t.state, t.done_reason = State.ESCALATED, DoneReason.FAIL
         e._graph.save_task(t)
@@ -117,15 +135,15 @@ def test_the_first_move_the_product_names_actually_exists():
     e.start()
     try:
         T.create_task(e, "root", {"description": "g",
-                                  "criteria": [{"name": "c", "description": "d"}]})
+                                  "criteria": [criterion("c", "d")]})
         t = e._graph.get_task(TaskId("root"))
         t.state, t.done_reason = State.ESCALATED, DoneReason.FAIL
         e._graph.save_task(t)
         e.wait_idle()
         out = T.revise(e, "root", agent="agent", max_iterations=20, reason="other")
         assert not out.get("refused"), out
-        assert e.get_task(TaskId("root")).max_iterations == 20
-        assert e.get_state(TaskId("root")) == State.OFFERED   # re-consent, Inv-1
+        assert e.graph.get_task(TaskId("root")).max_iterations == 20
+        assert e.graph.get_state(TaskId("root")) == State.OFFERED   # re-consent, Inv-1
     finally:
         e.stop()
 
@@ -141,9 +159,9 @@ def test_an_escalated_parent_is_asked_for_a_decision_not_a_plan_review():
     e.start()
     try:
         T.create_task(e, "root", {"description": "g",
-                                  "criteria": [{"name": "c", "description": "d"}]})
+                                  "criteria": [criterion("c", "d")]})
         T.create_task(e, "kid", {"description": "k",
-                                 "criteria": [{"name": "k1", "description": "d"}]},
+                                 "criteria": [criterion("k1", "d")]},
                       parent_id="root")
         T.map_criterion(e, "root", "kid", "c")
         t = e._graph.get_task(TaskId("root"))
@@ -168,7 +186,7 @@ def test_a_settled_goal_is_not_reported_as_a_structural_block():
     e.start()
     try:
         T.create_task(e, "root", {"description": "g",
-                                  "criteria": [{"name": "c", "description": "d"}]})
+                                  "criteria": [criterion("c", "d")]})
         t = e._graph.get_task(TaskId("root"))
         t.state, t.done_reason = State.ABANDONED, DoneReason.FAIL
         e._graph.save_task(t)
@@ -188,25 +206,24 @@ def test_the_issuers_silence_has_a_bottom_on_a_default_install():
     demands finiteness of a live state, and a bound that can be switched off is not a bound — the
     same reasoning that gave CANCELLING its own grace, and for the same reason: the only other exits
     belong to a party that may never answer."""
-    was = engine_loop._ESCALATED_GRACE_S, engine_loop._CANCELLING_GRACE_S
-    engine_loop._ESCALATED_GRACE_S = engine_loop._CANCELLING_GRACE_S = 0.05          # the same bound, shortened so the test is finite
+    was = _shorten_the_bounds(0.05)          # the same bounds, shortened so the test is finite
     e = make_engine(None, llm=None, validate_signals=False, check_interval=0.05, state_timeout=0)
     e.start()
     try:
         T.create_task(e, "root", {"description": "g",
-                                  "criteria": [{"name": "c", "description": "d"}]})
+                                  "criteria": [criterion("c", "d")]})
         t = e._graph.get_task(TaskId("root"))
         t.state, t.done_reason = State.ESCALATED, DoneReason.FAIL
         t.state_entered_at = datetime.now()
         e._graph.save_task(t)
         e.wait_idle()
         for _ in range(400):
-            if e.get_state(TaskId("root")) == State.ABANDONED:
+            if e.graph.get_state(TaskId("root")) == State.ABANDONED:
                 break
             time.sleep(0.05)
-        assert e.get_state(TaskId("root")) == State.ABANDONED, "the issuer's silence must CLOSE it"
+        assert e.graph.get_state(TaskId("root")) == State.ABANDONED, "the issuer's silence must CLOSE it"
     finally:
-        engine_loop._ESCALATED_GRACE_S, engine_loop._CANCELLING_GRACE_S = was
+        _restore_the_bounds(was)
         e.stop()
 
 
@@ -218,15 +235,14 @@ def test_the_silence_takes_the_subtree_with_it():
     leaves the frontier handing out work under a goal nobody owns any more, indefinitely, and the
     "the goal itself is settled" answer never fires because something IS actionable. Routing the
     silence through CANCELLING is what makes the cascade reach them."""
-    was = engine_loop._ESCALATED_GRACE_S, engine_loop._CANCELLING_GRACE_S
-    engine_loop._ESCALATED_GRACE_S = engine_loop._CANCELLING_GRACE_S = 0.05
+    was = _shorten_the_bounds(0.05)
     e = make_engine(None, llm=None, validate_signals=False, check_interval=0.05, state_timeout=0)
     e.start()
     try:
         T.create_task(e, "root", {"description": "g",
-                                  "criteria": [{"name": "c", "description": "d"}]})
+                                  "criteria": [criterion("c", "d")]})
         T.create_task(e, "kid", {"description": "k",
-                                 "criteria": [{"name": "k1", "description": "d"}]},
+                                 "criteria": [criterion("k1", "d")]},
                       parent_id="root")
         T.map_criterion(e, "root", "kid", "c")
         t = e._graph.get_task(TaskId("root"))
@@ -235,38 +251,35 @@ def test_the_silence_takes_the_subtree_with_it():
         e._graph.save_task(t)
         e.wait_idle()
         for _ in range(400):
-            if e.get_state(TaskId("kid")) == State.ABANDONED:
+            if e.graph.get_state(TaskId("kid")) == State.ABANDONED:
                 break
             time.sleep(0.05)
-        assert e.get_state(TaskId("kid")) == State.ABANDONED, (
+        assert e.graph.get_state(TaskId("kid")) == State.ABANDONED, (
             "the child is still live under a goal that has been closed")
     finally:
-        engine_loop._ESCALATED_GRACE_S, engine_loop._CANCELLING_GRACE_S = was
+        _restore_the_bounds(was)
         e.stop()
 
 
-def test_overdue_names_its_owner_too():
+def test_a_lapsed_node_names_its_owner_too():
     """The same hole, one state over — found by driving after the first one was closed.
 
-    OVERDUE answered "Stuck: no actionable node … the usual cause is a plan that does not admit its
-    own children", which is false of a childless leaf, and pointed at a `list_holes` that returns
-    nothing; `available_actions` gave a bare ["CANCEL"] with none of the prose every other state
-    gets. The state is legitimately signal-poor — it accepts no progress signal by design — and that
-    is a reason to say WHOSE move is coming, not a licence to say nothing."""
+    A missed deadline used to park the node in OVERDUE, which answered "Stuck: no actionable node …
+    the usual cause is a plan that does not admit its own children" — false of a childless leaf —
+    and gave a bare ["CANCEL"]. The transit is gone: the lapse hands the node to its issuer at once,
+    and the doors must say so, with his moves, on the first read after the clock fires."""
     e = make_engine(None, llm=None, validate_signals=False, check_interval=10_000)
     e.start()
     try:
         T.create_task(e, "root", {"description": "g",
-                                  "criteria": [{"name": "c", "description": "d"}]})
-        t = e._graph.get_task(TaskId("root"))
-        t.state = State.OVERDUE
-        e._graph.save_task(t)
-        e.wait_idle()
-        said = str(e.next_steps(TaskId("root")).get("directive", ""))
+                                  "criteria": [criterion("c", "d")]})
+        e.send_signal_sync(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("root")))
+        assert e.graph.get_state(TaskId("root")) == State.ESCALATED
+        said = str(e.next_steps(TaskId("root")))
         assert "structural" not in said, said
-        assert "OVERDUE" in said and "ISSUER" in said, said
+        assert "the ISSUER decides" in said and "revise('root'" in said, said
         av = T.available_actions(e, "root")
-        assert av.get("waiting_on") == "clock", av
-        assert "deadline" in str(av.get("recovery")), av
+        assert av.get("waiting_on") == "issuer", av
+        assert set(av.get("actions") or ()) >= {"ASSIGN", "CANCEL"}, av
     finally:
         e.stop()

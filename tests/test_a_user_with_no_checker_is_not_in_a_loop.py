@@ -9,7 +9,7 @@ the graph without a model:
     signal site.r ACCEPT        ->  "Run review_decomposition(site) first"
 
 Zero findings, execution refused, and the fix offered is the verb that just ran. Nothing anywhere
-named `GFSO_L2_GATE=0` -- the canon's own EXPLORE branch (§13.5), where the plan's verification is
+named `GFSO_L2_GATE=0` -- the canon's own EXPLORE branch (§9.9), where the plan's verification is
 bought with contact instead of with the checker. The engine's own comment beside the gate has said so
 since the gate was written; it never reached the person reading the refusal.
 
@@ -22,9 +22,9 @@ import pytest
 
 import gfso.tools as T
 import gfso.tools_llm as TL
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 @pytest.fixture(autouse=True)
@@ -42,12 +42,12 @@ def _a_plan():
     T.decompose(e, "site", [{"task_id": "site.r",
                              "spec": {"description": "renderer",
                                       "criteria": [criterion("md", "M")]},
-                             "assignee": "me", "covers": ["r"]}])
+                             "assignee": "me", "covers": ["r"]}], accepted_risks=REGISTER)
     e.wait_idle()
     return e
 
 
-def test_a_review_that_judged_nothing_does_not_report_zero_findings():
+def test_a_review_that_checked_nothing_does_not_report_zero_findings():
     e = _a_plan()
     out = TL.TOOLS["review_decomposition"](e, "site")
     assert out["execution_admitted"] is False
@@ -60,8 +60,8 @@ def test_the_refusal_names_the_way_out_once_the_advice_has_been_taken():
     e = _a_plan()
     TL.TOOLS["review_decomposition"](e, "site")
     err = str(T.signal(e, "site.r", "ACCEPT", "me").get("error") or "")
-    assert "GFSO_L2_GATE=0" in err and "§13.5" in err
-    assert "running it again changes nothing by itself" in err
+    assert "GFSO_L2_GATE=0" in err and "§9.9" in err
+    assert "run it again" in err and "If every run comes back like this" in err
     e.stop()
 
 
@@ -81,4 +81,22 @@ def test_the_explore_branch_actually_opens_the_gate(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _a_plan()
     assert T.signal(e, "site.r", "ACCEPT", "me").get("accepted") is True
+    e.stop()
+
+
+def test_the_way_out_is_named_on_every_round_not_only_the_first():
+    """The refusal knew "a review ran and said nothing" from the node being marked verified; once only a round
+    whose record stands marks it, the second review — after an edit — sent the user back into the loop."""
+    e = make_engine()
+    e.start()
+    T.create_task(e, "site", {"description": "a static site generator", "criteria": [criterion("r", "R")],
+                              "accepted_risks": _RISK}, assignee="me")
+    T.decompose(e, "site", [{"task_id": "site.r", "spec": {"description": "renderer",
+                             "criteria": [criterion("md", "M")]}, "assignee": "me", "covers": ["r"]}], accepted_risks=REGISTER)
+    e.wait_idle()
+    TL.TOOLS["review_decomposition"](e, "site")
+    T.TOOLS["edit_criteria"](e, "site.r", [criterion("md", "M"), criterion("md2", "M2")], "me")
+    e.wait_idle()
+    TL.TOOLS["review_decomposition"](e, "site")
+    assert "GFSO_L2_GATE=0" in str(T.signal(e, "site.r", "ACCEPT", "me").get("error") or "")
     e.stop()

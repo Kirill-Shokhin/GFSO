@@ -21,10 +21,10 @@ import pytest
 import gfso.tools as T
 from gfso import delegate as D
 from gfso.core.types import Verdict
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 from tests.test_delegate import _agents
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 @pytest.fixture(autouse=True)
@@ -40,10 +40,8 @@ def test_the_refusal_reaches_the_reader_with_its_reason(monkeypatch):
     T.create_task(e, "par", {"description": "parent",
                              "criteria": [criterion("g", "G")],
                              "accepted_risks": _RISK}, assignee="a-human")
-    T.create_task(e, "kid", {"description": "the work",
-                             "criteria": [criterion("k", "K")]},
-                  assignee="exec-1", parent_id="par")
-    T.map_criterion(e, "par", "kid", "g")
+    T.decompose(e, "par", [{"task_id": "kid", "spec": {"description": "the work",
+                             "criteria": [criterion("k", "K")]}, "assignee": "exec-1", "covers": ["g"]}], accepted_risks=REGISTER)
     T.signal(e, "kid", "ACCEPT", "exec-1")
     T.signal(e, "kid", "DELIVER", "exec-1", result="did it")
     # …and the PARENT is delivered too, or the refusal under test is about the STATE rather than
@@ -56,7 +54,7 @@ def test_the_refusal_reaches_the_reader_with_its_reason(monkeypatch):
     monkeypatch.setattr(e, "emit_info", lambda src, msg: said.append(msg))
     e._graph.authorized_validators = {"val-1"}
     # A verdict the FSM will refuse: PASS on the PARENT while its child is still unsettled.
-    monkeypatch.setattr(D, "_judge_with", lambda *a, **k: {"verdict": Verdict.PASS})
+    monkeypatch.setattr(D, "_validate_with", lambda *a, **k: {"verdict": Verdict.PASS})
     D._auto_validate(e, "par", agents)
 
     rejected = [m for m in said if "REJECTED by the FSM" in m]

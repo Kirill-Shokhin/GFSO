@@ -1,27 +1,22 @@
-"""A child that reached DONE on the timeout locked its whole ancestry, permanently and quietly.
+"""A child the CLOCK accepted: the edge is gone, and the rows it already wrote still have to read.
 
-The canon is not ambiguous about what auto_pass is. §12.2: "DONE is reached through acceptance
-(PASS ∨ auto_pass), never through fail". §14.3 calls the VALIDATING→DONE edge auto-ACCEPTANCE, and
-§24.7 explains whom it protects — an executor who would otherwise wait for an issuer forever. The
-conjunction at the parent asks whether a child was accepted, not whether its pass was earned.
+v4.1 removed auto_pass (§16.14): a timed-out VALIDATING now hands the decision back to its issuer in
+ESCALATED, because the clock, answering for a silent party, may not invent a verdict — and this was
+the one timeout that did. The first test below pins that.
 
-The code asked the second question. Probed 2026-09-07 end to end: the child is terminal, the
-parent's PASS is refused with "not all children have PASSed", `reopen` is refused because the parent
-already consumed the child, and `next_step` answers `stuck: false` while advising the very signal
-the engine forbids. No exit existed from anywhere. This divergence has been reported and promised
-closed across many sessions; what was missing each time was not the diagnosis but this file.
-
-Accepting it is only half. An acceptance the parent stands on unremarked is the lock's mirror image:
-a green nobody can weigh. So the closure predicate carries `auto_accepted`, and the completion says
-which parts of the result nobody checked — the making-explicit answer to a weaker conjunct.
+What does not go away is a database written by an older build. Such a row is DONE(AUTO_PASS), and
+the two facts this file was written for still hold of it: the parent's conjunction accepts it (the
+canon's reading of acceptance — probed 2026-09-07, when asking instead whether the pass was EARNED
+locked the whole ancestry with no exit from anywhere), and the closure says so out loud, because an
+acceptance a parent stands on unremarked is the lock's mirror image — a green nobody can weigh.
 """
 from __future__ import annotations
 
 import gfso.tools as T
-from gfso.core.types import Signal, SignalData, TaskId
-from tests.support import criterion, make_engine
+from gfso.core.types import DoneReason, Signal, SignalData, State, TaskId
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": "an unmodelled environment fault", "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
 def _graph():
@@ -30,22 +25,32 @@ def _graph():
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
                               "criteria": [criterion("g", "G holds")]},
                   assignee="agent")
-    T.create_task(e, "kid", {"description": "the work",
-                             "criteria": [criterion("k", "K holds")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "kid", "g")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "the work",
+                             "criteria": [criterion("k", "K holds")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
     return e
 
 
-def _timed_out_child(e):
-    """Put the child through the canon's own auto-acceptance edge — the signal the monitor sends."""
+def _child_a_clock_accepted(e):
+    """A row as an older build left it: DONE(AUTO_PASS). No edge produces it any more (§16.14), so it
+    is written the way a reader finds it — in the graph — rather than through a signal."""
+    T.signal(e, "kid", "ACCEPT", "agent")
+    T.signal(e, "kid", "DELIVER", "agent", result="did the work")
+    e.wait_idle()
+    t = e._graph.get_task(TaskId("kid"))
+    t.state, t.done_reason = State.DONE, DoneReason.AUTO_PASS
+    e._graph.save_task(t)
+
+
+def test_the_clock_no_longer_accepts_for_the_issuer():
+    """The edge itself: the timeout that used to close DONE(auto_pass) hands the node back (§16.14)."""
+    e = _graph()
     T.signal(e, "kid", "ACCEPT", "agent")
     T.signal(e, "kid", "DELIVER", "agent", result="did the work")
     e.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("kid")))
     e.wait_idle()
-    task = e.get_task("kid")
-    assert task.state.name == "DONE" and task.done_reason.name == "AUTO_PASS", \
-        f"the probe cannot see its subject: the child is {task.state.name}/{task.done_reason}"
+    t = e.graph.get_task("kid")
+    assert t.state.name == "ESCALATED" and t.done_reason is None
+    e.stop()
 
 
 def _parent_claims_the_aggregate(e):
@@ -53,23 +58,24 @@ def _parent_claims_the_aggregate(e):
     T.signal(e, "root", "DELIVER", "agent", result="the aggregate")
     T.record_verdict(e, "root", "PASS", reviewer="rev",
                      observed={"g": {"note": "read the child's artifact end to end; it holds",
-                                    "ran": ["check g"]}})
+                                    # …and the part's pinned probe over this delivery: g rests on it
+                                    "ran": ["check g", "check k"]}})
     return T.signal(e, "root", "PASS", "agent")
 
 
 def test_the_parents_conjunction_accepts_a_child_the_clock_accepted():
     e = _graph()
-    _timed_out_child(e)
+    _child_a_clock_accepted(e)
     out = _parent_claims_the_aggregate(e)
     assert out.get("accepted") is True, \
         f"the parent is locked behind a terminal child with no way back: {out.get('error')}"
-    assert e.get_task("root").state.name == "DONE"
+    assert e.graph.get_task("root").state.name == "DONE"
     e.stop()
 
 
 def test_the_completion_says_which_part_nobody_checked():
     e = _graph()
-    _timed_out_child(e)
+    _child_a_clock_accepted(e)
     _parent_claims_the_aggregate(e)
     assert e.auto_accepted_closures(TaskId("root")) == ["kid"], \
         "the scoped list must find it — a subtree is the parent edges, not a spelling of the ids"

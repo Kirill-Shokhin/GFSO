@@ -3,7 +3,7 @@ same DB hydrates the full signal history (it was in-memory only: a restarted ser
 so state=fold(log) could not be claimed across the process boundary)."""
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.types import TaskId, AgentId, Spec, Criteria, SignalData, Signal
-from tests.support import make_engine
+from tests.support import make_engine, pinned
 
 
 def _mk(db):
@@ -16,7 +16,7 @@ def _mk(db):
 def test_audit_log_survives_restart(tmp_path):
     db = tmp_path / "t.db"
     e = _mk(db)
-    e.assign_task(TaskId("n"), Spec("work", (Criteria("c", "C"),)), AgentId("human"))
+    e.assign_task(TaskId("n"), Spec("work", (Criteria("c", "C", check=pinned("c")),)), AgentId("human"))
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("n"), source=AgentId("human")))
     # a REJECTED signal is history too (the refusal is provenance)
     e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("n"), source=AgentId("human")))
@@ -44,6 +44,6 @@ def test_audit_log_survives_restart(tmp_path):
 def test_memory_storage_keeps_inmemory_audit(tmp_path):
     e = make_engine(llm=None, validate_signals=True, state_timeout=0)
     e.start()
-    e.assign_task(TaskId("m"), Spec("work", (Criteria("c", "C"),)), AgentId("human"))
+    e.assign_task(TaskId("m"), Spec("work", (Criteria("c", "C", check=pinned("c")),)), AgentId("human"))
     assert len(e.audit_log()) == 1                           # old behavior intact (ephemeral storage)
     e.stop()

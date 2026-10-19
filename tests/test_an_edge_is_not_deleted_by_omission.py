@@ -24,9 +24,9 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISKS = REGISTER
 
 
 @pytest.fixture(autouse=True)
@@ -36,17 +36,13 @@ def _no_plan_gate(monkeypatch):
 
 def _a_producer_and_a_consumer(e):
     T.create_task(e, "root", {"description": "parent",
-                              "criteria": [{"name": "g", "description": "G"},
-                                           {"name": "p", "description": "P"}],
+                              "criteria": [criterion("g", "G"),
+                                           criterion("p", "P")],
                               "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, "root.prod", {"description": "producer",
-                                   "criteria": [{"name": "pp", "description": "PP"}]},
-                  assignee="agent", parent_id="root")
-    T.create_task(e, "root.cons", {"description": "consumer",
-                                   "criteria": [{"name": "c", "description": "C"}]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "root.prod", "p")
-    T.map_criterion(e, "root", "root.cons", "g")
+    T.decompose(e, "root", [{"task_id": "root.prod", "spec": {"description": "producer",
+                                   "criteria": [criterion("pp", "PP")]}, "assignee": "agent", "covers": ["p"]},
+        {"task_id": "root.cons", "spec": {"description": "consumer",
+                                   "criteria": [criterion("c", "C")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
     T.add_dependency(e, "root.prod", "root.cons", glue="cons reads prod's output")
     e.wait_idle()
     assert [(d["producer"], d["consumer"]) for d in T.get_dependencies(e)] == [("root.prod", "root.cons")]
@@ -62,12 +58,12 @@ def test_revise_does_not_sever_what_the_node_waits_for():
     _a_producer_and_a_consumer(e)
 
     T.revise(e, "root.cons", {"description": "consumer, revised",
-                              "criteria": [{"name": "c", "description": "C, tightened"}],
+                              "criteria": [criterion("c", "C, tightened")],
                               "accepted_risks": _RISKS}, "agent")
     e.wait_idle()
 
     assert _edges(e) == [("root.prod", "root.cons")], "the edge was deleted by omission"
-    assert "dep__root.prod" in [c.name for c in e.get_task(TaskId("root.cons")).spec.criteria]
+    assert "dep__root.prod" in [c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria]
     e.stop()
 
 
@@ -77,7 +73,7 @@ def test_edit_criteria_still_carries_it_too():
     e.start()
     _a_producer_and_a_consumer(e)
 
-    T.edit_criteria(e, "root.cons", [{"name": "c", "description": "C, tightened"}], "agent")
+    T.edit_criteria(e, "root.cons", [criterion("c", "C, tightened")], "agent")
     e.wait_idle()
 
     assert _edges(e) == [("root.prod", "root.cons")]

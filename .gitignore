@@ -67,3 +67,6 @@ docs/notes/
 # so it lands in the user's repository as well as in this one. The engine prunes all but the most
 # recent; this keeps them out of the working tree in the meantime.
 .gfso-scratch/
+
+# agents' scratch work: never part of the repository
+/scratchpad/

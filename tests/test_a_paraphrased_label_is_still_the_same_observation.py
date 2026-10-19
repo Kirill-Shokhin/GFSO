@@ -9,7 +9,7 @@ shared words against the BEHAVIOUR's own word set — inflated by the absolute p
 threw away a fully evidenced PASS. Cost: one wasted run at $0.24 and a retry on a model three times
 dearer, which the product's own advice recommended.
 
-The rule stays: an unobserved conjunct cannot carry a pass (§11.2), and that is what the demotion is
+The rule stays: an unobserved conjunct cannot carry a pass (§2.3), and that is what the demotion is
 for. What changes is that the overlap is measured against the SHORTER side, with a floor so a
 two-word label cannot match everything — and the demotion now says which labels the link was sought
 in, so a wording gap is legible as one instead of reading as missing evidence.

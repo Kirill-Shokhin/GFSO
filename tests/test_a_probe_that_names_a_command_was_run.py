@@ -3,7 +3,7 @@
 `tools_used` is written beside every verdict, straight from the transport's own event stream, and the
 comment next to it says a claim of execution "is refuted structurally, without parsing a word of its
 prose". Grep the tree: the field had one reader -- a test asserting the contradiction is STORED. So a
-judge could pass a criterion on a probe it never ran, the engine would keep the evidence that this had
+validator could pass a criterion on a probe it never ran, the engine would keep the evidence that this had
 happened, and no rule anywhere would read it. A promise with no mechanism, and a test pinning the
 false belief rather than checking it.
 
@@ -58,7 +58,7 @@ def test_the_same_report_stands_when_the_shell_is_in_the_ledger():
 
 def test_no_ledger_refutes_nothing():
     """An EMPTY ledger is bottom ABOUT THE LEDGER, not evidence that nothing ran (bottom is not zero,
-    §11.2). A transport that reports no tool events would otherwise refute every verdict it carries."""
+    §2.3). A transport that reports no tool events would otherwise refute every verdict it carries."""
     assert _recorded(None)["holds"] == "pass"
     assert _recorded({})["holds"] == "pass"
 

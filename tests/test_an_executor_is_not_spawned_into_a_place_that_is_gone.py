@@ -17,8 +17,10 @@ from pathlib import Path
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from gfso.delegate import AgentRegistry, Dispatcher, run_executor
-from tests.support import make_engine, criterion
+from gfso.delegate import Dispatcher
+from gfso.sessions import run_executor
+from gfso.roster import AgentRegistry
+from tests.support import make_engine, criterion, round_over
 
 
 class _LoudLLM:
@@ -66,9 +68,9 @@ def test_the_node_is_left_where_it_was(tmp_path, engine):
     roster = tmp_path / "agents.json"
     roster.write_text(json.dumps({
         "exec-1": {"kind": "llm-executor", "workdir": str(tmp_path / "gone")}}), encoding="utf-8")
-    before = engine.get_task("n1").state
+    before = engine.graph.get_task("n1").state
     run_executor(engine, TaskId("n1"), "exec-1", AgentRegistry(str(roster)), _llm=_LoudLLM())
-    assert engine.get_task("n1").state == before
+    assert engine.graph.get_task("n1").state == before
 
 
 def test_a_directory_deleted_after_registration_is_caught(tmp_path, engine):
@@ -147,7 +149,7 @@ def test_the_dispatcher_does_not_start_a_node_whose_place_is_gone(tmp_path, engi
     # EXECUTING 1.5 s later).
     for _ in range(60):
         time.sleep(0.01)
-        assert engine.get_task("n1").state.name == "OFFERED", "the node was started with nowhere to work"
+        assert engine.graph.get_task("n1").state.name == "OFFERED", "the node was started with nowhere to work"
     engine.wait_idle()
 
 
@@ -250,7 +252,8 @@ def test_the_same_fact_is_said_again_when_it_recurs(tmp_path, engine):
 
     said = []
     d = _dispatcher(engine, agents)
-    d._runner = lambda en, tid, ex, ag: None
+    ran = []
+    d._runner = lambda en, tid, ex, ag: ran.append(str(tid))
     _real = d._say_once
     def _spy(key, msg, _r=_real, _s=said):
         out = _r(key, msg)               # only what it ACTUALLY said, not every call
@@ -261,17 +264,13 @@ def test_the_same_fact_is_said_again_when_it_recurs(tmp_path, engine):
 
     place.rmdir()
     d.dispatch_once()
-    for _ in range(200):
-        if said:
-            break
-        time.sleep(0.01)
+    round_over(d, "n1", lambda: said)  # the place is read inside the round, and a round still running skips the next pass
     assert len(said) == 1
 
     place.mkdir()                      # the place is back: the round runs and the notice is released
     d.dispatch_once()
+    round_over(d, "n1", lambda: ran)
     engine.wait_idle()
-    for _ in range(50):
-        time.sleep(0.01)
 
     # A NEW ROUND. The dedup key is per node x iteration and round 2 has now spent it; in life a
     # rework or a re-ASSIGN produces the next one. Building a whole rework cycle here would test the

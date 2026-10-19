@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -48,6 +49,15 @@ def _address() -> tuple[str, int]:
 
 
 BASE, PORT = _address()
+
+#: the verbs whose answer carries the page's address — the doors' one list (MCP and the CLI driver)
+UI_LINK_VERBS = frozenset({"use_project", "create_task", "project", "auto_decompose"})
+
+
+def ui_link(project: Optional[str] = None) -> str:
+    """The local address of the page that shows this graph (tab-per-project) — the server's address, so the server's
+    module says it; the verb surface reached up into the transport for it (sync audit, D-F17)."""
+    return f"{BASE}/" + (f"?project={urllib.parse.quote(str(project))}" if project else "")
 ROOT = Path(__file__).resolve().parent.parent          # the tree whose gfso/*.py the fingerprint covers
 
 
@@ -85,7 +95,7 @@ def open_server_log(data: Path, max_bytes: int = LOG_MAX_BYTES):
     installed `gfso` from PyPI it is the one file the product writes to their disk forever.
 
     Rotation at START, not per write: the server holds this handle open for its whole life, so the
-    size can only be judged between runs — and that is also the only moment nothing is writing.
+    size can only be validated between runs — and that is also the only moment nothing is writing.
     """
     data.mkdir(parents=True, exist_ok=True)
     path = data / "server.log"
@@ -108,11 +118,9 @@ def declared_path() -> Path:
 # configuration is a fact of the installation rather than of whoever last typed a command — and
 # anything experiment-specific (a named agent registry, a different validator) belongs in that file,
 # not in the defaults a stranger's first install inherits.
-# GFSO_VALIDATE_INTERNAL is a MEASUREMENT dial and ships OFF. With it on, every node inside one
-# Del scope gets its own minutes-long validator agent — while ORCHESTRATOR.md tells the agent not to
-# spend a validation on an internal node, and the canon puts the guarantee at the SEAMS (§14.5 D6).
-# A run that wants every node validated says so in `data/serve.json`, which is where anything
-# experiment-specific belongs.
+# GFSO_VALIDATE_INTERNAL is not declared here: its default is ON (`config.validate_internal` —
+# every delivery observed, whoever holds the node), and an installation that narrows observation to
+# the seams says so in `data/serve.json`, which is where anything experiment-specific belongs.
 DEFAULTS = {"GFSO_L2_GATE": "1"}
 
 
@@ -126,10 +134,12 @@ def source_fingerprint() -> str:
     # produced no drift, and never reached the running server.
     watched = [p for pat in ("*.py", "*.md", "*.html", "*.css", "*.svg")
                for p in (ROOT / "gfso").rglob(pat)]
-    for p in sorted(set(watched)):
+    # Ordered by the name it is hashed under: `Path` orders caselessly on Windows and bytewise on POSIX,
+    # so one tree read from both fingerprinted as two builds.
+    for rel, p in sorted({(p.relative_to(ROOT).as_posix(), p) for p in watched}):
         if "__pycache__" in p.parts:
             continue
-        h.update(p.relative_to(ROOT).as_posix().encode())
+        h.update(rel.encode())
         h.update(p.read_bytes())
     return h.hexdigest()[:12]
 
@@ -258,3 +268,54 @@ def agents_fingerprint(path: str) -> str:
         return hashlib.sha256(open(path, "rb").read()).hexdigest()[:12]
     except OSError:
         return "missing"
+
+
+# A port's state is a fact about the server, owned here beside `port_open` and `runtime`; `doctor` and
+# `mcp.connect` both read it, and with it in `doctor` the two imported each other (ortho audit, D-F14).
+def port_state() -> tuple[str, str]:
+    """(state, detail) — `free`, `gfso`, or `foreign`.
+
+    The distinction the launcher does not make: an OPEN port is not a running gfso. When something
+    else holds it, `ensure_server` sees a live socket, spawns nothing, and reports the server
+    started — measured: 114 seconds of silence and then a success line quoting a code fingerprint
+    for a process that does not exist.
+    """
+    base, port = BASE, PORT
+    if not port_open(LOOPBACK, port, timeout=1.0):
+        return "free", f"nothing is listening on :{port}"
+    if runtime() is not None:
+        return "gfso", f"a gfso server answers at {base}"
+    return "foreign", (f":{port} is held by another process ({_port_holder(port)}) that is not a "
+                       f"gfso server — stop it, or point GFSO_SHARED_URL elsewhere")
+
+
+def _port_holder(port: int) -> str:
+    """Best effort, and honest when it fails: naming the process is a convenience, not a contract.
+
+    Every child read here names its encoding. `text=True` alone decodes with the console code page,
+    and a single byte outside it raised UnicodeDecodeError *inside the diagnostic* — the one command
+    whose whole job is to still work when everything else does not.
+    """
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=10).stdout
+            pids = {line.split()[-1] for line in out.splitlines()
+                    if f":{port} " in line and "LISTENING" in line}
+            if pids:
+                pid = pids.pop()
+                name = subprocess.run(["tasklist", "/fi", f"pid eq {pid}", "/nh"],
+                                      capture_output=True, text=True, encoding="utf-8",
+                                      errors="replace", timeout=10).stdout.split()
+                return f"pid {pid}" + (f", {name[0]}" if name else "")
+        else:
+            pid = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=10).stdout.split()
+            if pid:
+                return f"pid {pid[0]}"
+    # who holds the port is a DIAGNOSTIC FIELD — no tasklist/lsof, or one that refuses, gives "pid
+    # unknown" below; it must not stop the report the user ran this for
+    except Exception:
+        pass
+    return "pid unknown"

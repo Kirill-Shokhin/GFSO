@@ -5,10 +5,10 @@ Child ids are NAMESPACED under the root (`{root_id}.{spec_id}`): spec ids are LL
 flat global TaskId namespace, so two decompositions of similar domains WOULD collide — and a colliding
 ASSIGN is a same-id REVISION of the other tree's node (observed live as cross-tree corruption)."""
 from gfso.adapters.llm.stub import StubLLM
-from gfso.core.types import TaskId, Signal, State, Spec, Criteria, AgentId
+from gfso.core.types import register_of, TaskId, Signal, State, Spec, Criteria, AgentId
 from gfso.decompose.build import build_graph_live
 from gfso import tools as T
-from tests.support import criterion, make_engine, pinned
+from tests.support import REGISTER, criterion, make_engine, pinned, DENIAL_ENTRY
 from gfso.decompose.loop import AUDIT_SCHEMA
 
 SPEC = {
@@ -20,8 +20,7 @@ SPEC = {
     ],
     "mappings": [{"criterion": "rc1", "child_id": "a"}, {"criterion": "rc2", "child_id": "b"}],
     "deps": [{"from": "a", "to": "b", "glue": "B consumes A's output"}],
-    "accepted_risks": [{"item": "edge case X", "predictability": "ORDINARY",
-                   "justification": "rare", "invalidation": "if X observed"}],
+    "accepted_risks": [{"item": "edge case X", "predictability": "STATISTICAL", "justification": "rare", "invalidation": "if X observed", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY],
 }
 
 
@@ -41,21 +40,22 @@ def test_build_graph_live_is_signal_routed():
     assigned = {a.task_id for a in e.audit_log() if a.signal == Signal.ASSIGN and not a.rejected}
     assert {TaskId("root"), TaskId("root.a"), TaskId("root.b")} <= assigned
 
-    root = e.get_task(rid)
+    root = e.graph.get_task(rid)
     assert root.state == State.EXECUTING                             # a decomposed root is accepted (working)
     assert root.spec.name == "Build the thing"                       # short label, separate from description
     assert {c.name for c in root.spec.criteria} == {"rc1", "rc2"}
-    assert [n.item for n in root.spec.accepted_risks] == ["edge case X"]
-    assert e.get_task(TaskId("root.a")).spec.name == "Do A"          # children carry their short name too
+    assert [n.item for n in register_of(root).items if not n.denial] == ["edge case X"]
+    assert [n.p for n in register_of(root).items if n.denial] == [DENIAL_ENTRY["p"]], "the plan's denial lands as its entry"
+    assert e.graph.get_task(TaskId("root.a")).spec.name == "Do A"          # children carry their short name too
 
     # children are active (no cascade), parented, mapped — under NAMESPACED ids
-    kids = {c.id for c in e.get_active_children(rid)}
+    kids = {c.id for c in e.graph.get_active_children(rid)}
     assert kids == {TaskId("root.a"), TaskId("root.b")}
     assert {(m.criterion_name, m.child_id) for m in root.criterion_mappings} == \
         {("rc1", TaskId("root.a")), ("rc2", TaskId("root.b"))}
 
-    # Dep = criteria-content: consumer b carries depends_on=a; the edge is DERIVED a→b (§10 direction)
-    b = e.get_task(TaskId("root.b"))
+    # Dep = criteria-content: consumer b carries depends_on=a; the edge is DERIVED a→b (§2 direction)
+    b = e.graph.get_task(TaskId("root.b"))
     assert any(c.depends_on == TaskId("root.a") for c in b.spec.criteria)
     edges = {(ed.from_id, ed.to_id) for ed in e.graph.dep_edges()}
     assert (TaskId("root.a"), TaskId("root.b")) in edges
@@ -77,9 +77,9 @@ def test_build_graph_live_into_existing_root_reauthors_it():
     e.wait_idle()
     build_graph_live(SPEC, "build the thing", e, root_id="root", assignee="human")
     e.wait_idle()
-    root = e.get_task(TaskId("root"))
+    root = e.graph.get_task(TaskId("root"))
     assert {c.name for c in root.spec.criteria} == {"rc1", "rc2"}            # re-authored to the derived V-set
-    assert {c.id for c in e.get_active_children(TaskId("root"))} == {TaskId("root.a"), TaskId("root.b")}
+    assert {c.id for c in e.graph.get_active_children(TaskId("root"))} == {TaskId("root.a"), TaskId("root.b")}
     # reconciled: the mappings resolve against the real criteria → coverage passes
     assert {c.check_name: c for c in e.get_checks(TaskId("root"))}["CHECK-1:coverage"].passed
 
@@ -95,11 +95,11 @@ def test_build_graph_live_reauthors_a_root_owned_by_another_agent():
     e.wait_idle()
     build_graph_live(SPEC, "build the thing", e, root_id="root", assignee="worker")   # children ≠ root owner
     e.wait_idle()
-    root = e.get_task(TaskId("root"))
+    root = e.graph.get_task(TaskId("root"))
     assert {c.name for c in root.spec.criteria} == {"rc1", "rc2"}          # re-authored despite a distinct owner
     assert root.assignee == AgentId("owner")                              # root ownership unchanged
-    assert e.get_state(TaskId("root")).name == "EXECUTING"               # ACCEPTed by its owner, not "worker"
-    assert {c.assignee for c in e.get_active_children(TaskId("root"))} == {AgentId("worker")}  # children → assignee
+    assert e.graph.get_state(TaskId("root")).name == "EXECUTING"               # ACCEPTed by its owner, not "worker"
+    assert {c.assignee for c in e.graph.get_active_children(TaskId("root"))} == {AgentId("worker")}  # children → assignee
 
 
 def test_build_graph_live_surfaces_dropped_items():
@@ -118,7 +118,7 @@ def test_build_graph_live_surfaces_dropped_items():
     assert any("ghost" in d for d in dropped)
     assert any("no_such_criterion" in d for d in dropped)
     # the valid parts still landed
-    assert {c.id for c in e.get_active_children(rid)} == {TaskId("root.a"), TaskId("root.b")}
+    assert {c.id for c in e.graph.get_active_children(rid)} == {TaskId("root.a"), TaskId("root.b")}
 
 
 def test_build_graph_live_no_cross_tree_collision():
@@ -132,19 +132,19 @@ def test_build_graph_live_no_cross_tree_collision():
     e = _eng()
     T.create_task(e, "top", {"description": "both things", "criteria": [criterion("t", "both done")]},
                   "human")
-    for sub in ("r1", "r2"):
-        T.create_task(e, sub, {"description": sub, "criteria": [criterion("s", "sub done")]},
-                      "human", parent_id="top")
+    T.decompose(e, "top", [{"task_id": sub, "spec": {"description": sub, "criteria": [criterion("s", "sub done")]},
+                            "assignee": "human"} for sub in ("r1", "r2")],
+                [{"criterion_name": "t", "child_id": sub} for sub in ("r1", "r2")], accepted_risks=REGISTER)
     e.wait_idle()
     build_graph_live(SPEC, "thing one", e, root_id="r1", assignee="human"); e.wait_idle()
     build_graph_live(SPEC, "thing two", e, root_id="r2", assignee="human"); e.wait_idle()
-    assert {c.id for c in e.get_active_children(TaskId("r1"))} == {TaskId("r1.a"), TaskId("r1.b")}
-    assert {c.id for c in e.get_active_children(TaskId("r2"))} == {TaskId("r2.a"), TaskId("r2.b")}
+    assert {c.id for c in e.graph.get_active_children(TaskId("r1"))} == {TaskId("r1.a"), TaskId("r1.b")}
+    assert {c.id for c in e.graph.get_active_children(TaskId("r2"))} == {TaskId("r2.a"), TaskId("r2.b")}
     # r1's tree is untouched by the r2 build
-    assert e.get_task(TaskId("r1.a")).spec.description == "do A"
+    assert e.graph.get_task(TaskId("r1.a")).spec.description == "do A"
     # a repair-style REBUILD of the SAME root is still the intended wholesale revision (same ids, no dupes)
     build_graph_live(SPEC, "thing one", e, root_id="r1", assignee="human"); e.wait_idle()
-    assert {c.id for c in e.get_active_children(TaskId("r1"))} == {TaskId("r1.a"), TaskId("r1.b")}
+    assert {c.id for c in e.graph.get_active_children(TaskId("r1"))} == {TaskId("r1.a"), TaskId("r1.b")}
 
 
 def test_rebuild_reuses_hand_built_bare_ids_no_duplicates():
@@ -152,23 +152,25 @@ def test_rebuild_reuses_hand_built_bare_ids_no_duplicates():
     those nodes in place, never create namespaced duplicates (observed live in the L2 gate
     experiment: C1..C9 + root.C1..C9 doubled the subtree and orphaned every mapping)."""
     e = _eng()
-    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("rc1", "A")]}, "human")
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("rc1", "A"), criterion("rc2", "B")]},
+                  "human")
     T.decompose(e, "root", [
         {"task_id": "C1", "spec": {"description": "do A", "criteria": [criterion("a1", "old")]}, "assignee": "human"},
         {"task_id": "C2", "spec": {"description": "do B", "criteria": [criterion("b1", "B")]}, "assignee": "human"},
-    ], [{"criterion_name": "rc1", "child_id": "C1"}])
+    ], [{"criterion_name": "rc1", "child_id": "C1"}, {"criterion_name": "rc2", "child_id": "C2"}],
+        accepted_risks=REGISTER)
     e.wait_idle()
-    spec = {"name": "goal", "root_criteria": [criterion("rc1", "A")],
+    spec = {"name": "goal", "root_criteria": [criterion("rc1", "A"), criterion("rc2", "B")],
             "subtasks": [
                 {"id": "C1", "name": "Do A", "description": "do A", "criteria": [criterion("a1", "NEW tighter")]},
                 {"id": "C2", "name": "Do B", "description": "do B", "criteria": [criterion("b1", "B")]}],
-            "mappings": [{"criterion": "rc1", "child_id": "C1"}],
-            "deps": [], "accepted_risks": [{"item": "x", "predictability": "STATISTICAL", "justification": "j", "invalidation": "i"}]}
+            "mappings": [{"criterion": "rc1", "child_id": "C1"}, {"criterion": "rc2", "child_id": "C2"}],
+            "deps": [], "accepted_risks": [{"item": "x", "predictability": "STATISTICAL", "justification": "j", "invalidation": "i", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]}
     build_graph_live(spec, "goal", e, root_id="root", assignee="human")
     e.wait_idle()
-    kids = {str(c.id) for c in e.get_active_children(TaskId("root"))}
+    kids = {str(c.id) for c in e.graph.get_active_children(TaskId("root"))}
     assert kids == {"C1", "C2"}          # revised in place - no root.C1/root.C2 duplicates
-    assert e.get_task(TaskId("C1")).spec.criteria[0].description == "NEW tighter"
+    assert e.graph.get_task(TaskId("C1")).spec.criteria[0].description == "NEW tighter"
     e.stop()
 
 
@@ -183,8 +185,8 @@ def test_the_register_key_the_schema_asks_for_is_the_key_the_parser_reads():
 
     e = _eng()
     _, rid, _ = build_graph_live(SPEC, "build the thing", e, root_id="root", assignee="human")
-    root = e.get_task(TaskId(rid))
-    assert [(n.item, n.justification) for n in root.spec.accepted_risks] == [("edge case X", "rare")]
+    root = e.graph.get_task(TaskId(rid))
+    assert [(n.item, n.justification) for n in register_of(root).items if not n.denial] == [("edge case X", "rare")]
 
 
 def test_a_child_may_declare_the_parent_criteria_it_covers():
@@ -205,8 +207,8 @@ def test_a_child_may_declare_the_parent_criteria_it_covers():
         {"task_id": "write", "spec": {"description": "document it",
                                       "criteria": [criterion("d", "D")]},
          "covers": ["docs"]},
-    ])
-    covered = {m.criterion_name for m in e.get_task(TaskId("app")).criterion_mappings}
+    ], accepted_risks=REGISTER)
+    covered = {m.criterion_name for m in e.graph.get_task(TaskId("app")).criterion_mappings}
     assert covered == {"cli", "docs"}, f"`covers` was dropped: {covered}"
     failed = [c for c in T.get_checks(e, "app")
               if not c["passed"] and "coverage" in c["check"]]

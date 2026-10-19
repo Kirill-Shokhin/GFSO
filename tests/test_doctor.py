@@ -71,6 +71,7 @@ def test_assets_the_doctor_checks_are_the_assets_the_packaging_test_checks():
         f"them — an installation missing one would be reported healthy")
 
 
+@pytest.mark.no_model_path          # it probes the CLI; in the suite the probe fails as a missing CLI does
 def test_doctor_runs_and_reports_this_installation(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
     code = D.doctor()
@@ -81,6 +82,7 @@ def test_doctor_runs_and_reports_this_installation(tmp_path, monkeypatch, capsys
     assert code in (0, 1)
 
 
+@pytest.mark.no_model_path          # it probes the CLI; in the suite the probe fails as a missing CLI does
 def test_doctor_refuses_to_call_a_foreign_holder_a_server(monkeypatch, capsys):
     monkeypatch.setattr(D, "port_state", lambda: ("foreign", ":8000 is held by another process"))
     assert D.doctor() == 1                            # a blocked installation exits non-zero

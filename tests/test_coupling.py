@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import imports_of
+
 import os
 PKG = Path(os.environ.get("GFSO_REPO", Path(__file__).resolve().parents[1])) / "gfso"
 
@@ -35,32 +37,29 @@ ALLOWED_PRIVATE: set[tuple[str, str]] = {
     # block 1 removes all of these: Graph becomes a complete facade
     ("gfso.core.graph.metrics", "_storage"), ("gfso.core.graph.mutations", "_storage"),
     ("gfso.engine.loop", "_storage"), ("gfso.engine.validation", "_storage"),
-    ("gfso.engine", "_storage"), ("gfso.critic.runner", "_storage"),
+    ("gfso.critic.runner", "_storage"),
     ("gfso.runtime", "_storage"), ("gfso.api.server", "_storage"),
     ("gfso.critic.runner", "_graph"), ("gfso.delegate", "_graph"),
-    ("gfso.runtime", "_graph"), ("gfso.tools_llm", "_graph"), ("gfso.api.server", "_graph"),
+    ("gfso.runtime", "_graph"), ("gfso.tools_llm", "_graph"),
     # block 1: EventBus gains an unsubscribe
     ("gfso.api.server", "_events"), ("gfso.api.server", "_on_transition"),
     ("gfso.api.server", "_on_reject"), ("gfso.api.server", "_on_info"),
     ("gfso.engine", "_on_transition"), ("gfso.engine", "_on_reject"),
     # block 1: Engine gains quiesce()
     ("gfso.decompose", "_dispatch_quiesce"), ("gfso.decompose.build", "_dispatch_quiesce"),
-    ("gfso.decompose.build", "_recompute_checks"),
     # block 1: the gate publishes a query surface
     ("gfso.critic.runner", "_llm"), ("gfso.api.server", "_llm"),
     # block 6: sqlite's own codecs, inside its own module (benign; kept visible on purpose)
     ("gfso.adapters.storage.sqlite", "_accepted_risks_to_json"),
     ("gfso.adapters.storage.sqlite", "_accepted_risks_from_json"),
     # binding wiring that has no better home yet
-    ("gfso.api.server", "_on_create"), ("gfso.api.server", "_exit"),
+    ("gfso.api.server", "_on_create"), ("gfso.adapters.children", "_exit"),
     ("gfso.runtime", "_NAME_RE"),
     # Added by the door-fixing stream on 2026-08-20/21 and recorded here rather than quietly
     # tolerated: each is a channel the dispatcher opened into the engine because the engine has no
     # public surface for it. S8 removes them by publishing that surface; until then the ratchet
     # holds the count so a ninth cannot arrive unnoticed.
-    ("gfso.delegate", "_roster"),                  # S8: who is registered, published downward
     ("gfso.delegate", "_dispatch_wake"),           # S8: the quiesce-end poke
-    ("gfso.delegate", "_validation_parked"),       # S8: nodes automatic validation gave up on
 }
 
 # Duck-typed PRIVATE names — `getattr(obj, "_x", …)`. Same edge, different syntax, so it needs its
@@ -69,12 +68,10 @@ ALLOWED_DUCK_PRIVATE: set[tuple[str, str]] = {
     ("gfso.decompose", "_dispatch_quiesce"), ("gfso.decompose", "_dispatch_wake"),
     ("gfso.decompose.build", "_dispatch_quiesce"), ("gfso.decompose.build", "_dispatch_wake"),
     ("gfso.delegate", "_dispatch_quiesce"), ("gfso.delegate", "_project_name"),
-    ("gfso.delegate", "_owner_live"), ("gfso.runtime", "_on_create"),
+    ("gfso.roster", "_owner_live"), ("gfso.runtime", "_on_create"),
     ("gfso.critic.runner", "_model"), ("gfso.critic.runner", "_critique_log_path"),
     ("gfso.tools_llm", "_model"),
     ("gfso.adapters.llm.headless", "_est_chars"),
-    # …and the duck-typed spelling of the same three channels (see the note above; S8 owns them).
-    ("gfso.engine", "_validation_parked"), ("gfso.examples.autonomous_org", "_validation_parked"),
 }
 
 # ── Kind IV bis: a private attribute WRITTEN onto a foreign object ──────────────────────────────
@@ -90,7 +87,7 @@ DECLARED_TASK_FIELDS = {"iteration", "reopens", "revisions", "state_entered_at",
 
 # ── Kind II: a module may only build paths inside its OWN area ──────────────────────────────────
 ALLOWED_PATH: set[tuple[str, str]] = {
-    ("gfso.delegate", "mcp"), ("gfso.tools_llm", "mcp"),      # block 4 moves the prompts
+    ("gfso.sessions", "mcp"), ("gfso.tools_llm", "mcp"),      # block 4 moves the prompts
     ("gfso.api.server", "web"), # doctor is binding: allowed by design
 }
 
@@ -132,6 +129,10 @@ def _root_name(node) -> str:
 # Measured 2026-08-20 20:5x on a tree the E3 stream was editing live — these WILL differ by the
 # time the plan runs. S1 re-snaps them: run the file once, read "X -> Y" and set Y.
 BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
+              # a private NAME imported from another module (`from gfso.x import _y`): the layering gate reads it as an
+              # ordinary import, and nothing counted it (sync audit, D-F17, 2026-10-05) — measured, to fall from here;
+              # 39 read as written, 53 resolved (relative imports: a package's own re-exports, gfso.engine's siblings)
+              "private_import": 50,   # ← stats.tag_stage published (D-F18)
               "monkey_patch": 0, "foreign_path": 0,
               "duck_private": 0,
               # 2 (2026-09-03, S7): a `getattr` with a default over a DECLARED field says the
@@ -148,8 +149,8 @@ BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
               # moved with every deletion and compared a thing to itself: deleting two entries left
               # the test green (measured). That is the third time in one session the same defect —
               # a guard whose own bookkeeping makes it blind — appeared inside these instruments.
-              "allowed_private": 32,
-              "allowed_duck": 14,
+              "allowed_private": 27,
+              "allowed_duck": 12,
               "allowed_path": 3,
               "allowed_patch": 4}
 
@@ -234,6 +235,18 @@ def test_no_new_private_reach():
     if len(found) != BASE_COUNT["private_reach"]:
         pytest.fail(f"private_reach: {BASE_COUNT['private_reach']} -> {len(found)} · "
                     + ("lower BASE_COUNT in this commit" if len(found) < BASE_COUNT["private_reach"]
+                       else "new: " + " | ".join(found[:6])))
+
+
+def test_no_new_private_import():
+    """A private name another module imports is that module's internal made someone else's dependency."""
+    found = [f"{f.name}:{line} {mod} imports {m}.{name}" for mod, f in _modules()
+             for line, m, name in imports_of(f, PKG.parent)
+             if name and name.startswith("_") and not name.startswith("__") and m.startswith("gfso") and m != mod
+             and not mod.startswith(m + ".")]   # resolved: a relative import of a private name counts too
+    if len(found) != BASE_COUNT["private_import"]:
+        pytest.fail(f"private_import: {BASE_COUNT['private_import']} -> {len(found)} · "
+                    + ("lower BASE_COUNT in this commit" if len(found) < BASE_COUNT["private_import"]
                        else "new: " + " | ".join(found[:6])))
 
 

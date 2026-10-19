@@ -5,9 +5,14 @@ from gfso.adapters.llm.stub import StubLLM
 from gfso import tools as T
 from gfso import tools_llm as TL, serverctl
 from gfso.mcp.server import _bind, _with_ui_link
-from tests.support import criterion, make_engine
+from tests.support import REGISTER, criterion, make_engine
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
+
+
+class _Checker(StubLLM):
+    """A silent L2 checker: a split admitted whole reaches it, and the verb reads its run stats."""
+    calls = ()
 
 
 def _eng():
@@ -16,8 +21,9 @@ def _eng():
     return e
 
 
-def test_agent_loop_through_tools():
+def test_agent_loop_through_tools(monkeypatch):
     """The agent's authoring loop driven entirely through the MCP tool functions → JSON-able dicts."""
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Checker())
     e = _eng()
     root = T.create_task(e, "r", {"description": "root", "criteria": [criterion("a", "A")]}, "alice")
     assert root["state"] == "OFFERED" and root["id"] == "r"
@@ -31,7 +37,8 @@ def test_agent_loop_through_tools():
     kids = T.decompose(e, "r",
                        [{"task_id": "c1", "spec": {"description": "c1", "criteria": [criterion("x", "X")]}, "assignee": "alice"},
                         {"task_id": "c2", "spec": {"description": "c2", "criteria": [criterion("y", "Y")]}, "assignee": "alice"}],
-                       [{"criterion_name": "a", "child_id": "c1"}])
+                       [{"criterion_name": "a", "child_id": "c1"}, {"criterion_name": "a", "child_id": "c2"}],
+                       accepted_risks=REGISTER)
     assert {k["id"] for k in kids} == {"c1", "c2"}
 
     # declared dep (criteria-content) + read back derived
@@ -60,32 +67,43 @@ def test_get_task_exposes_name():
 
 
 def test_signal_rejection_reports_reason():
-    """A rejected signal returns WHY + the structural gate, not a silent accepted:false (BUG-3)."""
+    """A rejected signal returns WHY + the structural gate, not a silent accepted:false (BUG-3).
+    Canon v4.1: a split is admitted whole (§11.5), so the hole is one a revision opens after it — the register cleared.
+    Since §11.5 refuses that clearing ("its register — changes only by a re-admission"), the revision is the ISSUER's:
+    a criterion added to the admitted root that no child carries, a flagged CHECK-1 hole (§12.10)."""
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [criterion("a", "A")]}, "alice")
-    # decompose it (CHECK-4 gates decomposed nodes only, v3.7 §13.1) — root has no ACCEPTED_RISKS → open hole
-    T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
-                [{"criterion_name": "a", "child_id": "k"}])
+    T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k", "criteria": [criterion("x", "X")]},
+                          "assignee": "alice"}],
+                [{"criterion_name": "a", "child_id": "k"}], accepted_risks=REGISTER)
+    T.edit_criteria(e, "r", [criterion("a", "A"), criterion("b", "B")], "alice")   # its issuer (a root's: alice)
     res = T.signal(e, "r", "PASS", "alice")            # PASS is invalid in OFFERED
     assert res["accepted"] is False
     assert "error" in res and "PASS" in res["error"]   # names the offending signal / valid set
-    assert res.get("failing_checks")                   # surfaces CHECK-4 (empty ACCEPTED_RISKS on a decomposed node)
+    assert res.get("failing_checks")                   # surfaces CHECK-1 (`b`, which no child of the split carries)
     e.stop()
 
 
 def test_list_holes_surfaces_graph_gaps():
     """list_holes aggregates every unmet structural check across the graph — check the decomposer's output
-    BEFORE driving signals (a decomposed graph can come back with holes)."""
+    BEFORE driving signals (a decomposed graph can come back with holes).
+    Canon v4.1: the split is admitted whole (§11.5); the hole listed is one its revision opens after admission (§12.10).
+    The register cannot be emptied after admission (§11.5: it "changes only by a re-admission"), so the revision is
+    the issuer's — a criterion no child carries, CHECK-1, listed beside the register CHECK-4 still does not flag."""
     e = _eng()
     T.create_task(e, "r", {"description": "root", "criteria": [criterion("a", "A")]}, "alice")
     holes = T.list_holes(e)["holes"]
-    # A leaf is not gated on the register (§13.1) — and with no holes at all the verb SAYS so rather
+    # A leaf is not gated on the register (§9.2) — and with no holes at all the verb SAYS so rather
     # than returning an empty list a reader cannot tell from a broken call.
     assert not any(h.get("task_id") == "r" and h.get("check", "").startswith("CHECK-4") for h in holes)
-    T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k"}, "assignee": "alice"}],
-                [{"criterion_name": "a", "child_id": "k"}])
-    holes = T.list_holes(e)["holes"]                 # decomposed root with no ACCEPTED_RISKS → CHECK-4 is an open hole
-    assert any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)
+    T.decompose(e, "r", [{"task_id": "k", "spec": {"description": "k", "criteria": [criterion("x", "X")]},
+                          "assignee": "alice"}],
+                [{"criterion_name": "a", "child_id": "k"}], accepted_risks=REGISTER)
+    assert not any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in T.list_holes(e)["holes"])
+    T.edit_criteria(e, "r", [criterion("a", "A"), criterion("b", "B")], "alice")   # its issuer adds `b`
+    holes = T.list_holes(e)["holes"]                 # the admitted root's uncovered criterion → an open hole
+    assert any(h["task_id"] == "r" and h["check"].startswith("CHECK-1") and "b" in h["details"] for h in holes)
+    assert not any(h["task_id"] == "r" and h["check"].startswith("CHECK-4") for h in holes)
     e.stop()
 
 
@@ -153,16 +171,16 @@ def test_default_assignee_is_the_calling_agent(monkeypatch):
     monkeypatch.delenv("GFSO_AGENT_ID", raising=False)
     t = T.create_task(e, "self1", {"description": "x", "criteria": [criterion("a", "A")]})
     assert t["assignee"] == "agent"                      # works with NO env at all
-    kids = T.decompose(e, "self1", [{"task_id": "k1", "spec": {"description": "k"}}],
-                       [{"criterion_name": "a", "child_id": "k1"}])
+    kids = T.decompose(e, "self1", [{"task_id": "k1", "spec": {"description": "k", "criteria": [criterion("x", "X")]}}],
+                       [{"criterion_name": "a", "child_id": "k1"}], accepted_risks=REGISTER)
     assert kids[0]["assignee"] == "agent"
     # the delegated and the renamed node hang under `self1` — the project's one root
     t2 = T.create_task(e, "other", {"description": "y", "criteria": [criterion("b", "B")]},
-                       assignee="bob", parent_id="self1")
+                       assignee="bob", parent_id="self1", covers=["a"])
     assert t2["assignee"] == "bob"                       # explicit = real delegation, wins
     monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")   # optional RENAME, not a requirement
     t3 = T.create_task(e, "named", {"description": "z", "criteria": [criterion("c", "C")]},
-                       parent_id="self1")
+                       parent_id="self1", covers=["a"])
     assert t3["assignee"] == "claude-main"
     e.stop()
 

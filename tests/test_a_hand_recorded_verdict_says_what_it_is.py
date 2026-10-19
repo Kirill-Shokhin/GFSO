@@ -1,12 +1,12 @@
 """What a verdict recorded BY HAND is, and what it is not.
 
 `record_verdict` is the door a person uses where no instrument stands — the canon's degenerate case
-(§14.5: with no independent seam, the explicit record IS the guarantee). Two things a wave of testers
+(§10.3: with no independent seam, the explicit record IS the guarantee). Two things a wave of testers
 established about it on 2026-09-02, both about the record's honesty rather than its permission:
 
 * the seam gate compares the reviewer's NAME to the executor's, so a name invented in the same
   breath satisfies it. That is the canon's named boundary, not a bug to be patched away — FM-3's
-  false-PASS is guarded by no structural CHECK (§13.6), only by q_V at runtime. What the product
+  false-PASS is guarded by no structural CHECK (§15.7), only by q_V at runtime. What the product
   owes is to not LAUNDER it: a record asserted by an unregistered party must say so, everywhere it
   is read, so nothing downstream can present it as an instrument's verdict.
 * a verdict recorded on a node that has already settled changed nothing and said `recorded: true`,
@@ -15,7 +15,7 @@ established about it on 2026-09-02, both about the record's honesty rather than 
 import pytest
 
 from gfso import tools as T
-from tests.support import criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _delivered(assignee="worker"):
@@ -52,11 +52,11 @@ def test_a_registered_instruments_verdict_is_not_marked_as_asserted():
 
 
 def test_a_verdict_on_a_settled_node_is_refused_and_names_the_only_route_back():
-    """`recorded: true` on a DONE node, then "signal it" — which the FSM then refuses (§14.3)."""
+    """`recorded: true` on a DONE node, then "signal it" — which the FSM then refuses (§12.4)."""
     e = _delivered()
     T.record_verdict(e, "n", "PASS", reviewer="somebody", observed={"c": {"note": "I ran it", "ran": ["check c"]}})
     T.signal(e, "n", "PASS", "worker")
-    assert e.get_task("n").state.name == "DONE"
+    assert e.graph.get_task("n").state.name == "DONE"
 
     out = T.record_verdict(e, "n", "PASS", reviewer="another", observed={"c": {"note": "I ran it too", "ran": ["check c"]}})
     assert out["recorded"] is False
@@ -65,7 +65,7 @@ def test_a_verdict_on_a_settled_node_is_refused_and_names_the_only_route_back():
 
 
 def test_a_refused_report_is_not_reported_as_never_validated():
-    """A judge ran, reported, and the engine refused the report as ⊥ (§11.2) — which is not the same
+    """A validator ran, reported, and the engine refused the report as ⊥ (§2.3) — which is not the same
     situation as nobody having looked, and it is the one that needs a decision.
 
     The note said "it has not been validated" while the refused report sat further down the same
@@ -83,7 +83,7 @@ def test_a_refused_report_is_not_reported_as_never_validated():
 
 
 def test_a_report_that_only_under_observes_never_becomes_a_failure():
-    """"⊥ is not a pass" and it is not a FAIL either (§11.2) — the executor has nothing to fix.
+    """"⊥ is not a pass" and it is not a FAIL either (§2.3) — the executor has nothing to fix.
 
     A wave read a refusal that says in so many words "this is the instrument's gap, not the
     executor's: do not send the node to rework over it" and then saw the node in REWORKING with the
@@ -97,7 +97,7 @@ def test_a_report_that_only_under_observes_never_becomes_a_failure():
             {"criterion": "c", "verdict": "pass", "behaviours": ["it sorts", "it is stable"],
              "probe": [{"command": "python -c 'print(1)'", "expect": "1", "behaviour": "it sorts"}]}])
     assert "⊥" in str(bottom.value) and "do not send the node to rework" in str(bottom.value)
-    assert e.get_task("n").state.name == "VALIDATING", "nothing moved: there is no verdict to move on"
+    assert e.graph.get_task("n").state.name == "VALIDATING", "nothing moved: there is no verdict to move on"
     assert e.get_exec_verdict("n") is None, "…and no FAIL was written behind the refusal"
     e.stop()
 
@@ -113,12 +113,9 @@ def test_replacing_the_criteria_says_what_it_left_uncovered():
     e = make_engine(check_interval=10_000)
     e.start()
     T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
-                              "accepted_risks": [{"item": "an unmodelled environment fault",
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "accepted_risks": REGISTER},
                   assignee="agent")
-    T.create_task(e, "kid", {"description": "k", "criteria": [criterion("k1", "K")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "kid", "c")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]}, "assignee": "agent", "covers": ["c"]}], accepted_risks=REGISTER)
 
     out = T.edit_criteria(e, "root", [criterion("c", "C"),
                                       criterion("d", "a new obligation")],

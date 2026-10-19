@@ -9,7 +9,7 @@ never the ones the engine makes for it.
 Two rules the tests pin, because both are ways a money column lies:
   * cost is what the TRANSPORT reported, never a number derived from tokens here;
   * a provider that reports no price contributes zero AND is counted apart (`costed_calls`), so a
-    total can never present "not reported" as "free" (the ⊥-as-zero error, §21 conventions).
+    total can never present "not reported" as "free" (the ⊥-as-zero error, §15.4 conventions).
 """
 from fastapi.testclient import TestClient
 
@@ -97,7 +97,8 @@ def test_the_endpoint_serves_totals_and_detail():
     with TestClient(create_app(e)) as c:
         body = c.get("/api/usage").json()
         assert body["cost_usd"] == 0.4 and "calls" not in body.get("by_stage", {})
-        assert c.get("/api/usage?detail=true").json()["calls"][0]["stage"] == "executor"
+        detail = c.get("/api/usage?detail=true").json()   # the verb's shape: the count stays a count (D-F16)
+        assert detail["calls"] == 1 and detail["calls_detail"][0]["stage"] == "executor"
 
 
 def test_the_money_total_names_its_scope_on_a_multi_project_server(monkeypatch, tmp_path):

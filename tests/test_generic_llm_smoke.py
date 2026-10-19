@@ -6,7 +6,7 @@ IMPLEMENTATIONS stay out of scope (N3) — this proves the seam, not a vendor.""
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from gfso.runtime import llm_factory
+from gfso.llm import llm_factory
 from gfso.adapters.llm.generic import GenericLLM
 
 import pytest

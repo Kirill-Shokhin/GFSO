@@ -1,6 +1,6 @@
-"""A verdict is about a DELIVERY, so there has to be one standing (§14.5).
+"""A verdict is about a DELIVERY, so there has to be one standing (§10.2).
 
-The rule existed and covered one end of the interval: a settled node "is not being judged, so a
+The rule existed and covered one end of the interval: a settled node "is not being validated, so a
 verdict about it changes nothing". The other end was open, and a stranger on the CLI door walked
 through it in four calls (wave 23, 2026-09-03):
 
@@ -23,24 +23,23 @@ import pytest
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _reworking(e, tid="leaf"):
     """A node whose first delivery was refused — the state the exploit needs."""
     T.create_task(e, tid, {"description": "a leaf",
                            "criteria": [criterion("c", "C")],
-                           "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                               "predictability": "EXTRAORDINARY"}]},
+                           "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, tid, "ACCEPT", "exec-1")
     T.signal(e, tid, "DELIVER", "exec-1", result="first try")
-    T.record_verdict(e, tid, "FAIL", reviewer="judge", failed_criteria=["c"],
+    T.record_verdict(e, tid, "FAIL", reviewer="validator", failed_criteria=["c"],
                      observed={"c": {"note": "ran the check, it printed NOT-OK", "ran": ["check c"]}})
     T.signal(e, tid, "FAIL", "exec-1", failed_criteria=["c"])
     e.wait_idle()
-    assert e.get_state(TaskId(tid)).name == "REWORKING"
+    assert e.graph.get_state(TaskId(tid)).name == "REWORKING"
 
 
 def test_no_verdict_is_recorded_while_the_work_is_being_redone():
@@ -71,24 +70,23 @@ def test_and_the_next_delivery_does_not_inherit_one():
 
     assert "already on the record" not in (delivered.get("awaiting_verdict") or "")
     assert signed["accepted"] is False, "the executor closed its own node on a verdict from before"
-    assert e.get_state(TaskId("leaf")).name == "VALIDATING"
+    assert e.graph.get_state(TaskId("leaf")).name == "VALIDATING"
     e.stop()
 
 
-def test_a_verdict_on_the_delivery_being_judged_is_recorded_exactly_as_before():
-    """The negative control: the ordinary act — judge what was just delivered — must be untouched."""
+def test_a_verdict_on_the_delivery_being_validated_is_recorded_exactly_as_before():
+    """The negative control: the ordinary act — validate what was just delivered — must be untouched."""
     e = make_engine()
     e.start()
     T.create_task(e, "ok", {"description": "a leaf",
                             "criteria": [criterion("c", "C")],
-                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                "predictability": "EXTRAORDINARY"}]},
+                            "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, "ok", "ACCEPT", "exec-1")
     T.signal(e, "ok", "DELIVER", "exec-1", result="built it")
 
-    out = T.record_verdict(e, "ok", "PASS", reviewer="judge",
+    out = T.record_verdict(e, "ok", "PASS", reviewer="validator",
                            observed={"c": {"note": "ran the check, it printed OK", "ran": ["check c"]}})
 
     assert out.get("recorded") is True, out

@@ -7,7 +7,7 @@ classic hold-space idiom outright. Reproducibility is not coverage.
 
 The first version of this rule REFUSED such a report outright, and the next run died 37 minutes in:
 the node stalled on ⊥ and the run ended over an incomplete proof. Demotion is the honest reading —
-the report IS a verdict, the unobserved conjunct simply is not decided (§11.2: ⊥ is not pass).
+the report IS a verdict, the unobserved conjunct simply is not decided (§2.3: ⊥ is not pass).
 """
 from gfso.core.protocol.invariants import underprobed
 

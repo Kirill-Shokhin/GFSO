@@ -6,9 +6,9 @@ whom was trying to find this:
 * As an `llm-validator`, it made the executing identity the one whose signature closes the seam —
   the product's single promise, off, for every node on the server. (Closed at the gate: a
   registration cannot make an id independent of itself. See
-  `test_registering_yourself_as_the_judge`.)
-* Its registered `workdir` then became the directory unattended validation judged IN. A stranger on
-  the MCP door had their delivery judged against another session's project — the temp directory a
+  `test_registering_yourself_as_the_validator`.)
+* Its registered `workdir` then became the directory unattended validation validated IN. A stranger on
+  the MCP door had their delivery validated against another session's project — the temp directory a
   different tester had registered hours earlier — and their fabricated report was caught for
   entirely the wrong reason: *"The actual delivered codebase in the working directory is
   `w23cli_csvjson` — a CSV-to-JSON converter."* (wave 23, 2026-09-03)

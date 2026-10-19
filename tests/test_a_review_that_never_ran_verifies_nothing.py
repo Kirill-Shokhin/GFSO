@@ -3,7 +3,7 @@
 `review_decomposition` set `verified = True` unconditionally — three lines below a comment of its own
 that promised the opposite for exactly this case ("A ROUND THAT DID NOT RUN THE CHECKER … The node is
 still marked unverified below"). The prose was right and the code did the other thing, so a review
-that judged nothing, because the structure was too broken to judge, certified the plan.
+that checked nothing, because the structure was too broken to check, certified the plan.
 
 A stranger on the HTTP door read all three surfaces in one instant and quoted them (wave 23,
 2026-09-03):
@@ -24,7 +24,7 @@ from __future__ import annotations
 from gfso import tools as T
 from gfso.core.types import TaskId
 from gfso.critic.runner import review_decomposition
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 class _NeverCalled:
@@ -43,15 +43,15 @@ class _NeverCalled:
 
 
 def _a_plan_with_a_hole_in_it(e):
-    """A parent whose criterion no child covers — CHECK-1, the Syntactic level (§13.4)."""
-    T.create_task(e, "par", {"description": "parent",
-                             "criteria": [criterion("g", "G")],
-                             "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                 "predictability": "EXTRAORDINARY"}]},
+    """A parent whose criterion no child covers — CHECK-1, the Syntactic level (§9.5).
+
+    Canon v4.1: a holed split is never admitted (§11.5), so the hole is made the one way it can exist —
+    a revision of the parent's criteria after a clean admission, flagged on the plan (§12.10)."""
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")]},
                   assignee="exec-1")
-    T.create_task(e, "par.kid", {"description": "kid",
-                                 "criteria": [criterion("k", "K")]},
-                  assignee="exec-1", parent_id="par")
+    T.decompose(e, "par", [{"task_id": "par.kid", "spec": {"description": "kid", "criteria": [criterion("k", "K")]},
+                            "assignee": "exec-1", "covers": ["g"]}], accepted_risks=REGISTER)
+    T.edit_criteria(e, "par", [criterion("g", "G"), criterion("h", "H")], agent="exec-1")
     e.wait_idle()
     assert [h.get("check") for h in T.list_holes(e)["holes"]] == ["CHECK-1:coverage"], (
         "the probe never produced the structural hole it is about")
@@ -65,13 +65,16 @@ def test_a_gated_out_round_leaves_the_plan_unverified():
     critique = review_decomposition(e, TaskId("par"))
 
     assert critique.gate_passed is False
-    assert e.get_task(TaskId("par")).verified is False, (
-        "a review that judged nothing certified the plan")
+    assert e.graph.get_task(TaskId("par")).verified is False, (
+        "a review that checked nothing certified the plan")
     e.stop()
 
 
 def test_and_the_read_says_so_too():
-    """The surface the docs tell an integrator to gate on is the one that was lying."""
+    """The surface the docs tell an integrator to gate on is the one that was lying.
+
+    Canon v4.1 pins the other half: a hole made by a revision after admission is a FLAG on the plan, never a hold
+    on issued work (§12.10, §12.16 (ii)) — so the read says "unverified" while the admitted children keep working."""
     e = make_engine(llm=_NeverCalled())
     e.start()
     _a_plan_with_a_hole_in_it(e)
@@ -80,7 +83,7 @@ def test_and_the_read_says_so_too():
     out = T.get_review(e, "par")
 
     assert out["verified"] is False, out
-    assert out["execution_admitted"] is False, out
+    assert out["execution_admitted"] is True, ("a flagged hole held the admitted children", out)
     e.stop()
 
 
@@ -97,13 +100,12 @@ def test_a_leaf_still_counts_as_answered():
     e.start()
     T.create_task(e, "leaf", {"description": "a leaf",
                               "criteria": [criterion("c", "C")],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
 
     critique = review_decomposition(e, TaskId("leaf"))
 
     assert critique.gate_passed is True
-    assert e.get_task(TaskId("leaf")).verified is True
+    assert e.graph.get_task(TaskId("leaf")).verified is True
     e.stop()

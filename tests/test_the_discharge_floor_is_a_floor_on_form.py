@@ -30,7 +30,7 @@ import pytest
 
 from gfso import tools as T
 from gfso.tools import _is_pure_assent
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 #: verbatim from the three doors' reports
 BYPASSES = ["xy", "zz", "Kettle.", "Blue kettle.", "It holds.", "The entailment does hold.",
@@ -46,9 +46,8 @@ HONEST = ["uncertainty is about wording, not entailment",
 
 def _a_node_with_an_open_finding(e):
     T.create_task(e, "root", {"description": "goal",
-                              "criteria": [{"name": "c1", "description": "C1"}],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "criteria": [criterion("c1", "C1")],
+                              "accepted_risks": REGISTER},
                   assignee="agent")
     e.wait_idle()
 

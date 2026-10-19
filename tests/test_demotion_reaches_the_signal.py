@@ -30,7 +30,9 @@ from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fe
 
 
 def _claimed_pass_over_an_unobserved_behaviour() -> str:
-    """A well-formed report — no self-contradiction — whose probe covers one behaviour of two."""
+    """A well-formed report — no self-contradiction — whose probe covers one behaviour of two, and is not the
+    procedure its criterion pinned (`check holds`): run whole, that procedure would decide the criterion and the
+    second behaviour would be exploration (`test_a_criterion_stands_on_its_pinned_procedure`)."""
     return _fenced({
         "verdict": "PASS",
         "per_criterion": [
@@ -40,7 +42,7 @@ def _claimed_pass_over_an_unobserved_behaviour() -> str:
             {"criterion": "holds", "verdict": "pass", "evidence": "looks solid",
              # two behaviours named, one probe given — the second was never observed
              "behaviours": ["it holds a picture", "it holds a 2kg frame"],
-             "probe": [{"command": "check holds", "expect": "it holds"}]}],
+             "probe": [{"command": "hang a picture", "expect": "it holds"}]}],
         "failed_criteria": []})
 
 
@@ -54,7 +56,7 @@ def _refuted_and_underprobed() -> str:
              "probe": [{"command": "check flush", "expect": "1 failed"}]},
             {"criterion": "holds", "verdict": "pass", "evidence": "looks solid",
              "behaviours": ["it holds a picture", "it holds a 2kg frame"],
-             "probe": [{"command": "check holds", "expect": "it holds"}]}],
+             "probe": [{"command": "hang a picture", "expect": "it holds"}]}],
         "failed_criteria": ["flush"]})
 
 
@@ -76,7 +78,7 @@ def test_a_claimed_pass_over_an_unobserved_behaviour_never_reaches_the_signal():
     assert "holds" in out["verdict_defects"] and "unobserved" in out["verdict_defects"]
     assert "not the executor" in out["verdict_defects"], "the report blames the wrong party"
     assert e.get_exec_verdict(T.TaskId("n1")) is None, "a non-verdict was stored as one"
-    assert e.get_task(T.TaskId("n1")).state.name == "VALIDATING", "the node moved on ⊥"
+    assert e.graph.get_task(T.TaskId("n1")).state.name == "VALIDATING", "the node moved on ⊥"
     e.stop()
 
 

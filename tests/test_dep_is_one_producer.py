@@ -3,7 +3,7 @@
 Lived: a criterion arrived carrying `depends_on: ["root.parser", "root.regex"]`, was stored
 verbatim, and surfaced later as a dependency edge whose `from` was a list — which crashed the cycle
 check with `unhashable type: 'list'` and killed a run four hours in. A seam is criteria-content
-(§10): two producers are two criteria, not one criterion naming two.
+(§2): two producers are two criteria, not one criterion naming two.
 """
 import pytest
 

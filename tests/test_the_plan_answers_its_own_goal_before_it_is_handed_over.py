@@ -22,16 +22,18 @@ def test_named_obligations_are_folded_in_and_the_residue_is_measured(monkeypatch
         return ({"obligation": "it must actually sort"},) if len(asked) == 1 else ()
     monkeypatch.setattr(D, "_undecided_obligations", _check)
     monkeypatch.setattr(D, "_refine_round",
-                        lambda *a, **k: (calls.append(a[1]) or (True, {"after": True}, [])))
+                        lambda *a, **k: (calls.append(k.get("findings", "")) or (True, {"after": True}, [])))
 
     class _Eng:
+        graph = property(lambda self: self)
+
         def get_task(self, _):
             return object()
 
     spec, holes, residue = D._close_the_goals_obligations(_Eng(), "sort a file", "root", "agent",
                                                           None, {"before": True}, ["a hole"], None)
     assert spec == {"after": True} and holes == []
-    assert "it must actually sort" in calls[0], "the obligation reaches the verb that repairs plans"
+    assert "it must actually sort" in calls[0], "the obligation reaches the verb that repairs plans, as its findings"
     assert asked == [1, 1], "it asked again after the repair"
     assert residue == (), "…and this time the answer was empty, so nothing is claimed falsely"
 
@@ -43,6 +45,8 @@ def test_what_the_repair_did_not_close_is_named(monkeypatch):
     monkeypatch.setattr(D, "_refine_round", lambda *a, **k: (True, {"after": True}, []))
 
     class _Eng:
+        graph = property(lambda self: self)
+
         def get_task(self, _):
             return object()
 
@@ -51,12 +55,14 @@ def test_what_the_repair_did_not_close_is_named(monkeypatch):
 
 
 def test_a_check_that_names_nothing_changes_nothing(monkeypatch):
-    """⊥ is not "the goal is covered" (§11.2) — an empty answer must not look like a clean bill."""
+    """⊥ is not "the goal is covered" (§2.3) — an empty answer must not look like a clean bill."""
     monkeypatch.setattr(D, "_undecided_obligations", lambda engine, task, llm, **k: ())
     monkeypatch.setattr(D, "_refine_round",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("nothing to fold")))
 
     class _Eng:
+        graph = property(lambda self: self)
+
         def get_task(self, _):
             return object()
 

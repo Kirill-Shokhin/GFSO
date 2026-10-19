@@ -3,27 +3,74 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.request import pathname2url
 
 from gfso import __version__
 
 from gfso.core.types import (
-    TaskId, AgentId, Task, State, DoneReason, AutonomyLevel, Predictability,
-    Spec, Criteria, Probe, CriterionMapping, AcceptedRiskItem,
+    TaskId, AgentId, Task, State, DoneReason, AutonomyLevel,
+    Spec, Criteria, Probe, CriterionMapping, AcceptedRiskItem, Register,
     CheckResult, Recommendation, DepEdge,
-    StoragePort, TERMINAL_STATES,
+    StoragePort, TERMINAL_STATES, RETIRED_STATES, state_named,
 )
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 
 log = logging.getLogger(__name__)
 
 
-class SqliteStorage(StoragePort):
+def _state_of(row: sqlite3.Row) -> "tuple[State, Optional[DoneReason]]":
+    # Read-side migration: pre-v3.7 DBs stored cancellation as DONE(reason=CANCELLED); canon v3.7
+    # gives it its own terminal state (§12.6). Map on read — no new writes produce the legacy form.
+    state = state_named(row["state"])   # a retired name another process wrote still reads
+    done_reason = DoneReason[row["done_reason"]] if row["done_reason"] else None
+    if state == State.DONE and done_reason == DoneReason.CANCELLED:
+        state, done_reason = State.ABANDONED, None
+    return state, done_reason
+
+
+def peek_root(db_path: str) -> "tuple[State, Optional[DoneReason]] | None":
+    """The root's state in a project file this process has not opened as a store — None when
+    there is no file, no root, or nothing readable (one bad file must not cost a picker the list).
+
+    `immutable` when no WAL lies beside it: a read-only open of a closed WAL database still
+    CREATES an empty `-wal` and `-shm` (measured 2026-09-24) — litter in the data dir, on every
+    look. With a WAL present its frames are part of the data, so the read-only open reads them;
+    it writes no WAL of its own."""
+    if not os.path.exists(db_path):
+        return None
+    how = "mode=ro" if os.path.exists(db_path + "-wal") else "immutable=1"
+    try:
+        with closing(sqlite3.connect(f"file:{pathname2url(os.path.abspath(db_path))}?{how}",
+                                     uri=True)) as c:
+            c.row_factory = sqlite3.Row
+            row = c.execute("SELECT state, done_reason FROM tasks WHERE parent_id IS NULL "
+                            "ORDER BY created_at LIMIT 1").fetchone()
+        return None if row is None else _state_of(row)
+    except (sqlite3.Error, KeyError):
+        return None
+
+
+class _ProjectSettings:
+    """The project's own settings (the mode) — one small table, its own concern beside the graph's."""
+
+    def store_setting(self, key: str, value: str) -> None:
+        with self._write() as c:
+            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    def get_setting(self, key: str) -> Optional[str]:
+        with self._read() as c:
+            row = c.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+
+class SqliteStorage(_ProjectSettings, StoragePort):
     def __init__(self, db_path: str = "data/gfso.db"):
         self._db_path = db_path
         if db_path != ":memory:":
@@ -116,17 +163,24 @@ class SqliteStorage(StoragePort):
     _ADDITIVE_MIGRATIONS = (
         ("dep_edges", "glue", "TEXT DEFAULT ''"),
         ("dep_edges", "provisional", "INTEGER DEFAULT 0"),
+        ("dep_edges", "closed", "INTEGER DEFAULT 0"),                   # a record nobody answered (§15.5)
+        ("dep_edges", "declared_first", "INTEGER DEFAULT 0"),           # declared before its first BLOCK (§15.5)
+        ("dep_edges", "refuted", "INTEGER DEFAULT 0"),                  # refuted, kept for the order (§15.5)
         ("tasks", "verified", "INTEGER DEFAULT 0"),
-        ("tasks", "reopens", "INTEGER DEFAULT 0"),                      # R′ (§14.3)
+        ("tasks", "reopens", "INTEGER DEFAULT 0"),                      # R′ (§12.14)
         ("tasks", "max_reopens", "INTEGER DEFAULT 1"),
         ("tasks", "reopened_from_pass", "INTEGER DEFAULT 0"),
-        ("tasks", "spec_defect_criteria_change", "INTEGER DEFAULT 0"),  # §24.5 revision-reason typing
+        ("tasks", "spec_defect_criteria_change", "INTEGER DEFAULT 0"),  # §15.4 revision-reason typing
         ("tasks", "reassign_reason_typed", "INTEGER DEFAULT 0"),
         ("tasks", "reassign_capability_mismatch", "INTEGER DEFAULT 0"),
         ("tasks", "revisions", "INTEGER DEFAULT 0"),                    # contract generation (Inv-1)
         ("tasks", "state_entered_at", "TEXT"),                          # Inv-5's per-state clock
+        ("tasks", "deadline_supplied", "INTEGER DEFAULT 0"),             # §2.5: the default, logged as supplied
+        ("tasks", "register_json", "TEXT"),                             # §9.2: the split's register, its decomposer's
         ("check_results", "vacuous", "INTEGER DEFAULT 0"),   # a green over an EMPTY subject differs
         ("audit_log", "spec_json", "TEXT"),                  # Inv-7: the contract each ASSIGN set
+        ("audit_log", "revision_reason", "TEXT"),            # §11.3: a re-ASSIGN's reason is signal data
+        ("audit_log", "retire_findings_json", "TEXT"),       # §10.2: the ruling an ACCEPT_CHALLENGE makes
     )
 
     def _init_tables(self):
@@ -177,7 +231,14 @@ class SqliteStorage(StoragePort):
                 to_id TEXT NOT NULL,
                 discovered INTEGER DEFAULT 0,
                 glue TEXT DEFAULT '',
-                provisional INTEGER DEFAULT 0
+                provisional INTEGER DEFAULT 0,
+                closed INTEGER DEFAULT 0,
+                declared_first INTEGER DEFAULT 0,
+                refuted INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS critiques (
                 task_id TEXT PRIMARY KEY,
@@ -226,7 +287,9 @@ class SqliteStorage(StoragePort):
                 failed_criteria_json TEXT DEFAULT '[]',
                 action TEXT,
                 in_flight TEXT,
-                spec_json TEXT
+                spec_json TEXT,
+                revision_reason TEXT,
+                retire_findings_json TEXT
             );
         """)
         # Defensive migrations for DBs created before these columns existed. DATA, not twenty
@@ -238,33 +301,44 @@ class SqliteStorage(StoragePort):
             have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if column not in have:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                if (table, column) == ("dep_edges", "closed"):
+                    # a record an older build left open after its node left BLOCKED was never answered:
+                    # closed now, or the node's NEXT block is blamed on it (critic, 2026-09-27)
+                    self._conn.execute("UPDATE dep_edges SET closed = 1, provisional = 0 WHERE provisional = 1 "
+                                       "AND to_id NOT IN (SELECT id FROM tasks WHERE state = 'BLOCKED')")
+        self._migrate_retired_states()
+
+    def _migrate_retired_states(self):
+        """A node stored in a state this machine no longer has is moved to the state that replaced
+        it, once, here — and the move is LOGGED AS A MIGRATION, not as a signal: nobody sent one,
+        and an audit row would claim a transition the protocol never made. The node enters its new
+        state now, so its bound counts from the migration (a node parked in OVERDUE under the old
+        machine reaches ESCALATED with the issuer's whole window ahead of it)."""
+        now = datetime.now().isoformat()
+        for old, new in RETIRED_STATES.items():
+            ids = [r["id"] for r in self._conn.execute("SELECT id FROM tasks WHERE state = ?", (old,))]
+            if not ids:
+                continue
+            self._conn.execute("UPDATE tasks SET state = ?, state_entered_at = ? WHERE state = ?",
+                               (new.name, now, old))
+            self._conn.executemany(
+                "INSERT INTO pipeline_log (ts, source, message) VALUES (?, ?, ?)",
+                [(datetime.now().isoformat(sep=" ", timespec="seconds"), "migration",
+                  f"{i}: stored in {old}, a state this machine no longer has — now {new.name} "
+                  f"(a migration, not a signal)") for i in ids])
+            log.info("migrated %d node(s) from retired state %s to %s: %s",
+                     len(ids), old, new.name, ", ".join(ids))
+        self._conn.commit()
 
     # === Serialization ===
 
     @staticmethod
     def _accepted_risks_to_json(items: tuple[AcceptedRiskItem, ...]) -> list[dict]:
-        return [{
-            "item": n.item,
-            "predictability": n.predictability.name if n.predictability else None,
-            "justification": n.justification,
-            "invalidation_condition": n.invalidation_condition,
-        } for n in items]
+        return [n.to_dict() for n in items]
 
     @staticmethod
     def _accepted_risks_from_json(raw) -> tuple[AcceptedRiskItem, ...]:
-        out = []
-        for n in raw or ():
-            if isinstance(n, str):  # legacy plain-string format
-                out.append(AcceptedRiskItem(n))
-            else:
-                p = n.get("predictability")
-                out.append(AcceptedRiskItem(
-                    n["item"],
-                    Predictability[p] if p else None,
-                    n.get("justification", ""),
-                    n.get("invalidation_condition", ""),
-                ))
-        return tuple(out)
+        return tuple(AcceptedRiskItem.of(n) for n in raw or ())   # a plain string is the legacy format
 
     @staticmethod
     def _spec_to_json(spec: Spec) -> str:
@@ -278,11 +352,14 @@ class SqliteStorage(StoragePort):
                           # the pinned decision procedure travels WITH the criterion: a contract that
                           # loses its probes on the way to disk is back to a procedure invented at
                           # validation time, which is the defect the field exists against
-                          "check": [{"behaviour": p.behaviour, "command": p.command,
-                                     "expect": p.expect} for p in (c.check or ())]}
+                          "check": [p.to_dict() for p in (c.check or ())],
+                          # …and so does the composition function CHECK-7 checks under (§9.6): a
+                          # declaration lost on the way to disk puts the check back on its assumed sum
+                          "composition": c.composition}
                          for c in spec.criteria],
             "accepted_risks": SqliteStorage._accepted_risks_to_json(spec.accepted_risks),
             "risk_components": list(spec.risk_components),
+            "covers_risks": list(spec.covers_risks),
             "scope": list(spec.scope),
         })
 
@@ -294,14 +371,14 @@ class SqliteStorage(StoragePort):
             criteria=tuple(Criteria(c["name"], c["description"], depends_on=c.get("depends_on"),
                                     input=c.get("input"), expected=c.get("expected"),
                                     n=c.get("n"), timeout=c.get("timeout"),
-                                    check=tuple(Probe(p.get("behaviour", ""), p.get("command", ""),
-                                                      p.get("expect", ""))
-                                                for p in (c.get("check") or ())))
+                                    check=tuple(Probe.of(p) for p in (c.get("check") or ())),
+                                    composition=c.get("composition", ""))
                            for c in d["criteria"]),
             accepted_risks=SqliteStorage._accepted_risks_from_json(d.get("accepted_risks", ())),
             risk_components=tuple(d.get("risk_components", ())),
             scope=tuple(d.get("scope", ())),
             name=d.get("name", ""),
+            covers_risks=tuple(d.get("covers_risks", ())),
         )
 
     @staticmethod
@@ -313,12 +390,7 @@ class SqliteStorage(StoragePort):
         return tuple(CriterionMapping(m["criterion_name"], TaskId(m["child_id"])) for m in json.loads(raw))
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:
-        # Read-side migration: pre-v3.7 DBs stored cancellation as DONE(reason=CANCELLED); canon v3.7
-        # gives it its own terminal state (§14.3). Map on read — no new writes produce the legacy form.
-        state = State[row["state"]]
-        done_reason = DoneReason[row["done_reason"]] if row["done_reason"] else None
-        if state == State.DONE and done_reason == DoneReason.CANCELLED:
-            state, done_reason = State.ABANDONED, None
+        state, done_reason = _state_of(row)
         t = Task(
             id=TaskId(row["id"]),
             spec=self._spec_from_json(row["spec_json"]),
@@ -345,6 +417,10 @@ class SqliteStorage(StoragePort):
         # moves with the process nor collapses the ordering between nodes.
         _sea = row["state_entered_at"] if "state_entered_at" in row.keys() else None
         t.state_entered_at = datetime.fromisoformat(_sea) if _sea else t.created_at
+        t.deadline_supplied = bool(row["deadline_supplied"]) if "deadline_supplied" in row.keys() else False
+        _reg = json.loads(row["register_json"]) if "register_json" in row.keys() and row["register_json"] else None
+        t.register = (Register(self._accepted_risks_from_json(_reg.get("items", ())), tuple(_reg.get("components", ())))
+                      if _reg is not None else None)
         t.was_challenged = bool(row["was_challenged"])
         t.was_reassigned = bool(row["was_reassigned"])
         t.false_positive = bool(row["false_positive"])
@@ -375,8 +451,8 @@ class SqliteStorage(StoragePort):
                 was_challenged, was_reassigned, false_positive, criterion_mappings_json, verified,
                 reopens, max_reopens, reopened_from_pass,
                 spec_defect_criteria_change, reassign_reason_typed, reassign_capability_mismatch,
-                revisions)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                revisions, deadline_supplied, register_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     task.id,
                     self._spec_to_json(task.spec),
@@ -402,6 +478,9 @@ class SqliteStorage(StoragePort):
                     int(task.reassign_reason_typed),
                     int(task.reassign_capability_mismatch),
                     int(task.revisions),
+                    int(task.deadline_supplied),
+                    json.dumps({"items": self._accepted_risks_to_json(task.register.items),
+                                "components": list(task.register.components)}) if task.register is not None else None,
                 ),
             )
 
@@ -471,8 +550,10 @@ class SqliteStorage(StoragePort):
     def add_dep_edge(self, edge: DepEdge) -> None:
         with self._write() as c:
             c.execute(
-                "INSERT INTO dep_edges (from_id, to_id, discovered, glue, provisional) VALUES (?, ?, ?, ?, ?)",
-                (edge.from_id, edge.to_id, int(edge.discovered), edge.glue, int(edge.provisional)),
+                "INSERT INTO dep_edges (from_id, to_id, discovered, glue, provisional, closed, declared_first, "
+                "refuted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (edge.from_id, edge.to_id, int(edge.discovered), edge.glue, int(edge.provisional),
+                 int(edge.closed), int(edge.declared_first), int(edge.refuted)),
             )
 
     def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
@@ -485,7 +566,9 @@ class SqliteStorage(StoragePort):
         with self._read() as c:
             rows = c.execute("SELECT * FROM dep_edges").fetchall()
         return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]),
-                        r["glue"] or "", bool(r["provisional"])) for r in rows]
+                        r["glue"] or "", bool(r["provisional"]),
+                        *(bool(r[k]) if k in r.keys() else False for k in ("closed", "declared_first", "refuted")))
+                for r in rows]
 
     def store_critique(self, task_id: TaskId, critique_json: str) -> None:
         with self._write() as c:
@@ -563,12 +646,13 @@ class SqliteStorage(StoragePort):
             c.execute(
                 "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
                 "rejected, error, source, reason, justification, result, failed_criteria_json, "
-                "action, in_flight, spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "action, in_flight, spec_json, revision_reason, retire_findings_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
                  json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
                  row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
                  json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight"),
-                 row.get("spec")))
+                 row.get("spec"), row.get("revision_reason"), json.dumps(row.get("retire_findings") or [])))
 
     def load_audit(self) -> list[dict]:
         with self._read() as c:
@@ -582,4 +666,6 @@ class SqliteStorage(StoragePort):
             "failed_criteria": json.loads(r["failed_criteria_json"] or "[]"),
             "action": r["action"], "in_flight": r["in_flight"],
             "spec": (r["spec_json"] if "spec_json" in r.keys() else None),
+            "revision_reason": r["revision_reason"],
+            "retire_findings": json.loads(r["retire_findings_json"] or "[]") if "retire_findings_json" in r.keys() else [],
         } for r in rows]

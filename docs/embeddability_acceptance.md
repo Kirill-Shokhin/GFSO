@@ -3,7 +3,7 @@
 > "Embedding" here = embedding the CORE AS A LIBRARY into a foreign host (as in an embedded
 > database) — nothing to do with ML vector embeddings.
 
-> The embeddability claim ("the core drops into a foreign host as-is") is judged by THIS suite,
+> The embeddability claim ("the core drops into a foreign host as-is") is validated by THIS suite,
 > fixed before any embedding attempt — not by impression. The test subject is a FRESH agent (or
 > engineer) with no project context, working ONLY from the public docs (README →
 > architecture.md → this file). Needing to ask the authors = a documentation defect.
@@ -31,7 +31,7 @@ The embedder makes THIS suite green without modifying anything under `gfso/core/
    consumer cannot be driven before its producer delivers).
 3. **Reject**: an executor signal from a non-Del source is rejected and audited as rejected.
 4. **Timeout**: with the virtual clock advanced past a deadline, the sub-FSM escalates
-   (OFFERED→OVERDUE→ESCALATED) — no real waiting.
+   (OFFERED→ESCALATED) — no real waiting.
 5. **Checks**: an intentionally cyclic Dep declaration is refused; a BLOCK naming a sibling
    records the discovered edge and CHECK-2 names the resulting cycle in `graph_holes`.
 6. **Restart**: a new host process over the same JSONL store hydrates the audit log and
@@ -73,6 +73,14 @@ extensions) and the Clock/Runner ports · `gfso/core/types/primitives.py` — Si
 Spec / Criteria / DepEdge field sets · `gfso/core/protocol/fsm.py` — the live transition table
 (the one in architecture.md is prose; the table module is the truth).
 
+**A split's admission is not a signal** (§11.5): it is the decomposer's own logged act, one function every
+door calls — `gfso.engine.admission.admit(graph, storage, log_at, parent_id, children, covers, register=…,
+send=…)`. It classifies everything the act names and reads every refusal (the Syntactic battery over the split as
+it will stand among them) before it writes anything, then writes that split: the admission record, the children's
+ASSIGNs through the host's `send` (producers first), the parent's coverage, the drops, the split's register — its
+decomposer's (§9.2), never the parent's packet. A child ASSIGN that no admission issued is refused at the signal
+gate, so a host does not assemble the act itself.
+
 **Semantic rules a from-scratch host must reproduce:**
 - **Verdict staleness**: the verifier≠executor gate compares the recorded exec-verdict's
   `iteration` against the node's current iteration — a rework stales the verdict; record shape
@@ -95,7 +103,7 @@ Spec / Criteria / DepEdge field sets · `gfso/core/protocol/fsm.py` — the live
       JSON-lines store, a virtual clock, and its own signal pump over `gfso.engine.loop.process_signal`
       — no Engine, no engine threads, and nothing imported outside the public ports. So the claim is
       now falsified by a red CI the moment the embedding contract breaks, rather than skipped.
-      `GFSO_EMBED_HOST` still overrides it, which is how a fresh-agent acceptance run is judged.
+      `GFSO_EMBED_HOST` still overrides it, which is how a fresh-agent acceptance run is validated.
 
   The reference host is a **client** of the ports, not a mirror of them: it duplicates no engine
   logic, so it can only break when the contract it consumes does.

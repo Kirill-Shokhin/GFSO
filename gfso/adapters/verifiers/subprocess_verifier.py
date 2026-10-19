@@ -1,7 +1,7 @@
 """GFSO verification adapter for BENCHMARK tasks: runs a delivered program against Spec criteria.
 
 Scope, so nobody mistakes this for the product's notion of a criterion. A criterion in the canon is
-a decidable condition on a task's result (A1, §2.1), and in normal use a validator reads the
+a decidable condition on a task's result (A1, §1.2), and in normal use a validator reads the
 delivery and runs what the criterion names. THIS adapter decides a narrower, mechanical payload —
 the competitive-programming shape the E0 benchmark work needed (`docs/EVIDENCE_LOG.md` §3). It is
 constructed by that harness and by nothing inside this package.
@@ -45,6 +45,8 @@ import tempfile
 import time
 from dataclasses import dataclass
 
+from gfso.adapters.children import adopt, kill_tree, release, spawn_kw
+from gfso.config import subprocess_env
 from gfso.core.types import TaskId, Spec, Criteria, CheckResult, StoragePort, VerifierPort
 
 log = logging.getLogger(__name__)
@@ -61,7 +63,7 @@ class ExecutionResult:
 
 def run_code(code: str, stdin_input: str, timeout: float = 10.0) -> ExecutionResult:
     """Run the delivered code in a subprocess and return what it printed — the deterministic half
-    of judging, where a suite decides instead of a model."""
+    of validation, where a suite decides instead of a model."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         f.write(code)
         tmp = f.name
@@ -76,20 +78,24 @@ def run_code(code: str, stdin_input: str, timeout: float = 10.0) -> ExecutionRes
         with open(in_file, "r", encoding="utf-8") as fin, \
              open(out_file, "w", encoding="utf-8") as fout, \
              open(err_file, "w", encoding="utf-8") as ferr:
-            proc = subprocess.Popen(
+            proc = adopt(subprocess.Popen(
                 [sys.executable, tmp],
-                stdin=fin, stdout=fout, stderr=ferr,
+                stdin=fin, stdout=fout, stderr=ferr, env=subprocess_env(keep_key=True),
                 # Windows: don't pop a console window (same class as the headless adapter)
                 **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
-            )
+                **spawn_kw(),
+            ))
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                kill_tree(proc)
                 proc.wait()
                 elapsed = time.time() - t0
                 log.info(f"TIMEOUT after {elapsed:.2f}s")
                 return ExecutionResult("", "TIMEOUT", -1, elapsed, True)
+            finally:
+                kill_tree(proc)          # what the code under test left running goes with it
+                release(proc)
         elapsed = time.time() - t0
         with open(out_file, "r", encoding="utf-8", errors="replace") as f:
             stdout = f.read()

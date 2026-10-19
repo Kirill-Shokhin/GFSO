@@ -12,7 +12,8 @@ from gfso.core.graph.metrics import false_fail_share
 from gfso.decompose import _dep_contradictions
 from gfso.engine import Engine
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import make_engine, instrument_passes, pinned
+from gfso.engine.validation import AdmissionRefused
+from tests.support import REGISTER_SPLIT, REGISTER_ITEMS, make_engine, instrument_passes, pinned
 
 
 class AutoAgent(AgentPort):
@@ -38,7 +39,7 @@ def _engine(agent=None, validate=False) -> Engine:
 
 
 def test_revise_is_reassign_same_id_no_cascade():
-    """Canon v3.7 Inv-1 (§14.4): REVISION = re-ASSIGN under the SAME id → OFFERED (NOT the CANCEL signal —
+    """Canon v3.7 Inv-1 (§12.3): REVISION = re-ASSIGN under the SAME id → OFFERED (NOT the CANCEL signal —
     no CANCELLING pass), each version appended to the log (Inv-7). The subtree is RETAINED (revision ≠
     abandonment): no cascade. Coverage staleness from a criteria change SURFACES via CHECK-1
     (surface-don't-destroy). The gate is the FSM's: ASSIGN needs the issuer role."""
@@ -47,14 +48,14 @@ def test_revise_is_reassign_same_id_no_cascade():
     eng.start()
 
     def sp(d, *c, neg=()):
-        return Spec(d, tuple(Criteria(n, t) for n, t in c), accepted_risks=neg)
+        return Spec(d, tuple(Criteria(n, t, check=pinned(n)) for n, t in c), accepted_risks=neg)
 
     # Leaf revise (the planning case): SAME id, spec applied, logged as a second ASSIGN — NO CANCEL involved.
     # `leaf` is this project's ONE root; the later subjects (`p`, `q`) hang under it, since a second
     # parentless node would be a second verdict with no rule composing the two.
     eng.assign_task(TaskId("leaf"), sp("leaf", ("a", "a")), A); eng.wait_idle()
     eng.revise(TaskId("leaf"), sp("leaf", ("a", "a2"), neg=(AcceptedRiskItem("ext"),)), A); eng.wait_idle()
-    lf = eng.get_task(TaskId("leaf"))
+    lf = eng.graph.get_task(TaskId("leaf"))
     assert lf.id == TaskId("leaf")                                    # SAME id — references survive
     assert lf.state == State.OFFERED                                   # revision → OFFERED (executor re-ACCEPTs)
     assert lf.spec.criteria[0].description == "a2" and [n.item for n in lf.spec.accepted_risks] == ["ext"]
@@ -63,26 +64,27 @@ def test_revise_is_reassign_same_id_no_cascade():
 
     # Parent revise: the subtree is RETAINED (revise ≠ abandon). Changing only ACCEPTED_RISKS here leaves coverage
     # intact → the child survives, no cascade.
-    eng.assign_task(TaskId("p"), sp("p", ("g", "g")), A, parent_id=TaskId("leaf")); eng.wait_idle()
+    eng.decompose_task(TaskId("leaf"), [(TaskId("p"), sp("p", ("g", "g")), A)],
+                       [CriterionMapping("a", TaskId("p"))], register=REGISTER_SPLIT); eng.wait_idle()
     eng.decompose_task(TaskId("p"), [(TaskId("k"), sp("k", ("x", "x")), B)],
-                       [CriterionMapping("g", TaskId("k"))]); eng.wait_idle()
+                       [CriterionMapping("g", TaskId("k"))], register=REGISTER_SPLIT); eng.wait_idle()
     eng.revise(TaskId("p"), sp("p", ("g", "g"), neg=(AcceptedRiskItem("re"),)), A); eng.wait_idle()
-    assert eng.get_task(TaskId("p")).id == TaskId("p")                          # same id
-    assert [c.id for c in eng.get_active_children(TaskId("p"))] == [TaskId("k")]  # subtree RETAINED (no cascade)
-    assert [n.item for n in eng.get_task(TaskId("p")).spec.accepted_risks] == ["re"]  # field re-authored
+    assert eng.graph.get_task(TaskId("p")).id == TaskId("p")                          # same id
+    assert [c.id for c in eng.graph.get_active_children(TaskId("p"))] == [TaskId("k")]  # subtree RETAINED (no cascade)
+    assert [n.item for n in eng.graph.get_task(TaskId("p")).spec.accepted_risks] == ["re"]  # field re-authored
 
     # A criteria re-author that strands coverage does NOT destroy the child — the staleness SURFACES via CHECK-1
     # (the g->k mapping now dangles), which the agent must resolve (surface-don't-destroy).
     eng.revise(TaskId("p"), sp("p", ("g2", "renamed")), A); eng.wait_idle()
-    assert [c.id for c in eng.get_active_children(TaskId("p"))] == [TaskId("k")]        # still there
+    assert [c.id for c in eng.graph.get_active_children(TaskId("p"))] == [TaskId("k")]        # still there
     assert not {c.check_name: c for c in eng.get_checks(TaskId("p"))}["CHECK-1:coverage"].passed
 
     # Gate: the ISSUER may re-author a delegated OFFERED leaf; the EXECUTOR may not.
-    eng.assign_task(TaskId("q"), sp("q", ("g", "g")), A, parent_id=TaskId("leaf")); eng.wait_idle()
+    eng.assign_task(TaskId("q"), sp("q", ("g", "g")), A, parent_id=TaskId("leaf"), covers=("a",)); eng.wait_idle()
     eng.decompose_task(TaskId("q"), [(TaskId("d"), sp("d", ("z", "z")), B)],
-                       [CriterionMapping("g", TaskId("d"))]); eng.wait_idle()
+                       [CriterionMapping("g", TaskId("d"))], register=REGISTER_SPLIT); eng.wait_idle()
     eng.revise(TaskId("d"), sp("d", ("z2", "tight")), A); eng.wait_idle()   # issuer alice ✓
-    assert eng.get_task(TaskId("d")).spec.criteria[0].description == "tight"
+    assert eng.graph.get_task(TaskId("d")).spec.criteria[0].description == "tight"
     with pytest.raises(ValueError):
         eng.revise(TaskId("d"), sp("d", ("z3", "no")), B)                  # executor bob ✗
     eng.stop()
@@ -90,25 +92,33 @@ def test_revise_is_reassign_same_id_no_cascade():
 
 def test_rmw_preserves_name_clears_done_reason_and_map_criterion():
     """RMW re-author must carry `name` (BUG: dropped) and clear the ABANDONED tombstone flag; map_criterion
-    binds an existing child to repair coverage that a decompose/re-author left dangling (the covers blocker)."""
+    binds an existing child to repair coverage that a decompose/re-author left dangling (the covers blocker).
+    Canon v4.1 (§11.5, §12.10): a decompose cannot leave it — the unmapped split is refused whole — so the dangling
+    coverage map_criterion repairs is a re-author's, a criterion added after admission."""
     A = AgentId("alice")
     eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
-    eng.assign_task(TaskId("n"), Spec("desc", (Criteria("k", "keep"),), name="Human Label"), A); eng.wait_idle()
+    eng.assign_task(TaskId("n"), Spec("desc", (Criteria("k", "keep", check=pinned("k")),), name="Human Label"), A); eng.wait_idle()
     eng.edit_accepted_risks(TaskId("n"), (AcceptedRiskItem("x"),), A); eng.wait_idle()
-    t = eng.get_task(TaskId("n"))
+    t = eng.graph.get_task(TaskId("n"))
     assert t.spec.name == "Human Label"                             # name carried through RMW
     assert t.done_reason is None and t.state == State.OFFERED        # tombstone flag cleared on re-author
 
     # `n` is the project's one root; the coverage subject `p` hangs under it.
-    eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g"),),
-                    accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
-                                                     Predictability.EXTRAORDINARY),)), A,
-                    parent_id=TaskId("n")); eng.wait_idle()
-    eng.decompose_task(TaskId("p"), [(TaskId("c"), Spec("c", (Criteria("z", "z"),)), A)], None); eng.wait_idle()
+    eng.decompose_task(TaskId("n"), [(TaskId("p"), Spec("p", (Criteria("g", "g", check=pinned("g")),),
+                       accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
+                                                        Predictability.EXTRAORDINARY),)), A)],
+                       [CriterionMapping("k", TaskId("p"))], register=REGISTER_SPLIT); eng.wait_idle()
+    kid = [(TaskId("c"), Spec("c", (Criteria("z", "z", check=pinned("z")),)), A)]
+    with pytest.raises(AdmissionRefused, match="CHECK-1"):
+        eng.decompose_task(TaskId("p"), kid, None, register=REGISTER_SPLIT)      # g uncovered (child unmapped)
+    assert eng.graph.get_task(TaskId("c")) is None
+    eng.decompose_task(TaskId("p"), kid, [CriterionMapping("g", TaskId("c"))], register=REGISTER_SPLIT)
+    eng.edit_criteria(TaskId("p"), tuple(eng.graph.get_task(TaskId("p")).spec.criteria)
+                      + (Criteria("h", "h", check=pinned("h")),), A); eng.wait_idle()
     checks = lambda: {c.check_name: c for c in eng.get_checks(TaskId("p"))}
-    assert not checks()["CHECK-1:coverage"].passed                  # g uncovered (child unmapped)
-    eng.map_criterion(TaskId("p"), TaskId("c"), "g"); eng.wait_idle()
+    assert not checks()["CHECK-1:coverage"].passed                  # h uncovered (the re-author left it dangling)
+    eng.map_criterion(TaskId("p"), {"c": ("h",)}); eng.wait_idle()
     assert checks()["CHECK-1:coverage"].passed                      # bound → coverage repaired
     # the mapping went through the LOGGED FSM (child re-authored with covers), not a silent direct write
     assert any(a.signal == Signal.ASSIGN and not a.rejected for a in eng.audit_log(TaskId("c")))
@@ -122,18 +132,17 @@ def test_pass_requires_all_children_passed_theorem1():
     eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
     eng.assign_task(TaskId("p"), Spec("p", (Criteria("g", "g", check=pinned("g")),),
-                    accepted_risks=(AcceptedRiskItem("an unmodelled environment fault",
-                                                     Predictability.EXTRAORDINARY),)), A); eng.wait_idle()
+                    accepted_risks=REGISTER_ITEMS), A); eng.wait_idle()
     eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("p"), source=A)); eng.wait_idle()
     eng.decompose_task(TaskId("p"), [(TaskId("c"), Spec("c", (Criteria("z", "z", check=pinned("z")),)), A)],
-                       [CriterionMapping("g", TaskId("c"))]); eng.wait_idle()
+                       [CriterionMapping("g", TaskId("c"))], register=REGISTER_SPLIT); eng.wait_idle()
     eng.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("p"), source=A, result="x")); eng.wait_idle()
     e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
     assert e is None or e.rejected                                # child not PASSed → parent PASS refused
-    assert eng.get_state(TaskId("p")) == State.VALIDATING
+    assert eng.graph.get_state(TaskId("p")) == State.VALIDATING
 
     # PASS the child, then the parent PASS is allowed. The child shares the parent's Del (alice) —
-    # an INTERNAL node (D6, §14.5): it self-verifies, no independent verdict demanded. The parent is
+    # an INTERNAL node (D6, §10.3): it self-verifies, no independent verdict demanded. The parent is
     # the ROOT = the public seam "done" must cross — ITS self-PASS still requires the recorded
     # verdict (verifier ≠ executor gate fires ON the seam, not on every node).
     eng.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("c"), source=A)); eng.wait_idle()
@@ -141,12 +150,12 @@ def test_pass_requires_all_children_passed_theorem1():
                                     result="ran the child check, it printed OK",
                                     self_validation=Verdict.PASS)); eng.wait_idle()   # D6: the self-check IS its record
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("c"), source=A)); eng.wait_idle()
-    assert eng.get_state(TaskId("c")) == State.DONE               # internal self-validation (D6)
+    assert eng.graph.get_state(TaskId("c")) == State.DONE               # internal self-validation (D6)
     e = eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
     assert e is None or e.rejected                                # ROOT self-pass without a verdict → refused
     instrument_passes(eng, TaskId("p"))
     eng.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("p"), source=A)); eng.wait_idle()
-    assert eng.get_state(TaskId("p")) == State.DONE and eng.get_task(TaskId("p")).done_reason.name == "PASS"
+    assert eng.graph.get_state(TaskId("p")) == State.DONE and eng.graph.get_task(TaskId("p")).done_reason.name == "PASS"
     eng.stop()
 
 
@@ -156,18 +165,18 @@ def test_upper_convenience_edit_accepted_risks_and_edit_criteria():
     A = AgentId("alice")
     eng = make_engine(llm=StubLLM(), validate_signals=True)
     eng.start()
-    eng.assign_task(TaskId("n"), Spec("node", (Criteria("k", "keep"),), accepted_risks=(AcceptedRiskItem("old"),),
+    eng.assign_task(TaskId("n"), Spec("node", (Criteria("k", "keep", check=pinned("k")),), accepted_risks=(AcceptedRiskItem("old"),),
                                       scope=("payments — deliberately out",)), A)
     eng.wait_idle()
 
     eng.edit_accepted_risks(TaskId("n"), (AcceptedRiskItem("new1"), AcceptedRiskItem("new2")), A)
-    t = eng.get_task(TaskId("n"))
+    t = eng.graph.get_task(TaskId("n"))
     assert [x.item for x in t.spec.accepted_risks] == ["new1", "new2"]      # field changed
     assert [c.name for c in t.spec.criteria] == ["k"]                   # rest carried
-    assert t.spec.scope == ("payments — deliberately out",)             # the scope tag is carried (§13.1)
+    assert t.spec.scope == ("payments — deliberately out",)             # the scope tag is carried (§9.2)
 
-    eng.edit_criteria(TaskId("n"), (Criteria("k2", "tighter"),), A)
-    t = eng.get_task(TaskId("n"))
+    eng.edit_criteria(TaskId("n"), (Criteria("k2", "tighter", check=pinned("k2")),), A)
+    t = eng.graph.get_task(TaskId("n"))
     assert [c.name for c in t.spec.criteria] == ["k2"]
     assert [x.item for x in t.spec.accepted_risks] == ["new1", "new2"]       # rest carried
     assert t.spec.scope == ("payments — deliberately out",)             # scope-пометка carried
@@ -177,7 +186,7 @@ def test_upper_convenience_edit_accepted_risks_and_edit_criteria():
 
     # reassign (Del change) on a not-yet-committed node → issuer re-ASSIGNs to a new executor (logged)
     eng.reassign(TaskId("n"), AgentId("bob"))
-    t = eng.get_task(TaskId("n"))
+    t = eng.graph.get_task(TaskId("n"))
     assert t.assignee == AgentId("bob") and t.was_reassigned is True
     assert t.state == State.OFFERED  # no cascade, still authorable
     eng.stop()
@@ -190,14 +199,14 @@ def test_full_happy_path():
 
     task = engine.assign_task(
         TaskId("t1"),
-        Spec("build feature", (Criteria("works", "works"),), ("risks",)),
+        Spec("build feature", (Criteria("works", "works", check=pinned("works")),), ("risks",)),
         AgentId("dev"),
     )
 
     engine.wait_idle()
-    assert engine.get_state(TaskId("t1")) == State.DONE
+    assert engine.graph.get_state(TaskId("t1")) == State.DONE
 
-    task = engine.get_task(TaskId("t1"))
+    task = engine.graph.get_task(TaskId("t1"))
     assert task.done_reason is not None
 
     # Audit trail exists
@@ -230,15 +239,15 @@ def test_challenge_flow():
 
     engine = _engine(ChallengeAgent())
     engine.start()
-    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1"),), ("r",)), AgentId("dev"))
+    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1", check=pinned("c1")),), ("r",)), AgentId("dev"))
 
     engine.wait_idle()
-    assert engine.get_state(TaskId("t1")) == State.EXECUTING
+    assert engine.graph.get_state(TaskId("t1")) == State.EXECUTING
     engine.stop()
 
 
 def test_cancel_cascade_two_step_handshake():
-    """v3.7 §14.2/§14.3: CANCEL opens the handshake (→ CANCELLING) and cascades CANCEL to the subtree;
+    """v3.7 §11.2/§12.6: CANCEL opens the handshake (→ CANCELLING) and cascades CANCEL to the subtree;
     each node settles to ABANDONED on its executor's CONFIRM_CANCEL (in_flight logged, Thm 11)."""
 
     class NoopAgent(AgentPort):
@@ -258,8 +267,8 @@ def test_cancel_cascade_two_step_handshake():
     engine.wait_idle()
 
     # Handshake open on parent AND (via cascade CANCEL) on the child
-    assert engine.get_state(TaskId("p")) == State.CANCELLING
-    assert engine.get_state(TaskId("c1")) == State.CANCELLING
+    assert engine.graph.get_state(TaskId("p")) == State.CANCELLING
+    assert engine.graph.get_state(TaskId("c1")) == State.CANCELLING
 
     # Executor settles both with CONFIRM_CANCEL → ABANDONED (terminal, V=⊥, no done_reason)
     for tid in ("p", "c1"):
@@ -267,7 +276,7 @@ def test_cancel_cascade_two_step_handshake():
                                       source=AgentId("a"), in_flight="stopped mid-work"))
     engine.wait_idle()
     for tid in ("p", "c1"):
-        t = engine.get_task(TaskId(tid))
+        t = engine.graph.get_task(TaskId(tid))
         assert t.state == State.ABANDONED and t.done_reason is None
     acked = [e for e in engine.audit_log(TaskId("p")) if e.signal == Signal.CONFIRM_CANCEL and not e.rejected]
     assert acked and acked[0].in_flight == "stopped mid-work"   # in-flight report logged (Thm 11)
@@ -275,7 +284,7 @@ def test_cancel_cascade_two_step_handshake():
 
 
 def test_block_records_provisional_discovered_dep_and_resolve_adjudicates():
-    """v3.7 §14.2/§15.2 two-phase discovered-Dep: BLOCK naming a prerequisite NODE records a provisional
+    """v3.7 §11.3/§15.5 two-phase discovered-Dep: BLOCK naming a prerequisite NODE records a provisional
     discovered edge (provenance = the BLOCK); RESOLVE_BLOCK adjudicates — confirm (default), re-attribute
     (corrected blocker_task_id), or retract (external=True, non-producible → FM-5 line). Feeds q_Dep."""
 
@@ -329,7 +338,7 @@ def test_block_records_provisional_discovered_dep_and_resolve_adjudicates():
 
 
 def test_multi_blocker_records_edge_per_prerequisite_and_adjudicates_the_set():
-    """One BLOCK may surface SEVERAL undeclared prerequisites (§14.2: an edge per surfaced
+    """One BLOCK may surface SEVERAL undeclared prerequisites (§11.3: an edge per surfaced
     prerequisite — observed live: three blockers collapsed into prose recorded 0 edges, starving
     q_Dep and blinding auto-resolve). blocker_task_ids records a provisional edge PER existing node
     (a non-node → the FM-5 line, skipped); RESOLVE_BLOCK adjudicates the SET: payload-free confirms
@@ -399,10 +408,10 @@ def test_discovered_edge_contradicting_declared_seam_surfaces_named_cycle_hole()
 
     engine = _engine(NoopAgent())
     A = AgentId("a")
-    engine.graph.save_task(Task(id=TaskId("par"), spec=Spec("par", ()), assignee=A,
+    engine.graph.save_task(Task(id=TaskId("par"), spec=Spec("par", (Criteria("c", "C", check=pinned("c")),)), assignee=A,
                                 state=State.EXECUTING))
     for tid in ("x", "y"):
-        engine.graph.save_task(Task(id=TaskId(tid), spec=Spec(tid, ()), assignee=A,
+        engine.graph.save_task(Task(id=TaskId(tid), spec=Spec(tid, (Criteria("c", "C", check=pinned("c")),)), assignee=A,
                                     state=State.EXECUTING, parent_id=TaskId("par")))
     engine.start()
     engine.add_dependency(TaskId("x"), TaskId("y"))       # declared: y depends on x
@@ -410,8 +419,11 @@ def test_discovered_edge_contradicting_declared_seam_surfaces_named_cycle_hole()
                                   reason="actually I consume y's output",
                                   blocker_task_ids=(TaskId("y"),)))
     engine.wait_idle()
-    dag = [h for h in engine.graph_holes() if h["check"] == "CHECK-2:dag"]
-    assert dag and "x" in dag[0]["details"] and "y" in dag[0]["details"]
+    # a provisional record, not an edge of E_Dep: no CHECK-2 hole over it — the parent is told its
+    # ORDER is refuted by contact (§15.5)
+    assert not [h for h in engine.graph_holes() if h["check"] == "CHECK-2:dag"]
+    order = engine.order_refuted_by(TaskId("x"))
+    assert order and "`x` needs `y`" in order
     # and the refine/repair instruments receive the DIRECTION, not just the cycle: the declared
     # seam is named as refuted by the discovered (contact) edge
     contr = _dep_contradictions(engine)
@@ -444,20 +456,20 @@ def test_rework_flow():
 
     engine = _engine(ReworkAgent())
     engine.start()
-    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1"),), ("r",)), AgentId("dev"))
+    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1", check=pinned("c1")),), ("r",)), AgentId("dev"))
 
     engine.wait_idle()
-    assert engine.get_state(TaskId("t1")) == State.DONE
-    assert engine.get_task(TaskId("t1")).iteration == 1
+    assert engine.graph.get_state(TaskId("t1")) == State.DONE
+    assert engine.graph.get_task(TaskId("t1")).iteration == 1
     engine.stop()
 
 
 def test_exhausted_rework_escalates_and_stays_a_verdict():
-    """FAIL past max_iterations settles in ESCALATED, not DONE (§14.3, corner #3).
+    """FAIL past max_iterations settles in ESCALATED, not DONE (§12.15, corner #3).
 
     Driven through the live engine, not the transition table: what matters downstream is that the
     node ends in an attention terminal carrying its verdict — so a Dep consumer cannot read-and-build
-    on it as a DONE result (§14.3 R′), and the standing-FAIL metric populations still see it.
+    on it as a DONE result (§12.14 R′), and the standing-FAIL metric populations still see it.
     """
     class AlwaysFailAgent(AgentPort):
         def dispatch(self, agent_id, payload):
@@ -474,9 +486,9 @@ def test_exhausted_rework_escalates_and_stays_a_verdict():
 
     engine = _engine(AlwaysFailAgent())
     engine.start()
-    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1"),), ("r",)), AgentId("dev"))
+    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1", check=pinned("c1")),), ("r",)), AgentId("dev"))
     engine.wait_idle()
-    t = engine.get_task(TaskId("t1"))
+    t = engine.graph.get_task(TaskId("t1"))
     assert t.state == State.ESCALATED
     assert t.done_reason == DoneReason.FAIL           # the verdict, not a timeout escalation
     assert t.iteration == t.max_iterations
@@ -489,7 +501,7 @@ def test_metrics_after_flow():
     engine = _engine()
     engine.start()
 
-    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1"),), ("r",)), AgentId("dev"))
+    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1", check=pinned("c1")),), ("r",)), AgentId("dev"))
     engine.wait_idle()
 
     m = engine.metrics()
@@ -510,7 +522,7 @@ def test_events_fire():
     engine.on_transition(lambda tid, old, new, sig: transitions.append((tid, new.name)))
     engine.start()
 
-    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1"),), ("r",)), AgentId("dev"))
+    engine.assign_task(TaskId("t1"), Spec("task", (Criteria("c1", "c1", check=pinned("c1")),), ("r",)), AgentId("dev"))
     engine.wait_idle()
 
     assert len(transitions) > 0
@@ -522,11 +534,14 @@ def test_events_fire():
 
 def test_decompose_task():
     """decompose_task creates children with parent-child edges + criterion mappings."""
-    engine = _engine()
+    # …NOT the auto-answering agent: it drives the parent ACCEPT→DELIVER→PASS the moment the
+    # contract is admitted, and §12.7 refuses a child issued under a parent that has settled. The
+    # subject here is the decomposition, so the parent has to still be live when it is decomposed.
+    engine = make_engine(llm=StubLLM())
     engine.start()
 
     parent = engine.assign_task(
-        TaskId("p"), Spec("parent", (Criteria("perf", "fast"), Criteria("security", "safe")), ("risks",)),
+        TaskId("p"), Spec("parent", (Criteria("perf", "fast", check=pinned("perf")), Criteria("security", "safe", check=pinned("security"))), ("risks",)),
         AgentId("pm"),
     )
     engine.wait_idle()
@@ -534,25 +549,25 @@ def test_decompose_task():
     children = engine.decompose_task(
         TaskId("p"),
         [
-            (TaskId("c1"), Spec("perf work", (Criteria("latency", "< 100ms"),)), AgentId("dev1")),
-            (TaskId("c2"), Spec("security audit", (Criteria("no_vulns", "0 CVEs"),)), AgentId("dev2")),
+            (TaskId("c1"), Spec("perf work", (Criteria("latency", "< 100ms", check=pinned("latency")),)), AgentId("dev1")),
+            (TaskId("c2"), Spec("security audit", (Criteria("no_vulns", "0 CVEs", check=pinned("no_vulns")),)), AgentId("dev2")),
         ],
         criterion_mappings=[
             CriterionMapping("perf", TaskId("c1")),
             CriterionMapping("security", TaskId("c2")),
-        ],
+        ],register=REGISTER_SPLIT
     )
 
     assert len(children) == 2
-    assert engine.get_children(TaskId("p")) != []
+    assert engine.graph.get_children(TaskId("p")) != []
 
-    parent = engine.get_task(TaskId("p"))
+    parent = engine.graph.get_task(TaskId("p"))
     assert len(parent.criterion_mappings) == 2
 
     engine.wait_idle()
     # Children should have been ASSIGN'd and processed
-    assert engine.get_state(TaskId("c1")) is not None
-    assert engine.get_state(TaskId("c2")) is not None
+    assert engine.graph.get_state(TaskId("c1")) is not None
+    assert engine.graph.get_state(TaskId("c2")) is not None
     engine.stop()
 
 
@@ -566,9 +581,9 @@ def test_add_dependency():
 
     # The two ends of the seam are SIBLINGS under the project's one root — a Dep joins peers, and a
     # second parentless node is no longer a shape the graph has.
-    engine.assign_task(TaskId("goal"), Spec("goal", (), ("r",)), AgentId("d"))
-    engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("d"), parent_id=TaskId("goal"))
-    engine.assign_task(TaskId("t2"), Spec("b", (), ("r",)), AgentId("d"), parent_id=TaskId("goal"))
+    engine.assign_task(TaskId("goal"), Spec("goal", (Criteria("c", "C", check=pinned("c")),), ("r",)), AgentId("d"))
+    engine.assign_task(TaskId("t1"), Spec("a", (Criteria("c", "C", check=pinned("c")),), ("r",)), AgentId("d"), parent_id=TaskId("goal"))
+    engine.assign_task(TaskId("t2"), Spec("b", (Criteria("c", "C", check=pinned("c")),), ("r",)), AgentId("d"), parent_id=TaskId("goal"))
     engine.wait_idle()
 
     engine.add_dependency(TaskId("t1"), TaskId("t2"), discovered=False)  # t2 depends on t1 (declared → t2's criterion)
@@ -581,7 +596,7 @@ def test_add_dependency():
     assert len(declared) == 1 and declared[0].from_id == TaskId("t1") and declared[0].to_id == TaskId("t2")
     assert len(discovered) == 1
     # the declared edge is derived from t2's criteria, not stored
-    assert any(c.depends_on == TaskId("t1") for c in engine.get_task(TaskId("t2")).spec.criteria)
+    assert any(c.depends_on == TaskId("t1") for c in engine.graph.get_task(TaskId("t2")).spec.criteria)
 
     assert engine.metrics()["q_Dep"] == 0.5  # 1 declared / 2 total
     engine.stop()
@@ -597,7 +612,7 @@ def test_tasks_by_state():
     engine = _engine(NoopAgent())
     engine.start()
 
-    engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("d"))
+    engine.assign_task(TaskId("t1"), Spec("a", (Criteria("c", "C", check=pinned("c")),), ("r",)), AgentId("d"))
     engine.wait_idle()
 
     review_tasks = engine.tasks_by_state(State.OFFERED)
@@ -618,8 +633,8 @@ def test_tasks_by_assignee():
     engine = _engine(NoopAgent())
     engine.start()
 
-    engine.assign_task(TaskId("t1"), Spec("a", (), ("r",)), AgentId("alice"))  # the project's one root
-    engine.assign_task(TaskId("t2"), Spec("b", (), ("r",)), AgentId("bob"), parent_id=TaskId("t1"))
+    engine.assign_task(TaskId("t1"), Spec("a", (Criteria("c", "C", check=pinned("c")),), ("r",)), AgentId("alice"))  # the project's one root
+    engine.assign_task(TaskId("t2"), Spec("b", (Criteria("c", "C", check=pinned("c")),), ("r",)), AgentId("bob"), parent_id=TaskId("t1"))
     engine.wait_idle()
 
     alice_tasks = engine.tasks_by_assignee(AgentId("alice"))
@@ -662,7 +677,7 @@ def test_validation_rejects_fail_without_criteria():
     engine = _engine(NoopAgent(), validate=True)
     engine.start()
 
-    task = Task(id=TaskId("t1"), spec=Spec("t", (Criteria("c1", "c1"),)),
+    task = Task(id=TaskId("t1"), spec=Spec("t", (Criteria("c1", "c1", check=pinned("c1")),)),
                 state=State.VALIDATING, assignee=AgentId("d"))
     engine.graph.save_task(task)
 
@@ -714,15 +729,15 @@ def test_validation_allows_system_signals_without_source():
     )
     assert entry is not None
     assert not entry.rejected
-    assert entry.new_state == State.OVERDUE
+    assert entry.new_state == State.ESCALATED   # the lapse hands over at once (E1)
     engine.stop()
 
 
 def test_agent_cannot_sign_the_clock():
-    """§14.2: the timeout "is not a P2P signal (no agent sends it) but a system mechanism enforcing
+    """§12.2: the timeout "is not a P2P signal (no agent sends it) but a system mechanism enforcing
     finiteness". Both doors refuse it, and the defect is planted the way it actually happened — a node
     the executor itself walked to VALIDATING, where (VALIDATING, TIMEOUT) routes to DONE(auto_pass):
-    a terminal reached around the AND gate (Thm 1), around verifier ≠ executor (§14.5) and around
+    a terminal reached around the AND gate (Thm 1), around verifier ≠ executor (§10.3) and around
     Inv-3, none of which a system signal ever meets (validation returns early for Role.SYSTEM)."""
     engine = make_engine(llm=StubLLM(), validate_signals=True)
     engine.start()
@@ -731,7 +746,7 @@ def test_agent_cannot_sign_the_clock():
     engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); engine.wait_idle()
     engine.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("root"), source=A, result="x"))
     engine.wait_idle()
-    assert engine.get_state(TaskId("root")) == State.VALIDATING
+    assert engine.graph.get_state(TaskId("root")) == State.VALIDATING
 
     # (1) the tool door: the alphabet is the twelve P2P signals, by name
     with pytest.raises(ValueError, match="not a P2P signal"):
@@ -744,7 +759,7 @@ def test_agent_cannot_sign_the_clock():
     assert entry is not None and entry.rejected
 
     # the node did NOT settle either way
-    t = engine.get_task(TaskId("root"))
+    t = engine.graph.get_task(TaskId("root"))
     assert t.state == State.VALIDATING and t.done_reason is None
     engine.stop()
 

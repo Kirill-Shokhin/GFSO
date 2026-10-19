@@ -10,32 +10,39 @@ Nothing to sum is not a sum of zero. An uncovered criterion is CHECK-1's finding
 it correctly; CHECK-7 restating it in the vocabulary of arithmetic is a second owner giving the wrong
 name to a real thing. The same ⊥ ≠ 0 rule this codebase applies to every metric it publishes, applied
 to a check that publishes one.
+
+Canon v4.1 (§11.5, §12.10): a split is admitted whole, so the uncovered bounded criterion is one a revision adds
+after admission — a flagged hole, not a refused admission.
 """
 from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_BOUNDED = {"name": "group_size",
-            "description": "output contains only content-equivalence classes of size >= 2"}
+_BOUNDED = criterion("group_size",
+                     "output contains only content-equivalence classes of size >= 2")
 
 
 def _checks(e, tid="root"):
     return {c["check"]: c for c in T.get_checks(e, tid)}
 
 
+def _uncovered_bounded(e):
+    """A clean split, then the bounded criterion added to its parent: no child covers it yet."""
+    base = criterion("base", "the base holds")
+    T.create_task(e, "root", {"description": "goal", "criteria": [base]}, assignee="agent")
+    T.decompose(e, "root", [{"task_id": "root.kid", "spec": {"description": "a child that covers nothing yet",
+                                                             "criteria": [criterion("k", "K holds")]},
+                             "assignee": "agent", "covers": ["base"]}], accepted_risks=REGISTER)
+    T.edit_criteria(e, "root", [base, _BOUNDED], "agent")
+    e.wait_idle()
+
+
 def test_an_uncovered_bounded_criterion_is_not_reported_as_a_sum_breach():
     e = make_engine()
     e.start()
-    T.create_task(e, "root", {"description": "goal", "criteria": [_BOUNDED],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
-                  assignee="agent")
-    T.create_task(e, "root.kid", {"description": "a child that covers nothing yet",
-                                  "criteria": [{"name": "k", "description": "K holds"}]},
-                  assignee="agent", parent_id="root")
-    e.wait_idle()
+    _uncovered_bounded(e)
 
     seven = _checks(e).get("CHECK-7:sufficiency")
 
@@ -48,14 +55,7 @@ def test_and_the_hole_is_still_named_by_the_check_that_owns_it():
     """The negative control that matters: the uncovered criterion must not become invisible."""
     e = make_engine()
     e.start()
-    T.create_task(e, "root", {"description": "goal", "criteria": [_BOUNDED],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
-                  assignee="agent")
-    T.create_task(e, "root.kid", {"description": "a child that covers nothing yet",
-                                  "criteria": [{"name": "k", "description": "K holds"}]},
-                  assignee="agent", parent_id="root")
-    e.wait_idle()
+    _uncovered_bounded(e)
 
     holes = {h["check"]: h for h in T.list_holes(e)["holes"]}
 
@@ -72,16 +72,13 @@ def test_a_covered_bounded_criterion_is_still_summed():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "goal",
-                              "criteria": [{"name": "throughput",
-                                            "description": "handles >= 100 requests per second"}],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "criteria": [criterion("throughput",
+                                                     "handles >= 100 requests per second")],
+                              "accepted_risks": REGISTER},
                   assignee="agent")
-    T.create_task(e, "root.kid", {"description": "the only child",
-                                  "criteria": [{"name": "k",
-                                                "description": "handles >= 10 requests per second"}]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", "root.kid", "throughput")
+    T.decompose(e, "root", [{"task_id": "root.kid", "spec": {"description": "the only child",
+                                  "criteria": [criterion("k",
+                                                         "handles >= 10 requests per second")]}, "assignee": "agent", "covers": ["throughput"]}], accepted_risks=REGISTER)
     e.wait_idle()
 
     seven = _checks(e).get("CHECK-7:sufficiency")

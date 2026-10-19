@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 import anyio
 
 from gfso import __version__, serverctl   # the FACTS module: what is running, what is declared
-from gfso.doctor import port_state
+from gfso.serverctl import port_state
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage

@@ -9,7 +9,7 @@ itself had made:
     failed_criteria ['parses'] != the report's own non-pass criteria ['matches', 'parses']
 
 Observing only the failing criterion fails too, from the other side: the unspoken one has no verdict,
-and an unevaluated conjunct is ⊥, never pass (§10/§11.2). So the honest partial FAIL had no route at
+and an unevaluated conjunct is ⊥, never pass (§2). So the honest partial FAIL had no route at
 all -- on the door a person actually uses (found 2026-09-05 while probing Inv-3).
 
 `failed_criteria` IS the red set (Inv-3). Everything else the reviewer observed passed.
@@ -19,9 +19,9 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 # A reviewer says WHICH of the procedure the contract pins they executed (`ran`), beside their own
 # words — the hand door is not the one place a pinned probe may be skipped in silence.
 _OBSERVED = {"parses": {"note": "ran the parser suite: 3 red", "ran": ["check parses"]},
@@ -41,7 +41,7 @@ def _recorded(verdict, failed, observed=None):
                            "accepted_risks": _RISK}, assignee="worker")
     T.signal(e, "n", "ACCEPT", "worker")
     T.signal(e, "n", "DELIVER", "worker", result="did it")
-    e.record_reviewer_verdict("n", verdict, list(failed), reviewer="judge",
+    e.record_reviewer_verdict("n", verdict, list(failed), reviewer="validator",
                               observed=dict(observed if observed is not None else _OBSERVED))
     out = {c["criterion"]: c["verdict"] for c in e.get_exec_verdict("n")["per_criterion"]}
     e.stop()
@@ -70,7 +70,7 @@ def test_the_evidence_the_reviewer_gave_is_what_is_stored():
                            "accepted_risks": _RISK}, assignee="worker")
     T.signal(e, "n", "ACCEPT", "worker")
     T.signal(e, "n", "DELIVER", "worker", result="did it")
-    e.record_reviewer_verdict("n", "FAIL", ["parses"], reviewer="judge", observed=dict(_OBSERVED))
+    e.record_reviewer_verdict("n", "FAIL", ["parses"], reviewer="validator", observed=dict(_OBSERVED))
     ev = {c["criterion"]: c["evidence"] for c in e.get_exec_verdict("n")["per_criterion"]}
     assert ev["parses"].startswith("ran the parser suite")
     assert ev["matches"].startswith("ran the matcher suite")

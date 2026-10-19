@@ -11,7 +11,8 @@ from gfso.core.types import (
 
 
 def test_state_count():
-    assert len(State) == 12  # canon v3.7 §14.3: +CANCELLING (non-terminal), +ABANDONED (terminal, V=⊥)
+    # canon v3.7 §12.6: +CANCELLING (non-terminal), +ABANDONED (terminal, V=⊥); E1: −OVERDUE
+    assert len(State) == 11
 
 
 def test_signal_count():
@@ -19,7 +20,9 @@ def test_signal_count():
 
 
 def test_fm_count():
-    assert len(FM) == 7
+    """Six failure modes, a complete basis modulo CA1 (§8.8); a seventh, FEEDBACK, survived from an older canon with no
+    reader (sync audit, C-F6)."""
+    assert len(FM) == 6
 
 
 def test_terminal_states():
@@ -29,15 +32,15 @@ def test_terminal_states():
     executor's contract ended and the issuer's decision begins). ESCALATED is the second, and it is
     the issuer's waiting state — symmetric to OFFERED, where the executor owes the answer (Inv-4)."""
     assert State.DONE in TERMINAL_STATES
-    assert State.ABANDONED in TERMINAL_STATES  # v3.7 §14.3: terminal, V=⊥
+    assert State.ABANDONED in TERMINAL_STATES  # v3.7 §12.6: terminal, V=⊥
     assert State.ESCALATED not in TERMINAL_STATES
     assert len(TERMINAL_STATES) == 2
 
 
 def test_non_terminal_states():
-    assert len(NON_TERMINAL_STATES) == 10
+    assert len(NON_TERMINAL_STATES) == 9
     assert State.ESCALATED in NON_TERMINAL_STATES  # the issuer's waiting state, not a settlement
-    assert State.CANCELLING in NON_TERMINAL_STATES  # v3.7 §14.3: handshake in flight
+    assert State.CANCELLING in NON_TERMINAL_STATES  # v3.7 §12.6: handshake in flight
     assert State.DONE not in NON_TERMINAL_STATES
 
 

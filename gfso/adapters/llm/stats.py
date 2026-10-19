@@ -10,8 +10,12 @@ fake or a third-party provider must stay usable without growing them.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 
-def _tag(llm, stage: str) -> None:
+from gfso.core.types.ports import LLMProviderPort
+
+
+def tag_stage(llm, stage: str) -> None:
     """Label the llm's last call with its stage (duck-typed: only stat-collecting adapters have tag_last)."""
     if hasattr(llm, "tag_last"):
         llm.tag_last(stage)
@@ -33,13 +37,13 @@ def the_call_was_cut(llm, said: str) -> bool:
     for a provider that cannot say — two answers to one question is how the two drift apart.
     """
     calls = calls_of(llm)
-    # ANY torn call of this run, not the LAST one. A rich contract is judged in concurrent batches
+    # ANY torn call of this run, not the LAST one. A rich contract is validated in concurrent batches
     # that all push onto one `calls` list, in completion order — so asking the last entry made the
     # answer depend on which batch happened to finish first: the same severed call was recognised
     # as torn, or not, by a race. Unrecognised it is read as "answered badly", which spends the
     # node's ONE retry and then parks it. A run stops on a coin toss, and the doctrine this function
     # exists for — a cut call is not an answer, so it does not spend the answer's budget — held only
-    # by luck. If any batch of this judgement was severed, the judgement was severed.
+    # by luck. If any batch of this validation was severed, the validation was severed.
     _typed = [c for c in calls if isinstance(c, dict) and "transport_torn" in c]
     if _typed:
         return any(bool(c["transport_torn"]) for c in _typed)
@@ -70,3 +74,22 @@ def _hint(llm, stage: str) -> None:
     """Tell the adapter which stage is about to run, so its live token ticks carry the stage name."""
     if hasattr(llm, "stage_hint"):
         llm.stage_hint = stage
+
+
+def readings(llm, n: int, read, stage: str) -> list:
+    """`read()` run n times — the independent readings of one question — and every call they made labelled `stage`.
+
+    At once on a provider that says it may be called so (`parallel_safe`: each call its own process), one after
+    another on any other: readings are independent by construction, and serially the authoring paid three of them
+    back to back at each obligation check (~100 s, twice per plan) and the first plan review three more (AUTO haiku
+    coreutils, 2026-10-12). Labelled after the fact, since "the last call" means nothing while several run."""
+    n0 = len(calls_of(llm))
+    if n > 1 and isinstance(llm, LLMProviderPort) and llm.parallel_safe:
+        with ThreadPoolExecutor(n) as pool:
+            out = list(pool.map(lambda _: read(), range(n)))
+    else:
+        out = [read() for _ in range(n)]
+    for c in calls_of(llm)[n0:]:
+        if isinstance(c, dict):
+            c["stage"] = stage
+    return out

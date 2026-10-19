@@ -1,4 +1,4 @@
-"""The embedding-acceptance suite (docs/embeddability_acceptance.md) — the pre-registered JUDGE.
+"""The embedding-acceptance suite (docs/embeddability_acceptance.md) — the pre-registered VALIDATOR.
 
 The suite drives an EMBEDDER-PROVIDED host through the contract below. Without a host it skips
 with the named reason (capability-honest; CI stays green); against an embedder's attempt it is
@@ -11,6 +11,11 @@ an object with:
 - `send(signal_data) -> None` — feed one SignalData into the host's OWN runtime (its own queue
   pump over `gfso.engine.loop.process_signal`; no Engine.start, no engine threads) and process
   it TO QUIESCENCE (including follow-up signals it produces) before returning.
+- `admit(parent_id: str, assigns: list[SignalData], register: Register, by: str) -> None` — a split's
+  admission (§11.5), the decomposer's act outside the twelve signals: `gfso.engine.admission.admit`, the one act
+  the engine performs too, its ASSIGNs and CANCELs through `send` — every refusal (the Syntactic battery over the
+  split as it will stand among them) read before anything is written; the register is the split's, its
+  decomposer's (§9.2), never the parent's packet. A child ASSIGN sent outside an admission is refused.
 - `state(task_id: str) -> str | None` — the node's current state name.
 - `graph_holes() -> list[dict]` — the unmet structural checks ({task_id, check, details}).
 - `record_verdict(task_id: str, verdict: str, failed: list, reviewer: str) -> None` — record an

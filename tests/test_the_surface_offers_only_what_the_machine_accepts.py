@@ -7,7 +7,7 @@ on a consumed terminal, PASS on a delivered seam with no verdict (2026-08-22, a 
 list as an invitation and closed a node over a stale FAIL). Each was patched where it was found.
 
 Two more were found on 2026-09-07, and they are the reason this file is a sweep rather than a sixth
-patch (a third, the node's own plan gone red, was found by a reviewer of the sweep itself): PASS advertised on a parent whose children have not passed, which Thm 1 (§11.1) forbids
+patch (a third, the node's own plan gone red, was found by a reviewer of the sweep itself): PASS advertised on a parent whose children have not passed, which Thm 1 (§7.3) forbids
 outright, and PASS advertised to anyone on the validator roster with no verdict on the record —
 where the surface had grown an exemption for *who signs* directly beneath its own comment saying the
 question is not who signs. The first surfaced only as a side effect: the class instrument for
@@ -30,7 +30,7 @@ removed, four shapes go red: the two 2026-09-07 findings (the conjunction, and t
 at the seam), the node's own plan gone red, and the plan gate on a child. Two shapes in the table do
 NOT go red under that control, and they are kept with their reason rather than dropped or claimed:
 
-  · `"parent still executing, children open"` — DELIVER there is genuinely admissible (§14.3), and
+  · `"parent still executing, children open"` — DELIVER there is genuinely admissible (§12.4), and
     `_gated_out` withholds it as a RECOMMENDATION, not because the machine would refuse. It can
     never be a `rule` refusal, so this test cannot be its instrument; it is here as the control that
     the sweep does not fail a shape whose surface is merely opinionated.
@@ -47,9 +47,9 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 #: The arguments each signal needs to be *about* something — Inv-3 wants the failed set, CANCEL and
 #: the rest want their reason. Missing arguments are a caller's error, not a disagreement between
@@ -71,8 +71,8 @@ _ARGS = {
 #: different DOOR, and `available_actions` now says which. The sweep sends it through that door, so
 #: what it tests stays "is the offer real" rather than "did the sweep call the right function".
 _DOORS = {"ASSIGN": lambda e, tid, who: T.revise(
-    e, tid, {"description": "the goal, sharpened", "accepted_risks": _RISK,
-             "criteria": [{"name": "g", "description": "G holds, measurably"}]},
+    e, tid, {"description": "the goal, sharpened",
+             "criteria": [criterion("g", "G holds, measurably")]},
     who, reason="scope_expansion")}
 
 
@@ -91,7 +91,7 @@ def _send(e, task_id, act, who):
     # root, and turned the first shape about a CHILD red for a reason that had nothing to do with
     # the subject — a fixture failing in the instrument's own voice.
     if act == "FAIL":
-        _t = e.get_task(task_id)
+        _t = e.graph.get_task(task_id)
         return T.signal(e, task_id, "FAIL", who,
                         failed_criteria=[_t.spec.criteria[0].name])
     # A RAISE IS A REFUSAL TOO. `tools.py`'s standing rule is that the verbs answer rather than
@@ -110,18 +110,17 @@ def _send(e, task_id, act, who):
 
 
 def _root_only(e, *, assignee="agent"):
-    T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [{"name": "g", "description": "G holds"}]},
+    T.create_task(e, "root", {"description": "a goal",
+                              "criteria": [criterion("g", "G holds")]},
                   assignee=assignee)
 
 
 def _with_children(e, *, kid_assignee="agent"):
     _root_only(e)
-    for kid in ("a", "b"):
-        T.create_task(e, kid, {"description": f"work {kid}",
-                               "criteria": [{"name": kid, "description": f"{kid} holds"}]},
-                      assignee=kid_assignee, parent_id="root")
-        T.map_criterion(e, "root", kid, "g")
+    T.decompose(e, "root", [{"task_id": kid, "spec": {"description": f"work {kid}",
+                                                      "criteria": [criterion(kid, f"{kid} holds")]},
+                             "assignee": kid_assignee, "covers": ["g"]} for kid in ("a", "b")],
+                accepted_risks=_RISK)
 
 
 def _settle_children(e):
@@ -130,13 +129,14 @@ def _settle_children(e):
         T.signal(e, kid, "ACCEPT", "agent")
         T.signal(e, kid, "DELIVER", "agent", result=f"{kid} is done")
         T.record_verdict(e, kid, "PASS", reviewer="rev",
-                         observed={kid: f"ran the check for {kid}; it holds"})
+                         observed={kid: {"note": f"ran the check for {kid}; it holds",
+                                         "ran": [p.command for p in e.graph.get_task(kid).spec.criteria[0].check]}})
         T.signal(e, kid, "PASS", "agent")
 
 
 def _deliver_root(e):
-    T.signal(e, "root", "ACCEPT", e.get_task("root").assignee)
-    T.signal(e, "root", "DELIVER", e.get_task("root").assignee, result="the aggregate")
+    T.signal(e, "root", "ACCEPT", e.graph.get_task("root").assignee)
+    T.signal(e, "root", "DELIVER", e.graph.get_task("root").assignee, result="the aggregate")
 
 
 # Each shape: a builder, the node to ask about, who is asking, and whether the Level-2 execution gate
@@ -145,7 +145,7 @@ def _deliver_root(e):
 # live in, plus their healthy controls.
 #
 # THE GATE FLAG IS NOT DECORATION. `tests/conftest.py` turns `GFSO_L2_GATE` OFF suite-wide (the canon's
-# EXPLORE branch, §13.5 — the suite is substrate-free and runs no model). The plan-gate shape below was
+# EXPLORE branch, §9.9 — the suite is substrate-free and runs no model). The plan-gate shape below was
 # written without noticing that, so in the suite's own environment the gate it names did not exist:
 # `execution_blocked_by` returned None, ACCEPT was never withheld, and the shape stayed green with
 # every surface gate removed. A shape blind to its own subject is the defect it guards against, wearing
@@ -163,11 +163,11 @@ SHAPES = {
         "root", "val-1", False),
     # …the SECOND who-independent PASS rule, which `_gated_out` did not model until the engine got
     # one owner for both: every child has settled, so the conjunction is satisfied, but the parent's
-    # own plan has since gone red (a criterion nothing covers) and §13.4 refuses the aggregate.
+    # own plan has since gone red (a criterion nothing covers) and §9.5 refuses the aggregate.
     "settled children under a plan that has gone red": (
         lambda e: (_with_children(e), _settle_children(e),
-                   T.edit_criteria(e, "root", [{"name": "g", "description": "G holds"},
-                                               {"name": "g2", "description": "and G2 holds"}]),
+                   T.edit_criteria(e, "root", [criterion("g", "G holds"),
+                                               criterion("g2", "and G2 holds")]),
                    _deliver_root(e),
                    T.record_verdict(e, "root", "PASS", reviewer="rev",
                                     observed={"g": "read the children's output; it holds",
@@ -202,8 +202,8 @@ SHAPES = {
     # the instrument and its subject had never met.
     "a node with no executor at all": (
         lambda e: e.assign_task(T.TaskId("root"), T._spec_from(
-            {"description": "a goal nobody holds", "accepted_risks": _RISK,
-             "criteria": [{"name": "g", "description": "G holds"}]}), None),
+            {"description": "a goal nobody holds",
+             "criteria": [criterion("g", "G holds")]}), None),
         "root", "stranger", False),
     # …a node where PASS is genuinely OPEN, which no shape provided until the drop-one control was
     # run signal by signal: dropping PASS silently left the whole sweep green, because every shape
@@ -221,7 +221,7 @@ SHAPES = {
         lambda e: (_root_only(e), T.signal(e, "root", "ACCEPT", "agent")),
         "root", "agent", False),
     # …and the 2026-08-21 patch the docstring credits: ASSIGN on a CONSUMED terminal, which the
-    # finality gate refuses (§14.3). It had no shape here at all until the control showed the file
+    # finality gate refuses (§12.14). It had no shape here at all until the control showed the file
     # was holding two of the five cases it claimed.
     "a consumed terminal offering ASSIGN": (
         lambda e: (_root_only(e), T.signal(e, "root", "ACCEPT", "agent"),
@@ -295,7 +295,7 @@ def test_a_removed_signal_is_removed_with_its_reason(shape: str) -> None:
 def test_an_action_whose_door_is_elsewhere_names_that_door(shape: str) -> None:
     """The half the sweep above deliberately routes around, held here instead of assumed.
 
-    ASSIGN is listed on every reassignable node because §14.3 admits it — but its edge is taken on
+    ASSIGN is listed on every reassignable node because §12.4 admits it — but its edge is taken on
     `spec is not None`, and `signal` has no `spec` parameter, so `signal <node> ASSIGN` is
     guard-refused in OFFERED, EXECUTING and VALIDATING alike (probed 2026-09-07). Keeping it listed
     is right; leaving the reader to discover that the verb they were shown cannot send it is the same
@@ -304,7 +304,7 @@ def test_an_action_whose_door_is_elsewhere_names_that_door(shape: str) -> None:
     _, task_id, who, _gate = SHAPES[shape]
     e = _build(shape)
     offered = T.available_actions(e, task_id, agent=who)
-    if "ASSIGN" not in offered["actions"] or e.get_task(task_id).state.name in ("DONE", "ABANDONED"):
+    if "ASSIGN" not in offered["actions"] or e.graph.get_task(task_id).state.name in ("DONE", "ABANDONED"):
         pytest.skip("no live ASSIGN offered in this shape")
     assert "revise" in (offered.get("gate") or ""), (
         f"{shape}: ASSIGN is offered on {task_id} and nothing says `revise` is what sends it. "
@@ -341,7 +341,7 @@ def test_nothing_the_machine_would_accept_is_hidden(shape: str) -> None:
         if _refused(out) or out.get("refused_by"):
             continue                                  # the machine agrees it is not for this caller
         # …AND WHERE THE MACHINE WOULD TAKE IT, THE SURFACE MAY STILL WITHHOLD IT — but only out
-        # loud. DELIVER on a parent with open children is exactly that: §14.3 admits the signal, and
+        # loud. DELIVER on a parent with open children is exactly that: §12.4 admits the signal, and
         # this surface stops RECOMMENDING it because taking it parks the node in VALIDATING outside
         # the frontier. That is a designed opinion, not a disagreement — and what makes it honest
         # rather than a hide is that the gate names the signal and says what to do instead. A

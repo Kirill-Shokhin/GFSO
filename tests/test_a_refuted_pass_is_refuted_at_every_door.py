@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from gfso import tools as T
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 
 def _a_node_standing_at_pass_over_its_own_fail(e, tid="leaf"):
@@ -28,18 +28,17 @@ def _a_node_standing_at_pass_over_its_own_fail(e, tid="leaf"):
     """
     T.create_task(e, tid, {"description": "a leaf that claimed more than it did",
                            "criteria": [criterion("file_exists", "NEVER.txt exists")],
-                           "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                               "predictability": "EXTRAORDINARY"}]},
+                           "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, tid, "ACCEPT", "exec-1")
     T.signal(e, tid, "DELIVER", "exec-1", result="done, I think")
-    T.record_verdict(e, tid, "PASS", reviewer="judge",
+    T.record_verdict(e, tid, "PASS", reviewer="validator",
                      observed={"file_exists": {"note": "ran `ls NEVER.txt` and read the listing",
                                                "ran": ["check file_exists"]}})
-    T.signal(e, tid, "PASS", "exec-1")   # the issuer signs; the judge's record is what opens the gate
+    T.signal(e, tid, "PASS", "exec-1")   # the issuer signs; the validator's record is what opens the gate
     e.wait_idle()
-    assert e.get_state(TaskId(tid)).name == "DONE"
+    assert e.graph.get_state(TaskId(tid)).name == "DONE"
     # The ENGINE's path, not the hand door: `record_verdict` refuses a settled node outright, and
     # the case this mechanism exists for is precisely the instrument whose verdict lands after the
     # signature — accepted as evidence (it is q_V's discovery carrier), refused as a signal.
@@ -75,13 +74,12 @@ def test_a_root_that_is_genuinely_done_still_answers_complete():
     e.start()
     T.create_task(e, "ok", {"description": "an honest leaf",
                             "criteria": [criterion("c", "C")],
-                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                "predictability": "EXTRAORDINARY"}]},
+                            "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, "ok", "ACCEPT", "exec-1")
     T.signal(e, "ok", "DELIVER", "exec-1", result="built it")
-    T.record_verdict(e, "ok", "PASS", reviewer="judge",
+    T.record_verdict(e, "ok", "PASS", reviewer="validator",
                      observed={"c": {"note": "ran the check, it printed OK",
                                      "ran": ["check c"]}})
     T.signal(e, "ok", "PASS", "exec-1")

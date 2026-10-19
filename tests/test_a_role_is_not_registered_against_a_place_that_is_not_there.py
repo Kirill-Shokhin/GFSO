@@ -21,7 +21,7 @@ import pytest
 import gfso.places as P
 from gfso import tools as T
 from gfso import tools_llm as TL
-from gfso.delegate import AgentRegistry, _resolution_note, missing_workdir
+from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.places import cheap_to_ask, same_place, text_place
 from tests.support import criterion, make_engine
 
@@ -214,8 +214,8 @@ def test_a_hand_written_entry_still_matches_a_registered_one(roster, tmp_path):
 def test_no_place_is_not_the_same_place_as_some_place(roster, tmp_path, monkeypatch):
     """An empty side normalizes to the process CWD, and the server normally stands in the project.
 
-    So `same_place(None, <the executor's workdir>)` came out true, and a judge registered with no
-    workdir at all joined the set of judges standing in the work — to be picked off it
+    So `same_place(None, <the executor's workdir>)` came out true, and a validator registered with no
+    workdir at all joined the set of validators standing in the work — to be picked off it
     alphabetically. That is the rule whose failure is on record as a false FAIL over seventeen
     criteria, reintroduced by an alias.
     """
@@ -225,7 +225,7 @@ def test_no_place_is_not_the_same_place_as_some_place(roster, tmp_path, monkeypa
     assert not same_place(str(tmp_path), None)
 
 
-def test_a_judge_with_no_workdir_does_not_beat_the_judge_standing_in_the_work(roster, tmp_path,
+def test_a_validator_with_no_workdir_does_not_beat_the_validator_standing_in_the_work(roster, tmp_path,
                                                                               monkeypatch):
     place = tmp_path / "work"
     place.mkdir()
@@ -282,7 +282,7 @@ def test_two_spellings_of_one_place_are_settled_without_asking_the_disk(tmp_path
     """The text answer must be reached BEFORE `resolve()`, not merely agree with it.
 
     Otherwise the cost that motivated it is still paid: this comparison runs once per candidate
-    judge, on every dispatch pass and every `list_agents`. A disk that refuses to answer proves the
+    validator, on every dispatch pass and every `list_agents`. A disk that refuses to answer proves the
     order.
     """
     place = tmp_path / "work"
@@ -327,7 +327,7 @@ def test_the_named_limit_two_spellings_of_a_place_that_is_gone(tmp_path):
 
 
 def test_the_advice_names_the_spelling_that_actually_binds(tmp_path, monkeypatch):
-    """`register_agent` tells the caller how to register the matching judge. The roster binds on the
+    """`register_agent` tells the caller how to register the matching validator. The roster binds on the
     RESOLVED workdir, so advice quoting the caller's own relative argument names a different place
     when run from a different directory."""
     monkeypatch.chdir(tmp_path)
@@ -339,14 +339,14 @@ def test_the_advice_names_the_spelling_that_actually_binds(tmp_path, monkeypatch
     monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: object())
     out = TL.register_agent(e, "exec-1", "llm-executor", workdir="work")
     assert Path(out["workdir"]).is_absolute()
-    assert "workdir='work'" not in str(out.get("will_be_judged_by", ""))
-    assert out["workdir"] in str(out.get("will_be_judged_by", ""))
+    assert "workdir='work'" not in str(out.get("will_be_validated_by", ""))
+    assert out["workdir"] in str(out.get("will_be_validated_by", ""))
 
 
-def test_the_judge_whose_spelling_matches_wins_over_one_that_needs_the_disk(tmp_path):
-    """WHICH judge, decided rather than fallen into.
+def test_the_validator_whose_spelling_matches_wins_over_one_that_needs_the_disk(tmp_path):
+    """WHICH validator, decided rather than fallen into.
 
-    Where two judges both stand in the work - one written the same way as the executor's workdir,
+    Where two validators both stand in the work - one written the same way as the executor's workdir,
     one reachable only through a spelling the disk must reconcile - the textual one is chosen, even
     when the other sorts earlier. The alphabet was never a reason for anything; the exact spelling
     is what a reader comparing the roster to the workspace would also pick.
@@ -629,6 +629,17 @@ def test_the_validation_door_asks_the_same_question_of_the_same_directory(monkey
     monkeypatch.setattr(Path, "is_dir", lambda self: (asked.append(str(self)), real_is_dir(self))[1])
     monkeypatch.setattr(Path, "iterdir",
                         lambda self: (asked.append(str(self)), real_iterdir(self))[1])
+    # the model is stubbed BEHIND the door (`_llm` stays None): passing `_llm` skips the very pre-check
+    # this test is about, and a mutant removing its guard then stayed green
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _NoValidator())
     TL.validate_result(e, "n1", workdir="Z:" + BS + "work")
     e.stop()
     assert not any(a.upper().startswith("Z:") for a in asked), asked
+
+
+class _NoValidator:
+    """A validator that answers nothing — this test is about what the door stats before any validator runs."""
+    calls, last_tool_calls, on_tick, stage_hint = [], {}, None, ""
+
+    def run_agent(self, *a, **k):
+        return ""

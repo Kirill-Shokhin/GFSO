@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.graph import DIAGNOSTIC_MEANS, Q_MEANS
 from gfso.core.graph.mutations import InvariantViolation
-from gfso.delegate import _replay_a_standing_verdict
+from gfso.delegate import _replay_a_standing_verdict, _standing_instrument_verdict
 from gfso.core.types import (AgentId, CriterionMapping, RevisionReason, Signal, SignalData, TaskId,
                              Verdict, passed)
 from gfso.mcp.connect import USAGE, _argv_answer, main as connect_main
@@ -43,7 +43,7 @@ from gfso.api.server import create_app
 from gfso.engine.validation import l2_gate_on
 from gfso.runtime import ProjectRegistry
 from gfso.tools_llm import validate_internal_on
-from tests.support import make_engine, spec, criterion
+from tests.support import REGISTER_SPLIT, make_engine, spec, criterion, DENIAL_ENTRY
 from tests.test_integration import _engine
 
 
@@ -104,8 +104,7 @@ def test_the_http_door_takes_project_where_every_other_argument_goes():
             "project": "bodyscope", "task_id": "root",
             "spec": {"name": "root", "description": "a goal",
                      "criteria": [criterion("c1", "the thing")],
-                     "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
-                                         "justification": "accepted", "invalidation_condition": "never"}]},
+                     "accepted_risks": [{"item": "fixture", "predictability": "extraordinary", "justification": "accepted", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]},
             "assignee": "agent"})
         assert made.status_code == 200, made.text
         assert made.json()["id"] == "root"
@@ -127,7 +126,7 @@ def test_a_refusal_over_http_keeps_its_status_and_its_shape():
     engine = make_engine(llm=StubLLM(), validate_signals=False)
     engine.start()
     with TestClient(create_app(engine)) as c:
-        made = c.post("/api/run/create_task", json={"task_id": "a", "spec": {"description": "x"},
+        made = c.post("/api/run/create_task", json={"task_id": "a", "spec": {"description": "x", "criteria": [criterion("c", "C")]},
                                                     "assignee": "dev"})
         assert made.status_code == 200 and made.json()["id"] == "a", made.text
         r = c.post("/api/run/add_dependency", json={"from_id": "a", "to_id": "a"})
@@ -159,15 +158,17 @@ def test_the_runtime_panel_reports_the_switches_the_code_actually_obeys(monkeypa
         assert rt["validate_internal"] is validate_internal_on() is True
 
         monkeypatch.setenv("GFSO_L2_GATE", "1")
-        monkeypatch.delenv("GFSO_VALIDATE_INTERNAL", raising=False)
+        monkeypatch.setenv("GFSO_VALIDATE_INTERNAL", "0")
         rt = c.get("/api/runtime").json()
         assert rt["l2_gate"] is True and rt["validate_internal"] is False
+        monkeypatch.delenv("GFSO_VALIDATE_INTERNAL", raising=False)
+        assert c.get("/api/runtime").json()["validate_internal"] is False    # the default: where κ ends
 
 
-def test_the_page_shows_who_judged_a_node_and_on_what(client):
+def test_the_page_shows_who_validated_a_node_and_on_what(client):
     """The one thing this product promises is that nothing closes on impression.
 
-    The page a person watches said nothing about who judged a node or on what: a tester answering
+    The page a person watches said nothing about who validated a node or on what: a tester answering
     "did anything close without proof" had to read `/api/tasks/{id}/verdict` by hand to find
     `by_hand`, `validator` and the per-criterion probe commands (HTTP door, 2026-09-02). This pins
     that the page asks the same question — the fields are the endpoint's, so if either side is
@@ -259,13 +260,13 @@ def test_the_numbers_arrive_with_what_they_are_about(client):
     """
     body = client.get("/api/metrics").json()
     means = body.get("means") or {}
-    scores = {k: v for k, v in body.items() if k != "means"}
+    scores = {k: v for k, v in body.items() if k != "means" and not k.endswith("_from")}   # `_from`: who the number counts
     assert scores, "the metrics read returned no numbers"
     assert set(means) == set(scores), "a number was served without what it is about"
 
     # …AND THE DOOR SERVES EVERYTHING THE ENGINE COMPUTES. `false_fail_share` was computed, promised
     # by this endpoint's own docstring, and silently dropped: pydantic ignores what the response
-    # model does not declare. It is the one number the canon says to read BESIDE a low q_D (§24.5 —
+    # model does not declare. It is the one number the canon says to read BESIDE a low q_D (§15.4 —
     # an over-strict validator inflates q_D's numerator), so the door that shows q_D in red was the
     # door that could not answer why. Note the two sets above shrink together when a field is
     # dropped, which is why the comparison against the engine is the assertion that bites.
@@ -296,7 +297,7 @@ def test_an_untyped_handoff_says_what_it_costs():
     Measured 2026-09-02 on a live delegated run: DEL read 25% in red, and the three "defects" were
     the run's own dispatcher handing its three leaves to its three executors — the product's
     headline feature scoring itself as a failure. The count is CORRECT and deliberately
-    over-approximate (§24.5: a metric must never improve by leaving the reason out), so the repair
+    over-approximate (§15.6 dial 3: a metric must never improve by leaving the reason out), so the repair
     is at the surface — the act reports its own cost, with the word to use, at the moment it is
     made rather than in help the caller was not reading.
     """
@@ -413,7 +414,7 @@ def test_a_self_report_is_not_reported_as_an_instruments_work():
     try:
         e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("worker"))
         e.wait_idle()
-        assert e.verdict_provenance(TaskId("root")) == "none", "a node with no verdict is not judged"
+        assert e.verdict_provenance(TaskId("root")) == "none", "a node with no verdict is not validated"
 
         e.record_exec_verdict(TaskId("root"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("worker"),
@@ -425,7 +426,7 @@ def test_a_self_report_is_not_reported_as_an_instruments_work():
         assert "SELF-REPORTED" in _INDEPENDENCE["self"], "the words do not say what the kind is"
 
         e.record_exec_verdict(TaskId("root"), verdict=Verdict.PASS, failed_criteria=[],
-                              validator_id=AgentId("judge"),
+                              validator_id=AgentId("validator"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
@@ -493,19 +494,17 @@ def test_complete_is_a_claim_about_the_whole_tree_not_the_first_node_that_closes
     e.start()
     try:
         e.assign_task(TaskId("g"), spec("the goal", "c1", "c2"), AgentId("agent"))
-        e.assign_task(TaskId("a"), spec("first branch", "c1"), AgentId("agent"),
-                      parent_id=TaskId("g"))
-        e.assign_task(TaskId("b"), spec("second branch", "c1"), AgentId("agent"),
-                      parent_id=TaskId("g"))
-        map_criterion(e, "g", "a", "c1")
-        map_criterion(e, "g", "b", "c2")
+        e.decompose_task(TaskId("g"), [(TaskId("a"), spec("first branch", "c1"), AgentId("agent")),
+                                       (TaskId("b"), spec("second branch", "c1"), AgentId("agent"))],
+                         [CriterionMapping("c1", TaskId("a")), CriterionMapping("c2", TaskId("b"))],
+                         register=REGISTER_SPLIT)   # §11.5: the split is admitted whole
         e.wait_idle()
 
         # THE SECOND ROOT IS REFUSED, which is where the measured forest came from.
         with pytest.raises(InvariantViolation, match="already has its root"):
             e.assign_task(TaskId("other"), spec("a second goal", "c1"), AgentId("agent"))
 
-        # Close branch 'a' for real — accepted, delivered, judged by somebody who is not its
+        # Close branch 'a' for real — accepted, delivered, validated by somebody who is not its
         # executor, then signed. Anything less leaves it in VALIDATING, where NEITHER reading of the
         # rule calls the graph complete and the test passes without touching what it is about.
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"),
@@ -516,17 +515,17 @@ def test_complete_is_a_claim_about_the_whole_tree_not_the_first_node_that_closes
                                       self_validation=Verdict.PASS))
         e.wait_idle()
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
-                              validator_id=AgentId("judge"),
+                              validator_id=AgentId("validator"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
                                       source=AgentId("agent")))
         e.wait_idle()
-        assert passed(e.get_task(TaskId("a"))), "the first branch did not actually close"
-        assert not passed(e.get_task(TaskId("b"))), "the second branch must still owe its work"
+        assert passed(e.graph.get_task(TaskId("a"))), "the first branch did not actually close"
+        assert not passed(e.graph.get_task(TaskId("b"))), "the second branch must still owe its work"
 
-        out = e._frontier()
+        out = e.frontier._frontier()
         if isinstance(out, dict) and out.get("complete"):
             raise AssertionError(
                 f"the graph called itself finished with 'b' still open: {out['directive']}")
@@ -539,7 +538,7 @@ def test_the_instructions_do_not_ask_for_what_the_engine_refuses():
 
     Measured on the MCP door 2026-09-02: the shipped instructions said to "put the evidence in the
     DELIVER `self_validation`". A tester did exactly that and was refused — `self_validation` holds
-    the WORD (`PASS`/`FAIL`, §14.2) and the evidence belongs in `result`. The refusal message was
+    the WORD (`PASS`/`FAIL`, §11.2) and the evidence belongs in `result`. The refusal message was
     good; the document that sent them into it was the defect, and nothing compared the two.
 
     So: the engine's own rule about that field is asked here, and the instructions are read for the
@@ -562,7 +561,7 @@ def test_an_observation_that_restates_the_verdict_records_nothing():
     Both stranger doors closed a root this way on the same afternoon (2026-09-02), independently,
     and both testers named THIS — not the reviewer's identity — as the step the product stops one
     short of. The engine already refuses a bare PASS on the grounds that a verdict with no check
-    behind it is ⊥ (§11.2); `observed={"c1": "ok"}` is the same ⊥ with a shape the check accepted.
+    behind it is ⊥ (§2.3); `observed={"c1": "ok"}` is the same ⊥ with a shape the check accepted.
 
     Deliberately narrow, and not authentication: at a loopback door a person names themselves, and
     anyone determined to lie can write a sentence. What this closes is the case where nothing was
@@ -572,10 +571,10 @@ def test_an_observation_that_restates_the_verdict_records_nothing():
     for said in ("ok", "looks green", "LGTM.", "all good", "yes", "n/a", ""):
         assert _is_pure_assent(said), f"{said!r} restates the verdict and must not count as observed"
     # AND THE LIMIT, pinned rather than implied. These two also record nothing, and they are NOT
-    # caught: separating a short false sentence from a short true one means judging content, and no
+    # caught: separating a short false sentence from a short true one means validating content, and no
     # decidable rule does that. Saying so here keeps a later reader from believing the rule is a
     # guarantee. What remains open is a person choosing to write a false sentence under their name,
-    # which is the boundary the human door has always declared (§14.5).
+    # which is the boundary the human door has always declared (§10.3).
     for prose in ("looked at it, seems right", "dave says it works"):
         assert not _is_pure_assent(prose), (
             f"{prose!r} is now caught — good, but the docstring's stated limit is out of date")
@@ -603,8 +602,8 @@ def test_an_observation_that_restates_the_verdict_records_nothing():
             "the refusal does not say WHY what they wrote is not an observation")
 
         # …and the observation names the pinned run: a criterion now carries the procedure that
-        # decides it (A1/§10), so an observation is measured against THAT, not against a probe the
-        # observer invented while judging.
+        # decides it (A1/§2), so an observation is measured against THAT, not against a probe the
+        # observer invented while validating.
         ok = record_verdict(e, "p", "PASS", reviewer="dave-from-accounting",
                             observed={"c1": {"note": "ran `python -m pytest -q` in ./p: 3 passed",
                                              "ran": ["check c1"]}})
@@ -633,7 +632,8 @@ def test_a_dependency_read_says_which_end_produces():
         e.decompose_task(TaskId("root"),
                          [(TaskId("root.core"), spec("core", "k1"), AgentId("agent")),
                           (TaskId("root.tests"), spec("tests", "k2"), AgentId("agent"))],
-                         criterion_mappings=[CriterionMapping("c1", TaskId("root.core"))])
+                         criterion_mappings=[CriterionMapping("c1", TaskId("root.core")),
+                                             CriterionMapping("c1", TaskId("root.tests"))], register=REGISTER_SPLIT)
         e.wait_idle()
         e.add_dependency(TaskId("root.core"), TaskId("root.tests"), glue="tests import core.join()")
         e.wait_idle()
@@ -661,10 +661,10 @@ def test_q_V_says_what_a_reopen_does_to_it():
     Measured on the HTTP door 2026-09-02: a tester reopened two nodes, was told each time that "that
     verdict is GONE", saw `q_V` stay at 1.0, and reported the number as false about their graph.
 
-    The NUMBER was right and the WORDS were wrong. A reopen takes the node out of the population
-    rather than counting against it — reopening everything leaves ⊥ here, not 0.0 — and only a later
-    independent check that CONTRADICTS a standing pass moves it. "No PASS was ever taken back" is
-    exactly how a reopen reads in plain English, which is why a careful reader called it a lie.
+    The NUMBER was right and the WORDS were wrong. A reopen retires the verdict, not the record of it: the node
+    stays in "a PASS was recorded" (§15.4) without counting against it, and only a later check that fails the pass
+    as delivered moves it. "No PASS was ever taken back" is exactly how a reopen reads in plain English, which is
+    why a careful reader called it a lie.
     """
     e = make_engine()
     e.start()
@@ -677,7 +677,7 @@ def test_q_V_says_what_a_reopen_does_to_it():
                                       source=AgentId("agent"), result="r"))
         e.wait_idle()
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
-                              validator_id=AgentId("judge"),
+                              validator_id=AgentId("validator"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
@@ -688,8 +688,8 @@ def test_q_V_says_what_a_reopen_does_to_it():
 
         e.reopen(TaskId("a"), AgentId("agent"))
         e.wait_idle()
-        assert e.metrics()["q_V"] is None, (
-            "a reopened node must leave the population — ⊥, not a score")
+        assert e.metrics()["q_V"] == 1.0, (
+            "a reopen retires the verdict, not the record: the node stays in the population, uncontradicted")
 
         words = Q_MEANS["q_V"]
         assert "reopen" in words, "the wording never mentions the act that confused a reader"
@@ -702,9 +702,9 @@ def test_q_V_says_what_a_reopen_does_to_it():
 def test_a_refused_report_is_said_at_completion_without_withholding_it():
     """⊥ is not fail — so it is SAID beside "complete", never used to withhold it.
 
-    Measured on the HTTP door 2026-09-02: a judge ran on a root that had closed by hand forty-six
-    seconds earlier, the engine refused its report as ⊥ (§11.2), and `next_steps` went on answering
-    "COMPLETE — the goal is met" with nothing anywhere recording that a judge had tried and failed
+    Measured on the HTTP door 2026-09-02: a validator ran on a root that had closed by hand forty-six
+    seconds earlier, the engine refused its report as ⊥ (§2.3), and `next_steps` went on answering
+    "COMPLETE — the goal is met" with nothing anywhere recording that a validator had tried and failed
     to decide it.
 
     Both halves matter and they pull opposite ways. Withholding completion over a ⊥ would read it as
@@ -722,22 +722,22 @@ def test_a_refused_report_is_said_at_completion_without_withholding_it():
                                       source=AgentId("agent"), result="r"))
         e.wait_idle()
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
-                              validator_id=AgentId("judge"),
+                              validator_id=AgentId("validator"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
                                       source=AgentId("agent")))
         e.wait_idle()
-        assert e._frontier().get("complete") is True, "the node closed; this should read complete"
+        assert e.frontier._frontier().get("complete") is True, "the node closed; this should read complete"
         assert not e.nodes_with_a_refused_report(), "nothing has been refused yet"
 
-        # …now a judge reports and the engine refuses it as ⊥, AFTER the node is terminal.
+        # …now a validator reports and the engine refuses it as ⊥, AFTER the node is terminal.
         e.record_rejected_report(TaskId("a"), {"defects": ["decided no criterion"],
                                                "per_criterion": [], "refusals": 1})
-        out = e._frontier()
+        out = e.frontier._frontier()
         assert out.get("complete") is True, (
-            "a ⊥ withheld completion — that reads 'could not decide' as 'decided against' (§11.2)")
+            "a ⊥ withheld completion — that reads 'could not decide' as 'decided against' (§2.3)")
         assert "a" in (out.get("unresolved_reports") or []), (
             "the refused report is invisible at the one place completion is announced")
     finally:
@@ -781,7 +781,7 @@ def test_a_dispute_that_says_nothing_discharges_nothing():
     and every quality metric read 1.0. Both testers named this verb and asked for the rule
     `record_verdict` already applies, in those words.
 
-    The checker is an approximation and may be wrong (§13.5) — disputing is a legitimate discharge.
+    The checker is an approximation and may be wrong (§9.9) — disputing is a legitimate discharge.
     What is refused is a dispute that restates the conclusion instead of giving a reason for it, and
     the other route needs no argument at all: fix the plan.
     """
@@ -814,12 +814,12 @@ def test_a_dispute_that_says_nothing_discharges_nothing():
 
 
 def test_a_hand_asserted_verdict_is_not_replayed_under_an_instruments_name():
-    """Reuse is for a JUDGE's ruling. Replaying a person's assertion as one is laundering.
+    """Reuse is for a VALIDATOR's ruling. Replaying a person's assertion as one is laundering.
 
     Measured on both stranger doors 2026-09-02. The CLI door recorded a PASS on the root naming a
     reviewer invented in the same second — `w22cli-reviewer-bob`, never registered, who ran nothing
     — and the dispatcher then reused it and signed the signal as `w22cli-validator`, so the log read
-    `PASS by w22cli-validator`: a registered instrument passing a root it had never judged. The HTTP
+    `PASS by w22cli-validator`: a registered instrument passing a root it had never validated. The HTTP
     door hit the same shape from the other side.
 
     The exclusion already existed for a self-report, for exactly this reason. The engine names all
@@ -832,16 +832,19 @@ def test_a_hand_asserted_verdict_is_not_replayed_under_an_instruments_name():
         e.assign_task(TaskId("n"), spec("goal", "c1"), AgentId("worker"))
         e.wait_idle()
         rec = {"verdict": Verdict.PASS, "validator": "bob-who-does-not-exist", "failed_criteria": []}
+        e.current_exec_verdict = lambda tid: rec                    # a verdict stands on this delivery…
 
-        for prov in ("by_hand", "self"):
-            assert _replay_a_standing_verdict(e, TaskId("n"), rec, AgentId("the-instrument"),
-                                              "llm-validator", True, prov, True) is None, (
+        for prov in ("by_hand", "self"):                            # …and who produced it decides its reuse
+            e.verdict_provenance = lambda tid, p=prov: p
+            assert _standing_instrument_verdict(e, TaskId("n")) is None, (
                 f"a {prov} verdict was replayed as though an instrument had ruled")
 
         # …and an instrument's ruling IS reused, or this stops being an optimisation and becomes a
         # wall that pays for every verdict twice.
-        assert _replay_a_standing_verdict(e, TaskId("n"), rec, AgentId("the-instrument"),
-                                          "llm-validator", True, "instrument", False) == "recorded"
+        e.verdict_provenance = lambda tid: "instrument"
+        standing = _standing_instrument_verdict(e, TaskId("n"))
+        assert standing == {"verdict": Verdict.PASS, "failed_criteria": []}
+        assert _replay_a_standing_verdict(e, TaskId("n"), standing, AgentId("the-instrument"), False) == "recorded"
     finally:
         e.stop()
 
@@ -852,7 +855,7 @@ def test_the_verdict_a_node_closed_on_is_not_overwritten_by_a_later_one():
     Measured on the HTTP door 2026-09-02: a hand-asserted PASS containing false statements closed a
     node; an instrument reported 46 seconds later; its SIGNAL was correctly refused because the node
     was terminal — and its RECORD was written anyway, on top. Every surface then reported the node
-    as judged by an instrument, `by_hand` was false, and the record that actually did the closing
+    as validated by an instrument, `by_hand` was false, and the record that actually did the closing
     was reachable from nowhere. The two things this product offers as its guarantee are "the record"
     and "in writing", and that was both of them, in the closer's favour.
 
@@ -899,7 +902,7 @@ def test_the_verdict_a_node_closed_on_is_not_overwritten_by_a_later_one():
         e.stop()
 
 
-def test_a_hand_verdict_is_refused_while_an_instrument_is_mid_judgement():
+def test_a_hand_verdict_is_refused_while_an_instrument_is_mid_validation():
     """The reply that says "recording your own verdict here would race it" now has something behind it.
 
     Measured on the CLI door 2026-09-02: the DELIVER reply gave exactly that warning, nothing
@@ -908,7 +911,7 @@ def test_a_hand_verdict_is_refused_while_an_instrument_is_mid_judgement():
     record landed on top of the one that had done the closing.
 
     The claim this needs already existed (`begin_validation` takes it); what was missing was a way to
-    ASK without taking it. Same TTL, so a leaked claim cannot make a node permanently unjudgeable.
+    ASK without taking it. Same TTL, so a leaked claim cannot make a node permanently unvalidatable.
     """
     e = make_engine()
     e.start()
@@ -920,18 +923,18 @@ def test_a_hand_verdict_is_refused_while_an_instrument_is_mid_judgement():
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("n"),
                                       source=AgentId("agent"), result="r"))
         e.wait_idle()
-        assert not e.validation_in_flight(TaskId("n")), "nothing is judging it yet"
+        assert not e.claims.validation_in_flight(TaskId("n")), "nothing is validating it yet"
 
-        claim = e.begin_validation(TaskId("n"))
-        assert claim is not None and e.validation_in_flight(TaskId("n"))
+        claim = e.claims.begin_validation(TaskId("n"))
+        assert claim is not None and e.claims.validation_in_flight(TaskId("n"))
         raced = record_verdict(e, "n", "PASS", reviewer="someone",
                                observed={"c1": {"note": "ran `pytest -q`: 3 passed", "ran": ["check c1"]}})
         assert raced.get("recorded") is False, "a hand verdict raced a running instrument"
         assert raced.get("validation_in_flight") is True
 
         # …and once the run ends, the door opens again: this is a race guard, not a lockout.
-        e.end_validation(claim)
-        assert not e.validation_in_flight(TaskId("n"))
+        e.claims.end_validation(claim)
+        assert not e.claims.validation_in_flight(TaskId("n"))
         assert record_verdict(
             e, "n", "PASS", reviewer="someone",
             observed={"c1": {"note": "ran `pytest -q`: 3 passed",
@@ -949,7 +952,7 @@ def test_the_review_summary_says_how_its_findings_were_closed():
     nobody had to argue with. The disputes were faithfully stored the whole time — nested where a
     reader had to already know to look.
 
-    Disputing is a legitimate discharge (§13.5: the checker approximates and can be wrong). It is
+    Disputing is a legitimate discharge (§9.9: the checker approximates and can be wrong). It is
     also the discharge nobody re-checks, which is exactly why it is named where the summary is read.
     """
     e = make_engine()
@@ -960,7 +963,7 @@ def test_the_review_summary_says_how_its_findings_were_closed():
         e.decompose_task(TaskId("root"),
                          [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
                          criterion_mappings=[CriterionMapping("c1", TaskId("root.kid")),
-                                             CriterionMapping("c2", TaskId("root.kid"))])
+                                             CriterionMapping("c2", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e.wait_idle()
         assert "discharged_by_dispute" not in get_review(e, "root"), (
             "nothing has been disputed — the line must not appear")
@@ -983,11 +986,9 @@ def test_binding_coverage_is_not_logged_as_revising_a_contract():
     """The human-facing strip must not claim a revision that never happened.
 
     Measured on the CLI door 2026-09-02: sixteen `map_criterion` calls wrote sixteen lines reading
-    "contract revised by agent". No contract was revised — binding coverage re-ASSIGNs the child
-    under the SAME spec, which is why it produces a same-state ASSIGN in the first place. The strip
-    is the trail a person actually reads, and it was overstating what happened, sixteen times.
-
-    The packet already distinguishes them: a coverage binding carries `covers`, a revision does not.
+    "contract revised by agent". No contract was revised — binding coverage re-admits the parent's split
+    (§11.5), the mapping being the split's (§2.4); it once re-ASSIGNed the child under the same spec. The strip is
+    the trail a person actually reads, and it was overstating what happened, sixteen times.
     """
     e = make_engine()
     e.start()
@@ -995,8 +996,10 @@ def test_binding_coverage_is_not_logged_as_revising_a_contract():
         e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
         e.wait_idle()
         e.decompose_task(TaskId("root"),
-                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
-                         criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))])
+                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent")),
+                          (TaskId("root.two"), spec("two", "k2"), AgentId("agent"))],
+                         criterion_mappings=[CriterionMapping("c1", TaskId("root.kid")),
+                                             CriterionMapping("c2", TaskId("root.two"))], register=REGISTER_SPLIT)
         e.wait_idle()
 
         map_criterion(e, "root", "root.kid", "c2")
@@ -1005,8 +1008,7 @@ def test_binding_coverage_is_not_logged_as_revising_a_contract():
         assert "coverage bound" in bound, f"a mapping was logged as: {bound}"
         assert "revised" not in bound, "a mapping still claims to have revised the contract"
 
-        edit_criteria(e, "root.kid", criteria=[{"name": "k1", "description": "k1", "check": "k1"},
-                                               {"name": "k2", "description": "k2", "check": "k2"}])
+        edit_criteria(e, "root.kid", criteria=[criterion("k1", "k1"), criterion("k2", "k2")])
         e.wait_idle()
         revised = e._graph._storage.get_pipeline(50)[-1]["message"]
         assert "contract revised" in revised, (
@@ -1054,7 +1056,7 @@ def test_the_affordance_surface_knows_a_validator_is_running(monkeypatch):
     signal". One says wait and do not record; the other says record. The affordance surface did not
     know a run was in flight.
 
-    Signing an INTERNAL node is the executor's right (§14.5 D6), so this does not refuse it — it says
+    Signing an INTERNAL node is the executor's right (§10.3), so this does not refuse it — it says
     what signing now costs, and names the field that will report the contradiction afterwards.
     """
     monkeypatch.setenv("GFSO_L2_GATE", "0")
@@ -1065,38 +1067,38 @@ def test_the_affordance_surface_knows_a_validator_is_running(monkeypatch):
         e.wait_idle()
         e.decompose_task(TaskId("root"),
                          [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
-                         criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))])
+                         criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.kid"),
                                       source=AgentId("agent")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("root.kid"),
                                       source=AgentId("agent"), result="r"))
         e.wait_idle()
-        assert e.get_task(TaskId("root.kid")).state.name == "VALIDATING"
+        assert e.graph.get_task(TaskId("root.kid")).state.name == "VALIDATING"
 
         assert "RIGHT NOW" not in str(available_actions(e, "root.kid", "agent")), (
             "the surface announces a run when none is in flight")
 
-        claim = e.begin_validation(TaskId("root.kid"))
+        claim = e.claims.begin_validation(TaskId("root.kid"))
         try:
             said = str(available_actions(e, "root.kid", "agent"))
-            assert "RIGHT NOW" in said, "the surface still invites a signature over a running judge"
+            assert "RIGHT NOW" in said, "the surface still invites a signature over a running validator"
             assert "refuted_passes" in said, (
                 "it does not name what will report the contradiction if they sign anyway")
         finally:
-            e.end_validation(claim)
+            e.claims.end_validation(claim)
     finally:
         e.stop()
 
 
 def test_replacing_criteria_says_what_coverage_it_destroyed(monkeypatch):
-    """Replacing the set takes the mappings with it, and once a child is DONE they never come back.
+    """Replacing the set takes the mappings with it, and the reply names what went.
 
     Measured on the MCP door 2026-09-02: a caller replaced ten criteria with one, then restored the
-    ten verbatim, and was left with a DONE/PASS root carrying a permanent `CHECK-1:coverage` failure
-    — `map_criterion` refuses to re-map, because adding a `covers` to a finished node is a revision
-    of a terminal contract (Inv-1). The reply had said what was newly UNCOVERED and never that
-    anything had been LOST.
+    ten verbatim, and was left with a DONE/PASS root carrying a `CHECK-1:coverage` failure the
+    product then had no move for. The reply had said what was newly UNCOVERED and never that
+    anything had been LOST. A mapping is the split's (§2.4), so `map_criterion` now puts it back on
+    a finished child too, its pass kept (critic r15).
 
     Two traps this also pins. The loss is computed from the REQUEST, because the pruning rides the
     revision's ASSIGN through the event loop and reading the node back inside the verb still sees
@@ -1112,12 +1114,11 @@ def test_replacing_criteria_says_what_coverage_it_destroyed(monkeypatch):
         e.wait_idle()
         e.decompose_task(TaskId("root"),
                          [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
-                         criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))])
+                         criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e.wait_idle()
 
         # while the child is still OPEN, the loss is recoverable and says so
-        out = edit_criteria(e, "root", criteria=[{"name": "other", "description": "d",
-                                                  "check": "d"}])
+        out = edit_criteria(e, "root", criteria=[criterion("other", "d")])
         assert out["coverage_dropped"] == ["c1 -> root.kid"], "the dropped mapping was not named"
         assert "can re-make them" in out["coverage_dropped_note"], "recoverable loss reads as final"
     finally:
@@ -1130,7 +1131,7 @@ def test_replacing_criteria_says_what_coverage_it_destroyed(monkeypatch):
         e2.wait_idle()
         e2.decompose_task(TaskId("root"),
                           [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
-                          criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))])
+                          criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e2.wait_idle()
         for sig, extra in ((Signal.ACCEPT, {}), (Signal.DELIVER, {"result": "ran the kid check, it printed OK",
                                                                   "self_validation": Verdict.PASS})):
@@ -1140,24 +1141,12 @@ def test_replacing_criteria_says_what_coverage_it_destroyed(monkeypatch):
         e2.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root.kid"),
                                        source=AgentId("agent")))
         e2.wait_idle()
-        assert e2.get_task(TaskId("root.kid")).state.name == "DONE"
+        assert e2.graph.get_task(TaskId("root.kid")).state.name == "DONE"
 
-        # …AND NOW IT IS REFUSED BEFORE IT HAPPENS, not narrated after. The note below was written
-        # while the loss was already made, which is the guard-after-the-side-effect shape this
-        # codebase keeps finding in itself; a stranger reworded one criterion on a finished project
-        # and read the explanation of why it could never close again in the reply that made it true
-        # (MCP door, wave 23, 2026-09-03). The knowledge did not change — the moment did.
-        refused = edit_criteria(e2, "root", criteria=[{"name": "other", "description": "d",
-                                                      "check": "d"}])
-        assert refused["refused"] is True and refused["would_destroy_coverage"] == ["root.kid"]
-        assert [c.name for c in e2.get_task(TaskId("root")).spec.criteria] == ["c1"], (
-            "the contract was replaced by the call that refused")
-
-        out = edit_criteria(e2, "root", criteria=[{"name": "other", "description": "d",
-                                                   "check": "d"}], accept_coverage_loss=True)
-        assert "IRREVERSIBLE" in out["coverage_dropped_note"], (
-            "a loss that cannot be undone reads the same as one that can")
-        assert "root.kid" in out["coverage_dropped_note"], "it does not name the finished child"
+        # …and over a FINISHED child the loss is just as recoverable: the reply names it, and the mapping is put
+        # back by the split's re-admission, the child's pass kept
+        out = edit_criteria(e2, "root", criteria=[criterion("other", "d")])
+        assert out["coverage_dropped"] == ["c1 -> root.kid"] and "can re-make them" in out["coverage_dropped_note"]
     finally:
         e2.stop()
 

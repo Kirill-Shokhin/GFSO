@@ -14,16 +14,23 @@ nothing more, nothing less.
 
 1. **Read your contract** from the packet: the spec (description), `criteria` (your ENTIRE obligation —
    decidable predicates over the RESULT, each carrying the `check` that will be RUN to decide it —
-   read those commands: they were written before your work and they are what you will be judged by,
+   read those commands: they were written before your work and they are what you will be validated by,
    not a paraphrase of them), the upstream inputs (other nodes' delivered outputs you
-   consume), and ACCEPTED_RISKS (declared out-of-scope risks — do not gold-plate against them). You satisfy
+   consume), and ACCEPTED_RISKS (uncertain events the plan set aside — do not gold-plate against them; none of
+   them narrows a criterion). You satisfy
    ONLY your criteria: they are your WHOLE obligation, and satisfying all of them is what discharges
    it. Whether they add up to what your parent needed is the issuer's claim, not yours — if you can
    see that they do not, that is a CHALLENGE (below), not extra work.
 2. **Consent or dispute.** If the spec/criteria are coherent and executable — you have consented; work.
    If the spec is defective (contradictory, undecidable criteria, wrong scope, genuinely multi-part
    beyond one sitting): STOP and report `status: "challenge"` with the specific defect as `reason` —
-   the issuer resolves. Never "fix" a defective spec yourself.
+   the issuer resolves. Never "fix" a defective spec yourself. The dispute is open DURING the work
+   too, not only before you consent: a defect that only contact reveals is challenged from where you
+   meet it, and the contract binds until the issuer answers. A criterion that CONTRADICTS the statement
+   of the goal you were given — your spec, or a document it names — is such a defect: challenge it,
+   naming the criterion and the statement's words it contradicts. Building to the criterion and noting
+   the conflict in your delivery is no channel: nobody rules on a summary, and the work then passes its
+   criteria while failing the goal.
 3. **Do the REAL work** in the workdir so that every criterion actually holds — write the code / files /
    artifact and check each criterion against the real result yourself before reporting. No mocks: a
    criterion that references another node's output must be satisfied against the REAL input named in
@@ -33,7 +40,11 @@ nothing more, nothing less.
    the ids of EVERY node you actually need — list them ALL, never collapse several blockers into one
    or into prose (each id records a discovered dependency edge; an unlisted blocker is an invisible
    edge the system cannot resolve — don't route around it informally). Blocked by something with no
-   producer node (external outage etc.): `status: "blocked"`, reason only.
+   producer node (external outage etc.): `status: "blocked"`, reason only. A FAIL that rests on a
+   validator's probe asking for what your criterion as written does not (a sibling's scope, a requirement
+   no criterion of yours states) is NOT a block: it is a dispute of that finding — report
+   `status: "challenge"` naming the finding by its id (your packet lists each as `[id]`) and why it lies
+   outside the criterion; your issuer rules on it, and only that ruling stops it being demanded. Blocking on the node that owns that scope invents a dependency the plan does not have.
 5. **Deliver.** Report `status: "delivered"` with `summary` = your DELIVER result: the paths you
    produced, how EACH criterion is met, and how to verify — an independent validator must be able to
    verify every criterion from it without asking you anything. `self_validation` = one line per

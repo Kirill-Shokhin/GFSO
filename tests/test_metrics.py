@@ -1,11 +1,11 @@
-"""Tests for graph/metrics.py — all 5 metrics from paper §15.2."""
+"""Tests for graph/metrics.py — all 5 metrics from paper §15.4."""
 import json
 
 from gfso.core.types import TaskId, AgentId, Task, Spec, Criteria, State, DoneReason, DepEdge
 from gfso.core.graph import Graph, q_T, q_D, q_V, q_Dep, q_Del, false_fail_share
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso import tools as T
-from tests.support import make_engine
+from tests.support import REGISTER, criterion, make_engine
 
 
 def _task(tid, state=State.EXECUTING, assignee="a1", done_reason=None, was_challenged=False, parent_id=None):
@@ -43,7 +43,7 @@ def test_q_T_half_challenged():
 
 def test_q_T_empty_population_is_undefined():
     g = _graph()
-    assert q_T(g) is None   # ⊥ (§21): no observations is not "100%"
+    assert q_T(g) is None   # ⊥ (§15.4): no observations is not "100%"
 
 def test_q_T_challenged_then_cancelled_still_counts():
     # Event-timeliness (v3.8): a challenged contract that DIED (ABANDONED — the worst spec-defect
@@ -55,7 +55,7 @@ def test_q_T_challenged_then_cancelled_still_counts():
     assert q_T(g) == 0.5
 
 def test_q_T_challenge_counts_at_the_event():
-    # The metric moves the moment CHALLENGE happens (§14.6 "CHALLENGE → q_T event"), not at DONE.
+    # The metric moves the moment CHALLENGE happens (§15.7 "CHALLENGE → q_T event"), not at DONE.
     g = _graph(
         _task("t1", State.CHALLENGED, was_challenged=True),
         _task("t2", State.EXECUTING),
@@ -179,7 +179,7 @@ def test_q_V_acceptance_time_pass_verdict_not_counted():
     assert q_V(g) == 1.0
 
 
-# === false_fail_share: over-strict-validator DIAGNOSTIC (outside Q, §24.5) ===
+# === false_fail_share: over-strict-validator DIAGNOSTIC (outside Q, §15.4) ===
 
 def test_false_fail_share_posthoc_pass_overturns_standing_fail():
     # Mirror of q_V's carrier: an independent PASS recorded over DONE(fail) = "fail → later
@@ -211,7 +211,7 @@ def test_false_fail_share_population_is_standing_fails_only():
 
 
 def test_false_fail_share_stays_out_of_Q():
-    # §24.5: a diagnostic key rides NEXT TO Q in engine.metrics(), never as a 6th q_*.
+    # §15.4: a diagnostic key rides NEXT TO Q in engine.metrics(), never as a 6th q_*.
     e = make_engine(llm=None)
     m = e.metrics()
     assert set(k for k in m if k.startswith("q_")) == {"q_T", "q_D", "q_V", "q_Dep", "q_Del"}
@@ -233,7 +233,7 @@ def test_q_Dep_half_discovered():
 
 def test_q_Dep_no_deps_is_undefined():
     g = _graph(_task("t1"))
-    assert q_Dep(g) is None   # ⊥ (§21)
+    assert q_Dep(g) is None   # ⊥ (§15.4)
 
 
 # === q_Del: delegation quality (1 - reassigned/done) ===
@@ -256,7 +256,7 @@ def test_q_Del_half_reassigned():
 
 def test_q_Del_empty_population_is_undefined():
     g = _graph()
-    assert q_Del(g) is None   # ⊥ (§21)
+    assert q_Del(g) is None   # ⊥ (§15.4)
 
 def test_q_Del_reassigned_then_cancelled_still_counts():
     # Event-timeliness (v3.8): a mis-delegated node that never reaches DONE stays counted
@@ -283,13 +283,14 @@ def test_q_T_says_which_kind_of_spec_defect_each_node_carried():
     """
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "a", {"description": "a", "criteria": [{"name": "c", "description": "C"}]},
+    T.create_task(e, "a", {"description": "a", "criteria": [criterion("c", "C")]},
                   assignee="worker")
-    T.create_task(e, "b", {"description": "b", "criteria": [{"name": "c", "description": "C"}]},
-                  assignee="worker", parent_id="a")   # `a` is the project's one root
+    T.decompose(e, "a", [{"task_id": "b", "spec": {"description": "b", "criteria": [criterion("c", "C")]},
+                          "assignee": "worker", "covers": ["c"]}],
+                accepted_risks=REGISTER)   # `a` is the project's one root; its split admitted whole
     T.signal(e, "a", "CHALLENGE", "worker", reason="this criterion cannot be met as written")
-    # the issuer revises: a root's issuer is its own Del (§14.2)
-    T.edit_criteria(e, "b", [{"name": "c", "description": "sharper"}], agent="worker",
+    # the issuer revises: a root's issuer is its own Del (§10.1)
+    T.edit_criteria(e, "b", [criterion("c", "sharper")], agent="worker",
                     reason="spec_defect")
     e.wait_idle()
 

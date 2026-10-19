@@ -14,6 +14,21 @@ from __future__ import annotations
 from gfso.core.types import CriticVerdict
 
 
+def measured(rec: dict) -> bool:
+    """Did the round that wrote this review record reach a verdict? One that did not — no checker, an
+    unreadable or incomplete plan verdict, a goal that could not be read — is no baseline to count
+    progress against: against it an alternating checker reset the unproductive count (critic rounds 9,
+    10). The same reading for records older than the flag: a verdict is a `semantic_covered` of True or
+    False."""
+    return rec.get("measured", rec.get("semantic_covered") is not None)
+
+
+def progress_baseline(rec: dict) -> "list[str] | None":
+    """The findings to count the next review's progress against: this record's, if its round measured;
+    else the last measuring round's, carried through (None when there never was one)."""
+    return finding_keys(rec) if measured(rec) else rec.get("baseline_findings")
+
+
 def finding_keys(rec: dict, exclude_disputed: bool = True) -> list[str]:
     """Every finding in a stored review, by the name a dispute must use.
 

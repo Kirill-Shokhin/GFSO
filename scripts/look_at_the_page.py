@@ -8,7 +8,7 @@ with no mapping at all, and criteria fields drawn cream-on-cream, i.e. invisible
 
 So this is the instrument for that surface: it opens the page against a running server, walks every
 node's panel, opens every modal, and reports what the page SAYS — plus every console error, which is
-where a broken page confesses first. It is a reporter, not a judge: it prints what it saw and the
+where a broken page confesses first. It is a reporter, not a validator: it prints what it saw and the
 reader decides. Run it with the server up:
 
     python scripts/look_at_the_page.py --project <name> [--out shots/]
@@ -110,7 +110,7 @@ def main() -> int:
         finally:
             browser.close()
     print(json.dumps(found, ensure_ascii=False, indent=1))
-    # A console error is the page confessing; it is the one thing here that is not a judgement call.
+    # A console error is the page confessing; it is the one thing here that is not a discretionary call.
     return 1 if any(c.startswith(("error", "pageerror")) for c in found["console"]) else 0
 
 

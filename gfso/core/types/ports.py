@@ -61,7 +61,7 @@ class StoragePort(ABC):
     @abstractmethod
     def get_parent(self, task_id: TaskId) -> Optional[Task]:
         """The node this one covers a criterion of — `None` for a root. Its Del is this node's ISSUER
-        (§14.1), which is what makes the parent lookup a protocol question and not a convenience."""
+        (§10.1), which is what makes the parent lookup a protocol question and not a convenience."""
         ...
 
     @abstractmethod
@@ -72,7 +72,7 @@ class StoragePort(ABC):
     @abstractmethod
     def get_check_results(self, task_id: TaskId) -> list[CheckResult]:
         """The last CHECK battery run for this node. Empty means NOT RUN, never "clean": a caller that
-        reads absence as green turns a missing check into a passing one (§11.2)."""
+        reads absence as green turns a missing check into a passing one (§2.3)."""
         ...
 
     @abstractmethod
@@ -94,7 +94,7 @@ class StoragePort(ABC):
 
     @abstractmethod
     def add_dep_edge(self, edge: DepEdge) -> None:
-        """Record a dependency (§10: a Dep is criteria content — the consumer's criterion names the
+        """Record a dependency (§2: a Dep is criteria content — the consumer's criterion names the
         producer). Adding one twice is not an error; the edge set is what matters, not the calls."""
         ...
 
@@ -139,7 +139,7 @@ class StoragePort(ABC):
 
     def get_deliver_result(self, task_id: TaskId) -> Optional[str]:
         """What the executor handed over in its last DELIVER — the validator's input, kept because it
-        must survive a restart between the delivery and the judging."""
+        must survive a restart between the delivery and the validation."""
         return None
 
     def store_exec_verdict(self, task_id: TaskId, verdict_json: str) -> None:
@@ -149,7 +149,16 @@ class StoragePort(ABC):
 
     def get_exec_verdict(self, task_id: TaskId) -> Optional[str]:
         """The stored execution verdict (JSON) for this node, or `None`. Stamped with the generation it
-        judged, so a reader can tell a verdict about THIS delivery from one about an earlier one."""
+        validated, so a reader can tell a verdict about THIS delivery from one about an earlier one."""
+        return None
+
+    def store_setting(self, key: str, value: str) -> None:
+        """Persist one project-level setting — today the MODE (who holds which nodes). Default no-op:
+        a storage without it runs every project with no mode set, which is the behaviour before modes."""
+        ...
+
+    def get_setting(self, key: str) -> Optional[str]:
+        """A stored project-level setting, or `None` if it was never set."""
         return None
 
     def log_pipeline(self, ts: str, source: str, message: str) -> None:
@@ -178,6 +187,9 @@ class StoragePort(ABC):
 
 
 class LLMProviderPort(ABC):
+    #: may independent calls run at once (`stats.readings`)? A provider says so only where each call stands alone.
+    parallel_safe: bool = False
+
     @abstractmethod
     def complete(self, prompt: str, context: str = "") -> str:
         """One zero-tool completion. The whole of this port: an adapter that cannot run tools is still a

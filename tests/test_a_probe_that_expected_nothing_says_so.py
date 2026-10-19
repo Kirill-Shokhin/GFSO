@@ -24,7 +24,7 @@ import pytest
 from gfso import tools as T
 from gfso.core.protocol.invariants import probes_that_expected_nothing, underprobed
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
 _SILENT_PROBE = [{"criterion": "no_configparser", "verdict": "pass",
                   "evidence": "grep found nothing",
@@ -50,10 +50,9 @@ def test_the_refusal_names_the_discarded_probe_rather_than_calling_it_missing():
     e = make_engine()
     e.start()
     T.create_task(e, "leaf", {"description": "a leaf",
-                              "criteria": [{"name": "no_configparser",
-                                            "description": "no configparser anywhere"}],
-                              "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                  "predictability": "EXTRAORDINARY"}]},
+                              "criteria": [criterion("no_configparser",
+                                                     "no configparser anywhere")],
+                              "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, "leaf", "ACCEPT", "exec-1")
@@ -74,10 +73,16 @@ def test_the_same_absence_written_to_show_its_result_is_accepted():
     e = make_engine()
     e.start()
     T.create_task(e, "ok", {"description": "a leaf",
-                            "criteria": [{"name": "no_configparser",
-                                          "description": "no configparser anywhere"}],
-                            "accepted_risks": [{"item": UNMODELLED_FAULT.item,
-                                                "predictability": "EXTRAORDINARY"}]},
+                            # …pinning the very probe the instrument then reports, since a contract
+                            # now carries its procedure: the subject here is the probe's SHAPE, and
+                            # it stays the subject only if the report answers the pinned check.
+                            "criteria": [criterion(
+                                "no_configparser", "no configparser anywhere",
+                                check=[{"behaviour": "no reference to configparser anywhere "
+                                                     "under iniq/",
+                                        "command": "grep -rin configparser iniq/; echo exit=$?",
+                                        "expect": "exit=1"}])],
+                            "accepted_risks": REGISTER},
                   assignee="exec-1")
     e.wait_idle()
     T.signal(e, "ok", "ACCEPT", "exec-1")

@@ -2,8 +2,8 @@
 
 Lived: a two-hour run built five well-specified children under a root carrying zero criteria.
 Coverage passed (nothing to cover), the Level-2 gate reported `semantic_covered: true` over
-`criteria_judged: 0`, every child reached PASS — and the only thing that caught it was the
-independent validator refusing to invent a criterion to judge the root by, after the work was done.
+`criteria_checked: 0`, every child reached PASS — and the only thing that caught it was the
+independent validator refusing to invent a criterion to validate the root by, after the work was done.
 """
 from gfso.core.handlers.structural import check_coverage
 from gfso.core.types import Spec, Criteria, AgentId, TaskId

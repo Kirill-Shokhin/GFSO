@@ -1,16 +1,17 @@
 ﻿"""L2 critic runner — the STRUCTURAL gate + the causal-correctness CHECKER + validate storage/dirty-flag.
 The gate blocks the checker; a clean node with no usable LLM produces NO verdict (never read as clean);
 with an LLM, ONE zero-tool call yields per-parent-criterion sufficient/insufficient/uncertain + FM-2
-conflicts; an INCOMPLETE verdict (a parent criterion unjudged) is treated as NO verdict."""
+conflicts; an INCOMPLETE verdict (a parent criterion unchecked) is treated as NO verdict."""
 import json
 
 import pytest
 
 from gfso.engine import Engine
 from gfso.adapters.llm.stub import StubLLM
-from gfso.core.types import TaskId, AgentId, Spec, Criteria, CriterionMapping, AcceptedRiskItem, Predictability
+from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, AcceptedRiskItem, Predictability,
+                             Register)
 from gfso.critic.runner import critique_node, review_decomposition
-from tests.support import make_engine
+from tests.support import DENIAL, criterion, make_engine, pinned
 from gfso import tools as T, driver, serverctl
 
 
@@ -21,19 +22,21 @@ def _engine() -> Engine:
 
 
 def _decompose_clean(e: Engine):
-    # genuinely L0/L1-clean: every child mapped, ACCEPTED_RISKS present (a classified RISK event — v3.7 §13.1:
+    # genuinely L0/L1-clean: every child mapped, ACCEPTED_RISKS present (a classified RISK event — v3.7 §9.2:
     # a scope boundary would not belong here, and an unclassified record fails the STD-2 guard), seam has glue.
+    # The register rides the split, its decomposer's (§9.2): a parent's pre-filled one is task data, not the split's.
     e.assign_task(
         TaskId("p"),
-        Spec("p", (Criteria("c1", "x"), Criteria("c2", "y")),
-             (AcceptedRiskItem("provider rate-limit spike", Predictability.STATISTICAL, "P<1%, off-peak run"),)),
+        Spec("p", (Criteria("c1", "x", check=pinned("c1")), Criteria("c2", "y", check=pinned("c2")))),
         AgentId("pm"),
     )
     e.wait_idle()
     e.decompose_task(TaskId("p"), [
-        (TaskId("a"), Spec("a", (Criteria("a1", "A1"),)), AgentId("d1")),
-        (TaskId("b"), Spec("b", (Criteria("b1", "B1"),)), AgentId("d2")),
-    ], criterion_mappings=[CriterionMapping("c1", TaskId("a")), CriterionMapping("c2", TaskId("b"))])
+        (TaskId("a"), Spec("a", (Criteria("a1", "A1", check=pinned("a1")),)), AgentId("d1")),
+        (TaskId("b"), Spec("b", (Criteria("b1", "B1", check=pinned("b1")),)), AgentId("d2")),
+    ], criterion_mappings=[CriterionMapping("c1", TaskId("a")), CriterionMapping("c2", TaskId("b"))],
+        register=Register((AcceptedRiskItem("provider rate-limit spike", Predictability.STATISTICAL, "P<1%, off-peak run",
+                                            "a spike is seen", 0.01, "the run waits for the provider"), DENIAL)))
     e.wait_idle()
     e.add_dependency(TaskId("a"), TaskId("b"), glue="b reads a's total")
 
@@ -43,7 +46,7 @@ def test_leaf_is_reviewed_by_the_atomicity_question():
     work), checked by the atomicity question. With a stub LLM returning nothing usable, the verdict
     stays None — never read as clean (tests/test_l2_gate.py owns the gate that reads it)."""
     e = _engine()
-    e.assign_task(TaskId("leaf"), Spec("x", (Criteria("c", "y"),)), AgentId("d"))
+    e.assign_task(TaskId("leaf"), Spec("x", (Criteria("c", "y", check=pinned("c")),)), AgentId("d"))
     e.wait_idle()
     crit = critique_node(e, TaskId("leaf"))
     assert crit.gate_passed and crit.semantic_covered is None
@@ -52,9 +55,9 @@ def test_leaf_is_reviewed_by_the_atomicity_question():
 def test_gate_blocks_on_l0l1_failure():
     e = _engine()
     # parent with a criterion but NO mapping → CHECK-1 coverage FAIL
-    e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x"),)), AgentId("pm"))
+    e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x", check=pinned("c")),)), AgentId("pm"))
     e.wait_idle()
-    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", (Criteria("a1", "A1"),)), AgentId("d1"))])
+    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", (Criteria("a1", "A1", check=pinned("a1")),)), AgentId("d1"))])
     e.wait_idle()
     crit = critique_node(e, TaskId("p"))
     assert not crit.gate_passed
@@ -72,13 +75,14 @@ def test_clean_node_passes_gate_no_semantic_without_llm():
 
 
 class _CheckerLLM:
-    """Fake checker: records the input, returns a scripted JSON verdict."""
+    """Fake checker: records the input, returns a scripted JSON verdict — and to the question about the
+    GOAL, the goal's answer (no gaps): a plan verdict given to it is an unread goal, never a clean one."""
     def __init__(self, reply: str):
         self.reply, self.seen = reply, []
 
     def complete(self, prompt: str, context: str = "") -> str:
         self.seen.append((prompt, context))
-        return self.reply
+        return '{"gaps": []}' if '"gaps"' in prompt else self.reply
 
 
 def _verdict_json(criteria, conflicts=()):
@@ -94,7 +98,7 @@ def test_checker_all_sufficient_is_covered():
     crit = critique_node(e, TaskId("p"), llm=llm)
     assert crit.gate_passed and crit.semantic_covered is True and crit.semantic_findings == ""
     assert len(crit.criteria_verdicts) == 2
-    # the checker judges the node's ONE canonical read (the projection), under the checker role
+    # the checker checks the node's ONE canonical read (the projection), under the checker role
     prompt, context = llm.seen[0]
     assert "DECOMPOSITION LEVEL UNDER CHECK" in prompt and "CHECKER, not a decomposer" in context
 
@@ -114,7 +118,7 @@ def test_checker_gap_and_conflict_are_advisory_findings():
 
 
 def test_checker_incomplete_verdict_is_no_verdict():
-    """A parent criterion the checker did not judge ⇒ semantic_covered=None — an incomplete
+    """A parent criterion the checker did not check ⇒ semantic_covered=None — an incomplete
     certificate is NEVER read as clean."""
     e = _engine()
     _decompose_clean(e)
@@ -135,9 +139,9 @@ def test_checker_unparseable_is_no_verdict():
 def test_checker_gated_by_structure():
     """L2 presupposes a structurally-complete graph: a failing gate must not spend the LLM."""
     e = _engine()
-    e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x"),)), AgentId("pm"))
+    e.assign_task(TaskId("p"), Spec("p", (Criteria("c", "x", check=pinned("c")),)), AgentId("pm"))
     e.wait_idle()
-    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", (Criteria("a1", "A1"),)), AgentId("d1"))])
+    e.decompose_task(TaskId("p"), [(TaskId("a"), Spec("a", (Criteria("a1", "A1", check=pinned("a1")),)), AgentId("d1"))])
     e.wait_idle()
     llm = _CheckerLLM("should never be called")
     crit = critique_node(e, TaskId("p"), llm=llm)
@@ -147,17 +151,17 @@ def test_checker_gated_by_structure():
 def test_validate_stores_and_sets_verified_then_dirties():
     e = _engine()
     _decompose_clean(e)
-    assert e.get_task(TaskId("p")).verified is False
+    assert e.graph.get_task(TaskId("p")).verified is False
     crit = review_decomposition(e, TaskId("p"))
     assert crit.gate_passed
-    assert e.get_task(TaskId("p")).verified is True            # validated → fresh
+    assert e.graph.get_task(TaskId("p")).verified is True            # validated → fresh
     assert e.get_critique(TaskId("p"))["gate_passed"] is True  # stored record
     e.remove_dependency(TaskId("a"), TaskId("b"))              # a decomposition change must dirty it
-    assert e.get_task(TaskId("p")).verified is False
+    assert e.graph.get_task(TaskId("p")).verified is False
 
 
 def test_review_record_carries_provenance_and_get_review_reads_it():
-    """Re-validation UX: the stored record says WHO judged (model) and WHEN (ts); get_review is the
+    """Re-validation UX: the stored record says WHO reviewed (model) and WHEN (ts); get_review is the
     free read (no LLM) agents/UI consume; a shape change stales freshness but KEEPS the record
     (so a re-run has something to be compared against)."""
     e = _engine()
@@ -179,13 +183,13 @@ def test_review_record_carries_provenance_and_get_review_reads_it():
 
 def test_edit_criteria_on_child_stales_parent_review():
     """The freshness contract: ANY shape change — including a CHILD's criteria edit — stales the
-    parent's stored review (the checker judged a mapping that no longer exists)."""
+    parent's stored review (the checker checked a mapping that no longer exists)."""
     e = _engine()
     _decompose_clean(e)
     review_decomposition(e, TaskId("p"))
-    assert e.get_task(TaskId("p")).verified is True
-    T.edit_criteria(e, "a", [{"name": "x2", "description": "tighter"}], "pm")
-    assert e.get_task(TaskId("p")).verified is False
+    assert e.graph.get_task(TaskId("p")).verified is True
+    T.edit_criteria(e, "a", [criterion("x2", "tighter")], "pm")
+    assert e.graph.get_task(TaskId("p")).verified is False
 
 
 def test_child_reassign_dirties_parent():
@@ -194,10 +198,10 @@ def test_child_reassign_dirties_parent():
     e = _engine()
     _decompose_clean(e)
     review_decomposition(e, TaskId("p"))
-    assert e.get_task(TaskId("p")).verified is True
-    e.assign_task(TaskId("a"), Spec("a v2", (Criteria("c1", "x"),)), AgentId("d1"), parent_id=TaskId("p"))
+    assert e.graph.get_task(TaskId("p")).verified is True
+    e.assign_task(TaskId("a"), Spec("a v2", (Criteria("c1", "x", check=pinned("c1")),)), AgentId("d1"), parent_id=TaskId("p"))
     e.wait_idle()
-    assert e.get_task(TaskId("p")).verified is False
+    assert e.graph.get_task(TaskId("p")).verified is False
 
 
 def test_gfso_run_goes_through_the_live_server_when_there_is_one(monkeypatch):
@@ -205,7 +209,7 @@ def test_gfso_run_goes_through_the_live_server_when_there_is_one(monkeypatch):
 
     `gfso run` opened the database directly, always — a second engine over the same SQLite file
     while the server holds it. The log's guarantees rest on there being ONE sequencer (Inv-7's
-    single non-branching history; §14.3 requires a consumption check and the edge it authorizes to
+    single non-branching history; §12.14 requires a consumption check and the edge it authorizes to
     be one log-serialized step), and two writers are two sequencers. The visible half was smaller
     and still wrong: a CLI write reached neither the UI, nor the dispatcher, nor the observation
     panel until something reloaded.
@@ -239,5 +243,5 @@ def test_gfso_run_still_works_with_no_server(monkeypatch, tmp_path):
     """…and with nothing listening, the direct path is correct and is the only one there is."""
     monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: None)
     monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "g.db"))
-    driver.run(["create_task", "n1", '{"description": "x", "criteria": [{"name": "a", "description": "A"}]}'])
+    driver.run(["create_task", "n1", '{"description": "x", "criteria": [criterion("a", "A")]}'])
     driver.run(["get_task", "n1"])

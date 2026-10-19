@@ -13,7 +13,7 @@ product catches for other people — on its own surface, at the door a person wa
 
 One owner now, on the engine, because that is where the refusal is decided. The two facts the tests
 below keep apart: an unreadable review is not a discharged one (⊥ ≠ clean), and with the gate off
-the children genuinely MAY start — a deployment taking the canon's EXPLORE branch (§13.5) is not a
+the children genuinely MAY start — a deployment taking the canon's EXPLORE branch (§9.9) is not a
 graph with a bad plan, and a surface that says otherwise disagrees with its own machine.
 """
 from __future__ import annotations
@@ -25,22 +25,20 @@ import pytest
 from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.core.types import TaskId
-from tests.support import criterion, make_engine, UNMODELLED_FAULT
+from tests.support import criterion, make_engine, REGISTER
 
-_RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISK = REGISTER
 
 
-def _reviewed(e, record: dict):
+def _reviewed(e, record: dict, executor: str = "worker"):
     """A node carrying a stored review of THIS version of its plan — the shape the checker writes."""
-    T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
-                              "criteria": [criterion("c1", "C1 holds")]},
+    T.create_task(e, "root", {"description": "a goal", "criteria": [criterion("c1", "C1 holds")]},
                   assignee="pm")
-    T.create_task(e, "kid", {"description": "the work",
-                             "criteria": [criterion("k", "K holds")]},
-                  assignee="worker", parent_id="root")
-    T.map_criterion(e, "root", "kid", "c1")
+    T.decompose(e, "root", [{"task_id": "kid", "assignee": executor, "covers": ["c1"],
+                             "spec": {"description": "the work", "criteria": [criterion("k", "K holds")]}}],
+                accepted_risks=_RISK)
     e._graph._storage.store_critique(TaskId("root"), json.dumps(record))
-    node = e.get_task(TaskId("root"))
+    node = e.graph.get_task(TaskId("root"))
     node.verified = True
     e._graph.save_task(node)
     return e
@@ -64,9 +62,42 @@ def test_an_unreadable_review_does_not_admit_execution(monkeypatch):
     assert T.get_review(e, "root")["execution_admitted"] is False, \
         "`not None` is true, and that is how ⊥ came back as admitted"
     assert T.get_task(e, "root")["execution_admitted"] is False
-    refused = T.signal(e, "kid", "ACCEPT", "worker")
-    assert refused.get("accepted") is False, \
-        "the surfaces and the machine must not disagree about one node in the same second"
+    e.stop()
+
+
+def test_an_unreadable_review_refuses_the_decomposers_own_child_and_not_anothers(monkeypatch):
+    """The refusal binds only whoever can lift it (§12.16 (ii)): the review and its findings are the decomposer's
+    moves, so his own child's ACCEPT is refused; another executor's child is not refused for its issuer's missing
+    review — `execution_admitted` False is what the system reads to hold its OWN spawn there (C9-L2)."""
+    monkeypatch.setenv("GFSO_L2_GATE", "1")
+    for executor, accepted in (("pm", False), ("worker", True)):
+        e = make_engine(validate_signals=True, state_timeout=0)
+        e.start()
+        _reviewed(e, _UNREADABLE, executor)
+        assert e.execution_admitted(TaskId("root")) is False
+        assert T.signal(e, "kid", "ACCEPT", executor).get("accepted") is accepted, executor
+        e.stop()
+
+
+@pytest.mark.parametrize("executor,held", [("pm", True), ("exec-1", True), ("worker", False)])
+def test_the_frontier_holds_only_whom_the_plan_gate_binds(monkeypatch, executor, held):
+    """A wait on the plan is shown where the start is really held — the decomposer's own child (the machine refuses
+    its ACCEPT) and a child the dispatcher would start (the system holds its own spawn). A person's child under the
+    same unreviewed plan may ACCEPT, so the frontier offers it rather than a wait (critic r12)."""
+    monkeypatch.setenv("GFSO_L2_GATE", "1")
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.workforce.publish_executor_pool({"exec-1": None})
+    _reviewed(e, _UNREADABLE, executor)
+    T.signal(e, "root", "ACCEPT", "pm")
+    out = T.next_steps(e)
+    waits = [w["task_id"] for w in out.get("waiting", ()) if w.get("kind") == "plan"]
+    offered = [s["task_id"] for s in out["steps"] if s["task_id"] == "kid" and s["action"] == "accept"]
+    assert (waits, offered) == ((["kid"], []) if held else ([], ["kid"]))
+    # …and the plan check is a step only where it holds a child: "its children cannot start" says more than the gate
+    # where a person takes them (critic r13)
+    assert any(s["task_id"] == "root" and s["action"] == "review" for s in out["steps"]) is held
+    assert bool(e.execution_blocked_by(TaskId("kid"))) is held
     e.stop()
 
 
@@ -85,7 +116,7 @@ def test_a_clean_review_admits_it(monkeypatch):
 
 @pytest.mark.parametrize("record,name", [(_UNREADABLE, "unreadable"), (_CLEAN, "clean")])
 def test_with_the_gate_off_the_children_may_start_either_way(monkeypatch, record, name):
-    """The EXPLORE branch (§13.5) is a deployment decision, not a skipped step: the machine admits
+    """The EXPLORE branch (§9.9) is a deployment decision, not a skipped step: the machine admits
     the children, so every surface says so. Saying otherwise is the same disagreement, mirrored."""
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = make_engine(validate_signals=True, state_timeout=0)

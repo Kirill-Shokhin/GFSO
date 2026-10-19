@@ -11,41 +11,18 @@ import re
 import sys
 
 from gfso.engine import Engine
+from gfso.core.graph.model import root_of
 from gfso.adapters.agents.human import HumanAgent
-from gfso.adapters.llm.generic import GenericLLM
-from gfso.adapters.llm.headless import HeadlessClaudeLLM
 from gfso.adapters.llm.stub import StubLLM
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.storage.sqlite import SqliteStorage
+from gfso.adapters.storage.sqlite import SqliteStorage, peek_root
 from gfso.demo import seed_demo
 from gfso import config as _config
-from gfso.config import (data_dir as _config_data_dir, MODEL_DEFAULT, active_project,
+from gfso.config import (data_dir as _config_data_dir, active_project,
                          remember_active_project, DEFAULT_PROJECT)
+from gfso.llm import llm_factory
 
 log = logging.getLogger(__name__)
-
-
-def llm_factory(model: str = MODEL_DEFAULT):
-    """THE ONE switch every internal gfso LLM role goes through (decompose, validate, critic, future
-    validate_result/delegate one-shots). Two env knobs, whole-system semantics (no per-role mixing):
-
-    - `GFSO_PROVIDER` = anthropic (default) | generic
-        anthropic → the headless `claude -p` transport (the ONLY Anthropic path);
-        generic   → `GenericLLM` at `GFSO_GENERIC_BASE_URL` (OpenAI-compatible; local models /
-                    other vendors, external users' own risk; `GFSO_GENERIC_MODEL`,
-                    `GFSO_GENERIC_API_KEY` optional).
-    - `GFSO_BILLING` = subscription (default) | api  — Anthropic only: `api` keeps
-        ANTHROPIC_API_KEY in the child env (per-token billing on the same transport, measured);
-        `subscription` strips it (claude.ai login).
-
-    Flipping the whole system to a foreign provider and seamlessly back IS these two variables."""
-    if _config.provider() == "generic":
-        _g = _config.generic_provider()
-        if not _g["base_url"]:
-            raise ValueError("GFSO_PROVIDER=generic needs GFSO_GENERIC_BASE_URL — the OpenAI-compatible "
-                             "endpoint to talk to")
-        return GenericLLM(base_url=_g["base_url"], model=_g["model"] or model, api_key=_g["api_key"])
-    return HeadlessClaudeLLM(model=model, keep_api_key=_config.api_billing())
 
 
 def data_dir():
@@ -237,13 +214,39 @@ class ProjectRegistry:
         # list readable (those files are the provenance of past measurements).
         def _touched(name: str) -> float:
             for candidate in (f"{name}.db", "gfso.db" if name == "default" else f"{name}.db"):
+                base = os.path.join(self._dir, candidate)
                 try:
-                    return os.path.getmtime(os.path.join(self._dir, candidate))
+                    stamp = os.path.getmtime(base)
                 except OSError:
                     continue
+                # …OR ITS WAL, where a WAL-mode database's writes land until a checkpoint: the file
+                # alone kept the stamp of its last checkpoint, so `ui-link-probe`, written at 16:43,
+                # was listed as 09-07 beneath a hundred finished probes (2026-09-24). An EMPTY WAL
+                # is not a write — a read-only open creates one — so it does not count.
+                try:
+                    if os.path.getsize(base + "-wal"):
+                        stamp = max(stamp, os.path.getmtime(base + "-wal"))
+                except OSError:      # no WAL: everything is in the file, and its stamp is the answer
+                    pass
+                return stamp
             return 0.0
 
         by_recency = sorted(names, key=lambda n: (-_touched(n), n))
         return {"active": self._active, "projects": by_recency,
                 # The raw stamps too, so a client can group or age them without a second call.
                 "last_active": {n: round(_touched(n), 0) for n in by_recency}}
+
+    def roots(self, names) -> dict:
+        """{name: {state, done_reason} | None} — each named project's root, None before it has one.
+
+        A loaded project answers from its engine; any other is PEEKED at on disk, because building
+        its engine would start its dispatcher, and looking at a list must not set a graph running."""
+        def _root(name: str):
+            eng = self._engines.get(name)
+            if eng is not None:
+                r = root_of(eng.all_tasks())
+                return r and (r.state, r.done_reason)
+            return peek_root(str(_config.db_path()) if name == DEFAULT_PROJECT
+                             else os.path.join(self._dir, f"{name}.db"))
+        return {n: (st := _root(n)) and {"state": st[0].name, "done_reason": st[1] and st[1].name}
+                for n in names}

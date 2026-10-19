@@ -3,13 +3,13 @@
 `record_verdict` refuses a PASS whose observations only restate the verdict — *"a PASS needs to say
 what was OBSERVED, one line per criterion"*. `DELIVER(self_validation=PASS)` took `result="yep"` and
 recorded a passing verdict on the node, which then closed carrying a criterion it did not meet (HTTP
-door, wave 26, 2026-09-06). §14.5 D6 makes that report the record an internal node is judged on, so
+door, wave 26, 2026-09-06). §10.3 makes that report the record an internal node is validated on, so
 it is the same demand at the same grade.
 
 One owner for the floor (`gfso.core.protocol.invariants`), because two spellings of one rule is
 exactly how these two doors came apart. The negative controls matter more than the rule here: an
 honest short report must survive, and a FAIL must not be gated at all — an executor reporting their
-own failure is the direction this product wants, and ⊥ is not a pass anyway (§11.2).
+own failure is the direction this product wants, and ⊥ is not a pass anyway (§2.3).
 """
 from __future__ import annotations
 
@@ -17,18 +17,16 @@ from gfso import tools
 from gfso import tools as T
 from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.types import TaskId
-from tests.support import UNMODELLED_FAULT, criterion, make_engine
+from tests.support import criterion, make_engine, REGISTER
 
-_RISKS = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY"}]
+_RISKS = REGISTER
 
 
 def _internal_leaf(e, tid):
-    """A leaf whose Del is its parent's — the §14.5 internal node that self-verifies."""
-    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
-                              "accepted_risks": _RISKS}, assignee="agent")
-    T.create_task(e, tid, {"description": "a leaf", "criteria": [criterion("k", "K")]},
-                  assignee="agent", parent_id="root")
-    T.map_criterion(e, "root", tid, "c")
+    """A leaf whose Del is its parent's — the §10.3 internal node that self-verifies."""
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")]}, assignee="agent")
+    T.decompose(e, "root", [{"task_id": tid, "spec": {"description": "a leaf", "criteria": [criterion("k", "K")]},
+                             "assignee": "agent", "covers": ["c"]}], accepted_risks=_RISKS)
     e.wait_idle()
     T.signal(e, tid, "ACCEPT", "agent")
 
@@ -47,7 +45,7 @@ def test_a_self_pass_over_a_report_that_records_nothing_is_not_recorded():
     rec = _delivered_with(e, "thin", "yep")
 
     assert not rec, "the exact report measured at the door: a self-PASS over `yep`"
-    assert e.get_state(TaskId("thin")).name == "VALIDATING", (
+    assert e.graph.get_state(TaskId("thin")).name == "VALIDATING", (
         "the DELIVER itself stands — what is refused is the RECORD, so the node now needs a real "
         "one before it can close")
     e.stop()

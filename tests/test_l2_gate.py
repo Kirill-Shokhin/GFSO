@@ -1,7 +1,7 @@
 ﻿"""The pre-execution causal gate — an ENGINEERING corner (`formal/README.md` #10), not a canon row.
 
-The canon gates execution on the SYNTACTIC level (§13.4) and files the Pragmatic level as runtime
-detection; what is mechanised here is its verify-vs-explore decision (§13.5) taken once: the causal
+The canon gates execution on the SYNTACTIC level (§11.5) and files the Pragmatic level as runtime
+detection; what is mechanised here is its verify-vs-explore decision (§9.9) taken once: the causal
 check must have RUN over this version of the plan and its findings must be dispositioned.
 
 L0 gates topology: a parent criterion needs a covering child. It cannot see whether that child's
@@ -11,7 +11,7 @@ be causally hollow, and the hole then surfaces only after the code exists, as a 
 step (a child's ACCEPT) while its parent's decomposition has no current, discharged Level-2 verdict.
 
 What is gated is that the check RAN and its findings were DISPOSITIONED — never that the checker is
-right (L2 is an approximation over the faithfulness axis; contact keeps the last word, §13.5).
+right (L2 is an approximation over the faithfulness axis; contact keeps the last word, §9.9).
 Hence two discharges: fix the plan (any edit stales the review — with its disputes) or record why the
 finding is wrong (`dispute_finding`). `GFSO_L2_GATE=0` is the explicit EXPLORE opt-out.
 
@@ -26,13 +26,13 @@ from gfso import tools
 from gfso import tools_llm as TL
 from gfso.critic.runner import (_goal_changed, _obligation_words, _same_obligation, critique_node,
                                 _still_undecided, _undecided_obligations)
-from gfso.core.types import Spec, Criteria, TaskId
-from dataclasses import dataclass
-from tests.support import make_engine, spec
+from gfso.core.types import Spec, Criteria, Register, TaskId
+from gfso.critic.types import NodeCritique
+from tests.support import REGISTER, REGISTER_SPLIT, criterion, make_engine, pinned, spec, DENIAL_ENTRY
 
 from gfso.critic import runner as _runner
-from gfso.core.graph.model import verdict_is_current_pass
-from gfso.engine.validation import _l2_undischarged, _l0_holes
+from gfso.core.graph.model import generation_of_task, stamped_with
+from gfso.engine.validation import AdmissionRefused, _l2_undischarged, _l0_holes
 import gfso.tools as T
 from gfso.critic import runner as R
 from gfso.critic.runner import _already_decided, _criterion_stamps, _plan_generation
@@ -57,17 +57,21 @@ def engine():
     e.stop()
 
 
-def _plan(e, risks=True):
-    """root(c1,c2) → child covering both. L0-clean; nothing reviewed yet."""
-    e.assign_task(TaskId("root"), spec("goal", "c1", "c2", risks=risks), AgentId("agent"))
+_KID = [(TaskId("kid"), spec("part", "k1"), AgentId("agent"))]
+_BOTH = [CriterionMapping("c1", TaskId("kid")), CriterionMapping("c2", TaskId("kid"))]
+
+
+def _root(e):
+    e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
     e.wait_idle()
-    e.decompose_task(TaskId("root"), [(TaskId("kid"), spec("part", "k1"), AgentId("agent"))],
-                     criterion_mappings=[CriterionMapping("c1", TaskId("kid")),
-                                         CriterionMapping("c2", TaskId("kid"))])
+
+
+def _plan(e):
+    """root(c1,c2) → child covering both, admitted whole with its register (§11.5). L0-clean; nothing reviewed yet."""
+    _root(e)
+    e.decompose_task(TaskId("root"), _KID, _BOTH, register=REGISTER_SPLIT)
     e.wait_idle()
-    holes = _l0_holes(e._graph, e.get_task(TaskId("root")))
-    assert holes == ([] if risks else holes)      # clean with the register; without it, CHECK-4 alone
-    assert risks or [h.check_name for h in holes] == ["CHECK-4:accepted_risks"]
+    assert _l0_holes(e._graph, e.graph.get_task(TaskId("root"))) == []
 
 
 def _review(e, node="root", covered=True, verdicts=(), conflicts=()):
@@ -76,7 +80,7 @@ def _review(e, node="root", covered=True, verdicts=(), conflicts=()):
            "criteria_verdicts": list(verdicts), "conflicts": list(conflicts),
            "model": "test", "ts": "2026-07-19 00:00:00"}
     e._graph._storage.store_critique(TaskId(node), json.dumps(rec))
-    t = e.get_task(TaskId(node))
+    t = e.graph.get_task(TaskId(node))
     t.verified = True
     e._graph.save_task(t)
 
@@ -84,7 +88,7 @@ def _review(e, node="root", covered=True, verdicts=(), conflicts=()):
 def _accept(e, tid="kid"):
     e.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId(tid), source=AgentId("agent")))
     e.wait_idle()
-    return e.get_task(TaskId(tid)).state
+    return e.graph.get_task(TaskId(tid)).state
 
 
 # ── the gate itself ───────────────────────────────────────────────────────────────────────────
@@ -135,7 +139,7 @@ def test_gate_off_is_the_explore_branch(engine):
 
 def test_a_leaf_executes_freely_the_shape_is_the_executors_call(engine):
     """How many subtasks a goal splits into is the executor's domain call — NOT imposed from outside
-    (§10). So a node the executor takes as a LEAF starts work with no atomicity verdict demanded; the
+    (§4.5). So a node the executor takes as a LEAF starts work with no atomicity verdict demanded; the
     root seam still validates the whole result against the issuer's criteria. (Removed: an earlier gate
     made a leaf justify being atomic — that set the subtask count from outside and deadlocked
     auto_decompose's own builder.)"""
@@ -169,7 +173,7 @@ def test_dispute_discharges_its_own_finding_only(engine):
     assert _accept(engine) == State.EXECUTING
 
     stored = engine.get_critique(TaskId("root"))["disputes"]
-    assert set(stored) == {"c1", "c2"} and stored["c1"]["by"] == "agent"  # provenance, §6.2
+    assert set(stored) == {"c1", "c2"} and stored["c1"]["by"] == "agent"  # provenance, §19.3
 
 
 def test_dispute_needs_a_current_verdict_naming_that_finding(engine):
@@ -194,12 +198,33 @@ def test_editing_the_plan_stales_the_review_and_its_disputes(engine):
     tools.dispute_finding(engine, "root", "c2", "holds via the child's documented output")
     assert _accept(engine) == State.EXECUTING
 
-    tools.edit_criteria(engine, "kid", [{"name": "k1", "description": "changed"},
-                                        {"name": "k2", "description": "added"}], agent="agent")
+    tools.edit_criteria(engine, "kid", [criterion("k1", "changed"),
+                                        criterion("k2", "added")], agent="agent")
     engine.wait_idle()
-    assert engine.get_task(TaskId("root")).verified is False    # review staled by the edit
+    assert engine.graph.get_task(TaskId("root")).verified is False    # review staled by the edit
     with pytest.raises(ValueError, match="no current Level-2 verdict"):
         tools.dispute_finding(engine, "root", "c2", "same reason again")
+
+
+def test_a_child_leaving_the_plan_stales_the_review_as_its_revision_does(engine):
+    """A cancelled child's settlement takes it out of the split the review read (§12.6) — the plan changed, as on a
+    revision of the child's contract, so the verdict is no longer current; while it is only CANCELLING it is still
+    active and the verdict stands (critic r12)."""
+    _root(engine)
+    kids = [(TaskId("a"), spec("part a", "ka"), AgentId("agent")), (TaskId("b"), spec("part b", "kb"), AgentId("agent"))]
+    maps = [CriterionMapping("c1", TaskId("a")), CriterionMapping("c2", TaskId("a")),
+            CriterionMapping("c1", TaskId("b"))]
+    engine.decompose_task(TaskId("root"), kids, maps, register=REGISTER_SPLIT)
+    engine.wait_idle()
+    _review(engine)
+    engine.send_signal(SignalData(signal=Signal.CANCEL, task_id=TaskId("b"), source=AgentId("agent"), reason="not needed"))
+    engine.wait_idle()
+    assert engine.graph.get_task(TaskId("root")).verified is True            # still active while CANCELLING
+    engine.send_signal(SignalData(signal=Signal.CONFIRM_CANCEL, task_id=TaskId("b"), source=AgentId("agent")))
+    engine.wait_idle()
+    assert engine.graph.get_task(TaskId("b")).state == State.ABANDONED
+    assert engine.graph.get_task(TaskId("root")).verified is False           # the plan it read is gone
+    assert _accept(engine, "a") == State.OFFERED                             # the decomposer's own child waits
 
 
 # ── the frontier NAMES the step (a gate that only refuses is a wall) ──────────────────────────
@@ -239,35 +264,56 @@ def test_an_empty_register_is_an_incomplete_plan_and_the_engine_says_which_hole(
     gates read that level the same way: execution is refused and the Level-2 checker refuses too.
 
     This used to be the argument for calling CHECK-4 advisory — the pair looked like a deadlock, with
-    a fabricated register as the only escape. It is not one. §13.1 says a decomposition without the
+    a fabricated register as the only escape. It is not one. §9.2 says a decomposition without the
     register is incomplete BY DEFINITION, so the escape is to write the register the plan was always
     missing, and the engine names exactly that hole rather than a generic refusal. What would make it
-    a deadlock is a hole the operator cannot see; what makes it a step is `list_holes`."""
-    _plan(engine, risks=False)                      # decomposed, register empty
+    a deadlock is a hole the operator cannot see; what makes it a step is `list_holes`.
+
+    Canon v4.1 (§11.5, §9.2, §12.10): a split carrying no register of its own — the packet's pre-fill is not one — is
+    refused at its admission, naming CHECK-4, and no child is issued; a register emptied after admission is a flag
+    both levels read and name.
+    Canon v4.1 §11.5 ("its register — changes only by a re-admission"): emptying it is refused naming CHECK-4 and
+    the admitted register stands; the empty one both levels must still name is a row written behind that gate, as an
+    older build left it (no door reaches it now), and the decomposer's complete register is what lifts it."""
+    _root(engine)                                   # the packet carries a pre-filled register: task data
+    with pytest.raises(AdmissionRefused, match="CHECK-4"):
+        engine.decompose_task(TaskId("root"), _KID, _BOTH)      # decomposed, no register with the split
+    assert engine.graph.get_task(TaskId("kid")) is None         # execution refused: nothing was issued
+    engine.decompose_task(TaskId("root"), _KID, _BOTH, register=REGISTER_SPLIT)
+    with pytest.raises(AdmissionRefused, match="CHECK-4"):     # its decomposer empties it: refused, not a flag
+        engine.admit_register(TaskId("root"), Register(), AgentId("agent"))
+    assert engine.graph.get_task(TaskId("root")).register.items == REGISTER_SPLIT.items
+    t = engine._graph.get_task(TaskId("root"))
+    t.register = Register()                                     # behind the gate: an older build's row
+    engine._graph.save_task(t)
+    engine._recompute_checks(TaskId("root"))
     assert any(c.check_name.startswith("CHECK-4") and not c.passed
                for c in engine.get_checks(TaskId("root")))
-    assert _accept(engine) == State.OFFERED         # execution refused: the level is not clean
     crit = critique_node(engine, TaskId("root"))
     assert not crit.gate_passed and any("CHECK-4" in f for f in crit.l0l1_failures)
     assert any("CHECK-4" in h["check"] for h in tools.list_holes(engine, "root")["holes"])   # named, not opaque
 
-    tools.edit_accepted_risks(engine, "root", [{"item": "an unmodelled environment fault",
-                                                "predictability": "EXTRAORDINARY"}], agent="agent")
+    tools.edit_accepted_risks(engine, "root", REGISTER, agent="agent")
     engine.wait_idle()
     assert not [c for c in engine.get_checks(TaskId("root"))
                 if c.check_name.startswith("CHECK-4") and not c.passed]   # the step, taken
 
 
 def test_l0_is_checked_before_l2(engine):
-    """Staging: the structural hole is named first — L2 presupposes a complete plan."""
-    engine.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
-    engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("kid"), spec("part", "k1"), AgentId("agent"))],
-                          criterion_mappings=[CriterionMapping("c1", TaskId("kid"))])  # c2 uncovered
-    engine.wait_idle()
-    assert _accept(engine) == State.OFFERED
+    """Staging: the structural hole is named first — L2 presupposes a complete plan.
+
+    Canon v4.1: the holed split is refused at its admission, naming CHECK-1, and no child is issued (§11.5); a hole a
+    revision makes after it is flagged (§12.10), and the checker stops at it before Level 2."""
+    _root(engine)
+    with pytest.raises(AdmissionRefused, match="CHECK-1"):     # c2 uncovered
+        engine.decompose_task(TaskId("root"), _KID, _BOTH[:1], register=REGISTER_SPLIT)
+    assert engine.graph.get_task(TaskId("kid")) is None
+    engine.decompose_task(TaskId("root"), _KID, _BOTH, register=REGISTER_SPLIT)
+    tools.edit_criteria(engine, "root", [criterion("c1"), criterion("c2"), criterion("c3")], agent="agent")
     holes = [h["check"] for h in tools.list_holes(engine, "root")["holes"]]
     assert any("CHECK-1" in h for h in holes)
+    crit = critique_node(engine, TaskId("root"))
+    assert not crit.gate_passed and any("CHECK-1" in f for f in crit.l0l1_failures)
 
 
 def test_a_goal_whose_own_criteria_decide_nothing_does_not_reach_execution(engine):
@@ -283,10 +329,10 @@ def test_a_goal_whose_own_criteria_decide_nothing_does_not_reach_execution(engin
 
     A named gap is discharged the same two ways as any other finding: change the plan, or record in
     writing why the finding is wrong. What is gated is that the check HAPPENED and its findings were
-    dispositioned — never that the checker is right (§13.5)."""
+    dispositioned — never that the checker is right (§9.9)."""
     e = engine
     _plan(e)                                  # a structurally clean parent with mapped children
-    node = e.get_task(TaskId("root"))
+    node = e.graph.get_task(TaskId("root"))
 
     rec = {"node_id": "root", "gate_passed": True, "semantic_covered": False,
            "criteria_verdicts": [{"criterion": "c1", "verdict": "sufficient", "why": "carried"},
@@ -299,14 +345,14 @@ def test_a_goal_whose_own_criteria_decide_nothing_does_not_reach_execution(engin
     node.verified = True
     e._graph.save_task(node)
 
-    open_now = _l2_undischarged(e._graph, e.get_task(TaskId("root")))
+    open_now = _l2_undischarged(e._graph, e.graph.get_task(TaskId("root")))
     assert open_now == ["undecided: the engine must actually match patterns"]
 
     out = e.dispute_review_finding(TaskId("root"), "undecided: the engine must actually match patterns",
                                    "the matching obligation is carried by the child's criteria",
                                    AgentId("agent"))
     assert out["open_findings"] == []
-    assert _l2_undischarged(e._graph, e.get_task(TaskId("root"))) == []
+    assert _l2_undischarged(e._graph, e.graph.get_task(TaskId("root"))) == []
 
 
 def test_a_current_pass_means_the_same_thing_everywhere(engine):
@@ -317,47 +363,37 @@ def test_a_current_pass_means_the_same_thing_everywhere(engine):
     and feed q_V. A disagreement between them is a disagreement about whether work is accepted.
 
     The generation is (iteration, reopens, revisions): a rework moves the first, a REOPEN the second
-    — §14.3's anti-fake rule, so a pre-reopen pass cannot re-open the gate from the past — and a
+    — §12.14's anti-fake rule, so a pre-reopen pass cannot re-open the gate from the past — and a
     revision the third, because a validator still running on a voided delivery lands its verdict
     afterwards carrying the same first two."""
     e = engine
     e.assign_task(TaskId("n"), spec("goal", "c"), AgentId("agent"))
     e.wait_idle()
-    t = e.get_task(TaskId("n"))
+    t = e.graph.get_task(TaskId("n"))
 
-    assert verdict_is_current_pass(None, t) is False                       # nothing recorded
-    assert verdict_is_current_pass({"verdict": "FAIL"}, t) is False         # a refusal is not a pass
+    gen = generation_of_task(t)
+    assert stamped_with(None, gen) is False                                 # nothing recorded
     fresh = {"verdict": "PASS", "iteration": 0, "reopens": 0, "revisions": 0}
-    assert verdict_is_current_pass(fresh, t) is True
+    assert stamped_with(fresh, gen) is True
     for stale in ({**fresh, "iteration": 1}, {**fresh, "reopens": 1}, {**fresh, "revisions": 1}):
-        assert verdict_is_current_pass(stale, t) is False, stale
+        assert stamped_with(stale, gen) is False, stale
 
 
 def test_a_checker_verdict_that_flipped_says_so(engine, monkeypatch):
     """A criterion went `sufficient` in one round and `insufficient` in the next with nothing about
     it or its children touched between them.
 
-    The checker is an approximation (§13.5) and may legitimately change its mind — but if it does so
+    The checker is an approximation (§9.9) and may legitimately change its mind — but if it does so
     silently, a plan can be admitted on the round that happened to be kind, and nobody can see that
     is what happened. This does not decide anything about the churn; it stops it being invisible."""
-    @dataclass
-    class _Out:
-        node_id: str = "root"
-        gate_passed: bool = True
-        semantic_covered: bool = True
-        semantic_findings: str = ""
-        criteria_verdicts: tuple = ()
-        conflicts: tuple = ()
-        undecided_obligations: tuple = ()
-        l0l1_failures: tuple = ()
-
     e = engine
     _plan(e)
     monkeypatch.setattr(_runner, "llm_factory", lambda m: object(), raising=False)
 
     def _run(verdict):
         monkeypatch.setattr(_runner, "critique_node",
-                            lambda *a, **k: _Out(criteria_verdicts=(
+                            lambda *a, **k: NodeCritique("root", gate_passed=True, semantic_covered=True,
+                                                         goal_read=True, criteria_verdicts=(
                                 {"criterion": "c1", "verdict": verdict, "why": "…"},)))
         _runner.review_decomposition(e, TaskId("root"), llm=object())
         return json.loads(e._graph._storage.get_critique(TaskId("root")))
@@ -399,7 +435,7 @@ def test_the_sufficiency_check_reads_the_goal_several_times_and_unions_what_it_f
             return self.rounds[(self.n - 1) % len(self.rounds)]
 
     task = type("T", (), {"id": TaskId("root"),
-                          "spec": Spec("a goal", (Criteria("c1", "one"),), (), scope=())})()
+                          "spec": Spec("a goal", (Criteria("c1", "one", check=pinned("c1")),), (), scope=())})()
     gaps = _undecided_obligations(None, task, _Reader())
     named = [g["obligation"] for g in gaps]
     assert named == ["reports missing keys", "exits non-zero", "documents the schema format"]
@@ -432,7 +468,7 @@ def test_one_obligation_in_three_phrasings_is_one_finding():
             return self.said[(self.n - 1) % len(self.said)]
 
     task = type("T", (), {"id": TaskId("root"),
-                          "spec": Spec("a goal", (Criteria("c1", "one"),), (), scope=())})()
+                          "spec": Spec("a goal", (Criteria("c1", "one", check=pinned("c1")),), (), scope=())})()
     named = [g["obligation"] for g in _undecided_obligations(None, task, _Reader())]
     assert named == ["CLI invoked as `python -m linestat FILE`", "a README exists",
                      "--json produces machine-readable output"]
@@ -465,19 +501,16 @@ def test_the_review_answers_with_one_number_and_what_changed(engine, monkeypatch
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = engine
     tools.create_task(e, "root", {"name": "root", "description": "a goal",
-                                  "criteria": [{"name": "c1", "description": "the thing"}],
-                                  "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
-                                                      "justification": "accepted", "invalidation_condition": "never"}]},
-                      "agent")
-    tools.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
-                      assignee="agent", parent_id="root")
-    tools.map_criterion(e, "root", "kid", "c1")
+                                  "criteria": [criterion("c1", "the thing")]}, "agent")
+    tools.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "child", "criteria": [criterion("k", "K")]},
+                                 "assignee": "agent", "covers": ["c1"]}],
+                    accepted_risks=[{"item": "fixture", "predictability": "extraordinary", "justification": "accepted", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY])
     e._graph._storage.store_critique(TaskId("root"), json.dumps({
         "node_id": "root", "gate_passed": True, "semantic_covered": False,
         "criteria_verdicts": [{"criterion": "c1", "verdict": "insufficient", "why": "not carried"}],
         "conflicts": [], "undecided_obligations": [],
         "iteration": 0, "reopens": 0, "revisions": 0}))
-    root = e.get_task(TaskId("root")); root.verified = True; e._graph.save_task(root)
+    root = e.graph.get_task(TaskId("root")); root.verified = True; e._graph.save_task(root)
     assert e.open_l2_findings(TaskId("root")) == ["c1"]        # the one list the gate reads
 
 
@@ -488,25 +521,27 @@ def test_a_goal_that_has_not_moved_is_not_mined_again(engine):
     THE GOAL — what does this text require that no criterion decides — and re-asking it open-endedly
     after every criteria edit made it discover a fresh corner each round, growing the contract until
     the run died in the gate without writing any code. The answer belongs to the text: when the goal
-    has not moved, later rounds re-judge the obligations already named instead of reading it again,
+    has not moved, later rounds re-check the obligations already named instead of reading it again,
     and nothing new can be invented."""
     e = engine
     tools.create_task(e, "root", {"name": "root", "description": "build the thing",
-                                  "criteria": [{"name": "c1", "description": "the thing"}]}, "agent")
-    task = e.get_task(TaskId("root"))
+                                  "criteria": [criterion("c1", "the thing")]}, "agent")
+    task = e.graph.get_task(TaskId("root"))
     assert _goal_changed(None, task)                              # never reviewed → read the goal
-    prior = {"goal_text": "build the thing",
+    prior = {"goal_text": "build the thing", "goal_read": True,
              "undecided_obligations": [{"obligation": "it is installable"},
                                        {"obligation": "it has a README"}]}
-    assert not _goal_changed(prior, task)                         # same text → judge the list
+    assert not _goal_changed(prior, task)                         # same text → check the list
+    # a record from before `goal_read` cannot say whether its round read the goal: read once more
+    assert _goal_changed({k: v for k, v in prior.items() if k != "goal_read"}, task)
     assert _goal_changed({**prior, "goal_text": "build something else"}, task)
 
-    class _Judge:
+    class _Checker:
         def complete(self, prompt, context=None, **kw):
             assert "OBLIGATIONS NAMED EARLIER" in prompt          # …the fixed list, not the goal
             return json.dumps({"decided": ["1"]})
 
-    left = _still_undecided(e, task, _Judge(), tuple(prior["undecided_obligations"]))
+    left = _still_undecided(e, task, _Checker(), tuple(prior["undecided_obligations"]))
     assert [g["obligation"] for g in left] == ["it has a README"]
 
 
@@ -516,13 +551,12 @@ def test_a_count_that_was_not_measured_is_not_zero(engine, monkeypatch):
     When the Syntactic level fails, the Level-2 checker is gated out and names nothing — and the
     count read zero, which a reader glancing at it takes for a clean plan (measured on the human door
     2026-08-22). A number that cannot tell "none" from "unmeasured" must not be a number, and the
-    delta against the last check is not a comparison either when nothing was compared."""
+    delta against the last check is not a comparison either when nothing was compared.
+    Canon v4.1: the hole is a revision's, flagged after a clean admission (§11.5, §12.10)."""
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = engine
-    tools.create_task(e, "root", {"name": "root", "description": "a goal",
-                                  "criteria": [{"name": "c1", "description": "the thing"}]}, "agent")
-    tools.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
-                      assignee="agent", parent_id="root")     # …unmapped: CHECK-1 fails
+    _plan(e)
+    tools.edit_criteria(e, "root", [criterion("c1"), criterion("c2"), criterion("c3")], agent="agent")  # c3: CHECK-1
     out = TL.review_decomposition(e, "root")
     assert out["gate_passed"] is False
     assert out["open_count"] is None and "not measured" in out["open_count_note"]
@@ -533,22 +567,18 @@ def test_the_checker_reads_the_plan_several_times_on_its_first_pass(engine, monk
     """With the contract steady at twelve criteria, the checker still found one NEW thing per round.
 
     Measured on the E3 arm 2026-08-22: three rounds, one new finding each, and the run ended
-    `l2_not_discharged` without a line of code. One reading of a plan is one sample of a judgement
+    `l2_not_discharged` without a line of code. One reading of a plan is one sample of an assessment
     that varies; a doubt raised by ANY reading is a doubt to answer, so the first pass takes several
-    and unions them. Later rounds read once — by then the plan has changed, and what they judge is
+    and unions them. Later rounds read once — by then the plan has changed, and what they check is
     the change."""
     monkeypatch.setattr("gfso.critic.runner.CHECKER_READINGS", 3)
     e = engine
     tools.create_task(e, "root", {"name": "root", "description": "a goal",
-                                  "criteria": [{"name": "c1", "description": "one"},
-                                               {"name": "c2", "description": "two"}],
-                                  "accepted_risks": [{"item": "fixture", "predictability": "extraordinary",
-                                                      "justification": "a", "invalidation_condition": "n"}]},
-                      "agent")
-    tools.create_task(e, "kid", {"description": "child", "criteria": [{"name": "k", "description": "K"}]},
-                      assignee="agent", parent_id="root")
-    tools.map_criterion(e, "root", "kid", "c1")
-    tools.map_criterion(e, "root", "kid", "c2")
+                                  "criteria": [criterion("c1", "one"),
+                                               criterion("c2", "two")]}, "agent")
+    tools.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "child", "criteria": [criterion("k", "K")]},
+                                 "assignee": "agent", "covers": ["c1", "c2"]}],
+                    accepted_risks=[{"item": "fixture", "predictability": "extraordinary", "justification": "a", "invalidation_condition": "n", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY])
 
     rounds = [
         {"criteria": [{"criterion": "c1", "verdict": "sufficient", "why": "carried"},
@@ -609,26 +639,26 @@ def test_a_check_already_running_is_not_offered_as_a_step(engine, monkeypatch):
     2026-08-22, where the two surfaces disagreed about the same node)."""
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     _plan(engine)
-    key = engine.begin_review(TaskId("root"))
-    assert key is not None and engine.begin_review(TaskId("root")) is None   # one per plan version
+    key = engine.claims.begin_review(TaskId("root"))
+    assert key is not None and engine.claims.begin_review(TaskId("root")) is None   # one per plan version
 
     out = T.next_steps(engine)
     assert not [s for s in out.get("steps", [])
                 if s["task_id"] == "root" and "PLAN" in s["directive"]]
     assert any("plan being checked" in w["why"] for w in out.get("in_flight", []))
-    engine.end_review(key)
+    engine.claims.end_review(key)
 
 
-def test_the_checker_does_not_relitigate_a_plan_it_already_judged(engine, monkeypatch):
+def test_the_checker_does_not_relitigate_a_plan_it_already_checked(engine, monkeypatch):
     """The gate was non-monotone, and that is what made discharging it feel like whack-a-mole.
 
     Measured on the agent door 2026-08-22: a criterion was ruled `sufficient` twice with a stated
     reason, and after an edit touching a DIFFERENT node's criteria it came back `insufficient` with
     the opposite claim — three rounds, $0.86, each closing findings while opening others that had
     been true from the first. A criterion decided against a plan that has not changed since is
-    carried forward; anything else is judged afresh, and a changed plan is judged whole."""
+    carried forward; anything else is checked afresh, and a changed plan is checked whole."""
     _plan(engine)
-    task = engine.get_task(TaskId("root"))
+    task = engine.graph.get_task(TaskId("root"))
     prior = {"plan_generation": list(_plan_generation(task)),
              "criteria_verdicts": [{"criterion": "c1", "verdict": "sufficient", "why": "carried"},
                                    {"criterion": "c2", "verdict": "insufficient", "why": "a gap"}]}
@@ -636,11 +666,11 @@ def test_the_checker_does_not_relitigate_a_plan_it_already_judged(engine, monkey
     decided = _already_decided(prior, task)
     assert list(decided) == ["c1"], "only what was SETTLED is carried; a gap is asked again"
 
-    # …and a plan that changed is judged whole: a new criterion moves the stamp
-    T.edit_criteria(engine, "root", [{"name": "c1", "description": "one"},
-                                     {"name": "c2", "description": "two"},
-                                     {"name": "c3", "description": "three"}], agent="agent")
-    assert _already_decided(prior, engine.get_task(TaskId("root"))) == {}
+    # …and a plan that changed is checked whole: a new criterion moves the stamp
+    T.edit_criteria(engine, "root", [criterion("c1", "one"),
+                                     criterion("c2", "two"),
+                                     criterion("c3", "three")], agent="agent")
+    assert _already_decided(prior, engine.graph.get_task(TaskId("root"))) == {}
 
 
 def test_a_criterion_untouched_by_an_edit_elsewhere_is_not_re_litigated(engine):
@@ -653,26 +683,26 @@ def test_a_criterion_untouched_by_an_edit_elsewhere_is_not_re_litigated(engine):
     satisfiability is a property of ALL the children together, and a criterion added elsewhere really
     can create one.)"""
     _plan(engine)
-    task = engine.get_task(TaskId("root"))
+    task = engine.graph.get_task(TaskId("root"))
     prior = {"plan_generation": list(_plan_generation(task)),
              "criteria_stamps": _criterion_stamps(engine, task),
              "criteria_verdicts": [{"criterion": "c1", "verdict": "sufficient", "why": "carried"},
                                    {"criterion": "c2", "verdict": "sufficient", "why": "carried"}]}
 
     # an edit that adds a THIRD criterion — c1 and c2 keep their text and their coverage
-    T.edit_criteria(engine, "root", [{"name": "c1", "description": "c1 description"},
-                                     {"name": "c2", "description": "c2 description"},
-                                     {"name": "c3", "description": "the new obligation"}],
+    T.edit_criteria(engine, "root", [criterion("c1", "c1 description"),
+                                     criterion("c2", "c2 description"),
+                                     criterion("c3", "the new obligation")],
                     agent="agent")
-    after = engine.get_task(TaskId("root"))
+    after = engine.graph.get_task(TaskId("root"))
     assert _already_decided(prior, after) == {}, "the OLD whole-plan rule threw both away — the control"
     assert sorted(_already_decided(prior, after, engine)) == ["c1", "c2"]
 
     # …but a criterion whose OWN text changed is a different question, and is asked again
-    T.edit_criteria(engine, "root", [{"name": "c1", "description": "something else entirely"},
-                                     {"name": "c2", "description": "c2 description"}],
+    T.edit_criteria(engine, "root", [criterion("c1", "something else entirely"),
+                                     criterion("c2", "c2 description")],
                     agent="agent")
-    assert sorted(_already_decided(prior, engine.get_task(TaskId("root")), engine)) == ["c2"]
+    assert sorted(_already_decided(prior, engine.graph.get_task(TaskId("root")), engine)) == ["c2"]
 
 
 def test_one_reason_can_answer_several_findings_in_one_call(engine):
@@ -719,7 +749,7 @@ def test_a_carried_finding_does_not_carry_its_old_argument(engine, monkeypatch):
     the graph it has not re-read.
     """
     _plan(engine)
-    task = engine.get_task(TaskId("root"))
+    task = engine.graph.get_task(TaskId("root"))
     prior = ({"obligation": "it must actually sort",
               "admits": "no criterion mentions sorting at all"},)
     monkeypatch.setattr(R, "parse_structured", lambda *a, **k: {"decided": []})
@@ -734,16 +764,16 @@ def test_a_carried_finding_does_not_carry_its_old_argument(engine, monkeypatch):
     assert "no criterion mentions sorting" in out[0]["admits"], "…and is still shown, not dropped"
 
 def test_a_silence_is_not_a_finding_that_your_fix_failed(engine, monkeypatch):
-    """⊥ ≠ "still open". When the re-judgement cannot run, the list stands — and says that it does.
+    """⊥ ≠ "still open". When the re-check cannot run, the list stands — and says that it does.
 
     Two doors reported these obligations as "frozen at the first reading: fixing the plan does not
-    close them" (wave 26, 2026-09-06). Fixing them IS what closes them — each round re-judges the
+    close them" (wave 26, 2026-09-06). Fixing them IS what closes them — each round re-checks the
     named list against the criteria as they stand — but a round whose checker did not answer kept
     every finding with no mark at all, so the two cases read identically to the person who had just
     done the work.
     """
     _plan(engine)
-    task = engine.get_task(TaskId("root"))
+    task = engine.graph.get_task(TaskId("root"))
     prior = ({"obligation": "it must actually sort", "admits": "no criterion mentions sorting"},)
 
     class _Silent:
@@ -753,14 +783,14 @@ def test_a_silence_is_not_a_finding_that_your_fix_failed(engine, monkeypatch):
     out = R._still_undecided(engine, task, _Silent(), prior)
 
     assert len(out) == 1, "a check that could not run closes nothing"
-    assert out[0]["rejudged"] is False
-    assert "NOT RE-JUDGED" in out[0]["admits"] and "not a finding that your fix failed" in out[0]["admits"]
+    assert out[0]["rechecked"] is False
+    assert "NOT RE-CHECKED" in out[0]["admits"] and "not a finding that your fix failed" in out[0]["admits"]
 
 
-def test_a_re_judged_carry_over_says_the_fix_is_what_closes_it(engine, monkeypatch):
-    """The other half: the round DID judge, the obligation is still open, and the exit is named."""
+def test_a_rechecked_carry_over_says_the_fix_is_what_closes_it(engine, monkeypatch):
+    """The other half: the round DID check, the obligation is still open, and the exit is named."""
     _plan(engine)
-    task = engine.get_task(TaskId("root"))
+    task = engine.graph.get_task(TaskId("root"))
     prior = ({"obligation": "it must actually sort", "admits": "no criterion mentions sorting"},)
     monkeypatch.setattr(R, "parse_structured", lambda *a, **k: {"decided": []})
 
@@ -770,8 +800,8 @@ def test_a_re_judged_carry_over_says_the_fix_is_what_closes_it(engine, monkeypat
 
     out = R._still_undecided(engine, task, _LLM(), prior)
 
-    assert out[0]["rejudged"] is True
-    assert "RE-JUDGED" in out[0]["admits"] and "fixing the criteria IS what closes it" in out[0]["admits"]
+    assert out[0]["rechecked"] is True
+    assert "RE-CHECKED" in out[0]["admits"] and "fixing the criteria IS what closes it" in out[0]["admits"]
 
 
 
@@ -782,7 +812,7 @@ def test_adding_a_criterion_to_a_covering_child_does_not_reopen_what_was_certifi
     while the only edit was ADDING a criterion to the child that covers it, at ~4 minutes and ~$0.25
     each (HTTP door, wave 27, 2026-09-06: "I would not promise a CI budget on it"). If the children
     entailed the parent criterion before, they entail it with an extra criterion on one of them
-    (§13.4 CHECK-7), so the certified verdict carries.
+    (§9.6 CHECK-7), so the certified verdict carries.
     """
     then = ["parent text", ["kid"], [["kid", [["c1", "does X"]]]]]
     grown = ["parent text", ["kid"], [["kid", [["c1", "does X"], ["c2", "also does Y"]]]]]
@@ -805,3 +835,54 @@ def test_a_weakened_plan_is_re_derived():
     assert not R._still_entailed(then, reworded_parent)
     assert not R._still_entailed(then, coverer_removed)
     assert not R._still_entailed(then, None), "a criterion that no longer exists carries nothing"
+
+
+def test_a_checker_that_keys_its_verdicts_by_the_whole_criterion_line_still_gives_a_verdict(engine):
+    """The projection lists criteria as `name: description`; haiku copied the whole line as the key of every entry, so
+    every criterion read as unchecked and a complete verdict was stored as "no verdict" — and such rounds counted toward
+    closing the goal by its issuer (AUTO haiku coreutils, 2026-10-11: two of the three counts that closed the root)."""
+    e = engine
+    _plan(e)
+    lines = {c.name: f"{c.name}: {c.description}" for c in e.graph.get_task(TaskId("root")).spec.criteria}
+
+    class _Checker:
+        def complete(self, prompt, context=None, **kw):
+            if "DECOMPOSITION LEVEL UNDER CHECK" in prompt:
+                return json.dumps({"criteria": [{"criterion": line, "verdict": "sufficient", "why": "w"}
+                                                for line in lines.values()], "conflicts": []})
+            return json.dumps({"gaps": []})
+
+    got = critique_node(e, TaskId("root"), _Checker())
+    assert got.semantic_covered is True
+    assert {v["criterion"] for v in got.criteria_verdicts} == set(lines)
+
+
+def test_a_split_one_session_carries_is_checked_by_contact_not_held_for_review(engine):
+    """Within one executor session's scope (§3.7) the split is that executor's internal work, validated once at its top
+    (§10.3): its parts are not held for an a-priori review (EXPLORE, §9.9) — measured, eight review rounds and 35 min
+    held a goal one bare session finished in 12 (AUTO haiku coreutils, 2026-10-12). A part beyond the session still is."""
+    e = engine
+    _plan(e)
+    assert e.execution_blocked_by(TaskId("kid")) is not None, "unreviewed and not judged within one session: held"
+    e.record_session_fit(TaskId("kid"), "large", False)
+    e.record_session_fit(TaskId("root"), "small", True)
+    assert e.execution_blocked_by(TaskId("kid")) is not None, "a part beyond one session: still held"
+    assert _accept(e) == State.OFFERED, "…by the machine too"
+    e.record_session_fit(TaskId("kid"), "small", True)
+    assert e.execution_blocked_by(TaskId("kid")) is None
+    assert _accept(e) == State.EXECUTING, "the machine takes what the surface offers — one predicate, two readers"
+
+
+def test_a_split_one_session_carries_still_answers_to_the_syntactic_level(engine):
+    """Only the Level-2 review is EXPLOREd inside a scope; the Syntactic level is mechanical, cheap and mandated (§9.9)
+    and gates execution (§11.5): a fitting split that gained a Level-0 hole after its admission is held (critic)."""
+    e = engine
+    _plan(e)
+    e.record_session_fit(TaskId("root"), "small", True)
+    e.record_session_fit(TaskId("kid"), "small", True)
+    e.revise(TaskId("root"), spec("goal", "c1", "c2", "c3"), AgentId("agent"))   # c3: no child covers it (CHECK-1)
+    e.wait_idle()
+    if not _l0_holes(e._graph, e.graph.get_task(TaskId("root"))):
+        pytest.skip("the revision left no Level-0 hole on this fixture")
+    assert e.execution_blocked_by(TaskId("kid")) is not None
+    assert _accept(e) != State.EXECUTING
