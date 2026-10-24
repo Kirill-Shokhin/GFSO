@@ -5,6 +5,7 @@ no graph writes, no signals."""
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,8 @@ from typing import Optional
 from gfso.core.protocol.procedure import INPUTS_TOKEN, laid, materialize_inputs, probe_id, unrerunnable
 from gfso.core.types import Signal, TaskId, set_aside_of
 from gfso.engine import Engine
+from gfso.engine.audit import rejected_on_current_version
+from gfso.engine.validation import is_auto_root
 from gfso.workspaces import _unjoined_text, base_of
 
 
@@ -118,7 +121,7 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = ()) -> 
             f"They are here for one reason: if you cannot proceed because something one of them owns "
             f"does not exist yet, report `status: \"blocked\"` and NAME it in `blocker_task_ids`. That "
             f"is a real dependency the plan did not declare, and naming it is what records it.\n"
-            f"{chr(10).join(sibs) or '- none'}\n{rework}{_unjoined_text(unjoined)}\n"
+            f"{chr(10).join(sibs) or '- none'}\n{rework}{answered_challenges(engine, task)}{_unjoined_text(unjoined)}\n"
             + _working_directory(workdir))
 
 
@@ -135,7 +138,17 @@ def _rework_section(engine, task) -> str:
         rework = (f"\n## REWORKING (iteration {task.iteration})"
                   + (" — the validator FAILED these criteria; fix exactly them.\n" + _why_it_failed(engine, task, own)
                      if own else "\n")
-                  + (_through_parts_text(through) if through else ""))
+                  + (_through_parts_text(through) if through else "") + _handover(engine, task))
+        # …and, where the same criteria failed every round, the other route (§12.4): the frontier says it at the agent
+        # door; a system executor saw only "fix exactly them", and its node was split before it could challenge
+        if stuck := engine.stuck_on(task.id):
+            rework += (f"\n{', '.join(stuck)} failed in each of the last {engine.CONTRACT_SUSPECT_ROUNDS} rounds. If "
+                       f"it cannot be met AS WRITTEN, report `status: \"challenge\"` naming it and why, instead of "
+                       f"delivering against it again."
+                       + (" If it can, this round decides: one session that fails it once more is judged too small "
+                          "for this node, and the node is split." if engine.mode() is not None
+                          and not engine.graph.get_active_children(task.id)
+                          and engine.stuck_on(task.id, after=engine.spent_fails(task.id)) else ""))
     elif (last := next((a for a in reversed(engine.audit_log(task.id))
                         if a.signal == Signal.FAIL and not a.rejected and a.failed_criteria), None)):
         # A new version (an escalation's re-ASSIGN, a raised bound) re-validates nothing by itself: that
@@ -176,8 +189,12 @@ def _why_it_failed(engine, task, failed: list) -> str:
             "criterion is what must hold, and the validator probes beyond these. A probe that asks for what the "
             "criterion as written does not — another node's scope, a requirement no criterion of yours states — is a "
             "finding you dispute, not a dependency: report `status: \"challenge\"` naming that finding by its id "
-            "(listed below) and why it lies outside the criterion — your issuer rules on it, and only his ruling "
-            "retires it; `blocked` is for another node's output you really need.")]
+            "(listed below) and why it lies outside the criterion — "
+            + ("this node's criteria are the user's goal and only the user retires a finding of it, so your issuer "
+               "answers without retiring it: what decides it is the next validation, which runs it again and judges "
+               "what it prints against the criterion as written — meet the criterion and deliver"
+               if is_auto_root(engine.graph, task) else "your issuer rules on it, and only his ruling retires it")
+            + "; `blocked` is for another node's output you really need.")]
     standing = engine.regression_probes(task.id)
     workdir = (engine.get_exec_verdict(task.id) or {}).get("workdir")
     settled = engine.rework_settled(task.id)
@@ -186,12 +203,38 @@ def _why_it_failed(engine, task, failed: list) -> str:
         out.append(f"- {f}" + (f"\n  what it observed: {ev}" if ev else "")
                    + (f"\n  settled, NOT demanded — the next PASS does not run them; nothing to dispute: "
                       f"{', '.join(settled[f])}" if settled.get(f) else "")
-                   + "".join(f"\n  probe:\n  ```\n  {cmd.replace(chr(10), chr(10) + '  ')}\n  ```" for cmd in cmds)
-                   + "".join(f"\n  standing finding [{p.get('id')}]: `{p.get('seen') or p.get('as_run')}`"
-                             + (f" — {why_not}: shown, not demanded" if (why_not := unrerunnable(
-                                 p, engine.layable(task.id), workdir)) else "")
-                             for p in standing.get(f, ())))
+                   + capped([f"probe: `{cmd.replace(chr(10), ' ⏎ ')}`" for cmd in cmds], "refuting probes",
+                            list_key(engine, task.id, f, "probes"))
+                   + capped([f"standing finding [{p.get('id')}]: `{p.get('seen') or p.get('as_run')}`"
+                             + (f" — {w}: shown, not demanded"
+                                if (w := unrerunnable(p, engine.layable(task.id), workdir)) else "")
+                             for p in standing.get(f, ())], "standing findings", list_key(engine, task.id, f, "findings")))
     return "\n".join(out) + "\n"
+
+
+#: Lines of one list — a failed criterion's refuting probes, its standing findings — a packet shows in its text; the
+#: whole list is in a file it names. Every one inline, a root's 1,414 findings and 1,152 probes made its packet ~250k
+#: tokens and every executor and consent session died `prompt_too_long` (GB_sql_database_tmxu0n436, 2026-10-15).
+SHOWN_FINDINGS = 20
+
+
+def list_key(engine, *parts) -> str:
+    """The file a capped list goes to: one per engine — two projects' roots are both `root`, and two runs of one task
+    would overwrite each other's lists — per node, criterion and kind."""
+    return "-".join(map(str, (os.getpid(), id(engine), *parts)))
+
+
+def capped(lines: list, what: str, key: str) -> str:
+    """`lines`, each one line of text: the first SHOWN_FINDINGS inline and, where there are more, every one — those too —
+    in a file outside the place, one per `key` (rewritten each build), so none is withheld and the text fits a window."""
+    text = "".join(f"\n  {x}" for x in lines[:SHOWN_FINDINGS])
+    if len(lines) > SHOWN_FINDINGS:
+        path = Path(tempfile.gettempdir()) / "gfso-lists" / (re.sub(r"[^\w.-]+", "_", key)[:120] + ".md")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(f"- {x}\n" for x in lines), encoding="utf-8")
+        text += (f"\n  … and {len(lines) - SHOWN_FINDINGS} more {what} — all {len(lines)}, one per line with its id, in "
+                 f"{path.as_posix()}: grep it for what you need, do not read it whole")
+    return text
 
 
 #: The states in which a node's work is still to be done — what an executor session is handed.
@@ -230,7 +273,7 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset) -> str:
             f"{crits}\n\n"
             f"### Inputs from outside your scope (the REAL outputs, no stubs)\n{ups}\n\n"
             f"### ACCEPTED_RISKS (declared plan assumptions — do not gold-plate against these)\n{negl}\n"
-            f"{_rework_section(engine, t)}")
+            f"{_rework_section(engine, t)}{answered_challenges(engine, t)}")
 
 
 def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = ()) -> str:
@@ -382,6 +425,15 @@ def _scratch_note(scratch: Optional[str]) -> str:
             f"anything you like in place; create nothing.\n" if scratch else "")
 
 
+def _evidence_short(defects: str) -> bool:
+    """Was the refusal about what the report observed (probes, behaviours) — else about its form (a name, a verdict word)?
+    Told "what was missing is the EVIDENCE" after a refusal for a label, validators re-ran the probes and kept the label
+    (GB_sql_database_tn03ao788)."""
+    if "is not a criterion of this node" in defects or "contradict" in defects:
+        return False
+    return any(k in defects for k in ("probe", "behaviour", "observ", "pinned", "divergence"))
+
+
 def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
                       scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None) -> str:
     """The validator's self-contained input: contract + seams + ACCEPTED_RISKS + the DELIVER report.
@@ -408,8 +460,11 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
     _gap = engine.refused_report_for_this_delivery(TaskId(tid)) or {}
     prior = (f"\n## YOUR PREVIOUS REPORT ON THIS DELIVERY WAS REFUSED — read this first\n"
              f"{_gap.get('defects')}\n\n"
-             f"Nothing about the work has changed since; what was missing is the EVIDENCE. "
-             f"Validate the same delivery again: run every criterion's WHOLE pinned procedure — a "
+             f"Nothing about the work has changed since; "
+             + ("what was missing is the EVIDENCE. " if _evidence_short(str(_gap.get("defects"))) else
+                f"what was wrong is the report's FORM — name each criterion exactly as this packet lists it, "
+                f"and give its verdict on its own entry; then, as before: ")
+             + f"Validate the same delivery again: run every criterion's WHOLE pinned procedure — a "
              f"criterion stands on it — and, under a criterion that pins none, give a labelled probe — a "
              f"command, what its output must show, and the `behaviour` it observes — for every "
              f"behaviour you name. Naming three behaviours and probing one is refused; naming one "
@@ -465,6 +520,72 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
             "conjunction of its own criteria (§2): a part that fails is that part's FAIL.\n\n"
             + "\n".join(blocks)
             + "\n" + _working_directory(workdir, validating=True) + _scratch_note(scratch))
+
+
+#: distinct rejected challenges a packet shows, newest last, and the characters of each side
+SHOWN_ANSWERS, ANSWER_CHARS = 5, 1500
+
+
+def _distinct_answers(pairs: list) -> list:
+    """[(asked, answer, times)] — one line per distinct exchange, the newest last: a loop asks the same thing forty times."""
+    seen: dict = {}
+    for asked, answer in pairs:
+        k = (" ".join(asked.split()), " ".join(answer.split()))
+        seen[k] = seen.pop(k, 0) + 1
+    return [(a, j, n) for (a, j), n in list(seen.items())[-SHOWN_ANSWERS:]]
+
+
+def _cut(s: str) -> str:
+    return s if len(s) <= ANSWER_CHARS else s[:ANSWER_CHARS] + " …"
+
+
+def answered_challenges(engine: Engine, task) -> str:
+    """For the one who challenged: his challenges of the contract that stands and his issuer's rejections of them.
+
+    Unseen, the answer cannot end the dispute: the rework order says "dispute a finding, only his ruling retires it",
+    and an executor whose ruling never reached him raised the same challenge again 40 times, one every 24 s, the
+    issuer rejecting each within seconds (GB_sql_database_tn9nii608 root.parse_stmt). Nothing is refused for asking
+    again — a rejected CHALLENGE forces nothing and the dispute has no counter (§11.3, §12.15 Φ2)."""
+    got = _distinct_answers(rejected_on_current_version(engine.audit_log(task.id)))
+    if not got:
+        return ""
+    return ("\n## Your challenges of this contract that its issuer REJECTED — each is answered\n"
+            "A rejected challenge leaves the contract as written, and the next validation runs what it disputed again, "
+            "judging what it prints against the criterion as written — your delivery is where that is decided. The "
+            "same ground raised again is a question already answered and gets the same answer. Challenge again only "
+            "with what the answer below does not meet — a new observation, quoted; otherwise meet the criteria as "
+            "written and deliver.\n"
+            + "".join(f"- you said{f' ({n} times)' if n > 1 else ''}: «{_cut(a) or '(no reason recorded)'}»\n"
+                      f"  your issuer answered: «{_cut(j) or '(no justification)'}»\n" for a, j, n in got))
+
+
+def answers_given(engine: Engine, task) -> str:
+    """For the issuer of a dispute: his own rejections of challenges on the contract that stands — the same ground
+    answered the same way, a new observation in the challenge being what is new to judge."""
+    got = _distinct_answers(rejected_on_current_version(engine.audit_log(task.id)))
+    if not got:
+        return ""
+    return ("## Challenges of this contract you already REJECTED — judge what the dispute above adds to them\n"
+            + "".join(f"- asked{f' ({n} times)' if n > 1 else ''}: «{_cut(a) or '(no reason recorded)'}»\n"
+                      f"  you answered: «{_cut(j) or '(no justification)'}»\n" for a, j, n in got))
+
+
+#: how much of the last report a rework round is handed: a note, not the conversation
+HANDOVER_LINES = 40
+
+
+def _handover(engine: Engine, task) -> str:
+    """The last delivery's own report, as its executor wrote it — what was built, where, how it was checked. Each round
+    starts clean; without this note a fresh session re-read the code it had written to find where it stood (32% of its
+    tool calls before the first edit, three sql_database rows, 2026-10-21), and continuing the whole conversation instead
+    cost more than every fresh round together (GB_sql_database_tn9nii608)."""
+    said = (_last_deliver_result(engine, task.id) or "").strip().splitlines()
+    if not said:
+        return ""
+    cut = len(said) > HANDOVER_LINES
+    return ("\n## Your last delivery, as you reported it (the work stands in your directory; start from here, not from "
+            "re-reading the code)\n" + "\n".join(said[:HANDOVER_LINES])
+            + (f"\n… ({len(said) - HANDOVER_LINES} more lines of that report)" if cut else "") + "\n")
 
 
 def _last_deliver_result(engine: Engine, task_id: TaskId) -> Optional[str]:

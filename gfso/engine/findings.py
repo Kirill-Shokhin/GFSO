@@ -19,7 +19,7 @@ import json
 import re
 from typing import Iterable, Optional
 
-from gfso.core.protocol.procedure import pinned_run, probe_id, without_pinned_runs, without_retired
+from gfso.core.protocol.procedure import pinned_run, probe_id, without_past_builds, without_pinned_runs, without_retired
 from gfso.core.types import Signal
 from .audit import VERSION_INSTALLING
 from .verdicts import REGRESSION, criterion_version, ledger_read
@@ -95,8 +95,8 @@ def standing_rulings(storage, entries: list, task_id) -> list[dict]:
 
 def regression(storage, entries: list, task) -> dict:
     """{criterion: [the validator's findings demanded of this node]} — every refutation recorded, less the runs of
-    pinned probes and the findings a ruling in force retired."""
-    return without_retired(without_pinned_runs(ledger_read(storage, task.id, REGRESSION, {}) or {},
+    pinned probes, the findings a ruling in force retired and those that run a past round's build."""
+    return without_retired(without_pinned_runs(without_past_builds(ledger_read(storage, task.id, REGRESSION, {}) or {}),
                                                ever_pinned(entries, task)),
                            standing_rulings(storage, entries, task.id))
 

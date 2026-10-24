@@ -29,7 +29,7 @@ from gfso.core.protocol.fsm import available_signals, not_admissible_here, trans
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
                                           verdict_report_defects, probe_labels, unrun_probes)
-from gfso.core.protocol.procedure import (admission_defects, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
+from gfso.core.protocol.procedure import (admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
                                           refuting_probes, merge_regression, probe_id, layable_over, unrerunnable,
                                           unaccounted_for, orphaned_regression,
                                           claim_digest)
@@ -39,7 +39,7 @@ from gfso.config import (
                          agent_id as _config_agent_id,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
-                    resolved_on_current_version)
+                    resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
                        OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS)
 from .findings import disputed_findings, ever_pinned, released, regression as standing_regression, standing_rulings
@@ -55,7 +55,7 @@ from .validation import (AdmissionRefused, _l0_holes, _l2_undischarged, l2_gate_
                          mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
                          fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here,
-                         session_fit as _session_fit, scope_top as _scope_top,
+                         session_fit as _session_fit, version_of as _version_of, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
                          parts_procedure as _parts_procedure, settled_procedure as _settled_procedure,
                          observation_binds as _observation_binds,
@@ -696,6 +696,10 @@ class Engine:
                 "output_tokens": c.get("output_tokens") or 0,
                 "cache_input_tokens": (c.get("cache_read_input_tokens") or 0)
                                       + (c.get("cache_creation_input_tokens") or 0),
+                "cache_read_tokens": c.get("cache_read_input_tokens"),
+                "cache_write_tokens": c.get("cache_creation_input_tokens"),
+                "peak_context": c.get("peak_context"), "context_window": c.get("context_window"),
+                "turns": c.get("turns"), "ended": c.get("ended"), "resumed": c.get("resumed"),
                 "cost_usd": c.get("cost_usd") or 0.0,
                 "duration_ms": c.get("duration_ms") or 0,
             })
@@ -739,6 +743,13 @@ class Engine:
     # === Execution-validation record (the validate_result verdict; feeds the self-pass gate) ===
 
 
+    def _as_reported(self, task_id: TaskId, per_criterion: Optional[list]) -> tuple:
+        """(the node, its report with every pinned probe it cites as the system spelled it cited by its id —
+        `canonical_citations`, the node's own and its parts')."""
+        task = self._graph.get_task(task_id)
+        return task, (canonical_citations(per_criterion, task.spec.criteria, self.parts_procedure(task_id))
+                      if per_criterion and task is not None else per_criterion)
+
     def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
                             validator_id: str, per_criterion: Optional[list] = None,
                             tools_used: Optional[dict] = None,
@@ -776,7 +787,7 @@ class Engine:
         # answer. The human door has always coerced (`tools._self_check_verdict`); the record, which
         # is where EVERY door lands, did not.
         verdict = decided_verdict(verdict)
-        task = self._graph.get_task(task_id)
+        task, per_criterion = self._as_reported(task_id, per_criterion)
         # A NODE WITH NO CRITERIA HAS NOTHING A VERDICT COULD BE ABOUT, whichever door produced it.
         # V is the conjunction over the node's criteria (§2), and over the empty set that is
         # vacuously TRUE — which is not a verdict. `record_verdict` refused this by name from
@@ -1744,10 +1755,11 @@ class Engine:
 
 
     def users_dispute(self, task_id: TaskId) -> list[str]:
-        """The findings a CHALLENGE at an AUTO root asks to rule out of the user's goal — a question only the user, the
-        root's issuer, answers (§10.1): the system makes no move on it, and the clock bounds his silence (Inv-5).
-        Answered by the system it could only accept without a ruling, and the finding, still demanded, came back
-        round after round until the rework bound cancelled the root (critic over 3982699). [] where it is not one."""
+        """The findings a CHALLENGE at an AUTO root asks to rule out of the user's goal — a ruling only the user, the
+        root's issuer, makes (§10.1): the system answers the dispute without it (REJECT_CHALLENGE, or a contract it
+        adds to), and his door stays open to rule. Ruled by the system, a finding left the user's own criterion (critic
+        over 868ede5); barred from the dispute altogether, a root sat CHALLENGED until the run's ceiling on a challenge
+        that only said the findings could not be met (GB_sql_database_tn03ao788). [] where it is not one."""
         t = self._graph.get_task(task_id)
         if t is None or t.state != State.CHALLENGED or not is_auto_root(self._graph, t):
             return []
@@ -2311,6 +2323,65 @@ class Engine:
         self._storage.store_setting(f"session_fit:{task_id}",
                                            json.dumps({"volume": volume, "fits": fits}))
 
+    def _store_fit(self, task_id: TaskId, rec: dict) -> None:
+        self._storage.store_setting(f"session_fit:{task_id}", json.dumps(rec))
+
+    def refute_session_fit(self, top_id: TaskId, members: list) -> None:
+        """Contact refuted "one session carries `top`" (§3.7, the leaf test is agent-relative): recorded beside the
+        decomposer's judgement, never over it, for the version of `top` that stands, with each member's FAILs it
+        spent. It reads as "does not fit" only while that version stands and the refutation is open
+        (`validation.session_fit`): a new version resets the rounds it rested on (§12.15 Φ2)."""
+        raw = json.loads(self._storage.get_setting(f"session_fit:{top_id}") or "{}")
+        self._store_fit(top_id, {**raw, "refuted": {
+            "version": list(_version_of(self._graph.get_task(top_id))), "open": True,
+            "upto": {str(m.id): [list(_version_of(m)), len(self.fails_of(m.id))] for m in members}}})
+
+    def lapse_session_refutation(self, task_id: TaskId) -> bool:
+        """Close the contact refutation on this node, its spent FAILs kept: where the split it owes cannot be built,
+        a refusal of the leaf's DELIVER has no lift (§12.16 (ii)), so the node gets a session again. True if one
+        was open."""
+        raw = json.loads(self._storage.get_setting(f"session_fit:{task_id}") or "{}")
+        if not (raw.get("refuted") or {}).get("open"):
+            return False
+        self._store_fit(task_id, {**raw, "refuted": {**raw["refuted"], "open": False}})
+        return True
+
+    def spent_fails(self, task_id: TaskId) -> int:
+        """How many of this node's FAILs on its current version a refutation already spent — one recorded on it or on
+        a scope above it. Those rounds were judged once; a part a refuted scope hands a session of its own has not
+        yet been tried alone."""
+        t, out = self._graph.get_task(task_id), 0
+        n = t
+        while n is not None:
+            got = ((_session_fit(self._graph, n.id) or {}).get("refuted") or {}).get("upto", {}).get(str(task_id))
+            if got and tuple(got[0]) == _version_of(t):
+                out = max(out, int(got[1]))
+            n = self._graph.get_parent(n.id)
+        return out
+
+    def record_seam_claim(self, task_id: TaskId, claim: dict) -> None:
+        """The decomposer's claim of what a part's work touches — the files it `writes`, the parts whose code its probes
+        `runs`, and, per producer, what its work `reads` of it — kept beside the contract like the session fit: it is
+        the split's statement of what its Dep edges carry (form item (4), reported, never gated, §20.10), and a plan read
+        back without it is checked blind (`decompose.seams`)."""
+        self._storage.store_setting(f"seam_claim:{task_id}", json.dumps({**claim, "probes": self._probes_of(task_id)}))
+
+    def seam_claim(self, task_id: TaskId) -> dict:
+        """The recorded claim for a part, or {} — never judged. `runs` speaks of the probes it was written beside: a
+        revision of the part's criteria by any door leaves it unsaid rather than stale (critic over the seam claim)."""
+        try:
+            got = json.loads(self._storage.get_setting(f"seam_claim:{task_id}") or "{}")
+        except (ValueError, TypeError):
+            return {}
+        if got.pop("probes", None) != self._probes_of(task_id):
+            got.pop("runs", None)
+        return got
+
+    def _probes_of(self, task_id: TaskId) -> list:
+        t = self._graph.get_task(task_id)
+        return [] if t is None else [[c.name, [p.command for p in c.check or ()]] for c in t.spec.criteria
+                                     if not c.depends_on]
+
     def session_fit(self, task_id: TaskId) -> Optional[dict]:
         """The recorded count and judgement for a node (`validation.session_fit`)."""
         return _session_fit(self._graph, task_id)
@@ -2671,7 +2742,11 @@ class Engine:
     #: Three is where the canon already bounds the ordinary loop (§12.15: max_iterations default 3).
     CONTRACT_SUSPECT_ROUNDS = 3
 
-    def stuck_on(self, task_id: TaskId, rounds: int = CONTRACT_SUSPECT_ROUNDS) -> list[str]:
+    def fails_of(self, task_id: TaskId) -> list:
+        """The node's FAIL verdicts under the packet version that stands, in order."""
+        return [e for e in on_current_version(self._audit.get_entries(task_id)) if e.signal == Signal.FAIL]
+
+    def stuck_on(self, task_id: TaskId, rounds: int = CONTRACT_SUSPECT_ROUNDS, after: int = 0) -> list[str]:
         """The criteria that failed in EVERY one of this node's last `rounds` FAILs, or [].
 
         A node can fail the same criterion round after round for two very different reasons — the
@@ -2679,9 +2754,10 @@ class Engine:
         them for either side. Measured on a live run 2026-08-22: an executor re-delivered five times
         against `unicode_and_surrogate_policy`, which asks for a round-trip of lone surrogates and is
         unsatisfiable with strict UTF-8; the artifact scored 0.972 on the held-out suite and the run
-        stalled. The count is a fact in the log; this reads it out so both doors can say it."""
-        fails = [e for e in self._audit.get_entries(task_id)
-                 if e.signal == Signal.FAIL and not e.rejected]
+        stalled. The count is a fact in the log; this reads it out so both doors can say it.
+        Only the version that stands counts — a new one resets the budget (§12.15 Φ2) — and `after` skips the FAILs a
+        refutation already spent (`spent_fails`)."""
+        fails = self.fails_of(task_id)[after:]
         if len(fails) < max(2, rounds):
             return []
         sets = [set(e.failed_criteria or ()) for e in fails[-rounds:]]

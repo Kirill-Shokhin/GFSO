@@ -20,18 +20,20 @@ from pathlib import Path
 from typing import Optional
 
 from gfso import tools_llm as T
-from gfso.config import MODEL_DEFAULT, agents_path, max_sessions, provider, validator_retry_model
+from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agents_path, max_sessions, provider, validator_retry_model
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask
 from gfso.tools import _agent_id
-from gfso.inflight import _inflight
+from gfso.inflight import _inflight, in_flight
 from gfso.adapters.verifiers import evaluate_unittest
 from gfso.core.graph.model import generation_of_task
 from gfso.core.protocol.procedure import criterionless, probes_from as _checks_of
 from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Verdict, Action, Mode,
                              SPAWNABLE_ACTIONS, passed, register_of)
-from gfso.issuer import Verbs, answer_open_questions, signal_ok as _signal, system_mover, split_has_a_mover
+from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
+                          split_has_a_mover, held_by_a_holder)
+from gfso.adapters.llm.stats import is_limit, refused_by_limit
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace,
                              clear_workspaces, join_whole, node_workspace, session_scope)
@@ -40,10 +42,14 @@ from gfso.sessions import run_consent, run_executor, run_scope_executor
 
 log = logging.getLogger(__name__)
 
-#: How many times a validation call that was CUT mid-flight is redialled before the node falls through
-#: to the ordinary no-verdict path. Two, not more: a box that cannot complete the same call twice
-#: running has a fault a third attempt does not reach, and the point of the budget is that it ends.
-TORN_REDIALS = 2
+#: How many times a call that was CUT before it answered — a validation, an executor's or a scope's session — is
+#: redialled before the node falls through to the ordinary path (one retry, then parked). Finite: the point of the
+#: budget is that it ends (Inv-5). SPACED (TORN_DELAY_S, doubling): redialled at once, a session cut by
+#: "API Error: 403" was cut again four seconds later, parked, and its issuer's reassign 15 min on broke the scope
+#: and re-armed the plan's gate — 82 min of re-planning (AUTO haiku coreutils, GB_coreutils_tn5q9r220); the
+#: outage had passed by then. Four spaced redials wait out 7.5 min of it.
+TORN_REDIALS = 4
+TORN_DELAY_S = 30
 
 
 #: The ISSUER's answer to a dispute (§12.4's two exits of CHALLENGED). `accept` carries the
@@ -83,7 +89,7 @@ def _contact_place(engine, agents, node) -> "str | None":
 
 ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=T.review_decomposition,
                      # the split is its node's EXECUTOR's move: authored by him, it re-authors no contract (Inv-1)
-                     refine=lambda engine, node: T.auto_decompose(
+                     refine=lambda engine, node: T.SYSTEM_TOOLS["auto_decompose"](
                          engine, root_id=node, depth=1, author=str(engine.graph.get_task(node).assignee)),
                      place=lambda engine, agents, node: _contact_place(engine, agents, node))
 
@@ -211,7 +217,7 @@ def _auto_validate_scope(engine, top_id: TaskId, agents: AgentRegistry, _llm=Non
     if validator_id is None:
         engine.emit_info("delegate", f"{top_id}: no llm-validator registered — the scope's validation stays manual")
         return "no-instrument"
-    verdicts = _standing_verdicts(engine, top_id)
+    verdicts, out = _standing_verdicts(engine, top_id), {}
     if (missing := {str(t.id) for t in engine.scope_members(top_id) if t.state.name == "VALIDATING"} - set(verdicts)):
         vcfg = agents.get(validator_id) or {}
         out = T.validate_scope(engine, str(top_id),
@@ -221,7 +227,9 @@ def _auto_validate_scope(engine, top_id: TaskId, agents: AgentRegistry, _llm=Non
         if out.get("inflight"):
             return "rejected"
         verdicts = {**verdicts, **(out.get("verdicts") or {})}
-    return _sign_scope(engine, top, verdicts, str(validator_id), sign) if verdicts else "no-verdict"
+    if verdicts:
+        return _sign_scope(engine, top, verdicts, str(validator_id), sign)
+    return "no-verdict:limit" if refused_by_limit(out.get("stats")) else "no-verdict"
 
 
 def _oracle_workdir(engine, vcfg: dict):
@@ -444,6 +452,50 @@ def _say_it_is_hand_asserted(engine, task_id: TaskId, rec: dict) -> None:
                      f"yourself, or let the instrument run.")
 
 
+def _classify_no_verdict(engine, task_id: TaskId, out: dict) -> str:
+    """A validation that returned no verdict, said where the issuer reads and classified by what ended it: the
+    account's limit, a cut call, a model that answered badly, or one that never ran."""
+    # The report is kept on disk, not merely "in the tool's output": under delegation the tool's
+    # caller is this dispatcher, which reads a verdict and nothing else, so the old wording named
+    # a place no one could look — and the evidence for why a validator could not state a verdict
+    # was gone by the time anyone asked.
+    # …AND WHETHER IT COST ANYTHING, because otherwise the reader has to infer it and two of
+    # them inferred it wrong. A validator that never made a model call — refused at the preflight
+    # because its registered directory holds none of this delivery, which is what a foreign
+    # unscoped role does — and a validator that spent a paid run and came back unreadable are the
+    # same line here, and they are opposite facts about the money. Two doors reported "failed
+    # validator runs are billed and appear in no stage" from exactly this ambiguity (wave 25,
+    # 2026-09-05); probed afterwards, the spend of a real unreadable run IS recorded, so what
+    # was actually missing is this sentence.
+    # WHAT THE TOOL OBSERVED, BEFORE ANYTHING THIS LAYER INFERS. `validate_result` returns an
+    # `error` when the validation never got as far as a model — an observation, with the reason in
+    # it — and this line threw it away and reconstructed a cause from a cost of zero instead
+    # ("it was refused before it started"). On 2026-09-05 that sentence stood over three dead
+    # runs, and the arm reading the log then wrote a THIRD invented cause on top of it. Zero
+    # spend is a fact about the money and about nothing else.
+    _spent = sum(float(c.get("cost_usd") or 0) for c in (out.get("stats") or ()))
+    _why = str(out.get("error") or "").strip()
+    engine.emit_info("delegate",
+                     f"{task_id}: validator verdict UNPARSED/error — "
+                     + ("the account's limit refused it" if refused_by_limit(out.get("stats")) else "issuer must decide")
+                     + (f" · {_why}" if _why else "")
+                     + (f" · this run cost ${_spent:.4f} (recorded in `usage`)" if _spent
+                        else " · no model call is recorded for it, so `usage` will not show it")
+                     + (f" (report: {out['report_kept_at']})" if out.get("report_kept_at")
+                        else " (report not kept)"))
+    # THREE OUTCOMES, NOT TWO. A validator that was never started, a validator that answered badly, and
+    # a validator whose call was CUT are three different facts, and only the last one was being
+    # read as one of the other two. The provider marks it where it is visible (the CLI's stream
+    # ended with no result event — `transport_torn`); here it only has to be believed rather
+    # than re-derived from a cost of zero, which is the inference that misdiagnosed it.
+    _stats = out.get("stats") or ()
+    if refused_by_limit(_stats) or is_limit(_why):
+        return "no-verdict:limit"
+    if _stats and _stats[-1].get("transport_torn"):
+        return "no-verdict:torn"
+    return "no-verdict" if (_stats or _spent) else "no-verdict:never-ran"
+
+
 def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
                    model_override: str | None = None, sign: bool = True) -> str | None:
     """DELIVER→VALIDATING auto-fires the registered validator instrument; the verdict AUTO_PASS-SIGNALS
@@ -508,7 +560,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
                 f"{task_id}: validated for you — the verdict is {verdict}, on the record "
                 f"(`get_verdict {task_id}`). Signing is yours: `signal {task_id} {verdict} <you>` "
                 f"when you agree with it.")
-        return "recorded" if verdict else "no-verdict"
+        return "recorded" if verdict else _classify_no_verdict(engine, task_id, out)
     _why: list = []
     if verdict == Verdict.PASS:
         if _signal(engine, task_id, Signal.PASS, validator_id, _why=_why):
@@ -518,42 +570,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
                    failed_criteria=tuple(out.get("failed_criteria") or ())):
             return "fail"
     else:  # null/error — never auto-signal an unparsed verdict
-        # The report is kept on disk, not merely "in the tool's output": under delegation the tool's
-        # caller is this dispatcher, which reads a verdict and nothing else, so the old wording named
-        # a place no one could look — and the evidence for why a validator could not state a verdict
-        # was gone by the time anyone asked.
-        # …AND WHETHER IT COST ANYTHING, because otherwise the reader has to infer it and two of
-        # them inferred it wrong. A validator that never made a model call — refused at the preflight
-        # because its registered directory holds none of this delivery, which is what a foreign
-        # unscoped role does — and a validator that spent a paid run and came back unreadable are the
-        # same line here, and they are opposite facts about the money. Two doors reported "failed
-        # validator runs are billed and appear in no stage" from exactly this ambiguity (wave 25,
-        # 2026-09-05); probed afterwards, the spend of a real unreadable run IS recorded, so what
-        # was actually missing is this sentence.
-        # WHAT THE TOOL OBSERVED, BEFORE ANYTHING THIS LAYER INFERS. `validate_result` returns an
-        # `error` when the validation never got as far as a model — an observation, with the reason in
-        # it — and this line threw it away and reconstructed a cause from a cost of zero instead
-        # ("it was refused before it started"). On 2026-09-05 that sentence stood over three dead
-        # runs, and the arm reading the log then wrote a THIRD invented cause on top of it. Zero
-        # spend is a fact about the money and about nothing else.
-        _spent = sum(float(c.get("cost_usd") or 0) for c in (out.get("stats") or ()))
-        _why = str(out.get("error") or "").strip()
-        engine.emit_info("delegate",
-                         f"{task_id}: validator verdict UNPARSED/error — issuer must decide"
-                         + (f" · {_why}" if _why else "")
-                         + (f" · this run cost ${_spent:.4f} (recorded in `usage`)" if _spent
-                            else " · no model call is recorded for it, so `usage` will not show it")
-                         + (f" (report: {out['report_kept_at']})" if out.get("report_kept_at")
-                            else " (report not kept)"))
-        # THREE OUTCOMES, NOT TWO. A validator that was never started, a validator that answered badly, and
-        # a validator whose call was CUT are three different facts, and only the last one was being
-        # read as one of the other two. The provider marks it where it is visible (the CLI's stream
-        # ended with no result event — `transport_torn`); here it only has to be believed rather
-        # than re-derived from a cost of zero, which is the inference that misdiagnosed it.
-        _stats = out.get("stats") or ()
-        if _stats and _stats[-1].get("transport_torn"):
-            return "no-verdict:torn"
-        return "no-verdict" if (_stats or _spent) else "no-verdict:never-ran"
+        return _classify_no_verdict(engine, task_id, out)
     # WITH THE FSM'S OWN REASON. "The node revalidates on the graph's next change" is true and
     # useless on its own: some refusals are transient (children not settled yet — the graph WILL
     # change) and some are standing (the node's plan no longer passes the Syntactic level — nothing
@@ -803,8 +820,18 @@ class Dispatcher:
         """Is this childless node's split owed, with someone to make it (`issuer.split_has_a_mover`)? Then no
         executor session is spawned on it: its DELIVER as a leaf is refused, so the run could only be thrown away
         (measured: two paid sessions, then parked, then two more). The split is made by the machine issuer's
-        question `split`, or by its issuer, whose step names it (`NodeSteps._step_for`)."""
-        owed = self._engine.split_owed(task.id) if split_has_a_mover(self._engine, self._agents, task) else None
+        question `split`, or by its issuer, whose step names it (`NodeSteps._step_for`).
+
+        A leaf the system executes is judged by the scope's rule (`_one_session_refuted`) one round later: the round
+        after three equal FAILs is the one its packet names CHALLENGE in, for a criterion that cannot hold as written
+        (§12.4) — a split then would pre-empt it. A haiku 4.5 leaf building a whole C compiler failed the same four
+        criteria nineteen rounds running, five hours, on real crashes its probes caught, until the ceiling cut the row
+        (GB_c_compiler_tnani8860, 2026-10-22)."""
+        if (self._engine.mode() is not None and not self._engine.graph.get_active_children(task.id)
+                and not held_by_a_holder(self._engine, str(task.assignee))
+                and (self._engine.session_fit(task.id) or {}).get("fits") is not False):
+            self._one_session_refuted(task, [task], self._engine.CONTRACT_SUSPECT_ROUNDS + 1)
+        owed =self._engine.split_owed(task.id) if split_has_a_mover(self._engine, self._agents, task) else None
         if owed is not None:
             self._say_once(f"split:{task.id}", f"{task.id}: no session started — {owed['why']}. The step "
                                                 f"that opens it: {owed['opens_with']}.")
@@ -960,8 +987,8 @@ class Dispatcher:
                 continue
             if s.get("action") not in SPAWNABLE_ACTIONS or (task is not None and self._split_owed_said(task)):
                 continue
-            if not self._deps_ready(TaskId(s["task_id"])):
-                continue                   # spawning before the producers deliver ⇒ instant BLOCK
+            if not self._deps_ready(TaskId(s["task_id"])) or self._being_rewritten(s["task_id"]):
+                continue                   # spawning before the producers deliver ⇒ instant BLOCK; mid-rewrite ⇒ waste
                                            # EVERY executor spawn, not the first one only: the gate
                                            # asked its question on `accept` alone, so a node already
                                            # past that step — resumed after a cleared block, re-queued
@@ -1081,6 +1108,19 @@ class Dispatcher:
                            f"every node of it and one validation checks each node's own criteria")
         return top is not None
 
+    def _one_session_refuted(self, top, members: list, rounds: int) -> bool:
+        """Did contact refute that one session carries `top` — a node of it failing the same criteria in each of its
+        last `rounds` rounds on its current version, rounds a refutation already spent not counted again? Then `top`
+        is above its holder's κ (§3.7, the leaf test is agent-relative): recorded refuted (`refute_session_fit`) — a
+        scope's nodes take a session each, a leaf's split is owed (`split_owed`)."""
+        if not (stuck := {str(m.id): s for m in members
+                          if (s := self._engine.stuck_on(m.id, rounds, after=self._engine.spent_fails(m.id)))}):
+            return False
+        self._engine.refute_session_fit(top.id, members)
+        self._engine.emit_info("delegate", f"{top.id}: one session no longer carries it — " + "; ".join(
+            f"{n} failed {', '.join(c)} in each of its last {rounds} rounds" for n, c in stuck.items()))
+        return True
+
     def _scope_key(self, members: list, prefix: str = "") -> str:
         """The dedup key of a scope's round: every node's generation and state — a round is one per visit of the
         scope, so a node answered or re-delivered makes the next one."""
@@ -1097,7 +1137,14 @@ class Dispatcher:
                 tops[str(top.id)] = top
         for top in tops.values():
             members = self._engine.scope_members(top.id)
-            if any(str(m.id) in self._running for m in members):
+            if any(str(m.id) in self._running or self._being_rewritten(m.id) for m in members):
+                continue
+            # …A SCOPE WHOSE NODE FAILS THE SAME CRITERIA ROUND AFTER ROUND IS ABOVE ITS HOLDER'S κ: the decomposer's
+            # "one session carries it" is an estimate (§3.7, the leaf test is agent-relative), and contact refuted it —
+            # one haiku session carried a whole plan for 16 rounds over three hours failing the same criteria, and the
+            # parts, re-split, finished in less (GB_sql_database_tmzgc0724, 2026-10-16). Recorded refuted, its nodes
+            # take a session each; the estimate is no packet field (no revision, Inv-1)
+            if self._one_session_refuted(top, members, self._engine.CONTRACT_SUSPECT_ROUNDS):
                 continue
             ready = self._scope_ready(top, members)
             # …and a delivery does not wait for what cannot come now: with no session to start (a sibling's dispute
@@ -1176,12 +1223,13 @@ class Dispatcher:
         before = sum(self._engine.accepted_moves(m.id) for m in members)
         try:
             out = self._scope_runner(self._engine, top_id, executor_id, self._agents)
-            if isinstance(out, dict) and out.get("status") == "not_consented":
+            if isinstance(out, dict) and out.get("status") in ("not_consented", "too_late"):
                 return                    # a member re-offered before the session began: it waits for the holder
             if (sum(self._engine.accepted_moves(m.id) for m in members) == before
                     and not any(self._engine.parking.contested_reason(m.id) for m in members)):
                 self._one_retry_then_park(top_id, "u:", f"the scope session reported "
-                                          f"{(out or {}).get('status')!r} and no signal took effect", claim=key)
+                                          f"{(out or {}).get('status')!r} and no signal took effect", claim=key,
+                                          cut=bool((out or {}).get("cut")), limit=bool((out or {}).get("limit")))
         except Exception as e:                          # noqa: BLE001 — a failed round is not a signal
             log.warning(f"delegate: scope session of {top_id} failed: {e}")
             self._one_retry_then_park(top_id, "x:", f"scope session failed — {e}", claim=key)
@@ -1213,6 +1261,8 @@ class Dispatcher:
                 self._seen.discard(vkey)                # revalidates, on the standing records, when the graph moves
             if ret in ("pass", "fail", "recorded", "no-instrument", "rejected"):
                 return
+            if ret == "no-verdict:limit":
+                return self._wait_out_limit(top_id, vkey, "the scope's validator")
             if vkey not in self._retried:
                 self._retried.add(vkey)
                 self._seen.discard(vkey)
@@ -1285,6 +1335,19 @@ class Dispatcher:
         self._dispatch_steps(out, started)
         return started
 
+    def _being_rewritten(self, task_id) -> bool:
+        """Is `task_id` inside a subtree a decomposition is writing now (`auto_decompose` in flight on it or above)? A
+        scope session started on round 1's nodes while round 2 rebuilt them, and the rebuild re-offered every node —
+        the session, its validation and their spend thrown away (GB_coreutils_tn5lhw152, 2026-10-19)."""
+        here = self._engine.project_name or DEFAULT_PROJECT
+        roots = {w["task_id"] for w in in_flight() if w["verb"] == "auto_decompose" and w["project"] == here}
+        t = self._engine.graph.get_task(TaskId(task_id)) if roots else None
+        while t is not None:
+            if str(t.id) in roots:
+                return True
+            t = self._engine.graph.get_task(t.parent_id) if t.parent_id else None
+        return False
+
     _EXECUTOR_STATES = _EXECUTOR_STATES
 
     def _fresh(self, task_id: TaskId, expect_gen: tuple, states: tuple,
@@ -1329,7 +1392,8 @@ class Dispatcher:
             return False
         return True
 
-    def _one_retry_then_park(self, task_id: TaskId, tag: str, what: str, claim: str | None = None) -> None:
+    def _one_retry_then_park(self, task_id: TaskId, tag: str, what: str, claim: str | None = None,
+                             cut: bool = False, limit: bool = False) -> None:
         """A round that ended with NOTHING SIGNALLED: give it exactly one more, then park it and say so.
 
         Three things end a round that way — an unreadable report, a status word the contract does not
@@ -1341,6 +1405,10 @@ class Dispatcher:
         unreadable-report case came to be handled and the other two did not.
         """
         t = self._engine.graph.get_task(task_id)
+        if limit and t is not None:
+            return self._wait_out_limit(task_id, claim or self._round_key(t), "the session's")
+        if cut and t is not None and self._redial(task_id, claim or self._round_key(t), "the session's"):
+            return
         key = self._round_key(t, tag) if t is not None else None
         if key and key not in self._retried:
             self._retried.add(key)
@@ -1366,6 +1434,8 @@ class Dispatcher:
             if out.get("status") in ("accepted", "challenged", "not_offered"):
                 return
             t = self._engine.graph.get_task(task_id)
+            if out.get("limit") and t is not None:
+                return self._wait_out_limit(task_id, self._round_key(t, "consent"), f"{executor_id}'s consent")
             retry = self._round_key(t, "consent-retry") if t is not None else None
             if retry and retry not in self._retried:
                 self._retried.add(retry)
@@ -1437,7 +1507,7 @@ class Dispatcher:
             _before = self._engine.accepted_moves(task_id)
             try:
                 out = self._runner(self._engine, task_id, executor_id, self._agents)
-                if isinstance(out, dict) and out.get("status") == "not_consented":
+                if isinstance(out, dict) and out.get("status") in ("not_consented", "too_late"):
                     return                # re-offered before its session began: the round waits for the holder
                 # DID THE NODE LEAVE THE EXECUTOR'S HANDS? Asked of the GRAPH, not of the report's
                 # status word: an unparsed report, an undefined status and a signal the FSM refused
@@ -1455,7 +1525,9 @@ class Dispatcher:
                              f"delivered / blocked / challenge" if _st == "undecided" else
                              f"executor reported {_st!r} but no signal took effect (see the log for the "
                              f"refusal)")
-                    self._one_retry_then_park(task_id, "u:", _what)
+                    self._one_retry_then_park(task_id, "u:", _what,
+                                              cut=bool(isinstance(out, dict) and out.get("cut")),
+                                              limit=bool(isinstance(out, dict) and out.get("limit")))
             except Exception as e:
                 # Into the OBSERVATION FIELD, not only a log record. This handler catches the whole
                 # spawn path, and a node whose dispatch raised is never retried — its key stays in
@@ -1472,23 +1544,47 @@ class Dispatcher:
                 except Exception:
                     pass
 
-    def _redial(self, task_id: TaskId, key: str) -> bool:
-        """Dial a CUT validation call again, within its own small budget. True = handled here.
+    def _redial(self, task_id: TaskId, key: str, whose: str = "the validator's") -> bool:
+        """Dial a CUT call again, within its own small budget and after its spacing (TORN_DELAY_S, doubling). True =
+        handled here.
 
         The budget is separate from the one retry on purpose: that retry exists to buy a second
-        VALIDATION of a delivery, and a severed transport produced no first one — charging it there
-        is how a node reaches its park having never been validated. Finite, because an unbounded
-        redial is the loop Inv-5 exists against.
+        answer — a VALIDATION of a delivery, an executor's report — and a severed transport produced no
+        first one; charging it there is how a node reaches its park having never been answered. Finite,
+        because an unbounded redial is the loop Inv-5 exists against.
         """
-        if self._torn.get(key, 0) >= TORN_REDIALS:
+        n = self._torn.get(key, 0)
+        if n >= TORN_REDIALS:
             return False
-        self._torn[key] = self._torn.get(key, 0) + 1
-        self._seen.discard(key)
+        self._torn[key], delay = n + 1, TORN_DELAY_S * 2 ** n
+        self._give_back(key, delay)
         self._engine.emit_info(
-            "delegate", f"{task_id}: the validator's call was CUT before it answered "
-                        f"(attempt {self._torn[key]} of {TORN_REDIALS}) — redialling on its own "
-                        f"tier; no validation was produced, so this does not spend the node's retry")
+            "delegate", f"{task_id}: {whose} call was CUT before it answered (attempt {n + 1} of "
+                        f"{TORN_REDIALS}) — redialled in {delay}s on its own tier; nothing was answered, so this "
+                        f"does not spend the node's retry")
         return True
+
+    def _give_back(self, key: str, delay: float) -> None:
+        """The round given back after `delay` seconds: the dispatcher may claim its key again."""
+        def again():
+            """The round given back: the dispatcher may claim its key again."""
+            self._seen.discard(key)
+            self._dirty.set()
+        if delay:
+            (timer := threading.Timer(delay, again)).daemon = True
+            timer.start()
+        else:
+            again()
+
+    def _wait_out_limit(self, task_id: TaskId, key: str, whose: str) -> None:
+        """The account's limit refused the call: nothing was answered, so neither the node's retry nor a redial is
+        spent — the round comes back when the limit can have lifted, probed every LIMIT_RETRY_S as the issuer's door
+        does, and the node's own clock still bounds it (§12.2). Read as an unreadable report, two limit-ended sessions
+        parked a node for the 2.5 h of the window and after it (GB_c_compiler_tncfs1160, 2026-10-23)."""
+        self._give_back(key, LIMIT_RETRY_S)
+        self._engine.emit_info("delegate", f"{task_id}: {whose} call was refused by the account's usage limit — "
+                                           f"asked again in {LIMIT_RETRY_S}s; nothing was answered, so this spends "
+                                           f"none of the node's retries")
 
     def _validate_queued(self, task_id: TaskId, expect_gen: tuple = (0, 0, 0), sign: bool = True) -> None:
         """A node's validation from the moment the dispatcher takes it on: in flight for every reader while it waits for
@@ -1521,9 +1617,8 @@ class Dispatcher:
                 # with a refusal behind it starts there (none by default — see validator_retry_model).
                 if _mo is None and (self._engine.rejected_report(task_id) or {}).get("refusals", 0):
                     _mo = validator_retry_model()
-                _kw = {"sign": sign} if not sign else {}
-                ret = (self._validate(self._engine, task_id, self._agents, model_override=_mo, **_kw)
-                       if _mo else self._validate(self._engine, task_id, self._agents, **_kw))
+                ret = self._validate(self._engine, task_id, self._agents, **({"model_override": _mo} if _mo else {}),
+                                     **({"sign": sign} if not sign else {}))
             except Exception as e:
                 log.warning(f"auto-validate failed on {task_id}: {e}")
             t = self._engine.graph.get_task(task_id)
@@ -1535,18 +1630,16 @@ class Dispatcher:
                 if t is not None:
                     self._seen.discard(self._round_key(t, "v:"))
                 return
-            if ret == "no-instrument":
-                # Nothing was spawned and nothing failed: this project has no registered validator, so
-                # the verdict is the issuer's own act (§10.2) and the node waits for them, which the
-                # frontier already says. Neither a retry nor a park belongs here.
-                return
-            if ret == "recorded":
-                # VALIDATED, AND DELIBERATELY NOT SIGNED — a human issuer's node (§10.2 keeps the
-                # signature theirs). The node stays in VALIDATING BY DESIGN, and the branch below
-                # reads that state as "the validator died" and queues a retry: measured on the human
-                # door 2026-08-22, every recorded verdict was followed by "validator returned no
-                # verdict — one retry queued" and a SECOND paid run over the same delivery, minutes
-                # after the first had already answered. A settled outcome is settled whoever signs.
+            # NO-INSTRUMENT: nothing was spawned and nothing failed — no registered validator here, so
+            # the verdict is the issuer's own act (§10.2) and the node waits for them, which the
+            # frontier already says. Neither a retry nor a park belongs here.
+            # RECORDED: VALIDATED, AND DELIBERATELY NOT SIGNED — a human issuer's node (§10.2 keeps the
+            # signature theirs). The node stays in VALIDATING BY DESIGN, and the branch below
+            # reads that state as "the validator died" and queues a retry: measured on the human
+            # door 2026-08-22, every recorded verdict was followed by "validator returned no
+            # verdict — one retry queued" and a SECOND paid run over the same delivery, minutes
+            # after the first had already answered. A settled outcome is settled whoever signs.
+            if ret in ("no-instrument", "recorded"):
                 return
             # a validator run that died/unparsed leaves VALIDATING with no verdict — ONE retry
             if t is not None and t.state.name == "VALIDATING":
@@ -1558,6 +1651,8 @@ class Dispatcher:
                 # own instead — small, because an installation that cannot complete a call twice in
                 # a row has a problem no third attempt fixes, and finite, because an unbounded
                 # redial is the loop Inv-5 exists against.
+                if ret == "no-verdict:limit":
+                    return self._wait_out_limit(task_id, key, "the validator's")
                 if ret == "no-verdict:torn" and self._redial(task_id, key):
                     return
                 if key not in self._retried:

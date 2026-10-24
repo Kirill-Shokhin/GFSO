@@ -8,7 +8,9 @@ the ACTIVE project; back-compat: default project = the env-configured engine, no
 import asyncio
 import inspect
 import os
+import sqlite3
 import time
+from datetime import datetime
 
 import anyio
 import pytest
@@ -340,12 +342,56 @@ def test_the_project_list_says_where_each_root_stands(monkeypatch, tmp_path):
     eng._graph._storage.close()
     app = create_app(reg.engine(), registry=reg)
     with TestClient(app) as c:
-        root = c.get("/api/projects").json()["roots"]
-    assert root["closed"] == root["loaded"] and root["loaded"]["state"]
+        about = c.get("/api/projects").json()["about"]
+    root = {n: about[n] and about[n]["goal"] for n in about}
+    assert root["closed"]["state"] == root["loaded"]["state"] == "OFFERED"
+    assert root["loaded"]["name"] is None and root["loaded"]["started"]
     assert root["bare"] is None
+    assert "closed" not in reg._engines, "listing a project built its engine"
     assert not list(tmp_path.glob("closed.db-*")), "the peek left WAL files beside a closed project"
     for e in list(reg._engines.values()):
         e.stop()
+
+
+def _closed(reg, name):
+    eng = reg._engines.pop(name)
+    eng.stop()
+    eng._graph._storage.close()
+
+
+def _stamp_log(path, launched, rows):
+    """Set a project file's goal launched `launched` seconds ago, and its log to `rows` of (seconds ago,
+    source) — the time of each act."""
+    at = lambda ago: datetime.fromtimestamp(time.time() - ago).isoformat()
+    with sqlite3.connect(path) as c:
+        c.execute("UPDATE tasks SET created_at = ? WHERE parent_id IS NULL", (at(launched),))
+        c.execute("DELETE FROM audit_log")
+        for ago, source in rows:
+            c.execute("INSERT INTO audit_log (ts, task_id, signal, source) VALUES (?, 'root', 'X', ?)",
+                      (at(ago), source))
+
+
+def test_a_project_is_listed_by_when_it_was_worked_in_not_when_it_was_looked_at(monkeypatch, tmp_path):
+    """The list put old runs on top (the author, 2026-10-24: «в топе списка сейчас вообще старый мусор»):
+    loading a project's engine — a read of it on the shared server — rewrites its file and lapses what
+    its deadlines owe, so by the file's stamp the projects LOOKED at today rose above the ones worked
+    in. The list goes by the last act of a party or a model call; a log of lapses alone still dates it."""
+    reg = _reg(monkeypatch, tmp_path)
+    monkeypatch.delenv("GFSO_STORAGE")
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "gfso.db"))   # `default` is not another test's file
+    for n in ("worked", "looked", "clock_only"):
+        _mk(reg.engine(n), "root")
+        _closed(reg, n)
+    _stamp_log(str(tmp_path / "worked.db"), 3600, [(600, "agent")])
+    _stamp_log(str(tmp_path / "looked.db"), 30 * 86400, [(3 * 86400, "agent"), (5, None)])
+    _stamp_log(str(tmp_path / "clock_only.db"), 40 * 86400, [(5 * 86400, None)])
+    now = time.time()
+    for n, age in (("looked", 0), ("worked", 3600), ("clock_only", 60 * 86400)):
+        os.utime(tmp_path / f"{n}.db", (now - age, now - age))
+    listing = ProjectRegistry().list()
+    assert listing["projects"] == ["worked", "looked", "clock_only", "default"]
+    assert abs(now - 3 * 86400 - listing["last_active"]["looked"]) < 5
+    assert abs(now - 5 * 86400 - listing["last_active"]["clock_only"]) < 5
 
 
 def test_use_project_takes_the_word_every_other_verb_uses():

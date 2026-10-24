@@ -618,3 +618,23 @@ def test_an_undated_record_over_a_footing_stands_only_if_it_refuses(tmp_path):
     assert record_stands(e._graph, e._audit, root, {"verdict": "FAIL", **gen})
     assert not record_stands(e._graph, e._audit, root, {"verdict": "PASS", **gen})
     e.stop()
+
+
+def test_a_scope_whose_part_fails_the_same_criterion_round_after_round_is_no_longer_one_session(tmp_path):
+    """One haiku session carried a whole plan for 16 rounds over three hours, failing the same criteria, and the parts,
+    re-split, finished in less (GB_sql_database_tmzgc0724, 2026-10-16): the estimate "one session carries it" is
+    refuted by contact after the rounds that make a criterion a suspect, and the parts take a session each."""
+    e, agents = _project(tmp_path)
+    rounds = e.CONTRACT_SUSPECT_ROUNDS
+    executor = _LLM(*[_delivered("root.a", "root.b", "root")] * (rounds + 3))
+    validator = _Validator(e, *[{("root.a", "a_ok")}] * (rounds + 3))
+    per_node = []
+    d = _dispatcher(e, agents, executor, validator, per_node)
+    _drive(e, d, lambda: len(executor.calls) >= rounds and len(validator.calls) >= rounds
+           and e.scope_top(TaskId("root.a")) is None, rounds=400)
+    assert len(executor.calls) == rounds, "a scope stuck on one criterion ran another round in one session"
+    assert e.scope_top(TaskId("root.a")) is None and (e.session_fit(TaskId("root")) or {}).get("fits") is False
+    _drive(e, d, lambda: ("exec", "root.a") in per_node, rounds=200)
+    assert ("exec", "root.a") in per_node, "the stuck part was not given a session of its own"
+    e.stop()
+

@@ -35,9 +35,43 @@ def _state_of(row: sqlite3.Row) -> "tuple[State, Optional[DoneReason]]":
     return state, done_reason
 
 
-def peek_root(db_path: str) -> "tuple[State, Optional[DoneReason]] | None":
-    """The root's state in a project file this process has not opened as a store — None when
-    there is no file, no root, or nothing readable (one bad file must not cost a picker the list).
+def _epoch(ts) -> Optional[float]:
+    try:
+        return datetime.fromisoformat(ts).timestamp() if ts else None
+    except ValueError:
+        return None
+
+
+def _all(c, sql: str) -> list:
+    """The rows of `sql`, or none where an older file lacks the table: that fact is then absent, not the
+    whole project."""
+    try:
+        return c.execute(sql).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def _one(c, sql: str):
+    return (_all(c, sql) or [None])[0]
+
+
+def _mode_named(value: str) -> Optional[str]:
+    try:
+        return json.loads(value).get("mode")
+    except (ValueError, AttributeError):
+        return value or None
+
+
+def peek_project(db_path: str) -> Optional[dict]:
+    """What a project IS, read from a file this process has not opened as a store: its root (goal
+    name, state, started), its last protocol event, its spend and its mode — None when there is no
+    file or nothing readable (one bad file must not cost a picker the list). A list of projects is
+    answered from here and never by building an engine: that starts its dispatcher, and an AUTO
+    project's clock and machine issuer then act — paid calls woken by a look (2026-10-24).
+
+    "Last" is the last act of a party or model call in the log, not the file's stamp: an engine
+    merely loaded rewrites its file, so by mtime the projects someone LOOKED at today rose above the
+    runs actually worked in.
 
     `immutable` when no WAL lies beside it: a read-only open of a closed WAL database still
     CREATES an empty `-wal` and `-shm` (measured 2026-09-24) — litter in the data dir, on every
@@ -50,11 +84,33 @@ def peek_root(db_path: str) -> "tuple[State, Optional[DoneReason]] | None":
         with closing(sqlite3.connect(f"file:{pathname2url(os.path.abspath(db_path))}?{how}",
                                      uri=True)) as c:
             c.row_factory = sqlite3.Row
-            row = c.execute("SELECT state, done_reason FROM tasks WHERE parent_id IS NULL "
-                            "ORDER BY created_at LIMIT 1").fetchone()
-        return None if row is None else _state_of(row)
-    except (sqlite3.Error, KeyError):
+            root = _one(c, "SELECT state, done_reason, spec_json, created_at FROM tasks "
+                              "WHERE parent_id IS NULL ORDER BY created_at LIMIT 1")
+            spent = _one(c, "SELECT MAX(ts), SUM(cost_usd) FROM llm_usage")
+            # who ran it: the models of its sessions that did work — a refusal spends nothing — costliest first
+            models = [r[0] for r in _all(c, "SELECT model FROM llm_usage WHERE model != '' AND (cost_usd > 0 "
+                                              "OR input_tokens > 0 OR output_tokens > 0 OR cache_input_tokens > 0) "
+                                              "GROUP BY model ORDER BY SUM(cost_usd) DESC")]
+            # a party's act, not the clock's: lapses fire on a mere load of an old project's engine
+            # (dozens within one minute on 2026-10-24), and a lapse is no one working in it
+            acted = ((_one(c, "SELECT MAX(ts) FROM audit_log WHERE source IS NOT NULL") or (None,))[0]
+                     or (_one(c, "SELECT MAX(ts) FROM audit_log") or (None,))[0])
+            mode = _one(c, "SELECT value FROM settings WHERE key = 'mode'")
+    except sqlite3.Error:
         return None
+    out = {"goal": None, "last": max(filter(None, (_epoch(spent and spent[0]), _epoch(acted))),
+                                     default=None),
+           "cost": round(spent[1] or 0.0, 2) if spent else 0.0,
+           "mode": mode and _mode_named(mode[0]), "models": models}
+    if root is not None:
+        try:
+            state, reason = _state_of(root)
+        except KeyError:
+            return out
+        out["goal"] = {"state": state.name, "done_reason": reason and reason.name,
+                       "name": json.loads(root["spec_json"]).get("name") or None,
+                       "started": _epoch(root["created_at"])}
+    return out
 
 
 class _ProjectSettings:
@@ -161,6 +217,15 @@ class SqliteStorage(_ProjectSettings, StoragePort):
     #: (table, column, declaration) — applied in order to a database that predates each column.
     #: The comments are the canon rows the columns exist for, kept where the columns are named.
     _ADDITIVE_MIGRATIONS = (
+        # what a model session read from the cache and what it wrote to it — priced apart, summed in
+        # `cache_input_tokens` — its fullest turn, its model's window, its turns; NULL where not recorded
+        ("llm_usage", "cache_read_tokens", "INTEGER"),
+        ("llm_usage", "cache_write_tokens", "INTEGER"),
+        ("llm_usage", "peak_context", "INTEGER"),
+        ("llm_usage", "context_window", "INTEGER"),
+        ("llm_usage", "turns", "INTEGER"),
+        ("llm_usage", "resumed", "INTEGER"),                            # 1: it continued a conversation (`--resume`)
+        ("llm_usage", "ended", "TEXT"),                                 # answered / cut / limit / the CLI's reason
         ("dep_edges", "glue", "TEXT DEFAULT ''"),
         ("dep_edges", "provisional", "INTEGER DEFAULT 0"),
         ("dep_edges", "closed", "INTEGER DEFAULT 0"),                   # a record nobody answered (§15.5)
@@ -622,14 +687,17 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         return [{"ts": r["ts"], "source": r["source"], "message": r["message"]} for r in rows]
 
     _USAGE_COLS = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens",
-                   "cache_input_tokens", "cost_usd", "duration_ms")
+                   "cache_input_tokens", "cost_usd", "duration_ms",
+                   "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed")
+    _USAGE_KEPT_NULL = ("ts", "stage", "model", "node_id",                # an absent reading stays absent
+                        "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed")
 
     def log_usage(self, row: dict) -> None:
         with self._write() as conn:
             conn.execute(
                 f"INSERT INTO llm_usage ({', '.join(self._USAGE_COLS)}) "
                 f"VALUES ({', '.join('?' * len(self._USAGE_COLS))})",
-                tuple(row.get(c) if c in ("ts", "stage", "model", "node_id") else (row.get(c) or 0)
+                tuple(row.get(c) if c in self._USAGE_KEPT_NULL else (row.get(c) or 0)
                       for c in self._USAGE_COLS))
 
     def get_usage(self, limit: int = USAGE_PAGE) -> list[dict]:

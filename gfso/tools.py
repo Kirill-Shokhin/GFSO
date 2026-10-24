@@ -24,7 +24,7 @@ from gfso.core.types import (
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_T_numerator, q_V_reversed
 from gfso.core.graph.model import root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
-from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, probe_id,
+from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
 from gfso.config import (data_dir as _data_dir, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
@@ -1396,6 +1396,16 @@ def _agent_id() -> str:
     explicit name — so an omitted `assignee` can only mean "the agent itself". Works out of the box as
     `agent`; GFSO_AGENT_ID merely RENAMES it (multi-agent future), it is never required."""
     return _config_agent_id()
+
+
+def admission_of(spec: dict) -> list[str]:
+    """What admission would refuse in a contract's criteria, before it is sent — the ladder every ASSIGN runs
+    (`admission_defects`), read; a form gating itself on a copy of its first rungs let a hollow `echo ok`
+    through (2026-10-24). Pure: no engine, no project, no write."""
+    try:
+        return admission_defects(_spec_from(spec or {}).criteria)
+    except (ValueError, TypeError, KeyError) as ex:
+        return [str(ex)]
 
 
 def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,

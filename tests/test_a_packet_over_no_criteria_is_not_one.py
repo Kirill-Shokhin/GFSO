@@ -8,6 +8,7 @@ gate passed over the empty set, the empty authoring was built, and the reply pro
 """
 from __future__ import annotations
 
+from gfso.decompose.loop import AGREE_SCHEMA
 import dataclasses
 import json
 
@@ -140,6 +141,8 @@ class _Model:
         return "ALREADY-COVERED" if "CURRENT DECOMPOSITION" in prompt else "holes"
 
     def complete_structured(self, system, user, schema):
+        if schema is AGREE_SCHEMA:
+            return {"contradictions": []}
         self.structured += 1
         self.calls.append({"output_tokens": 1, "parse_failed": self.structured not in self.plans})
         return self.plans.get(self.structured, {})

@@ -287,3 +287,24 @@ def test_the_machine_issuer_maps_two_holes_onto_two_children_in_one_reshape():
     assert ok, why
     assert T.list_holes(e)["holes"] == [] and [e.graph.get_task(TaskId(k)).revisions for k in ("k1", "k2")] == [0, 0]
     e.stop()
+
+
+def test_the_machine_issuer_maps_a_child_its_reshape_adds_in_the_same_act():
+    # AUTO haiku coreutils (GB_coreutils_tn73sy660): `children: [root.build_and_dispatcher]` with `map` naming it, refused
+    # four times as "not a child standing in root's split" — the plan held at the gate for an hour
+    e = _split(who="exec1", kid_who=("exec2", "exec2"))
+    T.edit_criteria(e, "root", [criterion("a", "A"), criterion("b", "B"), criterion("c", "C"), criterion("d", "D")],
+                    agent="exec1")
+    e.wait_idle()
+    root = e.graph.get_task(TaskId("root"))
+    new = {"name": "root.build", "criteria": [criterion("built", "B")], "covers": ["c"]}
+    ok, why = _reshape(e, root, "exec1", {"children": [new], "map": {"root.build": ["d"], "k1": ["a"]}}, "", None)
+    e.wait_idle()
+    assert ok, why
+    built = [str(k.id) for k in e.graph.get_active_children(TaskId("root")) if str(k.id) not in ("k1", "k2")]
+    assert len(built) == 1 and T.list_holes(e)["holes"] == []
+    assert {m.criterion_name for m in e.graph.get_task(TaskId("root")).criterion_mappings
+            if str(m.child_id) == built[0]} == {"c", "d"}
+    ok, why = _reshape(e, e.graph.get_task(TaskId("root")), "exec1", {"map": {"nobody": ["d"]}}, "", None)
+    assert not ok and "nor one this act adds" in why
+    e.stop()

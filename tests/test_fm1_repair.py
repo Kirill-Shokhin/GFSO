@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from gfso import issuer as I
 from gfso.engine import Engine
 from gfso.core.types import (
     State, Signal, SignalData, TaskId, AgentId, Spec, Criteria, CriterionMapping,
@@ -248,3 +249,19 @@ def test_a_coverer_out_of_the_plan_before_the_fail_leaves_the_split_refuted(when
         assert bool(e.decomposition_refuted(TaskId("root"))) is refuted, e.decomposition_refuted(TaskId("root"))
     finally:
         e.stop()
+
+
+def test_a_refuted_split_that_waits_on_its_review_is_the_plans_question(engine, monkeypatch):
+    """The gate said "run review_decomposition first"; asked as `repair`, the review never ran and the machine issuer added
+    a near-identical child ten times over, none started (GB_sql_database_tmyl10584, 2026-10-16) — and once a review had
+    findings, `repair` offered no dispute of them. It is the plan's question: the review, then fix or dispute."""
+    _refuted(engine)
+    _revise_root(engine, (Criteria("rc", "rc description, sharpened after contact", check=pinned("rc")),))
+    assert dict(I.open_questions(engine)).get(TaskId("root")) == "plan"
+    monkeypatch.setattr(I, "issuer_turn", lambda *a, **k: pytest.fail("the issuer was asked what the review answers"))
+    verbs = I.Verbs(llm=None, busy=None, refine=None, review=lambda e, node: (_review(e, covered=False, verdicts=[{"criterion": "rc", "verdict": "insufficient"}]),
+                                                              {"stats": {"c": 1}})[1])
+    assert I.settle(engine, None, TaskId("root"), "plan", "pm", verbs)["kind"] == "review"
+    assert engine.open_l2_findings(TaskId("root")) and "dispute_finding(" in engine.decomposition_refuted(TaskId("root"))
+    assert dict(I.open_questions(engine)).get(TaskId("root")) == "plan", "a finding left open is answered by fix or dispute"
+    assert "dispute" in I.moves_for(engine, TaskId("root"), "plan")

@@ -53,7 +53,7 @@ def test_an_answer_cut_at_the_limit_is_asked_for_shorter():
     assert asked[1].endswith(RETRY_SHORTER)
     llm, asked = _llm_answering(("not json", "end_turn"), ('```json\n{"a": "x"}\n```', "end_turn"))
     llm.complete_structured("s", "u", schema)
-    assert asked[1].endswith(RETRY_SUFFIX), "an answer that was not cut is asked again as before"
+    assert RETRY_SUFFIX in asked[1] and RETRY_SHORTER not in asked[1], "an answer that was not cut is asked again as before"
 
 
 def test_a_carried_obligation_says_its_argument_once(monkeypatch):

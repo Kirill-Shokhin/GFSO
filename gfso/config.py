@@ -197,6 +197,12 @@ def agent_trace_dir() -> str:
     return os.environ.get("GFSO_AGENT_TRACE_DIR", "")
 
 
+def claude_config_dir() -> Path:
+    """Where the `claude` CLI keeps its state — `CLAUDE_CONFIG_DIR`, else `~/.claude`: the conversations an executor
+    continues live under its `projects/`."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
 def default_deadline_s() -> float:
     """How far ahead the engine writes a deadline the issuer did not type — `GFSO_DEFAULT_DEADLINE_S`.
 

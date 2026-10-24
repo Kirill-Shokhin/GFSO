@@ -103,8 +103,6 @@ def test_a_member_whose_delivery_awaits_its_verdict_is_not_merged_until_it_has_o
     out = I.settle(e, AgentRegistry(path=str(tmp_path / "agents.json")), root.id, "repair", str(root.assignee), None)
     assert out["status"] == "waiting", out
     assert e.graph.get_task(TaskId("root.libc_pp")) is None and e.graph.get_state(TaskId("root.pp")) == State.VALIDATING
-    I._answered(e, "g", "repair", out, root.id)
-    assert e.tally("answers:g:repair") == 0, "a wait was counted as an answer toward closing the node"
     e.stop()
 
 

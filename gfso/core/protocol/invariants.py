@@ -76,6 +76,27 @@ def good_probes(entry: Mapping) -> list:
             if str(p.get("command", "")).strip() and (str(p.get("expect", "")).strip() or refuting)]
 
 
+def criterion_meant(label, names: Sequence[str]):
+    """The contract's criterion a report's label names: the label itself; else, its markup stripped (`` ` ``, `*`,
+    quotes, a leading `1.`, a trailing `.`), the one criterion it then is, or whose exact name it starts with before a
+    separator and more (`Name: what it requires`, `Name — …`, `Name (…)`) — compared without case only where exactly one
+    criterion matches; else the label as written, so a name the contract lacks is still refused as foreign. Read exactly,
+    a haiku validator's thirty root reports labelled "Name: description" were each refused whole as naming a foreign
+    criterion, and two deliveries lapsed with no verdict at ~$120 (GB_sql_database_tn03ao788, 2026-10-16); the packet
+    itself lists criteria as `**Name**: description`, so a bold or backticked label is the same name."""
+    s = str(label)
+    if s in names:
+        return label
+    bare = re.sub(r"^\s*(?:\d+[.)]|[-•])\s+", "", re.sub(r"[`*\"']", "", s)).strip().rstrip(".").strip()
+    for fold in (str, str.lower):
+        hits = [n for n in names if fold(bare) == fold(n)
+                or fold(bare).startswith(fold(n)) and re.match(r"\s*:|\s+[-–—(]", bare[len(n):])]
+        longest = max(hits, key=len, default=None)
+        if longest is not None and [len(h) for h in hits].count(len(longest)) == 1:
+            return longest
+    return label
+
+
 def spoken_verdict(raw) -> str:
     """A per-criterion verdict word, normalized ONCE — `pass` / `fail` / anything else, lower-case.
 

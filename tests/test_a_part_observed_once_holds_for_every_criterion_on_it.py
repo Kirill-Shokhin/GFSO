@@ -11,7 +11,8 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
-from gfso.core.protocol.procedure import part_criteria, probe_id, unrun_parts
+from gfso.core.protocol.invariants import verdict_report_defects
+from gfso.core.protocol.procedure import part_criteria, probe_id, unrun_parts, with_part_observations
 from gfso.core.types import Criteria, Probe, State, TaskId
 from tests.support import REGISTER, criterion, instrument_passes, make_engine
 from tests.test_a_part_is_checked_again_inside_its_whole import _RAISES, _RISK
@@ -96,3 +97,30 @@ def test_a_whole_failing_over_a_part_shown_holding_once_is_a_refuted_split(_whol
     out = T.signal(e, "root", "DELIVER", "me", result="unchanged")
     e.wait_idle()
     assert not out.get("accepted") and e.graph.get_state(TaskId("root")) == State.REWORKING, out
+
+
+def test_a_citation_and_a_criterion_resting_on_it_read_as_the_pinned_probe():
+    """The packet asks a part probe to be reported ONCE by its id with `held`, and tells a criterion whose part probe
+    another run carries that it is "not yours to run" — both were then refused for "no reproducible probe" (finder over
+    190f4db), and a validator invented its own probe whose expectation disagreed with the pinned one."""
+    raw = [{"criterion": "A", "verdict": "pass", "evidence": "held", "probe": [{"id": _ID, "held": True}]},
+           {"criterion": "B", "verdict": "pass", "evidence": "observed by another run"}]
+    blind = lambda es: [d for d in verdict_report_defects(["A", "B"], "PASS", es, [], require_probe=True)
+                        if "reproducible" in d or "no behaviours" in d]
+    assert blind(raw), "the control: read raw, both are refused"
+    out = with_part_observations(_PARTS, raw)
+    assert [e["probe"][0]["command"] for e in out] == ["cat -n f", "cat -n f"] and not blind(out), out
+    # a probe that did not hold is lent to no criterion
+    out = with_part_observations(_PARTS, [{**raw[0], "probe": [{"id": _ID, "held": False}]}, raw[1]])
+    assert not out[1].get("probe")
+
+
+def test_a_part_probe_reported_failing_anywhere_is_lent_to_no_criterion():
+    """Cited failing by its bare hash under one criterion and holding under another, it was lent to a third — and the
+    whole's FAIL then read as a refuted split (critic over the round, 2026-10-19)."""
+    parts = {**_PARTS, "C": _PART}
+    es = [{"criterion": "A", "verdict": "pass", "probe": [{"id": _ID, "held": True, "command": "cat -n f", "expect": "ok"}]},
+          {"criterion": "C", "verdict": "fail", "evidence": "x", "probe": [{"id": _ID.split("#")[-1], "held": False}]},
+          {"criterion": "B", "verdict": "pass"}]
+    out = with_part_observations(parts, es)
+    assert not out[2].get("probe") and out[1]["probe"] == es[1]["probe"], out

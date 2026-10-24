@@ -132,16 +132,21 @@ class AuditLog:
 VERSION_INSTALLING = frozenset({Signal.ASSIGN, Signal.ACCEPT_CHALLENGE})
 
 
-def _on_current_version(entries: list[AuditEntry], signal: Signal) -> bool:
-    """Is `signal` logged (accepted) after the latest version-installing event? Oldest first."""
+def on_current_version(entries: list[AuditEntry]) -> list[AuditEntry]:
+    """The accepted entries logged after the latest version-installing event, oldest first — the version that stands."""
+    tail: list[AuditEntry] = []
     for e in reversed(entries):
         if e.rejected:
             continue
-        if e.signal == signal:
-            return True
         if e.signal in VERSION_INSTALLING:
-            return False
-    return False
+            break
+        tail.append(e)
+    return tail[::-1]
+
+
+def _on_current_version(entries: list[AuditEntry], signal: Signal) -> bool:
+    """Is `signal` logged (accepted) after the latest version-installing event? Oldest first."""
+    return any(e.signal == signal for e in on_current_version(entries))
 
 
 def consented_on_current_version(entries: list[AuditEntry]) -> bool:
@@ -155,6 +160,20 @@ def failed_on_current_version(entries: list[AuditEntry]) -> bool:
     whatever the state is called? A rejected challenge or a resolved block returns a reworking node
     to EXECUTING, and the refusal it is working against has not gone anywhere."""
     return _on_current_version(entries, Signal.FAIL)
+
+
+def rejected_on_current_version(entries: list[AuditEntry]) -> list[tuple[str, str]]:
+    """[(the challenge's reason, the issuer's justification)] for every CHALLENGE its issuer REJECTED on the packet
+    version that stands, oldest first. A rejection answers its question and leaves the contract as written (§11.3,
+    §12.4); the one who asked must be able to read the answer, or he asks again."""
+    out, asked = [], None
+    for e in on_current_version(entries):
+        if e.signal == Signal.CHALLENGE:
+            asked = e.reason
+        elif e.signal == Signal.REJECT_CHALLENGE:
+            out.append((asked or "", e.justification or ""))
+            asked = None
+    return out
 
 
 def resolved_on_current_version(entries: list[AuditEntry]) -> bool:

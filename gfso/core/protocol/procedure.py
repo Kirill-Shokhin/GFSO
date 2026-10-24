@@ -234,6 +234,54 @@ def unsafe_input_paths(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
+def _input_items(inputs) -> list[tuple[str, str]]:
+    """A probe's pinned files as (path, body), whichever shape carries them: a spec's dict or pairs, a `Probe`'s tuple."""
+    if isinstance(inputs, dict):
+        return [(str(k), str(v or "")) for k, v in inputs.items()]
+    return [(str(x[0]), str(x[1] or "")) if isinstance(x, (list, tuple))
+            else (str(x.get("path")), str(x.get("body") or "")) for x in inputs or ()]
+
+
+def input_name(path: str) -> str:
+    """A pinned file's path inside its probe's inputs directory: the `{inputs}` token is the command's, not the path's."""
+    return path.replace("\\", "/").removeprefix(INPUTS_TOKEN + "/")
+
+
+def pinned_files(criteria: Iterable) -> dict[tuple, str]:
+    """The content every probe of these criteria pins, by (criterion, command, file) — and by (criterion, file) only
+    where every probe of that criterion pins one content under that name: two probes of one criterion, or two parts'
+    criteria of one name, over different files of one name must not lend each other's (critic, 2026-10-22)."""
+    by_cmd: dict[tuple, str] = {}
+    by_name: dict[tuple, set] = {}
+    for c in criteria or ():
+        name, check = (c.get("name"), c.get("check")) if isinstance(c, dict) else (c.name, c.check)
+        for p in check or ():
+            cmd = " ".join(str(p.get("command") if isinstance(p, dict) else p.command).split())
+            for path, body in _input_items(p.get("inputs") if isinstance(p, dict) else p.inputs):
+                if body:
+                    by_cmd.setdefault((str(name), cmd, input_name(path)), body)
+                    by_name.setdefault((str(name), input_name(path)), set()).add(body)
+    return {**{k: next(iter(v)) for k, v in by_name.items() if len(v) == 1}, **by_cmd}
+
+
+def with_named_files(criterion: dict, files: dict[tuple[str, str], str]) -> dict:
+    """The criterion with each probe that NAMES files without their content given the content its plan already pins
+    under that criterion (`pinned_files`), every path's `{inputs}` token normalized away. A model writing a probe reads
+    a projection that shows its command and never the corpus behind `{inputs}`: re-homing a root's 21 probes into an
+    integration node, the machine issuer pinned all 41 files empty under `{inputs}/<name>` paths, the command reworded,
+    and every validation read empty inputs for twelve rounds until the ceiling (GB_sql_database_tnajs5800,
+    2026-10-22). A body written stands; a probe pinning nothing (`inputs` absent or empty) is not touched."""
+    if not isinstance(criterion, dict) or not criterion.get("check"):
+        return criterion
+    def _probe(p):
+        if not isinstance(p, dict) or not p.get("inputs"):
+            return p
+        name, cmd = str(criterion.get("name")), " ".join(str(p.get("command", "")).split())
+        return {**p, "inputs": {input_name(path): body or files.get((name, cmd, input_name(path)))
+                                or files.get((name, input_name(path)), "") for path, body in _input_items(p["inputs"])}}
+    return {**criterion, "check": [_probe(p) for p in criterion["check"]]}
+
+
 def unread_inputs(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     """{criterion: [commands that carry inputs and never name `{inputs}`]} — files pinned and not read,
     so the command still observes whatever the working directory holds at validation time."""
@@ -332,6 +380,28 @@ def shared_scratch(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
+#: A `cd`/`pushd` into a literal absolute directory — `/…`, `C:\…`, `~` — not a token (`{inputs}`) or a variable (`$T`).
+_CD_ABSOLUTE = re.compile(r"(?:^|[;&|(]|\s)(?:cd|pushd)\s+[\"']?(?:/|~|[A-Za-z]:[\\/])")
+
+#: The one wording of that refusal, for every door that admits a contract.
+LEAVES_THE_WORKDIR = ("its probe changes into an absolute directory, so it checks whatever stands there rather than the "
+                      "work this node delivers — a probe runs in its node's own working directory; name the files by "
+                      "relative paths")
+
+
+def probes_that_leave_the_workdir(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: [pinned commands that `cd` into an absolute directory]}. A plan is written before the work has a
+    place, so any absolute directory a probe names is a guess: a plan's author running where the server stands pinned
+    `cd <state home> && …` on all 72 probes, the validators ran their own commands instead, and one following a probe
+    removed the project's database (GB_sql_database_tmzgc0724, 2026-10-16). Lifted by the decomposer's re-pin
+    (§12.16 (ii))."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        if bad := [p.command for p in (c.check or ()) if _CD_ABSOLUTE.search(p.command or "")]:
+            out[c.name] = bad
+    return out
+
+
 def criterionless(criteria: Iterable[Criteria]) -> Optional[str]:
     """Why a contract with no criterion the node itself decides is no packet — or None when it has one.
 
@@ -370,6 +440,7 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
             for k, v in sorted(unsafe_input_paths(crit).items())]
     out += [f"{k}: {OFF_THE_WORKDIR} — {', '.join(v)}" for k, v in sorted(probes_off_the_workdir(crit).items())]
     out += [f"{k}: {SHARED_SCRATCH} — {', '.join(v)}" for k, v in sorted(shared_scratch(crit).items())]
+    out += [f"{k}: {LEAVES_THE_WORKDIR} — {', '.join(v)}" for k, v in sorted(probes_that_leave_the_workdir(crit).items())]
     out += [f"{k}: every probe it pins emits a constant ({', '.join(v)}) and cannot come out false, so the criterion "
             f"forbids nothing (§1.3, §9.6) and a PASS on it observes no work; pin a command that runs the delivery"
             for k, v in sorted(hollow_procedures(crit).items())]
@@ -416,7 +487,9 @@ def materialize_inputs(criteria: Iterable[Criteria], base: str | Path) -> dict[s
             pid = probe_id(c.name, p)
             d = Path(base) / inputs_dir_name(pid)
             for path, body in p.inputs:
-                f = d / PurePosixPath(path.replace("\\", "/"))
+                # a path naming `{inputs}` is the same file: the token is the command's (an integration node's 41
+                # pinned files were stored so, 2026-10-22) — laid down where the command reads it
+                f = d / PurePosixPath(input_name(path))
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text(body, encoding="utf-8")
             dirs[pid] = d
@@ -471,6 +544,39 @@ def degenerate_procedures(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
+def canonical_citations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
+                        parts: Mapping[str, Sequence[Criteria]] | None = None) -> list:
+    """The report with each probe it cites by a spelling the system gave a pinned probe — the name of the directory its
+    inputs were laid down in (`inputs_dir_name`), whichever separators the citation kept — cited by that probe's id, the
+    node's own or a part's; a spelling two probes share is left as it came. Read once, where a report is recorded, so no
+    reader spells it again: a validator citing the directory it ran from had 65 truthful PASS reports refused, part
+    probes at a root among them, and its FAILs' runs of pinned probes filed as findings to re-run (E3, 2026-10-22)."""
+    ids = {probe_id(c.name, p) for cs in [criteria or ()] + list((parts or {}).values()) for c in cs
+           for p in (c.check or ()) if _norm(p.command)}
+    by: dict[str, set[str]] = {}
+    for pid in ids:
+        by.setdefault(inputs_dir_name(pid), set()).add(pid)
+    one = {d: next(iter(s)) for d, s in by.items() if len(s) == 1}
+
+    def _cite(q):
+        i = str(q.get("id", "")).strip()
+        to = one.get(inputs_dir_name(i)) if i and i not in ids else None
+        return {**q, "id": to} if to else q
+    return [{**e, "probe": [_cite(q) for q in probes_of(e)]} if probes_of(e) else e for e in per_criterion or ()]
+
+
+def _cited(name: str, cited: str) -> str:
+    """The probe id a citation under criterion `name` names: `criterion#hash` as written, a bare hash read inside `name`,
+    and the spellings the system itself gave the probe — the directory its inputs were laid down in
+    (`inputs_dir_name`), or that name's `#` kept. A validator cited the directory it ran from, `Statements_and_control_flow
+    _79bd1260`, and 65 truthful PASS reports over 7 rows were refused as not having run their pinned checks (E3, 2026-10-22)."""
+    crit, sep, h = cited.rpartition("#")
+    if sep:
+        return f"{name}#{h}" if inputs_dir_name(crit) == inputs_dir_name(name) else cited
+    pre = inputs_dir_name(name) + "_"
+    return f"{name}#{cited[len(pre):]}" if cited.startswith(pre) and len(cited) > len(pre) else f"{name}#{cited}"
+
+
 def _reported_ids(name: str, probes: Sequence[Mapping], dirs: Iterable[tuple[str, object]] = ()) -> set[str]:
     """The probe ids a report accounts for under criterion `name`: its cited ids — a bare hash read
     inside the criterion it is reported under — and, for each probe, the id of the command it ran.
@@ -481,7 +587,7 @@ def _reported_ids(name: str, probes: Sequence[Mapping], dirs: Iterable[tuple[str
     out: set[str] = set()
     for p in probes:
         if (_id := str(p.get("id", "")).strip()):
-            out.add(_id if "#" in _id else f"{name}#{_id}")
+            out.add(_cited(name, _id))
         # …AND BY THE COMMAND WHEN THE ID IS ABSENT. A report that ran the pinned command and
         # spelled no id has still run it; refusing it would teach the reader to paste ids
         # instead of commands, which is the fabrication this whole module exists against.
@@ -606,6 +712,50 @@ def coverage(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
             "named_beyond_the_procedure": named_beyond_procedure(criteria, per_criterion, dirs)}
 
 
+def runs_a_past_build(command: str) -> bool:
+    """Does the command use a BUILD a past validation round left in its scratch, rather than make it? Re-run on a later
+    delivery it runs that round's build of the old source: its outcome no longer depends on what was delivered, and a
+    finding kept with it fails every round whatever the executor fixes (root.parse_stmt, 7 FAILs in 33 min on
+    `printf … | …/.gfso-scratch-root.parse_stmt/root.parse_stmt_<epoch>/x/chk`, GB_sql_database_tn9kf3836).
+
+    Read off the FILE, not the shell's syntax — a wrapper (`timeout`, `env`, `valgrind`), a second line or a test hides
+    a program from any parse, and a script or Makefile there runs the delivery: a word in a round's scratch naming a
+    binary the command does not itself write. A scratch source compiled with the delivery, a script, a pinned probe's
+    inputs (laid again each round) stay findings; a file no longer there is not identified, so it stays too."""
+    cmd = command or ""
+    return any(_binary(Path(w)) and not _writes(cmd, w) for w in dict.fromkeys(_WORD.split(cmd))
+               if _ROUND.search(w) and "/probe_inputs/" not in w.replace("\\", "/"))
+
+
+def _binary(path: Path) -> bool:
+    """A built program: an executable's header (ELF, PE, Mach-O). Not any file with a NUL in it — a database the delivery
+    writes, or an input of NUL bytes, is data the delivery reads, and a finding over it re-runs the delivery (critic)."""
+    try:
+        with path.open("rb") as f:
+            return path.is_file() and f.read(4).startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe"))
+    except OSError:
+        return False
+
+
+def _writes(cmd: str, path: str) -> bool:
+    """Does the command make `path` itself — a compiler's or redirect's output, a copy's target, or a build run over its
+    directory?"""
+    p, end = re.escape(path), r"(?=$|[\s'\"`;&|)<>])"
+    name = re.escape(path.replace("\\", "/").rsplit("/", 1)[-1])
+    # `-o chk` after a `cd` into its directory makes it too; not the `-o` inside a word (`pytest-of-…`)
+    return bool(re.search(rf"(?:(?<![\w-])-o\s*|--output[= ]\s*|>\s*)['\"]?(?:{p}|{name}){end}", cmd)
+                or re.search(rf"\b(?:cp|mv|install|ln)\b[^;&|\n]*\s['\"]?{p}{end}", cmd)
+                or (re.search(r"\b(?:make|cmake|ninja|meson)\b", cmd)
+                    and path.replace("\\", "/").rsplit("/", 1)[0] in cmd.replace(path, "")))
+
+
+def without_past_builds(regression: Mapping) -> dict[str, list[dict]]:
+    """The regression set less the findings that run a past round's build (`runs_a_past_build`) — read so wherever the
+    set is demanded, so one filed before this rule stops failing the node too."""
+    return {c: kept for c, ps in (regression or {}).items()
+            if (kept := [p for p in ps if not runs_a_past_build(str(p.get("as_run") or p.get("command") or ""))])}
+
+
 def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, object]] = (),
                     texts: Mapping[str, str] | None = None) -> dict[str, list[dict]]:
     """{criterion: [the probes that REFUTED it this round]} — the regression set's new members, each with the text of
@@ -628,8 +778,12 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
             continue
         name = _norm(e.get("criterion"))
         probes = probes_of(e)
+        # …never one the report says HELD (a part's pinned check), nor one of a split run that passed its share
+        # (`share`, `tools_llm._fold`); unmarked, a root FAIL with 1 refuting probe of 1,336 grew the store by hundreds a
+        # round to 1,414 findings (GB_sql_database_tmxu0n436, 2026-10-15). An unsaid probe of the failing entry is
+        # kept: the validator says `held` only of a part's pinned check, never of its own probes
         for p in probes:
-            if not _norm(p.get("command", "")):
+            if not _norm(p.get("command", "")) or probe_held(p.get("held")) is True or p.get("share") == "pass":
                 continue
             # …AS RUN, with this round's inputs directories NAMED rather than spelled: normalizing a multi-line
             # program onto one line left a command no shell runs, and the round's directory is gone the next round
@@ -637,6 +791,8 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
             # 2026-09-28: one pass refused three times). The id is over the named form, so a later round that runs
             # the line over its own directory matches it by command as well as by id.
             run = tokenized(str(p.get("command", "")), dirs)
+            if runs_a_past_build(run):     # this round's inputs directories are named by now, never this
+                continue
             cited = str(p.get("id", "")).strip()
             out.setdefault(name, []).append(
                 {"id": finding_id(name, run), "behaviour": _norm(p.get("behaviour", "")) or "found by contact",
@@ -652,7 +808,12 @@ def merge_regression(stored: Mapping, found: Mapping) -> dict[str, list[dict]]:
     out = {k: list(v) for k, v in (stored or {}).items()}
     for name, probes in (found or {}).items():
         have = {p.get("id") for p in out.get(name, ())}
-        out.setdefault(name, []).extend(p for p in probes if p.get("id") not in have)
+        # …and a re-run of a standing finding — the report cites its id — under a reworded command is that finding,
+        # standing already: filed under a fresh id, 605 of 1,467 entries were such re-runs, chains six deep
+        # (GB_sql_database_tmxu0n436, 2026-10-15)
+        held_ids = have | {str(i).split("#")[-1] for i in have}
+        out.setdefault(name, []).extend(p for p in probes if p.get("id") not in have and not (
+            p.get("cited") and (p["cited"] in held_ids or str(p["cited"]).split("#")[-1] in held_ids)))
     return out
 
 
@@ -804,6 +965,39 @@ def _cmd_key(command: str) -> str:
 
 def _cited_as(p: Mapping) -> str:
     return f"`{i}`" if (i := str(p.get("id", "")).strip()) else "its command"
+
+
+def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping]) -> list:
+    """The report's entries, each part probe it observed written out in full where a criterion rests on it: a citation
+    `{id, held}` — the form the validator's packet asks for — given the pinned command and expectation it names, and a
+    criterion resting on a part probe another entry of the report observed given that observation. A criterion whose only
+    procedure was a part probe carried by another run was refused for "no reproducible probe", and a validator invented
+    one whose expectation then disagreed with the pinned one (finder over 190f4db; GB_sql_database_tn03ao788). An entry
+    with nothing to write out is returned as it came."""
+    pinned = {probe_id(c.name, p): p for cs in (parts or {}).values() for c in cs for p in (c.check or ()) if _norm(p.command)}
+    if not pinned:
+        return list(per_criterion or ())
+    full = lambda q, pid: {**q, "command": pinned[pid].command, "expect": pinned[pid].expect,
+                           "behaviour": q.get("behaviour") or pinned[pid].behaviour}
+    cited = lambda q: str(q.get("id", "")).strip() in pinned and not _norm(q.get("command", ""))
+    out = [{**e, "probe": [full(q, str(q["id"]).strip()) if cited(q) else q for q in probes_of(e)]}
+           if any(cited(q) for q in probes_of(e)) else e for e in per_criterion or ()]
+    # …never one the report says, anywhere and however cited, did not hold (one observation: `part_credit`)
+    failed = {pid for e in out for q in probes_of(e) if probe_held(q.get("held")) is False
+              for pid in pinned if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])}
+    seen = {str(q.get("id")): q for e in out for q in probes_of(e) if str(q.get("id", "")) in pinned
+            and str(q.get("id")) not in failed and _norm(q.get("command", "")) and probe_held(q.get("held")) is True}
+    lent = []
+    for e in out:
+        rests = [probe_id(c.name, p) for c in (parts or {}).get(str(e.get("criterion")), ()) for p in (c.check or ())]
+        got = [seen[i] for i in rests if i in seen]
+        if got and not probes_of(e):     # lent only to an entry that cites nothing itself
+            e = {**e, "probe": got}
+        # …and what such a probe observes is the behaviour the entry names, where it named none
+        if not [b for b in (e.get("behaviours") or ()) if str(b).strip()] and                 (named := [q["behaviour"] for q in probes_of(e) if str(q.get("id", "")) in pinned and q.get("behaviour")]):
+            e = {**e, "behaviours": named}
+        lent.append(e)
+    return lent
 
 
 def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],

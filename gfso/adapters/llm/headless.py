@@ -1,7 +1,8 @@
 """Headless Claude Code LLM provider — one-shot `claude -p` subprocess calls.
 
-THE Anthropic transport (the only one): each call is a fresh, stateless, single-request generation —
-exactly the call shape the decompose loop was calibrated on. BOTH billing modes ride the same
+THE Anthropic transport (the only one): each call is a fresh process and a single-request generation —
+exactly the call shape the decompose loop was calibrated on; an agent run may continue a named conversation
+(`session_key`). BOTH billing modes ride the same
 transport: by default ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are STRIPPED from the child env
 (subscription via the claude.ai login — the key would silently outrank it, measured live);
 `keep_api_key=True` keeps them ⟹ the same CLI bills the API per token. Structured output = the shared
@@ -15,14 +16,16 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 
 from gfso.core.types import LLMProviderPort
-from .structured import holds_an_object, schema_instruction, parse_structured, RETRY_SHORTER, RETRY_SUFFIX
-from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
+from .stats import is_limit
+from .structured import holds_an_object, schema_instruction, parse_structured, retry_suffix, RETRY_SHORTER
+from gfso.config import MODEL_DEFAULT, agent_trace_dir, claude_config_dir, subprocess_env
 from gfso.adapters.children import adopt, kill_tree, release, spawn_kw
 
 log = logging.getLogger(__name__)
@@ -33,6 +36,47 @@ def _obj(v) -> dict:
     `message` arrived as a string killed the whole call on `.get` (measured in two E3 runs, each time a
     ⊥ the validator never earned), so every field is read through this — never by trusting its shape."""
     return v if isinstance(v, dict) else {}
+
+
+def _turn_context(ev: dict, inner: dict) -> int:
+    """HOW FULL THE CONTEXT GOT on the turn this event reports: what its message was read over — fresh input,
+    what it wrote to the cache and what it read from it; 0 for an event that reports no turn. The envelope only
+    sums the turns, and a sum of twenty turns over one growing context says nothing about how close any of them
+    came to the window."""
+    turn = _obj(_obj(ev.get("message") or inner.get("message")).get("usage"))
+    return sum(_count(turn.get(k)) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+
+
+def _who_ran(envelope: dict, asked: str) -> dict:
+    """THE MODEL THAT RAN A SESSION, not the name it was asked by — an alias (`sonnet`) is whatever the CLI resolves
+    it to that day — and that model's window: the envelope's `modelUsage` entry that cost most. With no such entry,
+    `asked` — the model its turns named, else the one asked for — and no window."""
+    model, use = max(((m, _obj(u)) for m, u in _obj(envelope.get("modelUsage")).items()),
+                     key=lambda mu: _count(mu[1].get("costUSD")), default=(asked, {}))
+    return {"model": model or asked, "context_window": _count(use.get("contextWindow")) or None}
+
+
+def _summed(turns) -> dict:
+    """The usage of a session's turns, summed — its totals when no result event carried them."""
+    keys = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    return {k: sum(_count(t.get(k)) for t in turns) or None for k in keys}
+
+
+def _ended(envelope: dict, torn: bool) -> str:
+    """How a session ended: `answered`; `cut` (its stream stopped before a result); `limit` (the account's);
+    else the CLI's own terminal reason (`prompt_too_long` …), or `error`."""
+    if torn:
+        return "cut"
+    if not envelope.get("is_error"):
+        return "answered"
+    if is_limit(f"{envelope.get('api_error') or ''} {envelope.get('result') or ''}"):
+        return "limit"
+    return str(envelope.get("terminal_reason") or "error")
+
+
+def _count(v) -> float:
+    """A stream value as a number, or zero — read through like `_obj`, for the same reason."""
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
 
 
 def _tool_use_name(ev: dict) -> str | None:
@@ -52,6 +96,52 @@ def _tool_use_name(ev: dict) -> str | None:
         if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name"):
             return str(block["name"])
     return None
+
+
+def session_key(*parts) -> str:
+    """The id of ONE conversation per (project, node — its first issue, so a later goal reusing the id is another —,
+    its executor, the role's session): a round cut at its turn cap is continued by the next one instead of starting
+    from zero — measured on three sql_database rows (haiku 4.5, 2026-10-21), 9 of 56 executor sessions ended at the cap
+    mid-work. Every other round starts clean (`_call` forgets the rest). A new Del is a new conversation."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "gfso:" + "/".join(map(str, parts))))
+
+
+def _transcripts(sid: str) -> list[Path]:
+    """Where the CLI keeps the conversation: `<config dir>/projects/<its cwd, encoded>/<id>.jsonl`."""
+    return list((claude_config_dir() / "projects").glob(f"*/{sid}.jsonl"))
+
+
+def forget_session(sid: str) -> None:
+    """Drop a conversation's transcript: the work it served is settled, or it would not resume."""
+    for p in _transcripts(sid):
+        p.unlink(missing_ok=True)
+
+
+def _after_the_round(sid: str | None, out: dict) -> None:
+    """ONLY A ROUND CUT AT ITS TURN CAP IS CONTINUED: the next round of any other starts with a clean context, each
+    agent's own (the author, 2026-09-27: «агенты … с чистым контекстом дешево»). Measured continuing every round
+    (GB_sql_database_tn9nii608): a disputing executor repeated its challenge out of the conversation every 24 s, 40
+    calls, each one's input 16k tokens longer."""
+    if sid and out.get("subtype") != "error_max_turns":
+        forget_session(sid)
+
+
+def _cannot_resume(out: dict) -> bool:
+    """Did the CLI refuse to go on with the conversation itself — as opposed to the round ending badly inside it? A round
+    cut at its turn cap is `is_error` too (`error_max_turns`), and it is exactly the round the conversation exists to
+    continue; a usage limit or an API error says nothing about the conversation either."""
+    said = json.dumps(out).lower()
+    return out.get("subtype") != "error_max_turns" and any(
+        k in said for k in ("no conversation found", "prompt is too long", "context window", "context length"))
+
+
+def _session_args(sid: str | None) -> list[str]:
+    """A call naming no conversation SAVES none: each would otherwise land in the operator's session history for
+    its directory (measured on one install: 10 459 internal transcripts beside 18 of the person's own, and `claude
+    --resume` took over three minutes to list them). A named one lives under its node's own place, not the person's."""
+    if not sid:
+        return ["--no-session-persistence"]
+    return ["--resume", sid] if _transcripts(sid) else ["--session-id", sid]
 
 
 def _traced(trace, line: str):
@@ -91,6 +181,10 @@ class HeadlessClaudeLLM(LLMProviderPort):
         self._max_thinking = max_thinking_tokens
         self._keep_key = keep_api_key  # True = api billing (key kept in child env); False = subscription
         self.calls: list[dict] = []   # per-call stats: {stage?, duration_ms, input/output/cache tokens}
+        self.last_peak_context = 0    # the fullest turn of the call being read
+        self.last_model = ""          # the model its turns name — what a cut session ran on
+        self.last_turns: dict = {}    # each turn's own usage, by message id — what a cut session spent
+        self._turn_id = ""            # the message whose closing `message_delta` is still to come
         # Live ticks: the CLI streams (stream-json + partial messages), so generation progress is REAL
         # (actual output tokens so far), not an estimate. The caller wires `on_tick(msg)` and may set
         # `stage_hint` before each call; both are optional presentation.
@@ -111,8 +205,8 @@ class HeadlessClaudeLLM(LLMProviderPort):
 
     def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...],
                   cwd: str | None = None, timeout: int | None = None,
-                  max_turns: int | None = None) -> str:
-        """Port B — the AGENT-RUNNER: one fresh headless run WITH work tools (multi-step inside one
+                  max_turns: int | None = None, session: str | None = None) -> str:
+        """Port B — the AGENT-RUNNER: one headless run WITH work tools (multi-step inside one
         process), returning its final report text. Headless-by-necessity: an agent run needs a harness
         (tools/permissions/cwd), which a bare completion API can't provide — GenericLLM never covers this.
         `--dangerously-skip-permissions` is REQUIRED for non-interactivity (headless can't answer
@@ -137,7 +231,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         # the schemas of all ~28 built-in tools, re-read on every call: 58% of a validator's cached input
         # (2026-09-27), and a read-only validator holding Write and Edit.
         loaded = ",".join(dict.fromkeys(t.split("(", 1)[0].strip() for t in allowed_tools))
-        return self._call(system, user, cwd=cwd, timeout=timeout,
+        return self._call(system, user, cwd=cwd, timeout=timeout, session=session,
                           tools_args=["--tools", loaded,
                                       "--allowedTools", " ".join(allowed_tools),
                                       "--dangerously-skip-permissions"]
@@ -151,6 +245,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         real output tokens, never an estimate. Returns (envelope, text, out_tokens)."""
         envelope, text_acc, out_tokens, last_tick = None, [], 0, t0
         self.last_tool_calls = {}
+        self.last_peak_context, self.last_model, self.last_turns, self._turn_id = 0, "", {}, ""
         # WHAT AN AGENT RUN DID, KEPT WHEN ASKED (`GFSO_AGENT_TRACE_DIR`): each call's raw stream, one
         # file per call. `--no-session-persistence` keeps these runs out of the operator's history, which
         # also left no record of what a delegated executor or validator actually ran — an audit that reads
@@ -180,6 +275,31 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 except OSError:                # a failed flush of an audit aid never replaces the answer
                     pass
 
+    def _observe(self, ev: dict, inner: dict) -> None:
+        """What one event says about the session itself: a tool it called, how full its context got."""
+        self.last_peak_context = max(self.last_peak_context, _turn_context(ev, inner))
+        msg = _obj(ev.get("message") or inner.get("message"))
+        self._note_turn(msg, inner)
+        named = msg.get("model")
+        if isinstance(named, str) and named and not named.startswith("<"):   # `<synthetic>`: the CLI's own refusal
+            self.last_model = named
+        if (tname := _tool_use_name(ev)):
+            self.last_tool_calls[tname] = self.last_tool_calls.get(tname, 0) + 1
+
+    def _note_turn(self, msg: dict, inner: dict) -> None:
+        """A turn's own usage, by message id. What it was read over arrives with the message; its output arrives
+        in the `message_delta` that closes it, which names no message — kept under the message last started (the
+        message's own usage carries a token or so of output: summed alone it was 0.36% of the real output)."""
+        if msg.get("id"):
+            self._turn_id = msg["id"]
+            if (u := dict(_obj(msg.get("usage")))):
+                u["output_tokens"] = max(_count(u.get("output_tokens")),
+                                         _count(self.last_turns.get(msg["id"], {}).get("output_tokens")))
+                self.last_turns[msg["id"]] = u
+        if inner.get("type") == "message_delta" and self._turn_id in self.last_turns:
+            t = self.last_turns[self._turn_id]
+            t["output_tokens"] = max(_count(t.get("output_tokens")), _count(_obj(inner.get("usage")).get("output_tokens")))
+
     def _read_lines(self, proc, t0, cap, envelope, text_acc, out_tokens, last_tick, trace):
         live = False      # a background task of the session is still running (`background_tasks_changed`)
         for line in proc.stdout:
@@ -201,9 +321,8 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 if _is_the_answer(ev, live):
                     break
                 continue
-            if (tname := _tool_use_name(ev)):
-                self.last_tool_calls[tname] = self.last_tool_calls.get(tname, 0) + 1
             inner = _obj(ev.get("event"))
+            self._observe(ev, inner)
             usage = _obj(inner.get("usage")) or _obj(ev.get("usage"))
             if isinstance(usage.get("output_tokens"), int):
                 out_tokens = usage["output_tokens"]
@@ -226,7 +345,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         return envelope, text_acc, out_tokens
 
     def _call(self, system: str, user: str, tools_args: list[str] | None = None,
-              cwd: str | None = None, timeout: int | None = None) -> str:
+              cwd: str | None = None, timeout: int | None = None, session: str | None = None) -> str:
         """One fresh `claude -p` subprocess, STREAMED (stream-json + partial messages): while the model
         generates, cumulative output tokens tick to `on_tick` — real progress, never an estimate. The
         final `result` event carries the same envelope the aggregate json format did (usage,
@@ -234,6 +353,12 @@ class HeadlessClaudeLLM(LLMProviderPort):
         Default = a zero-tool one-shot (Port A); `tools_args`/`cwd` = an agent run (Port B)."""
         if self._cmd is None:
             return ""
+        # …and a call naming no place runs in an empty one of its own, never where the server stands: there the plan's
+        # author took the state home for the work's directory, pinned `cd <home> && …` on every probe of a plan, and a
+        # validator following one removed the project's own database (GB_sql_database_tmzgc0724, 2026-10-16)
+        if not cwd:
+            with tempfile.TemporaryDirectory(prefix="gfso-noplace-") as empty:
+                return self._call(system, user, tools_args, empty, timeout, session)
         env = subprocess_env(keep_key=self._keep_key)
         if self._max_thinking is not None:
             env["MAX_THINKING_TOKENS"] = str(self._max_thinking)
@@ -266,11 +391,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 # `--safe-mode` drops CLAUDE.md, skills, plugins, hooks and MCP and keeps auth (probed:
                 # none of those instructions reached the call; tools and the system prompt work).
                 "--safe-mode",
-                # And the reverse direction: each call used to SAVE its transcript into the
-                # operator's session history for this directory. Measured on one install: 10 459
-                # internal transcripts beside 18 of the person's own, and `claude --resume` took
-                # over three minutes to list them. Nothing reads them; the envelope comes off stdout.
-                "--no-session-persistence",
+                *_session_args(session),
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 *(tools_args if tools_args is not None else ["--disallowedTools", "*"])]
         t0 = time.monotonic()
@@ -281,7 +402,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         # the user's screen, accidentally closable (= killing the run). CREATE_NO_WINDOW suppresses
         # the console entirely; all real I/O rides the pipes and is unaffected.
         no_window = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-        proc = None
+        proc, out = None, {}
         try:
             proc = adopt(subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                           stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
@@ -300,7 +421,10 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 proc.wait(timeout=30)
 
             out = envelope or {}
-            usage = _obj(out.get("usage"))
+            # A STREAM CUT BEFORE ITS RESULT kept no totals, and its tokens were recorded as the last tick's
+            # output alone: its turns' own usage, once per message, is what it spent (input and cache as the
+            # message carries them, output as its `message_delta` does — together they reproduce the envelope)
+            usage = _obj(out.get("usage")) if envelope is not None else _summed(self.last_turns.values())
             self.calls.append({
                 "duration_ms": out.get("duration_ms") or int((time.monotonic() - t0) * 1000),
                 "input_tokens": usage.get("input_tokens"),
@@ -311,7 +435,9 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 # recorded, the dollars were dropped, and "what did this graph cost" stayed a
                 # question the system could not answer about itself.
                 "cost_usd": out.get("total_cost_usd"),
-                "model": self._model,
+                **_who_ran(out, self.last_model or self._model),   # the model that ran it and its window
+                "peak_context": self.last_peak_context or None,
+                "turns": _count(out.get("num_turns")) or None,
                 # THE STREAM ENDED WITHOUT ITS RESULT EVENT — the call was cut, not answered.
                 # Only this layer can see the difference: upstream all that survives is a short
                 # answer at zero cost, and zero cost is a fact about the money and about nothing
@@ -322,12 +448,29 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 # a tier three times the price, and spent the node's last attempt; the run
                 # (`database_engine`) ended on it.
                 "transport_torn": envelope is None,
+                # WHY A SESSION GAVE NO ANSWER, kept with it: a context grown past the window and an account
+                # limit both come back as zero tokens at zero cost, and only this layer can tell them apart
+                "ended": _ended(out, envelope is None),
+                # whether it CONTINUED a conversation (`--resume`, a round cut at its turn cap) rather than opening
+                # a context of its own: real contexts are the calls that did not
+                "resumed": "--resume" in args,
                 "stop_reason": out.get("stop_reason"),
+                # …and WHY a call that errored ended: read as "did not parse", 38 re-issues of a root whose packet no
+                # longer fit the model's window answered a bug no executor could fix (GB_sql_database_tmxu0n436)
+                # …with the envelope's own `api_error`: an account's limit came back as "api_error: You've hit your
+                # session limit", which no reader took for a limit, and its sessions were parked as unreadable
+                # reports (GB_c_compiler_tncfs1160, 2026-10-23)
+                "error": (f"{out.get('terminal_reason') or 'error'}: "
+                          + (f"{out['api_error']}: " if out.get("api_error") else "")
+                          + str(out.get("result") or "")[:160]
+                          if out.get("is_error") else None),
             })
             if out.get("is_error"):
                 log.warning(f"headless claude call errored: {str(out)[:300]}")
-                return ""
-            return (out.get("result") if isinstance(out.get("result"), str) else "") or "".join(text_acc)
+                if not (session and "--resume" in args and _cannot_resume(out)):
+                    return ""
+            else:
+                return (out.get("result") if isinstance(out.get("result"), str) else "") or "".join(text_acc)
         except Exception as e:
             log.warning(f"headless claude call failed: {e}", exc_info=True)   # the cause was once only inferred
             return ""
@@ -337,6 +480,11 @@ class HeadlessClaudeLLM(LLMProviderPort):
             if proc is not None:           # the child's own shells too, on every path
                 kill_tree(proc)
                 release(proc)
+            _after_the_round(session, out)
+        # Reached only by a conversation the CLI could not take up (gone, outgrown its window): that is not the round's
+        # failure, so the round runs cold — after the first process is gone, which otherwise rewrote the transcript
+        # just forgotten and sent the "cold" retry back to `--resume` (critic, live on CLI 2.1.306)
+        return forget_session(session) or self._call(system, user, tools_args, cwd, timeout, session)
 
     def complete(self, prompt: str, context: str = "") -> str:
         return self._call(context or "You are a GFSO System LLM analyzing task decompositions.", prompt)
@@ -353,7 +501,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
             parsed = parse_structured(
                 self._call(system, user + schema_instruction(schema)
                            + (RETRY_SHORTER if self.calls and self.calls[-1].get("stop_reason") == "max_tokens"
-                              else RETRY_SUFFIX)), schema)
+                              else retry_suffix(text, schema))), schema)
             if parsed is not None:
                 return parsed
         log.warning("headless structured call: no schema-valid json after retry")

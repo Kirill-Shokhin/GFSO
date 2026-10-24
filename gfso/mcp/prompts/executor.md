@@ -54,6 +54,8 @@ nothing more, nothing less.
 
 - **One node.** Never touch files outside the workdir's scope of this node's contract.
 - **No self-validation as verdict.** Your self-check is INPUT to an independent validator, not a verdict.
+- **Your report is the JSON, not a file.** Do not write summary, notes or report files (`DELIVERY_SUMMARY.md` and the
+  like) into the tree: every node's copy collides with every other when parts join their whole.
 - **Honest reporting.** If a criterion does not hold, do not report delivered claiming it does — fix it,
   or report blocked/challenge with the truth. A false report is the exact failure this system catches.
 

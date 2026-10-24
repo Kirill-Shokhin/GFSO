@@ -15,7 +15,7 @@ from gfso.core.graph.model import root_of
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.storage.sqlite import SqliteStorage, peek_root
+from gfso.adapters.storage.sqlite import SqliteStorage, peek_project
 from gfso.demo import seed_demo
 from gfso import config as _config
 from gfso.config import (data_dir as _config_data_dir, active_project,
@@ -79,6 +79,7 @@ class ProjectRegistry:
         self._kw = engine_kwargs
         self._dir = str(data_dir())
         self._engines: dict[str, Engine] = {}
+        self._peeks: dict[str, tuple] = {}     # name → (the file's stamps, its peek)
         self._active = active_project()
         ProjectRegistry._NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -206,47 +207,67 @@ class ProjectRegistry:
         except OSError:
             pass
         names.discard("gfso")  # the default project's own file — not a separate project
-        # …ordered by when each was last WORKED IN, newest first. Alphabetical order made the picker
-        # useless the moment the installation had a history: the project someone is actually on sat
-        # somewhere in the middle of hundreds of names from finished runs and probes (measured: 271
-        # entries, the live one 69th). Recency is the fact a picker needs, and the database's own
-        # mtime already carries it — nothing new to track, and nothing has to be deleted to make the
-        # list readable (those files are the provenance of past measurements).
-        def _touched(name: str) -> float:
-            for candidate in (f"{name}.db", "gfso.db" if name == "default" else f"{name}.db"):
-                base = os.path.join(self._dir, candidate)
-                try:
-                    stamp = os.path.getmtime(base)
-                except OSError:
-                    continue
-                # …OR ITS WAL, where a WAL-mode database's writes land until a checkpoint: the file
-                # alone kept the stamp of its last checkpoint, so `ui-link-probe`, written at 16:43,
-                # was listed as 09-07 beneath a hundred finished probes (2026-09-24). An EMPTY WAL
-                # is not a write — a read-only open creates one — so it does not count.
-                try:
-                    if os.path.getsize(base + "-wal"):
-                        stamp = max(stamp, os.path.getmtime(base + "-wal"))
-                except OSError:      # no WAL: everything is in the file, and its stamp is the answer
-                    pass
-                return stamp
-            return 0.0
-
-        by_recency = sorted(names, key=lambda n: (-_touched(n), n))
+        # …ordered by when each was last WORKED IN, newest first: the last act of a party or a model call
+        # in its log. Alphabetical order made the picker useless the moment the installation had a
+        # history (measured: 271 entries, the live one 69th). Nothing has to be deleted to make the list
+        # readable (those files are the provenance of past measurements).
+        touched = {n: self._touched(n) for n in names}   # once: a peek may change a stamp it reads
+        by_recency = sorted(names, key=lambda n: (-touched[n], n))
         return {"active": self._active, "projects": by_recency,
                 # The raw stamps too, so a client can group or age them without a second call.
-                "last_active": {n: round(_touched(n), 0) for n in by_recency}}
+                "last_active": {n: round(touched[n], 0) for n in by_recency}}
 
-    def roots(self, names) -> dict:
-        """{name: {state, done_reason} | None} — each named project's root, None before it has one.
+    def _file(self, name: str) -> str:
+        return str(_config.db_path()) if name == DEFAULT_PROJECT else os.path.join(self._dir, f"{name}.db")
 
-        A loaded project answers from its engine; any other is PEEKED at on disk, because building
-        its engine would start its dispatcher, and looking at a list must not set a graph running."""
-        def _root(name: str):
+    def _stamp(self, name: str) -> float:
+        """The file's own write stamp — or its WAL's, where a WAL-mode database's writes land until a
+        checkpoint: the file alone kept the stamp of its last checkpoint, so `ui-link-probe`, written
+        at 16:43, was listed as 09-07 beneath a hundred finished probes (2026-09-24). An EMPTY WAL is
+        not a write — a read-only open creates one — so it does not count."""
+        base = self._file(name)
+        try:
+            stamp = os.path.getmtime(base)
+        except OSError:
+            return 0.0
+        try:
+            if os.path.getsize(base + "-wal"):
+                stamp = max(stamp, os.path.getmtime(base + "-wal"))
+        except OSError:      # no WAL: everything is in the file, and its stamp is the answer
+            pass
+        return stamp
+
+    def _peek(self, name: str) -> tuple:
+        """(the file's stamp, what it holds) — the file read once per write of it: a list of 138
+        projects re-read whole on every look would be 138 opens for nothing new."""
+        key = self._stamp(name)
+        hit = self._peeks.get(name)
+        if hit is None or hit[0] != key:
+            self._peeks[name] = hit = (key, peek_project(self._file(name)))
+        return hit
+
+    def _touched(self, name: str) -> float:
+        """When the project was last WORKED IN: its log's last act. The file's stamp moves on a mere
+        look too — loading an engine rewrites it, its clock lapses what its deadlines owe — so by it the
+        projects read today rose above the runs actually run (2026-10-24). An issuer that a look woke and
+        that then acted did work, and that shows. The stamp stands in only for a file with no act yet,
+        as taken BEFORE the peek (SQLite drops an invalid WAL when the peek closes)."""
+        stamp, p = self._peek(name)
+        return (p and p["last"]) or stamp
+
+    def about(self, names) -> dict:
+        """{name: {goal, last, cost, mode} | None} — what each named project is, without opening it:
+        goal = the root's {state, done_reason, name, started} or None before it has one.
+
+        A loaded project's root state answers from its engine; everything else is PEEKED at on disk,
+        because building an engine starts its dispatcher, and looking at a list must not set a graph
+        running."""
+        def _about(name: str):
+            p = self._peek(name)[1]
             eng = self._engines.get(name)
-            if eng is not None:
-                r = root_of(eng.all_tasks())
-                return r and (r.state, r.done_reason)
-            return peek_root(str(_config.db_path()) if name == DEFAULT_PROJECT
-                             else os.path.join(self._dir, f"{name}.db"))
-        return {n: (st := _root(n)) and {"state": st[0].name, "done_reason": st[1] and st[1].name}
-                for n in names}
+            if p is None or eng is None or p["goal"] is None:
+                return p
+            r = root_of(eng.all_tasks())
+            return {**p, "goal": r and {**p["goal"], "state": r.state.name,
+                                        "done_reason": r.done_reason and r.done_reason.name}}
+        return {n: _about(n) for n in names}

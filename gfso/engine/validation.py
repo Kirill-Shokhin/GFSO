@@ -163,13 +163,24 @@ def _fail_extension_shrank(old_desc: str, new_desc: str) -> bool:
     return n_val > o_val if o_op in ("<", "<=") else n_val < o_val
 
 
+def version_of(task) -> tuple:
+    """The packet version that stands on a node: (reopens, revisions) — what a re-ASSIGN, REOPEN or accepted
+    challenge advances (Inv-1); `iteration` counts rounds inside a version, not versions."""
+    return (task.reopens, task.revisions) if task is not None else (0, 0)
+
+
 def session_fit(graph: Graph, task_id) -> Optional[dict]:
-    """The decomposer's recorded count and judgement for a node (`Engine.record_session_fit`), or None."""
+    """The decomposer's recorded count and judgement for a node (`Engine.record_session_fit`), or None — read as
+    "does not fit" while a contact refutation of it is open on the version that stands (`Engine.refute_session_fit`)."""
     raw = graph._storage.get_setting(f"session_fit:{task_id}")
     try:
-        return json.loads(raw) if raw else None
+        rec = json.loads(raw) if raw else None
     except (ValueError, TypeError):
         return None
+    ref = (rec or {}).get("refuted") or {}
+    if ref.get("open") and tuple(ref.get("version") or ()) == version_of(graph.get_task(task_id)):
+        return {**rec, "fits": False}
+    return rec
 
 
 def fits_one_session(graph: Graph, task_id) -> bool:
@@ -302,9 +313,12 @@ def split_owed(graph: Graph, task) -> Optional[dict]:
     if (not fit or fit.get("fits") is not False or graph.get_active_children(task.id)
             or project_mode(graph) is None):
         return None
+    by_contact = bool((fit.get("refuted") or {}).get("open"))
     return {"kind": "split_owed", "fails": [],
-            "why": (f"its plan's author judged it larger than one session of its executor"
-                    + (f" ({fit.get('volume')})" if fit.get("volume") else "")
+            "why": (("one session of its executor failed the same criteria round after round, so contact refuted that "
+                     "one session carries it" if by_contact else
+                     "its plan's author judged it larger than one session of its executor")
+                    + (f" ({fit.get('volume')})" if fit.get("volume") and not by_contact else "")
                     + " — a node above κ, one executor session (§3.7), is not a leaf (§3.7), and its split is owed "
                       "(§11.5, deferred decomposition): its parts are what get delivered and validated"),
             "opens_with": (f"its executor splits it — `auto_decompose(root_id='{task.id}')`, or `decompose` "
@@ -910,7 +924,7 @@ def ruling_refusal(signal_data: SignalData, graph: Graph, audit=None) -> Optiona
     node stays CHALLENGED with both truthful answers open: ACCEPT_CHALLENGE without a ruling, or REJECT_CHALLENGE
     (Inv-8). A ruling rides an ACCEPT_CHALLENGE only, and names findings standing on the node that the CHALLENGE named
     by id (`findings.ruling_defect`). Who may make it is not this gate's to tell: at an AUTO root the user and the
-    system both sign as the root's issuer, and only the system is barred — it makes no move on such a dispute
+    system both sign as the root's issuer, and only the system is barred — it answers such a dispute without a ruling
     (`Engine.users_dispute`), while the user's own ruling there is his to make."""
     sd = signal_data
     if not sd.retire_findings:

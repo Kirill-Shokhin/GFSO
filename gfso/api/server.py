@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from gfso import __version__
-from gfso.tools import PARAM_CHOICES
+from gfso.tools import PARAM_CHOICES, admission_of
 from gfso.core.handlers import solver_findings
 from gfso.core.handlers.recommend import suggest_criteria
 from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
@@ -36,7 +36,7 @@ try:
 except Exception:                                    # never let a diagnostic field break the server
     _CODE_VERSION = "unknown"
 from gfso.engine.validation import l2_gate_on as _l2_gate_on
-from gfso.tools_llm import validate_internal_on as _validate_internal_on
+from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_staffing
 from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso import config as _config
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
@@ -280,6 +280,13 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
             criteria=[CriteriaIn(name=n, description=d) for n, d in results]
         )
 
+    @app.post("/api/admission")
+    def admission_endpoint(spec: dict = Body(...)):
+        """What admission would refuse in this contract's criteria, before anyone sends it — the engine's
+        own ladder (`admission_defects`, the one every ASSIGN runs), read; a page gating its form on a copy
+        of the first two rungs let through a hollow `echo ok` (2026-10-24). Pure: no project, no write."""
+        return {"defects": admission_of(spec)}
+
 
 def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
     """What the RUN cost and what it did: usage, metrics, the audit and pipeline logs.
@@ -318,6 +325,15 @@ def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
         `false_fail_share`, a diagnostic that is deliberately NOT part of Q (§15.4; high means
         over-strict validation). A null is ⊥: the population was empty, not a score of zero."""
         return _tools.TOOLS["metrics"](_e())   # the verb's answer — a response model dropped what it did not declare
+
+    @app.get("/api/modes")
+    def get_modes():
+        """Who holds the work in this project now, and for each mode what it needs registered and whether
+        it has it — `set_mode`'s own rule (`mode_staffing`), read before anyone asks for a mode, so a page
+        offering the choice says what will be refused instead of keeping its own copy of the rule."""
+        e = _e()
+        return {"current": e.mode(),
+                "modes": {m: {p: mode_staffing(e, m, p) for p in ("dispatch", "in_chat")} for m in ("solo", "semi", "auto")}}
 
     # === Audit ===
 
@@ -579,6 +595,15 @@ def _mount_pages(app) -> None:
         external host."""
         return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml")
 
+    @app.get("/js/{name}")
+    async def page_module(name: str):
+        """The page's script modules, one file per unit of the page — served like the stylesheet,
+        from disk on every request, so a change shows on reload without a restart."""
+        path = WEB_DIR / "js" / name
+        if not name.endswith(".js") or path.name != name or not path.is_file():
+            raise HTTPException(404, f"no page module {name!r}")
+        return FileResponse(path, media_type="text/javascript")
+
 
 def _mount_events(app) -> None:
     """The live WS feed — every write, pushed to whoever is watching.
@@ -596,9 +621,14 @@ def _mount_events(app) -> None:
         `pipeline` for what a running verb reports. The callbacks are unregistered on disconnect,
         so a dropped tab leaves nothing subscribed."""
         await websocket.accept()
-        # the tab's project rides the WS url too (middleware covers HTTP only)
+        # the tab's project rides the WS url too (middleware covers HTTP only) — and, like every read,
+        # names an EXISTING project: opening a page on a mistyped name created that project (2026-10-24)
         proj = websocket.query_params.get("project") or None
-        eng: Engine = app.state.registry.engine(proj) if app.state.registry else app.state.engine
+        try:
+            eng: Engine = app.state.registry.engine(proj, create=False) if app.state.registry else app.state.engine
+        except (KeyError, ValueError):
+            await websocket.close(code=4404)
+            return
         loop = asyncio.get_event_loop()
         app.state.loop = loop
         q: asyncio.Queue = asyncio.Queue()
@@ -662,9 +692,9 @@ def _mount_projects(app, _e) -> None:
         page = _projects_page(reg.list() if reg else
                               {"active": DEFAULT_PROJECT, "projects": [DEFAULT_PROJECT]},
                               prefix, limit)
-        # Each listed project's root, so a picker can say which are finished without opening them.
-        # Only the page's names: the whole installation is hundreds of files.
-        return {**page, "roots": reg.roots(page["projects"])} if reg else page
+        # What each listed project is — its goal, where its root stands, when it ran, what it cost —
+        # so a person finds a run without opening each one. Only the page's names.
+        return {**page, "about": reg.about(page["projects"])} if reg else page
 
     @app.post("/api/projects/use")
     def use_project(body: dict = Body(...)):

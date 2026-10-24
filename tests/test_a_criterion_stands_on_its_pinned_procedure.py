@@ -162,10 +162,13 @@ def test_a_report_without_a_failed_list_parses_and_derives_it():
 
 
 def test_a_failed_list_that_disagrees_with_its_entries_is_still_refused():
-    """CONTROL — a list that is THERE is the report's own claim, and one naming what its entries pass decides nothing."""
+    """CONTROL — a FAIL claimed over entries that all pass names nothing observed, and decides nothing; with a red
+    entry the payload is that entry's, whatever the list names."""
     parsed = {"verdict": "FAIL", "failed_criteria": ["a"], "per_criterion": [{"criterion": "a", "verdict": "pass"},
-                                                                              {"criterion": "b", "verdict": "fail"}]}
-    assert _listed_failed(parsed) == ["a"] and "contradict" in _report_contradicts_itself(parsed)
+                                                                              {"criterion": "b", "verdict": "pass"}]}
+    assert "contradict" in _report_contradicts_itself(parsed)
+    assert "contradict" in _report_contradicts_itself({**parsed, "verdict": "PASS"})
+    assert _report_contradicts_itself({**parsed, "per_criterion": [{"criterion": "b", "verdict": "fail"}]}) is None
 
 
 def test_a_failed_list_short_of_its_entries_is_read_off_them():
@@ -175,7 +178,7 @@ def test_a_failed_list_short_of_its_entries_is_read_off_them():
     for listed in (["x"], []):
         parsed = {"verdict": "FAIL", "failed_criteria": listed, "per_criterion": reds}
         assert _listed_failed(parsed) == ["x", "y", "z"] and _report_contradicts_itself(parsed) is None
-    assert "contradict" in _report_contradicts_itself({"verdict": "PASS", "failed_criteria": [], "per_criterion": reds})
+    assert _report_contradicts_itself({"verdict": "PASS", "failed_criteria": [], "per_criterion": reds}) is None
 
 
 def test_the_root_build_shape_is_read_and_a_report_cut_short_is_not():

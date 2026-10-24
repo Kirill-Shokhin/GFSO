@@ -175,6 +175,8 @@ class Stage(StrEnum):
     # which made the authoring pass unmeasurable: it was justified as the most expensive open item
     # and its cost was indistinguishable in the ledger from the gate's own check.
     AUTHORING_OBLIGATIONS = "authoring-obligations"
+    # Whether a criterion the system just wrote says what its own checks deny — asked before the build.
+    AUTHORING_AGREE = "authoring-agree"
     VALIDATE_RESULT = "validate_result"
     VALIDATOR = "validator"
     # The ISSUER answering a dispute (§12.4's two exits of CHALLENGED). Its own line in the ledger

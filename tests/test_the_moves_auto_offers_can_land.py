@@ -3,7 +3,6 @@ name, `drop_dependency` is offered only where it applies, a probe reads only wha
 empty project is told its one act (GB_c_compiler_tmp5cb096, GB_spreadsheet_engine_tmpekc132)."""
 from __future__ import annotations
 
-import threading
 
 from gfso import issuer as I, tools as T, tools_llm as TL
 from gfso.core.protocol.procedure import admission_defects
@@ -13,41 +12,18 @@ from tests.support import criterion
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _goal, _kid
 
 
-def _spent_root(tmp_path):
-    """AUTO, the root at work, a child cancelled so the root's repair question is open; the ledger as three
-    unproductive settles left it (the critic's probe, round 2)."""
+def test_below_the_root_the_machine_issuers_cancel_lands(tmp_path):
+    """The `cancel` move the escalation, parked and external questions offer a machine issuer must land under AUTO."""
     e = _engine(Mode.AUTO)
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")), _kid("root.other", ["g"], criterion("o", "O")))
-    T.TOOLS["add_dependency"](e, "root.part", "root.other")
-    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
-    for a in ("exec-1", "exec-2"):
-        agents.register(a, "llm-executor", workdir=str(tmp_path))
     T.signal(e, "root", "ACCEPT", str(e.graph.get_task(TaskId("root")).assignee))
-    T.signal(e, "root.part", "CANCEL", str(e.graph.issuer_of(TaskId("root.part"))), reason="dropped")
     e.wait_idle()
-    return e, agents
-
-
-def _sweep(e, agents, ledger):
-    claims = set()
-
-    def claim(k):
-        return k not in claims and not claims.add(k)
-
-    before = set(threading.enumerate())
-    I.answer_open_questions(e, agents, claim, lambda t, redispatch=False: claims.discard(f"q:{t}"),
-                            threading.Semaphore(4), None, ledger)
-    for th in set(threading.enumerate()) - before:
-        th.join(10)
+    other = e.graph.get_task(TaskId("root.other"))
+    ok, why = I._cancel(e, other, str(e.graph.issuer_of(other.id)), {"move": "cancel"}, "spent", None)
     e.wait_idle()
-
-
-def test_below_the_root_a_spent_question_is_still_its_machine_issuers_to_close(tmp_path):
-    e, agents = _spent_root(tmp_path)
-    out = I._close(e, agents, TaskId("root.other"), "external", "spent")
-    e.wait_idle()
-    assert out["status"] == "cancelled", out
+    assert ok, why
+    assert e.graph.get_state(TaskId("root.other")) in (State.CANCELLING, State.ABANDONED)
 
 
 def test_a_reshape_replaces_a_child_under_its_own_name_in_one_act():

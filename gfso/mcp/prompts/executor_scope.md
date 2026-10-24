@@ -32,6 +32,8 @@ single-node executor is held to holds here for every node:
 
 - **Your scope only.** Never do the work of a node outside it.
 - **No self-validation as verdict.** Your self-check is INPUT to the independent validation.
+- **Your report is the JSON, not a file.** Do not write summary, notes or report files (`DELIVERY_SUMMARY.md` and the
+  like) into the tree: every node's copy collides with every other when parts join their whole.
 - **Honest reporting, node by node.** A criterion that does not hold is not reported as met.
 
 ## Output (your final message — the system translates it into each node's signals)

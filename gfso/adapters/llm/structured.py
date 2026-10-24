@@ -21,6 +21,23 @@ RETRY_SUFFIX = ("\n\nYour previous output could not be parsed against the schema
                 "(missing required keys or invalid JSON). Re-emit the ONE fenced json "
                 "object, complete and valid.")
 
+def retry_suffix(text: str, schema: dict) -> str:
+    """The retry, with WHAT failed in the reply: the JSON error and where, with the text around it, or the required keys
+    it lacks. Told only "could not be parsed", a model re-emitted the same reply — a plan's fold dropped the closers
+    after every probe carrying `inputs`, six calls of six (E3 c_compiler, own plan, 2026-10-23)."""
+    blocks = [m.group(1) for m in FENCED.finditer(text or "")] or [(text or "").strip()]
+    raw = max(blocks, key=len)
+    try:
+        obj = json.loads(raw, strict=False)          # as the parser it explains reads
+    except json.JSONDecodeError as e:
+        near = raw[max(0, e.pos - 160):e.pos + 60]
+        return (RETRY_SUFFIX + f"\nThe JSON is invalid: {e.msg} at line {e.lineno} column {e.colno}, here:\n"
+                f"…{near}…\nA common cause is a closing `]` or `}}` left out after a nested list (a probe's `inputs`, "
+                f"a criterion's `check`): close every array and object you open.")
+    missing = [k for k in (schema or {}).get("required", ()) if not isinstance(obj, dict) or k not in obj]
+    return RETRY_SUFFIX + (f"\nThe object lacks the required keys: {', '.join(missing)}." if missing else "")
+
+
 #: The retry when the first answer was CUT at the output limit (`stop_reason == "max_tokens"`): asked again for the
 #: whole object, a model meets the same limit again — the retry used to repeat the full request unchanged.
 RETRY_SHORTER = ("\n\nYour previous output was cut off at the output-length limit before the json object closed. "
@@ -106,7 +123,9 @@ def parse_structured(text: str, schema: dict):
     # inside a quoted probe command. Malformed JSON still fails, save the closers `_restored` identifies.
     candidates = ([m.group(1) for m in FENCED.finditer(text or "")]
                   + [(text or "").strip()] + _bare_objects(text or ""))
-    for read in (_parsed, lambda raw: _restored(raw, schema)):   # a block as written first; a repaired one only failing all
+    # as written first; then the closers its schema places, before `_restored`'s narrower lift — which, first, nested a
+    # validator's later entries inside an earlier entry's probe list (critic, fuzz: 19 of 600, 0 in this order)
+    for read in (_parsed, lambda raw: _closed(raw, schema), lambda raw: _restored(raw, schema)):
         for raw in candidates:
             obj = read(raw)
             if isinstance(obj, dict) and _answers(obj, schema):
@@ -162,8 +181,9 @@ def _field_names(s: dict) -> set:
 
 
 def _keys(raw: str) -> list:
-    """[(where, the containers open around it, key, the comma before it)] for every object key outside strings."""
-    out, stack, in_str, esc, comma, start = [], [], False, False, None, 0
+    """[(where, the containers open around it, key, the comma before it, their frames)] for every object key outside
+    strings; a frame is (its opener, the key it is the value of, the comma before it opened, the keys it held so far)."""
+    out, stack, frames, in_str, esc, comma, start, last = [], [], [], False, False, None, 0, None
     for i, ch in enumerate(raw):
         if in_str:
             if esc:
@@ -173,16 +193,102 @@ def _keys(raw: str) -> list:
             elif ch == '"':
                 in_str = False
                 if raw[i + 1:i + 40].lstrip().startswith(":"):
-                    out.append((start, "".join(stack), raw[start + 1:i], comma))
+                    last = raw[start + 1:i]
+                    out.append((start, "".join(stack), last, comma, [tuple(f) for f in frames]))
+                    if frames:
+                        frames[-1][3] += 1
         elif ch == '"':
             in_str, start = True, i
         elif ch in "[{":
+            frames.append([ch, last if stack and stack[-1] == "{" else None, comma, 0])
             stack.append(ch)
-        elif ch in "]}":
-            stack and stack.pop()
+        elif ch in "]}" and stack:
+            stack.pop()
+            frames.pop()
         elif ch == ",":
             comma = i
     return out
+
+
+def _closed(raw: str, schema: dict, rounds: int = 200):
+    """`raw` with every closer it left out put back where its schema places the next key, parsed — else None. A model
+    closes a probe carrying `inputs` and opens the next criterion inside the last one's `check`: the JSON stays grammatical
+    until its end, so it fails only there, and a whole plan's fold failed six calls of six — then no goal at all (E3
+    c_compiler, own plan, 2026-10-23). Each round puts back the closers before the first key its object's schema does not
+    declare and an enclosing level's does; a reply cut short, or broken any other way, stays unread."""
+    raw = _no_trailing_commas(raw)
+    for _ in range(rounds):
+        twice: list = []
+
+        def _pairs(pairs):
+            d = dict(pairs)
+            if len(d) != len(pairs):
+                twice.append(d)
+            return d
+        try:
+            obj = json.loads(raw, strict=False, object_pairs_hook=_pairs)
+        except ValueError:
+            obj = None
+        if obj is not None:
+            # …unless a key now stands twice in an object below the top: the repair merged two items into one — a
+            # subtask opened by a key its criteria declare too became the last one's criterion, and a whole subtask was
+            # lost (critic, fuzz: 22 wrong objects of 3,600, none after this). Twice at the top is the model's own: it
+            # wrote the whole's volume again at the end.
+            return None if any(o is not obj for o in twice) else obj
+        if (at := _misplaced(raw, schema)) is None:
+            return None
+        raw = raw[:at[0]] + at[1] + raw[at[0]:]
+    return None
+
+
+def _misplaced(raw: str, schema: dict):
+    """(where, the closers) for the first key its object's schema does not declare while an enclosing level's does —
+    the object's first key belongs to a list's next item, any other key to an enclosing object — or None."""
+    for _, _, key, comma, frames in _keys(raw):
+        schemas = _frame_schemas(frames, schema)
+        props = schemas[-1].get("properties") if schemas else None
+        if props is None or key in props:
+            continue
+        top = frames[-1]
+        for j in range(len(frames) - 2, -1, -1):
+            if not top[3] and frames[j][0] == "[" and key in ((schemas[j].get("items") or {}).get("properties") or {}):
+                return (top[2], _shut(frames[j + 1:-1])) if top[2] is not None else None
+            if top[3] and frames[j][0] == "{" and key in (schemas[j].get("properties") or {}):
+                return (comma, _shut(frames[j + 1:])) if comma is not None else None
+        return None
+    return None
+
+
+def _frame_schemas(frames: list, schema: dict) -> list:
+    """The schema each open container is written against, outermost first."""
+    out = [schema or {}]
+    for parent, f in zip(frames, frames[1:]):
+        s = out[-1]
+        out.append((s.get("items") if parent[0] == "[" else (s.get("properties") or {}).get(f[1])) or {})
+    return out
+
+
+def _shut(frames: list) -> str:
+    return "".join("]" if f[0] == "[" else "}" for f in reversed(frames))
+
+
+def _no_trailing_commas(raw: str) -> str:
+    """`raw` without a comma that closes a list or an object — outside strings only: embedded source has `,]` in it."""
+    out, in_str, esc = [], False, False
+    for i, ch in enumerate(raw):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "," and raw[i + 1:].lstrip()[:1] in ("]", "}"):
+            continue
+        out.append(ch)
+    return "".join(out)
 
 
 def _answers(obj: dict, schema: dict) -> bool:

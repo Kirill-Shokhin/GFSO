@@ -388,4 +388,4 @@ def test_a_review_that_raises_again_only_what_was_disputed_is_not_the_issuers_fa
                     review=lambda engine, node: (CR.review_decomposition(engine, node, llm=_Gap(True)),
                                                  {"stats": {"calls": 1}})[1])
     out = I.settle(e, None, ROOT, "plan", "exec-1", verbs)
-    assert out.get("kind") == "review" and out["status"] not in I._COUNTED, out
+    assert out.get("kind") == "review" and out["status"] == "applied", out

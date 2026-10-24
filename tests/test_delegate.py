@@ -761,7 +761,7 @@ def test_executor_turn_cap_is_declared_with_the_role(tmp_path):
     class _LLM:
         calls: list = []
 
-        def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None, max_turns=None):
+        def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None, max_turns=None, session=None):
             seen["max_turns"] = max_turns
             return '{"status": "delivered", "summary": "ok", "self_validation": "ran"}'
 

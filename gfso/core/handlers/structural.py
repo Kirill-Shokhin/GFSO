@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from gfso.core.types import Task, CheckResult, Predictability, DepEdge, State, register_of
-from gfso.core.protocol.procedure import (admission_defects, criterionless, degenerate_procedures, reads_an_unpinned_set,
+from gfso.core.protocol.procedure import (LEAVES_THE_WORKDIR, admission_defects, criterionless, degenerate_procedures, reads_an_unpinned_set,
                                           unread_inputs)
 
 
@@ -116,7 +116,7 @@ def check_procedure(task: Task) -> CheckResult:
     # the admission's own ladder, read rather than written again (`admission_defects`; ortho audit, D-F7) — a contract
     # this row calls clean is one the doors admit, and the reverse
     # …and a settled contract's hollow procedure is said, not failed: nothing re-admits it (same ground as above)
-    if defects := [d for d in admission_defects(task.spec.criteria) if not (settled and "emits a constant" in d)]:
+    if defects := [d for d in admission_defects(task.spec.criteria) if not (settled and ("emits a constant" in d or LEAVES_THE_WORKDIR in d))]:
         return CheckResult("A1:procedure", False, "; ".join(defects))
     notes = []
     if loose := reads_an_unpinned_set(task.spec.criteria):

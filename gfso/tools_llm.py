@@ -28,8 +28,8 @@ from typing import Optional
 from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.core.types import AgentId, Mode, State, TaskId, Stage, Verdict, passed
-from gfso.core.protocol.invariants import probes_of, spoken_verdict, verdict_word
-from gfso.core.protocol.procedure import laid_down_dirs
+from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
+from gfso.core.protocol.procedure import canonical_citations, laid_down_dirs, with_part_observations
 from gfso.core.protocol.validation import SIGNAL_ROLES, Role
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
@@ -38,7 +38,7 @@ from gfso.decompose import NoPlan, decompose_into
 from gfso.engine.events import emit_cb
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
 from gfso.engine.loop import state_bound_left
-from gfso.adapters.llm.stats import _stat_line, the_call_was_cut
+from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
 from gfso.engine import Engine
 from gfso import tools as _tools
 from gfso.tools import _agent_id
@@ -923,7 +923,13 @@ def _fold(es: list) -> dict:
     return {**es[0], "verdict": worst.get("verdict"),
             "evidence": " | ".join(str(e["evidence"]) for e in [worst] + [x for x in es if x is not worst]
                                    if e.get("evidence")),
-            "probe": [p for e in es for p in probes_of(e)],
+            # …a probe of a run that PASSED its share refuted nothing: unioned unmarked into the failed
+            # entry, every one was filed as a refutation — one FAIL listed 1,036 probes, one of them refuting, and the
+            # store grew to 1,414 findings (GB_sql_database_tmxu0n436, 2026-10-15)
+            # (a mark of its own: `held` is the part-credit gate's word, and written here it vouched a part's probe a
+            # passing share only cited — critic, 2026-10-15)
+            "probe": [dict(p, share="pass") if w == "pass" else p
+                      for w, e in zip(words, es) for p in probes_of(e)],
             **{k: [x for e in es for x in e.get(k) or ()] for k in ("behaviours", "divergences")}}
 
 
@@ -943,29 +949,41 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
     Each node's failed list is then its own entries' red set — names alone collide, two consumers of one producer both
     carrying `dep__<producer>` (critic V1)."""
     owners: dict = {}
-    for task, _, crits in parts:
-        for c in crits:
-            owners.setdefault(c.name, []).append(str(task.id))
+    for task, _, crits in parts:   # …over the WHOLE contract: a criterion kept from a refused attempt has its owner too
+        for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.criteria]):   # (critic r5)
+            owners.setdefault(name, []).append(str(task.id))
     out: dict = {str(t.id): [] for t, _, _ in parts}
     said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "",
                         "contradiction": None} for tid in out}
+    failed_said, unplaced = set(), set()
     for text in texts:
-        parsed = parse_structured(text or "", schema)
+        parsed = _shaped(parse_structured(text or "", schema))
         if parsed is None:
             return None
+        # every reader below — the node an entry goes to, the report against its own entries, the record — reads the
+        # contract's name, never the label as the validator decorated it
+        for e in parsed.get("per_criterion") or ():
+            e["criterion"] = criterion_meant(e.get("criterion"), list(owners))
+        if parsed.get("failed_criteria"):
+            parsed["failed_criteria"] = [criterion_meant(n, list(owners)) for n in parsed["failed_criteria"]]
         named = set()
         for e in parsed.get("per_criterion") or ():
-            tid = next(iter(out)) if own else str(e.get("task_id") or "")
-            if tid not in out and len(owners.get(str(e.get("criterion")), ())) == 1:
+            tid = next(iter(out)) if own else str(e.get("task_id") or "").strip().strip("`'\"").strip()
+            # …by its criterion's name only where it names no node: naming one outside this validation, a consumer's
+            # seam entry was credited to its sibling's like-named seam (critic over the round, 2026-10-19)
+            if not tid and len(owners.get(str(e.get("criterion")), ())) == 1:
                 tid = owners[str(e.get("criterion"))][0]
             if tid in out:
                 out[tid].append(e)
                 named.add(tid)
+            elif spoken_verdict(e.get("verdict")) != "pass":
+                unplaced.add(str(e.get("criterion")))
         # EVERY REPORT IS JUDGED WHOLE, a batch of one node's contract as a scope's report is: a word that decided
         # nothing, or one its own entries contradict, decided nothing for any node it covers (Inv-3, §7.1) — the batches
         # of one node read by a rule of their own made ⊥ or FAIL depend on which malformed word came (critic V4). A
         # node's single report is judged by the same clause at the record, in the record's own words.
         why = _report_contradicts_itself(parsed) if not own or len(texts) > 1 else None
+        failed_said.update(_listed_failed(parsed), _red(parsed))   # held to the names' owners below
         for tid in (out if own else named):
             s = said[tid]
             s["contradiction"] = s["contradiction"] or why
@@ -973,13 +991,28 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
             if own:
                 # …and the decided words conjoined, in any order; an undecided one kept as said, so the record
                 # refuses it by name — None would read there as "derive it from the entries" (critics V2, V3)
-                word = verdict_word(parsed.get("verdict"))
+                word = Verdict.FAIL if _red(parsed) else verdict_word(parsed.get("verdict"))
                 s["verdict"] = (s["verdict"] if s["verdict"] not in (Verdict.PASS, Verdict.FAIL) else
                                 str(parsed.get("verdict") or "").strip() if word is None else
                                 Verdict.FAIL if Verdict.FAIL in (word, s["verdict"]) else Verdict.PASS)
                 s["failed_criteria"] = list(dict.fromkeys(  # …once each, a criterion split between runs too
-                    s["failed_criteria"] + _listed_failed(parsed)))
+                    s["failed_criteria"] + (_red(parsed) or _listed_failed(parsed))))
+    if not own or len(texts) > 1:      # one node's single report: the record holds its list to its entries
+        for tid, why in _unanswered_fails(out, owners, failed_said, unplaced).items():
+            said[tid]["contradiction"] = said[tid]["contradiction"] or why
     return out, said
+
+
+def _shaped(parsed: Optional[dict]) -> Optional[dict]:
+    """The report in the shape it is read in, or None — a report that did not parse. `parse_structured` checks keys, not
+    types: a `failed_criteria` written as one string was read letter by letter, no letter had an owner, and a node passed
+    over its own criterion named failed (critic over 37579f8); entries that are not objects broke the read uncaught."""
+    if isinstance((parsed or {}).get("failed_criteria"), str):
+        parsed["failed_criteria"] = [parsed["failed_criteria"]]
+    ok = (parsed is not None and isinstance(parsed.get("per_criterion") or [], list)
+          and isinstance(parsed.get("failed_criteria") or [], list)
+          and all(isinstance(e, dict) for e in parsed.get("per_criterion") or ()))
+    return parsed if ok else None
 
 
 def _listed_failed(parsed: dict) -> list:
@@ -994,13 +1027,45 @@ def _listed_failed(parsed: dict) -> list:
     return listed if "failed_criteria" in parsed and not set(listed) < set(red) else red
 
 
+def _unanswered_fails(out: dict, owners: dict, failed_said: set, unplaced: frozenset = frozenset()) -> dict:
+    """{node: why} — for each criterion some report of this validation calls failed, by its list or by an entry under any
+    node's id, every owner of it when no owner's own entry fails it: the word is then a fail its owner does not carry,
+    and the owner decides nothing. Held per report or only where a red entry stood, a fail written under a non-owner's
+    id, or listed by a batch with no red entry, let the owner pass on its own pass or on one kept from a refused attempt
+    (critics over the round, 2026-10-19). A name two nodes share is answered by either owner failing it — except a red
+    entry placed under no node (`unplaced`), which may be either's: every owner not failing it itself decides nothing,
+    or the other owner's fail answered it and the second passed on a pass kept from a refused attempt (critic over
+    37579f8)."""
+    red_by = {(tid, str(e.get("criterion"))) for tid, es in out.items() for e in es
+              if spoken_verdict(e.get("verdict")) != "pass"}
+    unanswered: dict = {}
+    for name in sorted(failed_said | set(unplaced)):
+        holders = [t for t in owners.get(name, ()) if t in out]
+        short = [t for t in holders if (t, name) not in red_by]
+        if name in unplaced or not any((t, name) in red_by for t in holders):
+            for tid in short:
+                unanswered.setdefault(tid, f"a report of this validation calls '{name}' failed and no entry of its node "
+                                           f"fails it — the issuer's FAIL payload must be the red set (Inv-3)")
+    return unanswered
+
+
+def _red(parsed: dict) -> list:
+    """The report's own non-pass criteria, read off its entries."""
+    return list(dict.fromkeys(str(e.get("criterion")) for e in parsed.get("per_criterion") or ()
+                              if spoken_verdict(e.get("verdict")) != "pass"))
+
+
 def _report_contradicts_itself(parsed: dict) -> Optional[str]:
-    """Why a report's verdict or failed list disagrees with its own per-criterion entries, or None."""
-    red = {str(e.get("criterion")) for e in parsed.get("per_criterion") or ()
-           if spoken_verdict(e.get("verdict")) != "pass"}
+    """Why a report decided nothing its entries can carry, or None. Where an entry is red the report is a FAIL on its red
+    set, whatever its word or list say: a false FAIL is guarantee-safe (§8.4) and a PASS over a red entry is read as the
+    FAIL it is. Refused, one batch's `FAILED` or a list naming another batch's criterion voided a root's every batch and
+    the probed FAIL with them — of ~17 batches a round, all had to be well-formed (finder over 190f4db, after
+    GB_sql_database_tn03ao788). A FAIL claimed over entries that all pass names nothing observed, and decides nothing."""
+    red, listed = set(_red(parsed)), set(_listed_failed(parsed))
+    if red:      # what the list names beyond the red set is held to its owners' entries (`_entries_by_node`)
+        return None
     said = verdict_word(parsed.get("verdict"))   # a word that is neither decided nothing: no verdict to agree (§7.1)
-    listed = set(_listed_failed(parsed))
-    if said is None or (said == Verdict.FAIL) != bool(red) or listed != red:
+    if said != Verdict.PASS or listed:
         return (f"the report's verdict {parsed.get('verdict') or '(none)'} and failed_criteria {sorted(listed)} contradict its own "
                 f"entries, whose non-pass criteria are {sorted(red)} — the issuer's FAIL payload must be the red set "
                 f"(Inv-3)")
@@ -1022,6 +1087,8 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
     `get_verdict` shows what it did manage to check (measured 2026-08-21: a 25-criterion contract refused twice, the
     node parked, and the only trace of what was checked was a text file); with how many refusals the node has had."""
     tools, _model = _instrument_of(llm, model)
+    parts = engine.parts_procedure(task.id)
+    entries = with_part_observations(parts, canonical_citations(entries, task.spec.criteria, parts))   # the packet's `{id, held}` form, read
     # a node read out of a report over several: its claim is its own entries' — every NON-PASS one failed, as the
     # validator reports an undecidable criterion FAIL (validator.md)
     failed = (list(said["failed_criteria"]) if said["verdict"] is not None else
@@ -1137,6 +1204,11 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
         # (`the_call_was_cut`, the provider's own observation first) is a run that stopped, worth re-running on the
         # same tier, unlike a report that parsed and decided nothing (measured 2026-09-06: fifteen minutes, one
         # sentence, $0.00).
+        if refused_by_limit(calls_of(llm)):
+            # …AND A CALL THE ACCOUNT'S LIMIT REFUSED IS NO REPORT AT ALL: booked as a refused one, every probe of a
+            # limit window raised the node's refusal count — the next validation bought on the retry tier, the issuer
+            # told to narrow the contract, the validator told "attempt 16" (critic over this fix, 2026-10-24)
+            return {**out, "error": "the account's usage limit refused the validator's call — nothing was validated"}, text
         if getattr(llm, "calls", None):
             llm.calls[-1]["parse_failed"] = True
         _said = text.strip()
@@ -1669,6 +1741,34 @@ def unregister_agent(engine: Engine, agent_id: str, workdir: Optional[str] = Non
 _MODE_STAFF = {Mode.AUTO: 2, Mode.SEMI: 1, Mode.SOLO: 0}
 
 
+def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
+    """What a mode needs registered in this project, and whether it has it — the one rule `set_mode`
+    enforces, readable before anyone asks for the mode (the page shows it; a copy of the rule in the
+    page had already drifted from this one). Executors: auto two (the root and its children must be
+    different executors, or the children would self-verify), semi one, solo none — and one in any mode
+    whose held nodes are DISPATCHED to a session of this project's executor. A validator in every mode:
+    the system validates wherever κ ends, whoever holds the node, so solo needs the instrument as much
+    as auto does — without one, the agent is its own only verifier."""
+    m = Mode(str(mode).strip().lower())
+    agents = _roster(engine)
+    _delegation().publish_the_workforce(engine, agents.list())
+    pool = [str(a) for a in engine.workforce.executor_pool()]
+    validators = [a for a, c in agents.list().items()
+                  if c.get("kind") in ("llm-validator", "unittest-checker")
+                  and c.get("project") in (engine.project_name, None)]
+    dispatch = perform == "dispatch" and m != Mode.AUTO          # under AUTO the user-agent holds nothing
+    need = max(_MODE_STAFF[m], int(dispatch))
+    ready = len(pool) >= need and bool(validators)
+    missing = "" if ready else (
+        f"{m.value} needs {need} registered executor(s) of this project and a validator; it "
+        f"has {len(pool)} executor(s) ({', '.join(pool) or 'none'}) and {len(validators)} validator(s)"
+        + (" — dispatch performs your nodes in a session of this project's executor" if dispatch else "")
+        + ". Register them with `register_agent(<id>, \"llm-executor\" | \"llm-validator\", "
+        "workdir=<the work's directory>)` in this project, then set the mode.")
+    return {"mode": m.value, "perform": perform, "dispatch": dispatch, "needs_executors": need,
+            "executors": pool, "validators": validators, "ready": ready, "missing": missing}
+
+
 def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
              agent: Optional[str] = None, user_said: str = "", perform: str = "dispatch") -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
@@ -1704,27 +1804,12 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
         return {"refused": True, "error":
                 "this project already has work in it, and who holds it is the USER's choice: ask the "
                 "user, and pass their own words asking for the change as `user_said`."}
-    agents = _roster(engine)
-    _delegation().publish_the_workforce(engine, agents.list())
-    pool = engine.workforce.executor_pool()
-    validators = [a for a, c in agents.list().items()
-              if c.get("kind") in ("llm-validator", "unittest-checker")
-              and c.get("project") in (engine.project_name, None)]
     if perform not in ("dispatch", "in_chat"):
         return {"refused": True, "error": f"perform must be dispatch | in_chat, got {perform!r}"}
-    dispatch = perform == "dispatch" and m != Mode.AUTO          # under AUTO the user-agent holds nothing
-    need = max(_MODE_STAFF[m], int(dispatch))
-    # A VALIDATOR IN EVERY MODE: the system validates wherever κ ends, whoever holds the node, so solo
-    # needs the instrument as much as auto does — without one, the agent is its own only verifier.
-    if len(pool) < need or not validators:
-        return {"refused": True, "error":
-                f"{m.value} needs {need} registered executor(s) of this project and a validator; it "
-                f"has {len(pool)} executor(s) ({', '.join(map(str, pool)) or 'none'}) and "
-                f"{len(validators)} validator(s)"
-                + (" — dispatch performs your nodes in a session of this project's executor" if dispatch else "")
-                + f". Register them with `register_agent(<id>, "
-                f"\"llm-executor\" | \"llm-validator\", workdir=<the work's directory>)` in this "
-                f"project, then set the mode.", "executors": [str(a) for a in pool]}
+    staff = mode_staffing(engine, m.value, perform)
+    pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
+    if not staff["ready"]:
+        return {"refused": True, "error": staff["missing"], "executors": staff["executors"]}
     try:
         rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
                               hands=str(pool[0]) if dispatch else None)

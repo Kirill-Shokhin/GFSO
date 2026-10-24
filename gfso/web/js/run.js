@@ -1,0 +1,222 @@
+// The run as one model: who worked on which node when, what each delivery was answered with, and
+// how the clock reads once the idle stretches are folded. Every view of the run (timeline,
+// progress, cost, events, the graph's badges) reads this and nothing else, so two views can never
+// disagree on a fact. Pure: payloads in, model out — no fetch, no DOM, no imports.
+
+// Who owes the next move in each state (canon §12.13).
+const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
+              CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
+
+const KIND = {executor: 'exec', validate_result: 'val', validator: 'val', issuer: 'issuer'};
+const kindOf = stage => KIND[stage] || 'plan';
+export const KIND_NAME = {exec: 'execution', val: 'validation', issuer: 'issuer', plan: 'planning'};
+export const levelName = d => +d === 0 ? 'goal' : +d === 1 ? 'parts' : `level ${d}`;
+// An idle stretch longer than this is folded to FOLD on the axis: a run's clock is its work, and a
+// host asleep overnight is not part of the run (mode_cost.py measures wall time by the same cut).
+export const GAP = 20 * 60e3, FOLD = 2 * 60e3;
+
+export const at = s => Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
+// The narration names its node first ("root.sort: …"); the rest is what was said.
+export const said = msg => { const m = /^([\w.\-]+):\s*(.*)$/s.exec(msg); return m ? {node: m[1], text: m[2]} : {node: null, text: msg}; };
+export const roundsLine = rs => !rs.length ? '' : `${rs.length} round${rs.length > 1 ? 's' : ''}`
+    + (rs.some(r => r.verdict === 'FAIL') ? ` · ${rs.filter(r => r.verdict === 'FAIL').length} FAIL` : '');
+
+const sum = (xs, f) => xs.reduce((s, x) => s + f(x), 0);
+
+function depths(nodes) {
+    const by = Object.fromEntries(nodes.map(n => [n.id, n])), d = {};
+    const of = id => d[id] ??= by[id]?.parent_id ? of(by[id].parent_id) + 1 : 0;
+    nodes.forEach(n => of(n.id));
+    return d;
+}
+
+// The acts that close each kind of session — whoever signed the first of them after it is who ran it.
+const SIGNS = {exec: ['DELIVER', 'BLOCK', 'CHALLENGE'], val: ['PASS', 'FAIL'],
+               issuer: ['ASSIGN', 'CANCEL', 'RESOLVE_BLOCK', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE']};
+// Sessions from the usage ledger: a row is written when its call ends, so it starts `duration` before.
+function sessions(calls, audit) {
+    return calls.filter(c => c.duration_ms > 0 && c.node_id).map(c => {
+        const end = at(c.ts), start = end - c.duration_ms, kind = kindOf(c.stage);
+        // the ledger names no agent: the one who signed the node's next act after the call is it
+        const signer = audit.find(a => a.task_id === c.node_id && !a.rejected && a.t >= end - 1e3
+            && SIGNS[kind]?.includes(a.signal));
+        return {node: c.node_id, kind, stage: c.stage, start, end, cost: c.cost_usd || 0,
+                tokens: (c.input_tokens || 0) + (c.output_tokens || 0) + (c.cache_input_tokens || 0),
+                out: c.output_tokens || 0, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0};
+    });
+}
+
+// A session still running has no ledger row yet. Its START is in the narration — "executor …
+// spawned", "independent validator …" — so a start with no end of its kind strictly after it (a
+// respawn lands in the same second the last call ended), on a node still in that kind of work, is
+// open until now. A parent EXECUTING while its parts work is not a session, and draws none.
+const STARTS = [['exec', /^executor (\S+) spawned/, ['EXECUTING', 'REWORKING']], ['val', /^independent validator/, ['VALIDATING']]];
+function openSessions(pipeline, closed, nodes, now) {
+    const state = Object.fromEntries(nodes.map(n => [n.id, n.state])), out = {};
+    for (const p of pipeline) {
+        const {node, text} = said(p.message);
+        for (const [kind, re, states] of STARTS) {
+            const hit = node && re.exec(text);
+            if (hit && states.includes(state[node])) out[`${kind}|${node}`] = {node, kind, start: at(p.ts), agent: hit[1] || null};
+        }
+    }
+    return Object.values(out).filter(o => !closed.some(s => s.node === o.node && s.kind === o.kind && s.end > o.start))
+        .map(o => ({...o, end: now, open: true, cost: 0, tokens: 0, out: 0}));
+}
+
+// A round is one delivery and the verdict it got; the counter on the task resets on a re-ASSIGN, so
+// rounds are read off the log, not off `iteration`.
+function rounds(audit) {
+    const r = {};
+    for (const a of audit) {
+        if (a.rejected) continue;
+        const list = r[a.task_id] ??= [];
+        if (a.signal === 'DELIVER') list.push({n: list.length + 1, delivered: a.t, verdict: null, by: a.source});
+        else if ((a.signal === 'PASS' || a.signal === 'FAIL') && list.length && !list.at(-1).verdict)
+            Object.assign(list.at(-1), {verdict: a.signal, at: a.t, failed: a.failed_criteria || [], validator: a.source});
+    }
+    return r;
+}
+// One node's rounds straight from its own slice of the log (the panel reads it without the run).
+export const roundsOf = (audit, id) => rounds(audit.map(a => ({...a, t: at(a.timestamp)})).sort((a, b) => a.t - b.t))[id] || [];
+
+// What a node waits on, ONE rule for every view: the Dep producers not yet passed (the engine hands
+// no such node to anyone — frontier.py), else the parts of a parent still working, else whoever owes
+// the next move (canon §12.13). A finished node waits on nothing.
+const SETTLED = new Set(['DONE', 'ABANDONED']);
+export function waitsOf(nodes, edges) {
+    const st = Object.fromEntries(nodes.map(n => [n.id, n.state]));
+    return Object.fromEntries(nodes.map(n => {
+        if (SETTLED.has(n.state)) return [n.id, {owes: null, deps: [], parts: []}];
+        const deps = edges.filter(e => e.type !== 'parent-child' && e.target === n.id && st[e.source] !== 'DONE').map(e => e.source);
+        const parts = ['EXECUTING', 'REWORKING'].includes(n.state) ? nodes.filter(k => k.parent_id === n.id && !SETTLED.has(k.state)).map(k => k.id) : [];
+        return [n.id, {owes: deps.length || parts.length ? null : OWES[n.state] || null, deps, parts}];
+    }));
+}
+// What is AT WORK now, one rule for the strip and the graph: a node with a session open, or a leaf in a
+// working state (its executor may be a person or a process elsewhere). A parent EXECUTING waits on its parts.
+const WORKING = new Set(['EXECUTING', 'REWORKING', 'VALIDATING']);
+export function atWork(run, tasks) {
+    const parent = new Set(tasks.map(t => t.parent_id)), open = new Set((run?.sessions || []).filter(s => s.open).map(s => s.node));
+    return new Set(tasks.filter(t => open.has(t.id) || (WORKING.has(t.state) && !parent.has(t.id))).map(t => t.id));
+}
+// The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
+export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
+    : w.parts.length ? `its ${w.parts.length} part${w.parts.length > 1 ? 's' : ''}` : w.owes ? `the ${w.owes}` : '—';
+// What holds the most back: following each waiting node's Dep producers up to the ones that wait on
+// nothing themselves — those are the work everything behind them is queued on — and counting, per such
+// producer, the nodes it holds (directly or through others).
+export function blockers(waits) {
+    const roots = (id, seen = new Set()) => seen.has(id) ? [] : (seen.add(id), waits[id]?.deps.length
+        ? waits[id].deps.flatMap(d => roots(d, seen)) : [id]);
+    const held = {};
+    for (const [id, w] of Object.entries(waits))
+        if (w.deps.length) new Set(w.deps.flatMap(d => roots(d))).forEach(r => (held[r] = (held[r] || 0) + 1));
+    return Object.entries(held).sort((a, b) => b[1] - a[1]);
+}
+
+// The folded clock: activity intervals merged, gaps over GAP shrunk to FOLD.
+function clock(spans, points, now) {
+    const iv = [...spans.map(s => [s.start, s.end]), ...points.map(t => [t, t])].sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const [a, b] of iv) {
+        const last = merged.at(-1);
+        if (last && a - last[1] <= GAP) last[1] = Math.max(last[1], b); else merged.push([a, b]);
+    }
+    if (now && merged.length) merged.at(-1)[1] = Math.max(merged.at(-1)[1], now);
+    const folds = merged.slice(1).map((m, i) => ({from: merged[i][1], to: m[0]}));
+    const t0 = merged[0]?.[0] ?? now ?? 0;
+    const x = t => t - t0 - sum(folds, f => Math.min(Math.max(t - f.from - FOLD, 0), f.to - f.from - FOLD));
+    return {t0, x, span: merged.length ? x(merged.at(-1)[1]) : 0, folds: folds.map(f => ({at: x(f.from), from: f.from, to: f.to}))};
+}
+
+// How many sessions of a kind ran at once, as a step series; its peak is the parallelism figure.
+export function concurrency(list) {
+    const ev = list.flatMap(s => [[s.start, 1], [s.end, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let cur = 0, peak = 0;
+    const steps = ev.map(([t, d]) => (cur += d, peak = Math.max(peak, cur), [t, cur]));
+    return {steps, peak};
+}
+
+// Totals of a set of sessions, grouped by `key` and, inside each group, by role — so the cost of
+// checking always stands beside the cost of doing.
+function rollup(list, key) {
+    const out = {};
+    for (const s of list) {
+        const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, cost: 0, tokens: 0, busy: 0};
+        o.calls++; o.cost += s.cost; o.tokens += s.tokens; o.busy += s.end - s.start;
+    }
+    return out;
+}
+
+// WHO DID THE WORK: every model call, by the model that made it and the role it served — the model is the
+// node's real executor (author, 2026-10-25: «модель это реальный исполнитель ноды»). One row per (model,
+// role): sessions, turns, tokens by kind, cost, and how full each session's context got against its model's
+// window. A call recorded before those were kept carries cache read and write as one sum, and no fill.
+// A SESSION THAT SPENT NOTHING is no model's work — an account limit, a context grown past the window, a refusal
+// come back as zero tokens at zero cost under the name it was asked by (13% of the agent traces since
+// 2026-10-15): counted apart by why it ended (`ended`, kept since 2026-10-25), never signed onto a node. A session
+// that did work and still gave no answer — cut mid-stream, out of turns — is counted, and says how it ended.
+function work(calls) {
+    const rows = {}, byNode = {}, unanswered = {}, unansweredOn = {};
+    // a model's window, from any of its sessions that reported one — a cut session reports none
+    const window = Object.fromEntries(calls.filter(c => c.context_window).map(c => [c.model, c.context_window]));
+    for (const c of calls) {
+        const kind = kindOf(c.stage), model = c.model || '';
+        if (!(c.cost_usd || c.input_tokens || c.output_tokens || c.cache_input_tokens)) {
+            const why = unanswered[kind] ??= {}, w = c.ended || '';
+            why[w] = (why[w] || 0) + 1;
+            if (c.node_id) (unansweredOn[c.node_id] ??= {})[kind] = (unansweredOn[c.node_id][kind] || 0) + 1;
+            continue;
+        }
+        const r = rows[`${model}|${kind}`] ??= {model, kind, calls: 0, resumed: 0, cost: 0, unpriced: 0, ends: {}, input: 0, output: 0, read: 0, write: 0, unsplit: 0, turns: 0, turned: 0, fills: []};
+        r.calls++; r.resumed += c.resumed ? 1 : 0; r.cost += c.cost_usd || 0; r.unpriced += c.cost_usd ? 0 : 1; if (c.ended && c.ended !== 'answered') r.ends[c.ended] = (r.ends[c.ended] || 0) + 1;
+        r.input += c.input_tokens || 0; r.output += c.output_tokens || 0; r.turns += c.turns || 0; r.turned += c.turns ? 1 : 0;
+        if (c.cache_read_tokens == null) r.unsplit += c.cache_input_tokens || 0;
+        else { r.read += c.cache_read_tokens; r.write += c.cache_write_tokens || 0; }
+        if (c.peak_context && (c.context_window || window[model])) r.fills.push(c.peak_context / (c.context_window || window[model]));
+        if (c.node_id) (((byNode[c.node_id] ??= {})[kind] ??= {})[model] = (byNode[c.node_id][kind][model] || 0) + 1);
+    }
+    return {rows: Object.values(rows).sort((a, b) => b.cost - a.cost), byNode, unanswered, unansweredOn,
+            total: sum(calls, c => c.cost_usd || 0)};
+}
+
+// Criteria passing at their latest verdict, one track per tree level: a part's verdict is its
+// issuer's signature at that seam, the root's is the goal delivered — never summed into one curve.
+// The log keeps only what a FAIL named (Inv-3), so an unnamed criterion of a past verdict is read as
+// standing; a node's CURRENT verdict is read per criterion (`/verdict`), where an undecidable one is
+// ⊥, not pass. A Dep's carriage criterion (`dep__…`) is the system's, not the plan's, and is left out.
+const own = c => !String(c).startsWith('dep__');
+const V = {pass: 'pass', fail: 'fail'};
+function criteria(audit, tasks, depth, verdicts) {
+    const names = Object.fromEntries(tasks.map(t => [t.id, (t.criteria || []).map(c => c.name || c).filter(own)]));
+    const status = {}, levels = {}, verdictRows = audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL') && names[a.task_id]);
+    const last = Object.fromEntries(verdictRows.map(a => [a.task_id, a]));
+    for (const t of tasks) (levels[depth[t.id] ?? 0] ??= {total: 0, steps: [], marks: []}).total += names[t.id].length;
+    for (const a of verdictRows) {
+        const failed = new Set((a.failed_criteria || []).filter(own)), d = depth[a.task_id] ?? 0, L = levels[d];
+        const per = last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal
+            && Object.fromEntries((verdicts[a.task_id].per_criterion || []).map(c => [c.criterion, V[c.verdict] || '⊥']));
+        status[a.task_id] = Object.fromEntries(names[a.task_id].map(c => [c, per ? per[c] || '⊥' : a.signal === 'FAIL' && failed.has(c) ? 'fail' : 'pass']));
+        const k = sum(tasks.filter(t => (depth[t.id] ?? 0) === d), t => Object.values(status[t.id] || {}).filter(v => v === 'pass').length);
+        L.steps.push([a.t, k]);
+        L.marks.push({t: a.t, node: a.task_id, signal: a.signal, failed: [...failed], k});
+    }
+    return {levels, status, names};
+}
+
+export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, now = Date.now()}) {
+    audit = audit.map(a => ({...a, t: at(a.timestamp)})).sort((a, b) => a.t - b.t);
+    const ss = sessions(calls, audit), open = openSessions(pipeline, ss, nodes, now);
+    const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
+    return {
+        name: id => names[id] || id,
+        sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges),
+        clock: clock(all, audit.map(a => a.t), open.length ? now : null),
+        exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
+        criteria: criteria(audit, tasks, depth, verdicts), work: work(calls),
+        cost: {total: sum(ss, s => s.cost), tokens: sum(ss, s => s.tokens), busy: sum(ss, s => s.end - s.start),
+               unpriced: ss.filter(s => !s.priced).length,
+               byKind: rollup(ss, () => 'all').all || {}, byNode: rollup(ss, s => s.node), byDepth: rollup(ss, s => depth[s.node] ?? 0), byAgent: rollup(ss, s => s.agent || '—')},
+    };
+}

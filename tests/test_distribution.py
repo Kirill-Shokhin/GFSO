@@ -32,7 +32,7 @@ ROOT = pathlib.Path(__file__).parent.parent
 # What the product reads at runtime. Named here as well as in test_packaging.py on purpose: there
 # the question is "is it declared", here "did it arrive".
 REQUIRED = (
-    "gfso/web/index.html", "gfso/web/gfso.css", "gfso/web/tokens.css", "gfso/web/icon.svg",
+    "gfso/web/index.html", "gfso/web/gfso.css", "gfso/web/tokens.css", "gfso/web/icon.svg", "gfso/web/js/main.js",
     "gfso/mcp/ORCHESTRATOR.md", "gfso/mcp/prompts/executor.md", "gfso/mcp/prompts/validator.md",
     "gfso/decompose/prompts/search.md", "gfso/decompose/prompts/audit.md",
     "gfso/critic/prompts/atomicity.md", "gfso/critic/prompts/checker.md",

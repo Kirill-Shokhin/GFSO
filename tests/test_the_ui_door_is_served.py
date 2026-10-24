@@ -53,6 +53,31 @@ def client():
         yield c
 
 
+def _served_modules(client) -> dict[str, str]:
+    """The page's script, as a browser gets it: every ES module reachable from the page's own
+    `<script type="module" src="/js/…">` through `import … from './x.js'`, each fetched through the door
+    that serves it. A module the page needs and the server does not serve fails here, not in a console."""
+    todo = re.findall(r'<script type="module" src="/js/([\w-]+\.js)"', client.get("/").text)
+    assert todo, "the page loads no script module — these tests would be reading nothing"
+    seen: dict[str, str] = {}
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        r = client.get(f"/js/{name}")
+        assert r.status_code == 200, f"the page imports /js/{name} and the server does not serve it"
+        assert "javascript" in r.headers["content-type"], f"/js/{name} came back as {r.headers['content-type']}"
+        seen[name] = r.text
+        todo += re.findall(r"from '\./([\w-]+\.js)'", r.text)
+    return seen
+
+
+def _ui(client) -> str:
+    """What the page says and does: the document plus every module it runs. The pins below are about
+    the UI's behaviour, which lives in the modules since the inline script was split into units."""
+    return client.get("/").text + "\n".join(_served_modules(client).values())
+
+
 def test_the_page_itself_is_served(client):
     r = client.get("/")
     assert r.status_code == 200, "the UI root did not answer"
@@ -174,17 +199,17 @@ def test_the_page_shows_who_validated_a_node_and_on_what(client):
     that the page asks the same question — the fields are the endpoint's, so if either side is
     renamed the other stops answering.
     """
-    page = client.get("/").text
+    page = _ui(client)
     assert "/verdict" in page, "the page reads the execution verdict, not only the plan review"
     for field in ("by_hand", "validator", "per_criterion", "failed_criteria", "refused_report"):
         assert field in page, f"the verdict block does not read `{field}`"
     assert "REFUSED as ⊥" in page, "…and a refused report is not shown as 'not validated'"
 
 
-def test_the_pages_javascript_parses():
+def test_the_pages_javascript_parses(client):
     """Nothing checked that the page is valid JavaScript.
 
-    The UI is one inline script, edited from Python as text, and the tests around it grep for
+    The UI is a set of ES modules, edited from Python as text, and the tests around it grep for
     substrings — so a broken edit ships a blank page that every other check calls healthy (which is
     exactly how the ORCHESTRATOR file once shipped empty). A parse is the cheapest true statement
     available: it does not say the page WORKS, it says it can run at all.
@@ -194,13 +219,14 @@ def test_the_pages_javascript_parses():
     node = shutil.which("node")
     if node is None:
         pytest.skip("no JS engine on this machine — the page's syntax is unchecked here")
-    html = (Path(__file__).resolve().parent.parent / "gfso" / "web" / "index.html").read_text(encoding="utf-8")
-    inline = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S)
-    assert inline, "the page has no inline script — this test is measuring the wrong file"
-    js = Path(tempfile.gettempdir()) / "gfso_ui_syntax_check.js"
-    js.write_text("\n".join(inline), encoding="utf-8")
-    r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
-    assert r.returncode == 0, f"the page's script does not parse:\n{r.stderr[:800]}"
+    assert not re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", client.get("/").text, re.S), (
+        "an inline script is back in the page — the UI's code lives in /js modules, one per unit")
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, text in _served_modules(client).items():
+            js = Path(tmp) / (name[:-3] + ".mjs")        # .mjs: parsed as a module (import/export)
+            js.write_text(text, encoding="utf-8")
+            r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+            assert r.returncode == 0, f"/js/{name} does not parse:\n{r.stderr[:800]}"
 
 
 def test_the_runtime_panel_reports_the_acceptance_dial(monkeypatch, client):
@@ -222,7 +248,7 @@ def test_the_page_says_so_when_its_graph_library_does_not_load(client):
     page and no error at all (read as a user, 2026-09-02). Vendoring is a separate, parked decision;
     saying so is not.
     """
-    page = client.get("/").text
+    page = _ui(client)
     assert "!window.cytoscape" in page, "the page does not check whether its library arrived"
     assert "The graph library did not load" in page
     assert "gfso status" in page, "…and it names the door that needs no browser at all"
@@ -232,16 +258,19 @@ def test_the_page_offers_the_callers_real_identity(client):
     """It shipped a box reading `pm` — an id registered nowhere — so a person's first Pass/Fail was
     signed as a stranger and refused, correctly and uselessly."""
     assert "agent_id" in client.get("/api/runtime").json()
-    page = client.get("/").text
+    page = _ui(client)
     assert "rt.agent_id" in page and "box.value === 'pm'" in page
 
 
 def test_working_does_not_look_like_dead(client):
     """`EXECUTING` shared the palest style with IDLE and ABANDONED, while an untouched OFFERED node
     was drawn more prominently — the colours answered "what is being worked on" backwards."""
-    page = client.get("/").text
-    assert "EXECUTING: 'busy'" in page and "busy:" in page
-    assert "OFFERED:'Not started'" in page, "`OFFERED` is not 'In Review' — nobody has touched it"
+    page = _ui(client)
+    # The states are one table now (vocab.js, `STATE: [bucket, label, …]`), so the pin reads its row;
+    # what is pinned is unchanged: EXECUTING draws `busy`, a style of its own, and OFFERED reads 'Not started'.
+    assert re.search(r"EXECUTING:\s*\['busy'", page) and "busy:" in page
+    assert re.search(r"OFFERED:\s*\['attend',\s*'Not started'", page), (
+        "`OFFERED` is not 'In Review' — nobody has touched it")
 
 
 def test_the_numbers_arrive_with_what_they_are_about(client):
@@ -283,7 +312,7 @@ def test_the_numbers_arrive_with_what_they_are_about(client):
     assert set(tool.get("means") or {}) == {k for k in tool if k != "means"}, (
         "the agent door serves a number without what it is about")
 
-    page = (Path(__file__).resolve().parents[1] / "gfso" / "web" / "index.html").read_text("utf-8")
+    page = _ui(client)
     for k in scores:
         assert f"{k} —" not in page, (
             f"the page writes its own definition of {k}; it must render the served `means` "
@@ -1157,7 +1186,7 @@ def test_the_page_draws_how_a_node_closed(client):
     (`Engine.closure_of`), and the picture reads it: contested closures ringed in the accent, hand
     ones dashed, and the counts beside the state tally say how many of each.
     """
-    page = client.get("/").text
+    page = _ui(client)
     assert "closureStyle" in page and "n.closure" in page, (
         "the drawing has to read the node's own closure, not a second copy of the rule")
     assert "closed by hand" in page and "contested" in page, (
@@ -1166,14 +1195,14 @@ def test_the_page_draws_how_a_node_closed(client):
 
 def test_the_identity_the_page_signs_with_survives_a_reload(client):
     """The box SIGNS every signal this page sends, and it reset to the server's id on refresh."""
-    page = client.get("/").text
+    page = _ui(client)
     assert "rememberedRole" in page and "localStorage" in page
     assert "rememberRole(myRole())" in page, "…and it is written down when it is typed"
 
 
 def test_one_edit_is_one_revision(client):
     """Each authoring verb is a re-ASSIGN (Inv-1); the form sent all of them on every submit."""
-    page = client.get("/").text
+    page = _ui(client)
     assert "critsMoved" in page and "risksMoved" in page, (
         "the form has to send what CHANGED — two identical ASSIGNs for one act is what wave 26 saw")
 
@@ -1184,4 +1213,4 @@ def test_the_graph_libraries_do_not_block_the_page(client):
     assert page.count("<script defer src=\"https://unpkg.com") == 3, (
         "the remote scripts must not block the first paint — vendoring them is a separate, parked "
         "decision")
-    assert "DOMContentLoaded" in page, "…and init has to wait for them, or it reports them missing"
+    assert "DOMContentLoaded" in _ui(client), "…and init has to wait for them, or it reports them missing"

@@ -201,7 +201,7 @@ BASE_LITERAL = {# 2 and 1: V's two values are `Verdict`, a StrEnum whose members
                 "root": 2,
                 # 2, not 4: the roster and the database file are derived in `gfso.config` now, and
                 # the two remaining spellings are that owner and the doctor line that reports it.
-                "agents.json": 2, "gfso.db": 1,
+                "agents.json": 2, "gfso.db": 0,
                 # 2: the single-project `/api/projects` answer asked `gfso.config.DEFAULT_PROJECT`
                 # instead of spelling the name a third time (2026-09-02)
                 "default": 2,

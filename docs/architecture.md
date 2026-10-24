@@ -180,7 +180,7 @@ Dep edge with an owner, which is what q_Dep divides by.
 
 **What a graph costs (`/api/usage`).** Every internal model call is recorded with the ROLE that made
 it — decomposer, Level-2 review, validator, executor — and totalled per project: tokens, dollars, and
-a per-role split (surfaced in the observation window, not beside the quality metrics: those are
+a per-role split (surfaced in the page's run deck — its Cost view, by role, node, tree level and assignee — not beside the quality metrics: those are
 properties of the graph, while spend is a property of one way of working it — with people at the
 nodes there are no calls to report). `costed_calls` rides beside the money because a transport that reports no price
 (any OpenAI-compatible endpoint) contributes zero, and a total that cannot tell "not reported" from

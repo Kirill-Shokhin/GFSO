@@ -241,6 +241,12 @@ def _record_the_session_fit(engine, d: dict, rid: TaskId, ns) -> None:
         if "fits_one_session" in c:
             engine.record_session_fit(TaskId(ns(str(c["id"]))), str(c.get("volume", "")),
                                       bool(c.get("fits_one_session")))
+        # …and what its work touches, so a plan read back for a refine or a repair is checked as it was authored
+        reads = {str(x.get("from")): list(x.get("reads") or []) for x in d.get("deps", [])
+                 if str(x.get("to")) == str(c.get("id")) and "reads" in x}
+        claim = {k: list(c[k] or []) for k in ("writes", "runs") if k in c} | ({"reads": reads} if reads else {})
+        if claim:
+            engine.record_seam_claim(TaskId(ns(str(c["id"]))), claim)
 
 
 def held_contract(d: dict, node) -> dict:

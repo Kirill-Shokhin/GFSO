@@ -19,7 +19,7 @@ import time
 import urllib.request
 
 from gfso.core.types import LLMProviderPort
-from .structured import schema_instruction, parse_structured, RETRY_SUFFIX
+from .structured import schema_instruction, parse_structured, retry_suffix
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class GenericLLM(LLMProviderPort):
         if self.calls:
             self.calls[-1]["parse_failed"] = True
         if text:
-            parsed = parse_structured(self._call(system, user + schema_instruction(schema) + RETRY_SUFFIX), schema)
+            parsed = parse_structured(self._call(system, user + schema_instruction(schema) + retry_suffix(text, schema)), schema)
             if parsed is not None:
                 return parsed
         log.warning("generic structured call: no schema-valid json after retry")

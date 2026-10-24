@@ -23,9 +23,11 @@ import sys
 from pathlib import Path
 
 from gfso.adapters.llm.stats import _hint, _stat_line, tag_stage
+from gfso.core.protocol.procedure import pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
 from gfso.config import MODEL_DEFAULT
 from gfso.llm import llm_factory
+from gfso.decompose.seams import critical_path, waves
 
 
 def _progress(msg: str, cb=None) -> None:
@@ -41,8 +43,9 @@ def _progress(msg: str, cb=None) -> None:
 
 
 def _spec_line(spec: dict) -> str:
-    """Shape readout of a structured spec (what is about to be built)."""
+    """Shape readout of a structured spec (what is about to be built), with the chain its seams make it wait on."""
     return (f"spec: {len(spec.get('subtasks', []))} subtasks · {len(spec.get('deps', []))} seams · "
+            f"{len(waves(spec))} waves ({' → '.join(critical_path(spec))}) · "
             f"{len(spec.get('root_criteria', []))} root criteria · {len(spec.get('accepted_risks', []))} risks")
 
 
@@ -55,6 +58,13 @@ def shape(spec: dict) -> tuple[int, int, int]:
 _PROMPTS = Path(__file__).parent / "prompts"
 SEARCH_PROMPT = (_PROMPTS / "search.md").read_text(encoding="utf-8")
 AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8")
+AGREE_PROMPT = (_PROMPTS / "agree.md").read_text(encoding="utf-8")
+AGREE_SCHEMA = {"type": "object", "required": ["contradictions"], "properties": {"contradictions": {
+    "type": "array", "items": {"type": "object", "required": ["node", "criterion", "description_says", "check_requires",
+                                                               "task_says", "task_takes"],
+                               "properties": {**{k: {"type": "string"} for k in (
+                                   "node", "criterion", "description_says", "check_requires", "task_says")},
+                                   "task_takes": {"enum": ["description", "check", "open", "both"]}}}}}}
 
 _NAME_DESC = {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"},
@@ -109,6 +119,18 @@ _VOLUME = ("the obvious count of the work: roughly how much has to be written (l
 _FITS = ("can ONE session of the executor named under # EXECUTOR write this subtask AND run every one of its "
          "checks directly, holding all its requirements at once? Judged from the volume you counted, "
          "against that executor")
+# THE FILES, NAMED: a seam is the claim that the consumer's work reads the producer's output (§2.7), and the claim
+# becomes checkable once each part says which files it writes (`seams.seam_problems`)
+_WRITES = ("the files (or directories, written with a trailing `/`) this subtask creates or edits, relative to the "
+           "work's root — its own, so two "
+           "subtasks running at once never write the same file; a file both must edit needs the seam that orders them")
+_READS = ("the producer's files (from its `writes`) the consumer needs to WRITE and BUILD its own work — the "
+          "declarations it includes, the code it edits or extends. Not an implementation it only links to or runs "
+          "through so its probes can run: a function whose declaration the base owns is read from the base")
+_RUNS = ("the OTHER subtasks (ids) whose code this subtask's probes execute — a probe through the whole program runs "
+         "every part the program is built from; a driver of the subtask's own over the base's interfaces runs only "
+         "the base. Empty when its probes run only its own code and the base it builds on. Each one named must be a "
+         "producer this subtask waits on: it is checked in a place holding only what it waits on")
 _WHOLE_FITS = ("the same question for the WHOLE node being split — every subtask together with the "
                "integration: could one session of the named executor build and check all of it? The node is "
                "split for the plan either way; this decides whether its pieces are validated each on its "
@@ -133,8 +155,11 @@ AUDIT_SCHEMA = {
                 "id": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"},
                 "criteria": {"type": "array", "items": _NAME_DESC},
                 "volume": {"type": "string", "description": _VOLUME},
-                "fits_one_session": {"type": "boolean", "description": _FITS}},
-                "required": ["id", "name", "description", "criteria", "volume", "fits_one_session"]}},
+                "fits_one_session": {"type": "boolean", "description": _FITS},
+                "writes": {"type": "array", "items": {"type": "string"}, "description": _WRITES},
+                "runs": {"type": "array", "items": {"type": "string"}, "description": _RUNS}},
+                "required": ["id", "name", "description", "criteria", "volume", "fits_one_session", "writes",
+                             "runs"]}},
         "mappings": {"type": "array", "description":
             "Coverage: which subtask establishes which root criterion (every root criterion → >=1 subtask; "
             "every subtask → >=1 mapping).",
@@ -142,10 +167,13 @@ AUDIT_SCHEMA = {
                 "criterion": {"type": "string"}, "child_id": {"type": "string"}},
                 "required": ["criterion", "child_id"]}},
         "deps": {"type": "array", "description":
-            "Dep seams: {from: producer subtask id, to: consumer subtask id, glue: the seam truth-maker}.",
+            "Dep seams: {from: producer subtask id, to: consumer subtask id, glue: the seam truth-maker, reads: what "
+            "of the producer's files the consumer's WORK reads}. Every seam is wall time: the consumer waits for the "
+            "producer's PASS, so the longest chain of seams is the plan's floor on time.",
             "items": {"type": "object", "properties": {
-                "from": {"type": "string"}, "to": {"type": "string"}, "glue": {"type": "string"}},
-                "required": ["from", "to", "glue"]}},
+                "from": {"type": "string"}, "to": {"type": "string"}, "glue": {"type": "string"},
+                "reads": {"type": "array", "items": {"type": "string"}, "description": _READS}},
+                "required": ["from", "to", "glue", "reads"]}},
         "accepted_risks": {"type": "array", "description":
             "The RISK REGISTER — ONLY uncertain EVENTS with a real materialization probability that this "
             "decomposition ignores. predictability verdict per event: STATISTICAL = P estimable but rare "
@@ -359,7 +387,8 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
 
     _apply_removals(s, patch, ops)
 
-    upd = {str(c.get("id")): _keeping_the_pinned_inputs(c, s["subtasks"])
+    files = _pinned_files(s)
+    upd = {str(c.get("id")): _filling_named_inputs(_keeping_the_pinned_inputs(c, s["subtasks"]), files)
            for c in patch.get("update_subtasks", [])}
     changed = [str(c.get("id")) for c in s["subtasks"] if str(c.get("id")) in upd and upd[str(c.get("id"))] != c]
     if changed:
@@ -373,14 +402,28 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
         if new:
             s[tgt] = s[tgt] + new
             ops.append(f"+{tgt} {len(new)}")
-    _add("subtasks", list(patch.get("add_subtasks", [])) + unknown_upd, lambda x: str(x.get("id")))
-    _add("root_criteria", patch.get("add_root_criteria", []), lambda x: str(x.get("name")))
+    _add("subtasks", [_filling_named_inputs(x, files) for x in patch.get("add_subtasks", [])] + unknown_upd,
+         lambda x: str(x.get("id")))
+    _add("root_criteria", _filling_named_inputs({"criteria": patch.get("add_root_criteria", [])}, files)["criteria"],
+         lambda x: str(x.get("name")))
     _add("mappings", patch.get("add_mappings", []),
          lambda x: (str(x.get("criterion")), str(x.get("child_id"))))
     _add("deps", patch.get("add_deps", []), lambda x: (str(x.get("from")), str(x.get("to"))))
     _add("accepted_risks", patch.get("add_accepted_risks", []), lambda x: str(x.get("item")))
     _add("scope", patch.get("add_scope", []), lambda x: str(x.get("item")))
     return s, ops
+
+
+def _pinned_files(spec: dict) -> dict[tuple[str, str], str]:
+    """{(criterion, file): body} of every file a probe of this plan pins with content — root criteria and subtasks."""
+    return pinned_files(list(spec.get("root_criteria") or [])
+                        + [c for k in spec.get("subtasks") or [] for c in k.get("criteria") or []])
+
+
+def _filling_named_inputs(item: dict, files: dict) -> dict:
+    """`item`'s criteria, each probe that names files without their content given the content this plan pins under its
+    criterion (`procedure.with_named_files`) — the fold's door; the machine issuer's is `issuer._new_child`."""
+    return dict(item, criteria=[with_named_files(c, files) for c in (item.get("criteria") or [])])
 
 
 def _keeping_the_pinned_inputs(replacement: dict, current: list) -> dict:

@@ -35,7 +35,10 @@ it, what contract comes next, or is the node to be closed.
   memory: where you are given the workspace, run the disputed checks before deciding, and decide on
   what they showed. A check whose own reference fails it is a defect of the contract — accept, and
   write the check so that what the criterion describes passes it: run the new check before you answer,
-  with the reference standing in for the work, and accept only a check it passes.
+  with the reference standing in for the work, and accept only a check it passes. The work under test is
+  never that reference: at the root of an AUTO project every expectation you change is shown by a
+  `derivations` entry whose command computes it without the work, and the system re-runs it — for the
+  new probe and for the probe it replaces, which must be shown wrong.
 - **escalation** — the executor's contract ended without a verdict: rework exhausted, a bound missed,
   a block unresolved, or a delivery unvalidated. `reassign` writes the next contract (a new deadline, a
   raised rework budget, corrected criteria, another executor if this one cannot do it); `cancel`

@@ -8,6 +8,9 @@ two consumers of one producer both carry `dep__<producer>`.
 """
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 import gfso.delegate as D
@@ -17,6 +20,7 @@ import tests.test_one_session_carries_a_scope as S
 from gfso.core.types import AgentId, Mode, State, TaskId
 from gfso.decompose.build import build_graph_live
 from gfso.roster import AgentRegistry
+from gfso.tools_llm import _SCOPE_VALIDATOR_SCHEMA, _entries_by_node
 from tests.support import REGISTER, criterion, make_engine
 
 
@@ -83,3 +87,39 @@ def test_a_shared_criterion_name_fails_only_the_node_whose_entry_failed(tmp_path
     out = TL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
     assert (out["verdicts"]["root.b"]["verdict"], out["verdicts"]["root.c"]["verdict"]) == ("FAIL", "PASS")
     e.stop()
+
+
+
+@pytest.mark.parametrize("listed", ["c_ok"])
+def test_a_failed_list_read_as_written_never_passes_the_node_it_names(tmp_path, listed):
+    # critic over 37579f8: a list written as one string was read letter by letter, and a name that is no criterion was
+    # dropped beside a red entry — either way root.c passed over its own c_ok, which the report called failed
+    e, agents = _two_consumers_of_one_producer(tmp_path)
+    S._drive(e, S._dispatcher(e, agents, S._LLM(S._delivered("root.a", "root.b", "root.c", "root")), S._NeverAnswers(), []),
+             lambda: e.graph.get_state(TaskId("root")) == State.VALIDATING, rounds=60)
+    for tid in ("root", "root.a", "root.b", "root.c"):
+        e.claims.end_validation(S._free_claim(e, tid))
+
+    def report():
+        ents = [x for t in e.all_tasks() if t.state == State.VALIDATING for x in S._entries(e, t, {("root.b", "dep__a")})]
+        return S._fenced({"verdict": "FAIL", "per_criterion": ents, "failed_criteria": listed})
+    out = TL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
+    assert out["verdicts"]["root.c"]["verdict"] != "PASS", out["verdicts"]
+    e.stop()
+
+
+def test_a_red_entry_placed_under_no_node_is_answered_by_each_owner_itself():
+    # critic over 37579f8: two consumers share `dep__P`; B's pass of it was kept from a refused attempt; a red `dep__P`
+    # entry under "`B`" (or under no id) was dropped, A's own fail answered the name, and B passed on the kept pass
+    crit = lambda n: SimpleNamespace(name=n)
+    a = SimpleNamespace(id="A", spec=SimpleNamespace(criteria=[crit("dep__P"), crit("a_own")]))
+    b = SimpleNamespace(id="B", spec=SimpleNamespace(criteria=[crit("dep__P"), crit("b_own")]))
+    parts = [(a, "", [crit("dep__P"), crit("a_own")]), (b, "", [crit("b_own")])]
+    for tid in ("`B`", ""):
+        ents = [{"task_id": "A", "criterion": "dep__P", "verdict": "fail", "evidence": "x"},
+                {"task_id": "A", "criterion": "a_own", "verdict": "pass", "evidence": "x"},
+                {"task_id": tid, "criterion": "dep__P", "verdict": "fail", "evidence": "x"},
+                {"task_id": "B", "criterion": "b_own", "verdict": "pass", "evidence": "x"}]
+        text = "```json\n" + json.dumps({"verdict": "FAIL", "per_criterion": ents, "failed_criteria": ["dep__P"]}) + "\n```"
+        out, said = _entries_by_node([text], parts, _SCOPE_VALIDATOR_SCHEMA, own=False)
+        assert any(x["criterion"] == "dep__P" for x in out["B"]) or said["B"]["contradiction"], (tid, out, said)

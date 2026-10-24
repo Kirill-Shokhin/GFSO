@@ -29,10 +29,12 @@ def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
 
     subtasks, deps = [], []
     for c in engine.graph.get_active_children(TaskId(root_id)):
-        crit = []
+        crit, claim = [], engine.seam_claim(c.id)
         for cr in c.spec.criteria:
             if cr.depends_on:  # build's seam encoding: dep__{producer} criterion on the CONSUMER
-                deps.append({"from": dens(cr.depends_on), "to": dens(c.id), "glue": cr.description})
+                f = dens(cr.depends_on)
+                deps.append({"from": f, "to": dens(c.id), "glue": cr.description}
+                            | ({"reads": claim["reads"][f]} if f in (claim.get("reads") or {}) else {}))
             else:
                 crit.append({"name": cr.name, "description": cr.description,
                              # …WITH ITS PROCEDURE. This function calls itself the exact data
@@ -42,7 +44,8 @@ def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
                              # failed A1 where a minute earlier it had passed.
                              "check": [p.to_dict() for p in (cr.check or ())]})
         subtasks.append({"id": dens(c.id), "name": c.spec.name, "description": c.spec.description,
-                         "criteria": crit, **_fit(engine, c.id, "")})
+                         "criteria": crit, **_fit(engine, c.id, ""),
+                         **{k: claim[k] for k in ("writes", "runs") if k in claim}})
 
     return {
         "name": root.spec.name,

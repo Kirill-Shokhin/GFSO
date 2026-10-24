@@ -81,9 +81,10 @@ def mcp_registered() -> tuple[bool | None, str]:
 
 
 def _assets_ok() -> tuple[bool, str]:
-    """The eleven files the wheel must carry. A missing one breaks a door with no error at the door."""
+    """The files the wheel must carry. A missing one breaks a door with no error at the door — the page's
+    script modules by their entry point, which imports every other one."""
     pkg = Path(__file__).parent
-    required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg",
+    required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg", "web/js/main.js",
                 "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md",
                 "decompose/prompts/search.md", "decompose/prompts/audit.md",
                 "critic/prompts/atomicity.md", "critic/prompts/checker.md")

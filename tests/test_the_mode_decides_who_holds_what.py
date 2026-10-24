@@ -21,6 +21,7 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso import issuer as I
 from gfso.decompose.build import build_graph_live
+from gfso.delegate import ISSUER_VERBS
 from gfso.decompose.extract import extract_spec
 from gfso.sessions import run_consent
 from gfso.roster import AgentRegistry
@@ -175,7 +176,10 @@ def test_under_auto_an_accepted_dispute_re_pins_a_root_probe_and_keeps_the_users
     probe = {"behaviour": "b", "command": "test -d . && echo 6", "expect": "6"}
     llm = _FakeLLM({"decision": "accept", "justification": "the probe's expected output contradicts g's text",
                     "criteria": [{"name": "g", "description": "G, loosened", "check": [probe]},
-                                 {"name": "h", "description": "H holds", "check": [probe]}]})
+                                 {"name": "h", "description": "H holds", "check": [probe]}],
+                    # the 6 the user's own text gives, computed without the work (`underived_at_the_root`)
+                    "derivations": [{"criterion": "g", "probe": probe["command"], "derived_by": "expr 2 \\* 3"},
+                                    {"criterion": "g", "probe": "check g", "derived_by": "expr 2 \\* 3"}]})
     out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm)
     e.wait_idle()
     t = e.graph.get_task("root")
@@ -400,9 +404,6 @@ def test_a_rejected_challenge_is_seen_and_spends_the_plans_budget():
                                   new_spec=e.graph.get_task(kid).spec))
     e.wait_idle()
     assert "REJECTED" not in I.issuer_context(e, kid, "plan"), "an answered, re-versioned contract is no longer that one"
-    before = (e.tally("admitted:g"), e.tally("answers:g:plan:0"))
-    I._answered(e, "g", "plan", {"status": "applied", "move": "challenge"}, kid)
-    assert (e.tally("admitted:g"), e.tally("answers:g:plan:0")) == (before[0], before[1] + 1)
 
 
 def test_the_issuers_context_builds_on_a_real_tree_for_every_question():
@@ -430,23 +431,24 @@ def test_a_question_whose_answers_keep_failing_is_asked_rarely_never_muted(tmp_p
         asked.append(key)
         return False                      # never run: the test is about whether it is ASKED
 
-    I.answer_open_questions(e, agents, claim, None, None, None, {gen: (0, 50, 0.0)})
+    I.answer_open_questions(e, agents, claim, None, None, None, {gen: (50, 0.0, 0)})
     assert asked == ["q:root"], "however many settles failed, the question is asked once its wait passed"
     assert I.backoff(50) == I.MAX_BACKOFF_S and I.backoff(0) == I.BACKOFF_S
 
 
 def _sweeps(e, agents, settles, monkeypatch):
-    """Run one sweep per scripted settle outcome; return the nodes the machine issuer closed."""
-    closed, script = [], iter(settles)
+    """Run one sweep per scripted settle outcome, each past the backoff the last one left; return the ledger."""
+    script = iter(settles)
     monkeypatch.setattr(I, "settle", lambda *a, **k: next(script))
-    monkeypatch.setattr(I, "_close", lambda *a, **k: closed.append(a[2]) or {"status": "cancelled"})
     ledger, cap = {}, threading.Semaphore(1)
     for _ in settles:
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         for th in set(threading.enumerate()) - before:
             th.join(5)
-    return closed
+        e.wait_idle()
+        ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
+    return ledger
 
 
 def _auto_goal(tmp_path):
@@ -458,71 +460,90 @@ def _auto_goal(tmp_path):
     return e, agents
 
 
-def test_a_converging_plan_is_not_closed_on_a_fix_no_review_has_read(tmp_path, monkeypatch):
-    """Each applied plan fix counted as a settle that moved nothing (three closed the AUTO root — the user's
-    goal — before the review of the third ran), and then as an answer under a cap of twelve (the same, at
-    twelve). A plan whose reviews keep moving is closed by neither: fix, review, fix, review…"""
+def test_no_count_of_answers_closes_a_node_its_clock_does(tmp_path, monkeypatch):
+    """The machine issuer CANCELled a node — the AUTO root, the user's live goal — after three settles that moved
+    nothing or twelve answers to one question; on GB_sql_database (2026-10-14/15) every such close hid the engine's
+    own refusals of a correct move. §12.15 Φ3: "the counters are not finiteness devices" — a node no answer moves is
+    asked again after its backoff and ends by its clock (Φ1/Φ2), never by a count."""
     e, agents = _auto_goal(tmp_path)
-    fix, review = {"status": "applied", "kind": "fix"}, {"status": "applied", "kind": "review"}
-    assert _sweeps(e, agents, [fix, review] * 10, monkeypatch) == []
+    state = e.graph.get_state(TaskId("root"))
+    for st in ("unproductive", "refused", "unparsed", "unavailable"):
+        ledger = _sweeps(e, agents, [{"status": st}] * 15, monkeypatch)
+        assert e.graph.get_state(TaskId("root")) == state, f"{st} answers closed the node"
+    assert max(w for w, _, _ in ledger.values()) == 15, "a settle no model answered backs the question off"
+    fix, dispute = {"status": "applied", "kind": "fix"}, {"status": "applied", "kind": "fix", "move": "dispute"}
+    _sweeps(e, agents, [fix, dispute] * 15, monkeypatch)
+    assert e.graph.get_state(TaskId("root")) == state, "applied answers closed the node"
 
 
-def test_a_plan_episode_is_bounded_but_never_closed_on_a_fix_no_review_has_read(tmp_path, monkeypatch):
-    """A plan's answers are bounded per episode (a measure read off the gate's contents between reviews let
-    a plan grow its root without bound: hole and finding keys change for reasons other than convergence).
-    At the bound the node is closed — unless its review is due, which then runs first."""
-    e, agents = _auto_goal(tmp_path)
-    fix, review = {"status": "applied", "kind": "fix"}, {"status": "applied", "kind": "review"}
-    assert _sweeps(e, agents, [fix] * I.MAX_PLAN_ANSWERS, monkeypatch) == []
-    monkeypatch.setattr(I, "review_due", lambda *a: True)
-    assert _sweeps(e, agents, [review], monkeypatch) == [], "the due review runs before any close"
-    monkeypatch.setattr(I, "review_due", lambda *a: False)
-    assert _sweeps(e, agents, [fix], monkeypatch) == [TaskId("root")]
-
-
-def test_whatever_closes_the_plan_question_ends_its_episode(tmp_path, monkeypatch):
-    """A plan cleared once — by a review, or by a dispute of its last finding — and reopened later (a child
-    re-issued) starts with its budget whole: only a review's opening ended the episode, so a plan cleared by
-    disputes came back already spent and its converging second episode was cancelled."""
-    e, agents = _auto_goal(tmp_path)
-    fix = {"status": "applied", "kind": "fix", "move": "revise_child"}
-    closes_once = {"armed": False}
-    real = I.open_questions
+def _served(e, agents, settles, monkeypatch, closes_after=(), waits=None):
+    """Sweep once per scripted settle, the clock never moving; return how many were served. The answers whose index
+    is in `closes_after` close their question (its plan episode ends): the read after them finds it gone, the next
+    sweep open again (a child re-issued). With `waits`, the clock moves past each wait and the wait each answer left
+    is appended there."""
+    script, reads, real = iter(settles), {"left": 0}, I.open_questions
+    monkeypatch.setattr(I, "settle", lambda *a, **k: next(script))
 
     def questions(eng):
-        if closes_once["armed"]:          # the read right after the closing answer: the question is gone
-            closes_once["armed"] = False
-            return []
-        return real(eng)                  # ...and on the next sweep a re-issued child has reopened it
+        reads["left"] -= 1
+        return [] if reads["left"] == 0 else real(eng)      # the sweep's own read first, the answer's second
     monkeypatch.setattr(I, "open_questions", questions)
-
-    def settles():
-        for _ in range(I.MAX_PLAN_ANSWERS - 1):
-            yield fix
-        closes_once["armed"] = True       # a dispute clears the last finding
-        yield dict(fix, move="dispute")
-        for _ in range(5):
-            yield fix
-    script = settles()
-    closed, served = [], []
-    monkeypatch.setattr(I, "settle", lambda *a, **k: served.append(1) or next(script))
-    monkeypatch.setattr(I, "_close", lambda *a, **k: closed.append(a[2]) or {"status": "cancelled"})
-    ledger, cap = {}, threading.Semaphore(1)
-    for _ in range(I.MAX_PLAN_ANSWERS + 5):
+    ledger, cap, served = {}, threading.Semaphore(1), []
+    for k in range(len(settles)):
+        reads["left"] = 2 if len(served) in closes_after else -1
         before = set(threading.enumerate())
-        I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
+        got = I.answer_open_questions(e, agents, lambda key: True, lambda *a, **kw: None, cap, None, ledger)
+        served += got
         for th in set(threading.enumerate()) - before:
             th.join(5)
-    assert closed == [] and len(served) == I.MAX_PLAN_ANSWERS + 5, (closed, len(served))
+        if waits is not None:
+            waits.append(round(max(nb for _, nb, _ in ledger.values()) - time.monotonic()))
+            ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
+    return len(served)
 
 
-def test_disputes_do_not_spend_a_plans_budget(tmp_path, monkeypatch):
-    """A fix stales the review and its disputes with it, so a rightly disputed finding comes back at every
-    review; counted, the disputes cancelled a converging plan under dispute-first order."""
+def test_an_answer_that_leaves_its_question_open_waits_past_the_free_count(tmp_path, monkeypatch):
+    """A question its own answer brings straight back was asked at the model's latency for a whole version once no
+    count closed it (critic, 2026-10-15: 200 settles in 200 sweeps). Past FREE_ANSWERS such an answer waits; nothing
+    closes."""
     e, agents = _auto_goal(tmp_path)
-    dispute = {"status": "applied", "kind": "fix", "move": "dispute"}
-    assert _sweeps(e, agents, [dispute] * (I.MAX_PLAN_ANSWERS * 2), monkeypatch) == []
+    fix = {"status": "applied", "kind": "fix"}
+    assert _served(e, agents, [fix] * (I.FREE_ANSWERS + 5), monkeypatch) == I.FREE_ANSWERS + 1
+    assert e.graph.get_state(TaskId("root")) != State.CANCELLING
 
+
+def test_an_answer_that_came_and_moved_nothing_is_not_backed_off_as_a_failed_transport(tmp_path, monkeypatch):
+    """A refusal names its own correction; backed off as a transport that failed, the next answer waited 2, 4, 8, 16,
+    32 min — an AUTO root's dispute sat CHALLENGED 81 min, 62 of them idle (GB_sql_database_tmvpo1976). An answer that
+    came paces at the model's latency (PACE_S) while free; past FREE_ANSWERS it waits; a settle no model answered still
+    doubles."""
+    e, agents = _auto_goal(tmp_path)
+    waits = []
+    _served(e, agents, [{"status": "refused"}] * (I.FREE_ANSWERS + 2), monkeypatch, waits=waits)
+    assert set(waits[:I.FREE_ANSWERS]) == {I.PACE_S}, waits
+    assert waits[I.FREE_ANSWERS] > I.PACE_S and waits[I.FREE_ANSWERS + 1] > waits[I.FREE_ANSWERS], waits
+    waits = []
+    _served(e, agents, [{"status": "unavailable"}] * 3, monkeypatch, waits=waits)
+    assert waits == [I.BACKOFF_S, 2 * I.BACKOFF_S, 4 * I.BACKOFF_S], waits
+    assert e.graph.get_state(TaskId("root")) != State.CANCELLING
+
+
+def test_a_converging_plan_is_never_slowed(tmp_path, monkeypatch):
+    """The rate counted every applied answer per node and never reset: a plan converging over episodes, its reviews
+    and its disputes, waited 14–26 h in the critic's replay (2026-10-15). Reviews and disputes are not counted, and a
+    question that closed starts the count over."""
+    e, agents = _auto_goal(tmp_path)
+    fix, review = {"status": "applied", "kind": "fix"}, {"status": "applied", "kind": "review"}
+    dispute = dict(fix, move="dispute")
+    n = I.FREE_ANSWERS                    # as many fixes as one episode takes free, a review and a dispute after each
+    assert _served(e, agents, [fix, review, dispute] * n, monkeypatch) == 3 * n, "reviews and disputes were counted"
+    per_episode = [fix] * (I.FREE_ANSWERS - 1) + [review]
+    closes = {k * I.FREE_ANSWERS + I.FREE_ANSWERS - 1 for k in range(3)}
+    assert _served(e, agents, per_episode * 3, monkeypatch, closes) == 3 * I.FREE_ANSWERS, "a closed question kept its count"
+    # …and past the free count only the counted answer waits: the review that reads a fix, and a dispute, do not
+    waits = []
+    _served(e, agents, [fix] * (I.FREE_ANSWERS + 1) + [review, dispute], monkeypatch, waits=waits)
+    assert waits[-3] > 0 and waits[-2:] == [0, 0], ("an uncounted answer waited the counted ones' backoff", waits[-3:])
 
 def test_a_semi_goal_with_no_split_is_not_delivered_by_its_holder():
     """SEMI is a boundary in the plan's depth; a goal with no split has nothing below it, and its holder
@@ -1161,7 +1182,7 @@ def test_two_holes_one_revision_opened_are_lifted_by_one_reshape(monkeypatch):
 def test_a_dispute_rejected_without_contact_is_not_a_reason_to_close_the_node(tmp_path):
     """A rejection whose run used no shell is refused — and is not one of the answers that close a node: the dispute
     is not adjudicated yet. Counted as unproductive, three such sweeps cancelled the node whose challenge nobody had
-    run (critic over session a597fc08) — `head`'s end, sooner. MAX_ANSWERS still bounds the question."""
+    run (critic over session a597fc08) — `head`'s end, sooner."""
     e = _engine(Mode.AUTO)
     _goal(e)
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
@@ -1187,15 +1208,14 @@ def test_a_dispute_rejected_without_contact_is_not_a_reason_to_close_the_node(tm
     verbs = I.Verbs(llm=lambda m: _NoShell(), busy=lambda *a: contextlib.nullcontext(), review=None, refine=None,
                     place=lambda engine, agents, node: str(tmp_path))
     ledger, cap = {}, threading.Semaphore(1)
-    for _ in range(I.MAX_UNPRODUCTIVE + 1):
+    for _ in range(4):
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, verbs, ledger)
         for th in set(threading.enumerate()) - before:
             th.join(10)
         e.wait_idle()
-        ledger.update({g: (n, w, 0.0) for g, (n, w, _) in ledger.items()})     # past the backoff
+        ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})     # past the backoff
     assert e.graph.get_state(TaskId("kid")) == State.CHALLENGED, "the dispute still stands, the node is not closed"
-    assert all(n == 0 for n, _, _ in ledger.values()), ledger
 
 
 def test_a_child_the_issuer_added_is_found_under_the_name_it_gave():
@@ -1240,3 +1260,42 @@ def test_a_new_child_reads_a_sibling_named_without_its_parent():
     ok, why = add({"name": "glue", "description": "reads the part", "covers": ["g"], "reads": ["part2"],
                    "criteria": [criterion("r", "R holds")]})
     assert ok, why
+
+
+@pytest.mark.parametrize("drop", [["root.D3", "root.d4", "root.D5"], []])
+def test_a_sibling_the_same_act_adds_is_read_under_the_id_it_will_have(drop, monkeypatch):
+    """The machine issuer's reshape dropped root.D3/d4/D5 and added `D3_Parser`, `D4_ExpressionEvaluator`, `D5_Executor`,
+    the last reading `root.D3_Parser` — stored `root.d3_parser`, so the answer was refused on one letter's case
+    (GB_sql_database_tmx1h7240, 2026-10-15). Read as the sibling it names — never as the old `root.D3` beside it."""
+    monkeypatch.setenv("GFSO_L2_GATE", "0")
+    e = _engine(Mode.AUTO)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+    kids = []
+    for tid, name in [("root.D1", "Lexer"), ("root.D2", "Storage"), ("root.D3", "Parser — SQL to AST"),
+                      ("root.d4", "D4"), ("root.D5", "Executor")]:
+        k = _kid(tid, ["g"], criterion("k" + tid[-1], tid + " holds"))
+        k["spec"]["name"] = name
+        kids.append(k)
+    _admit(e, "root", *kids)
+    root = e.graph.get_task(TaskId("root"))
+    new = lambda name, reads: {"name": name, "description": name, "covers": ["g"], "reads": reads,
+                               "criteria": [criterion("c_" + name, name + " holds")]}
+    ok, why = I.MOVES["reshape"](e, root, str(root.assignee), {"drop": drop, "children": [
+        new("D3_Parser", ["root.D1"]), new("D4_ExpressionEvaluator", []),
+        new("D5_Executor", ["root.D3_Parser", "root.D2"])]}, "j", None)
+    assert ok, why
+    e.wait_idle()
+    deps = [c.depends_on for c in e.graph.get_task(TaskId("root.d5_executor")).spec.criteria if c.depends_on]
+    assert sorted(deps) == ["root.D2", "root.d3_parser"], deps
+    e.stop()
+
+
+def test_the_machines_own_split_is_not_refused_as_the_customers_move(tmp_path, monkeypatch):
+    """Bound to the door registry, the issuer's `refine` went through AUTO's customer lock: a part whose split was owed
+    ("does not fit one session") was refused on every attempt, silently, and sat OFFERED to its timeout, 2 h 35 min
+    (AUTO haiku coreutils, GB_coreutils_tn73sy660, root.tr). The split is the system's move here, not the customer's."""
+    e, agents = _auto_goal(tmp_path)
+    seen = {}
+    monkeypatch.setitem(TL.SYSTEM_TOOLS, "auto_decompose", lambda engine, **kw: seen.update(kw) or {"ok": True})
+    out = ISSUER_VERBS.refine(e, "kid")
+    assert "customer" not in str(out) and seen.get("root_id") == "kid", out

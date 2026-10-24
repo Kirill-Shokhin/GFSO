@@ -349,9 +349,9 @@ class NodeSteps:
                     f"moves until you close it: ACCEPT_CHALLENGE with the new spec if the dispute is "
                     f"right (the node returns to OFFERED and its executor consents afresh), or "
                     f"REJECT_CHALLENGE with the justification if the contract stands."
-                    # …AND AT AN AUTO ROOT, A RULING ON A FINDING IS THE USER'S ALONE: the system makes no move on it
+                    # …AND AT AN AUTO ROOT, A RULING ON A FINDING IS THE USER'S ALONE: the system never makes it
                     + (f" | THE USER'S QUESTION: it asks to rule {', '.join(_asked)} outside the user's goal, and "
-                       f"under AUTO the system makes no move on it — ask the user, and send their answer: "
+                       f"under AUTO the system never rules on it — ask the user, and send their answer: "
                        f"ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
                        f"with why the goal asks for it. Unanswered, the clock escalates it."
                        if (_asked := self.engine.users_dispute(t.id)) else ""))

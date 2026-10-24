@@ -6,10 +6,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from gfso.adapters import worktrees as W
+from gfso.adapters.llm.headless import forget_session, session_key
 from gfso.config import DEFAULT_PROJECT
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task
-from gfso.core.types import TaskId, State
+from gfso.core.types import Signal, TaskId, State
 from gfso.roster import AgentRegistry
 
 
@@ -141,13 +142,7 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
     base, place, branch = w
     _ensure_place(engine, agents, top, w)
     inside = {str(m.id) for m in members}
-    parts = {str(k.id): k for m in members for k in engine.graph.get_active_children(m.id)}
-    parts.update({str(e.from_id): engine.graph.get_task(TaskId(e.from_id)) for e in engine.adopted_dependencies()
-                  if str(e.to_id) in inside})
-    # …AND THE WORK OF WHAT IT REPLACES, PASSed or not: a child merged out of a cycle, or cut again, started from the
-    # base and redid what its dropped predecessors had committed (§12.16 (ii): the issuer's move keeps the work)
-    kept = {str(x.id): x for m in members for x in engine.carried_work(m.id)}
-    parts.update(kept)
+    parts, kept = parts_of(engine, members)
     unjoined = []
     for x in parts.values():
         xw = (_workspace(engine, agents, x) if x is not None and str(x.id) not in inside
@@ -159,6 +154,30 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
     return place, unjoined, w
 
 
+def parts_of(engine, members: list) -> tuple[dict, dict]:
+    """({id: node} whose work the members' result carries — their active children, the producers they consume, and the
+    work they carry on — , {id: node} of the last alone)."""
+    inside = {str(m.id) for m in members}
+    parts = {str(k.id): k for m in members for k in engine.graph.get_active_children(m.id)}
+    parts.update({str(e.from_id): engine.graph.get_task(TaskId(e.from_id)) for e in engine.adopted_dependencies()
+                  if str(e.to_id) in inside})
+    # …AND THE WORK OF WHAT IT REPLACES, PASSed or not: a child merged out of a cycle, or cut again, started from the
+    # base and redid what its dropped predecessors had committed (§12.16 (ii): the issuer's move keeps the work)
+    kept = {str(x.id): x for m in members for x in engine.carried_work(m.id)}
+    parts.update(kept)
+    return parts, kept
+
+
+def still_unjoined(engine, workspace: tuple | None, task_id, unjoined: list) -> list[str]:
+    """The parts of `task_id` listed unjoined when its session began whose branch its tree still does not contain."""
+    if workspace is None or not unjoined:
+        return []
+    mine, kept = parts_of(engine, [engine.graph.get_task(TaskId(task_id))])
+    # …the parts that PASSed: a replaced node's unfinished work is offered to the whole, not owed by it
+    return [x for x, b, _ in unjoined if x in mine and (x not in kept or mine[x].state == State.DONE)
+            and not W.contains(workspace[0], workspace[1], b)]
+
+
 def _unjoined_text(unjoined: list) -> str:
     """The parts whose PASSed delivery did not merge into this session's workspace — its integration to do."""
     if not unjoined:
@@ -166,15 +185,30 @@ def _unjoined_text(unjoined: list) -> str:
     return ("\n## Parts NOT joined into your workspace — integrating them is this whole's work\n"
             "Each stands on its own branch — a part that PASSed, or a node this one replaces, whose work it carries "
             "on — and did not merge here cleanly (the merge was aborted, your tree is as it was). Merge each "
-            "(`git merge <branch>`), resolve, and deliver the integrated result.\n"
+            "(`git merge <branch>`), resolve, and deliver the integrated result. A delivery whose tree does not "
+            "contain every branch below is not handed in: your result is the integration of its parts' work, and "
+            "rewriting what a part already built in place of merging it loses what its seam passed.\n"
             + "".join(f"- `{x}` on branch `{b}`: {why}\n" for x, b, why in unjoined))
 
 
+#: the roles whose sessions keep a conversation: one node's round and one scope's — two prompts, two conversations
+CONVERSING_ROLES = ("executor", "scope-executor")
+
+
+def conversation_of(engine, task_id, executor_id, role: str) -> str:
+    """The conversation a role's session on this node continues: keyed by the node's FIRST issue as well as its id, so
+    a later goal in the same project reusing the id (a root that never passed keeps its transcripts) is another."""
+    first = next((e.timestamp for e in engine.audit_log(task_id) if e.signal == Signal.ASSIGN and not e.rejected), "")
+    return session_key(engine.project_name, task_id, first, executor_id, role)
+
+
 def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
-    """At the root's PASS every joined part is in the base: its worktree and branch go (a node's tree is a whole
+    """At the root's PASS every joined part is in the base: its worktree, branch and executor's conversation go (a node's tree is a whole
     checkout, so kept they cost the base's size each), and what did not join stays where it is, named."""
     left, seen = [], set()
     for t in engine.all_tasks():
+        for role in CONVERSING_ROLES:          # the work its conversations served is settled
+            forget_session(conversation_of(engine, t.id, t.assignee, role))
         w = _workspace(engine, agents, t)
         if w is None or w[2] in seen or not Path(w[1]).is_dir():
             continue

@@ -21,6 +21,23 @@ def tag_stage(llm, stage: str) -> None:
         llm.tag_last(stage)
 
 
+#: How an account's limit reads in a call's error — not a context window's "limit", which no wait lifts. The CLI's own
+#: words for its five-hour window are "session limit" (`usage_limit_reached` in the envelope's `api_error`).
+ACCOUNT_LIMIT = ("usage limit", "usage_limit", "session limit", "weekly limit", "spend limit", "rate_limit", "rate limit")
+
+
+def is_limit(error) -> bool:
+    """Was this call's error the account's limit?"""
+    e = str(error or "").lower()
+    return any(m in e for m in ACCOUNT_LIMIT)
+
+
+def refused_by_limit(calls) -> bool:
+    """Did the account's limit end any call of this run? Such a run answered nothing — an executor's session, a
+    validation, a consent — and is asked again when the limit can have lifted, spending none of the node's budget."""
+    return any(isinstance(c, dict) and is_limit(c.get("error")) for c in calls or ())
+
+
 def calls_of(llm) -> tuple:
     """The stat dicts this provider recorded, or nothing — the ONE place that asks a provider for
     them. Duck-typed for the reason this module exists: only a stat-collecting adapter has `calls`,
@@ -64,10 +81,14 @@ def _stat_line(llm) -> str:
     # sufficiency readings — reported the LAST one, so a review costing 57 seconds and 0.18 dollars
     # was announced as "done in 2s · 0.0k tokens": the sub-call's numbers, under-reporting the work
     # by thirty times (measured on the human door 2026-08-22).
+    # …SAID AS THE SUM IT IS: one llm carries a whole verb, and `auto_decompose` reuses it across its stages, so
+    # "done in 1466s · 13.9k tokens" read as one repairer's 25 minutes when that call took 95 s — the sum of every call
+    # before it, parallel readings included (measured on GB_coreutils_tn73sy660, 2026-10-20)
     secs = sum((x.get("duration_ms") or 0) for x in dicts) / 1000
-    line = (f"done in {secs:.0f}s · {(c.get('output_tokens') or 0) / 1000:.1f}k tokens "
-            f"· Σ {total / 1000:.1f}k tokens")
-    return line + (f" · ⚠ {retries} parse-retry" if retries else "")
+    line = (f"done · this call {(c.get('duration_ms') or 0) / 1000:.0f}s, {(c.get('output_tokens') or 0) / 1000:.1f}k "
+            f"tokens · Σ {len(dicts)} call(s) {secs:.0f}s model time, {total / 1000:.1f}k tokens")
+    return (line + (f" · ⚠ {retries} parse-retry" if retries else "")
+            + (f" · ⚠ the call ended in error — {c['error']}" if c.get("error") else ""))
 
 
 def _hint(llm, stage: str) -> None:

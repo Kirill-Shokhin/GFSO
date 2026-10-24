@@ -13,10 +13,12 @@ A critic over 3982699 found three more: a validator's `t.c` of one round took th
 new program's FAIL was refused as a ruled finding's; the system answered an AUTO root's dispute it could not rule on,
 and the finding came back until the rework bound cancelled the root; a member all of whose criteria read another member
 handed its findings to no criterion of the merged child. A finding's id now carries the content of the scratch files
-it ran; a dispute at an AUTO root naming a finding is the user's question (`Engine.users_dispute`).
+it ran; at an AUTO root a ruling on a finding is the user's alone (`Engine.users_dispute`) — the dispute itself the
+system still answers without one: barred from it altogether, a root sat CHALLENGED until the run's ceiling on a
+challenge that only said the findings could not be met (GB_sql_database_tn03ao788, 2026-10-16).
 
-CONTROLS: let the system move on the user's question (`system_mover`) or lock the door to the user's answer, and the
-AUTO test goes red; stop lapsing rulings in `findings.rulings` and the tightening test goes red; let `ruling_defect`
+CONTROLS: let the system rule on the user's goal (`answer_the_challenge`) or lock the door to the user's answer, and the
+AUTO test goes red; bar the system from the dispute (`system_mover`) and the rejection test goes red; stop lapsing rulings in `findings.rulings` and the tightening test goes red; let `ruling_defect`
 take a criterion's name in place of a finding's id and the incidental-mention test goes red; map a dropped seam to
 nothing in `_merged`'s `onto`, or an all-seam member to its own criteria alone, and the seam tests go red; fold the
 round out of a finding's id without its files' content and the same-name test goes red; record the ruling apart from
@@ -70,10 +72,9 @@ def test_a_ruling_on_the_users_own_goal_is_the_users_question(tmp_path):
     e = _engine(Mode.AUTO)
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g")
-    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") is None, "the system moves on the user's question"
     llm = _ContactLLM({"decision": "accept", "justification": "not g", "retire_findings": [pid]}, ran={"Bash": 1})
     out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm, where=str(tmp_path))
-    assert out["status"] == "users" and not llm.packets, out
+    assert out["status"] == "users" and e.graph.get_state("root").name == "CHALLENGED", out
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert step["mine"] and "THE USER'S QUESTION" in step["directive"] and pid in step["directive"], step
     assert [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid]
@@ -81,6 +82,35 @@ def test_a_ruling_on_the_users_own_goal_is_the_users_question(tmp_path):
     out = LOCKED["signal"](e, "root", "ACCEPT_CHALLENGE", "agent", retire_findings=[pid], justification="not my goal")
     e.wait_idle()
     assert out["accepted"] and e.regression_probes(TaskId("root")) == {}, out
+    e.stop()
+
+
+def test_the_system_still_rejects_an_auto_roots_dispute_naming_a_finding(tmp_path):
+    """G13's shape: "these findings cannot be fixed" names them by id; the goal asks for them, so the system's answer is
+    the rejection, and the root goes back to work instead of waiting on a user who is not there."""
+    e = _engine(Mode.AUTO)
+    _auto_root(e)
+    pid = _challenged_with_a_finding(e, "root", "g", reason="{pid} cannot be fixed without JOIN support")
+    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "agent", "the system left the dispute to no one"
+    llm = _ContactLLM({"decision": "reject", "justification": "the goal asks for joins: implement them"}, ran={"Bash": 1})
+    out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm, where=str(tmp_path))
+    e.wait_idle()
+    assert out["status"] == "rejected" and e.graph.get_state("root").name == "EXECUTING", out
+    assert [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid], "a rejection retired the finding"
+    e.stop()
+
+
+def test_a_rejection_with_a_stray_ruling_beside_it_is_still_the_rejection(tmp_path):
+    """Read before the decision, a stray `retire_findings` beside REJECT returned the user's question and threw the
+    rejection away; asked again, the machine was told the user's lines (finder over 190f4db)."""
+    e = _engine(Mode.AUTO)
+    _auto_root(e)
+    pid = _challenged_with_a_finding(e, "root", "g", reason="{pid} cannot be fixed")
+    llm = _ContactLLM({"decision": "reject", "justification": "implement it", "retire_findings": [pid]}, ran={"Bash": 1})
+    out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm, where=str(tmp_path))
+    e.wait_idle()
+    assert out["status"] == "rejected" and [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid], out
+    assert "without `retire_findings`" in I._USERS_DISPUTE        # what the machine is told when it would rule
     e.stop()
 
 

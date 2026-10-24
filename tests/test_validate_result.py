@@ -130,12 +130,14 @@ def test_validate_result_unparsed_report_is_never_pass():
     e.stop()
 
 
-def test_pass_contradicting_its_own_evidence_is_not_a_verdict():
+def test_a_pass_over_its_own_red_entry_is_the_fail_its_entry_is():
     """THE false-PASS measured live (BCB/93, 2026-07-17): the validator ran the canonical suite
     correctly, reported `test_values: fail` WITH failing evidence, and still returned verdict PASS
     with empty failed_criteria — excusing the red criterion as "ACCEPTED_RISKS-declared, out of scope".
     A criterion is the obligation (§2 V=⋀cᵢ); ACCEPTED_RISKS (§9.2) holds risks of the decomposition and
-    never retires one. The ENGINE refuses to record it (not the prompt): no verdict ⟹ no PASS."""
+    never retires one. The ENGINE reads the red entry as what it is — V = AND of the criteria's values (§2.3) — so
+    what is recorded is a FAIL on `holds`, never the PASS (not the prompt). It was refused as no verdict, and one such
+    batch of ~17 voided a root's whole round (finder over 190f4db)."""
     e = _eng()
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
@@ -146,9 +148,7 @@ def test_pass_contradicting_its_own_evidence_is_not_a_verdict():
                                                   "impossible criterion, so out of scope", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
-    assert out["verdict"] is None                      # ⊥, never read as pass
-    assert "holds" in out["verdict_defects"] and "ACCEPTED_RISKS" in out["verdict_defects"]
-    assert e.get_exec_verdict(T.TaskId("n1")) is None   # nothing recorded — the gate stays shut
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["holds"], out   # never read as pass
     assert T.signal(e, "n1", "PASS", "alice")["accepted"] is False
     e.stop()
 
@@ -167,9 +167,9 @@ def test_report_leaving_a_criterion_unspoken_is_not_a_verdict():
     e.stop()
 
 
-def test_failed_criteria_must_be_the_reports_own_red_set():
-    """The issuer's FAIL payload IS the report's red set (Inv-3): a FAIL naming other criteria (or
-    naming none) sends the executor to rework the wrong thing."""
+def test_failed_criteria_are_the_reports_own_red_set():
+    """The issuer's FAIL payload IS the report's red set (Inv-3): a list naming a criterion its own entry passes would send
+    the executor to rework the wrong thing, so one node's payload is read off its entries — the node fails either way."""
     e = _eng()
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "FAIL",
@@ -178,7 +178,7 @@ def test_failed_criteria_must_be_the_reports_own_red_set():
                                      {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": ["holds"]}))
     out = TL.validate_result(e, "n1", _llm=llm)
-    assert out["verdict"] is None and "failed_criteria" in out["verdict_defects"]
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"], out
     e.stop()
 
 
@@ -800,12 +800,8 @@ def test_a_retry_that_speaks_a_kept_criterion_again_is_read_by_what_it_saw(monke
     llm = _Twice("")
     assert TL.validate_result(e, "n1", _llm=llm)["verdict"] is None
     out = TL.validate_result(e, "n1", _llm=llm)
-    if word == "FAIL":
-        assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
-    else:
-        assert out["verdict"] is None
-        assert e.get_exec_verdict(T.TaskId("n1")) is None
-        assert T.signal(e, "n1", "PASS", "alice")["accepted"] is False
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"], out   # the fresh `fail` read, either word
+    assert T.signal(e, "n1", "PASS", "alice")["accepted"] is False
     e.stop()
 
 

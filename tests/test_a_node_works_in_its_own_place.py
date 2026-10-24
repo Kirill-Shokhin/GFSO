@@ -10,6 +10,7 @@ packet. A directory that is not a repository behaves as before. Fake agent runne
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -183,24 +184,66 @@ def test_a_part_that_passed_joins_where_its_whole_works(tmp_path):
     assert not any(places.joinpath(t).exists() for t in ("a", "b", "par"))
 
 
-def test_a_part_that_conflicts_is_left_unjoined_and_named_to_its_whole(tmp_path):
+class _Merger(_Executor):
+    """The whole's session that does its integration: merges every branch its packet names, the part's side winning."""
+
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        for b in re.findall(r"on branch `([^`]+)`", user):
+            _git(cwd, "merge", "--no-edit", "-X", "theirs", b)
+        return super().run_agent(system, user, allowed_tools, cwd=cwd, timeout=timeout)
+
+
+class _HalfMerger(_Executor):
+    """The whole's session that starts the merge its packet names, meets the conflict, and delivers without resolving."""
+
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        for b in re.findall(r"on branch `([^`]+)`", user):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-edit", b], cwd=cwd,
+                           capture_output=True)
+        return super().run_agent(system, user, allowed_tools, cwd=cwd, timeout=timeout)
+
+
+def test_a_whole_that_leaves_a_merge_unresolved_is_not_delivered(tmp_path):
+    """Committed as it stood, the half-done merge concluded with the conflict markers in the files and the tree then
+    contained the part's branch, so the hold let it through (finder over 190f4db)."""
+    e, agents, base, said, sessions = _conflicting(tmp_path, _HalfMerger("par", {}))
+    _run(e, agents, sessions, lambda: any("merge left unfinished" in m for m in said))
+    assert e.graph.get_state(TaskId("par")) in (State.EXECUTING, State.REWORKING)
+    e.stop()
+
+
+def _conflicting(tmp_path, whole):
     e, agents, base = _plan(tmp_path, whole="exec-1")
     said: list = []
     e.on_info(lambda src, msg: said.append(msg))
-    sessions = {"a": _Executor("a", {"shared.c": "A\n"}), "b": _Executor("b", {"shared.c": "B\n"}),
-                "par": _Executor("par", {})}
-    _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
-    _until(lambda: e.joins.joining_nodes() == [])            # the root's own join lands before the base is read
+    sessions = {"a": _Executor("a", {"shared.c": "A\n"}), "b": _Executor("b", {"shared.c": "B\n"}), "par": whole}
+    return e, agents, base, said, sessions
+
+
+def test_a_whole_that_does_not_merge_a_conflicting_part_is_not_delivered(tmp_path):
+    """G13's shape (GB_sql_database_tn03ao788): the root's executor, told to merge parts that conflicted, rewrote
+    their files instead and delivered a tree without a part's work."""
+    e, agents, base, said, sessions = _conflicting(tmp_path, _Executor("par", {}))
+    _run(e, agents, sessions, lambda: any("delivery held" in m for m in said))
     named = [b for b in ("gfso/p/a", "gfso/p/b") if f"on branch `{b}`" in sessions["par"].packet]
     assert len(named) == 1 and "Parts NOT joined into your workspace" in sessions["par"].packet
-    left = named[0].rsplit("/", 1)[1]
-    # the merge was aborted where it ran: the base holds the other part, whole and clean, and no conflict markers
-    assert (base / "shared.c").read_text() == ("B\n" if left == "a" else "A\n")
+    assert e.graph.get_state(TaskId("par")) in (State.EXECUTING, State.REWORKING), "handed in without its part's work"
+    # the merge was aborted where it ran: the base holds no conflict markers
     assert _git(base, "status", "--porcelain") == ""
-    # the unjoined branch and its tree stay, and are named, at the root's PASS
-    _until(lambda: any("not joined into the base are kept" in m for m in said))
-    assert (tmp_path / ".gfso-nodes-ws" / "p" / left).is_dir()
-    assert _git(base, "branch", "--list", named[0]).strip().endswith(named[0])
+    e.stop()
+
+
+def test_a_whole_that_merges_its_conflicting_part_is_delivered_with_both(tmp_path):
+    """The control: the same plan, the whole's session merging what its packet names — DONE, and both parts' work
+    reach the base."""
+    e, agents, base, said, sessions = _conflicting(tmp_path, _Merger("par", {}))
+    _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
+    _until(lambda: e.joins.joining_nodes() == [])
+    assert "Parts NOT joined into your workspace" in sessions["par"].packet
+    assert not any("delivery held" in m for m in said)
+    named = [b for b in ("gfso/p/a", "gfso/p/b") if f"on branch `{b}`" in sessions["par"].packet]
+    assert (base / "shared.c").read_text() == ("A\n" if named == ["gfso/p/a"] else "B\n")
+    e.stop()
 
 
 def test_a_directory_that_is_not_a_repository_is_shared_as_before(tmp_path):

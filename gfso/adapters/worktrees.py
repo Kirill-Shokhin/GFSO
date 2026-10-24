@@ -106,6 +106,13 @@ def merge(base, into, branch: str, message: str) -> str | None:
         return " ".join((r.stdout + " " + r.stderr).split())[:400] or f"git merge exited {r.returncode}"
 
 
+def merging(base, place) -> bool:
+    """Is a merge left unfinished in the tree at `place` — begun and not concluded, or with paths still unmerged?"""
+    with _lock(base):
+        return (_git(place, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0
+                or bool(_git(place, "ls-files", "-u").stdout.strip()))
+
+
 def contains(base, into, branch: str) -> bool:
     """Is every commit of `branch` already in the tree at `into`?"""
     with _lock(base):

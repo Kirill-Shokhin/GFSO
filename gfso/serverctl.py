@@ -135,12 +135,13 @@ def source_fingerprint() -> str:
     watched = [p for pat in ("*.py", "*.md", "*.html", "*.css", "*.svg")
                for p in (ROOT / "gfso").rglob(pat)]
     # Ordered by the name it is hashed under: `Path` orders caselessly on Windows and bytewise on POSIX,
-    # so one tree read from both fingerprinted as two builds.
+    # so one tree read from both fingerprinted as two builds. Hashed with LF line ends for the same reason: git's
+    # autocrlf checks one commit out as CRLF here and LF in a clone, and the two fingerprinted as two builds.
     for rel, p in sorted({(p.relative_to(ROOT).as_posix(), p) for p in watched}):
         if "__pycache__" in p.parts:
             continue
         h.update(rel.encode())
-        h.update(p.read_bytes())
+        h.update(p.read_bytes().replace(b"\r\n", b"\n"))
     return h.hexdigest()[:12]
 
 

@@ -28,7 +28,7 @@ from gfso.config import CHECKER_READINGS, SUFFICIENCY_READINGS
 from gfso.core.graph.review import progress_baseline
 from gfso.core.types import CriticVerdict, Stage, TaskId
 from gfso.engine.validation import _EXEC_GATING_CHECKS
-from gfso.adapters.llm.stats import readings, tag_stage
+from gfso.adapters.llm.stats import calls_of, readings, refused_by_limit, tag_stage
 from .types import NodeCritique
 
 log = logging.getLogger(__name__)
@@ -101,6 +101,7 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     Lives HERE, not on Engine: the critic pulls decompose/adapters, and the engine imports core
     only (the mechanical layer gate) — the engine is an argument, not a host."""
     used = llm or engine._llm
+    n0 = len(calls_of(used))          # this round's calls only: the engine's provider carries every earlier one
     critique = critique_node(engine, node_id, used)
     _node = engine.graph.get_task(node_id)
     rec = {**asdict(critique),   # + review provenance: re-validation UX needs "who reviewed, when"
@@ -161,8 +162,9 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     rec["measured"] = critique.semantic_covered is not None
     if not rec["measured"] and _before:
         rec["baseline_findings"] = progress_baseline(_before)
+    # …and a round the account's limit refused read nothing: stored, it erased the verdicts carried on an unchanged plan
     stored = bool(critique.gate_passed or critique.criteria_verdicts or critique.undecided_obligations
-                  or not _before)
+                  or not _before) and not refused_by_limit(calls_of(used)[n0:])
     if stored:
         engine._graph._storage.store_critique(node_id, json.dumps(rec))
     node = engine.graph.get_task(node_id)
