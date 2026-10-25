@@ -4,7 +4,7 @@ import {$} from './dom.js';
 import {PROJECT} from './api.js';
 
 // `reload` is the page's refresh policy, set by main.js — units that change the graph call it.
-export const S = {tasks: [], graph: {nodes: [], edges: []}, run: null, closures: [], missing: '',
+export const S = {tasks: [], graph: {nodes: [], edges: []}, run: null, closures: [], missing: '', mineOnly: false,
                   inflight: [], project: PROJECT, reload: async () => {}};
 
 // the processes this server runs in this project now — the in-flight registry, the one reading of it
@@ -16,6 +16,9 @@ export const hasKids = id => S.tasks.some(t => t.parent_id === id && t.state !==
 
 // The box SIGNS every signal the page sends, so what was typed survives a reload (wave 26) — kept per
 // browser, and wrapped because a browser with site data blocked THROWS on the accessor.
-export const myRole = () => $('current-role').value.trim();
+// an emptied box is the server's own agent again, as on load — never a move signed by nobody
+// …and under a mode the page acts as that agent only: the box is hidden there, and a name remembered from another
+// project would sign unseen and ask the engine for someone else's steps (critic)
+export const myRole = () => (S.graph.mode?.mode ? '' : $('current-role').value.trim()) || S.agentId || '';
 export function rememberedRole() { try { return localStorage.getItem('gfso.role') || ''; } catch (e) { return ''; } }
 export function rememberRole(v) { try { localStorage.setItem('gfso.role', v); } catch (e) { /* nameless is fine */ } }

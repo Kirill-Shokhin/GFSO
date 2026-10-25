@@ -14,6 +14,10 @@ const unfolded = new Set();                      // parts the reader opened; the
 function rows(tasks, track) {
     const kids = {}, out = [];
     for (const t of tasks) if (t.parent_id) (kids[t.parent_id] ??= []).push(t.id);
+    // siblings that have a verdict first, by their first one, then the rest in plan order — as the timeline orders its
+    // rows; in plan order the one part at work sat under nine empty tracks, below the fold of a short deck (critic)
+    const first = id => track[id]?.marks[0]?.t ?? Infinity;
+    for (const ks of Object.values(kids)) ks.sort((a, b) => first(a) - first(b));
     const walk = (id, d) => {
         if (track[id]?.total) out.push({id, d, kids: (kids[id] || []).length});
         if (d === 0 || unfolded.has(id)) for (const k of kids[id] || []) walk(k, d + 1);

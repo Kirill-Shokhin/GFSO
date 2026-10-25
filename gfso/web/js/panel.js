@@ -94,7 +94,8 @@ function actions({d}) {
         ...can(s, 'D') ? [btn('btn-purple', 'Decompose', 'decompose', id), btn('btn-purple', kids ? 'AI refine' : 'AI decompose', 'ai-decompose', id),
                           kids ? btn('btn-purple', 'AI review', 'ai-review', id) : ''] : [],
         can(s, 'E') ? btn('btn-muted', 'Edit', 'edit', id) : ''].join('');
-    return btns ? `<div class="pn-foot"><div class="actions">${btns}</div><div id="inline-form"></div></div>` : '';
+    // under a mode the agents and the system move the nodes; a person's own moves stay where one is theirs (header.js)
+    return btns ? `<div class="pn-foot${S.mySteps?.has(d.id) ? '' : ' manual-only'}"><div class="actions">${btns}</div><div id="inline-form"></div></div>` : '';
 }
 
 const PARTS = [head, verdict, criteria, facets, actions];

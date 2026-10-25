@@ -56,7 +56,11 @@ const need = (n, text, ids, why, cls = '') => !n ? '' : `<button class="need${cl
 const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // Under AUTO the system makes every issuer move below the root (set_mode), so a challenge or a block there is the
 // machine issuer's to answer — in the strip as its turn or its wait, never here as a call on a person (critic).
-const onAPerson = t => S.graph.mode?.mode !== 'auto' || isRoot(t);
+// …and under SEMI only the top the user's agent holds (`boundary` = k holds depths 0…k−1; the root by default): below it
+// a registered executor issues, and the engine refuses a person's move there (critic)
+const depthOf = t => { let d = 0; for (let n = t; n?.parent_id; n = taskOf(n.parent_id)) d++; return d; };
+const onAPerson = t => { const m = S.graph.mode; return m?.mode === 'auto' ? isRoot(t)
+    : m?.mode === 'semi' ? depthOf(t) < (m.boundary || 1) : true; };
 const byState = s => { const ts = S.tasks.filter(t => t.state === s && onAPerson(t));
     return need(ts.length, label(s).toLowerCase(), ts.map(t => t.id), ts.map(t => named(t.id))); };
 // …AND HOW THOSE DONES REST: an instrument's proof and a signature are not one kind of green (§15.7).
@@ -148,6 +152,7 @@ export const refreshHeader = singleFlight(async () => {
     // WHAT THE ENGINE SAYS IS OWED, asked AS WHOEVER THIS PAGE IS: `mine` is computed for `actor`, the YOU
     // ARE box that signs; `stuck` comes with its `directive`. NAME WHO — "you" is nobody on a shared graph.
     let heard = false;                // "nothing needs you" is said only when the engine was asked
+    const mySteps = new Set();
     if (S.tasks.length) try {
         const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {});
         if (!r.ok) throw r.status;
@@ -156,6 +161,8 @@ export const refreshHeader = singleFlight(async () => {
         // (dropped only where that chip IS shown: under AUTO a person's own move below the root has none — critic)
         const shown = t => CALLS.includes(t.state) && onAPerson(t);
         const mine = (f.steps || []).filter(x => x.mine && !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
+        // the nodes where the move is this page's person's: their panel keeps its moves under a mode too (panel.js)
+        (f.steps || []).filter(x => x.mine).forEach(x => mySteps.add(x.task_id));
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 f.directive || 'no actionable node and the root is not DONE') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
@@ -163,6 +170,9 @@ export const refreshHeader = singleFlight(async () => {
         S.runState = f.run;
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }
+    // the panel keeps its moves on these only (panel.js): what the ENGINE says is this person's move — a state chip is
+    // a call to look, and under AUTO the engine refuses a person's Cancel or Edit on an escalated root (critic)
+    S.mySteps = mySteps;
     chips += stalled(chips);
     if (S.tasks.length) await techReports(); else $('hd-reports').innerHTML = '';
     $('hd-goal').innerHTML = left + runSwitch(S.runState);

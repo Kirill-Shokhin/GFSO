@@ -5,7 +5,7 @@ import {TASK, GOAL, getJSON} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap} from './vocab.js';
-import {initGraph, refreshGraph, restyle, annotate, graphNeeds} from './graph.js';
+import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {refreshHeader, refreshQuality, toggleQuality, toggleReports, stopRun, startRun} from './header.js';
 import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
 import {selectTask, closeSidebar, resign} from './panel.js';
@@ -45,7 +45,7 @@ const ACT = {
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
-    help: () => $('tb-help').classList.toggle('open'), quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
+    mine: toggleMine, help: () => $('tb-help').classList.toggle('open'), quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
     projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects,
     'project-new': () => (closeProjects(), switchProject('__new__')),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
@@ -71,7 +71,7 @@ $('goal-panel').addEventListener('input', goal.recheck);
 $('goal-panel').addEventListener('click', goal.recheck);   // a row removed by its ×
 $('pl-search').addEventListener('input', searchProjects);
 // …AND THE BAR IS ASKED AGAIN: the frontier's `mine` is computed FOR the identity in the box.
-$('current-role').addEventListener('input', () => { rememberRole(myRole()); refreshHeader(); });
+$('current-role').addEventListener('input', () => { rememberRole(myRole()); if (S.mineOnly) applyMineDim(); refreshHeader(); });
 watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : closeSidebar(); });
 
 const LIVE = {
@@ -111,6 +111,7 @@ async function init() {
     // YOUR OWN ID IS THE SERVER'S, not the placeholder `pm` registered nowhere — and what you typed wins.
     try {
         const rt = await getJSON('/api/runtime'), box = $('current-role');
+        S.agentId = rt?.agent_id || '';
         if (rt && rt.agent_id && (!box.value || box.value === 'pm')) box.value = rt.agent_id;
         box.value = rememberedRole() || box.value;
     } catch (e) { /* the box keeps what it had; the engine still refuses a stranger */ }

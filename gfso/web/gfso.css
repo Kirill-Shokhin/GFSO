@@ -759,7 +759,27 @@ body {
 
 /* ============ Toolbar — the right end: the graph's key, and who this page acts as ============ */
 .toolbar-row { display: flex; gap: 10px; align-items: center; flex: 1; }
+/* a person's own moves and the name they sign them with: only in a project without a mode (graph.js) */
+body:not(.manual) .manual-only { display: none !important; }
 .toolbar .tb-help { margin-left: auto; }
+.queue-toggle {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: var(--tr-mono);
+    color: var(--ui-on-chrome);
+    opacity: 0.6;
+    cursor: pointer;
+    padding: 4px 10px;
+    border: 1px solid var(--hair-on-chrome);
+    border-radius: var(--radius);
+    background: transparent;
+    transition: opacity 0.12s, border-color 0.12s, background 0.12s;
+}
+.queue-toggle:hover { opacity: 1; }
+.queue-toggle.active { opacity: 1; background: var(--acc); border-color: var(--acc); color: var(--bg); }
+body.manual .toolbar .tb-help { margin-left: 0; }
 /* a quiet line, not a form field: an input only while it is being changed */
 .role-select.acting-as { gap: 6px; opacity: 0.7; }
 .role-select.acting-as:hover, .role-select.acting-as:focus-within { opacity: 1; }

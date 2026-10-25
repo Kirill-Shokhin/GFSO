@@ -1,7 +1,7 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc} from './dom.js';
 import {api, singleFlight} from './api.js';
-import {S, taskOf, procs} from './state.js';
+import {S, taskOf, myRole, procs} from './state.js';
 import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
@@ -72,6 +72,8 @@ export async function initGraph() {
             // ABANDONED tombstone: kept for provenance but visibly NOT an active node.
             {selector: 'node.cancelled', style: {'opacity': 0.4, 'background-color': '#8a8a8a', 'border-color': '#6a6a6a',
                                                   'border-style': 'dashed', 'text-opacity': 0.6}},
+            {selector: 'node.dimmed', style: {'opacity': 0.22}},
+            {selector: 'edge.dimmed', style: {'opacity': 0.15}},
             {selector: 'edge[type="dependency"].fromCancelled', style: {'opacity': 0.2, 'line-style': 'dotted'}},
         ],
         // nodes stay where the layout put them (a tap is a selection, never a drag); a wheel notch zooms gently
@@ -211,6 +213,8 @@ export const refreshGraph = singleFlight(async () => {
         // their project's name (the stats bar says it — header.js).
         if (gr.status === 404) {
             S.missing = (await gr.json().catch(() => ({}))).detail || 'no such project';
+            // a project not on disk yet has no mode: a mode set first would have created it (a goal stated here)
+            document.body.classList.add('manual');
             cy.elements().remove();
             S.tasks = [];
             return;
@@ -218,6 +222,9 @@ export const refreshGraph = singleFlight(async () => {
         const g = await gr.json();
         S.tasks = await tr.json();
         S.graph = g;
+        // a project with a mode is moved by agents and the system; the person's own moves, and the name they sign
+        // them with, belong to a project without one, where a node is held by whoever it names (author, 2026-10-26)
+        document.body.classList.toggle('manual', !g.mode?.mode);
         S.missing = '';
         // the same nodes drawn again keep the reader's view; a new set (another project, parts added) is framed whole
         const key = g.nodes.map(n => n.id).sort().join('|'), kept = key === drawn && {zoom: cy.zoom(), pan: {...cy.pan()}};
@@ -246,11 +253,28 @@ export const refreshGraph = singleFlight(async () => {
         }
         // a redraw removes and re-adds every node, and the chosen one lost its border while its panel stayed open
         if (focus().select) cy.getElementById(focus().select).select();
+        applyMineDim();
         const one = undrawable[0];
         banner('undrawable', one && `${undrawable.length} edge(s) not drawn — they name a node this graph does not `
             + `contain (e.g. ${one.source} → ${one.target}). The rest of the graph is shown.`, $('cy'));
     } catch (e) { console.error('refreshGraph:', e); }
 });
+
+// "Mine only": the nodes the name in "acting as" holds — a person's view in a project without a mode
+export function applyMineDim() {
+    if (!cy) return;
+    const me = myRole();
+    cy.elements().removeClass('dimmed');
+    if (!S.mineOnly || !me || S.graph.mode?.mode) return;
+    const mine = new Set(S.tasks.filter(t => t.assignee === me).map(t => t.id));
+    cy.nodes().forEach(n => { if (!mine.has(n.id())) n.addClass('dimmed'); });
+    cy.edges().forEach(e => { if (!mine.has(e.source().id()) || !mine.has(e.target().id())) e.addClass('dimmed'); });
+}
+export function toggleMine() {
+    S.mineOnly = !S.mineOnly;
+    $('queue-toggle').classList.toggle('active', S.mineOnly);
+    applyMineDim();
+}
 
 // A transition patches its node in place; false when the node is not drawn (the caller re-reads).
 export function restyle(id, state) {
