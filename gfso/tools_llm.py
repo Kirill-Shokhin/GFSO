@@ -45,9 +45,9 @@ from gfso.tools import _agent_id
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, validation_batch,
                          validate_internal, state_bound)
-from gfso.packets import _last_deliver_result, _scope_validator_packet, _validator_packet, owed_probes
+from gfso.packets import TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports, owed_probes
 from gfso.llm import session_calls
-from gfso.inflight import _inflight
+from gfso.inflight import _inflight, in_flight
 
 log = logging.getLogger(__name__)
 
@@ -358,6 +358,7 @@ _VALIDATOR_SCHEMA = {
                          "divergences"]}},
         "seams": {"type": "string"},
         "failed_criteria": {"type": "array", "items": {"type": "string"}},
+        "tech_report": TECH_REPORT,
     },
     # …and `failed_criteria` NOT required: the record derives it from the entries (`_listed_failed`), so a report that
     # left it out was refused as unparsed over a list it did not need (AUTO coreutils, 2026-10-10)
@@ -1194,8 +1195,10 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     text = "\n\n".join(x or "" for x in texts)
     out: dict = {"task_id": top_id, "stats": session_calls(llm, Stage.VALIDATE_RESULT)}
     _strays_left_behind(engine, top_id, workdir, _before, out, _cb)   # `.gfso-scratch` is the offered place
-    read = _entries_by_node(texts, parts, _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA,
-                            own=inside is None)
+    _schema = _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA
+    for x in texts:
+        file_tech_reports(engine, parse_structured(x or "", _schema), "validator", validator or "validator", top_id)
+    read = _entries_by_node(texts, parts, _schema, own=inside is None)
     if read is None:
         # No retry here: an agent run is minutes-long. The report is KEPT, on disk and on the node, as a report the
         # engine refuses is: under delegation the caller is the dispatcher, which reads a verdict and nothing else,
@@ -1438,7 +1441,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                 f"by {'the system' if str(_kid) != _agent_id() else 'you'}, so they cannot go to "
                 f"{executor}. Call it again without `executor` — the mode assigns them.")
         executor = executor or str(_kid)
-    if engine.graph.get_task(TaskId(root_id)) is None:
+    if fresh := engine.graph.get_task(TaskId(root_id)) is None:
         # the place is read for the plan's author; a plan handed in (`spec`) has none
         found = "" if spec is not None else _work_place_documents(engine, request, model)
         request = (request or "") + _named_documents(engine, f"{request} {found}")
@@ -1460,6 +1463,8 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
         # while the plan's author and auditors had spent $0.56 (GB_sql_database_tmu9cb784)
         engine.record_llm_usage(Stage.DECOMPOSER, planner, TaskId(root_id))
     kids = engine.graph.get_active_children(res.root_id)
+    if fresh and spec is not None:
+        engine.give_users_plan(res.root_id)
     out = {"root_id": str(res.root_id),
            "subtasks": [{"id": str(c.id), "description": c.spec.description} for c in kids],
            "holes": res.holes,
@@ -1769,6 +1774,39 @@ def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
             "executors": pool, "validators": validators, "ready": ready, "missing": missing}
 
 
+def run_state(engine: Engine) -> dict:
+    """THE RUN'S ONE STATE — `running`; `stopping` once stopped while sessions of this project still run (`working`:
+    each one's verb, node and since); `stopped` when none does. Derived from the stop as set and the work in flight,
+    never a second flag."""
+    if not (stop := engine.paused()):
+        return {"state": "running"}
+    working = [w for w in in_flight() if w.get("project") == (engine.project_name or DEFAULT_PROJECT)]
+    return {"state": "stopping" if working else "stopped", **stop, "working": working}
+
+
+def stop_project(engine: Engine, why: str = "", by: Optional[str] = None) -> dict:
+    """STOP the project's run: the system starts no new session in it (executor, validator, issuer); those running
+    finish and their signals land — `stopping` until the last one has, then `stopped`. No timeout fires while stopped
+    and the graph is not changed. `start_project` runs it again."""
+    engine.pause(by or _agent_id(), why)
+    return run_state(engine)
+
+
+def start_project(engine: Engine, by: Optional[str] = None) -> dict:
+    """RUN the project again after `stop_project`; a bound that passed meanwhile fires as any passed bound does."""
+    engine.resume(by or _agent_id())
+    return run_state(engine)
+
+
+def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[str] = None, wait: float = 0.0) -> dict:
+    """The frontier with the run's state beside it — `run`: running, stopping or stopped (`stop_project` /
+    `start_project`). What follows is the frontier's own text (`gfso.tools.next_steps`)."""
+    return {**_tools.next_steps(engine, root_id, actor, wait), "run": run_state(engine)}
+
+
+next_steps.__doc__ += "\n\n    " + (_tools.next_steps.__doc__ or "").strip()
+
+
 def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
              agent: Optional[str] = None, user_said: str = "", perform: str = "dispatch") -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
@@ -1893,6 +1931,8 @@ _RAW_TOOLS = {
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1
     "register_agent": register_agent, "unregister_agent": unregister_agent, "list_agents": list_agents,                     # the roster
     "set_mode": set_mode,                                                             # who holds what
+    "stop_project": stop_project, "start_project": start_project,                     # the run's switch
+    "next_steps": next_steps,
 }
 
 # WHO MAY MOVE WHAT UNDER A MODE — checked at the doors only. The system's own moves (the dispatcher,

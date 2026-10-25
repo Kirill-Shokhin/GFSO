@@ -119,6 +119,8 @@ _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
                  "record_verdict": ("reviewer",),
                  # the mode is the user's choice, relayed by their agent — recorded under who set it
                  "set_mode": ("agent",),
+                 # who stopped a project, and who filed a report, are recorded under the agent's own name
+                 "stop_project": ("by",), "start_project": ("by",), "tech_report": ("actor",),
                  # reopen re-earns a TERMINAL node under R′ (§12.14) — as load-bearing an act as any
                  # signal, and it was the one whose actor the caller still chose freely, so it
                  # landed in the audit log attributed to whatever name the model wrote.

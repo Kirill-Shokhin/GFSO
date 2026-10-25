@@ -306,6 +306,22 @@ def _regression_line(p: dict, dirs: dict, workdir: Optional[str] = None) -> str:
             f"seen — decide from what it prints now against the criterion's own requirement)")
 
 
+#: The one optional field every role's answer carries for a TECH REPORT (`Engine.tech_report`): said small, so it is
+#: used where the system itself leaves no honest move, not as a second place for complaints about the task.
+TECH_REPORT = {"type": "string", "description":
+               "Rarely, and only about the SYSTEM, not the task: a defect that leaves you no honest move — a pinned check "
+               "that contradicts the contract, a tool that cannot run, an answer that ignored what you showed. One "
+               "line. Leave it out otherwise."}
+
+
+def file_tech_reports(engine: Engine, report, role: str, actor: str, task_id) -> None:
+    """Every tech report a role's answer carries — at its top and in each node entry of a scope's report — filed."""
+    nodes = report.get("nodes") if isinstance(report, dict) else None
+    for r in [report] + list(nodes if isinstance(nodes, list) else ()):
+        if isinstance(r, dict) and str(r.get("tech_report") or "").strip():
+            engine.tech_report(r["tech_report"], role, actor, r.get("task_id") or task_id)
+
+
 def owed_probes(engine: Engine, task, crits) -> list:
     """[(criterion, [(probe id, what to show)…])] — what validating `crits` of `task` OWES, criterion by criterion: its
     pinned probes, the pinned probes of the DONE parts it rests on, and the probes that once refuted it.

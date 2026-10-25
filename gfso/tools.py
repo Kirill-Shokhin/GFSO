@@ -2762,6 +2762,16 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
     return _out
 
 
+def tech_report(engine: Engine, text: str, task_id: Optional[str] = None, actor: Optional[str] = None) -> dict:
+    """Rarely: report a defect of the SYSTEM itself (not of the task) that leaves you no honest move. Moves nothing."""
+    return {"filed": engine.tech_report(text, "mcp", actor or _agent_id(), task_id)}
+
+
+def tech_reports(engine: Engine) -> dict:
+    """The tech reports filed in this project — {count, reports: [{at, node, role, actor, text}]}, oldest first."""
+    return {"count": len(r := engine.tech_reports()), "reports": r}
+
+
 def _mine_to_do(out: dict) -> bool:
     """Is there anything in this answer for the CALLER to do — or is the graph busy elsewhere?
 
@@ -2811,4 +2821,5 @@ TOOLS = {
     "signal": signal, "record_verdict": record_verdict, "claim_drift": claim_drift,
     "probe_inputs": probe_inputs,
     "next_step": next_step, "next_steps": next_steps,
+    "tech_report": tech_report, "tech_reports": tech_reports,
 }

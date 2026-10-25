@@ -103,6 +103,8 @@ _GOOD: dict[str, dict] = {
     "auto_decompose": {"request": "do the thing", "root_id": "root"},
     "review_decomposition": {"task_id": "root"},
     "validate_result": {"task_id": "kid"},
+    "stop_project": {"why": "look"}, "start_project": {},
+    "tech_report": {"text": "a check contradicts the contract", "task_id": "kid"}, "tech_reports": {},
 }
 
 # The wrong SHAPE, not merely a wrong value: the class of input that used to reach the interpreter.
@@ -144,6 +146,8 @@ _BAD: dict[str, dict] = {
     "auto_decompose": {"request": "", "root_id": "no-such-node"},
     "review_decomposition": {"task_id": "no-such-node"},
     "validate_result": {"task_id": "no-such-node"},
+    "stop_project": {"why": ["not", "a", "reason"]}, "start_project": {"by": ["not", "an", "id"]},
+    "tech_report": {"text": ["not", "text"], "task_id": {"no": "id"}}, "tech_reports": {},
 }
 
 

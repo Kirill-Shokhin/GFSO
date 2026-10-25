@@ -16,7 +16,7 @@ from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import _enter_workspace, conversation_of, node_workspace, performer
-from gfso.packets import _EXECUTOR_STATES, _executor_packet, _scope_order, _scope_packet
+from gfso.packets import TECH_REPORT, _EXECUTOR_STATES, _executor_packet, _scope_order, _scope_packet, file_tech_reports
 from gfso.reports import _decided_status, _report_into_signals, _scope_report_into_signals
 
 
@@ -40,6 +40,7 @@ EXECUTOR_SCHEMA = {
         "reason": {"type": "string"},
         "blocker_task_id": {"type": "string"},
         "blocker_task_ids": {"type": "array", "items": {"type": "string"}},
+        "tech_report": TECH_REPORT,
     },
     "required": ["status", "summary"],
 }
@@ -96,7 +97,8 @@ def _spawn(engine, node_id, executor_id: str, cfg: dict, _llm, role: str, prompt
                 llm.run_agent(system, user, allowed_tools=("Read", "Glob", "Grep"), cwd=cwd))
     stats = session_calls(llm, Stage.EXECUTOR)
     engine.record_llm_usage(Stage.EXECUTOR, llm, node_id)      # the session's spend, booked once to its node
-    return parse_structured(text, schema), text, stats, llm, _cb
+    file_tech_reports(engine, report := parse_structured(text, schema), role, executor_id, node_id)
+    return report, text, stats, llm, _cb
 
 
 def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistry,
@@ -170,7 +172,8 @@ CONSENT_SCHEMA = {
     "type": "object",
     "properties": {"decision": {"type": "string", "enum": ["accept", "challenge"]},
                    "reason": {"type": "string", "description": "on a challenge: which criteria are "
-                              "defective and why; on an accept: one line on why the contract holds"}},
+                              "defective and why; on an accept: one line on why the contract holds"},
+                   "tech_report": TECH_REPORT},
     "required": ["decision", "reason"],
 }
 

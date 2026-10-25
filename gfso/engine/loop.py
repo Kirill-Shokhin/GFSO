@@ -27,7 +27,7 @@ from gfso.config import state_bound
 from .audit import AuditLog, AuditEntry, VERSION_INSTALLING, consented_on_current_version
 from .verdicts import store_verdict
 from .events import EventBus
-from .validation import validate_signal, ValidationError
+from .validation import pause_record, validate_signal, ValidationError
 
 log = logging.getLogger(__name__)
 
@@ -604,6 +604,10 @@ def timeout_monitor(
             # 2026-09-02). A monitor whose graph has closed has nothing left to monitor: it leaves.
             log.debug(f"the timeout monitor is stopping: its graph is closed ({e})")
             break
+        # …AND WHILE THE USER HAS STOPPED THE PROJECT, NO TIMEOUT: a stop writes nothing into the graph, and a bound
+        # passed meanwhile fires on the first tick after the start, as any passed bound does (§12.2)
+        if pause_record(graph):
+            continue
         for task in _active:
             overdue = task.deadline and now > task.deadline.timestamp()
             # …EXCEPT in the issuer's waiting state, where the deadline is already spent by

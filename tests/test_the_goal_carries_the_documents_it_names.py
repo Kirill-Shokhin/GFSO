@@ -7,6 +7,7 @@ workdir (spreadsheet_engine, AUTO haiku — EVIDENCE_LOG §13.38).
 from __future__ import annotations
 
 import gfso.tools_llm as TL
+from gfso.core.graph.model import USERS_PLAN_KEY
 from gfso.core.types import TaskId
 from gfso.roster import AgentRegistry
 from tests.support import REGISTER, criterion, make_engine
@@ -82,3 +83,16 @@ def test_a_plan_the_system_writes_carries_the_files_its_place_names(tmp_path, mo
     e.record_llm_usage = lambda *a, **k: None
     carried = TL._named_documents(e, "a summary " + TL._work_place_documents(e, "a summary", "m"))
     assert "THE STATEMENT IN base" in carried and "THE BUILD IN base" in carried, "a build file without a suffix too"
+
+
+
+def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):
+    """`auto_decompose` with `spec` on an empty project builds the user's own plan, and the project records it so: under
+    AUTO the system does not re-split it (`Engine.users_plan`, `issuer.settle`); a plan the system authors is not."""
+    monkeypatch.setattr(TL, "_roster", lambda engine=None: AgentRegistry(str(tmp_path / "roster.json")))
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.project_name = "p"
+    e.start()
+    TL.auto_decompose(e, "the goal", spec=dict(_PLAN))
+    assert e._storage.get_setting(USERS_PLAN_KEY) == "root"
+    e.stop()

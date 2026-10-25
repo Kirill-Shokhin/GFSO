@@ -26,7 +26,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (admission_key, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (PAUSE_KEY, admission_key, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer)
 
 
@@ -1061,6 +1061,13 @@ def _deliver_rules(signal_data: SignalData, graph: Graph, audit) -> None:
 def project_mode(graph: Graph) -> Optional[dict]:
     """The project's mode as set — {mode, boundary, by} — or None."""
     raw = graph._storage.get_setting("mode")
+    return json.loads(raw) if raw else None
+
+
+def pause_record(graph: Graph) -> Optional[dict]:
+    """The project's stop as set — {by, at, why} — or None while it runs: the one reading the dispatcher and the
+    clock share (`Engine.pause`)."""
+    raw = graph._storage.get_setting(PAUSE_KEY)
     return json.loads(raw) if raw else None
 
 

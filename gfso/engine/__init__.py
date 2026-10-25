@@ -18,8 +18,8 @@ from gfso.core.types import (
 )
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutations, dep_scope, generation_of_task,
-                                   non_leaf_ids, replaces_key, root_of, root_issuer_key, register_log_key,
-                                   stamp, stamped_with)
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
+                                   register_log_key, stamp, stamped_with)
 from gfso.core.graph.mutations import InvariantViolation, with_its_seams
 from gfso.core.handlers.structural import run_structural
 from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_was_refuted
@@ -50,7 +50,7 @@ from .parking import Parking
 from .workforce import Workforce
 from .admission import (admit as _admit, admit_register as _admit_register, refuse_a_contract_that_pins_nothing,
                         refuse_a_d_cycle)
-from .validation import (AdmissionRefused, _l0_holes, _l2_undischarged, l2_gate_on, no_live_deadline, dep_cycle_closed,
+from .validation import (AdmissionRefused, pause_record, _l0_holes, _l2_undischarged, l2_gate_on, no_live_deadline, dep_cycle_closed,
                          issuing_condition, rule_refusal, signer_refusal, whole_waits_for_its_parts,
                          mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
@@ -114,6 +114,7 @@ class Engine:
     ):
         self._graph = Graph(storage)
         self._storage = storage           # the port this engine was given — its own, not reached for under the graph
+        self._tech_lock = threading.Lock()  # one writer of the tech-report list (read-modify-write of one setting)
         self._agents = agents
         self._llm = llm
         self._check_interval = check_interval
@@ -518,6 +519,55 @@ class Engine:
         self.emit_info("mode", f"mode set to {mode.value}"
                        + (f" (boundary {boundary})" if boundary is not None else "") + f" by {author}")
         return rec
+
+    def paused(self) -> Optional[dict]:
+        """The project's stop as set — {by, at, why} — or None while it runs (`validation.pause_record`)."""
+        return pause_record(self._graph)
+
+    def pause(self, by: str, why: str = "") -> dict:
+        """STOP: the system starts no session of any role here — sessions already running finish and their signals land
+        — and the clock fires no timeout; on resume a bound passed meanwhile fires as any passed bound does (§12.2). It
+        writes nothing into the graph: a stop is the user's act on the run, not a protocol move."""
+        rec = {"by": str(by), "at": datetime.now().isoformat(timespec="seconds"), "why": str(why or "")}
+        self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
+        self.emit_info("pause", f"STOPPED by {by}" + (f": {why}" if why else "") + " — nothing new starts")
+        return rec
+
+    def resume(self, by: str) -> Optional[dict]:
+        """START again: the stop that stood, or None where none did."""
+        was = self.paused()
+        self._storage.store_setting(PAUSE_KEY, "")
+        if was:
+            self.emit_info("pause", f"STARTED again by {by} (stopped since {was.get('at')})")
+        return was
+
+    def tech_report(self, text: str, role: str, actor: str, task_id=None) -> dict:
+        """A report about the SYSTEM, not the task — a check contradicting its contract, a tool that cannot run, an answer
+        that ignored what was shown. Outside the twelve signals: it moves nothing and no packet reads it back; it lies
+        where the system's maker reads it (`tech_reports`)."""
+        rec = {"at": datetime.now().isoformat(timespec="seconds"), "node": str(task_id) if task_id else None,
+               "role": str(role), "actor": str(actor), "text": str(text).strip()[:4000]}
+        with self._tech_lock:
+            self._storage.store_setting(TECH_KEY, json.dumps(self.tech_reports() + [rec]))
+        self.emit_info("tech_report", f"TECH REPORT from {role} {actor}" + (f" on {task_id}" if task_id else "")
+                                      + f": {rec['text'][:300]}")
+        return rec
+
+    def users_plan(self) -> bool:
+        """Is this project's plan the user's — handed in whole (`auto_decompose` with `spec`) and run under AUTO? Then it
+        is theirs as the root's criteria are, and the system does not re-split it: a weak model re-splitting a given plan
+        turned the "plan given" condition into its own plan (2, 9 and 16 nodes added on the sql × haiku 4.5 rows of
+        Amendment 2; none on coreutils)."""
+        return self.mode_kind() == Mode.AUTO and bool(self._storage.get_setting(USERS_PLAN_KEY))
+
+    def give_users_plan(self, root_id) -> None:
+        """Record that the plan just built under `root_id` was the user's, handed in whole."""
+        self._storage.store_setting(USERS_PLAN_KEY, str(root_id))
+
+    def tech_reports(self) -> list[dict]:
+        """Every tech report filed in this project, oldest first."""
+        raw = self._storage.get_setting(TECH_KEY)
+        return json.loads(raw) if raw else []
 
     def hands_of(self, party) -> Optional[str]:
         """The executor whose session performs `party`'s nodes, or None (`validation.hands_of`)."""

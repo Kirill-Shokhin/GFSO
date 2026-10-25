@@ -1280,6 +1280,8 @@ class Dispatcher:
         validation stays the issuer's act)."""
         if getattr(self._engine, "_dispatch_quiesce", 0):
             return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
+        if self._engine.paused():
+            return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
         self._rejoin()     # a root's result that did not land is tried again (cheap: roots only)
         # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§10.3) —
         # both the LLM validator (a fresh read-only agent) and the deterministic unittest-checker

@@ -112,6 +112,15 @@ def root_issuer_key(task_id) -> str:
     return f"issuer:{task_id}"
 
 
+#: The project's STOP, the user's: {by, at, why} while the system starts nothing in it, or absent.
+PAUSE_KEY = "paused"
+#: The tech reports filed in the project — about the system, not the task (`Engine.tech_report`).
+TECH_KEY = "tech_reports"
+#: The root whose plan the user handed in whole (`auto_decompose` with `spec`): under AUTO it is the user's, as the root's
+#: criteria are, and the system does not re-split it (`Engine.users_plan`).
+USERS_PLAN_KEY = "users_plan"
+
+
 class Graph:
     def __init__(self, storage: StoragePort):
         self._storage = storage

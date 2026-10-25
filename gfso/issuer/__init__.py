@@ -51,7 +51,7 @@ from gfso.engine import findings, loose_finding_key
 from gfso.engine.validation import is_auto_root, party_kind
 from gfso.packets import answered_challenges, answers_given, capped, list_key
 from gfso.engine.events import emit_cb
-from gfso.packets import checkout_note
+from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
 
 log = logging.getLogger("gfso.issuer")
 
@@ -428,8 +428,12 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         out.append(f"## This node's own ACCEPTED_RISKS\n{_own}"
                    + (f"\n\nNaming one of this node's criteria (CHECK-4; `drop_risk` takes them out): "
                       + "; ".join(f"«{i}»" for i in _flag) if _flag else ""))
-    q = QUESTIONS[question]
-    out.append(f"# The question: {q['ask']}\n\nAdmissible moves: " + ", ".join(f"`{m}`" for m in moves_for(engine, task, question))
+    q, moves = QUESTIONS[question], moves_for(engine, task, question)
+    out.append(f"# The question: {q['ask']}"
+               + ("\n\nThis is the user's goal under AUTO: closing it is theirs, not yours — continue it with a contract "
+                  "the standing findings can be met under; unanswered, it closes by its bound."
+                  if "cancel" in q["moves"] and "cancel" not in moves else "")
+               + "\n\nAdmissible moves: " + ", ".join(f"`{m}`" for m in moves)
                + f"\n\nWrite every text you return in the same language as this sentence the user wrote: "
                  f"«{_users_sentence(engine, task)}» — even where other text in this packet is in another "
                  f"language"
@@ -488,6 +492,7 @@ _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
 MOVE_SCHEMA = {
     "type": "object",
     "properties": {
+        "tech_report": TECH_REPORT,
         "move": {"type": "string"},
         "justification": {"type": "string", "description": "why — in terms of the contract and the goal"},
         "criteria": {**_CRITERIA, "description": "reassign / revise_child: the WHOLE criteria set as it "
@@ -529,6 +534,7 @@ MOVE_SCHEMA = {
 ISSUER_SCHEMA = {
     "type": "object",
     "properties": {
+        "tech_report": TECH_REPORT,
         "decision": {"type": "string", "enum": ["accept", "reject"]},
         "justification": {"type": "string",
                           "description": "why — in terms of the contract. On a rejection this is "
@@ -1338,11 +1344,17 @@ def _cancelled_producers(engine, child) -> list:
 def moves_for(engine, task, question: str) -> tuple:
     """The moves this question admits on THIS node: `drop_dependency` only where a child waits on a cancelled
     producer — offered on a dependency-order refutation it could never land, and an AUTO issuer spent four answers on
-    it while the one move that could (a re-decomposition, §15.5) went unasked (GB_c_compiler_tmp5cb096)."""
+    it while the one move that could (a re-decomposition, §15.5) went unasked (GB_c_compiler_tmp5cb096).
+
+    No `cancel` at an AUTO root: CANCEL is the refusal of the task (§11.2), and the goal is the user's — the system
+    moving for them continues it by a re-ASSIGN, and silence closes it by its bound (§12.5). A machine issuer
+    cancelled one "all 22 criteria pass" over the standing FAIL that escalated it (GB_sql_database_tncfrm404)."""
     moves = QUESTIONS[question]["moves"]
     if "drop_dependency" in moves and task is not None and not any(
             _cancelled_producers(engine, k) for k in engine.graph.get_active_children(task.id)):
         moves = tuple(m for m in moves if m != "drop_dependency")
+    if "cancel" in moves and is_auto_root(engine.graph, task):
+        moves = tuple(m for m in moves if m != "cancel")
     return moves
 
 
@@ -1424,8 +1436,8 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
         raise Unavailable("the model call returned nothing")
     if where and the_call_was_cut(llm, str(text)):   # an agent run of minutes is where calls are severed (critic 8)
         raise Unavailable("the contact run was cut before it answered")
-    return (_unlaid(parse_structured(text, schema), [d.as_posix() for d in laid.values()]),
-            dict(llm.last_tool_calls) if where else None)
+    file_tech_reports(engine, answer := parse_structured(text, schema), "issuer", actor, task_id)
+    return _unlaid(answer, [d.as_posix() for d in laid.values()]), dict(llm.last_tool_calls) if where else None
 
 
 def _unlaid(x, dirs: list):
@@ -1703,6 +1715,14 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
         return {"status": "gone"}
     if question == "plan" and review_due(engine, task_id):
         return _review(engine, task_id, verbs)
+    # …A SPLIT OF THE USER'S PLAN IS NOT THE SYSTEM'S TO REMAKE: owed where contact refuted it or a leaf proved larger
+    # than a session, and only its author re-plans it — the run stops, its sessions finishing, its record whole
+    if question in SPLIT_QUESTIONS and engine.users_plan():
+        why = (f"the plan the user gave is refuted at {task_id} ({question}: "
+               f"{engine.decomposition_refuted(task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans it")
+        if not engine.paused():
+            engine.pause("system", why)
+        return {"status": "users", "why": why}
     if question == "split":
         # ONE admissible move, and it is not a judgement: the refine round authors the split (SEARCH + the
         # form audit), the same verb a plan question may call; a model turn would only choose it
@@ -1728,8 +1748,9 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
              if verbs and verbs.place and question not in SPLIT_QUESTIONS else None)
     out = issuer_turn(engine, task_id, question, actor, verbs, where=where, refusal=(
         f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict. Decide: a next "
-        f"contract that changes what failed ({what_can_change(engine, engine.graph.get_task(task_id))}), or `cancel` "
-        f"with the reason." if spent else "" if question in SPLIT_QUESTIONS else refused_on_this_version(
+        f"contract that changes what failed ({what_can_change(engine, engine.graph.get_task(task_id))})"
+        + ("." if "cancel" not in moves_for(engine, engine.graph.get_task(task_id), question)
+           else ", or `cancel` with the reason.") if spent else "" if question in SPLIT_QUESTIONS else refused_on_this_version(
             engine, task_id, actor)))
     if out["status"] != "applied" and _still_open(engine, task_id, question, ep):
         out = issuer_turn(engine, task_id, question, actor, verbs, where=where,

@@ -435,6 +435,9 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
             f"{{inputs}})" for k, v in sorted(twin_probes(crit).items())]
     out += [f"{k}: its probe reads {INPUTS_TOKEN} and pins nothing there ({', '.join(v)}) — it would run over an empty "
             f"directory; pin the files it reads in its `inputs`" for k, v in sorted(inputs_unpinned(crit).items())]
+    out += [f"{k}: pinned input file(s) it feeds or runs are EMPTY ({', '.join(v)}) — the probe would run over nothing "
+            f"and decide nothing; write their content (an empty expected output under `diff`/`cmp` is fine, and an empty "
+            f"stdin is `< /dev/null`)" for k, v in sorted(empty_inputs(crit).items())]
     out += [f"{k}: pinned inputs would land outside their own probe's directory ({', '.join(v)}) — the system writes "
             f"them at validation time under a directory the validator owns; give each a relative path inside it"
             for k, v in sorted(unsafe_input_paths(crit).items())]
@@ -444,6 +447,28 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
     out += [f"{k}: every probe it pins emits a constant ({', '.join(v)}) and cannot come out false, so the criterion "
             f"forbids nothing (§1.3, §9.6) and a PASS on it observes no work; pin a command that runs the delivery"
             for k, v in sorted(hollow_procedures(crit).items())]
+    return out
+
+
+#: A pinned file a probe runs, sources, compiles or feeds on stdin — empty, it runs nothing. An empty file passed as an
+#: ARGUMENT is a case of its own (`tail -n 1 a e b`, a coreutils plan's probe) and stays admissible.
+_RUN_AS_CODE = re.compile(r"\.(?:c|h|sh|bash|py|sql)$")
+
+
+def empty_inputs(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: the names of its pinned input files that are empty and that its command runs, sources, compiles or
+    feeds on stdin}. Measured on build 9155db9: the machine's repair parts pinned 0-byte `.sql`, `.c` and `.sh` inputs on
+    their first ASSIGN — 40 in GB_sql_database_tncfrm404, 79 in GB_c_compiler_tne9g0864 — and an issuer then re-pinned
+    the expectations to what the build printed over them."""
+    def fed(n: str, cmd: str) -> bool:
+        """Is file `n` code by its name, or what `cmd` sources, runs or reads on stdin?"""
+        at =rf"(?:{re.escape(INPUTS_TOKEN)}/)?{re.escape(n)}(?![\w./-])"
+        return bool(_RUN_AS_CODE.search(n) or re.search(rf"(?:<|(?:^|[;&|(]\s*)(?:\.|source|bash|sh|python3?))\s+{at}", cmd))
+    out: dict = {}
+    for c in criteria or ():
+        for p in c.check or ():
+            if names := [n for n, body in (p.inputs or ()) if not str(body).strip() and fed(n, p.command)]:
+                out.setdefault(c.name, []).extend(names)
     return out
 
 
