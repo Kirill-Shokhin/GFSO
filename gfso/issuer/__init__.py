@@ -25,9 +25,7 @@ import contextlib
 import dataclasses
 import logging
 import re
-import shutil
 import subprocess
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -36,9 +34,10 @@ from pathlib import Path
 from typing import Optional
 
 from gfso import tools as _tools
+from gfso.adapters.execution import LocalExecution
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
-from gfso.config import MODEL_DEFAULT, agent_id as _config_agent_id
+from gfso.config import agent_id as _config_agent_id
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, pinned_files, probe_id,
@@ -133,6 +132,11 @@ class Verbs:
     review: object       # (engine, node id) -> the review's reply
     refine: object       # (engine, node id) -> the refine round's reply
     place: object = None  # (engine, agents, node id) -> the directory the node's work is in, or None
+    execution: object = None  # engine -> where its project's sessions and commands run (`ExecutionPort`), None = here
+
+
+def _execution(engine, verbs: "Verbs | None"):
+    return verbs.execution(engine) if verbs is not None and verbs.execution is not None else None
 
 
 def signal_ok(engine, task_id: TaskId, sig: Signal, source: str, _why: "list | None" = None,
@@ -660,28 +664,21 @@ def _same(a: str, b: str) -> bool:
     return u(a) == u(b)
 
 
-def _bash() -> Optional[str]:
-    """The shell probes are written for: on Windows Git's own (the one Claude Code runs), never WSL's `bash.exe`, where a
-    `C:/…` inputs path does not resolve."""
-    if (git := shutil.which("git")) and (b := Path(git).resolve().parents[1] / "bin" / "bash.exe").is_file():
-        return str(b)
-    return shutil.which("bash")
-
-
-def _derived(command: str, criterion, probe) -> tuple[Optional[str], str]:
-    """(what the command printed, '') run in an EMPTY place holding only the probe's pinned inputs, or (None, why it
-    could not run — with its exit code and the tail of its stderr, so the next answer knows what to change)."""
-    if not (bash := _bash()):
+def _derived(command: str, criterion, probe, execution=None) -> tuple[Optional[str], str]:
+    """(what the command printed, '') run in an EMPTY place holding only the probe's pinned inputs — where the project's
+    work runs, so a value is derived on the platform its check is decided on — or (None, why it could not run — with
+    its exit code and the tail of its stderr, so the next answer knows what to change)."""
+    ex = execution or LocalExecution()
+    if not (bash := ex.shell()):
         return None, "could not run: no `bash` here"
-    with tempfile.TemporaryDirectory(prefix="gfso-derive-", ignore_cleanup_errors=True) as tmp:
+    with ex.scratch("gfso-derive-") as tmp:
         try:
             laid = materialize_inputs((criterion,), Path(tmp) / "inputs")
         except ValueError as e:
             return None, f"could not lay down the probe's inputs ({e})"
         cmd = command.replace(INPUTS_TOKEN, laid.get(probe_id(criterion.name, probe), Path(tmp)).as_posix())
         try:
-            p = subprocess.run([bash, "-c", cmd], cwd=tmp, capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=DERIVE_TIMEOUT_S)
+            p = ex.run([bash, "-c", cmd], cwd=tmp, timeout=DERIVE_TIMEOUT_S)
         except (OSError, subprocess.TimeoutExpired) as e:
             return None, f"did not finish ({type(e).__name__})"
         if p.returncode:
@@ -702,7 +699,8 @@ def _runs_the_work(how: str, probe, where: Optional[str]) -> Optional[str]:
                  if re.search(rf"(?:^|[\s/;&|(]){re.escape(x)}\b", text)), None)
 
 
-def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Optional[str] = None) -> Optional[str]:
+def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Optional[str] = None,
+                          execution=None) -> Optional[str]:
     """Under AUTO an expectation the system re-pins on a root criterion is a claim about the world made for the user, and
     it is grounded by contact with something other than the delivery it will judge — else the work under test answers
     its own check, verifier = executor in substance (§10.3, d6 §4.1). So each re-pinned probe names `derived_by`, a
@@ -736,7 +734,7 @@ def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Opt
         elif used := _runs_the_work(how, p, where):
             wrong.append(f"«{c.name}»: its derivation `{how[:120]}` runs the work under test — {used}")
         else:
-            out, why = _derived(how, c, p)
+            out, why = _derived(how, c, p, execution)
             if out is not None:
                 return out
             wrong.append(f"«{c.name}» `{p.command[:80]}`: its derivation `{how[:120]}` {why}")
@@ -1412,13 +1410,15 @@ def apply_move(engine, task_id: TaskId, question: str, actor: str, answer: dict,
 def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=None):
     """The issuer's answer, and the ledger of the tools its run used — None where nothing could be run (the agent
     transport, the only one with `run_agent`, keeps the ledger of every run)."""
-    llm = _llm or verbs.llm(MODEL_DEFAULT)
+    # a contact run works in the node's place, so it runs where the project's work runs; a zero-tool answer has no
+    # place to be isolated in
+    ex = _execution(engine, verbs) if where else None
+    llm = _llm or (verbs.llm(engine.system_model(), execution=ex) if ex else verbs.llm(engine.system_model()))
     llm.stage_hint = f"{task_id} issuer({actor}) {question}"
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
-    with (tempfile.TemporaryDirectory(prefix="gfso-issuer-inputs-", ignore_cleanup_errors=True) if where
-          else contextlib.nullcontext()) as tmp:
+    with ((ex or LocalExecution()).scratch("gfso-issuer-inputs-") if where else contextlib.nullcontext()) as tmp:
         laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp) if tmp else {}
         packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
         with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
@@ -1528,7 +1528,8 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         _cb(f"{task_id}: the adjudication would DROP {', '.join(unasked)}, which the dispute never "
             f"questioned — refused")
         return {"task_id": str(task_id), "status": "would_narrow", "dropped": unasked}
-    if bad := narrowing_at_the_root(engine, task, spec) or underived_at_the_root(engine, task, spec, answer, where):
+    if bad := (narrowing_at_the_root(engine, task, spec)
+               or underived_at_the_root(engine, task, spec, answer, where, _execution(engine, verbs))):
         return {"task_id": str(task_id), "status": "would_narrow", "why": bad, "dropped": dropped}
     # the ruling rides the acceptance — one act, refused whole where it may not be made (`validation.ruling_refusal`)
     ok, why = _signalled(engine, task_id, Signal.ACCEPT_CHALLENGE, issuer_id, new_spec=spec,
@@ -1639,10 +1640,15 @@ def awaits_the_plans_review(refusal: str) -> bool:
 
 def _starved(engine, child) -> bool:
     """A live child consuming a producer that was cancelled — it waits on something that will not come."""
-    return child.state in (State.OFFERED, State.BLOCKED, State.EXECUTING) and any(
-        str(e.to_id) == str(child.id)
-        and (engine.graph.get_task(TaskId(e.from_id)) or child).state in (State.ABANDONED, State.CANCELLING)
-        for e in engine.get_dependencies())
+    return bool(_cancelled_producers(engine, child))
+
+
+def _cancelled_producers(engine, child) -> list[str]:
+    """The cancelled producers a live child consumes."""
+    if child.state not in (State.OFFERED, State.BLOCKED, State.EXECUTING):
+        return []
+    return [str(e.from_id) for e in engine.get_dependencies() if str(e.to_id) == str(child.id)
+            and (engine.graph.get_task(TaskId(e.from_id)) or child).state in (State.ABANDONED, State.CANCELLING)]
 
 
 def _machine_issuer(engine, agents, task_id: TaskId) -> Optional[str]:
@@ -1712,8 +1718,12 @@ def _review(engine, task_id: TaskId, verbs: Verbs) -> dict:
 
 
 def what_contact_refuted(engine, task_id: TaskId) -> str:
-    """What contact refuted in this node's split — its FAIL over passing children, its order — as the engine states it."""
-    return "\n".join(filter(None, (engine.decomposition_refuted(task_id), engine.dep_order_refuted(task_id))))
+    """What contact refuted in this node's split, each of the three ways a repair is owed: its FAIL over passing
+    children, its order, a child waiting on a producer that was cancelled."""
+    starved = [f"{k.id} waits on {', '.join(ps)}, cancelled — drop that Dep and cover what it fed another way"
+               for k in engine.graph.get_active_children(task_id) if (ps := _cancelled_producers(engine, k))]
+    return "\n".join(filter(None, (engine.decomposition_refuted(task_id), engine.dep_order_refuted(task_id),
+                                   *starved)))
 
 
 def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Verbs) -> dict:

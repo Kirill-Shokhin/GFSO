@@ -7,7 +7,8 @@ import re
 import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
-from gfso.config import DEFAULT_PROJECT
+from gfso.adapters.execution import ContainerExecution, LocalExecution
+from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task
@@ -108,7 +109,8 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
         _ensure_place(engine, agents, parent, pw)
     if (into := _where_it_joins(engine, agents, t, w)) is None:
         return None
-    why = W.merge(w[0], into, w[2], f"gfso: {t.id} joins {parent.id if parent else 'the base'}")
+    why = W.merge(w[0], into, w[2], f"gfso: {t.id} joins {parent.id if parent else 'the base'}",
+                  execution=execution_of(engine, agents))
     if why and engine.say_once(f"unjoined:{t.id}:{generation_of_task(t)}"):
         engine.emit_info("delegate", f"{t.id}: PASSED, and its branch `{w[2]}` did not join {into} ({why}) - the "
                                      f"merge was aborted and the branch stands unmerged; integrating it is the work "
@@ -150,7 +152,7 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
               and (x.state == State.DONE or str(x.id) in kept) else None)
         if xw is None or xw[2] == branch or not same_place(xw[0], base) or not Path(xw[1]).is_dir():
             continue
-        if (why := W.merge(base, place, xw[2], f"gfso: {x.id} joins {top.id}")):
+        if (why := W.merge(base, place, xw[2], f"gfso: {x.id} joins {top.id}", execution=execution_of(engine, agents))):
             unjoined.append((str(x.id), xw[2], why))
     return place, unjoined, w
 
@@ -196,6 +198,30 @@ def _unjoined_text(unjoined: list) -> str:
 CONVERSING_ROLES = ("executor", "scope-executor")
 
 
+#: one object per (execution, project): its container is started once and every call of the project goes through it
+_EXECUTIONS: dict = {}
+
+
+def execution_of(engine, agents: "AgentRegistry | None" = None):
+    """WHERE this project's sessions and commands run: the execution its roles declare (`register_agent(execution=)`,
+    one per project), in the place of the role that declared it — else this host."""
+    role = next((c for c in (agents or AgentRegistry()).list().values()
+                 if c.get("execution") and c.get("project") == engine.project_name and c.get("workdir")), None)
+    if role is None:
+        return LocalExecution()
+    key = (role["execution"], engine.project_name)
+    if key not in _EXECUTIONS:
+        d = executions()[role["execution"]]
+        _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d["env_file"], d["state"],
+                                              role["workdir"], engine.project_name)
+    return _EXECUTIONS[key]
+
+
+def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):
+    """The model a session of this project runs on, started where the project's work runs."""
+    return llm_factory(model, execution=execution_of(engine, agents))
+
+
 def session_key(*parts) -> str:
     """The id of ONE conversation per (project, node — its first issue, so a later goal reusing the id is another —,
     its executor, the role's session): a round cut at its turn cap is continued by the next one instead of starting
@@ -214,7 +240,7 @@ def conversation_of(engine, task_id, executor_id, role: str) -> str:
 def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
     """At the root's PASS every joined part is in the base: its worktree, branch and executor's conversation go (a node's tree is a whole
     checkout, so kept they cost the base's size each), and what did not join stays where it is, named."""
-    left, seen, llm = [], set(), llm_factory()
+    left, seen, llm = [], set(), project_llm(engine, MODEL_DEFAULT, agents)   # its conversations live where it ran
     for t in engine.all_tasks():
         for role in CONVERSING_ROLES:          # the work its conversations served is settled
             llm.forget(conversation_of(engine, t.id, t.assignee, role))
@@ -224,6 +250,7 @@ def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
         seen.add(w[2])
         if not (W.contains(w[0], w[0], w[2]) and W.remove(*w)):
             left.append(f"{w[1]} (`{w[2]}`)")
+    execution_of(engine, agents).stop()        # the goal is settled: its project's container goes too
     if left:
         engine.emit_info("delegate", f"{root.id}: DONE - node workspaces not joined into the base are kept: "
                                      f"{'; '.join(left)}")

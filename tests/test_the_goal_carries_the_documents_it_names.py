@@ -77,7 +77,7 @@ def test_a_plan_the_system_writes_carries_the_files_its_place_names(tmp_path, mo
     (tmp_path / "base" / "Makefile").write_text("THE BUILD IN base", encoding="utf-8")
     reg.register("exec-1", "llm-executor", workdir=str(tmp_path / "base"), project="p")
     monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
-    monkeypatch.setattr(TL, "llm_factory", lambda model=None: _Reader())
+    monkeypatch.setattr(TL, "llm_factory", lambda model=None, **_: _Reader())
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
     e.record_llm_usage = lambda *a, **k: None

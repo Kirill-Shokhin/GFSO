@@ -27,6 +27,7 @@ from typing import Optional
 
 from gfso import runtime
 from gfso.llm import llm_factory
+from gfso.workspaces import execution_of
 from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import canonical_citations, laid_down_dirs, with_part_observations
@@ -140,7 +141,7 @@ def _delta_since_the_last_review(out: dict, prev_open, prev_ts) -> None:
                          "so nothing here is new or closed.")
 
 
-def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAULT) -> dict:
+def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = None) -> dict:
     """Validate a node's decomposition: the STRUCTURAL gate (L0/L1: coverage, DAG, glue, non-redundancy —
     fails ⇒ fix those first) + the L2 CHECKER (canon §9.1 Level 2): one zero-tool call checking, per
     parent criterion, whether the mapped children's criteria — taken as real-world facts — CAUSALLY
@@ -162,7 +163,7 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
                         "or its runner died: `revise` moves the node to a new version and the "
                         "check can be asked again."}
     try:
-        llm = llm_factory(model)
+        llm = llm_factory(model or engine.system_model())
         llm.on_tick = _cb
         llm.stage_hint = f"{task_id} L2-checker"
         _cb(f"{task_id}: L2 checker (causal entailment per parent criterion)…")
@@ -742,7 +743,7 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
     if _stop is not None:
         return _stop, None
     _cb = emit_cb(engine, "validate_result", _progress)
-    llm = _llm or llm_factory(model)
+    llm = _llm or llm_factory(model, execution=execution_of(engine))
     if not (llm.runs_agents if isinstance(llm, LLMProviderPort) else hasattr(llm, "run_agent")):
         return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
                          "GFSO_PROVIDER=generic covers zero-tool one-shots only"}, None
@@ -816,7 +817,7 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
         _cb(f"{task_id}: independent validator (read-only agent) over the deliverable…")
         out, text = _validation_pass(engine, task_id, [(task, deliverable)], {task_id: inflight_key}, workdir,
                                      validator, model, llm,
-                                     _spawn or (None if _llm is not None else lambda: llm_factory(model)), _cb)
+                                     _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=execution_of(engine))), _cb)
         out["state"] = task.state.name
         if out.get("error"):
             # The transport refuses to spawn an agent with no working directory (it would run in the state home
@@ -1254,7 +1255,7 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
             if k is not None:
                 engine.claims.end_validation(k)
         return {"task_id": str(top_id), "verdicts": {}, "inflight": bool(nodes)}
-    llm = _llm or llm_factory(model)
+    llm = _llm or llm_factory(model, execution=execution_of(engine))
     try:
         llm.on_tick = _cb = emit_cb(engine, "validate_result")
         llm.stage_hint = f"{top_id} scope-validator({validator or 'standalone'})"
@@ -1262,7 +1263,7 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
         out, _ = _validation_pass(engine, str(top_id), [(t, _last_deliver_result(engine, t.id) or "(none recorded)")
                                                         for t in nodes],
                                   {str(t.id): k for t, k in zip(nodes, keys)}, workdir, validator, model, llm,
-                                  _spawn or (None if _llm is not None else lambda: llm_factory(model)), _cb,
+                                  _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=execution_of(engine))), _cb,
                                   inside=frozenset(str(m.id) for m in members))
         out.pop("reports", None)
         out["verdicts"] = {tid: {"verdict": v["verdict"], "failed_criteria": v["failed_criteria"],
@@ -1334,7 +1335,7 @@ def _work_place_documents(engine: Engine, request: str, model: str) -> str:
     GB_sql_database_tmu9cb784, 0.09 held-out). Criteria take their content from contact with the work (d6, §4.1)."""
     named: list = []
     for base in _work_places(engine):
-        llm = llm_factory(model)
+        llm = llm_factory(model, execution=execution_of(engine))
         llm.stage_hint = f"root place-reader({engine.project_name})"   # named like every role's trace, so it is read
         try:
             text = llm.run_agent(_PLACE_SYSTEM, (request or "") + schema_instruction(_PLACE_SCHEMA),
@@ -1369,7 +1370,7 @@ def _what_the_gate_does(engine: Engine, root_id, kids: list, n: int) -> str:
 
 def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    assignee: Optional[str] = None, executor: Optional[str] = None,
-                   depth: int = 1, model: str = MODEL_DEFAULT, fast: bool = False,
+                   depth: int = 1, model: Optional[str] = None, fast: bool = False,
                    max_iterations: Optional[int] = None, spec: Optional[dict] = None,
                    _progress=None, author: Optional[str] = None) -> dict:
     """THE one decomposition verb — dispatched by the target's state (one operation over graph state):
@@ -1402,6 +1403,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
 
     `spec` builds a plan already authored — the shape `extract_spec` reads off a graph — as it
     stands, with no search: the way to execute ONE plan twice and compare the executions."""
+    model = model or engine.system_model()
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
     # every child, which is the opposite of what "delegate the work" usually means to the caller.
@@ -1605,7 +1607,7 @@ def _delegation():
 def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                    workdir: Optional[str] = None, validator: Optional[str] = None,
                    oracle_map: Optional[str] = None, max_turns: Optional[int] = None,
-                   client: Optional[str] = None) -> dict:
+                   client: Optional[str] = None, execution: Optional[str] = None) -> dict:
     """Register a NON-human participant (humans need no registration — an unregistered Del = human,
     the system stays passive). kind: `llm-executor` (nodes assigned to this id AUTOSTART: headless
     executor with work tools in `workdir`, its report wrapped into ACCEPT/DELIVER/BLOCK/CHALLENGE) ·
@@ -1627,6 +1629,9 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     `client` (optional) ties the role's LIFETIME to your own lease: while that lease is live the role
     is dispatchable, and when it lapses the dispatcher stops starting work for it — nothing is
     cancelled, no state moves, and the same owner returning resumes where the graph stood.
+
+    `execution` (optional) names where this project's sessions and commands run — an execution the server
+    DECLARES (its executions.json: a Linux container per project, say); one per project, and none = this host.
 
     THIS VERB LIVED ON THE AGENT DOOR ALONE. A person driving from the CLI or the HTTP API was told
     by the log to `reassign` a node to a registered role and had no verb anywhere to make one —
@@ -1655,7 +1660,7 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     agents = _roster(engine)
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
                           oracle_map=oracle_map, max_turns=max_turns, client=client,
-                          project=engine.project_name)
+                          project=engine.project_name, execution=execution)
     _delegation().publish_the_workforce(engine, agents.list())
     # THE SPELLING THAT BINDS, not the one that was typed. The roster stores the workdir RESOLVED,
     # and the workspace binding is decided on that value — while the advice below interpolated the
@@ -1808,7 +1813,9 @@ next_steps.__doc__ += "\n\n    " + (_tools.next_steps.__doc__ or "").strip()
 
 
 def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
-             agent: Optional[str] = None, user_said: str = "", perform: str = "dispatch") -> dict:
+             agent: Optional[str] = None, user_said: str = "", perform: str = "dispatch",
+             system_model: Optional[str] = None, l2_gate: Optional[bool] = None,
+             deadline_s: Optional[float] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
     - `solo` — you (the user-agent) hold and execute every node; the one seam is the root.
@@ -1832,7 +1839,12 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
     yourself, with your own tools, and nothing keeps it inside the contract but you.
 
     Once the project has work in it, a change needs `user_said` — the user's own words asking for it,
-    recorded with the mode: a refusal or a stall is a reason to ask the user, never to switch yourself."""
+    recorded with the mode: a refusal or a stall is a reason to ask the user, never to switch yourself.
+
+    What the project sets for itself, recorded with the mode (unset = the server's): `system_model` — the model the
+    system's own roles run on here (its issuer, its plan's author and reviewer); `l2_gate` — whether the plan's
+    Level-2 review gates execution (off: the plan was verified where it was authored); `deadline_s` — how far ahead a
+    deadline nobody typed is written (0 = none)."""
     try:
         m = Mode(str(mode).strip().lower())
     except ValueError:
@@ -1844,13 +1856,18 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
                 "user, and pass their own words asking for the change as `user_said`."}
     if perform not in ("dispatch", "in_chat"):
         return {"refused": True, "error": f"perform must be dispatch | in_chat, got {perform!r}"}
+    if deadline_s is not None and float(deadline_s) < 0:
+        return {"refused": True, "error": f"deadline_s is seconds ahead, 0 or more, got {deadline_s!r}"}
+    settings = {k: v for k, v in (("system_model", str(system_model).strip() or None if system_model else None),
+                                  ("l2_gate", None if l2_gate is None else "1" if l2_gate else "0"),
+                                  ("deadline_s", None if deadline_s is None else float(deadline_s))) if v is not None}
     staff = mode_staffing(engine, m.value, perform)
     pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
     if not staff["ready"]:
         return {"refused": True, "error": staff["missing"], "executors": staff["executors"]}
     try:
         rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
-                              hands=str(pool[0]) if dispatch else None)
+                              hands=str(pool[0]) if dispatch else None, settings=settings)
     except ValueError as e:
         return {"refused": True, "error": str(e)}
     return {**rec, "executors": [str(a) for a in pool],

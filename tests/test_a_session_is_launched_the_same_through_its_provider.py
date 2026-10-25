@@ -4,7 +4,9 @@ The provider factory's first step (docs/notes/PROVIDER_FACTORY.md) moves the `cl
 provider class handing its process to an execution — the author: «текущее просто вынесется из хардкода в общий класс с
 прокидкой всего того же что есть сейчас без изменений». So what every call starts with is pinned here byte for byte:
 the program, the argv, the environment it inherits, the place it runs in and the prompt it is fed — for a one-shot, an
-agent run opening a conversation, one continuing it, and the per-token billing that keeps the key.
+agent run opening a conversation, one continuing it, and the per-token billing that keeps the key. How a call is ENDED
+(the cap's timer, the mid-stream cap, `finally`, the cold retry) is not pinned here: the silent-child, conversation and
+cut-call tests hold those (critic over ad639bc, by mutation).
 """
 import io
 import json

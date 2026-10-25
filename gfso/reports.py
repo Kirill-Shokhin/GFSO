@@ -12,7 +12,7 @@ from gfso.core.graph.model import generation_of_task
 from gfso.core.types import TaskId, Signal, Verdict
 from gfso.issuer import signal_ok as _signal
 from gfso.packets import _EXECUTOR_STATES
-from gfso.workspaces import still_unjoined
+from gfso.workspaces import execution_of, still_unjoined
 
 log = logging.getLogger(__name__)
 
@@ -148,7 +148,8 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         _cb(f"{task_id}: the report answers a contract revised while the session worked - nothing signalled; the "
             f"node waits under its new version · {_stat_line(llm)}")
         if workspace is not None:   # what it wrote is the old version's, on the record as such — never in a later delivery
-            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} work under a superseded version", executor_id)
+            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} work under a superseded version", executor_id,
+                         execution=execution_of(engine))
         return
     if status == "challenge":
         # The dispute travels as the signal wherever the state admits it — OFFERED, and, since
@@ -216,7 +217,8 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             engine.emit_info("delegate", f"{task_id}: delivery held — a merge left unfinished in its tree")
             return
         if workspace is not None:
-            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id)
+            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id,
+                         execution=execution_of(engine))
         # …AND IT CARRIES ITS PARTS' WORK. Told in its packet to merge four parts that conflicted, a root's executor
         # rewrote their files instead, never merged, and delivered a tree without the JOINs a part had passed on; its
         # deliveries failed until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16). Merging is its own move.

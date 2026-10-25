@@ -7,6 +7,7 @@ MISSING implementation costs — a degraded feature, or a voided guarantee — b
 from __future__ import annotations
 
 import queue
+import tempfile
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -209,21 +210,41 @@ class ExecutionPort(ABC):
         ...
 
     @abstractmethod
-    def scratch(self, prefix: str):
-        """A context manager lending an empty directory of its own, removed when the block leaves."""
+    def temp_root(self) -> str:
+        """The host directory a temporary file must stand in to be seen where this execution runs — a packet's inputs or
+        lists named to an agent are read there, not here."""
         ...
+
+    def scratch(self, prefix: str):
+        """A context manager lending an empty directory of its own under `temp_root`, removed when the block leaves."""
+        return tempfile.TemporaryDirectory(prefix=prefix, dir=self.temp_root(), ignore_cleanup_errors=True)
 
     @abstractmethod
     def state_dir(self):
         """Where the agent CLI started here keeps its state — the conversations a session continues live under it."""
         ...
 
+    @abstractmethod
+    def run(self, args: list[str], *, cwd: str, timeout: float, env: Optional[dict] = None):
+        """A command to its end in `cwd`: a `CompletedProcess` with text output; past `timeout` it is ended whole and
+        `TimeoutExpired` reaches the caller."""
+        ...
+
+    @abstractmethod
+    def shell(self) -> Optional[str]:
+        """The shell the plan's probes are written for, as this execution starts it, or None where it has none."""
+        ...
+
+    def stop(self) -> None:
+        """Release what this execution holds for its project — its goal settled, or the project deleted. The host
+        holds nothing."""
+
 
 class LLMProviderPort(ABC):
     #: may independent calls run at once (`stats.readings`)? A provider says so only where each call stands alone.
     parallel_safe: bool = False
-    #: can it run an AGENT — tools, a place, a conversation (`run_agent`)? A provider of one-shots says no, and the
-    #: verbs that need one refuse before a paid call rather than halfway through it.
+    #: can it run an AGENT — tools, a place, a conversation (`run_agent`)? A provider of one-shots says no;
+    #: `validate_result` reads it to refuse before a paid call, every other agent door raises at `run_agent`.
     runs_agents: bool = False
 
     def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,

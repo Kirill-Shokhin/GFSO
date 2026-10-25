@@ -23,7 +23,7 @@ def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_
         task.reassign_reason_typed = True
         if r == RevisionReason.CAPABILITY_MISMATCH:
             task.reassign_capability_mismatch = True
-from .model import Graph, logged_declarations
+from .model import Graph, logged_declarations, project_deadline_s
 from gfso.core.types import settled_positive
 from gfso.config import default_deadline_s
 
@@ -480,7 +480,7 @@ class Schedule:
         dated = parent is not None and parent.deadline is not None
         self.spent = dated and parent.deadline <= self.now
         self.due = parent.deadline if dated and not self.spent else None
-        span = default_deadline_s()
+        span = project_deadline_s(graph) if graph is not None else default_deadline_s()
         self.want = want or (self.now + timedelta(seconds=span) if span else None)
         edges = graph.dep_edges(adopted=True) if graph is not None else []
         self.reads = {x: set(r) | {str(e.from_id) for e in edges if str(e.to_id) == x and e.discovered}

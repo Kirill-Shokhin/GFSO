@@ -6,6 +6,8 @@ import dataclasses
 import json
 from typing import Optional
 
+from gfso.config import default_deadline_s
+
 from gfso.core.types import (
     TaskId, AgentId, Task, State, Signal, Verdict,
     GuardContext, GraphContext, CheckResult, Recommendation,
@@ -121,6 +123,12 @@ TECH_KEY = "tech_reports"
 USERS_PLAN_KEY = "users_plan"
 
 
+def project_deadline_s(graph: "Graph") -> float:
+    """How far ahead a deadline nobody typed is written in this project: its own setting, else the server's."""
+    v = graph.setting("deadline_s")
+    return float(v) if v is not None else default_deadline_s()
+
+
 class Graph:
     def __init__(self, storage: StoragePort):
         self._storage = storage
@@ -133,6 +141,10 @@ class Graph:
         # reading it defensively, which is how a rule silently becomes "empty set" on any graph the
         # dispatcher never touched.
         self.authorized_validators: set[str] = set()
+
+    def setting(self, key: str) -> Optional[str]:
+        """A setting of this graph's project as stored, or None — the user's choices for it (`set_mode`)."""
+        return self._storage.get_setting(key)
 
     def get_state(self, task_id: TaskId) -> Optional[State]:
         """The node's current state, or `None` if this id is not in the graph. `None` is what the

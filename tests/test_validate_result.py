@@ -961,7 +961,7 @@ def test_the_workdir_defaults_to_where_the_nodes_Del_is_registered(tmp_path, mon
          "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42", "behaviour": "nail head is flush"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "ran it", "behaviours": ["picture hangs on it"],
          "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42", "behaviour": "picture hangs on it"}]}]}))
-    monkeypatch.setattr(TL, "llm_factory", lambda model: llm)
+    monkeypatch.setattr(TL, "llm_factory", lambda model, **_: llm)
 
     out = TL.validate_result(e, "n1")                       # no workdir: the roster has it
     assert "error" not in out, out.get("error")

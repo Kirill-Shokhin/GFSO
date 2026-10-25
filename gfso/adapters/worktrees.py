@@ -37,13 +37,32 @@ def _lock(base) -> threading.RLock:
         return _LOCKS.setdefault(_key(base), threading.RLock())
 
 
-def _git(cwd, *args, who: str = "gfso"):
-    """One git call in `cwd`, as `who` — a delivery is its executor's commit, and no identity needs configuring."""
+def _git(cwd, *args, who: str = "gfso", execution=None):
+    """One git call in `cwd`, as `who` — a delivery is its executor's commit, and no identity needs configuring —
+    where `execution` runs the project's work (this host when None)."""
     mail = f"{who}@gfso.local"
-    env = {"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail, "GIT_COMMITTER_NAME": who,
-           "GIT_COMMITTER_EMAIL": mail, "GIT_TERMINAL_PROMPT": "0"}
+    env = subprocess_env(keep_key=False, extra={"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail,
+                                                "GIT_COMMITTER_NAME": who, "GIT_COMMITTER_EMAIL": mail,
+                                                "GIT_TERMINAL_PROMPT": "0"})
+    if execution is not None:
+        return execution.run(["git", *args], cwd=str(cwd), timeout=_SLOW, env=env)
     return children.run(["git", *args], timeout=_SLOW, cwd=str(cwd), text=True, encoding="utf-8",
-                        errors="replace", env=subprocess_env(keep_key=False, extra=env))
+                        errors="replace", env=env)
+
+
+def _relative_gitfile(place: Path) -> None:
+    """A worktree's `.git` names its gitdir by a path relative to the place: written absolute (`C:/…`), the same tree
+    is no repository inside a container that mounts it elsewhere (probe P2). Hidden on Windows, so rewritten in place."""
+    with open(place / ".git", "r+", encoding="utf-8") as f:
+        gitdir = f.read().split("gitdir:", 1)[1].strip()
+        f.seek(0)
+        f.write("gitdir: " + Path(os.path.relpath(gitdir, place)).as_posix() + "\n")
+        f.truncate()
+
+
+def checks_out_crlf(base) -> bool:
+    """Does the repository at `base` check its files out with CRLF (`core.autocrlf=true`, any level that applies)?"""
+    return is_repo_top(base) and _git(base, "config", "--get", "core.autocrlf").stdout.strip().lower() == "true"
 
 
 def is_repo_top(base) -> bool:
@@ -75,6 +94,7 @@ def ensure(base, place, branch: str, start_from) -> bool:
         r = _git(base, *args)
         if r.returncode != 0:
             raise OSError(f"git worktree add {place} failed: {r.stderr.strip()}")
+        _relative_gitfile(place)
         return True
 
 
@@ -84,25 +104,27 @@ def ensure(base, place, branch: str, start_from) -> bool:
 CACHES = ("__pycache__", "*.pyc", "*.pyo", ".pytest_cache", "*.o", "*.obj")
 
 
-def commit_all(base, place, message: str, who: str) -> str:
-    """Everything in the place but caches as one commit — empty or not, so every delivery has a name. Its sha."""
+def commit_all(base, place, message: str, who: str, execution=None) -> str:
+    """Everything in the place but caches as one commit — empty or not, so every delivery has a name. Its sha. Taken
+    where the work was made: host git cannot index a symlink made inside a container (probe P5)."""
     with _lock(base):
         _git(place, "add", "-A", "--", ".", *(f":(exclude,glob)**/{c}" for c in CACHES),
-             *(f":(exclude,glob)**/{c}/**" for c in CACHES if "*" not in c))
-        r = _git(place, "commit", "--allow-empty", "--no-verify", "-q", "-m", message, who=who)
+             *(f":(exclude,glob)**/{c}/**" for c in CACHES if "*" not in c), execution=execution)
+        r = _git(place, "commit", "--allow-empty", "--no-verify", "-q", "-m", message, who=who, execution=execution)
         if r.returncode != 0:
             raise OSError(f"the delivery could not be committed in {place}: {r.stderr.strip()}")
         return _git(place, "rev-parse", "HEAD").stdout.strip()
 
 
-def merge(base, into, branch: str, message: str) -> str | None:
+def merge(base, into, branch: str, message: str, execution=None) -> str | None:
     """Join `branch` into the tree at `into`. None when joined (or already in); else why not, with the tree
-    returned to where it stood — a half-merged tree would be the torn read this module exists against."""
+    returned to where it stood — a half-merged tree would be the torn read this module exists against. Written where the
+    work runs, so a symlink a part made is checked out as one."""
     with _lock(base):
-        r = _git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, branch)
+        r = _git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, branch, execution=execution)
         if r.returncode == 0:
             return None
-        _git(into, "merge", "--abort")           # refused before it started (a dirty tree): nothing to abort
+        _git(into, "merge", "--abort", execution=execution)   # refused before it started (a dirty tree): nothing to abort
         return " ".join((r.stdout + " " + r.stderr).split())[:400] or f"git merge exited {r.returncode}"
 
 

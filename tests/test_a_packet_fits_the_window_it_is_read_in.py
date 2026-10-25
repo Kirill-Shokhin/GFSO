@@ -13,15 +13,16 @@ from gfso.core.types import Criteria, Mode, Probe, TaskId
 from tests.test_the_mode_decides_who_holds_what import _engine, _goal
 
 
-def test_a_list_past_the_shown_count_is_in_a_file_the_text_names_none_withheld():
+def test_a_list_past_the_shown_count_is_in_a_file_the_text_names_none_withheld(tmp_path):
     lines = [f"standing finding [f{i}]: `query {i} printed 1, not 1.000`" for i in range(P.SHOWN_FINDINGS + 30)]
-    text = P.capped(lines, "standing findings", "root-Query execution-findings")
+    key = str(tmp_path / "gfso-lists" / "root-Query_execution-findings.md")     # the path `list_key` names
+    text = P.capped(lines, "standing findings", key)
     assert text.count("standing finding [") == P.SHOWN_FINDINGS
     path = text.rsplit(" in ", 1)[1].split(": grep it", 1)[0]
     listed = Path(path).read_text(encoding="utf-8")
     assert all(f"[f{i}]" in listed for i in range(len(lines))), "a line past the shown count was withheld"
     assert "[f49]" not in text and "30 more standing findings" in text
-    assert P.capped(lines, "standing findings", "root-Query execution-findings") == text, "one file per key"
+    assert P.capped(lines, "standing findings", key) == text, "one file per key"
 
 
 def test_a_short_list_stays_inline():

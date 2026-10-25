@@ -16,6 +16,7 @@ its point of enforcement on purpose, where the code that obeys it is the code th
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -51,6 +52,19 @@ def db_path(project: str | None = None) -> Path:
 def agents_path() -> Path:
     """The roster of non-human participants — one file, shared by every session of the one server."""
     return Path(os.environ.get("GFSO_AGENTS_PATH") or (data_dir() / "agents.json"))
+
+
+def executions_path() -> Path:
+    """Where a project's sessions may run besides this host — a DECLARATION, read, never written by a door:
+    `{name: {"image", "env_file", "state"?}}` (`state` defaults to `<data_dir>/executions/<name>/claude`)."""
+    return Path(os.environ.get("GFSO_EXECUTIONS_PATH") or (data_dir() / "executions.json"))
+
+
+def executions() -> dict:
+    """The declared executions, each with its CLI state directory filled in; none declared is `{}`."""
+    p = executions_path()
+    got = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+    return {n: {**d, "state": d.get("state") or str(data_dir() / "executions" / n / "claude")} for n, d in got.items()}
 
 
 # ── The names two or more modules have to agree about ───────────────────────────────────────────
@@ -519,6 +533,12 @@ def install_spawned_server_env(declared: dict) -> None:
     """
     os.environ.update(fill_env_gaps(declared))     # the spawn inherits THIS process's environment
     os.environ["GFSO_AUTOEXIT"] = "0"              # up until it is stale or stopped, not until we go
+
+
+def host_env() -> dict:
+    """This process's environment, a copy: what a child started on this host inherits, and the baseline a call into
+    another execution is told only its own differences from."""
+    return dict(os.environ)
 
 
 def subprocess_env(*, keep_key: bool, extra: dict | None = None) -> dict:

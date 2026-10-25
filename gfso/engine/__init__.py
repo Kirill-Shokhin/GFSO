@@ -36,7 +36,7 @@ from gfso.core.protocol.procedure import (admission_defects, canonical_citations
 
 from gfso.config import (
                          PIPELINE_PAGE, USAGE_PAGE,
-                         agent_id as _config_agent_id,
+                         MODEL_DEFAULT, agent_id as _config_agent_id,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
@@ -492,8 +492,13 @@ class Engine:
         that reads it behaves as it did before modes existed."""
         return _project_mode(self._graph)
 
+    def system_model(self) -> str:
+        """The model the system's own roles run on in this project — its issuer, its plan's author and reviewer: the
+        project's choice (`set_mode(system_model=)`), else the server's."""
+        return self._storage.get_setting("system_model") or MODEL_DEFAULT
+
     def set_mode(self, mode: Mode, boundary: Optional[int], author: AgentId, said: str = "",
-                 hands: Optional[str] = None) -> dict:
+                 hands: Optional[str] = None, settings: Optional[dict] = None) -> dict:
         """Record the user's choice. It governs nodes issued AFTER it: an issued node keeps its Del,
         which only a logged re-ASSIGN changes (Inv-1). `hands`: the executor whose session performs the
         nodes the user-agent holds (dispatch, `hands_of`); None — it performs them in its own chat."""
@@ -514,7 +519,12 @@ class Engine:
                # HOW the user-agent performs what it holds — nothing to say under AUTO, where it holds nothing
                **({} if mode == Mode.AUTO else {"perform": "dispatch" if hands else "in_chat"}),
                **({"hands": str(hands)} if hands else {}),
-               **({"user_said": said} if said else {})}
+               **({"user_said": said} if said else {}),
+               # …AND WHAT THE PROJECT SETS FOR ITSELF, which differs between projects of one server: the system's model,
+               # the Level-2 gate, the deadline nobody typed (`Graph.setting`)
+               **({"settings": settings} if settings else {})}
+        for k, v in (settings or {}).items():
+            self._storage.store_setting(k, str(v))
         self._storage.store_setting("mode", json.dumps(rec))
         self.emit_info("mode", f"mode set to {mode.value}"
                        + (f" (boundary {boundary})" if boundary is not None else "") + f" by {author}")
@@ -1337,7 +1347,7 @@ class Engine:
         parent = self._graph.get_parent(task_id)
         if parent is None:
             return None                          # a root has no plan above it to admit it
-        if not l2_gate_on():          # the Syntactic level gates the admission, not this ACCEPT (corner 9)
+        if not l2_gate_on(self._graph):          # the Syntactic level gates the admission, not this ACCEPT (corner 9)
             return None
         if t is None or (str(t.assignee) != str(parent.assignee)
                          and not self.workforce.is_system_executor(t.assignee)):

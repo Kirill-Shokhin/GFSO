@@ -37,7 +37,7 @@ from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok 
 from gfso.adapters.llm.stats import is_limit, refused_by_limit
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace,
-                             clear_workspaces, join_whole, node_workspace, session_scope)
+                             clear_workspaces, execution_of, join_whole, node_workspace, session_scope)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
 from gfso.sessions import run_consent, run_executor, run_scope_executor
 
@@ -102,7 +102,8 @@ ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=_in_flight_as("revi
                      # the split is its node's EXECUTOR's move: authored by him, it re-authors no contract (Inv-1)
                      refine=lambda engine, node: T.SYSTEM_TOOLS["auto_decompose"](
                          engine, root_id=node, depth=1, author=str(engine.graph.get_task(node).assignee)),
-                     place=lambda engine, agents, node: _contact_place(engine, agents, node))
+                     place=lambda engine, agents, node: _contact_place(engine, agents, node),
+                     execution=lambda engine: execution_of(engine, default_agents()))
 
 
 def publish_the_workforce(engine, roster: dict) -> None:

@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from gfso.config import MODEL_DEFAULT
 from gfso.inflight import _inflight
-from gfso.llm import llm_factory, session_calls
+from gfso.llm import session_calls
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import schema_instruction, parse_structured
 from gfso.core.graph.model import generation_of_task
@@ -15,7 +15,7 @@ from gfso.core.types import TaskId, Signal, Stage, State, Verdict
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
-from gfso.workspaces import _enter_workspace, conversation_of, node_workspace, performer
+from gfso.workspaces import _enter_workspace, conversation_of, node_workspace, performer, project_llm
 from gfso.packets import TECH_REPORT, _EXECUTOR_STATES, _executor_packet, _scope_order, _scope_packet, file_tech_reports
 from gfso.reports import _decided_status, _report_into_signals, _scope_report_into_signals
 
@@ -86,7 +86,7 @@ def _spawn(engine, node_id, executor_id: str, cfg: dict, _llm, role: str, prompt
     under the session cap, else read-only (a consent reads, it does not build). Returns (report or None, text,
     stats, llm, the observation callback) — what the report MEANS is the caller's, never the frame's."""
     _cb = emit_cb(engine, "delegate")
-    llm = _llm or llm_factory(cfg.get("model", MODEL_DEFAULT))
+    llm = _llm or project_llm(engine, cfg.get("model", MODEL_DEFAULT))
     if work:
         llm.on_tick = _cb
     llm.stage_hint = f"{node_id} {role}({executor_id})"

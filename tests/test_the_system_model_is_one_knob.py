@@ -1,5 +1,6 @@
-"""`GFSO_SYSTEM_MODEL` moves every system-side role at once, and the server says which model it runs: a cheaper
-model chosen for the system that left one door on the stronger default would have the stronger one hold the work."""
+"""`GFSO_SYSTEM_MODEL` moves every system-side role at once where a project sets none of its own, and the server says
+which model it runs: a cheaper model chosen for the system that left one door on the stronger default would have the
+stronger one hold the work. Every door asks one place, `Engine.system_model()` — the project's choice, else the knob."""
 from __future__ import annotations
 
 import inspect
@@ -9,14 +10,12 @@ import sys
 
 from fastapi.testclient import TestClient
 
-from gfso import config, issuer
+from gfso import config, issuer, tools_llm
 from gfso.api.server import create_app
 from tests.test_integration import _engine
 
-PROBE = ("import inspect, gfso.config as c, gfso.tools_llm as t, gfso.issuer as i;"
-         "print(c.MODEL_DEFAULT,"
-         " inspect.signature(t.auto_decompose).parameters['model'].default,"
-         " inspect.signature(t.review_decomposition).parameters['model'].default)")
+PROBE = ("import gfso.config as c; from tests.support import make_engine;"
+         "print(c.MODEL_DEFAULT, make_engine().system_model())")
 
 
 def _defaults(env_model: str | None) -> list[str]:
@@ -28,15 +27,16 @@ def _defaults(env_model: str | None) -> list[str]:
 
 
 def test_the_knob_moves_the_plan_author_and_its_reviewer():
-    assert _defaults("claude-haiku-5-5") == ["claude-haiku-5-5"] * 3
+    assert _defaults("claude-haiku-5-5") == ["claude-haiku-5-5"] * 2
 
 
 def test_unset_it_is_the_default_door():
-    assert _defaults(None) == ["claude-sonnet-5-5"] * 3
+    assert _defaults(None) == ["claude-sonnet-5-5"] * 2
 
 
-def test_the_issuer_asks_the_same_default():
-    assert "MODEL_DEFAULT" in inspect.getsource(issuer._ask)
+def test_the_issuer_the_plans_author_and_its_reviewer_ask_the_one_place():
+    for door in (issuer._ask, tools_llm.auto_decompose, tools_llm.review_decomposition):
+        assert "engine.system_model()" in inspect.getsource(door), door.__name__
 
 
 def test_the_server_says_which_model_plays_the_roles():

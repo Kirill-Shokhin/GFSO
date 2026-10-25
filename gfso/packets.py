@@ -15,16 +15,17 @@ from gfso.core.types import Signal, TaskId, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
 from gfso.engine.validation import is_auto_root
-from gfso.workspaces import _unjoined_text, base_of
+from gfso.workspaces import _unjoined_text, base_of, execution_of
 
 
-def _executor_inputs(criteria) -> dict:
+def _executor_inputs(engine, criteria) -> dict:
     """{probe id: a copy of its pinned inputs} for the executor, laid down from the contract outside its place.
 
     The inputs are part of what will be RUN, so part of the contract the executor is held to (Inv-1); named without
     their contents, the root executor of c_compiler searched the file system for them and read the plan's own copies
     (EVIDENCE_LOG §13.34). The validator still lays its own from the contract, so nothing done to this copy reaches a verdict."""
-    return (materialize_inputs(criteria, tempfile.mkdtemp(prefix="gfso-check-inputs-"))
+    return (materialize_inputs(criteria, tempfile.mkdtemp(prefix="gfso-check-inputs-",
+                                                          dir=execution_of(engine).temp_root()))
             if any(p.inputs for c in criteria or () for p in (c.check or ())) else {})
 
 
@@ -94,7 +95,7 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = ()) -> 
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
     inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any."""
     tid = str(task.id)
-    dirs = _executor_inputs(task.spec.criteria)
+    dirs = _executor_inputs(engine, task.spec.criteria)
     crits = "\n".join(_crit_line(c, dirs) for c in task.spec.criteria) or "- (none)"
     ups = _upstream_lines(engine, task)
     # THE OTHER NODES OF THIS PLAN, by id. The packet listed only DECLARED upstream deps, so an
@@ -220,16 +221,20 @@ SHOWN_FINDINGS = 20
 
 def list_key(engine, *parts) -> str:
     """The file a capped list goes to: one per engine — two projects' roots are both `root`, and two runs of one task
-    would overwrite each other's lists — per node, criterion and kind."""
-    return "-".join(map(str, (os.getpid(), id(engine), *parts)))
+    would overwrite each other's lists — per node, criterion and kind; where the project's agents run, so the one it is
+    named to can read it."""
+    name = "-".join(map(str, (os.getpid(), id(engine), *parts)))
+    return str(Path(execution_of(engine).temp_root()) / "gfso-lists"
+               / (re.sub(r"[^\w.-]+", "_", name)[:120] + ".md"))
 
 
 def capped(lines: list, what: str, key: str) -> str:
     """`lines`, each one line of text: the first SHOWN_FINDINGS inline and, where there are more, every one — those too —
-    in a file outside the place, one per `key` (rewritten each build), so none is withheld and the text fits a window."""
+    in the file `key` names (`list_key`: outside the place, where the reader runs; rewritten each build), so none is
+    withheld and the text fits a window."""
     text = "".join(f"\n  {x}" for x in lines[:SHOWN_FINDINGS])
     if len(lines) > SHOWN_FINDINGS:
-        path = Path(tempfile.gettempdir()) / "gfso-lists" / (re.sub(r"[^\w.-]+", "_", key)[:120] + ".md")
+        path = Path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("".join(f"- {x}\n" for x in lines), encoding="utf-8")
         text += (f"\n  … and {len(lines) - SHOWN_FINDINGS} more {what} — all {len(lines)}, one per line with its id, in "
@@ -267,7 +272,7 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset) -> str:
         return head + f"Already {t.state.name}: delivered earlier — listed for context, not yours to redo.\n"
     ups = "\n".join(_upstream_lines(engine, t, inside)) or "- none"
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(t)) or "- none"
-    dirs = _executor_inputs(t.spec.criteria)
+    dirs = _executor_inputs(engine, t.spec.criteria)
     crits = "\n".join(_crit_line(c, dirs) for c in t.spec.criteria) or "- (none)"
     return (head + f"### Criteria of `{t.id}` — its ENTIRE obligation; the scope's validation runs each\n"
             f"{crits}\n\n"
@@ -361,7 +366,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     # A probe's INPUTS are laid down here, from the contract, by the system — never read from the
     # delivery, where the executor could have grown them (the corpus that moved under `c_compiler`).
     _dirs = (materialize_inputs(_all, Path(scratch) / "probe_inputs" if scratch
-                                else tempfile.mkdtemp(prefix="gfso-probe-inputs-"))
+                                else tempfile.mkdtemp(prefix="gfso-probe-inputs-", dir=execution_of(engine).temp_root()))
              if any(p.inputs for c in _all for p in (c.check or ())) else {})
     owed = owed_probes(engine, task, crits)
     if carry is None:

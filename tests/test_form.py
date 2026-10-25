@@ -66,7 +66,10 @@ BASE = {
     # contract it implements, and narrowing it would mean narrowing the port. They are counted
     # anyway rather than exempted, because an exemption is the "indulgence forever" this file's own
     # docstring guards against — if the port grows, this number moves and someone says why.
-    "F_class_over_method_limit": 4,
+    # 5 (2026-10-25): `Graph` (21) — `setting`, the one door to a project's own settings where only the graph is in
+    # hand (the Level-2 gate, the deadline nobody typed); a module function reaching `_storage` instead is the private
+    # reach `test_coupling` refuses.
+    "F_class_over_method_limit": 5,
     # 9 — the MODULES that sit inside a mutually-importing group, at module granularity:
     #     {decompose, decompose.loop, delegate, runtime, tools_llm} · {api.server, mcp.server} ·
     #     {doctor, mcp.connect}.

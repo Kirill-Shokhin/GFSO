@@ -348,7 +348,7 @@ def test_a_round_that_reached_no_verdict_reports_nothing_closed(monkeypatch):
         "criteria": [criterion("kid_c", "K holds")]}}], accepted_risks=REGISTER)
     e.wait_idle()
     CR.review_decomposition(e, ROOT, llm=_Gap(True))
-    monkeypatch.setattr(TL, "llm_factory", lambda model: _Checker(False))
+    monkeypatch.setattr(TL, "llm_factory", lambda model, **_: _Checker(False))
     out = TL.TOOLS["review_decomposition"](e, "root")
     assert not out.get("error") and out["gate_passed"], out
     assert out.get("closed_since_last_review") is None, out.get("delta_note")

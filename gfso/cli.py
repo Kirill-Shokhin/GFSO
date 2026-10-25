@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
+from gfso.adapters.execution import end_leftovers
 from gfso import __version__, serverctl
 from gfso.config import LOOPBACK, install_mcp_env, install_serve_env
 from gfso import serverctl
@@ -384,6 +385,7 @@ def _serve(args):
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(message)s")
     # The server's descendants — executors, validators, their probes — die with it, however it ends.
     bind_this_process()
+    end_leftovers()              # …and the project containers of the server that stood here before
 
     # Store config in env for reload mode
     # Whatever raises the server — `gfso up`, a session's connect.py, or this command typed by hand

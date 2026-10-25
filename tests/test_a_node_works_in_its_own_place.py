@@ -309,7 +309,7 @@ def test_a_whole_is_not_validated_over_parts_still_joining(tmp_path, monkeypatch
     gate, seen = threading.Event(), {}
     real = W.merge
 
-    def held(base, into, branch, message):
+    def held(base, into, branch, message, **_):
         gate.wait(20)
         return real(base, into, branch, message)
     monkeypatch.setattr(W, "merge", held)
@@ -366,7 +366,7 @@ def test_a_root_whose_result_did_not_land_is_not_complete_until_it_does(tmp_path
     assert out["complete"] is False and out["stuck"] is True and "did not land" in out["directive"], out
     assert "gfso/p/par" in out["directive"], "the branch that holds the result is named (critic r4)"
     gate, real = threading.Event(), W.merge
-    monkeypatch.setattr(W, "merge", lambda *a: (gate.wait(20), real(*a))[1])
+    monkeypatch.setattr(W, "merge", lambda *a, **k: (gate.wait(20), real(*a, **k))[1])
     d.dispatch_once()                                   # WHILE a retry runs, the refusal still stands (critic r4)
     _until(lambda: "par" in e.joins.joining_nodes())
     assert e.next_steps()["stuck"] is True, "a retry erased the refusal: the root read 'being joined'"
@@ -385,7 +385,7 @@ def test_a_held_whole_is_not_told_to_aggregate_over_parts_still_joining(tmp_path
     (critic r3, 2026-10-04: SEMI's AGGREGATE step and `validate_result` read the base ahead of the merges)."""
     gate = threading.Event()
     real = W.merge
-    monkeypatch.setattr(W, "merge", lambda *a: (gate.wait(20), real(*a))[1])
+    monkeypatch.setattr(W, "merge", lambda *a, **k: (gate.wait(20), real(*a, **k))[1])
     e, agents, base = _plan(tmp_path)
     T.signal(e, "par", "ACCEPT", "kirill")
     _run(e, agents, {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"})}, _in(e, "a", "b"))
@@ -414,7 +414,7 @@ def test_a_refused_root_join_is_retried_less_often_each_time(tmp_path, monkeypat
     _until(lambda: "par" in e.joins.unjoined_roots() and not e.joins.joining_nodes())
     tries = []
     real = W.merge
-    monkeypatch.setattr(W, "merge", lambda *a: (tries.append(a[2]), real(*a))[1])
+    monkeypatch.setattr(W, "merge", lambda *a, **k: (tries.append(a[2]), real(*a, **k))[1])
     for _ in range(20):
         d.dispatch_once()
         time.sleep(0.01)

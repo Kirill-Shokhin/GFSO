@@ -119,6 +119,21 @@ def test_a_stop_names_the_refutation_that_stands(monkeypatch):
     e.stop()
 
 
+def test_a_stop_over_a_cancelled_producer_names_it(monkeypatch):
+    """The third way a repair is owed — a child waiting on a producer that was cancelled — refutes neither the split nor
+    its order, and its stop printed the q_D wording again (critic over ad639bc)."""
+    e, _ = _users_part()
+    e.give_users_plan("root")
+    monkeypatch.setattr(I, "_still_open", lambda *a: True)
+    for refuted in ("decomposition_refuted", "dep_order_refuted"):
+        monkeypatch.setattr(e, refuted, lambda t: None)
+    monkeypatch.setattr(I, "_cancelled_producers", lambda engine, k: ["root.gone"] if str(k.id) == "root.part" else [])
+    I.settle(e, None, TaskId("root"), "repair", "exec-1", verbs=None)
+    why = e.paused()["why"]
+    assert "root.part waits on root.gone, cancelled" in why and "children cover" not in why, why
+    e.stop()
+
+
 def test_an_accepted_dispute_does_not_re_pin_a_check_of_the_users_part():
     """Below the root of the user's plan an accepted dispute may only add: re-pinned to what a build printed, a part's
     expected output contradicted the root's and the root failed on it to the ceiling (GB_sql_database_tne9fg736 09:30)."""

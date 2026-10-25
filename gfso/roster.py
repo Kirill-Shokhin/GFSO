@@ -10,7 +10,8 @@ import sys
 import threading
 import time
 from pathlib import Path
-from gfso.config import MODEL_DEFAULT, agents_path
+from gfso.config import MODEL_DEFAULT, agents_path, executions
+from gfso.adapters.worktrees import checks_out_crlf
 from gfso.places import cheap_to_ask, disk_place, same_place, text_place
 
 
@@ -131,7 +132,7 @@ class AgentRegistry:
     def register(self, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                  workdir: str | None = None, validator: str | None = None,
                  oracle_map: str | None = None, max_turns: int | None = None,
-                 client: str | None = None, project: str | None = None) -> dict:
+                 client: str | None = None, project: str | None = None, execution: str | None = None) -> dict:
         """Put a role on the server-wide roster: its kind, model tier, workdir and bindings.
 
         Registration is what makes a role addressable by Del — the dispatcher picks a node up
@@ -192,6 +193,8 @@ class AgentRegistry:
                   "create the directory first, or name the one the work is really in. A path in "
                   "POSIX form on Windows ('/c/Users/...') is resolved against the current drive "
                   "root, not the C: drive - pass the native path.")
+        if execution:
+            self._refuse_execution(agent_id, execution, workdir, project)
         if workdir:
             # STORED ABSOLUTE. A relative `workdir` is checked here against the SERVER's cwd and
             # would later be resolved against whatever cwd the spawn happens to have — the same
@@ -223,6 +226,8 @@ class AgentRegistry:
                 # whatever the transport defaults to: two runs of "the same agent" under different
                 # caps are different agents, and a comparison across them measures the cap.
                 self._agents[agent_id]["max_turns"] = int(max_turns)
+            if execution:
+                self._agents[agent_id]["execution"] = execution
             if client:
                 # WHO this role belongs to — the key of the caller's own lease. A registration is a
                 # promise that somebody is there to execute; when that somebody goes, the promise
@@ -235,6 +240,24 @@ class AgentRegistry:
                 self._agents[agent_id]["client"] = str(client)
             self._write()
         return {"registered": agent_id, **self._agents[agent_id]}
+
+    def _refuse_execution(self, agent_id: str, execution: str, workdir: str | None, project: str | None) -> None:
+        """WHERE a role's sessions run is the project's, declared once: an undeclared name runs nowhere, two executions
+        in one project would put one node's place in two machines, and a base that checks out CRLF reads as modified
+        inside a Linux container (probe P3)."""
+        if execution not in executions():
+            raise ValueError(f"registering {agent_id!r}: execution {execution!r} is not declared "
+                             f"({', '.join(executions()) or 'none is'}); declare it in the server's executions.json")
+        self._load()
+        other = {c.get("execution") for i, c in self._agents.items()
+                 if i != agent_id and project and c.get("project") == project} - {None, execution}
+        if other:
+            raise ValueError(f"registering {agent_id!r}: project {project!r} already runs in {sorted(other)[0]!r} - "
+                             f"one project runs in one execution")
+        if workdir and checks_out_crlf(workdir):
+            raise ValueError(f"registering {agent_id!r}: '{workdir}' checks out with core.autocrlf=true, which a "
+                             f"Linux container reads as every file modified - set `git config core.autocrlf false` "
+                             f"and `core.eol lf` there and check it out again")
 
     def unregister(self, agent_id: str, workdir: str | None = None) -> dict:
         """Take a role OUT of the roster — the operation that did not exist.
