@@ -68,12 +68,16 @@ function strip() {
         : live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
         : '<span class="dk-now dk-idle">nothing at work</span>';
     // …and what waits on what is said whether the run runs or is held
+    const back = run ? Object.entries(run.rounds).map(([id, rs]) => [id, rs.filter(r => r.verdict === 'FAIL').length]).filter(([, n]) => n).sort((x, y) => y[1] - x[1]) : [];
     return now_
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
             return `<button class="dk-block" data-node="${esc(id)}" title="${hint(`${n} wait on ${run.name(id)}`, 'queued behind it along Dep', 'none starts until what it waits on passes')}">${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`
                 + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '')
         + (issuer.length ? `<span class="dk-wait" title="${hint('Waiting on the issuer', issuer.map(t => `${name(t)} — ${t.state}`))}">${issuer.length} wait${issuer.length > 1 ? '' : 's'} on the issuer</span>` : '')
+        // what was sent back: a part that took a FAIL is the run's one health sign a glance should not miss — its marks sit
+        // in the timeline below the fold (a newcomer reading the page mid-run could not tell anything had failed, 2026-10-26)
+        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" title="${hint('Sent back', back.map(([id, n]) => `${run.name(id)} — ${n} FAIL${n > 1 ? 's' : ''}`))}">${back.length} sent back${back.length === 1 ? `: ${esc(trim(run.name(back[0][0]), 20))}` : ''}</button>` : '')
         // a session's cost is booked when it ENDS (the CLI reports it then): a running one is said, not guessed
         + (run ? `<span class="dk-sum" title="Spend&#10;booked when each session ends — the model reports its cost then${mine.length ? `&#10;${mine.length} running now, not booked yet` : ''}">`
                  + `$${run.cost.total.toFixed(2)}${mine.length ? ` + ${mine.length} running` : ''} · ${dur(run.clock.span)} run</span>` : '');
