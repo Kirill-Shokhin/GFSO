@@ -41,7 +41,9 @@ function readableLabel(text) {
     return (sp > LABEL_MAX * 0.5 ? cut.slice(0, sp) : cut).replace(/[ ,;:.-]+$/, '') + '…';
 }
 
-const LAYOUT = {name: 'dagre', rankDir: 'TB', spacingFactor: 1.4, nodeSep: 35, rankSep: 55};
+// tight enough that a whole plan fits at a zoom its names can be read at: at 1.4/35/55 an 11-part plan fitted at 0.58,
+// its 11 px names at 6 px, which a newcomer could not read (2026-10-26); at 1.0/20/40 it fits at 0.93
+const LAYOUT = {name: 'dagre', rankDir: 'TB', spacingFactor: 1.0, nodeSep: 20, rankSep: 40};
 let cy;
 
 export async function initGraph() {
