@@ -142,6 +142,7 @@ body {
 }
 /* opened by a click, one at a time (main.js): on hover two popovers stacked over each other (critic) */
 .hd-quality.open .hd-pop { display: block; }
+.header .hd-pop { top: var(--below-toolbar, calc(100% + 8px)); }
 .hq-row { padding: 10px 0; border-bottom: 1px solid var(--hair-soft); }
 .hq-row:last-child { border-bottom: none; }
 .hq-head { display: flex; align-items: baseline; gap: 10px; }
@@ -756,30 +757,16 @@ body {
 .v-badge.v-fail .v-symbol { color: var(--acc); }
 .v-badge.v-undef .v-symbol { color: var(--ink-faint); }
 
-/* ============ Toolbar — expanded form toggle, queue filter ============ */
+/* ============ Toolbar — the right end: the graph's key, and who this page acts as ============ */
 .toolbar-row { display: flex; gap: 10px; align-items: center; flex: 1; }
-.queue-toggle {
-    margin-left: auto;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: var(--tr-mono);
-    color: var(--ui-on-chrome);
-    opacity: 0.6;
-    cursor: pointer;
-    padding: 4px 10px;
-    border: 1px solid var(--hair-on-chrome);
-    border-radius: var(--radius);
-    background: transparent;
-    transition: opacity 0.12s, border-color 0.12s, background 0.12s;
-}
-.queue-toggle:hover { opacity: 1; }
-.queue-toggle.active {
-    opacity: 1;
-    background: var(--acc);
-    border-color: var(--acc);
-    color: var(--bg);
-}
+.toolbar .tb-help { margin-left: auto; }
+/* a quiet line, not a form field: an input only while it is being changed */
+.role-select.acting-as { gap: 6px; opacity: 0.7; }
+.role-select.acting-as:hover, .role-select.acting-as:focus-within { opacity: 1; }
+.role-select.acting-as input { width: auto; field-sizing: content; min-width: 4ch; max-width: 22ch; padding: 4px 6px;
+    background: transparent; border-color: transparent; cursor: pointer; }
+.role-select.acting-as input:hover { border-color: var(--hair-on-chrome); }
+.role-select.acting-as input:focus { cursor: text; border-color: var(--acc); }
 
 
 

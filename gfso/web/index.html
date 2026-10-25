@@ -31,7 +31,6 @@
         <button class="pl-open" id="project-open" data-action="projects" title="Projects&#10;find a run by its goal, when it ran, where it stands"></button>
     </div>
     <button class="btn btn-goal" id="btn-goal" data-action="goal" title="New project&#10;a project is one goal: you state it, the system plans its parts">+ New project</button>
-    <button class="queue-toggle" id="queue-toggle" data-action="mine">Mine only</button>
     <div class="hd-quality tb-help" id="tb-help"><button class="hd-q" data-action="help" title="How to read the graph">?</button>
         <div class="hd-pop"><div class="hq-row"><div class="hq-head"><b>How to read the graph</b></div></div>
             <div class="hq-row"><div class="hq-head"><i class="lg-split"></i><b>node → its part</b></div><div class="hq-means">a solid arrow runs from a node to one of its parts — the split</div></div>
@@ -39,9 +38,9 @@
             <div class="hq-row"><div class="hq-head"><b>pulse</b></div><div class="hq-means">a node at work; filled in the accent when a process of this server runs it</div></div>
             <div class="hq-row"><div class="hq-head"><b>number</b></div><div class="hq-means">how many delivery rounds a node took; in the accent while its last one failed</div></div>
             <div class="hq-row"><div class="hq-head"><b>double-click</b></div><div class="hq-means">a node: frame it with all its parts · the background: the whole graph</div></div></div></div>
-    <div class="role-select">
-        <label for="current-role">You are</label>
-        <input id="current-role" value="pm" placeholder="your agent id">
+    <div class="role-select acting-as" title="Acting as&#10;the name this page signs your moves with — the server's own agent unless you name yourself; click to change">
+        <label for="current-role">acting as</label>
+        <input id="current-role" value="pm" placeholder="your name" spellcheck="false">
     </div>
 </div>
 <div class="main">

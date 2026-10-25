@@ -6,7 +6,7 @@ import {tip, untip} from './tip.js';
 import {dur, trim} from './draw.js';
 import {KIND_NAME as KIND, levelName, concurrency} from './run.js';
 
-const usd = x => `$${x < 10 ? x.toFixed(2) : x.toFixed(1)}`, tok = x => x > 1e6 ? `${(x / 1e6).toFixed(1)}M` : `${Math.round(x / 1e3)}k`;
+const usd = x => `$${x < 10 ? x.toFixed(2) : x.toFixed(1)}`, tok = x => x == null ? 'not reported' : x > 1e6 ? `${(x / 1e6).toFixed(1)}M` : `${Math.round(x / 1e3)}k`;
 
 // the shared head of the assignee ids (the project's name), cut at a '-' so the distinct tail stays
 const commonPrefix = ids => { if (ids.length < 2) return 0;
@@ -42,7 +42,7 @@ export function render(el, run, nodes) {
     el.innerHTML = `<div class="cs">
         <div class="cs-tiles">
             ${tile(usd(c.total), 'spent', c.unpriced ? `${c.unpriced} call${c.unpriced > 1 ? 's' : ''} with no cost recorded` : '')}
-            ${tile(tok(c.tokens), 'tokens', 'cache included')}
+            ${tile(tok(c.tokens), 'tokens', c.untold && c.tokens != null ? `cache included · ${c.untold} session${c.untold > 1 ? 's' : ''} reported none` : 'cache included')}
             ${tile(dur(run.clock.span), 'run time', run.clock.folds.length ? `idle ${dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0))} folded` : '')}
             ${tile(dur(c.busy), 'session time', `${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}× the run`)}
             ${tile(run.exec.peak, 'executors at once', `validators ${run.val.peak}`)}

@@ -5,7 +5,7 @@ import {TASK, GOAL, getJSON} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap} from './vocab.js';
-import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
+import {initGraph, refreshGraph, restyle, annotate, graphNeeds} from './graph.js';
 import {refreshHeader, refreshQuality, toggleQuality, toggleReports, stopRun, startRun} from './header.js';
 import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
 import {selectTask, closeSidebar, resign} from './panel.js';
@@ -45,7 +45,7 @@ const ACT = {
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
-    mine: toggleMine, help: () => $('tb-help').classList.toggle('open'), quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
+    help: () => $('tb-help').classList.toggle('open'), quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
     projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects,
     'project-new': () => (closeProjects(), switchProject('__new__')),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
@@ -61,12 +61,17 @@ document.addEventListener('click', e => {
     // one popover at a time: a click anywhere else, or on a link inside one, closes the open ones
     document.querySelectorAll('.hd-quality.open').forEach(p => { if (p !== mine || (b && b.dataset.action === 'select')) p.classList.remove('open'); });
     if (b) ACT[b.dataset.action](b.dataset, b);
+    // a header popover opens below the toolbar, not over it: over it, it covered the toolbar's own "?" (critic 9).
+    // Set on the header, not on the popover: the quality chip is rebuilt on every transition and took an inline top with it.
+    const open = document.querySelector('.header .hd-quality.open');
+    if (open) document.querySelector('.header').style.setProperty('--below-toolbar',
+        `${document.querySelector('.toolbar').getBoundingClientRect().bottom - open.getBoundingClientRect().top + 8}px`);
 });
 $('goal-panel').addEventListener('input', goal.recheck);
 $('goal-panel').addEventListener('click', goal.recheck);   // a row removed by its ×
 $('pl-search').addEventListener('input', searchProjects);
 // …AND THE BAR IS ASKED AGAIN: the frontier's `mine` is computed FOR the identity in the box.
-$('current-role').addEventListener('input', () => { rememberRole(myRole()); if (S.mineOnly) applyMineDim(); refreshHeader(); });
+$('current-role').addEventListener('input', () => { rememberRole(myRole()); refreshHeader(); });
 watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : closeSidebar(); });
 
 const LIVE = {

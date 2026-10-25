@@ -4,7 +4,7 @@ import {$} from './dom.js';
 import {PROJECT} from './api.js';
 
 // `reload` is the page's refresh policy, set by main.js — units that change the graph call it.
-export const S = {tasks: [], graph: {nodes: [], edges: []}, run: null, closures: [], missing: '', mineOnly: false,
+export const S = {tasks: [], graph: {nodes: [], edges: []}, run: null, closures: [], missing: '',
                   inflight: [], project: PROJECT, reload: async () => {}};
 
 // the processes this server runs in this project now — the in-flight registry, the one reading of it

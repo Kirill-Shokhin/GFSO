@@ -749,15 +749,20 @@ class Engine:
                 # which is how it looked like it had not run.
                 "stage": c.get("stage") or stage,
                 "model": c.get("model") or "", "node_id": str(node_id or ""),
-                "input_tokens": c.get("input_tokens") or 0,
-                "output_tokens": c.get("output_tokens") or 0,
-                "cache_input_tokens": (c.get("cache_read_input_tokens") or 0)
+                # NOT REPORTED stays NULL, not 0: a provider that does not say its tokens or its price spent an
+                # unknown amount, and a 0 here read as "spent nothing" — a refusal — on the page (author, 2026-10-26:
+                # what a provider does not report reads «не сообщено»)
+                "input_tokens": c.get("input_tokens"),
+                "output_tokens": c.get("output_tokens"),
+                "cache_input_tokens": None if c.get("cache_read_input_tokens") is None
+                                      and c.get("cache_creation_input_tokens") is None
+                                      else (c.get("cache_read_input_tokens") or 0)
                                       + (c.get("cache_creation_input_tokens") or 0),
                 "cache_read_tokens": c.get("cache_read_input_tokens"),
                 "cache_write_tokens": c.get("cache_creation_input_tokens"),
                 "peak_context": c.get("peak_context"), "context_window": c.get("context_window"),
                 "turns": c.get("turns"), "ended": c.get("ended"), "resumed": c.get("resumed"),
-                "cost_usd": c.get("cost_usd") or 0.0,
+                "cost_usd": c.get("cost_usd"),
                 "duration_ms": c.get("duration_ms") or 0,
             })
             try:

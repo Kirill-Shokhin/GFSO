@@ -1,7 +1,7 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc} from './dom.js';
 import {api, singleFlight} from './api.js';
-import {S, taskOf, myRole, procs} from './state.js';
+import {S, taskOf, procs} from './state.js';
 import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
@@ -69,8 +69,6 @@ export async function initGraph() {
             // no grey press overlay: the selection border is the one mark a tap leaves
             {selector: 'node:active', style: {'overlay-opacity': 0}},
             {selector: 'core', style: {'active-bg-opacity': 0}},
-            {selector: 'node.dimmed', style: {'opacity': 0.22}},
-            {selector: 'edge.dimmed', style: {'opacity': 0.15}},
             // ABANDONED tombstone: kept for provenance but visibly NOT an active node.
             {selector: 'node.cancelled', style: {'opacity': 0.4, 'background-color': '#8a8a8a', 'border-color': '#6a6a6a',
                                                   'border-style': 'dashed', 'text-opacity': 0.6}},
@@ -248,7 +246,6 @@ export const refreshGraph = singleFlight(async () => {
         }
         // a redraw removes and re-adds every node, and the chosen one lost its border while its panel stayed open
         if (focus().select) cy.getElementById(focus().select).select();
-        applyMineDim();
         const one = undrawable[0];
         banner('undrawable', one && `${undrawable.length} edge(s) not drawn — they name a node this graph does not `
             + `contain (e.g. ${one.source} → ${one.target}). The rest of the graph is shown.`, $('cy'));
@@ -262,17 +259,3 @@ export function restyle(id, state) {
     return node.length > 0;
 }
 
-export function applyMineDim() {
-    if (!cy) return;
-    const me = myRole();
-    cy.elements().removeClass('dimmed');
-    if (!S.mineOnly || !me) return;
-    const mine = new Set(S.tasks.filter(t => t.assignee === me).map(t => t.id));
-    cy.nodes().forEach(n => { if (!mine.has(n.id())) n.addClass('dimmed'); });
-    cy.edges().forEach(e => { if (!mine.has(e.source().id()) || !mine.has(e.target().id())) e.addClass('dimmed'); });
-}
-export function toggleMine() {
-    S.mineOnly = !S.mineOnly;
-    $('queue-toggle').classList.toggle('active', S.mineOnly);
-    applyMineDim();
-}

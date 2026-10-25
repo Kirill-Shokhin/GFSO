@@ -708,7 +708,9 @@ class SqliteStorage(_ProjectSettings, StoragePort):
     _USAGE_COLS = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens",
                    "cache_input_tokens", "cost_usd", "duration_ms",
                    "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed")
-    _USAGE_KEPT_NULL = ("ts", "stage", "model", "node_id",                # an absent reading stays absent
+    # an absent reading stays absent — tokens and price too: a provider that does not report them spent an unknown
+    # amount, and a 0 read as "spent nothing". Only the duration, which our own adapter measures, is always there.
+    _USAGE_KEPT_NULL = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens", "cache_input_tokens", "cost_usd",
                         "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed")
 
     def log_usage(self, row: dict) -> None:

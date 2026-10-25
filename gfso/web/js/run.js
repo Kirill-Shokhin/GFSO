@@ -23,6 +23,8 @@ export const roundsLine = rs => !rs.length ? '' : `${rs.length} round${rs.length
     + (rs.some(r => r.verdict === 'FAIL') ? ` · ${rs.filter(r => r.verdict === 'FAIL').length} FAIL` : '');
 
 const sum = (xs, f) => xs.reduce((s, x) => s + f(x), 0);
+// a figure a provider may not report: null stays null ("not reported") until something reported adds to it
+const add = (a, b) => b == null ? a : (a ?? 0) + b, total = (xs, f) => xs.reduce((s, x) => add(s, f(x)), null);
 
 function depths(nodes) {
     const by = Object.fromEntries(nodes.map(n => [n.id, n])), d = {};
@@ -42,8 +44,8 @@ function sessions(calls, audit) {
         const signer = audit.find(a => a.task_id === c.node_id && !a.rejected && a.t >= end - 1e3
             && SIGNS[kind]?.includes(a.signal));
         return {node: c.node_id, kind, stage: c.stage, start, end, cost: c.cost_usd || 0,
-                tokens: (c.input_tokens || 0) + (c.output_tokens || 0) + (c.cache_input_tokens || 0),
-                out: c.output_tokens || 0, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0};
+                tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
+                out: c.output_tokens ?? null, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0};
     });
 }
 
@@ -147,8 +149,8 @@ export function concurrency(list) {
 function rollup(list, key) {
     const out = {};
     for (const s of list) {
-        const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, cost: 0, tokens: 0, busy: 0};
-        o.calls++; o.cost += s.cost; o.tokens += s.tokens; o.busy += s.end - s.start;
+        const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, cost: 0, tokens: null, busy: 0};
+        o.calls++; o.cost += s.cost; o.tokens = add(o.tokens, s.tokens); o.busy += s.end - s.start;
     }
     return out;
 }
@@ -167,15 +169,17 @@ function work(calls) {
     const window = Object.fromEntries(calls.filter(c => c.context_window).map(c => [c.model, c.context_window]));
     for (const c of calls) {
         const kind = kindOf(c.stage), model = c.model || '';
-        if (!(c.cost_usd || c.input_tokens || c.output_tokens || c.cache_input_tokens)) {
+        // spent nothing = SAID zero; a call that reported none of these spent an unknown amount and is still work
+        const said = [c.cost_usd, c.input_tokens, c.output_tokens, c.cache_input_tokens];
+        if (said.some(v => v != null) && !said.some(v => v)) {
             const why = unanswered[kind] ??= {}, w = c.ended || '';
             why[w] = (why[w] || 0) + 1;
             if (c.node_id) (unansweredOn[c.node_id] ??= {})[kind] = (unansweredOn[c.node_id][kind] || 0) + 1;
             continue;
         }
-        const r = rows[`${model}|${kind}`] ??= {model, kind, calls: 0, resumed: 0, cost: 0, unpriced: 0, ends: {}, input: 0, output: 0, read: 0, write: 0, unsplit: 0, turns: 0, turned: 0, fills: []};
+        const r = rows[`${model}|${kind}`] ??= {model, kind, calls: 0, resumed: 0, cost: 0, unpriced: 0, ends: {}, input: null, output: null, read: 0, write: 0, unsplit: 0, turns: 0, turned: 0, fills: []};
         r.calls++; r.resumed += c.resumed ? 1 : 0; r.cost += c.cost_usd || 0; r.unpriced += c.cost_usd ? 0 : 1; if (c.ended && c.ended !== 'answered') r.ends[c.ended] = (r.ends[c.ended] || 0) + 1;
-        r.input += c.input_tokens || 0; r.output += c.output_tokens || 0; r.turns += c.turns || 0; r.turned += c.turns ? 1 : 0;
+        r.input = add(r.input, c.input_tokens); r.output = add(r.output, c.output_tokens); r.turns += c.turns || 0; r.turned += c.turns ? 1 : 0;
         if (c.cache_read_tokens == null) r.unsplit += c.cache_input_tokens || 0;
         else { r.read += c.cache_read_tokens; r.write += c.cache_write_tokens || 0; }
         if (c.peak_context && (c.context_window || window[model])) r.fills.push(c.peak_context / (c.context_window || window[model]));
@@ -221,7 +225,7 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
         criteria: criteria(audit, tasks, verdicts), work: work(calls),
-        cost: {total: sum(ss, s => s.cost), tokens: sum(ss, s => s.tokens), busy: sum(ss, s => s.end - s.start),
+        cost: {total: sum(ss, s => s.cost), tokens: total(ss, s => s.tokens), untold: ss.filter(s => s.tokens == null).length, busy: sum(ss, s => s.end - s.start),
                unpriced: ss.filter(s => !s.priced).length,
                byKind: rollup(ss, () => 'all').all || {}, byNode: rollup(ss, s => s.node), byDepth: rollup(ss, s => depth[s.node] ?? 0), byAgent: rollup(ss, s => s.agent || '—')},
     };
