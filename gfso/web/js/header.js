@@ -104,14 +104,17 @@ export async function startRun() {
 
 // The system's reports about ITSELF (a check contradicting its contract, a tool that cannot run): a quiet channel —
 // they stop and move nothing — so a quiet chip, and none at all while there is none.
+// Laid out beside the quality chip as a list one click opens — each report whole, its node one click away.
 async function techReports() {
-    try {
-        const {count, reports = []} = await (await post('/api/run/tech_reports', {})).json();
-        const last = reports.slice(-4).reverse();
-        return need(count, `tech report${count > 1 ? 's' : ''}`, last.map(r => r.node).filter(Boolean),
-            last.map(r => `${ago(r.at)} ago · ${r.node || '—'} · ${r.role}: ${trim(r.text, 160)}`), ' paper');
-    } catch (e) { return ''; }
+    let reports = [];
+    try { reports = (await (await post('/api/run/tech_reports', {})).json()).reports || []; } catch (e) { /* a read */ }
+    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${reports.length} tech report${reports.length > 1 ? 's' : ''}</button>`
+        + `<div class="hd-pop"><div class="hq-means">What the system reported about ITSELF — a check contradicting its contract, a tool that `
+        + `cannot run. A report stops and moves nothing; newest first.</div>${[...reports].reverse().map(r => `<div class="hq-row">`
+        + `<div class="hq-head"><i>${esc(ago(r.at))} ago · ${esc(r.role || '')}</i>${r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : ''}</div>`
+        + `<div class="hq-means">${esc(r.text)}</div></div>`).join('')}</div>`;
 }
+export const toggleReports = () => $('hd-reports').classList.toggle('open');
 
 // A goal still open with nothing at work, no call on anyone, and no event for longer than the run folds as idle
 // is STALLED — the one quiet that must not read "leave it" (a json-parser run sat 642h so, under "nothing needs you").
@@ -154,7 +157,8 @@ export const refreshHeader = singleFlight(async () => {
         S.runState = f.run;
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }
-    chips += stalled(chips) + (S.tasks.length ? await techReports() : '');
+    chips += stalled(chips);
+    if (S.tasks.length) await techReports(); else $('hd-reports').innerHTML = '';
     $('hd-goal').innerHTML = left + runSwitch(S.runState);
     $('hd-needs').innerHTML = status + (chips || (heard ? '<span class="hd-quiet">nothing needs you</span>' : ''));
 });

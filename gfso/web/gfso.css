@@ -1108,3 +1108,11 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pn-by b { font-weight: 600; color: var(--ink); }
 .pn-by:empty { display: none; }
 .wk-note { margin-top: 8px; }
+
+/* the graph's key: what its two arrows are (graph.js) */
+.cy-legend { position: absolute; left: 12px; bottom: 10px; z-index: 6; display: flex; gap: 14px; font-family: var(--font-mono); font-size: 9.5px;
+    letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-faint); background: color-mix(in srgb, var(--ui-page) 85%, transparent);
+    padding: 3px 8px; border-radius: var(--radius); cursor: help; }
+.cy-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.cy-legend i { display: inline-block; width: 22px; border-top: 1px solid color-mix(in srgb, var(--ink) 45%, transparent); }
+.cy-legend i.lg-dep { border-top: 1px dashed var(--acc); }

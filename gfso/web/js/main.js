@@ -6,7 +6,7 @@ import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap} from './vocab.js';
 import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
-import {refreshHeader, refreshQuality, toggleQuality, stopRun, startRun} from './header.js';
+import {refreshHeader, refreshQuality, toggleQuality, toggleReports, stopRun, startRun} from './header.js';
 import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
 import {selectTask, closeSidebar, resign} from './panel.js';
 import {openReader} from './reader.js';
@@ -44,7 +44,7 @@ const ACT = {
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
-    mine: toggleMine, quality: toggleQuality, 'close-modal': author.closeModal,
+    mine: toggleMine, quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
     projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects,
     'project-new': () => (closeProjects(), switchProject('__new__')),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,

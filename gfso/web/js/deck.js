@@ -74,7 +74,9 @@ function strip() {
             return `<button class="dk-block" data-node="${esc(id)}" title="${hint(`${n} wait on ${run.name(id)}`, 'queued behind it along Dep', 'none starts until what it waits on passes')}">${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`
                 + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '')
         + (issuer.length ? `<span class="dk-wait" title="${hint('Waiting on the issuer', issuer.map(t => `${name(t)} — ${t.state}`))}">${issuer.length} wait${issuer.length > 1 ? '' : 's'} on the issuer</span>` : '')
-        + (run ? `<span class="dk-sum">$${run.cost.total.toFixed(2)} · ${dur(run.clock.span)} run</span>` : '');
+        // a session's cost is booked when it ENDS (the CLI reports it then): a running one is said, not guessed
+        + (run ? `<span class="dk-sum" title="Spend&#10;booked when each session ends — the model reports its cost then${mine.length ? `&#10;${mine.length} running now, not booked yet` : ''}">`
+                 + `$${run.cost.total.toFixed(2)}${mine.length ? ` + ${mine.length} running` : ''} · ${dur(run.clock.span)} run</span>` : '');
 }
 
 function paint() {

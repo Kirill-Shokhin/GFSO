@@ -10,7 +10,8 @@ const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor',
 const KIND = {executor: 'exec', consent: 'consent', validate_result: 'val', validator: 'val', issuer: 'issuer'};
 const kindOf = stage => KIND[stage] || 'plan';
 export const KIND_NAME = {exec: 'execution', consent: 'consent', val: 'validation', issuer: 'issuer', plan: 'planning'};
-export const levelName = d => +d === 0 ? 'goal' : +d === 1 ? 'parts' : `level ${d}`;
+// the tree's levels by what they are: the goal (the root), its parts, then parts of parts, one level down each time
+export const levelName = d => +d === 0 ? 'the goal' : +d === 1 ? 'its parts' : `parts, level ${d}`;
 // An idle stretch longer than this is folded to FOLD on the axis: a run's clock is its work, and a
 // host asleep overnight is not part of the run (mode_cost.py measures wall time by the same cut).
 export const GAP = 20 * 60e3, FOLD = 2 * 60e3;

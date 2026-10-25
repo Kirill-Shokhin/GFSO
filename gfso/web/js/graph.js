@@ -63,7 +63,8 @@ export async function initGraph() {
                 'width': 1, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
                 'line-color': inkAlpha(0.30), 'target-arrow-color': inkAlpha(0.30), 'arrow-scale': 0.7}},
             {selector: 'edge[type="dependency"]', style: {'line-style': 'dashed', 'line-color': ACC, 'target-arrow-color': ACC}},
-            {selector: 'node.focus', style: {'underlay-color': INK, 'underlay-opacity': 0.12, 'underlay-padding': 7}},
+            // a hover from another view TINTS the node: an underlay grew its box, so the edges re-anchored and the pulse moved
+            {selector: 'node.focus', style: {'overlay-color': ACC, 'overlay-opacity': 0.22, 'overlay-padding': 0}},
             // no grey press overlay: the selection border is the one mark a tap leaves
             {selector: 'node:active', style: {'overlay-opacity': 0}},
             {selector: 'core', style: {'active-bg-opacity': 0}},
@@ -75,7 +76,7 @@ export async function initGraph() {
             {selector: 'edge[type="dependency"].fromCancelled', style: {'opacity': 0.2, 'line-style': 'dotted'}},
         ],
         // nodes stay where the layout put them (a tap is a selection, never a drag); a wheel notch zooms gently
-        layout: LAYOUT, minZoom: 0.3, maxZoom: 3, autoungrabify: true, boxSelectionEnabled: false, wheelSensitivity: 0.2,
+        layout: LAYOUT, minZoom: 0.08, maxZoom: 3, autoungrabify: true, boxSelectionEnabled: false, wheelSensitivity: 0.2,
     });
     // The page follows the canvas's OWN selection, not its `tap`: a press that moves a few pixels is no tap, yet
     // cytoscape selects the node — the border showed, the panel stayed, and the next redraw took the border back
@@ -99,6 +100,7 @@ export async function initGraph() {
         if (key === 'select' && st.select && !fresh) inSight(cy.getElementById(st.select));
     });
     cy.on('render', () => requestAnimationFrame(placeBadges));
+    $('cy').insertAdjacentHTML('beforeend', '<div class="cy-legend" title="How to read the graph&#10;solid arrow: a part of its parent — the split, parent to part&#10;dashed arrow: a dependency — the part at its end uses the result of the one it comes from and waits for it to pass&#10;double-click a node: frame it with its parts · on the background: the whole graph"><span><i class="lg-split"></i>part of</span><span><i class="lg-dep"></i>uses the result of</span></div>');
     // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the
     // canvas is told its new size and the graph stays where it was — a fit here made the graph jump each time a
     // click opened or closed the panel (author, 2026-10-25: «нажатие на некоторые ноды тригерит новую центровку»).
@@ -115,21 +117,26 @@ export async function initGraph() {
     addEventListener('pointerup', () => { held = false; }, true);
     // a double-click's own first click opens or closes the panel, and the frame is redone for the canvas it leaves
     const reseat = () => held ? (frame = setTimeout(reseat, 120))
-        : (cy.resize(), want ? frameTo(want) : fresh ? cy.fit(undefined, 30) : inSight(cy.nodes(':selected')));
+        : (cy.resize(), want ? framed() : fresh ? cy.fit(undefined, 30) : inSight(cy.nodes(':selected')));
     new ResizeObserver(() => { clearTimeout(frame); frame = setTimeout(reseat, 120); }).observe($('cy'));
-    const frameTo = eles => cy.animate({fit: {eles, padding: 40}, duration: 200});
-    const framing = eles => { want = eles; frameTo(eles); setTimeout(() => { if (want === eles) want = null; }, 1500); };
+    // a double-click's own first click opens or closes the panel: the frame waits for that resize and is drawn ONCE —
+    // drawn at once and again after it, a node was zoomed twice (author, 2026-10-25)
+    let wantT;
+    const framed = () => { clearTimeout(wantT); if (want) cy.animate({fit: {eles: want, padding: 40}, duration: 200}); want = null; };
+    const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, 450); };
     cy.on('dbltap', 'node', evt => framing(subtree(evt.target)));
     cy.on('dbltap', evt => { if (evt.target === cy) framing(cy.elements()); });
 }
 
-// A node and everything under it along D — the split's edges, never Dep (a leaf framed half the graph by its chains).
+// A node and everything under it along D, read off the tasks' parents — never Dep (a leaf framed half the graph by its
+// chains), and not off the drawn edges either: a part whose split edge was not drawn framed only itself (author).
 function subtree(n) {
-    let all = n, front = n;
-    while (front.length) all = all.union(front = front.outgoers('edge[type = "parent-child"]').targets());
-    return all;
+    const kids = id => S.tasks.filter(t => t.parent_id === id).map(t => t.id), ids = [n.id()];
+    for (let i = 0; i < ids.length; i++) ids.push(...kids(ids[i]));
+    return cy.collection(ids.map(id => cy.getElementById(id)).filter(e => e.length));
 }
 
+const BODY = {includeLabels: false, includeOverlays: false, includeUnderlays: false};   // the node itself
 let drawn = '';                        // the node set last drawn: a redraw of the same keeps the view
 // framed whole and not yet touched: a change of size re-frames it (the deck takes its height after the first
 // drawing, and the graph's foot sat under it); once the reader taps, zooms or a node is chosen, the view is theirs
@@ -138,7 +145,7 @@ let fresh = true;
 // The least pan that brings `eles` inside the canvas, a margin kept; nothing moves when they are already in sight.
 function inSight(eles) {
     if (!eles.length) return;
-    const b = eles.renderedBoundingBox(), m = 24, W = cy.width(), H = cy.height();
+    const b = eles.renderedBoundingBox(BODY), m = 24, W = cy.width(), H = cy.height();
     const dx = b.x1 < m ? m - b.x1 : b.x2 > W - m ? Math.max(W - m - b.x2, m - b.x1) : 0;
     const dy = b.y1 < m ? m - b.y1 : b.y2 > H - m ? Math.max(H - m - b.y2, m - b.y1) : 0;
     if (dx || dy) cy.panBy({x: dx, y: dy});
@@ -167,7 +174,7 @@ function placeBadges() {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
         const id = n.id(), rs = S.run?.rounds[id] || [], failing = rs.at(-1)?.verdict === 'FAIL';
         if (!work.has(id) && rs.length < 2) return '';
-        const b = n.renderedBoundingBox();
+        const b = n.renderedBoundingBox(BODY);
         return `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
             + (work.has(id) ? `<i class="cy-live${proc.has(id) ? ' on' : ''}"></i>` : '')
             + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''} title="${roundsLine(rs)}">${rs.length}</span>` : '') + '</div>';
