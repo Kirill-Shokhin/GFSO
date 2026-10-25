@@ -127,8 +127,9 @@ function stalled(calls) {
 }
 
 export const refreshHeader = singleFlight(async () => {
+    // the left side is written ONCE, after every read: written first and the switch added after the frontier's
+    // answer, the Stop button was missing for the length of each read — a blinking button on a live run
     const left = await goal();
-    $('hd-goal').innerHTML = left;
     let chips = CALLS.map(byState).join('')
         + closures(S.closures.filter(contested), 'contested', '')
         + closures(S.closures.filter(c => c.by_hand && !contested(c)), 'closed by hand', ' paper');
@@ -148,8 +149,8 @@ export const refreshHeader = singleFlight(async () => {
         S.runState = f.run;
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }
-    $('hd-goal').insertAdjacentHTML('beforeend', runSwitch(S.runState));
     chips += stalled(chips) + (S.tasks.length ? await techReports() : '');
+    $('hd-goal').innerHTML = left + runSwitch(S.runState);
     $('hd-needs').innerHTML = status + (chips || (heard ? '<span class="hd-quiet">nothing needs you</span>' : ''));
 });
 
