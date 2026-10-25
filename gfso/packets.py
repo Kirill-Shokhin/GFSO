@@ -309,9 +309,9 @@ def _regression_line(p: dict, dirs: dict, workdir: Optional[str] = None) -> str:
 #: The one optional field every role's answer carries for a TECH REPORT (`Engine.tech_report`): said small, so it is
 #: used where the system itself leaves no honest move, not as a second place for complaints about the task.
 TECH_REPORT = {"type": "string", "description":
-               "Rarely, and only about the SYSTEM, not the task: a defect that leaves you no honest move — a pinned check "
-               "that contradicts the contract, a tool that cannot run, an answer that ignored what you showed. One "
-               "line. Leave it out otherwise."}
+               "Leave it out: that is the normal answer, and \"no defect found\" is no report. Only for a defect of the "
+               "SYSTEM, not the task, that leaves you no honest move — a pinned check that contradicts the contract, a "
+               "tool that cannot run, an answer that ignored what you showed. One line."}
 
 
 def file_tech_reports(engine: Engine, report, role: str, actor: str, task_id) -> None:
