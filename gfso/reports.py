@@ -216,9 +216,8 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
                 f"each conflicted file and commit the merge · {_stat_line(llm)}")
             engine.emit_info("delegate", f"{task_id}: delivery held — a merge left unfinished in its tree")
             return
-        if workspace is not None:
-            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id,
-                         execution=execution_of(engine))
+        artifact = (W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id,
+                                 execution=execution_of(engine)) or None) if workspace is not None else None
         # …AND IT CARRIES ITS PARTS' WORK. Told in its packet to merge four parts that conflicted, a root's executor
         # rewrote their files instead, never merged, and delivered a tree without the JOINs a part had passed on; its
         # deliveries failed until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16). Merging is its own move.
@@ -229,7 +228,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             engine.emit_info("delegate", f"{task_id}: delivery held — part(s) {', '.join(left)} not merged into it")
             return
         _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
-                self_validation=_self)
+                self_validation=_self, artifact=artifact)
         _cb(f"{task_id}: executor DELIVERED · {_stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb, observed)
 

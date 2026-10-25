@@ -30,6 +30,19 @@ def _users_part():
     return e, e.graph.get_task(TaskId("root.part"))
 
 
+def test_a_plan_handed_in_open_is_a_draft_not_the_users_plan(monkeypatch):
+    """`open_plan` hands a spec in as a draft the system may repair (the run that polishes a plan); without it the plan
+    is the user's. The author, 2026-10-25: «пока план полируется оставлять открытым возможность менять»."""
+    def built(engine, request, root_id, **kw):
+        T.TOOLS["create_task"](engine, root_id, {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+        return SimpleNamespace(root_id=TaskId(root_id), holes=[], stats={}, d_md="", undecided_obligations=[], note="")
+    monkeypatch.setattr(TL, "decompose_into", built)
+    for open_plan, users in ((False, True), (True, False)):
+        e = _engine(Mode.AUTO)
+        TL.auto_decompose(e, "the goal", spec={"name": "p"}, open_plan=open_plan)
+        assert e.users_plan() is users, (open_plan, e.users_plan())
+
+
 def test_a_reissued_contract_of_the_users_part_keeps_its_criteria():
     e, part = _users_part()
     loose = [{"name": "k", "description": "K, loosened", "check": [

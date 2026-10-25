@@ -179,3 +179,25 @@ def test_a_split_run_that_left_the_criterion_out_does_not_pass_it(monkeypatch):
     assert out["verdict"] != "PASS"
     assert (e.get_exec_verdict(T.TaskId("big")) or {}).get("verdict") != "PASS"
     e.stop()
+
+
+def test_a_part_probe_another_run_carries_is_shown_as_pinned_not_by_id_alone():
+    """A run whose criterion rests on a part's probe another run carries is shown that probe's command and expectation —
+    not asked to run it. By id alone, the root validators of GB_sql_database_tngtvm580 read three sorting checks as owed
+    and unrunnable, rebuilt them from their expected files as unsorted diffs, and filed `held: false`: every criterion
+    resting on them failed over a tree that passes all of them."""
+    eng, task, parts = _measured()
+    shown = 0
+    for run in TL._scope_batches(eng, parts, 16):
+        for t, _, crits, carry in run:
+            text = _criteria_text(eng, t, crits, None, None, carry)
+            for c in crits:
+                block = text.split(f"**{c.name}**")[1].split("\n- **")[0]
+                for pc in _SHAPE[c.name][0]:
+                    pid, p = probe_id(pc.name, pc.check[0]), pc.check[0]
+                    if pid in carry or f"[{pid}]" not in block:
+                        continue
+                    shown += 1
+                    assert f"[{pid}] — {p.behaviour}: `{p.command}` → must show: {p.expect}" in block
+                    assert f"PINNED CHECK [{pid}]" not in block            # …shown, not demanded a second time
+    assert shown

@@ -406,6 +406,9 @@ class SignalData:
     external: bool = False                         # RESOLVE_BLOCK: blocker was non-producible (no producer node) →
                                                    # retract the provisional edge; the FM-5 currency line, not a Dep (§11.3)
     result: Optional[str] = None                   # DELIVER
+    # DELIVER: the identity of the artifact handed over (§11.2) — its tree, the same for the same files however many
+    # commits carry them; None where the work has no place of its own
+    artifact: Optional[str] = None
     self_validation: Optional[Verdict] = None      # DELIVER
     new_spec: Optional[Spec] = None                # ACCEPT_CHALLENGE
     # ACCEPT_CHALLENGE: the issuer's ruling — ids of the validator's findings the executor's CHALLENGE named that this

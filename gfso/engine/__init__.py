@@ -2803,7 +2803,29 @@ class Engine:
         """The node's FAIL verdicts under the packet version that stands, in order."""
         return [e for e in on_current_version(self._audit.get_entries(task_id)) if e.signal == Signal.FAIL]
 
-    def stuck_on(self, task_id: TaskId, rounds: int = CONTRACT_SUSPECT_ROUNDS, after: int = 0) -> list[str]:
+    def fails_over_new_work(self, task_id: TaskId, after: int = 0) -> list:
+        """`fails_of` from the `after`-th on, less each FAIL over an artifact an earlier one of them already judged: a
+        re-delivery of the same files is no new attempt at the work. A delivery of no known identity counts as new.
+        Both leaves the user's plan lost to the leaf test today were four FAILs over ONE tree, the executor re-handing
+        it while it said the fix lay in another node's file (GB_sql_database_tngo2o700 root.joins, tngn3j412
+        root.scaffold)."""
+        fails, judged, handed, out = set(map(id, self.fails_of(task_id)[after:])), set(), None, []
+        for e in on_current_version(self._audit.get_entries(task_id)):
+            if e.signal == Signal.DELIVER:
+                handed = e.artifact
+            elif id(e) in fails:
+                if handed is None or handed not in judged:
+                    out.append(e)
+                judged.add(handed)
+        return out
+
+    def rehanded(self, task_id: TaskId) -> bool:
+        """Was the standing FAIL over files an earlier FAIL of this version had already judged (`fails_over_new_work`)?"""
+        fails = self.fails_of(task_id)
+        return bool(fails) and all(f is not fails[-1] for f in self.fails_over_new_work(task_id))
+
+    def stuck_on(self, task_id: TaskId, rounds: int = CONTRACT_SUSPECT_ROUNDS, after: int = 0,
+                 new_work: bool = False) -> list[str]:
         """The criteria that failed in EVERY one of this node's last `rounds` FAILs, or [].
 
         A node can fail the same criterion round after round for two very different reasons — the
@@ -2813,8 +2835,12 @@ class Engine:
         unsatisfiable with strict UTF-8; the artifact scored 0.972 on the held-out suite and the run
         stalled. The count is a fact in the log; this reads it out so both doors can say it.
         Only the version that stands counts — a new one resets the budget (§12.15 Φ2) — and `after` skips the FAILs a
-        refutation already spent (`spent_fails`)."""
-        fails = self.fails_of(task_id)[after:]
+        refutation already spent (`spent_fails`).
+
+        `new_work`: only FAILs over work not yet judged count (`fails_over_new_work`) — the reading of the leaf test
+        (§3.7): κ is what one act can realize-and-check, and handing the same artifact again is no act on it. Without
+        it the count stays the contract's suspicion, which an unchanged re-delivery only sharpens."""
+        fails = self.fails_over_new_work(task_id, after) if new_work else self.fails_of(task_id)[after:]
         if len(fails) < max(2, rounds):
             return []
         sets = [set(e.failed_criteria or ()) for e in fails[-rounds:]]

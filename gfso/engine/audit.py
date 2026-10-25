@@ -37,6 +37,8 @@ class AuditEntry:
     revision_reason: Optional[str] = None
     # …AND THE RULING AN ACCEPT_CHALLENGE MAKES: the findings it retires, on the row of the act that retires them
     retire_findings: tuple[str, ...] = ()
+    # …AND WHAT A DELIVER HANDED OVER, by identity: re-handing the same files is no new attempt at the work
+    artifact: Optional[str] = None
 
 
 class AuditLog:
@@ -106,7 +108,7 @@ class AuditLog:
             "justification": e.justification, "result": e.result,
             "failed_criteria": list(e.failed_criteria), "action": e.action,
             "in_flight": e.in_flight, "spec": e.spec, "revision_reason": e.revision_reason,
-            "retire_findings": list(e.retire_findings),
+            "retire_findings": list(e.retire_findings), "artifact": e.artifact,
         }
 
     @staticmethod
@@ -122,7 +124,7 @@ class AuditLog:
             reason=r.get("reason"), justification=r.get("justification"), result=r.get("result"),
             failed_criteria=tuple(r.get("failed_criteria") or ()), action=r.get("action"),
             in_flight=r.get("in_flight"), spec=r.get("spec"), revision_reason=r.get("revision_reason"),
-            retire_findings=tuple(r.get("retire_findings") or ()),
+            retire_findings=tuple(r.get("retire_findings") or ()), artifact=r.get("artifact"),
         )
 
 

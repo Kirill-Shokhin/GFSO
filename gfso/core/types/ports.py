@@ -235,6 +235,17 @@ class ExecutionPort(ABC):
         """The shell the plan's probes are written for, as this execution starts it, or None where it has none."""
         ...
 
+    @abstractmethod
+    def copy_tree(self, src: str, dst: str) -> None:
+        """`src` as it stands where this execution runs — every file, symlinks as links, times kept — at `dst`, which
+        does not exist yet. A failure raises `OSError`."""
+        ...
+
+    @abstractmethod
+    def remove_tree(self, path: str) -> None:
+        """`path` gone, whatever it holds — a read-only directory a test made in it included. Gone already is fine."""
+        ...
+
     def stop(self) -> None:
         """Release what this execution holds for its project — its goal settled, or the project deleted. The host
         holds nothing."""

@@ -20,6 +20,7 @@ import re
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
@@ -28,6 +29,7 @@ from typing import Optional
 from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.workspaces import execution_of
+from gfso.adapters.snapshots import snapshot, swap
 from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import canonical_citations, laid_down_dirs, with_part_observations
@@ -46,7 +48,8 @@ from gfso.tools import _agent_id
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, validation_batch,
                          validate_internal, state_bound)
-from gfso.packets import TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports, owed_probes
+from gfso.packets import (TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
+                          owed_probes, snapshot_note)
 from gfso.llm import session_calls
 from gfso.inflight import _inflight, in_flight
 
@@ -1129,7 +1132,8 @@ def _scope_cap(batch: list) -> Optional[int]:
     return max((c for t, *_ in batch if (c := _validation_cap(t))), default=None)
 
 
-def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn) -> list:
+def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
+                     edits: Optional[list] = None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1145,15 +1149,25 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         if inside is not None:
             body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside)
                     + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
-            cap = _scope_cap(batch)
+            cap = lambda: _scope_cap(batch)
         else:
             (task, deliverable, crits, *carry), = batch
             body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
                                       criteria=None if len(crits) == len(task.spec.criteria) else crits,
                                       carry=carry[0] if carry else None)
                     + schema_instruction(_VALIDATOR_SCHEMA))
-            cap = _validation_cap(task)
-        return (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=workdir, timeout=cap)
+            cap = lambda: _validation_cap(task)
+        # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
+        # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
+        # A run alone (`place` None) works in the place itself. Mapped back, the report reads as run in the place.
+        # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
+        # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
+        with snapshot(workdir, Path(place) / "delivery", execution_of(engine), edits) if place else nullcontext() as tree:
+            if tree:
+                body = swap(body, workdir, tree) + snapshot_note(tree)
+            text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
+                                             timeout=cap())
+            return swap(text, tree, workdir) if tree else text
 
     def _run_again_if_unread(batch, client=None, place=None) -> str:
         """A batch whose report does not parse is run once more, alone, inside this validation, in a fresh place of its
@@ -1191,12 +1205,18 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
         for ps in engine.regression_probes(t.id).values() for p in ps))
     try:
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn)
+        edits: list = []
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
     text = "\n\n".join(x or "" for x in texts)
     out: dict = {"task_id": top_id, "stats": session_calls(llm, Stage.VALIDATE_RESULT)}
     _strays_left_behind(engine, top_id, workdir, _before, out, _cb)   # `.gfso-scratch` is the offered place
+    if edits:   # …and what a run changed in its copy of the place, said as a stray is: a fact, not a verdict
+        out["validator_edits"] = sorted(set(edits))
+        _cb(f"{top_id}: a validator run changed {len(out['validator_edits'])} committed file(s) in its copy of the "
+            f"delivery ({', '.join(out['validator_edits'][:5])}) — rebuilt outputs a pinned check makes, or edits a "
+            f"read-only instrument must not make; the delivery itself is untouched")
     _schema = _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA
     for x in texts:
         file_tech_reports(engine, parse_structured(x or "", _schema), "validator", validator or "validator", top_id)
@@ -1373,7 +1393,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    assignee: Optional[str] = None, executor: Optional[str] = None,
                    depth: int = 1, model: Optional[str] = None, fast: bool = False,
                    max_iterations: Optional[int] = None, spec: Optional[dict] = None,
-                   _progress=None, author: Optional[str] = None) -> dict:
+                   _progress=None, author: Optional[str] = None, open_plan: bool = False) -> dict:
     """THE one decomposition verb — dispatched by the target's state (one operation over graph state):
     (a) empty project / undecomposed node → authors a real GFSO subtree from `request` (the root node
     itself is created from the request — no hand create_task needed), builds INTO the live CORE through
@@ -1403,7 +1423,10 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     out**: the mode, the user's choice, already answers both.
 
     `spec` builds a plan already authored — the shape `extract_spec` reads off a graph — as it
-    stands, with no search: the way to execute ONE plan twice and compare the executions."""
+    stands, with no search: the way to execute ONE plan twice and compare the executions. A plan handed in is the
+    user's (append-only, never re-split; refuted at contact, the run stops for the user); `open_plan=true` hands it in
+    as a DRAFT the system may repair and re-split like its own — the run that polishes a plan, whose final graph
+    `export_plan` then reads back as the plan to hand in closed."""
     model = model or engine.system_model()
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
@@ -1466,7 +1489,10 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
         # while the plan's author and auditors had spent $0.56 (GB_sql_database_tmu9cb784)
         engine.record_llm_usage(Stage.DECOMPOSER, planner, TaskId(root_id))
     kids = engine.graph.get_active_children(res.root_id)
-    if fresh and spec is not None:
+    # …A PLAN BEING POLISHED IS NOT YET THE USER'S: `open_plan` hands the spec in as a draft the system may repair and
+    # re-split on contact, so its final graph (export_plan) shows what the plan needed — the author, 2026-10-25: «пока
+    # план полируется оставлять открытым возможность менять, потом смотреть что менялось и фиксировать итог»
+    if fresh and spec is not None and not open_plan:
         engine.give_users_plan(res.root_id)
     out = {"root_id": str(res.root_id),
            "subtasks": [{"id": str(c.id), "description": c.spec.description} for c in kids],

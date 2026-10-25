@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import tempfile
 import subprocess
 import threading
@@ -56,12 +57,30 @@ class LocalExecution(ExecutionPort):
         return run(args, timeout=timeout, cwd=cwd, text=True, encoding="utf-8", errors="replace",
                    **({"env": env} if env is not None else {}))
 
+    def copy_tree(self, src: str, dst: str) -> None:
+        shutil.copytree(src, dst, symlinks=True)
+
+    def remove_tree(self, path: str) -> None:
+        # owned before listed: rmtree neither lists a directory it may not read nor unlinks inside one it may not write
+        if not os.path.lexists(path):
+            return
+        _own(path)
+        for d, dirs, _ in os.walk(path):
+            for x in dirs:
+                if not os.path.islink(p := os.path.join(d, x)):
+                    _own(p)
+        shutil.rmtree(path, onerror=lambda fn, p, _: (_own(p), fn(p)))
+
     def shell(self):
         """On Windows Git's own bash (the one Claude Code runs), never WSL's `bash.exe`, where a `C:/…` inputs path does
         not resolve."""
         if (git := shutil.which("git")) and (b := Path(git).resolve().parents[1] / "bin" / "bash.exe").is_file():
             return str(b)
         return shutil.which("bash")
+
+
+def _own(path: str) -> None:
+    os.chmod(path, os.lstat(path).st_mode | stat.S_IRWXU)
 
 
 def end_started() -> None:
@@ -190,6 +209,20 @@ class ContainerExecution(ExecutionPort):
 
     def shell(self):
         return "bash"
+
+    def copy_tree(self, src: str, dst: str) -> None:
+        # inside, as the place was made: a symlink a session made in here is no link on the host (probe P5)
+        r = self.run(["cp", "-a", "--", src, dst], cwd=src, timeout=1800)
+        if r.returncode != 0:
+            raise OSError(f"cp -a {src} {dst} failed in {self.container}: {r.stderr.strip()[-300:]}")
+
+    def remove_tree(self, path: str) -> None:
+        if not os.path.lexists(path):
+            return
+        r = self.run(["sh", "-c", 'chmod -R u+rwX -- "$1" 2>/dev/null; rm -rf -- "$1"', "sh", path],
+                     cwd=str(Path(path).parent), timeout=600)
+        if r.returncode != 0:
+            raise OSError(f"rm -rf {path} failed in {self.container}: {r.stderr.strip()[-300:]}")
 
     def end(self, proc) -> None:
         """The call's group inside, and whatever it started that left the group (`setsid`), found by its mark — killing

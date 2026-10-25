@@ -1140,11 +1140,13 @@ class Dispatcher:
 
     def _one_session_refuted(self, top, members: list, rounds: int) -> bool:
         """Did contact refute that one session carries `top` — a node of it failing the same criteria in each of its
-        last `rounds` rounds on its current version, rounds a refutation already spent not counted again? Then `top`
+        last `rounds` rounds on its current version, rounds a refutation already spent not counted again, nor a round
+        over files a FAIL had already judged — an unchanged re-delivery is no attempt one session made? Then `top`
         is above its holder's κ (§3.7, the leaf test is agent-relative): recorded refuted (`refute_session_fit`) — a
         scope's nodes take a session each, a leaf's split is owed (`split_owed`)."""
         if not (stuck := {str(m.id): s for m in members
-                          if (s := self._engine.stuck_on(m.id, rounds, after=self._engine.spent_fails(m.id)))}):
+                          if (s := self._engine.stuck_on(m.id, rounds, after=self._engine.spent_fails(m.id),
+                                                             new_work=True))}):
             return False
         self._engine.refute_session_fit(top.id, members)
         self._engine.emit_info("delegate", f"{top.id}: one session no longer carries it — " + "; ".join(

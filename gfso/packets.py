@@ -82,6 +82,17 @@ def _working_directory(workdir: Optional[str], validating: bool = False) -> str:
             f"never write.\n{checkout_note(here)}")
 
 
+def snapshot_note(tree: str) -> str:
+    """What a validator run in its own copy of the place (`adapters.snapshots`) is told about where it stands."""
+    return (f"\nThis run has the delivery to itself: {tree} is a copy of the delivery's directory exactly as it stands "
+            f"on disk — uncommitted files, build outputs and links included — made for this run alone, while the "
+            f"other runs of this validation work in copies of their own: wherever the contract or the report names "
+            f"the delivery's directory, it means this one. Build and clean as the checks say: the delivery's files are "
+            f"not reached from here. Git refs, config and worktrees are shared with the delivery: run no git command "
+            f"that writes (no commit, checkout -b, gc, worktree prune). You are still READ-ONLY: change no file the delivery holds — the copy is compared with the "
+            f"delivery before it goes, and a committed file that differs is recorded as your edit.\n")
+
+
 def checkout_note(here: Optional[str]) -> str:
     """A node's place checks out its base as committed when the place was made: those paths are here, the rest of the
     base is read there."""
@@ -139,7 +150,8 @@ def _rework_section(engine, task) -> str:
         rework = (f"\n## REWORKING (iteration {task.iteration})"
                   + (" — the validator FAILED these criteria; fix exactly them.\n" + _why_it_failed(engine, task, own)
                      if own else "\n")
-                  + (_through_parts_text(through) if through else "") + _handover(engine, task))
+                  + (_through_parts_text(through) if through else "") + _handover(engine, task)
+                  + (_REHANDED if own and engine.rehanded(task.id) else ""))
         # …and, where the same criteria failed every round, the other route (§12.4): the frontier says it at the agent
         # door; a system executor saw only "fix exactly them", and its node was split before it could challenge
         if stuck := engine.stuck_on(task.id):
@@ -149,7 +161,7 @@ def _rework_section(engine, task) -> str:
                        + (" If it can, this round decides: one session that fails it once more is judged too small "
                           "for this node, and the node is split." if engine.mode() is not None
                           and not engine.graph.get_active_children(task.id)
-                          and engine.stuck_on(task.id, after=engine.spent_fails(task.id)) else ""))
+                          and engine.stuck_on(task.id, after=engine.spent_fails(task.id), new_work=True) else ""))
     elif (last := next((a for a in reversed(engine.audit_log(task.id))
                         if a.signal == Signal.FAIL and not a.rejected and a.failed_criteria), None)):
         # A new version (an escalation's re-ASSIGN, a raised bound) re-validates nothing by itself: that
@@ -163,6 +175,16 @@ def _rework_section(engine, task) -> str:
                       "still carries — the delivery must meet them (observed on that version):\n"
                       + _why_it_failed(engine, task, still))
     return rework
+
+
+#: Said to the executor whose last delivery re-handed files a FAIL had already judged (`Engine.rehanded`): the round
+#: decided nothing new, and the move that does is his. Re-handing one tree three times while its report said the fix lay
+#: in another node's file, a leaf was split over rounds that tried nothing (GB_sql_database_tngo2o700 root.joins).
+_REHANDED = ("\nYour last delivery handed in the very files a FAIL had already judged, unchanged, and the FAIL stands "
+             "on exactly them: re-handing them again decides nothing new. Change the result; or, where what it lacks "
+             "is another node's to make, report `status: \"blocked\"` naming that node; or, where a finding asks for "
+             "what your criterion as written does not, report `status: \"challenge\"` naming it by its id. An issuer's "
+             "words in a rejection retire no finding — only an acceptance naming its id does.\n")
 
 
 def _failed_through_parts(engine, task, failed: list) -> dict:
@@ -199,12 +221,24 @@ def _why_it_failed(engine, task, failed: list) -> str:
     standing = engine.regression_probes(task.id)
     workdir = (engine.get_exec_verdict(task.id) or {}).get("workdir")
     settled = engine.rework_settled(task.id)
+    # …EACH BY THE ID IT IS DISPUTED AND RULED ON, and each settled id by what it ran: told "name the finding by its id",
+    # an executor met this round's probes bare and the settled ones as ids alone, and disputed a retired finding again
+    # because "the packet gives no [id] for it" (GB_sql_database_tngo2o700 root.joins, audit 52)
+    ran = {(c, " ".join(str(x).split())): str(p["id"]) for c, ps in standing.items() for p in ps if p.get("id")
+           for x in (p.get("seen"), p.get("as_run"), p.get("command")) if x}
+    said = {str(r["id"]): str(r.get("seen") or r.get("command") or "") for r in engine.retired_findings(task.id)}
+    said.update({str(p["id"]): str(p.get("seen") or p.get("as_run") or p.get("command") or "")
+                 for ps in standing.values() for p in ps if p.get("id")})
     for f in failed:
         ev, cmds = why.get(f, ("", []))
         out.append(f"- {f}" + (f"\n  what it observed: {ev}" if ev else "")
-                   + (f"\n  settled, NOT demanded — the next PASS does not run them; nothing to dispute: "
-                      f"{', '.join(settled[f])}" if settled.get(f) else "")
-                   + capped([f"probe: `{cmd.replace(chr(10), ' ⏎ ')}`" for cmd in cmds], "refuting probes",
+                   + (f"\n  settled, NOT demanded — the next PASS does not run them; nothing to dispute (where what "
+                      f"it observed still names one, that part is settled):"
+                      + capped([f"[{i}]" + (f": `{said[i].replace(chr(10), ' ⏎ ')}`" if said.get(i) else "")
+                                for i in settled[f]], "settled findings", list_key(engine, task.id, f, "settled"))
+                      if settled.get(f) else "")
+                   + capped([f"probe{f' [{i}]' if (i := ran.get((f, ' '.join(cmd.split())))) else ''}: "
+                             f"`{cmd.replace(chr(10), ' ⏎ ')}`" for cmd in cmds], "refuting probes",
                             list_key(engine, task.id, f, "probes"))
                    + capped([f"standing finding [{p.get('id')}]: `{p.get('seen') or p.get('as_run')}`"
                              + (f" — {w}: shown, not demanded"
@@ -312,11 +346,15 @@ def _regression_line(p: dict, dirs: dict, workdir: Optional[str] = None) -> str:
 
 
 #: The one optional field every role's answer carries for a TECH REPORT (`Engine.tech_report`): said small, so it is
-#: used where the system itself leaves no honest move, not as a second place for complaints about the task.
+#: used where the system itself leaves no honest move, not as a second place for complaints about the task. Opened with
+#: "Leave it out: that is the normal answer", it was left out by every role of all 8 smokes of 2026-10-25, the joins
+#: executor among them, who met three of the cases below in one node (GB_sql_database_tngo2o700 root.joins).
 TECH_REPORT = {"type": "string", "description":
-               "Leave it out: that is the normal answer, and \"no defect found\" is no report. Only for a defect of the "
-               "SYSTEM, not the task, that leaves you no honest move — a pinned check that contradicts the contract, a "
-               "tool that cannot run, an answer that ignored what you showed. One line."}
+               "Usually absent: it moves nothing in this run, it goes to the system's maker, and \"no defect found\" "
+               "is no report. One line, when the SYSTEM, not the task, left you no honest move — you re-deliver an "
+               "unchanged result because the fix lies in another node's file; a finding you are held to shows no id "
+               "to dispute it by; a ruling contradicts itself (calls a finding out of scope while it keeps binding); a "
+               "pinned check contradicts the contract; a tool cannot run; an answer ignored what you showed."}
 
 
 def file_tech_reports(engine: Engine, report, role: str, actor: str, task_id) -> None:
@@ -362,6 +400,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     # was on its own delivery, and this one may have rewritten it (`validation.parts_procedure`).
     _retired = engine.retired_findings(TaskId(tid))
     _parts = engine.parts_procedure(TaskId(tid))
+    _part_probes = {probe_id(pc.name, p): (pc, p) for pcs in _parts.values() for pc in pcs for p in (pc.check or ())}
     _all = engine.validation_procedure(TaskId(tid))
     # A probe's INPUTS are laid down here, from the contract, by the system — never read from the
     # delivery, where the executor could have grown them (the corpus that moved under `c_compiler`).
@@ -372,14 +411,17 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     if carry is None:
         carry = {pid: c.name for c, items in owed for pid, _ in items}
 
-    def _probe_line(c, p, part: bool = False) -> str:
-        pid = probe_id(c.name, p)
-        d = _dirs.get(pid)
+    def _cmd(c, p) -> str:
+        d = _dirs.get(probe_id(c.name, p))
         # …with forward slashes: the command is read by a shell, and a Windows path dropped into it
         # verbatim turns every separator into an escape — the pinned probe then does not run as
         # shown, which is the one thing a pinned probe may not do.
-        cmd = p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command
-        return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: run `{cmd}` → must show: "
+        return p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command
+
+    def _probe_line(c, p, part: bool = False) -> str:
+        pid = probe_id(c.name, p)
+        d = _dirs.get(pid)
+        return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: run `{_cmd(c, p)}` → must show: "
                 f"{p.expect}"
                 + ("\n      (the part it belongs to passed its own validation on an earlier delivery; its result "
                    "now stands inside THIS delivery, and this criterion rests on it — run it here and report it ONCE, "
@@ -410,9 +452,15 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
                 again.setdefault(carry.get(pid), []).append(pid)
         lines += [f"    - rests also on the PART’S PINNED CHECKS written out under **{at}**: {', '.join(ids)} — one "
                   f"observation of each serves this criterion too" for at, ids in again.items() if at is not None]
+        # …ONE CARRIED BY ANOTHER RUN, shown as the contract pins it: named by id alone, a validator read it as owed and
+        # unrunnable, rebuilt it from its expected file — an unsorted diff of a sorting check — and filed held: false,
+        # which failed every criterion resting on it (GB_sql_database_tngtvm580 root, 2026-10-25)
         if None in again:
-            lines.append(f"    - rests also on the PART’S PINNED CHECKS {', '.join(again[None])} — observed by another "
-                         f"run of this validation: not yours to run, and one observation of each serves this criterion")
+            lines.append("    - rests also on the PART’S PINNED CHECKS below, each observed by ANOTHER run of this "
+                         "validation — shown as the contract pins them so you know what they run and must show; not "
+                         "yours to run or report, and one observation of each serves this criterion:")
+            lines += [f"      · [{pid}] — {p.behaviour}: `{_cmd(pc, p)}` → must show: {p.expect}"
+                      for pid in again[None] for pc, p in [_part_probes[pid]]]
         # …AND WHAT IT OWES THAT ANOTHER RUN CARRIES: its verdict is the conjunction of the runs' verdicts on it
         if any(carry.get(pid) != c.name for pid, _ in items):
             lines.append("    - (what this criterion owes is SPLIT between runs of this validation: run what is listed "
