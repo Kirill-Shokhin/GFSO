@@ -135,18 +135,31 @@ def test_a_seam_criterion_left_to_the_seams_note_is_refused_saying_what_to_add()
     assert len(d) == 1 and "own `per_criterion` entry" in d[0] and "criterion: 'dep__root.cat_core'" in d[0], d
 
 
-def test_the_validator_is_told_a_seam_criterion_needs_its_own_entry():
+def _consumer(check=None):
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "root", "criteria": [criterion("g", "G")]}, assignee="agent")
     T.decompose(e, "root", [{"task_id": k, "spec": {"description": k, "criteria": [criterion("k" + k, k.upper())]},
                              "assignee": "worker", "covers": ["g"]} for k in ("a", "b")], accepted_risks=REGISTER)
-    T.add_dependency(e, "a", "b", glue="b reads a")
+    T.add_dependency(e, "a", "b", glue="b reads a", check=check)
     e.wait_idle()
-    text = _validator_packet(e, e.graph.get_task(TaskId("b")), "built it", ".")
-    seam = text.split("**dep__a**", 1)[1].split("\n- **", 1)[0]
-    assert "SEAM criterion" in seam and "OWN `per_criterion` entry" in seam, seam
-    assert "SEAM criterion" not in text.split("**kb**", 1)[1].split("\n- **", 1)[0]
+    return e, e.graph.get_task(TaskId("b"))
+
+
+def test_a_bare_dep_edge_is_no_conjunct_and_the_validator_is_not_asked_for_it():
+    """A Dep is a relation, not a predicate on the consumer's result (§2.7): its glue was a sentence a validator passed
+    or failed by reading it (9 of 416 archived FAILs rested on one alone). It stays in `criteria` as the edge's
+    declaration and leaves V — the packet shows it as an edge, and a verdict over the node's own criteria stands."""
+    e, b = _consumer()
+    assert [c.name for c in b.spec.conjuncts] == ["kb"] and "dep__a" in [c.name for c in b.spec.criteria]
+    text = _validator_packet(e, b, "built it", ".")
+    assert "**dep__a**" not in text and "b reads a" in text, text
+    e.stop()
+
+
+def test_a_seam_that_pins_a_consumer_side_check_is_a_conjunct():
+    e, b = _consumer(check=[{"behaviour": "reads a", "command": "grep -q a b.txt && echo ok", "expect": "ok"}])
+    assert sorted(c.name for c in b.spec.conjuncts) == ["dep__a", "kb"]
     e.stop()
 
 

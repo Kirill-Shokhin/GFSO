@@ -106,8 +106,8 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = ()) -> 
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
     inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any."""
     tid = str(task.id)
-    dirs = _executor_inputs(engine, task.spec.criteria)
-    crits = "\n".join(_crit_line(c, dirs) for c in task.spec.criteria) or "- (none)"
+    dirs = _executor_inputs(engine, task.spec.conjuncts)
+    crits = "\n".join(_crit_line(c, dirs) for c in task.spec.conjuncts) or "- (none)"
     ups = _upstream_lines(engine, task)
     # THE OTHER NODES OF THIS PLAN, by id. The packet listed only DECLARED upstream deps, so an
     # executor blocked on work a SIBLING owns had no id to name — and `blocker_task_ids`, the field
@@ -170,7 +170,7 @@ def _rework_section(engine, task) -> str:
         # PASS still re-runs every probe that refuted them.
         # …of a criterion still carried, and only while something of it binds the next PASS (`rework_findings`)
         binding = {c for c, ev, cmds in engine.rework_findings(task.id) if ev or cmds}
-        if still := [f for f in last.failed_criteria if f in {c.name for c in task.spec.criteria} and f in binding]:
+        if still := [f for f in last.failed_criteria if f in {c.name for c in task.spec.conjuncts} and f in binding]:
             rework = ("\n## An earlier version of this contract was FAILED on these criteria, which it "
                       "still carries — the delivery must meet them (observed on that version):\n"
                       + _why_it_failed(engine, task, still))
@@ -306,8 +306,8 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset) -> str:
         return head + f"Already {t.state.name}: delivered earlier — listed for context, not yours to redo.\n"
     ups = "\n".join(_upstream_lines(engine, t, inside)) or "- none"
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(t)) or "- none"
-    dirs = _executor_inputs(engine, t.spec.criteria)
-    crits = "\n".join(_crit_line(c, dirs) for c in t.spec.criteria) or "- (none)"
+    dirs = _executor_inputs(engine, t.spec.conjuncts)
+    crits = "\n".join(_crit_line(c, dirs) for c in t.spec.conjuncts) or "- (none)"
     return (head + f"### Criteria of `{t.id}` — its ENTIRE obligation; the scope's validation runs each\n"
             f"{crits}\n\n"
             f"### Inputs from outside your scope (the REAL outputs, no stubs)\n{ups}\n\n"
@@ -512,7 +512,7 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
     in batches whose conjunction is the same verdict (§2 V = ⋀ cᵢ), because the coverage discipline
     is what one report fails when the contract is long. `carry`: the probes this run carries (`_criteria_text`)."""
     tid = str(task.id)
-    _crits = tuple(criteria if criteria is not None else task.spec.criteria)
+    _crits = tuple(criteria if criteria is not None else task.spec.conjuncts)
     crits = _criteria_text(engine, task, _crits, scratch, workdir, carry)
     ups = _seam_lines(engine, task)
     # WHAT THE LAST ATTEMPT ON THIS DELIVERY WAS MISSING. Measured across every run this
@@ -542,13 +542,13 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(task))
     return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n{prior}\n"
             + (f"## Contract — the criteria (the ENTIRE obligation; use these EXACT names in your "
-               f"report, each criterion — a `dep__*` seam included — in its own `per_criterion` entry)\n" if len(_crits) == len(task.spec.criteria) else
+               f"report, each criterion in its own `per_criterion` entry; a dependency below is an edge, not a criterion)\n" if len(_crits) == len(task.spec.conjuncts) else
                f"## Contract — the criteria THIS RUN VALIDATES ({len(_crits)} of "
-               f"{len(task.spec.criteria)}; the others are validated by their own runs, and the node's "
+               f"{len(task.spec.conjuncts)}; the others are validated by their own runs, and the node's "
                f"verdict is their conjunction, §2). Use these EXACT names and report on EVERY "
                f"one, each in its own `per_criterion` entry:\n")
             + f"{crits}\n\n"
-            f"## Upstream dependencies (seams — check against the REAL producer output, not a stub)\n"
+            f"## Upstream dependencies (edges, not criteria — a stub where one should be goes in the `seams` advisory)\n"
             f"{chr(10).join(ups) or '- none'}\n\n"
             f"## ACCEPTED_RISKS — risk factors the PLAN set aside. Do not fail the node for a gap "
             f"that lives ONLY here. It retires no criterion above: where an entry and a criterion "
@@ -576,8 +576,8 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
                       + (f"\nYOUR PREVIOUS REPORT ON THIS DELIVERY WAS REFUSED: {gap}\n" if gap else "")
                       + f"\n### Criteria of `{tid}` this run validates — report each with task_id `{tid}`\n"
                       f"{_criteria_text(engine, task, crits, place, workdir, *carry)}\n\n"
-                      f"### Upstream dependencies from outside the scope (check against the REAL producer "
-                      f"output)\n{ups}\n\n"
+                      f"### Upstream dependencies from outside the scope (edges, not criteria — a stub where "
+                      f"one should be goes in the `seams` advisory)\n{ups}\n\n"
                       f"### ACCEPTED_RISKS of `{tid}` — the plan set these aside; none retires a criterion, "
                       f"and a divergence from a criterion is its value, fail (Inv-2, §9.2)\n{negl}\n\n"
                       f"### Executor's DELIVER report for `{tid}`\n{deliverable}\n")

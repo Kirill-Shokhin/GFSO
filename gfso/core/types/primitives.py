@@ -195,6 +195,15 @@ class Spec:
         exactly the composition failure it states."""
         return tuple(n for n in self.accepted_risks if not n.denial)
 
+    @property
+    def conjuncts(self) -> tuple[Criteria, ...]:
+        """criteria(t) as V reads them (§2.3): every criterion but a Dep edge's bare declaration. A `dep__` entry that
+        pins no check only carries the edge — Dep is a relation, not a predicate on this node's result (§2.7); the
+        coupling holds by the producer's own PASS and the integration is the parent's criterion (§8.7). Left in V it was
+        a glue sentence a validator passed or failed by reading it (9 of 416 archived FAILs rested on one alone). A seam
+        that pins a consumer-side check (`add_dependency(check=…)`) is a predicate on this result, so a conjunct."""
+        return tuple(c for c in self.criteria if not c.depends_on or c.check)
+
 
 @dataclass(frozen=True)
 class Register:

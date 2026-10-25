@@ -1162,7 +1162,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     """
     # …the behaviours named beyond a pinned procedure the report ran whole are exploration, not gaps — unless the
     # criterion falls short on another count below, where the refusal names everything it is short of, as before
-    stood = named_beyond_procedure(task.spec.criteria, per_criterion, dirs) if task is not None else {}
+    stood = named_beyond_procedure(task.spec.conjuncts, per_criterion, dirs) if task is not None else {}
     gaps = underprobed(per_criterion)
     # The internal-node exemption (§10.3) is narrowed to the case that HAS it: §10.3 lets an INTERNAL node
     # self-verify; at a seam independence is owed and a self-validation is not a verdict at all. The
@@ -1170,7 +1170,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # holds at one door and not at the next — so it is checked here, where the rule lives.
     if task is None or (bool(by_hand) and internal and str(validator_id) == str(task.assignee)):
         return {c: b for c, b in gaps.items() if b != stood.get(c)}
-    for name, ids in unrun_pinned(task.spec.criteria, per_criterion, dirs).items():
+    for name, ids in unrun_pinned(task.spec.conjuncts, per_criterion, dirs).items():
         gaps.setdefault(name, []).append(
             "the procedure this criterion PINS was not run: " + ", ".join(ids)
             + " — the contract fixed these before the work (Inv-1, §12.3); a pass that skips them "
@@ -1178,7 +1178,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # What contact already found here was paid for with a round (§9.9). Re-running it is what makes
     # a repair CHECKED rather than asserted: the loop this closes is the executor fixing what was
     # named while the next validator writes fresh probes and never looks there again.
-    layable = layable_over(task.spec.criteria, parts)
+    layable = layable_over(task.spec.conjuncts, parts)
     for name, ids in unrun_regression(regression, per_criterion, dirs, layable, delivery).items():
         gaps.setdefault(name, []).append(
             "a probe that REFUTED this criterion in an earlier round was not re-run: "
@@ -1186,8 +1186,8 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
             + " — a pass over a repair nobody re-observed is not a verdict on the repair")
     # …SAID AS IT IS: a probe the report names but cannot be credited with is not a probe "not run" — told so, the
     # validator re-read every probe and dropped a different subset each round (GB_c_compiler_tmqn88552)
-    _, why = part_credit(parts, per_criterion, dirs, task.spec.criteria)
-    for name, ids in unrun_parts(parts, per_criterion, dirs, own=task.spec.criteria).items():
+    _, why = part_credit(parts, per_criterion, dirs, task.spec.conjuncts)
+    for name, ids in unrun_parts(parts, per_criterion, dirs, own=task.spec.conjuncts).items():
         if unseen := [i for i in ids if i not in why]:
             gaps.setdefault(name, []).append(
                 "the pinned procedure of a part this criterion rests on was not run over this delivery — nothing of "

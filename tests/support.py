@@ -26,6 +26,7 @@ from gfso import tools as T
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import TaskId, Probe, AcceptedRiskItem, Criteria, Predictability, Register, Spec
 from gfso.engine import Engine
+from types import SimpleNamespace
 
 #: What a decomposition declares it knowingly does not cover. Every split the engine admits carries a register
 #: with each entry's estimate and its own denial by S (STD-1, CHECK-4, §9.5), so the suite carries one rather than
@@ -259,3 +260,10 @@ def workdir(base, *parts) -> str:
     p = Path(base).joinpath(*parts)
     p.mkdir(parents=True, exist_ok=True)
     return str(p)
+
+
+class FakeSpec(SimpleNamespace):
+    """A spec stand-in for tests that build nodes by hand: `conjuncts` read as `Spec.conjuncts` reads them."""
+    @property
+    def conjuncts(self):
+        return tuple(c for c in self.criteria if not getattr(c, "depends_on", None) or getattr(c, "check", None))

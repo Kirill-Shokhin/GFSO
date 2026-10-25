@@ -543,8 +543,10 @@ ISSUER_SCHEMA = {
                           "description": "why — in terms of the contract. On a rejection this is "
                                          "what the executor is given to work from."},
         "criteria": {**_CRITERIA, "description":
-                     "ON ACCEPT ONLY: the corrected criteria, the WHOLE set as it will then stand "
-                     "(the ones you keep, unchanged, included — each with its pinned `check`)."},
+                     "ON ACCEPT ONLY, and only when the contract changes: on a node of a plan the user gave, only the "
+                     "criteria you ADD (the user's stand as written, and one you omit is kept); otherwise the WHOLE set "
+                     "as it will then stand, each with its pinned `check` — one you omit is dropped. An accept that "
+                     "only rules findings out (`retire_findings`) carries no criteria."},
         "retire_findings": {"type": "array", "items": {"type": "string"}, "description":
                             "ON ACCEPT ONLY: ids of the validator's standing findings (listed in the packet) that the "
                             "dispute named by id and you rule outside the criterion as written — no longer demanded "

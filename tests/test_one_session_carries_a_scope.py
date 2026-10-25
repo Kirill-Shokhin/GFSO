@@ -157,7 +157,7 @@ def test_a_scope_is_one_session_and_one_validation(tmp_path):
     for t in _NODES:
         rec = e.get_exec_verdict(TaskId(t))
         assert rec and rec["verdict"] == "PASS" and rec["validator"] == "val-1", (t, rec)
-        assert {p["criterion"] for p in rec["per_criterion"]} == {c.name for c in e.graph.get_task(TaskId(t)).spec.criteria}
+        assert {p["criterion"] for p in rec["per_criterion"]} == {c.name for c in e.graph.get_task(TaskId(t)).spec.conjuncts}
     e.stop()
 
 

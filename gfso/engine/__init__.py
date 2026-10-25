@@ -809,12 +809,20 @@ class Engine:
     # === Execution-validation record (the validate_result verdict; feeds the self-pass gate) ===
 
 
-    def _as_reported(self, task_id: TaskId, per_criterion: Optional[list]) -> tuple:
+    def _as_reported(self, task_id: TaskId, per_criterion: Optional[list], failed: list) -> tuple:
         """(the node, its report with every pinned probe it cites as the system spelled it cited by its id —
-        `canonical_citations`, the node's own and its parts')."""
+        `canonical_citations`, the node's own and its parts', its failed list).
+
+        Both read less what they say of a Dep edge's bare declaration: not a conjunct (`Spec.conjuncts`), so neither owed
+        nor foreign — a report, or a record from a door without entries or from before the edge left V, that still names
+        one is read without it rather than refused for it."""
         task = self._graph.get_task(task_id)
-        return task, (canonical_citations(per_criterion, task.spec.criteria, self.parts_procedure(task_id))
-                      if per_criterion and task is not None else per_criterion)
+        if task is not None:
+            edges = {c.name for c in task.spec.criteria} - {c.name for c in task.spec.conjuncts}
+            per_criterion = per_criterion and [e for e in per_criterion if str(e.get("criterion")) not in edges]
+            failed = [n for n in failed or () if n not in edges]
+        return task, (canonical_citations(per_criterion, task.spec.conjuncts, self.parts_procedure(task_id))
+                      if per_criterion and task is not None else per_criterion), failed
 
     def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
                             validator_id: str, per_criterion: Optional[list] = None,
@@ -853,7 +861,7 @@ class Engine:
         # answer. The human door has always coerced (`tools._self_check_verdict`); the record, which
         # is where EVERY door lands, did not.
         verdict = decided_verdict(verdict)
-        task, per_criterion = self._as_reported(task_id, per_criterion)
+        task, per_criterion, failed_criteria = self._as_reported(task_id, per_criterion, failed_criteria)
         # A NODE WITH NO CRITERIA HAS NOTHING A VERDICT COULD BE ABOUT, whichever door produced it.
         # V is the conjunction over the node's criteria (§2), and over the empty set that is
         # vacuously TRUE — which is not a verdict. `record_verdict` refused this by name from
@@ -886,7 +894,7 @@ class Engine:
                 f"over the contract (§2); a conjunct nobody spoke to is ⊥, and ⊥ does not carry a "
                 f"pass. Say what was observed per criterion, or record what actually happened.")
         if per_criterion is not None and task is not None:
-            defects = verdict_report_defects([c.name for c in task.spec.criteria], verdict,
+            defects = verdict_report_defects([c.name for c in task.spec.conjuncts], verdict,
                                              per_criterion, list(failed_criteria or ()),
                                              require_probe=require_probe)
             if defects:
@@ -2221,8 +2229,8 @@ class Engine:
                 # obligation to re-run it cannot be enforced against a criterion that no longer
                 # exists, so it is named here rather than lost. Silence is the failure mode this
                 # whole change exists against.
-                "orphaned_refutations": orphaned_regression(
-                    t.spec.criteria, self.regression_probes(task_id)) or None,
+                "orphaned_refutations": orphaned_regression(       # a finding filed under a bare Dep edge is one too
+                    t.spec.conjuncts, self.regression_probes(task_id)) or None,
                 # THE RESIDUE, AND IT IS NOT ONE SENTENCE. What the pinned set does not reach is
                 # unchecked; so is a pinned probe that never ran (the internal self-report door, §10.3, closes a
                 # node without running any); and so is the sensitivity of the procedure ITSELF — no
@@ -2642,7 +2650,7 @@ class Engine:
                         # …a revision asked with its contract carries the deadline the revision will: none, the
                         # node's own kept — a live one invented here approved what the revision then refused (critic C1)
                         deadline=datetime.now() + timedelta(hours=1) if signal == Signal.ASSIGN and spec is None else None,
-                        failed_criteria=tuple(c.name for c in t.spec.criteria[:1]) if signal == Signal.FAIL else (),
+                        failed_criteria=tuple(c.name for c in t.spec.conjuncts[:1]) if signal == Signal.FAIL else (),
                         result="the delivered result" if signal == Signal.DELIVER else None)
         if why := signer_refusal(self._graph, task_id, signal, source):
             return Refusal(kind="role", why=why)
@@ -2770,7 +2778,7 @@ class Engine:
         # with itself is trusting the half nobody can tell apart from the other.
         if any(spoken_verdict(e.get("verdict")) != "pass" for e in entries):
             return []
-        known = {c.name for c in task.spec.criteria}
+        known = {c.name for c in task.spec.conjuncts}
         regression, parts = self.regression_probes(task_id), self.parts_procedure(task_id)
         # Each entry against ITS OWN run's ledger — a shell in the next run must not vouch for a
         # probe the earlier one never executed (`unrun_probes`).

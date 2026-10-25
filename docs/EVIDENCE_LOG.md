@@ -3601,3 +3601,28 @@ claim done falsely and on `sql_database` goes three to six times further than al
 work to the oracle holds on `coreutils` only (where the system added no part to the given plan). On `c_compiler` the
 agent alone claims no "done" (12–15%), so that cell carries no false-done comparison. The defects named are the
 system's and the plan's, not the model's; the cell is re-run under Amendment 4 of the pre-registration.
+
+### 13.47 `sql_database` on the final given plan: the newer smaller model closes it at held-out 1.0; the older one stops honestly at the part larger than one of its sessions (2026-10-25 → 10-26)
+
+**What was asked** (`experiments/e3_specbench/PREREGISTERED_table_v1.md`, Amendment 4, each row designated before it
+started). The automatic mode, every role on one model, on the given plan v16 for `sql_database` (ten parts; the SELECT
+pipeline one part), graded in Linux on the oracle.
+
+**What it shows.**
+
+| model | automatic, plan given: claim | held-out | public | wall |
+|---|---|---|---|---|
+| `claude-haiku-5-5` | DONE — every pinned check of every passing verdict ran (24 at the root) | 1.000 (11/11) | 1.000 | 52 min |
+| `claude-haiku-4-5-20251001` | NOT DONE — the system stopped the run: the given plan refuted at its `select` part | 0.091 | 0.0 | 2 h 14 min |
+
+On `claude-haiku-4-5-20251001` eight of the ten parts passed in 85 minutes; `select` failed four deliveries of four
+different trees, the same four criteria from the second on (a segfault on `SELECT t.*`, GROUP BY grouping only NULL keys,
+ORDER BY printing nothing), and its issuer judged it larger than one session of its executor (§3.7's leaf test). A plan
+the user gave is not changed by the system: it stopped with that reason, and no "done" was claimed. The bare agent on the
+same model and contract (§13.46) claims DONE in 5 of 6 runs at held-out 0.091.
+
+**What it does not show.** The plan's checks were verified against the oracle beforehand and polished on
+`claude-haiku-5-5`'s own runs, so the first row says what the system does with checks that hold; it carries no value
+claim by itself (§13.46's condition). The second row's held-out equals the bare arm's: on this cell the automatic mode
+removes the false "done" and does not yet finish — finishing needs `select` split for the older model's session, a new
+plan version not run.

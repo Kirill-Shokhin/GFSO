@@ -22,6 +22,7 @@ from gfso.decompose.build import build_graph_live
 from gfso.roster import AgentRegistry
 from gfso.tools_llm import _SCOPE_VALIDATOR_SCHEMA, _entries_by_node
 from tests.support import REGISTER, criterion, make_engine
+from tests.support import FakeSpec
 
 
 class _Says(S._LLM):
@@ -74,7 +75,10 @@ def _two_consumers_of_one_producer(tmp_path):
     return e, agents
 
 
-def test_a_shared_criterion_name_fails_only_the_node_whose_entry_failed(tmp_path):
+def test_a_glue_failed_by_reading_it_fails_neither_consumer(tmp_path):
+    """Two consumers of one producer each carry a bare `dep__a` edge. It was a shared criterion NAME, and a validator's
+    fail of its glue sentence failed the consumer it was placed under (critic V1 kept it from failing the other). A bare
+    edge is no conjunct (`Spec.conjuncts`, §2.7): its fail is read as nothing, each consumer stands on its own criteria."""
     e, agents = _two_consumers_of_one_producer(tmp_path)
     S._drive(e, S._dispatcher(e, agents, S._LLM(S._delivered("root.a", "root.b", "root.c", "root")), S._NeverAnswers(), []),
              lambda: e.graph.get_state(TaskId("root")) == State.VALIDATING, rounds=60)
@@ -85,7 +89,7 @@ def test_a_shared_criterion_name_fails_only_the_node_whose_entry_failed(tmp_path
         ents = [x for t in e.all_tasks() if t.state == State.VALIDATING for x in S._entries(e, t, {("root.b", "dep__a")})]
         return S._fenced({"verdict": "FAIL", "per_criterion": ents, "failed_criteria": ["dep__a"]})
     out = TL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
-    assert (out["verdicts"]["root.b"]["verdict"], out["verdicts"]["root.c"]["verdict"]) == ("FAIL", "PASS")
+    assert (out["verdicts"]["root.b"]["verdict"], out["verdicts"]["root.c"]["verdict"]) == ("PASS", "PASS")
     e.stop()
 
 
@@ -112,8 +116,8 @@ def test_a_red_entry_placed_under_no_node_is_answered_by_each_owner_itself():
     # critic over 37579f8: two consumers share `dep__P`; B's pass of it was kept from a refused attempt; a red `dep__P`
     # entry under "`B`" (or under no id) was dropped, A's own fail answered the name, and B passed on the kept pass
     crit = lambda n: SimpleNamespace(name=n)
-    a = SimpleNamespace(id="A", spec=SimpleNamespace(criteria=[crit("dep__P"), crit("a_own")]))
-    b = SimpleNamespace(id="B", spec=SimpleNamespace(criteria=[crit("dep__P"), crit("b_own")]))
+    a = SimpleNamespace(id="A", spec=FakeSpec(criteria=[crit("dep__P"), crit("a_own")]))
+    b = SimpleNamespace(id="B", spec=FakeSpec(criteria=[crit("dep__P"), crit("b_own")]))
     parts = [(a, "", [crit("dep__P"), crit("a_own")]), (b, "", [crit("b_own")])]
     for tid in ("`B`", ""):
         ents = [{"task_id": "A", "criterion": "dep__P", "verdict": "fail", "evidence": "x"},

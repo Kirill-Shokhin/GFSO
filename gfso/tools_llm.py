@@ -365,9 +365,9 @@ _VALIDATOR_SCHEMA = {
         "failed_criteria": {"type": "array", "items": {"type": "string"}},
         "tech_report": TECH_REPORT,
     },
-    # …and `failed_criteria` NOT required: the record derives it from the entries (`_listed_failed`), so a report that
-    # left it out was refused as unparsed over a list it did not need (AUTO coreutils, 2026-10-10)
-    "required": ["verdict", "per_criterion"],
+    # …and neither `verdict` nor `failed_criteria` required: the engine computes both from the entries (§2.3, Inv-3),
+    # so a report that left one out was refused as unparsed over a word it did not need (AUTO coreutils, 2026-10-10)
+    "required": ["per_criterion"],
 }
 
 
@@ -424,9 +424,9 @@ def _left_to_validate(engine: Engine, task) -> tuple[list, list]:
     (`reused_from_refused`), and the merged report is checked whole against THIS run's ledger."""
     kept = engine.reusable_from_refused(task.id)
     names = {str(e.get("criterion")) for e in kept}
-    crits = [c for c in task.spec.criteria if c.name not in names]
+    crits = [c for c in task.spec.conjuncts if c.name not in names]
     if not kept or not crits:
-        return list(task.spec.criteria), []
+        return list(task.spec.conjuncts), []
     return crits, kept
 
 
@@ -679,8 +679,8 @@ def _the_validators_answer(engine, task_id, out, parsed, recorded, _cb, llm) -> 
     engine had just refused to store. Split out because the run and the answer are two
     things, and the second had grown to half the verb.
     """
-    verdict = recorded.get("verdict") or parsed["verdict"]
-    failed = list(recorded.get("failed_criteria") or parsed["failed_criteria"])
+    verdict = recorded.get("verdict") or parsed.get("verdict")
+    failed = list(recorded.get("failed_criteria") or parsed.get("failed_criteria") or ())
     out.update({"verdict": verdict, "per_criterion": parsed["per_criterion"],
                 "failed_criteria": failed, "seams": parsed.get("seams", ""),
                 # WHO IT WAS RECORDED UNDER, read off the record. The reply echoed the `validator`
@@ -956,7 +956,7 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
     carrying `dep__<producer>` (critic V1)."""
     owners: dict = {}
     for task, _, crits in parts:   # …over the WHOLE contract: a criterion kept from a refused attempt has its owner too
-        for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.criteria]):   # (critic r5)
+        for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.conjuncts]):   # (critic r5)
             owners.setdefault(name, []).append(str(task.id))
     out: dict = {str(t.id): [] for t, _, _ in parts}
     said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "",
@@ -988,7 +988,7 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
         # nothing, or one its own entries contradict, decided nothing for any node it covers (Inv-3, §7.1) — the batches
         # of one node read by a rule of their own made ⊥ or FAIL depend on which malformed word came (critic V4). A
         # node's single report is judged by the same clause at the record, in the record's own words.
-        why = _report_contradicts_itself(parsed) if not own or len(texts) > 1 else None
+        why = _report_contradicts_itself(parsed)   # one node's single report too: the record no longer reads its word
         failed_said.update(_listed_failed(parsed), _red(parsed))   # held to the names' owners below
         for tid in (out if own else named):
             s = said[tid]
@@ -1071,6 +1071,8 @@ def _report_contradicts_itself(parsed: dict) -> Optional[str]:
     if red:      # what the list names beyond the red set is held to its owners' entries (`_entries_by_node`)
         return None
     said = verdict_word(parsed.get("verdict"))   # a word that is neither decided nothing: no verdict to agree (§7.1)
+    if parsed.get("verdict") is None and not listed:   # …and no word is no claim: the entries are the verdict (§2.3)
+        return None
     if said != Verdict.PASS or listed:
         return (f"the report's verdict {parsed.get('verdict') or '(none)'} and failed_criteria {sorted(listed)} contradict its own "
                 f"entries, whose non-pass criteria are {sorted(red)} — the issuer's FAIL payload must be the red set "
@@ -1094,12 +1096,14 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
     node parked, and the only trace of what was checked was a text file); with how many refusals the node has had."""
     tools, _model = _instrument_of(llm, model)
     parts = engine.parts_procedure(task.id)
-    entries = with_part_observations(parts, canonical_citations(entries, task.spec.criteria, parts))   # the packet's `{id, held}` form, read
-    # a node read out of a report over several: its claim is its own entries' — every NON-PASS one failed, as the
-    # validator reports an undecidable criterion FAIL (validator.md)
-    failed = (list(said["failed_criteria"]) if said["verdict"] is not None else
-              [str(e.get("criterion")) for e in entries if spoken_verdict(e.get("verdict")) != "pass"])
-    verdict = said["verdict"] if said["verdict"] is not None else (Verdict.FAIL if failed else Verdict.PASS)
+    entries = with_part_observations(parts, canonical_citations(entries, task.spec.conjuncts, parts))   # the packet's `{id, held}` form, read
+    # THE ENGINE'S CONJUNCTION, NOT THE REPORT'S WORD: V is the AND of the per-criterion values (§2.3) and the FAIL
+    # payload is their red set (Inv-3), so both are computed here from the entries over this node's conjuncts — an
+    # entry on a bare Dep edge read as nothing (`Spec.conjuncts`); a word or list the report adds decides nothing
+    edges = {c.name for c in task.spec.criteria} - {c.name for c in task.spec.conjuncts}
+    entries = [e for e in entries if str(e.get("criterion")) not in edges]
+    failed = list(dict.fromkeys(str(e.get("criterion")) for e in entries if spoken_verdict(e.get("verdict")) != "pass"))
+    verdict = Verdict.FAIL if failed else Verdict.PASS
     try:
         if said.get("contradiction"):
             raise ValueError(said["contradiction"])
@@ -1153,7 +1157,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         else:
             (task, deliverable, crits, *carry), = batch
             body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
-                                      criteria=None if len(crits) == len(task.spec.criteria) else crits,
+                                      criteria=None if len(crits) == len(task.spec.conjuncts) else crits,
                                       carry=carry[0] if carry else None)
                     + schema_instruction(_VALIDATOR_SCHEMA))
             cap = lambda: _validation_cap(task)

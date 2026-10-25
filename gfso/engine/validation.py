@@ -262,7 +262,7 @@ def parts_procedure(graph: Graph, task) -> dict:
 def settled_procedure(graph: Graph, task) -> tuple:
     """Every criterion whose pinned probes a validation of `task` runs over its delivery: its own, then its DONE
     parts' (`parts_procedure`) — what a whole above it demands again of it."""
-    return tuple(task.spec.criteria) + tuple(c for cs in parts_procedure(graph, task).values() for c in cs)
+    return tuple(task.spec.conjuncts) + tuple(c for cs in parts_procedure(graph, task).values() for c in cs)
 
 
 def record_stands(graph: Graph, audit, task, rec: Optional[dict]) -> bool:
@@ -463,7 +463,7 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
       · REPAIRED — a coverer was touched (reopened, revised, or newly added), or the criterion's coverage was
         re-admitted (§2.4: a remap is the split's, and moves no child): admitted, as before.
     """
-    now = {c.name: c for c in task.spec.criteria}
+    now = {c.name: c for c in task.spec.conjuncts}
     was = rec.get("criteria_text") or {}
     fail_at = audit.last_at(task.id, signal=Signal.FAIL)
     covered_then, _ = coverage_at(coverage_history(graph._storage, audit, task.id), fail_at)
@@ -472,7 +472,9 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
     read_here = rec.get("parts_not_shown_holding") or {}
     dropped, loosened, edited, unrepaired = [], [], [], []
     split, left = _split_the_fail_refutes(graph, task, covered_then, audit, fail_at)
-    for crit in rec.get("failed_criteria") or ():
+    # a bare edge a record names refuted no conjunct (`Spec.conjuncts`)
+    for crit in (n for n in rec.get("failed_criteria") or ()
+                 if n in now or n not in {c.name for c in task.spec.criteria}):
         coverers = [m.child_id for m in split.criterion_mappings if m.criterion_name == crit]
         if crit not in now:
             dropped.append(crit)
@@ -1444,7 +1446,7 @@ def _rules(signal_data: SignalData, graph: Graph, audit=None) -> None:
     # advisory for the person (audited 2026-09-05, F5).
     _t = graph.get_task(signal_data.task_id)
     if signal_data.signal == Signal.FAIL and _t is not None:
-        _names = [c.name for c in _t.spec.criteria]
+        _names = [c.name for c in _t.spec.conjuncts]
         if _foreign := fail_names_this_contract(signal_data.failed_criteria, _names):
             raise ValidationError(
                 f"FAIL on {signal_data.task_id} names {_foreign} — not criteria of this node, whose "

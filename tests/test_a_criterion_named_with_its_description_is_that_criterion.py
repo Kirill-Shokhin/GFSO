@@ -14,13 +14,14 @@ from types import SimpleNamespace as NS
 from gfso.core.protocol.invariants import criterion_meant
 from gfso.packets import _evidence_short
 from gfso.tools_llm import _SCOPE_VALIDATOR_SCHEMA, _VALIDATOR_SCHEMA, _entries_by_node
+from tests.support import FakeSpec
 
 NAMES = ["Lexer and parser functionality", "INNER JOIN operations", "INNER JOIN operations chained"]
 
 
 def _parts(*names_by_node, kept=()):
     """(node, _, criteria left to validate) — `kept` names are in the contract but kept from a refused attempt."""
-    return [(NS(id=tid, spec=NS(criteria=[NS(name=n) for n in (*names, *kept)])), None, [NS(name=n) for n in names])
+    return [(NS(id=tid, spec=FakeSpec(criteria=[NS(name=n) for n in (*names, *kept)])), None, [NS(name=n) for n in names])
             for tid, names in names_by_node]
 
 

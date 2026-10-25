@@ -21,6 +21,7 @@ from gfso.core.types import Criteria, Probe
 from gfso.packets import _criteria_text, owed_probes
 from tests.support import criterion
 from tests.test_validate_result import _eng, _fenced
+from tests.support import FakeSpec
 
 # ── the measured shape ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ class _Owed:
 
 def _measured():
     eng = _Owed()
-    task = SimpleNamespace(id="root", spec=SimpleNamespace(criteria=eng.crits))
+    task = SimpleNamespace(id="root", spec=FakeSpec(criteria=eng.crits))
     return eng, task, [(task, "delivered", eng.crits)]
 
 

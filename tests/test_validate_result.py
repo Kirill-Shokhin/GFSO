@@ -182,10 +182,11 @@ def test_failed_criteria_are_the_reports_own_red_set():
     e.stop()
 
 
-def test_a_nodes_own_report_that_names_no_verdict_is_not_a_verdict():
-    """A node's own report is wholly its claim (§7.1: V is two-valued; Inv-3): `"verdict": null` decided nothing, so
-    nothing is recorded — read as "derive it from the entries", it recorded PASS even beside a failed list (critic V2)."""
-    for listed in ([], ["holds"]):
+def test_a_nodes_own_report_is_its_entries_and_a_failed_list_its_entries_deny_decides_nothing():
+    """The system computes V from the entries (§2.3, Inv-3); the report's word is not asked. With no word and no list the
+    entries are the verdict; a failed list its own entries pass decided nothing — read as a PASS beside it, a
+    contradiction would have closed the node (critic V2)."""
+    for listed, want in (([], "PASS"), (["holds"], None)):
         e = _eng()
         _delivered_node(e)
         llm = _ValidatorLLM(_fenced({"verdict": None, "failed_criteria": listed, "per_criterion": [
@@ -193,8 +194,8 @@ def test_a_nodes_own_report_that_names_no_verdict_is_not_a_verdict():
              "probe": [{"command": f"check {n}", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}
             for n in ("flush", "holds")]}))
         out = TL.validate_result(e, "n1", _llm=llm)
-        assert out["verdict"] is None and "neither PASS nor FAIL" in out["verdict_defects"]
-        assert e.get_exec_verdict(T.TaskId("n1")) is None
+        assert (out["verdict"] or None) == want, (listed, out)
+        assert (e.get_exec_verdict(T.TaskId("n1")) is None) == (want is None)
         e.stop()
 
 
@@ -231,7 +232,7 @@ def test_each_batch_is_judged_whole_and_the_words_are_conjoined(monkeypatch, sha
                                                          {"command": "pytest -q", "expect": "passed"}]}]})
 
     out = TL.validate_result(e, "n1", _llm=_Batched(""))
-    if shape == "lowercase pass":
+    if shape in ("lowercase pass", "null word"):     # no word is no claim: the engine conjoins the entries (§2.3)
         assert out["verdict"] == "FAIL" and out["failed_criteria"] == [red]
     else:
         assert out["verdict"] is None and out["verdict_defects"]
@@ -243,8 +244,9 @@ def test_a_report_over_several_nodes_that_names_no_verdict_decided_nothing():
     """The scope's reading of a report holds the record's rule (§7.1): a word that is neither PASS nor FAIL decided
     nothing for any node it covers, however green its entries (critic V3: it recorded PASS for every node)."""
     green = {"criterion": "a_ok", "verdict": "pass"}
-    for word in (None, "", "PARTIAL"):
+    for word in ("", "PARTIAL"):      # a word given that is neither; none given is no claim — the entries decide
         assert TL._report_contradicts_itself({"verdict": word, "per_criterion": [green], "failed_criteria": []})
+    assert TL._report_contradicts_itself({"verdict": None, "per_criterion": [green], "failed_criteria": []}) is None
     assert TL._report_contradicts_itself({"verdict": "pass", "per_criterion": [green], "failed_criteria": []}) is None
 
 

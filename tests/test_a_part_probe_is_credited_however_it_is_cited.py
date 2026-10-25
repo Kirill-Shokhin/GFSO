@@ -15,6 +15,7 @@ import pytest
 
 from gfso.core.protocol.procedure import part_credit, part_criteria, probe_id, unaccounted_for, unrun_parts
 from gfso.core.types import Criteria, Probe
+from tests.support import FakeSpec
 
 _CAT = part_criteria("root.cat", [Criteria("flags", check=(Probe("cat flags", "cat -n f", "ok"),))])
 _WC = part_criteria("root.wc", [Criteria("count", check=(Probe("wc counts", "python {inputs}/t.py", "3"),))])
@@ -44,7 +45,7 @@ def test_cited_once_by_hash_or_command_without_held_it_holds_for_every_criterion
 def test_not_cited_at_all_it_is_still_unrun_and_said_so():
     out = unrun_parts(_PARTS, _report({"id": _hash(_CAT_ID)}), _DIRS)
     assert out == {"A": [_WC_ID], "B": [_WC_ID]}
-    gaps = unaccounted_for(SimpleNamespace(spec=SimpleNamespace(criteria=()), assignee="x"),
+    gaps = unaccounted_for(SimpleNamespace(spec=FakeSpec(criteria=()), assignee="x"),
                            _report({"id": _hash(_CAT_ID)}), False, "v", {}, dirs=_DIRS, parts=_PARTS)
     assert "was not run over this delivery — nothing of it" in gaps["B"][0] and _WC_ID in gaps["B"][0]
     assert not any("cannot be credited" in g for g in gaps["B"])
@@ -69,7 +70,7 @@ def test_a_hash_two_demanded_probes_share_credits_neither_and_says_why():
     parts = {"A": _CAT + twin, "B": _CAT + twin}
     report = _report({"id": _hash(_CAT_ID), "command": "cat -n f"})
     assert unrun_parts(parts, report) == {"A": [_CAT_ID, twin_id], "B": [_CAT_ID, twin_id]}
-    gaps = unaccounted_for(SimpleNamespace(spec=SimpleNamespace(criteria=()), assignee="x"), report, False, "v", {},
+    gaps = unaccounted_for(SimpleNamespace(spec=FakeSpec(criteria=()), assignee="x"), report, False, "v", {},
                            parts=parts)
     assert any("cannot be credited" in g and "names 2 demanded probes" in g and "full id" in g for g in gaps["B"])
     assert not any("nothing of it" in g for g in gaps["B"])

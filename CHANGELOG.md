@@ -12,6 +12,11 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 
 ## [Unreleased]
 
+### Changed
+- A Dep edge is no criterion of its consumer: a `dep__` entry that pins no check declares the edge and is left out of the
+  node's verdict on every door (a seam that pins a consumer-side check stays a criterion). A node's PASS/FAIL and failed
+  list are computed from the validator's per-criterion entries; the validator is no longer asked for a verdict word.
+
 ## [0.2.0] — 2026-10-15
 
 ### Added

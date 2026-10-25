@@ -558,7 +558,7 @@ class NodeSteps:
                 # ALL of them, seams included: a `dep__` criterion is a criterion of this node, V
                 # is the conjunction over the whole contract (§2.3), and `record_verdict` enforces
                 # that — so a step that lists fewer is a step whose instruction cannot be followed.
-                "criteria": [c.name for c in t.spec.criteria], "directive": directive}
+                "criteria": [c.name for c in t.spec.conjuncts], "directive": directive}
 
 
 class Frontier:
@@ -993,7 +993,7 @@ class Frontier:
             # what `record_verdict` enforces: a person who validated exactly the printed list was
             # refused for "criterion 'dep__x' has no verdict" (measured on the human door
             # 2026-08-22, two round-trips). Following the instruction has to be enough.
-            crits = [c.name for c in t.spec.criteria]
+            crits = [c.name for c in t.spec.conjuncts]
             nm = t.spec.name or str(t.id)
             if self.steps._plan_gate_step(t, kids, crits, nm, cands, held, _passed):
                 continue

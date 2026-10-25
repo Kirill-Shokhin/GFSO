@@ -108,7 +108,7 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # Without it a PASS is a word; with it a later reader can re-run exactly what was run.
         # …counted by the gate's own reader, over the same inputs directories: a probe reported by its laid-down
         # command and no id was ACCEPTED by the gate and recorded "never run" here (GB_c_compiler_tmokgz344, root.vec)
-        **(procedure_coverage(task.spec.criteria, per_criterion or (), inputs_dirs) if task is not None else {}),
+        **(procedure_coverage(task.spec.conjuncts, per_criterion or (), inputs_dirs) if task is not None else {}),
         "ts": ts, "log_at": int(log_at)}))
     if verdict_word(verdict) == Verdict.FAIL and task is not None:
         _remember_refuted_versions(storage, task_id, task, failed_criteria, validated)
@@ -154,7 +154,7 @@ def _remember_refuted_versions(storage, task_id: TaskId, task, failed_criteria,
     straight out of VALIDATING. What the refutation validated is known only now, so it is written now.
     """
     have = refuted_versions(storage, task_id)
-    for c in task.spec.criteria:
+    for c in task.spec.conjuncts:
         if c.name in set(failed_criteria or ()):
             # the version the verdict VALIDATED (at the last DELIVER), falling back to the current one
             v = (validated or {}).get(c.name) or criterion_version(
