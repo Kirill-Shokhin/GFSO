@@ -3585,12 +3585,19 @@ shared limit only where it was measured and taken out.
 
 **Amendment 2, measured (2026-10-24).** The plan-given cells of Haiku 4.5 on `sql_database` and `c_compiler`, re-run on the
 amended build `9155db9` (two rows each), closed no root and claimed done in none. Scored on the held-out suite as each
-root's tree last stood: `sql_database` 54.5% in both rows (the agent alone: 9–18%, done claimed in 5 of 6) — one row's
-root was cancelled by the machine issuer from its escalation while it judged the work complete, the other ran to the
-9-hour ceiling; for two hours before, the root's failed criteria alternated between two sets because a repair part the
-issuer added pinned double-quoted strings as identifiers against the user's own checks that read them as text.
+root's tree last stood: `sql_database` 54.5% in both rows (the agent alone: 9–18%, done claimed in 5 of 6). Read off the
+rows' own logs: every root pinned check of the given plan passes on both final trees, so the plan's checks were looser
+than the held-out suite on this model's code (they had been verified on stronger models' trees only); the first root
+verdict, 3.4 h into each row, failed 10–14 root criteria over parts that had all passed; the system then re-split the
+given plan (2 and 16 parts added), so those rows ran a plan of its own; one added part's expected output was re-pinned,
+on an accepted dispute, to what the build printed, contradicting the root's own pinned check, and the root failed on the
+pair to the 9-hour ceiling; repair parts pinned empty input files on their first issue (40 in one row; the fix named
+below covered re-written probes, not newly added parts); in the other row the machine issuer cancelled the root two
+minutes before its ceiling.
 `c_compiler`: one row stopped by hand after two days whose integrated trees never rose above the task's starter code
 (11–20%, the starter at 20.4%) — a part kept failing the same criteria over children that all passed, re-worked rather
 than re-split; the other ran to the ceiling with its root not reached. Read: under the system the weak model does not
 claim done falsely and on `sql_database` goes three to six times further than alone; the claim that it carries the
-work to the oracle holds on `coreutils` only. The three defects named are the system's, not the model's.
+work to the oracle holds on `coreutils` only (where the system added no part to the given plan). On `c_compiler` the
+agent alone claims no "done" (12–15%), so that cell carries no false-done comparison. The defects named are the
+system's and the plan's, not the model's; the cell is re-run under Amendment 4 of the pre-registration.
