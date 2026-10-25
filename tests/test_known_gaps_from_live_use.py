@@ -399,10 +399,15 @@ def test_the_observation_log_carries_the_humans_own_signals():
         f"the human's signal is absent from the observation log: {lines}")
 
 
-def test_the_human_door_hands_out_the_ui_link_too(capsys):
+def test_the_human_door_hands_out_the_ui_link_too(capsys, monkeypatch, tmp_path):
     """The agent door attaches `ui` to its entry verbs and repeats it; the CLI/HTTP door never did,
     so the person the UI exists for was the one never told its address (measured: fourteen calls,
-    no link anywhere). One list of verbs now serves both doors."""
+    no link anywhere). One list of verbs now serves both doors.
+
+    In process, in its own data dir: through a live server this test created `ui-link-probe` in the
+    person's own project list on every run of the suite (found three times, 2026-10-24/25)."""
+    monkeypatch.setattr(driver, "_through_server", lambda *a, **k: None)
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     assert "use_project" in serverctl.UI_LINK_VERBS and "create_task" in serverctl.UI_LINK_VERBS
     assert "?project=demo" in serverctl.ui_link("demo"), serverctl.ui_link("demo")
 
