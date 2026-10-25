@@ -227,7 +227,10 @@ body {
 .tl .tl-val { fill: var(--ink-faint); }
 .tl .tl-issuer { fill: none; stroke: var(--ink-soft); stroke-width: 1.2; }
 .tl .tl-plan { fill: var(--paper); stroke: var(--ink-faint); }
-.tl .tl-open { animation: tl-pulse 1.6s ease-in-out infinite; }
+/* a running bar breathes, but never pales into the validation colour: at the dots' .45 a black execution bar read as a
+   grey validation one in a screenshot (2026-10-26) */
+.tl .tl-open { animation: tl-breathe 1.6s ease-in-out infinite; }
+@keyframes tl-breathe { 50% { opacity: .75; } }
 @keyframes tl-pulse { 50% { opacity: .45; } }
 /* The brand's bordeaux marks the real done — a PASS; a FAIL speaks by its shape, in ink. */
 /* The accent dot is kept for work running NOW (pulsing) and the one goal delivered. A verdict mark is a figure, not a
