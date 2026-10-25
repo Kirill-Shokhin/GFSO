@@ -19,6 +19,8 @@ import threading
 
 import pytest
 
+import gfso.driver as driver
+
 
 @pytest.fixture(autouse=True, scope="session")
 def _own_state_home():
@@ -30,6 +32,14 @@ def _own_state_home():
         os.environ.pop("GFSO_HOME", None)
     else:
         os.environ["GFSO_HOME"] = prior
+
+
+@pytest.fixture(autouse=True)
+def _the_suite_never_drives_the_one_server(monkeypatch):
+    """…NOR SENDS ITS VERBS THERE. A CLI verb goes over the live server whenever one answers (`driver._through_server`),
+    so a test of the CLI door created its project in the installation's `data/` on every run while :8000 was up — four
+    times in one day, beside a paid row (ui stream, 2026-10-25). In the suite a verb runs in process."""
+    monkeypatch.setattr(driver, "_through_server", lambda *a, **k: None)
 
 
 @pytest.fixture(autouse=True, scope="session")
