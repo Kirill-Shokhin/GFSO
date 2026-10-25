@@ -108,7 +108,9 @@ export function mountDeck() {
     d.querySelector('nav').onclick = e => {
         const v = e.target.dataset.view;
         if (!v) return;
-        view = pref.view = v; pref.closed = false; keep(); paint();
+        // the open tab pressed again folds the deck; any tab unfolds it (author, 2026-10-25)
+        pref.closed = v === view && !pref.closed;
+        view = pref.view = v; keep(); paint();
     };
     d.querySelector('.dk-fold').onclick = () => { pref.closed = !pref.closed; keep(); paint(); };
     d.querySelector('.dk-strip').onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n) point('select', n); };

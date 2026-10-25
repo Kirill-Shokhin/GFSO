@@ -146,8 +146,9 @@ function render() {
 }
 
 // `facet` opens or switches the tab; none closes the reader.
+// …and the facet open now, pressed again, closes it — as the deck's tabs and the project picker do
 export function openReader(facet) {
-    tab = facet || null;
+    tab = facet && facet !== tab ? facet : null;
     tab && cur ? render() : closeReader();
 }
 // The panel hands over each node it reads; an open reader follows it.
