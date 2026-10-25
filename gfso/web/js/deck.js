@@ -1,7 +1,7 @@
 // The run deck under the graph: a strip that always says what is running now and what it has cost,
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
-import {$, esc} from './dom.js';
+import {$, esc, hint} from './dom.js';
 import {getJSON, singleFlight} from './api.js';
 import {S} from './state.js';
 import {point} from './store.js';
@@ -37,18 +37,18 @@ function strip() {
     const live = busy.map(t => {
         const w = mine.find(w => w.task_id === t.id), tk = [...ticks.values()].find(k => k.node === t.id);
         const what = t.state === 'VALIDATING' ? 'validating' : t.state === 'REWORKING' ? 'reworking' : 'executing';
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${esc(tk?.msg || (w ? w.verb : 'no process on this server'))}"><i></i>${esc(name(t))}`
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : 'in a working state; no process of this server runs it'))}"><i></i>${esc(name(t))}`
             + `<span>${what}${w ? ' · ' + dur((now - w.since) * 1e3) : ''}</span></button>`;
     });
     // at most three chips, the rest counted: what waits and what it cost must stay on the line however much runs
-    const more = live.length > 3 ? `<span class="dk-more" title="${esc(busy.slice(3).map(name).join('\n'))}">+${live.length - 3}</span>` : '';
-    return (live.length ? `<span class="dk-now" title="a node with a session open, or a leaf in a working state — a parent EXECUTING waits on its parts and is not counted">${live.length} at work</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
+    const more = live.length > 3 ? `<span class="dk-more" title="${hint(`${live.length - 3} more at work`, busy.slice(3).map(name))}">+${live.length - 3}</span>` : '';
+    return (live.length ? `<span class="dk-now" title="At work&#10;a node with a session open, or a leaf in a working state&#10;a parent in EXECUTING waits on its parts and is not counted">${live.length} at work</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
         : '<span class="dk-now dk-idle">nothing at work</span>')
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
-            return `<button class="dk-block" data-node="${esc(id)}" title="${n} node${n > 1 ? 's' : ''} queued behind it along Dep — none starts until what it waits on passes">${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`
+            return `<button class="dk-block" data-node="${esc(id)}" title="${hint(`${n} wait on ${run.name(id)}`, 'queued behind it along Dep', 'none starts until what it waits on passes')}">${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`
                 + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '')
-        + (issuer.length ? `<span class="dk-wait" title="${esc(issuer.map(t => `${name(t)} — ${t.state}`).join('\n'))}">${issuer.length} wait${issuer.length > 1 ? '' : 's'} on the issuer</span>` : '')
+        + (issuer.length ? `<span class="dk-wait" title="${hint('Waiting on the issuer', issuer.map(t => `${name(t)} — ${t.state}`))}">${issuer.length} wait${issuer.length > 1 ? '' : 's'} on the issuer</span>` : '')
         + (run ? `<span class="dk-sum">$${run.cost.total.toFixed(2)} · ${dur(run.clock.span)} run</span>` : '');
 }
 
@@ -101,9 +101,9 @@ export const onInflight = () => { $('deck').querySelector('.dk-strip').innerHTML
 
 export function mountDeck() {
     const d = $('deck');
-    d.innerHTML = `<div class="dk-grip" title="drag to resize"></div><div class="dk-head">
-        <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}" title="${esc(ASKS[k])}">${k}</button>`).join('')}</nav>
-        <div class="dk-strip"></div><button class="dk-fold" title="fold / unfold">▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
+    d.innerHTML = `<div class="dk-grip" title="Drag to resize"></div><div class="dk-head">
+        <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}" title="${hint(k, ASKS[k])}">${k}</button>`).join('')}</nav>
+        <div class="dk-strip"></div><button class="dk-fold" title="Fold / unfold">▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
     if (pref.h) d.style.height = `${pref.h}px`;
     d.querySelector('nav').onclick = e => {
         const v = e.target.dataset.view;

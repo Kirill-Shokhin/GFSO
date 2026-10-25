@@ -3,7 +3,7 @@
 // each level is its own count ("k of N criteria passing at their latest verdict"), never one curve,
 // and the root's verdicts cross every track as the milestones they are. Counts, not percentages:
 // a share is not a verdict (canon §7.4).
-import {esc} from './dom.js';
+import {esc, hint} from './dom.js';
 import {bindFocus} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, mark, glyph, trim} from './draw.js';
@@ -38,7 +38,7 @@ function coverage(run, nodes, tasks) {
     const maps = root.criterion_mappings || [], st = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const kids = [...new Set(maps.map(m => m.child_id))], self = run.criteria.status[root.id] || {}, name = run.name;
     const cell = (c, k) => !maps.some(m => m.criterion_name === c && m.child_id === k) ? '<td></td>'
-        : `<td data-node="${esc(k)}" title="${esc(name(k))} — ${esc(st[k])}"><i class="cv cv-${st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : 'open'}"></i></td>`;
+        : `<td data-node="${esc(k)}" title="${hint(name(k), st[k])}"><i class="cv cv-${st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : 'open'}"></i></td>`;
     const rows = run.criteria.names[root.id].map(c => `<tr><th title="${esc(c)}">${esc(trim(c, 30))}</th>
         ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase()) : '⊥'}</td></tr>`).join('');
     return `<table class="pg-cov"><thead><tr><th class="sec">the goal's criteria</th>

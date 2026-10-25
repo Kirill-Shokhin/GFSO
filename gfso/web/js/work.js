@@ -1,7 +1,7 @@
 // Who did the work: each model, in each role it served — how many sessions, how many turns, what it read and
 // wrote, what it cost and what share of the run that is, and how close its sessions came to its window. The
 // model is the node's real executor, so the run is signed by it (author, 2026-10-25). From the run model only.
-import {esc} from './dom.js';
+import {esc, hint} from './dom.js';
 import {KIND_NAME as KIND} from './run.js';
 import {modelName} from './vocab.js';
 
@@ -12,16 +12,16 @@ const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.leng
 
 // how full the sessions' contexts got: the fullest turn of each, against the window of the model that ran it
 function fill(r) {
-    if (!r.fills.length) return '<span class="wk-none" title="recorded only for sessions run on a build that keeps it">not recorded</span>';
+    if (!r.fills.length) return '<span class="wk-none" title="Not recorded&#10;kept only for sessions run on a build that records it">not recorded</span>';
     const max = Math.max(...r.fills);
-    return `<span class="wk-fill${max > 0.8 ? ' high' : ''}" title="each session's fullest turn against its window: median ${pct(median(r.fills))}, `
-        + `fullest ${pct(max)}, ${r.fills.length} of ${r.calls} sessions recorded"><i style="width:${pct(max)}"></i></span>`
+    return `<span class="wk-fill${max > 0.8 ? ' high' : ''}" title="${hint('Context filled', "each session's fullest turn against its window", `median ${pct(median(r.fills))} · fullest ${pct(max)}`,
+        `${r.fills.length} of ${r.calls} sessions recorded`)}"><i style="width:${pct(max)}"></i></span>`
         + `${pct(median(r.fills))} · max ${pct(max)}`;
 }
 
 // cache read / written, apart where the session kept them apart — summed in the calls before that was kept
 const cache = r => (r.read || r.write ? `${tok(r.read)} / ${tok(r.write)}` : '')
-    + (r.unsplit ? `${r.read || r.write ? ' + ' : ''}<span title="read and written, one sum: recorded before they were kept apart">${tok(r.unsplit)} r+w</span>` : '');
+    + (r.unsplit ? `${r.read || r.write ? ' + ' : ''}<span title="Cache read + written&#10;one sum: recorded before the two were kept apart">${tok(r.unsplit)} r+w</span>` : '');
 
 export function render(el, run) {
     const {rows, total, unanswered} = run.work;
@@ -33,12 +33,12 @@ export function render(el, run) {
         <div class="cs-tiles">${Object.entries(byModel).sort((a, b) => b[1].cost - a[1].cost).map(([m, x]) =>
             `<div class="cs-tile"><b>${esc(modelName(m))}</b><span>${esc(x.roles.join(' · '))}</span>`
             + `<i>${usd(x.cost)}${total ? ` · ${pct(x.cost / total)} of the run` : ''} · ${x.calls} sessions</i></div>`).join('')}</div>
-        <table class="wk-table"><thead><tr><th>model</th><th>role</th><th title="each model call is a session with a context of its own, unless it continued a conversation (marked)">sessions</th><th>turns</th><th>input</th><th>output</th>
-            <th title="what the sessions read from the prompt cache / wrote to it">cache read / written</th><th>cost</th><th>share</th>
-            <th title="each session's fullest turn against its model's window">context filled</th></tr></thead><tbody>
-        ${rows.map(r => `<tr><td title="${esc(r.model)}">${esc(modelName(r.model))}</td><td>${KIND[r.kind]}</td><td>${r.calls}${r.resumed ? ` <span class="wk-none" title="a call that continued its round's conversation (cut at its turn cap) is no context of its own">· ${r.calls - r.resumed} contexts</span>` : ''}${Object.keys(r.ends).length ? ` <span class="wk-none" title="sessions that worked and gave no answer: a cut one's tokens are its turns' own and its price unknown; one out of turns is taken up by the next round">(${Object.entries(r.ends).map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')})</span>` : ''}</td>`
-            + `<td>${!r.turned ? '—' : r.turned < r.calls ? `<span title="turns are recorded for ${r.turned} of the ${r.calls} sessions">${r.turns} in ${r.turned}</span>` : r.turns}</td><td>${tok(r.input)}</td><td>${tok(r.output)}</td><td>${cache(r) || '—'}</td>`
-            + `<td>${usd(r.cost)}${r.unpriced ? ` <span class="wk-none" title="sessions that spent tokens with no cost recorded — a cut stream among them; the share is of what was priced">+ ${r.unpriced} unpriced</span>` : ''}</td><td>${total ? pct(r.cost / total) : '—'}</td><td>${fill(r)}</td></tr>`).join('')}
+        <table class="wk-table"><thead><tr><th>model</th><th>role</th><th title="Sessions&#10;each model call is a session with a context of its own&#10;unless it continued a conversation (marked)">sessions</th><th>turns</th><th>input</th><th>output</th>
+            <th title="Cache read / written&#10;what the sessions read from the prompt cache, and wrote to it">cache read / written</th><th>cost</th><th>share</th>
+            <th title="Context filled&#10;each session's fullest turn against its model's window">context filled</th></tr></thead><tbody>
+        ${rows.map(r => `<tr><td title="${esc(r.model)}">${esc(modelName(r.model))}</td><td>${KIND[r.kind]}</td><td>${r.calls}${r.resumed ? ` <span class="wk-none" title="Contexts&#10;a call that continued its round's conversation (cut at its turn cap) is no context of its own">· ${r.calls - r.resumed} contexts</span>` : ''}${Object.keys(r.ends).length ? ` <span class="wk-none" title="Worked, gave no answer&#10;a cut session's tokens are its turns' own, its price unknown&#10;one out of turns is taken up by the next round">(${Object.entries(r.ends).map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')})</span>` : ''}</td>`
+            + `<td>${!r.turned ? '—' : r.turned < r.calls ? `<span title="${hint('Turns', `recorded for ${r.turned} of the ${r.calls} sessions`)}">${r.turns} in ${r.turned}</span>` : r.turns}</td><td>${tok(r.input)}</td><td>${tok(r.output)}</td><td>${cache(r) || '—'}</td>`
+            + `<td>${usd(r.cost)}${r.unpriced ? ` <span class="wk-none" title="Unpriced&#10;sessions that spent tokens with no cost recorded — a cut stream among them&#10;the share is of what was priced">+ ${r.unpriced} unpriced</span>` : ''}</td><td>${total ? pct(r.cost / total) : '—'}</td><td>${fill(r)}</td></tr>`).join('')}
         </tbody></table>${unansweredLine(unanswered)}</div>`;
 }
 

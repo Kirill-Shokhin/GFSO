@@ -1,7 +1,7 @@
 // The header, by significance: the project's goal and where it stands, then ONLY what needs a person
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
-import {$, esc, data} from './dom.js';
+import {$, esc, data, hint} from './dom.js';
 import {getJSON, post, singleFlight, GOAL} from './api.js';
 import {S, taskOf, myRole} from './state.js';
 import {label, closureNote, contested, modeDoc} from './vocab.js';
@@ -38,25 +38,25 @@ async function goal() {
     if (!root) return GOAL && S.missing ? '<span class="hd-phrase">a new project — it exists once its goal is created</span>'
         : `<span class="hd-phrase${S.missing ? ' acc' : ''}">${esc(S.missing || 'no goal yet')}</span>`;
     const doc = mode ? await modeDoc() : {};
-    const who = Object.entries(doc).map(([m, text]) => `${m === mode ? '▸ ' : ''}${m}: ${text}`).join('\n\n');
+    const who = Object.entries(doc).map(([m, text]) => `${m === mode ? '▸ ' : ''}${m}: ${text}`);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = root.name || root.id, short = full.split(/\s[(:—]/)[0].slice(0, 40);
     const delivered = root.state === 'DONE' && !['FAIL', 'CANCELLED'].includes(root.done_reason);
     // left: WHICH goal and who holds its work; where it stands goes to the middle, beside what needs a person —
     // the brand's dot marking the one real done: the goal delivered
-    status = `<span class="hd-phrase">${phrase(root)}${delivered ? '<i class="brand-dot" title="the goal is delivered: the root passed"></i>' : ''}</span>`;
-    return `<button class="hd-root"${data({action: 'select', id: root.id})} title="${esc(full)}">${esc(short)}</button>`
-        + (mode ? `<span class="hd-mode" title="${esc('who holds the work —\n\n' + who)}">${esc(mode)}</span>` : '');
+    status = `<span class="hd-phrase">${phrase(root)}${delivered ? '<i class="brand-dot" title="Delivered&#10;the root passed — the goal is reached"></i>' : ''}</span>`;
+    return `<button class="hd-root"${data({action: 'select', id: root.id})} title="${hint(full, 'click to open the goal')}">${esc(short)}</button>`
+        + (mode ? `<span class="hd-mode" title="${hint(`${mode} — who holds the work`, who)}">${esc(mode)}</span>` : '');
 }
 
 // One chip per kind of call on a person; `ids` are the nodes it is about, the first one is selected.
 const need = (n, text, ids, why, cls = '') => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
-    + ` title="${esc(why)}"><b>${n}</b> ${esc(text)}</button>`;
+    + ` title="${hint(`${n} ${text}`, why)}"><b>${n}</b> ${esc(text)}</button>`;
 const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 const byState = s => { const ts = S.tasks.filter(t => t.state === s);
-    return need(ts.length, label(s).toLowerCase(), ts.map(t => t.id), ts.map(t => named(t.id)).join(' · ')); };
+    return need(ts.length, label(s).toLowerCase(), ts.map(t => t.id), ts.map(t => named(t.id))); };
 // …AND HOW THOSE DONES REST: an instrument's proof and a signature are not one kind of green (§15.7).
-const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id), list.map(c => `${c.id} — ${closureNote(c)}`).join(' · '), cls);
+const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id), list.map(c => `${c.id} — ${closureNote(c)}`), cls);
 
 // THE RUN'S SWITCH: the engine's one state of the run (`next_steps.run`, never inferred here) and the button that
 // moves it. Three states, so a press of Stop is not read as done while the sessions it let finish still run:
@@ -64,16 +64,16 @@ const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id
 const ago = t => dur(Date.now() - at(t));
 function runSwitch(r) {
     if (!r || !S.tasks.length) return '';
-    if (r.state === 'running') return '<button class="hd-run" data-action="run-stop" title="stop the run: nothing new starts here — '
-        + 'no executor, validator or issuer session, no timeout; the sessions running now finish">stop</button>';
+    if (r.state === 'running') return '<button class="hd-run" data-action="run-stop" title="Stop the run&#10;nothing new starts: no executor, validator or issuer session, no timeout&#10;'
+        + 'the sessions running now finish and their signals land">stop</button>';
     const who = `stopped by ${r.by} ${ago(r.at)} ago${r.why ? ` — ${r.why}` : ''}`;
     const text = r.state === 'stopping' ? `stopping · ${r.working.length} still at work` : 'stopped';
     const title = r.state === 'stopping'
-        ? `${who}\n\nstill at work — each finishes and its signal lands:\n`
-            + r.working.map(w => `${w.verb} · ${w.task_id || '—'} · ${ago(w.since)}`).join('\n')
-        : `${who}\n\nnothing runs and no timeout fires until it is started again`;
-    return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}" title="${esc(title)}">${text}</span>`
-        + '<button class="hd-run" data-action="run-start" title="start the run again: a bound that passed meanwhile fires as any passed bound does">start</button>';
+        ? [`Stopping — ${r.working.length} still at work`, who, 'each finishes and its signal lands:',
+           ...r.working.map(w => `${w.verb} · ${w.task_id || '—'} · ${ago(w.since)}`)]
+        : ['Stopped', who, 'nothing runs and no timeout fires until it is started again'];
+    return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}" title="${hint(title)}">${text}</span>`
+        + '<button class="hd-run" data-action="run-start" title="Start the run again&#10;a bound that passed meanwhile fires as any passed bound does">start</button>';
 }
 async function switchRun(verb, body) {
     try {
@@ -97,7 +97,7 @@ async function techReports() {
         const {count, reports = []} = await (await post('/api/run/tech_reports', {})).json();
         const last = reports.slice(-4).reverse();
         return need(count, `tech report${count > 1 ? 's' : ''}`, last.map(r => r.node).filter(Boolean),
-            last.map(r => `${ago(r.at)} ago · ${r.node || '—'} · ${r.role}: ${trim(r.text, 160)}`).join('\n\n'), ' paper');
+            last.map(r => `${ago(r.at)} ago · ${r.node || '—'} · ${r.role}: ${trim(r.text, 160)}`), ' paper');
     } catch (e) { return ''; }
 }
 
@@ -135,7 +135,7 @@ export const refreshHeader = singleFlight(async () => {
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 f.directive || 'no actionable node and the root is not DONE') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
-                   mine.map(x => `${x.action} ${named(x.task_id)}`).join(' · ')) + chips;
+                   mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;
         S.runState = f.run;
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }

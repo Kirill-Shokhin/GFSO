@@ -1,7 +1,7 @@
 // The node panel, one screen: what the node is, whose move it is, how its last verdict went, where each
 // criterion stands, and a chip per long text — those open in the reader (reader.js). Buttons carry
 // `data-action` (dispatched in main.js); nothing here sends anything.
-import {$, esc, data, section, rebuild} from './dom.js';
+import {$, esc, data, section, rebuild, hint} from './dom.js';
 import {getJSON} from './api.js';
 import {S, hasKids, taskOf} from './state.js';
 import {bucketOf, statusLabel, vOf, V_SYMBOL, can, signals, CANCEL, closureNote, contested} from './vocab.js';
@@ -19,33 +19,33 @@ const ISSUER_MOVES = "the executor stopped and the decision is the issuer's: rai
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
     const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges)[d.id], id => taskOf(id).name || id);
-    return words === '—' ? '' : `<span title="${esc(d.state === 'ESCALATED' ? ISSUER_MOVES : words)}">waiting on <b>${esc(words)}</b></span> · `;
+    return words === '—' ? '' : `<span title="${hint('Waiting on', d.state === 'ESCALATED' ? ISSUER_MOVES : words)}">waiting on <b>${esc(words)}</b></span> · `;
 }
 
 function head({d, rounds}) {
     const v = vOf(d.state), name = d.name || d.description || d.id, note = closureNote(d.closure), bad = contested(d.closure);
     const live = d.state !== 'DONE' && d.state !== 'ABANDONED', mode = S.graph.mode?.mode;
     return `<div class="sidebar-header"><h2 title="${esc(name)}">${esc(name)}</h2><button class="sidebar-close" data-action="close">&times;</button></div>`
-        + `<div class="pn-meta" title="${esc(d.assignee || '')}">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
-        + `<div class="pn-status"><span class="v-badge v-${v}" title="V(t) — validation outcome §2.3"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`
+        + `<div class="pn-meta" title="${hint('Executor (Del)', d.assignee || 'none')}">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
+        + `<div class="pn-status"><span class="v-badge v-${v}" title="V(t) — the validation outcome&#10;pass only when every criterion passes; ⊥ while not yet checked (§2.3)"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`
         + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, d.done_reason)}</span>`
-        + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}" title="deadline">⏱ ${when(d.deadline)}</span>` : '')
+        + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}" title="Deadline&#10;when this node is due">⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
         + `</div><div class="pn-meta">${waiting(d)}${['EXECUTING', 'REWORKING'].includes(d.state) && (!rounds.length || rounds.at(-1).verdict)
             ? `round ${rounds.length + 1}, in work` : `round ${rounds.length}`}</div>`
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-meta pn-by" id="pn-by">${signedBy(S.run, d.id)}</div>`
-        + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip" title="${esc(ISSUER_MOVES)}">issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
+        + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip" title="${hint('The issuer decides', ISSUER_MOVES)}">issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
         // HOW IT CLOSED, on the node itself — the same `closure` the drawing reads, no copy of the rule.
-        + (note ? `<div class="pn-note ${bad ? 'check-fail' : 'check-skip'}"${bad ? ' title="legitimate (§10.3) and nothing can check it (§15.7) — read the verdict"' : ''}>`
+        + (note ? `<div class="pn-note ${bad ? 'check-fail' : 'check-skip'}"${bad ? ' title="Read the verdict&#10;legitimate (§10.3), and nothing can check it (§15.7)"' : ''}>`
                   + `${bad ? '⚠ ' : ''}${note}</div>` : '');
 }
 
 // THE EXECUTION VERDICT in one line — what, who, when, what failed; its evidence is the reader's.
 function verdict({vr}) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
-        + `<span class="pn-who" title="${esc(vr.validator || '')}">${signer(vr)}${vr.ts ? ' · ' + when(vr.ts) : ''}</span>`
-        + `${vr.current === false ? '<span class="check-fail" title="validated an EARLIER delivery">earlier</span>' : ''}${link('verdict', 'evidence')}</div>`;
+        + `<span class="pn-who" title="${hint('Validator', vr.validator)}">${signer(vr)}${vr.ts ? ' · ' + when(vr.ts) : ''}</span>`
+        + `${vr.current === false ? '<span class="check-fail" title="An earlier delivery&#10;this verdict is about a delivery the current one replaced">earlier</span>' : ''}${link('verdict', 'evidence')}</div>`;
     // what failed is not repeated here: it is the ✗ rows of the criteria list just below
     // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
     return vr?.refused_report ? `<div class="pn-verdict check-fail"><span class="pn-who">a validator reported and the report was REFUSED as ⊥ — `
@@ -56,7 +56,7 @@ function verdict({vr}) {
 // stand → an ink dot; a delivery still unanswered, or a criterion the current verdict left undecided
 // (⊥ — the log of past rounds keeps only names, the current verdict keeps values) → hollow. The last 12.
 const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = (x, i) => `<circle class="mk-open" cx="${x}" cy="0" r="2.5"/>`;
-    return !rs.length ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10" title="${rounds.length} rounds">`
+    return !rs.length ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10" title="${hint(`${rounds.length} rounds`, 'this criterion in each round: dot pass, cross fail, ring not checked')}">`
         + rs.map((r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? open(i * 8 + 4)
             : mark(r.verdict === 'FAIL' && r.failed.includes(name) ? 'FAIL' : 'PASS', i * 8 + 4, 0, 2.5)).join('') + '</svg>'; };
 

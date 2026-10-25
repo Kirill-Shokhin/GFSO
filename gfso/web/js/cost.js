@@ -1,6 +1,6 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
-import {esc} from './dom.js';
+import {esc, hint} from './dom.js';
 import {bindFocus} from './store.js';
 import {tip, untip} from './tip.js';
 import {dur, trim} from './draw.js';
@@ -52,7 +52,7 @@ export function render(el, run, nodes) {
             ${bars('cost by node', nodeRows, p => p.cost, usd, r => `data-node="${esc(r.id)}"`)}
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`)}
             ${bars('cost by level', levelRows, p => p.cost, usd, () => '')}
-            ${bars(`sessions by assignee${cut ? ` <span title="${esc(ids[0].slice(0, cut))}">(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
+            ${bars(`sessions by assignee${cut ? ` <span title="${hint(ids[0].slice(0, cut) + '…', 'the start every assignee id shares, cut from the bars')}">(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
                    (n, r) => `${n} · ${r.peak} at once`, () => '')}
         </div></div>`;
     bindFocus(el, e => {

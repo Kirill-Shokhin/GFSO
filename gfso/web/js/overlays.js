@@ -12,7 +12,7 @@ const box = (id, kind = '', parent = document.body) => {
 // act it refused — a stale one sat over a whole cancel handshake — but the bad kind lasts longer.
 export function notice(text, kind) {
     const b = box('page-notice', kind === 'bad' ? 'bad' : '');
-    Object.assign(b, {textContent: text, title: 'click to dismiss', onclick: () => b.remove()});
+    Object.assign(b, {textContent: text, title: 'Click to dismiss', onclick: () => b.remove()});
     setTimeout(() => b.remove(), kind === 'bad' ? 45000 : 12000);
 }
 export const clearNotice = () => $('page-notice')?.remove();

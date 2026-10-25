@@ -4,6 +4,9 @@ export const $ = id => document.getElementById(id);
 // EVERY STRING ON THIS PAGE THAT A MODEL WROTE GOES THROUGH HERE. Panels are built by concatenation,
 // and a validator's evidence quoting `a<=f>=g` lost `<=f>` to the parser (author, 2026-09-12): a page
 // that renders its evidence as HTML cannot be read as evidence. Not a security claim.
+// A hint for the page's one tip: its first line is the heading, each further line one row under it (tip.js).
+export const hint = (...lines) => esc(lines.flat().filter(Boolean).join('\n'));
+
 export const esc = s => String(s).replace(/[&<>"']/g, ch => (
     {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
 

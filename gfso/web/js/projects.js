@@ -2,7 +2,7 @@
 // stands, what it cost — and how a new one comes into being: by name, in the URL, made by its first
 // creating verb. Everything here is read from the files on disk by the server: listing a project never
 // builds its engine, so a look sets nothing running.
-import {$, el, esc} from './dom.js';
+import {$, el, esc, hint} from './dom.js';
 import {PROJECT, getJSON} from './api.js';
 import {S} from './state.js';
 import {notice} from './overlays.js';
@@ -67,7 +67,7 @@ function row(p, busy, active) {
     const acted = active ? r?.started && `launched ${when(r.started)}`
         : ['DONE', 'ABANDONED'].includes(r?.state) && r.started && p.t && day(r.started) !== day(p.t) && `last act ${when(p.t)}`;
     const t = active ? p.t : r?.started;
-    return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}" title="${esc((r?.name ? r.name + '\n' : '') + p.n)}">`
+    return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}" title="${hint(r?.name || p.n, r?.name && p.n)}">`
         + `<span class="pl-time">${t ? clock(t) : ''}</span>`
         + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, acted, (p.models || []).map(modelName).join(' + ')].filter(Boolean).map(esc).join(' · ')}</i></span>`
         + `<span class="pl-where ${cls}">${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`

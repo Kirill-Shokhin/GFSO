@@ -1,6 +1,6 @@
 // The reader: every long text about the selected node, one facet per tab, in a slide-over left of the
 // panel. It renders what the panel read and fetches nothing, so it follows the selection by construction.
-import {$, el, esc, section, ul, rebuild} from './dom.js';
+import {$, el, esc, section, ul, rebuild, hint} from './dom.js';
 import {byHand, vOf, V_SYMBOL, mark, FM, fmOf, FM_NONE, FM_NO_MODE} from './vocab.js';
 
 let cur = null, tab = null;
@@ -39,7 +39,7 @@ function verdict({vr}) {
             return `<li class="${cls}"><span class="check-icon">${icon}</span><div class="verdict-body"><strong>${esc(c.criterion)}</strong>`
                 + (c.evidence ? `<div class="verdict-evidence">${esc(c.evidence)}</div>` : '')
                 + (byCmd.size ? `<div class="verdict-probes">${[...byCmd].map(([cmd, bhs]) =>
-                    `<code title="${esc(bhs.join(' · '))}">${esc(cmd)}</code>`).join('')}</div>` : '')
+                    `<code title="${hint('What it checks', bhs)}">${esc(cmd)}</code>`).join('')}</div>` : '')
                 + `</div></li>`;
         })));
     // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
@@ -140,7 +140,7 @@ function render() {
     tab = f.id;
     box().hidden = false;
     rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2>${esc(d.name || d.id)}</h2>`
-        + `<button class="sidebar-close" data-action="read" title="close (Esc)">&times;</button></div>`
+        + `<button class="sidebar-close" data-action="read" title="Close&#10;Esc">&times;</button></div>`
         + `<div class="pn-meta">${esc(d.id)} · rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN · reopens ${d.reopens || 0}</div>`
         + `<div class="rd-tabs">${FACETS.map(x => chip(x, cur, x === f)).join('')}</div></div>${f.body(cur)}`);
 }

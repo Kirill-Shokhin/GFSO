@@ -19,11 +19,14 @@ export const untip = () => box().classList.remove('visible');
 // Every `title` on the page is read through the same tip: the browser's own box (square, system font, default
 // colours) is the one surface outside the brand. A title is moved to `data-tip` on first hover so the browser never
 // draws it; a view's own tip for the same event wins, since views listen below the document.
+// …laid out as the node's own tip is: the first line its heading, each further line a row (`dom.hint` writes them)
+const card = text => { const [head, ...rows] = text.split('\n').filter(s => s.trim());
+    return `<div class="tt-name">${esc(head)}</div>${rows.map(r => `<div class="tt-row">${esc(r)}</div>`).join('')}`; };
 const own = e => {
     if (e.tipped) return;
     const t = e.target.closest?.('[title], [data-tip]');
     if (t?.hasAttribute('title')) { t.dataset.tip = t.getAttribute('title'); t.removeAttribute('title'); }
-    if (t?.dataset.tip) { tip(`<div class="tt-text">${esc(t.dataset.tip)}</div>`, e); mine = true; }
+    if (t?.dataset.tip) { tip(card(t.dataset.tip), e); mine = true; }
     else if (mine) { untip(); mine = false; }
 };
 const drop = () => { if (mine) { untip(); mine = false; } };
