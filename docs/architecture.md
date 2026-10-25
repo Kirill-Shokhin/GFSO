@@ -305,7 +305,7 @@ gfso/
                             # FM(7), RevisionReason (§15.8 typing)
       effects.py            # MutateGraph (incl. dep_from/dep_froms), RunChecks, Recommend, Dispatch
       ports.py              # StoragePort (mandatory core incl. the append-only signal log),
-                            # LLMProviderPort, AgentPort, VerifierPort, ClockPort, RunnerPort
+                            # LLMProviderPort, ExecutionPort, AgentPort, VerifierPort, ClockPort, RunnerPort
                             # (+ their stdlib defaults SystemClock/ThreadRunner — zero-dep, live here)
     protocol/               # fsm.py = THE TABLE (+ `not_admissible_here`: why a signal moves nothing
                             # here and where the intent goes) · invariants.py · validation.py (role map)
@@ -438,6 +438,22 @@ itself, not a pre-contact check level (a recurring conflation, named here on pur
 | Paper section | §17.1 (AI layer) | §10.3 (agent-agnostic role filler) |
 
 Both use LLMProviderPort (in core/types/ports.py). Different roles, different locations, shared provider.
+
+## Where a project's work runs — one server, execution isolated
+
+WHO answers is the provider (`LLMProviderPort`: `ClaudeCodeProvider`, the `claude -p` path, in adapters/llm/headless.py);
+WHERE its processes and the commands over a project's work run is the `ExecutionPort` (adapters/execution.py):
+`LocalExecution` — this host, as before — or `ContainerExecution` — one sealed Linux container per (execution, project)
+that the one server calls into with `docker exec`. A project chooses it on the existing doors: a role registered with
+`execution=<name>` names an execution the server declares in `data/executions.json`, one per project. Then every call
+of the project runs there: its sessions, the plan's author and reviewer, the issuer's derivations, a delivery's snapshot
+and join. The container holds only the base's parent's four directories of the project (base, node places, scratch, its
+own temp) at `/gfso-place`, its CLI state per container, the host loopback forward shut; paths are mapped both ways so
+the graph keeps host paths; a call is ended inside with whatever it started; the server's ordinary exit ends its
+containers, and the next server's start ends any a hard kill left behind.
+`tests/test_every_launch_goes_through_an_execution.py` keeps every process start and host temp behind the port.
+What differs between projects of one server — the system's model, the Level-2 gate, the deadline nobody typed — is the
+project's own setting on `set_mode`.
 
 ## Runtime Model
 
