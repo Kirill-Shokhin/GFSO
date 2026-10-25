@@ -9,15 +9,16 @@ import {at, said, roundsLine} from './run.js';
 const KINDS = {
     verdict: ['PASS', 'FAIL'], delivery: ['DELIVER'], assignment: ['ASSIGN', 'ACCEPT', 'REOPEN'],
     clock: ['TIMEOUT'], dispute: ['CHALLENGE', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE', 'BLOCK', 'RESOLVE_BLOCK'],
-    close: ['CANCEL', 'CONFIRM_CANCEL'], narration: [],
+    close: ['CANCEL', 'CONFIRM_CANCEL'], refused: [], narration: [],
 };
-const signalKind = sig => Object.keys(KINDS).find(k => KINDS[k].includes(sig)) || 'assignment';
+// a move the engine refused changed nothing: its own kind, so the column of state moves holds only moves
+const signalKind = a => a.rejected ? 'refused' : Object.keys(KINDS).find(k => KINDS[k].includes(a.signal)) || 'assignment';
 const day = t => new Date(t).toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
 
 // One stream of rows per node: signals from the audit, narration from the pipeline ("<node>: …").
 function streams(run, nodes, pipeline) {
     const ids = new Set(nodes.map(n => n.id)), out = Object.fromEntries(nodes.map(n => [n.id, []]));
-    for (const a of run.audit) if (out[a.task_id]) out[a.task_id].push({t: a.t, kind: signalKind(a.signal), a});
+    for (const a of run.audit) if (out[a.task_id]) out[a.task_id].push({t: a.t, kind: signalKind(a), a});
     for (const p of pipeline) {
         const {node, text} = said(p.message);
         if (ids.has(node)) out[node].push({t: at(p.ts), kind: 'narration', p: {source: p.source, text}});
@@ -28,11 +29,11 @@ function streams(run, nodes, pipeline) {
 
 function row(r) {
     if (r.p) return `<li class="ev ev-narration"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text">${esc(r.p.text)}</span></li>`;
-    const a = r.a, prose = [a.reason && ['reason', a.reason], a.justification && ['justification', a.justification], a.result && ['report', a.result]].filter(Boolean);
+    const a = r.a, prose = [a.rejected && a.error && ['why refused', a.error], a.reason && ['reason', a.reason], a.justification && ['justification', a.justification], a.result && ['report', a.result]].filter(Boolean);
     const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
-        <span class="ev-move">${a.old_state && a.new_state ? `${a.old_state} → ${a.new_state}` : esc(a.error || '')}</span>
+        <span class="ev-move">${a.old_state && a.new_state ? `${a.old_state} → ${a.new_state}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
         <span class="ev-src">${esc(a.source || '')}</span>
         ${a.failed_criteria?.length ? `<span class="ev-failed">${a.failed_criteria.map(c => `<em>${esc(c)}</em>`).join('')}</span>` : ''}
         ${prose.length ? `<details><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;

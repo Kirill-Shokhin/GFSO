@@ -13,7 +13,13 @@ import * as cost from './cost.js';
 import * as work from './work.js';
 import * as events from './events.js';
 
-const VIEWS = {timeline, progress, cost, work, events}, KEY = 'gfso.deck';
+// Each tab is named by the question it answers, so two views that both show money are not read as one:
+// `spend` is where the money and time went (by node, level, role), `models` is who did the work.
+const VIEWS = {timeline, progress, spend: cost, models: work, events}, KEY = 'gfso.deck';
+const ASKS = {timeline: 'which nodes ran when, and at once', progress: "how the goal's criteria came to pass",
+    spend: 'where the money and session time went — by node, level and role',
+    models: 'who did the work — each model in each role: sessions, tokens, context filled, its share of the spend',
+    events: "the log, grouped by node and kind"};
 const isTick = m => / tokens · \d+s$/.test(m);         // live token ticks: shown in place, never persisted
 const pref = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } })();
 const keep = () => { try { localStorage.setItem(KEY, JSON.stringify(pref)); } catch (e) { /* per-viewer nicety */ } };
@@ -96,7 +102,7 @@ export const onInflight = () => { $('deck').querySelector('.dk-strip').innerHTML
 export function mountDeck() {
     const d = $('deck');
     d.innerHTML = `<div class="dk-grip" title="drag to resize"></div><div class="dk-head">
-        <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}">${k}</button>`).join('')}</nav>
+        <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}" title="${esc(ASKS[k])}">${k}</button>`).join('')}</nav>
         <div class="dk-strip"></div><button class="dk-fold" title="fold / unfold">▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
     if (pref.h) d.style.height = `${pref.h}px`;
     d.querySelector('nav').onclick = e => {

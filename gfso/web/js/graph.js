@@ -77,8 +77,11 @@ export async function initGraph() {
         // nodes stay where the layout put them (a tap is a selection, never a drag); a wheel notch zooms gently
         layout: LAYOUT, minZoom: 0.3, maxZoom: 3, autoungrabify: true, boxSelectionEnabled: false, wheelSensitivity: 0.2,
     });
-    cy.on('tap', 'node', evt => point('select', evt.target.id()));
-    cy.on('tap', evt => { if (evt.target === cy) point('select', null); });
+    // The page follows the canvas's OWN selection, not its `tap`: a press that moves a few pixels is no tap, yet
+    // cytoscape selects the node — the border showed, the panel stayed, and the next redraw took the border back
+    // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
+    cy.on('select', 'node', evt => point('select', evt.target.id()));
+    cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
     cy.on('mouseover', 'node', evt => { own = true; point('hover', evt.target.id()); });

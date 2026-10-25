@@ -7,7 +7,7 @@ import {focus, watch, point} from './store.js';
 import {loadCheckMap} from './vocab.js';
 import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {refreshHeader, refreshQuality, toggleQuality} from './header.js';
-import {refreshProjects, switchProject, busyByProject, openProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
+import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
 import {selectTask, closeSidebar, resign} from './panel.js';
 import {openReader} from './reader.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
@@ -39,7 +39,7 @@ const ACT = {
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
     mine: toggleMine, quality: toggleQuality, 'close-modal': author.closeModal,
-    projects: openProjects, 'projects-close': closeProjects, 'projects-more': moreProjects,
+    projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects,
     'project-new': () => (closeProjects(), switchProject('__new__')),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
     'gp-scope': goal.addScope, 'gp-risk': goal.addRisk, 'gp-create': goal.createGoal, 'gp-plan': goal.planGoal,

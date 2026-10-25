@@ -95,7 +95,9 @@ function draw() {
     $('pl-more').textContent = `show ${Math.min(SHOWN, hits.length - shown)} more`;
 }
 
-export async function openProjects() {
+// the picker's button opens it and, pressed again, closes it — as any drop-down does
+export async function toggleProjects() {
+    if (!panel().hidden) return closeProjects();
     panel().hidden = false;
     shown = SHOWN;
     await refreshProjects();

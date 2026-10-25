@@ -56,7 +56,7 @@ function verdict({vr}) {
 // stand → an ink dot; a delivery still unanswered, or a criterion the current verdict left undecided
 // (⊥ — the log of past rounds keeps only names, the current verdict keeps values) → hollow. The last 12.
 const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = (x, i) => `<circle class="mk-open" cx="${x}" cy="0" r="2.5"/>`;
-    return !rs.length ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10"><title>${rounds.length} rounds</title>`
+    return !rs.length ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10" title="${rounds.length} rounds">`
         + rs.map((r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? open(i * 8 + 4)
             : mark(r.verdict === 'FAIL' && r.failed.includes(name) ? 'FAIL' : 'PASS', i * 8 + 4, 0, 2.5)).join('') + '</svg>'; };
 

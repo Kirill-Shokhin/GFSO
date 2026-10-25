@@ -442,6 +442,7 @@ body {
     letter-spacing: var(--tr-mono);
 }
 .tooltip .tt-row { color: var(--ui-text-soft); margin: 2px 0; font-size: 11px; }
+.tooltip .tt-text { white-space: pre-line; }
 
 /* ============ Sidebar — cream surface, ink text ============ */
 .sidebar {
