@@ -26,12 +26,17 @@ export function frame(run, W, left, right = 16) {
         ticks(y0, y1, ly) {
             const n = Math.max(2, Math.floor((W - left) / 110)), lo = run.clock.t0;
             const step = STEPS.find(s => span / s <= n) || STEPS.at(-1), tz = new Date(lo).getTimezoneOffset() * 60e3;
-            // a run over days names the day at its midnight tick: 12:00 … 12:00 were two different noons
-            const day = t => new Date(t).toLocaleDateString('en', {month: 'short', day: 'numeric'});
-            const label = step < 60e3 ? hms : t => new Date(t).getHours() || new Date(t).getMinutes() || step < 3600e3 ? hm(t) : day(t), ts = [];
+            // a run over days names the day on its first tick of each new day — at midnight, or after an overnight fold that
+            // swallowed midnight: 12:00 … 12:00 were two different noons (critic, 2026-10-26)
+            const day = t => new Date(t).toLocaleDateString('en', {month: 'short', day: 'numeric'}), ts = [];
             for (let t = Math.ceil((lo - tz) / step) * step + tz; t <= end; t += step) ts.push(t);
-            return ts.filter(t => !run.clock.folds.some(f => t > f.from && t < f.to))
-                .map(t => `<g class="ax-tick"><line x1="${X(t)}" x2="${X(t)}" y1="${y0}" y2="${y1}"/>${ly == null ? '' : `<text x="${X(t)}" y="${ly}">${label(t)}</text>`}</g>`).join('');
+            const shown = ts.filter(t => !run.clock.folds.some(f => t > f.from && t < f.to));
+            const days = new Set(shown.map(t => new Date(t).toDateString())).size > 1;
+            const label = (t, i) => { const d = new Date(t);
+                if (step < 60e3) return hms(t);
+                if (!days || (i && new Date(shown[i - 1]).toDateString() === d.toDateString())) return hm(t);
+                return d.getHours() || d.getMinutes() ? `${day(t)} ${hm(t)}` : day(t); };
+            return shown.map((t, i) => `<g class="ax-tick"><line x1="${X(t)}" x2="${X(t)}" y1="${y0}" y2="${y1}"/>${ly == null ? '' : `<text x="${X(t)}" y="${ly}">${label(t, i)}</text>`}</g>`).join('');
         },
         folds(y0, y1, ly) {
             return run.clock.folds.map(f => { const x = left + f.at * k;
