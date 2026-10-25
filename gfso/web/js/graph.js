@@ -5,7 +5,7 @@ import {S, taskOf, myRole} from './state.js';
 import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
-import {point, watch} from './store.js';
+import {point, watch, focus} from './store.js';
 import {roundsLine, waitWords, atWork} from './run.js';
 
 // Leaf tokens are hex literals; getComputedStyle returns the specified value of an unregistered property.
@@ -98,17 +98,36 @@ export async function initGraph() {
         if (st.select) cy.getElementById(st.select).select();
     });
     cy.on('render', () => requestAnimationFrame(placeBadges));
-    // The canvas changes size when the panel opens or the deck folds or is dragged; cytoscape keeps the
-    // viewport it was built with until told, so a node sat half-hidden under the opened panel (2026-09-06).
-    // Re-framed on a change of SIZE only — not on every transition, which threw away the reader's own zoom.
+    // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the
+    // canvas is told its new size and the graph stays where it was — a fit here made the graph jump each time a
+    // click opened or closed the panel (author, 2026-10-25: «нажатие на некоторые ноды тригерит новую центровку»).
+    // Only the selected node is kept in sight, by the least pan that does it (it sat under the opened panel,
+    // 2026-09-06). Framing is the reader's own gesture: double-click a node for its subtree, the background for all.
     let frame;
-    // …but never in the middle of a gesture: a tap that opens the panel resizes the canvas while the button is still
+    // …and never in the middle of a gesture: a tap that opens the panel resizes the canvas while the button is still
     // down, and a resize then left the press stuck — the next move dragged the whole graph (author, 2026-10-24)
     let held = false;
-    cy.on('tapstart', () => { held = true; });
+    cy.on('tapstart', () => { held = true; fresh = false; });
+    cy.on('scrollzoom', () => { fresh = false; });
     addEventListener('pointerup', () => { held = false; }, true);
-    const refit = () => held ? (frame = setTimeout(refit, 120)) : (cy.resize(), cy.fit(undefined, 30));
-    new ResizeObserver(() => { clearTimeout(frame); frame = setTimeout(refit, 120); }).observe($('cy'));
+    const reseat = () => held ? (frame = setTimeout(reseat, 120)) : (cy.resize(), fresh && !cy.nodes(':selected').length ? cy.fit(undefined, 30) : inSight(cy.nodes(':selected')));
+    new ResizeObserver(() => { clearTimeout(frame); frame = setTimeout(reseat, 120); }).observe($('cy'));
+    cy.on('dbltap', 'node', evt => cy.animate({fit: {eles: evt.target.union(evt.target.successors()), padding: 40}, duration: 200}));
+    cy.on('dbltap', evt => { if (evt.target === cy) cy.animate({fit: {eles: cy.elements(), padding: 30}, duration: 200}); });
+}
+
+let drawn = '';                        // the node set last drawn: a redraw of the same keeps the view
+// framed whole and not yet touched: a change of size re-frames it (the deck takes its height after the first
+// drawing, and the graph's foot sat under it); once the reader taps, zooms or a node is chosen, the view is theirs
+let fresh = true;
+
+// The least pan that brings `eles` inside the canvas, a margin kept; nothing moves when they are already in sight.
+function inSight(eles) {
+    if (!eles.length) return;
+    const b = eles.renderedBoundingBox(), m = 24, W = cy.width(), H = cy.height();
+    const dx = b.x1 < m ? m - b.x1 : b.x2 > W - m ? Math.max(W - m - b.x2, m - b.x1) : 0;
+    const dy = b.y1 < m ? m - b.y1 : b.y2 > H - m ? Math.max(H - m - b.y2, m - b.y1) : 0;
+    if (dx || dy) cy.panBy({x: dx, y: dy});
 }
 
 function nodeTip(t) {
@@ -118,7 +137,8 @@ function nodeTip(t) {
         + (t.assignee ? `<div class="tt-row">executor (Del): ${esc(t.assignee)}</div>` : '')
         + (w && waitWords(w, d => taskOf(d).name || d) !== '—' ? `<div class="tt-row">waits on: ${esc(waitWords(w, d => taskOf(d).name || d))}</div>` : '')
         + (rs.length ? `<div class="tt-row">${roundsLine(rs)}</div>` : '')
-        + (t.criteria?.length ? `<div class="tt-row">${t.criteria.length} criteria</div>` : '');
+        + (t.criteria?.length ? `<div class="tt-row">${t.criteria.length} criteria</div>` : '')
+        + '<div class="tt-row tt-hint">double-click: frame its subtree · on the background: the whole graph</div>';
 }
 
 // Badges over the canvas: a pulse on a node being worked right now, and its rounds when it took more
@@ -158,6 +178,9 @@ export const refreshGraph = singleFlight(async () => {
         S.tasks = await tr.json();
         S.graph = g;
         S.missing = '';
+        // the same nodes drawn again keep the reader's view; a new set (another project, parts added) is framed whole
+        const key = g.nodes.map(n => n.id).sort().join('|'), kept = key === drawn && {zoom: cy.zoom(), pan: {...cy.pan()}};
+        drawn = key;
         cy.elements().remove();
         // the state (+ the legacy DoneReason of pre-v3.7 rows)
         const cancelled = new Set(g.nodes.filter(n => n.state === 'ABANDONED' || n.done_reason === 'CANCELLED').map(n => n.id));
@@ -175,11 +198,13 @@ export const refreshGraph = singleFlight(async () => {
                     classes: cancelled.has(e.source) ? 'fromCancelled' : undefined});
         }
         if (cy.nodes().length) {
-            const lay = cy.layout({...LAYOUT, animate: true, animationDuration: 200});
+            const lay = cy.layout({...LAYOUT, animate: !kept, animationDuration: 200});
             // framed once the layout knows where things are — and the read resolves only then, so a caller
             // measuring the drawing measures the finished one
-            await new Promise(done => { lay.one('layoutstop', () => { cy.fit(undefined, 30); done(); }); lay.run(); });
+            await new Promise(done => { lay.one('layoutstop', () => { kept ? cy.viewport(kept) : (cy.fit(undefined, 30), fresh = true); done(); }); lay.run(); });
         }
+        // a redraw removes and re-adds every node, and the chosen one lost its border while its panel stayed open
+        if (focus().select) cy.getElementById(focus().select).select();
         applyMineDim();
         const one = undrawable[0];
         banner('undrawable', one && `${undrawable.length} edge(s) not drawn — they name a node this graph does not `

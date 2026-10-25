@@ -265,7 +265,7 @@ class ProjectRegistry:
         return (p and p["last"]) or stamp
 
     def about(self, names) -> dict:
-        """{name: {goal, last, cost, mode} | None} — what each named project is, without opening it:
+        """{name: {goal, last, cost, mode, models, stopped} | None} — what each named project is, without opening it:
         goal = the root's {state, done_reason, name, started} or None before it has one.
 
         A loaded project's root state answers from its engine; everything else is PEEKED at on disk,

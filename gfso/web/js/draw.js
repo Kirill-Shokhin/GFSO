@@ -3,7 +3,7 @@
 export const hm = t => new Date(t).toTimeString().slice(0, 5);
 export const dur = ms => ms < 90e3 ? `${Math.round(ms / 1e3)}s` : ms < 90 * 60e3 ? `${Math.round(ms / 60e3)}m` : `${(ms / 3600e3).toFixed(1)}h`;
 
-// A verdict as a glyph: PASS an ink dot, FAIL an accent cross — the one colour that asks for a look.
+// A verdict as a glyph: PASS a dot, FAIL a cross — two shapes that never blend, whatever lies under them.
 export const mark = (v, x, y, r = 4) => v === 'PASS' ? `<circle class="mk-pass" cx="${x}" cy="${y}" r="${r}"/>`
     : `<path class="mk-fail" d="M${x - r},${y - r}l${2 * r},${2 * r}m0,-${2 * r}l-${2 * r},${2 * r}"/>`;
 // the same glyph standing alone in text or a table cell

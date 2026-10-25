@@ -6,7 +6,7 @@ import {S, myRole, rememberedRole, rememberRole} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap} from './vocab.js';
 import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
-import {refreshHeader, refreshQuality, toggleQuality} from './header.js';
+import {refreshHeader, refreshQuality, toggleQuality, stopRun, startRun} from './header.js';
 import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
 import {selectTask, closeSidebar, resign} from './panel.js';
 import {openReader} from './reader.js';
@@ -30,10 +30,12 @@ async function pollInFlight() {
         S.inflight = (await getJSON('/api/runtime')).in_flight || [];
         if (JSON.stringify(busyByProject()) !== before) projects();
         onInflight(); annotate();
+        if (S.runState?.state === 'stopping') refreshHeader();   // until the last session the stop let finish has ended
     } catch (e) { /* the strip keeps its last count; the socket banner says when the server is gone */ }
 }
 
 const ACT = {
+    'run-stop': stopRun, 'run-start': startRun,
     close: () => point('select', null), select: d => point('select', d.id), read: d => openReader(d.facet),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,

@@ -21,6 +21,7 @@ from gfso.core.types import (
     StoragePort, TERMINAL_STATES, RETIRED_STATES, state_named,
 )
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
+from gfso.core.graph.model import PAUSE_KEY
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,13 @@ def _all(c, sql: str) -> list:
 
 def _one(c, sql: str):
     return (_all(c, sql) or [None])[0]
+
+
+def _json_or_none(value: Optional[str]) -> Optional[dict]:
+    try:
+        return json.loads(value) if value else None
+    except ValueError:
+        return None
 
 
 def _mode_named(value: str) -> Optional[str]:
@@ -96,12 +104,15 @@ def peek_project(db_path: str) -> Optional[dict]:
             acted = ((_one(c, "SELECT MAX(ts) FROM audit_log WHERE source IS NOT NULL") or (None,))[0]
                      or (_one(c, "SELECT MAX(ts) FROM audit_log") or (None,))[0])
             mode = _one(c, "SELECT value FROM settings WHERE key = 'mode'")
+            stop = _one(c, f"SELECT value FROM settings WHERE key = '{PAUSE_KEY}'")
     except sqlite3.Error:
         return None
     out = {"goal": None, "last": max(filter(None, (_epoch(spent and spent[0]), _epoch(acted))),
                                      default=None),
            "cost": round(spent[1] or 0.0, 2) if spent else 0.0,
-           "mode": mode and _mode_named(mode[0]), "models": models}
+           "mode": mode and _mode_named(mode[0]), "models": models,
+           # the stop as set — {by, at, why} — the one record `Engine.paused` reads; None while it runs
+           "stopped": _json_or_none(stop and stop[0])}
     if root is not None:
         try:
             state, reason = _state_of(root)

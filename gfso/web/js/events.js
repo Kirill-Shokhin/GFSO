@@ -62,7 +62,7 @@ export function render(el, run, nodes, tasks, pipeline = []) {
             const rs = by[id].filter(r => on.has(r.kind) && (!q || JSON.stringify(r.a || r.p).toLowerCase().includes(q)));
             if (!rs.length && (q || sel !== id)) return '';
             return `<details class="ev-group" data-node="${esc(id)}"${sel === id ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, by[id])}
-                <ol>${rs.map(row).join('')}</ol></details>`;
+                <ol><li class="ev ev-cols"><span>time</span><span>signal</span><span>state</span><span>by</span></li>${rs.map(row).join('')}</ol></details>`;
         }).join('') || '<p class="ev-none">nothing matches</p>';
         el.querySelector('.ev-only').innerHTML = sel ? `only <b>${esc(name(sel))}</b> <button data-clear>show all</button>` : '';
     };

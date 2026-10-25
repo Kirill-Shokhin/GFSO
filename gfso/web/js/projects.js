@@ -32,6 +32,10 @@ function where(p, busy) {
     if (r.state === 'DONE' && !['FAIL', 'CANCELLED'].includes(r.done_reason)) return ['done', 'delivered'];
     if (r.done_reason === 'FAIL') return ['bad', 'failed'];
     if (r.state === 'DONE' || r.state === 'ABANDONED') return ['bad', 'abandoned · not delivered'];
+    // a stop is the person's act on the run, not a failure: said as theirs, with why — and while sessions it let
+    // finish still run, as stopping (the engine's three states, `run_state`)
+    const stop = p.stopped;
+    if (stop) return ['open', `${busy ? `stopping · ${busy} still at work` : 'stopped'}${stop.why ? ` · ${stop.why}` : ` · by ${stop.by}`}`];
     if (busy) return ['live', `running · ${busy}`];
     const since = p.t ? ` · last act ${when(p.t)}` : '';
     if (r.state === 'ESCALATED') return ['bad', `awaits a decision${since}`];

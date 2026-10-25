@@ -17,12 +17,15 @@ export function notice(text, kind) {
 }
 export const clearNotice = () => $('page-notice')?.remove();
 
-export const askInPage = question => new Promise(resolve => {
+// `field`: a line of text to ask for beside the question — then the answer is that text ('' allowed), false on Cancel
+export const askInPage = (question, {yes = 'Run it', field} = {}) => new Promise(resolve => {
     const b = box('ask-box');
-    b.innerHTML = `<div style="margin-bottom:10px">${question}</div><div class="actions">`
-        + '<button class="btn btn-sm" id="ask-yes">Run it</button><button class="btn btn-sm btn-muted" id="ask-no">Cancel</button></div>';
+    b.innerHTML = `<div style="margin-bottom:10px">${question}</div>`
+        + (field ? `<input id="ask-text" style="width:100%;box-sizing:border-box;margin-bottom:10px" placeholder="${field}">` : '')
+        + `<div class="actions"><button class="btn btn-sm" id="ask-yes">${yes}</button><button class="btn btn-sm btn-muted" id="ask-no">Cancel</button></div>`;
     const done = v => { b.remove(); resolve(v); };
-    $('ask-yes').onclick = () => done(true);
+    $('ask-text')?.focus();
+    $('ask-yes').onclick = () => done(field ? $('ask-text').value.trim() : true);
     $('ask-no').onclick = () => done(false);
 });
 
