@@ -140,7 +140,8 @@ body {
     border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, var(--ink) 40%, transparent);
 }
-.hd-quality:hover .hd-pop, .hd-quality.open .hd-pop { display: block; }
+/* opened by a click, one at a time (main.js): on hover two popovers stacked over each other (critic) */
+.hd-quality.open .hd-pop { display: block; }
 .hq-row { padding: 10px 0; border-bottom: 1px solid var(--hair-soft); }
 .hq-row:last-child { border-bottom: none; }
 .hq-head { display: flex; align-items: baseline; gap: 10px; }

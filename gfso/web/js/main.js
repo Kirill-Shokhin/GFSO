@@ -54,7 +54,9 @@ const ACT = {
     'child-suggest': author.suggestChildCriteria, 'child-criterion': author.addChildCriterion, 'child-risk': author.addChildAcceptedRisk,
 };
 document.addEventListener('click', e => {
-    const b = e.target.closest('[data-action]');
+    const b = e.target.closest('[data-action]'), mine = e.target.closest('.hd-quality');
+    // one popover at a time: a click anywhere else, or on a link inside one, closes the open ones
+    document.querySelectorAll('.hd-quality.open').forEach(p => { if (p !== mine || (b && b.dataset.action === 'select')) p.classList.remove('open'); });
     if (b) ACT[b.dataset.action](b.dataset, b);
 });
 $('goal-panel').addEventListener('input', goal.recheck);

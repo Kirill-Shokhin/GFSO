@@ -8,6 +8,8 @@ import {bindFocus} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, mark, glyph, trim} from './draw.js';
 import {levelName} from './run.js';
+// a track counts CRITERIA passing, not nodes: "its parts 3 of 31" read as parts (critic)
+const criteriaOf = d => +d === 0 ? "the goal's criteria" : +d === 1 ? "its parts' criteria" : `criteria, level ${d}`;
 
 const LEFT = 140, TRACK = 54, GAP = 14, TOP = 22;
 
@@ -18,7 +20,7 @@ function tracks(el, run, name) {
     const body = ls.map(([d, L], i) => {
         const y0 = TOP + i * (TRACK + GAP) + TRACK, y = k => y0 - (k / L.total) * TRACK, last = L.steps.at(-1)?.[1] ?? 0;
         return `<g class="pg-track">
-            <text class="pg-level" x="${LEFT - 10}" y="${y0 - TRACK + 10}">${levelName(d)}</text>
+            <text class="pg-level" x="${LEFT - 10}" y="${y0 - TRACK + 10}">${criteriaOf(d)}</text>
             <text class="pg-count" x="${LEFT - 10}" y="${y0 - TRACK + 28}">${last}<tspan> of ${L.total}</tspan></text>
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${y(L.total)}" y2="${y(L.total)}"/>

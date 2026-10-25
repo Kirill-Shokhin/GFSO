@@ -78,11 +78,16 @@ export async function initGraph() {
         ],
         // nodes stay where the layout put them (a tap is a selection, never a drag); a wheel notch zooms gently
         layout: LAYOUT, minZoom: 0.08, maxZoom: 3, autoungrabify: true, boxSelectionEnabled: false, wheelSensitivity: 0.2,
+        // a double-click as people make it (Windows' default is 500 ms; cytoscape's own 250 ms dropped slow ones)
+        multiClickDebounceTime: DBL,
     });
     // The page follows the canvas's OWN selection, not its `tap`: a press that moves a few pixels is no tap, yet
     // cytoscape selects the node — the border showed, the panel stayed, and the next redraw took the border back
     // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
-    cy.on('select', 'node', evt => point('select', evt.target.id()));
+    // …and the panel a click opens waits out a possible second click: opened at once over the canvas's right side, it
+    // took the second click of a double-click on a node there (critic, 5 of 5)
+    let pick;
+    cy.on('select', 'node', evt => { clearTimeout(pick); pick = setTimeout(() => point('select', evt.target.id()), DBL); });
     cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
@@ -137,6 +142,7 @@ function subtree(n) {
 }
 
 const BODY = {includeLabels: false, includeOverlays: false, includeUnderlays: false};   // the node itself
+const DBL = 400;   // ms: a second press within it makes a double-click
 let drawn = '';                        // the node set last drawn: a redraw of the same keeps the view
 // framed whole and not yet touched: a change of size re-frames it (the deck takes its height after the first
 // drawing, and the graph's foot sat under it); once the reader taps, zooms or a node is chosen, the view is theirs

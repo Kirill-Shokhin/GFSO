@@ -108,6 +108,9 @@ export async function startRun() {
 async function techReports() {
     let reports = [];
     try { reports = (await (await post('/api/run/tech_reports', {})).json()).reports || []; } catch (e) { /* a read */ }
+    const seen = `${reports.length}|${reports.at(-1)?.at || ''}`;
+    if ($('hd-reports').dataset.seen === seen) return;
+    $('hd-reports').dataset.seen = seen;
     $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${reports.length} tech report${reports.length > 1 ? 's' : ''}</button>`
         + `<div class="hd-pop"><div class="hq-means">What the system reported about ITSELF — a check contradicting its contract, a tool that `
         + `cannot run. A report stops and moves nothing; newest first.</div>${[...reports].reverse().map(r => `<div class="hq-row">`
