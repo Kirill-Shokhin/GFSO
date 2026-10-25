@@ -61,9 +61,10 @@ def test_the_container_holds_only_the_projects_four_directories_and_its_state(pl
 
 def test_a_call_is_started_inside_its_mapped_place_with_only_what_it_sets(place, tmp_path, monkeypatch):
     ran, started = [], []
-    monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(args, 0, b"", b""))
+    monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
+        args, 0, "true" if args[:2] == ["docker", "inspect"] else "", ""))
     monkeypatch.setattr(E.LocalExecution, "popen", lambda self, argv, **kw: started.append((argv, kw)) or _Client())
-    monkeypatch.setattr(E, "_STARTED", set())
+    monkeypatch.setattr(E, "_STARTED", {})
     monkeypatch.setenv("SOME_HOST_VAR", "x")
     one, two = _ex(place, tmp_path), _ex(place, tmp_path)
     env = {"SOME_HOST_VAR": "x", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", "PATH": "C:\\Windows"}
@@ -120,5 +121,29 @@ def test_live_a_call_inside_is_sealed_mapped_and_ended_whole(place, tmp_path):
         left = subprocess.run(["docker", "exec", x.container, "sh", "-c", "pgrep -c sleep || true"],
                               capture_output=True, text=True).stdout.strip()
         assert left == "1", f"the call's sleeps outlived its end: {left} (only the container's own `sleep infinity`)"
+    finally:
+        x.stop()
+
+
+def test_each_project_keeps_its_own_cli_state(place, tmp_path):
+    """Shared by an execution's projects, the CLI state let one E3 row read and append to another's conversation —
+    every row's cwd is `/gfso-place/ws` (critic over d5c8f7a)."""
+    a = ContainerExecution("e3-linux", IMAGE, "f", str(tmp_path / "state"), str(place), "row-a")
+    b = ContainerExecution("e3-linux", IMAGE, "f", str(tmp_path / "state"), str(place), "row-b")
+    assert a.state_dir() != b.state_dir() and a.state_dir().parent == b.state_dir().parent
+
+
+@pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
+def test_live_a_container_removed_under_the_server_is_started_again_and_ends_with_it(place, tmp_path):
+    env_file = tmp_path / "e.env"
+    env_file.write_text("NOTHING=1\n")
+    x = ContainerExecution("t", IMAGE, str(env_file), str(tmp_path / "state"), str(place), f"live{time.time_ns()}")
+    try:
+        assert x.run(["echo", "one"], cwd=str(place), timeout=60).stdout.strip() == "one"
+        subprocess.run(["docker", "rm", "-f", x.container], capture_output=True)
+        assert x.run(["echo", "two"], cwd=str(place), timeout=60).stdout.strip() == "two", "not started again"
+        E.end_started()
+        gone = subprocess.run(["docker", "ps", "-aq", "--filter", f"name={x.container}"], capture_output=True, text=True)
+        assert not gone.stdout.strip(), "the server's exit left its container running"
     finally:
         x.stop()

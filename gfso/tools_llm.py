@@ -102,7 +102,8 @@ def _nothing_was_validated(a_model_ran: bool) -> str:
             + ". No verdict is never read as clean (§9.5 fail-closed), so execution stays shut. Run this "
               "again — a reply that could not be read may not recur. If every run comes back like this, two "
               "supported ways on: make a checker available and run this again, or take the canon's "
-              "EXPLORE branch — `GFSO_L2_GATE=0` on the server, where the plan's causal check is "
+              "EXPLORE branch — `set_mode(..., l2_gate=False)` for this project (`GFSO_L2_GATE=0` for the "
+              "server), where the plan's causal check is "
               "bought with contact instead of with the checker (§9.9). The second is a deployment "
               "decision, not a workaround: it is what a system with no checker honestly is.")
 
@@ -163,7 +164,7 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
                         "or its runner died: `revise` moves the node to a new version and the "
                         "check can be asked again."}
     try:
-        llm = llm_factory(model or engine.system_model())
+        llm = llm_factory(model or engine.system_model(), execution=execution_of(engine))
         llm.on_tick = _cb
         llm.stage_hint = f"{task_id} L2-checker"
         _cb(f"{task_id}: L2 checker (causal entailment per parent criterion)…")
@@ -1447,7 +1448,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
         # the place is read for the plan's author; a plan handed in (`spec`) has none
         found = "" if spec is not None else _work_place_documents(engine, request, model)
         request = (request or "") + _named_documents(engine, f"{request} {found}")
-    planner = _decompose.default_llm(model)   # the one door to the plan's transport, as decompose builds it
+    planner = _decompose.default_llm(model, execution=execution_of(engine))   # the one door to the plan's transport
     try:
         res = decompose_into(engine, request, root_id=root_id, assignee=assignee or _agent_id(),
                              child_assignee=executor, llm=planner,

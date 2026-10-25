@@ -34,7 +34,7 @@ def test_a_role_names_a_declared_execution_and_the_project_runs_there(declared):
     agents.register("q-exec", "llm-executor", workdir=str(base), project="q")
     x = WS.execution_of(SimpleNamespace(project_name="p"), agents)
     assert isinstance(x, ContainerExecution) and x.image == "e3-linux-agent:2" and x.base == base.resolve()
-    assert x.state_dir().parts[-3:] == ("executions", "e3-linux", "claude")
+    assert x.state_dir().parts[-4:] == ("executions", "e3-linux", "claude", x.container)
     assert WS.execution_of(SimpleNamespace(project_name="p"), agents) is x, "one object per (execution, project)"
     assert isinstance(WS.execution_of(SimpleNamespace(project_name="q"), agents), LocalExecution)
 
@@ -66,3 +66,15 @@ def test_a_base_that_checks_out_crlf_is_refused(declared):
 def test_a_base_off_a_local_drive_is_refused():
     with pytest.raises(ValueError, match="local drive"):
         ContainerExecution("e", "i", "f", "s", "\\\\server\\share\\base", "p")
+
+
+def test_a_project_re_created_on_another_base_gets_another_execution(declared, tmp_path):
+    agents, base = declared
+    agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
+    first = WS.execution_of(SimpleNamespace(project_name="p"), agents)
+    other = tmp_path / "w2" / "base"
+    other.mkdir(parents=True)
+    agents.unregister("p-exec")
+    agents.register("p-exec", "llm-executor", workdir=str(other), project="p", execution="e3-linux")
+    again = WS.execution_of(SimpleNamespace(project_name="p"), agents)
+    assert again is not first and again.base == other.resolve()

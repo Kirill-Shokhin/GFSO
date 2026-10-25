@@ -892,7 +892,8 @@ def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
                            f"again — a reply that could not be read may not recur. If every run comes back "
                            f"like this, give the server a checker "
                            f"(the Claude CLI on PATH, signed in), or take the canon's EXPLORE branch "
-                           f"with `GFSO_L2_GATE=0`, where the plan's verification is bought with "
+                           f"(`set_mode(..., l2_gate=False)` for this project, or `GFSO_L2_GATE=0` for the "
+                           f"server), where the plan's verification is bought with "
                            f"contact instead (§9.9) — a deployment decision, not a skipped step"
                            if _ran_and_said_nothing else ""))
                 if gaps:

@@ -1410,9 +1410,10 @@ def apply_move(engine, task_id: TaskId, question: str, actor: str, answer: dict,
 def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=None):
     """The issuer's answer, and the ledger of the tools its run used — None where nothing could be run (the agent
     transport, the only one with `run_agent`, keeps the ledger of every run)."""
-    # a contact run works in the node's place, so it runs where the project's work runs; a zero-tool answer has no
-    # place to be isolated in
-    ex = _execution(engine, verbs) if where else None
+    # where the project's work runs — a contact run in the node's place, and a zero-tool answer too: it is told the
+    # platform it runs on, and the work's is the one it answers about (a plan authored on the host named Windows tools
+    # for a Linux project, smoke-exec-1025141852)
+    ex = _execution(engine, verbs)
     llm = _llm or (verbs.llm(engine.system_model(), execution=ex) if ex else verbs.llm(engine.system_model()))
     llm.stage_hint = f"{task_id} issuer({actor}) {question}"
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written

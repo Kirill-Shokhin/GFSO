@@ -67,14 +67,15 @@ class DecomposeResult:
     undecided_obligations: tuple = ()
 
 
-def _default_llm(model: str):
-    """The system-wide provider/billing switch (runtime.llm_factory) — never a hardcoded adapter here."""
-    return llm_factory(model)
+def _default_llm(model: str, execution=None):
+    """The system-wide provider/billing switch (runtime.llm_factory) — never a hardcoded adapter here — started where
+    the project's work runs (`execution`), so the plan is authored on the platform it is built on."""
+    return llm_factory(model, execution=execution)
 
 
-def default_llm(model: str):
+def default_llm(model: str, execution=None):
     """The plan's transport, for a caller that must hold the client to account for what it spent."""
-    return _default_llm(model)
+    return _default_llm(model, execution=execution)
 
 
 def _dep_contradictions(engine: Engine, strip: str = "") -> list[str]:

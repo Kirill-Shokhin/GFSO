@@ -179,13 +179,29 @@ def _kill_group(pgid: int) -> None:
             log.warning(f"process group {pgid} could not be ended ({e})")
 
 
+#: what else ends with this process — children it holds that `reap` cannot reach (a container's calls)
+_AT_EXIT: list = []
+
+
+def at_exit(fn) -> None:
+    """End `fn`'s children with this process too, however it exits."""
+    _AT_EXIT.append(fn)
+
+
+def _end_all(closing: bool = False) -> None:
+    for fn in list(_AT_EXIT):
+        with contextlib.suppress(Exception):     # one holder failing to end its own never keeps the rest alive
+            fn()
+    reap(closing)
+
+
 def end_this_process(code: int = 0) -> None:
     """Exit NOW, children first. `os._exit` skips interpreter exit (and so `atexit`), which is the
     point — nothing waits on a worker thread — and is why the reap is done here, not left to it."""
-    reap(closing=True)
+    _end_all(closing=True)
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(code)
 
 
-atexit.register(reap)
+atexit.register(_end_all)

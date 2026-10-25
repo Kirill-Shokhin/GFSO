@@ -230,7 +230,7 @@ def test_a_split_the_limit_refused_keeps_it_owed(tmp_path, monkeypatch):
     assert d._split_owed_said(_leaf(e))
     owed = e.split_owed(TaskId("root.a"))
     assert owed is not None
-    monkeypatch.setattr(DEC, "_default_llm", lambda m: _LimitedModel())
+    monkeypatch.setattr(DEC, "_default_llm", lambda m, **_: _LimitedModel())
     verbs = Verbs(llm=lambda m: _LimitedModel(), busy=None, review=None, refine=D.ISSUER_VERBS.refine)
     with pytest.raises(Unavailable) as ex:
         settle(e, agents, TaskId("root.a"), "split", "exec-2", verbs)
@@ -246,7 +246,7 @@ def test_a_review_the_limit_refused_keeps_the_verdicts_carried(tmp_path, monkeyp
     e._graph._storage.store_critique(TaskId("root"), json.dumps({
         "node_id": "root", "gate_passed": True, "semantic_covered": False, "measured": True,
         "criteria_verdicts": [{"criterion": "g", "verdict": "sufficient"}], "criteria_stamps": _criterion_stamps(e, t)}))
-    monkeypatch.setattr(TL, "llm_factory", lambda m=None: _LimitedModel())
+    monkeypatch.setattr(TL, "llm_factory", lambda m=None, **_: _LimitedModel())
     TL.review_decomposition(e, "root")
     assert list(_already_decided(json.loads(e._graph._storage.get_critique(TaskId("root"))), t, e)) == ["g"]
     e.stop()

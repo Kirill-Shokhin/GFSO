@@ -524,7 +524,7 @@ def test_a_silent_provider_is_reported_as_a_provider_fact(monkeypatch):
         def complete_structured(self, system, user, schema):
             return {}
 
-    monkeypatch.setattr(D, "_default_llm", lambda model: Silent())
+    monkeypatch.setattr(D, "_default_llm", lambda model, **_: Silent())
     e = make_engine(llm=Silent(), validate_signals=True)
     e.start()
     out = T.auto_decompose(e, "ship a hello world script", root_id="r", assignee="human")
@@ -592,7 +592,7 @@ def test_what_the_plan_spent_is_on_the_record_when_the_build_raises(monkeypatch)
     def boom(*a, **k):
         raise ValueError("the build refused the split")
 
-    monkeypatch.setattr(_D, "_default_llm", lambda model: Spent())
+    monkeypatch.setattr(_D, "_default_llm", lambda model, **_: Spent())
     monkeypatch.setattr(_TL, "decompose_into", boom)
     e = make_engine()
     seen = []

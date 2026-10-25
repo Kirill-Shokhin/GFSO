@@ -209,12 +209,19 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
                  if c.get("execution") and c.get("project") == engine.project_name and c.get("workdir")), None)
     if role is None:
         return LocalExecution()
-    key = (role["execution"], engine.project_name)
+    key = (role["execution"], engine.project_name, role["workdir"])
     if key not in _EXECUTIONS:
         d = executions()[role["execution"]]
         _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d["env_file"], d["state"],
                                               role["workdir"], engine.project_name)
     return _EXECUTIONS[key]
+
+
+def drop_execution(engine) -> None:
+    """The project is gone: its container goes, and so does the object that held it."""
+    execution_of(engine).stop()
+    for key in [k for k in _EXECUTIONS if k[1] == engine.project_name]:
+        del _EXECUTIONS[key]
 
 
 def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):

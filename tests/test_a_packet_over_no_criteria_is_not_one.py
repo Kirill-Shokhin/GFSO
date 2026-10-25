@@ -149,7 +149,7 @@ class _Model:
 
 
 def _auto(monkeypatch, model, request="ship the spreadsheet engine"):
-    monkeypatch.setattr(D, "_default_llm", lambda m: model)
+    monkeypatch.setattr(D, "_default_llm", lambda m, **_: model)
     e = _engine(Mode.AUTO)
     return e, TL.auto_decompose(e, request)
 
@@ -162,7 +162,7 @@ def test_an_authoring_that_produced_no_plan_builds_no_root(monkeypatch):
     model = _Model(plans={1: {"name": _PLAN["name"], "add_root_criteria": _PLAN["root_criteria"],
                               "add_subtasks": _PLAN["subtasks"], "add_mappings": _PLAN["mappings"],
                               "add_accepted_risks": _PLAN["accepted_risks"], "denial": _PLAN["denial"]}})
-    monkeypatch.setattr(D, "_default_llm", lambda m: model)
+    monkeypatch.setattr(D, "_default_llm", lambda m, **_: model)
     out = TL.auto_decompose(e, "ship the spreadsheet engine")
     assert not out.get("error"), out
     assert [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria] == ["rc"]

@@ -22,7 +22,7 @@ from gfso import config as _config
 from gfso.config import (data_dir as _config_data_dir, active_project,
                          remember_active_project, DEFAULT_PROJECT)
 from gfso.llm import llm_factory
-from gfso.workspaces import execution_of
+from gfso.workspaces import drop_execution
 
 log = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ class ProjectRegistry:
                 log.warning(f"the dispatcher of {name!r} did not stop ({_ex}); it is unregistered and "
                             f"may still be polling a database this call is about to delete")
             eng.stop()
-            execution_of(eng).stop()
+            drop_execution(eng)
             close = getattr(eng._graph._storage, "close", None)
             if close:
                 close()

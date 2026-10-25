@@ -15,7 +15,7 @@ from pathlib import Path
 
 from gfso.core.types import ExecutionPort
 from gfso.config import claude_config_dir, host_env
-from gfso.adapters.children import adopt, kill_tree, release, run, spawn_kw
+from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
 INSIDE = "/gfso-place"
 #: the agent CLI's state inside the container — the image's `CLAUDE_CONFIG_DIR`
@@ -25,8 +25,9 @@ STATE_INSIDE = "/home/agent/.claude"
 HOST_NET = "192.168.65.0/24"
 #: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes
 LABEL = "gfso.execution"
-#: the containers this server process started — one per (execution, project), whichever object asks for it
-_STARTED: set = set()
+#: the containers this server process started — one per (execution, project), whichever object asks for it — with
+#: what each was started holding: a project re-created on another base gets a container of its own again
+_STARTED: dict = {}
 _START = threading.Lock()
 
 
@@ -63,6 +64,17 @@ class LocalExecution(ExecutionPort):
         return shutil.which("bash")
 
 
+def end_started() -> None:
+    """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
+    its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
+    if ids := list(_STARTED):
+        run(["docker", "rm", "-f", *ids], timeout=120)
+        _STARTED.clear()
+
+
+at_exit(end_started)
+
+
 def end_leftovers() -> None:
     """At a server's start: the project containers of a server that is gone — their calls died with it, and each is
     started afresh on its project's first call."""
@@ -81,8 +93,11 @@ class ContainerExecution(ExecutionPort):
         self.base, self.parent = Path(base).resolve(), Path(base).resolve().parent
         if not self.parent.drive or self.parent.drive.startswith("\\\\"):
             raise ValueError(f"execution {name!r}: {base} is not on a local drive — a container cannot mount it")
-        self.name, self.image, self.env_file, self.state = name, image, env_file, Path(state)
+        self.name, self.image, self.env_file = name, image, env_file
         self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{name}-{project}").lower()
+        # THE CLI'S STATE IS THE PROJECT'S: shared by an execution's projects, every E3 row (all at /gfso-place/ws) read
+        # and appended to another row's conversation (critic over d5c8f7a, measured on two containers)
+        self.state = Path(state) / self.container
         b = self.base.name
         self.mounts = [b, f".gfso-nodes-{b}", f".gfso-scratch-{b}", f".gfso-tmp-{b}"]
         # the parent in any spelling a path may arrive in — C:\ or C:/, either drive case — and the rest of that path
@@ -120,7 +135,7 @@ class ContainerExecution(ExecutionPort):
     def start(self) -> None:
         """The project's container, running and sealed — started once per server process, whoever asks first."""
         with _START:
-            if self.container in _STARTED:
+            if _STARTED.get(self.container) == self.run_args() and self._running():
                 return
             for d in [self.parent / m for m in self.mounts] + [self.state]:
                 d.mkdir(parents=True, exist_ok=True)
@@ -133,11 +148,17 @@ class ContainerExecution(ExecutionPort):
                 self.stop()
                 raise RuntimeError(f"{self.container}: the host's network could not be shut — no call runs unsealed "
                                    f"({(seal.stderr or b'').decode(errors='replace')[-300:]})")
-            _STARTED.add(self.container)
+            _STARTED[self.container] = self.run_args()
+
+    def _running(self) -> bool:
+        """Is the container still up? A Docker restart (the host slept, an update) removes it under a live server, and
+        every later call of the project then failed `No such container` (critic over d5c8f7a)."""
+        got = run(["docker", "inspect", "-f", "{{.State.Running}}", self.container], timeout=30, text=True)
+        return got.returncode == 0 and (got.stdout or "").strip() == "true"
 
     def stop(self) -> None:
         run(["docker", "rm", "-f", self.container], timeout=60)
-        _STARTED.discard(self.container)
+        _STARTED.pop(self.container, None)
 
     def which(self, program: str):
         return program                         # resolved on the container's PATH when the call starts
