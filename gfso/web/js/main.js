@@ -2,7 +2,7 @@
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
 import {$} from './dom.js';
 import {TASK, GOAL, getJSON} from './api.js';
-import {S, myRole, rememberedRole, rememberRole} from './state.js';
+import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap} from './vocab.js';
 import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
@@ -26,10 +26,14 @@ const afterDeck = () => { annotate(); refreshHeader(); if (focus().select) resig
 // tools sends none; author, 2026-09-24). A run starting or ending elsewhere changes the picker's line.
 async function pollInFlight() {
     try {
-        const before = JSON.stringify(busyByProject());
+        const before = JSON.stringify(busyByProject()), here = () => JSON.stringify(procs().map(w => [w.verb, w.task_id]));
+        const was = here();
         S.inflight = (await getJSON('/api/runtime')).in_flight || [];
         if (JSON.stringify(busyByProject()) !== before) projects();
         onInflight(); annotate();
+        // a process starting or ending here re-reads the graph and the header: a plan authored, or a session ending,
+        // moves no transition this page hears, and the header said "no goal yet" through a whole planning (live run)
+        if (here() !== was) { await refreshAll(); refreshDeck().then(afterDeck); }
         if (S.runState?.state === 'stopping') refreshHeader();   // until the last session the stop let finish has ended
     } catch (e) { /* the strip keeps its last count; the socket banner says when the server is gone */ }
 }
