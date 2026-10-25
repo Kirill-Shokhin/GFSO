@@ -58,6 +58,20 @@ def test_a_repeated_exchange_is_one_line(e):
     assert packet.count(ANSWER) == 1 and "(3 times)" in packet
 
 
+def test_a_long_ruling_reaches_its_asker_whole(e):
+    """The ruling binds, so all of it is shown: cut at 1500 characters, a 2510-character ruling reached its executor as
+    «unless it is a reserved wo…» — the reserved set it named was the part that decided the rework, and the executor
+    guessed it and failed again (GB_sql_database_tng5od544 root.parse_stmt, 05:18; its own tech report named the cut)."""
+    long_answer = "a keyword is an identifier wherever a name is expected " * 40 + "THE RESERVED SET: SELECT, FROM"
+    assert T.signal(e, "root", "CHALLENGE", W, reason=ASKED * 30)["accepted"]
+    assert T.signal(e, "root", "REJECT_CHALLENGE", W, justification=long_answer)["accepted"]
+    e.wait_idle()
+    assert long_answer in _executor_packet(e, e.graph.get_task(TaskId("root")), None)
+    assert T.signal(e, "root", "CHALLENGE", W, reason="a new observation")["accepted"]
+    ctx = issuer_context(e, TaskId("root"), "dispute")
+    assert long_answer in ctx and ASKED * 30 in ctx
+
+
 def test_the_issuer_of_a_dispute_sees_his_earlier_answers(e):
     _rejected(e)
     assert T.signal(e, "root", "CHALLENGE", W, reason="a new observation: the probe printed X")["accepted"]

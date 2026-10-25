@@ -14,7 +14,7 @@ import pytest
 import gfso.adapters.llm.headless as _headless
 from gfso import tools as T
 from gfso import tools_llm as TL
-from gfso.adapters.llm.headless import _tool_use_name, HeadlessClaudeLLM
+from gfso.adapters.llm.headless import _tool_use_name, ClaudeCodeProvider
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.invariants import verdict_report_defects
 from tests.support import criterion, make_engine, pinned, REGISTER
@@ -626,8 +626,8 @@ def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeyp
     # reports a missing pin where the real defect is a missing binary. That is how this test read on
     # a machine with `claude` installed (green) and on a CI runner without it (red), for one and the
     # same correct code. Pinning `which` makes the argv real on both.
-    monkeypatch.setattr(_headless.shutil, "which", lambda cmd: cmd)
-    llm = HeadlessClaudeLLM(model="haiku", claude_cmd="claude")
+    monkeypatch.setattr("shutil.which", lambda cmd: cmd)
+    llm = ClaudeCodeProvider(model="haiku", claude_cmd="claude")
     try:
         llm.complete("system", "user")
     except Exception:

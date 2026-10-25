@@ -27,7 +27,7 @@ from typing import Optional
 
 from gfso import runtime
 from gfso.llm import llm_factory
-from gfso.core.types import AgentId, Mode, State, TaskId, Stage, Verdict, passed
+from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import canonical_citations, laid_down_dirs, with_part_observations
 from gfso.core.protocol.validation import SIGNAL_ROLES, Role
@@ -743,7 +743,7 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
         return _stop, None
     _cb = emit_cb(engine, "validate_result", _progress)
     llm = _llm or llm_factory(model)
-    if not hasattr(llm, "run_agent"):
+    if not (llm.runs_agents if isinstance(llm, LLMProviderPort) else hasattr(llm, "run_agent")):
         return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
                          "GFSO_PROVIDER=generic covers zero-tool one-shots only"}, None
     # the claim names the delivery THIS run reads — the node's generation (§10.3 gate) — and where the log stood

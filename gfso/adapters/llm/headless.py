@@ -1,8 +1,8 @@
-"""Headless Claude Code LLM provider — one-shot `claude -p` subprocess calls.
+"""The Claude Code provider (`ClaudeCodeProvider`) — one `claude -p` subprocess per call, started by its execution.
 
 THE Anthropic transport (the only one): each call is a fresh process and a single-request generation —
 exactly the call shape the decompose loop was calibrated on; an agent run may continue a named conversation
-(`session_key`). BOTH billing modes ride the same
+(`workspaces.session_key`). BOTH billing modes ride the same
 transport: by default ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are STRIPPED from the child env
 (subscription via the claude.ai login — the key would silently outrank it, measured live);
 `keep_api_key=True` keeps them ⟹ the same CLI bills the API per token. Structured output = the shared
@@ -13,20 +13,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import LLMProviderPort
+from gfso.core.types import ExecutionPort, LLMProviderPort
 from .stats import is_limit
 from .structured import holds_an_object, schema_instruction, parse_structured, retry_suffix, RETRY_SHORTER
-from gfso.config import MODEL_DEFAULT, agent_trace_dir, claude_config_dir, subprocess_env
-from gfso.adapters.children import adopt, kill_tree, release, spawn_kw
+from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
+from gfso.adapters.execution import LocalExecution
 
 log = logging.getLogger(__name__)
 
@@ -98,34 +95,6 @@ def _tool_use_name(ev: dict) -> str | None:
     return None
 
 
-def session_key(*parts) -> str:
-    """The id of ONE conversation per (project, node — its first issue, so a later goal reusing the id is another —,
-    its executor, the role's session): a round cut at its turn cap is continued by the next one instead of starting
-    from zero — measured on three sql_database rows (haiku 4.5, 2026-10-21), 9 of 56 executor sessions ended at the cap
-    mid-work. Every other round starts clean (`_call` forgets the rest). A new Del is a new conversation."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, "gfso:" + "/".join(map(str, parts))))
-
-
-def _transcripts(sid: str) -> list[Path]:
-    """Where the CLI keeps the conversation: `<config dir>/projects/<its cwd, encoded>/<id>.jsonl`."""
-    return list((claude_config_dir() / "projects").glob(f"*/{sid}.jsonl"))
-
-
-def forget_session(sid: str) -> None:
-    """Drop a conversation's transcript: the work it served is settled, or it would not resume."""
-    for p in _transcripts(sid):
-        p.unlink(missing_ok=True)
-
-
-def _after_the_round(sid: str | None, out: dict) -> None:
-    """ONLY A ROUND CUT AT ITS TURN CAP IS CONTINUED: the next round of any other starts with a clean context, each
-    agent's own (the author, 2026-09-27: «агенты … с чистым контекстом дешево»). Measured continuing every round
-    (GB_sql_database_tn9nii608): a disputing executor repeated its challenge out of the conversation every 24 s, 40
-    calls, each one's input 16k tokens longer."""
-    if sid and out.get("subtype") != "error_max_turns":
-        forget_session(sid)
-
-
 def _cannot_resume(out: dict) -> bool:
     """Did the CLI refuse to go on with the conversation itself — as opposed to the round ending badly inside it? A round
     cut at its turn cap is `is_error` too (`error_max_turns`), and it is exactly the round the conversation exists to
@@ -133,15 +102,6 @@ def _cannot_resume(out: dict) -> bool:
     said = json.dumps(out).lower()
     return out.get("subtype") != "error_max_turns" and any(
         k in said for k in ("no conversation found", "prompt is too long", "context window", "context length"))
-
-
-def _session_args(sid: str | None) -> list[str]:
-    """A call naming no conversation SAVES none: each would otherwise land in the operator's session history for
-    its directory (measured on one install: 10 459 internal transcripts beside 18 of the person's own, and `claude
-    --resume` took over three minutes to list them). A named one lives under its node's own place, not the person's."""
-    if not sid:
-        return ["--no-session-persistence"]
-    return ["--resume", sid] if _transcripts(sid) else ["--session-id", sid]
 
 
 def _traced(trace, line: str):
@@ -167,15 +127,20 @@ def _is_the_answer(result: dict, live: bool) -> bool:
     return not live or (isinstance(said, str) and holds_an_object(said))
 
 
-class HeadlessClaudeLLM(LLMProviderPort):
+class ClaudeCodeProvider(LLMProviderPort):
+    """Anthropic's models through the Claude Code CLI: this class builds every `claude -p` invocation and reads its
+    stream; WHERE the process runs is its execution's (`ExecutionPort`, this host by default)."""
     #: each call is its own `claude -p` process, so independent readings may run at once (`stats.readings`)
     parallel_safe = True
+    runs_agents = True
 
     def __init__(self, model: str = MODEL_DEFAULT, timeout: int = 900, claude_cmd: str = "claude",
-                 max_thinking_tokens: int | None = None, keep_api_key: bool = False):
+                 max_thinking_tokens: int | None = None, keep_api_key: bool = False,
+                 execution: ExecutionPort | None = None):
         self._model = model
         self._timeout = timeout
-        self._cmd = shutil.which(claude_cmd)
+        self._exec = execution or LocalExecution()
+        self._cmd = self._exec.which(claude_cmd)
         # Latency lever: per-call wall time is dominated by OUTPUT tokens, and thinking tokens bill into
         # output. Caps the child CLI's thinking budget (MAX_THINKING_TOKENS env); None = CLI default.
         self._max_thinking = max_thinking_tokens
@@ -202,6 +167,32 @@ class HeadlessClaudeLLM(LLMProviderPort):
         """Label the most recent call with its pipeline stage (the caller knows; the port API doesn't)."""
         if self.calls:
             self.calls[-1]["stage"] = stage
+
+    def _transcripts(self, sid: str) -> list[Path]:
+        """Where the CLI keeps the conversation: `<its state dir>/projects/<its cwd, encoded>/<id>.jsonl`."""
+        return list((Path(self._exec.state_dir()) / "projects").glob(f"*/{sid}.jsonl"))
+
+    def forget(self, session: str) -> None:
+        """Drop a conversation's transcript: the work it served is settled, or it would not resume."""
+        for p in self._transcripts(session):
+            p.unlink(missing_ok=True)
+
+    def _session_args(self, sid: str | None) -> list[str]:
+        """A call naming no conversation SAVES none: each would otherwise land in the operator's session history for
+        its directory (measured on one install: 10 459 internal transcripts beside 18 of the person's own, and `claude
+        --resume` took over three minutes to list them). A named one lives under its node's own place, not the
+        person's."""
+        if not sid:
+            return ["--no-session-persistence"]
+        return ["--resume", sid] if self._transcripts(sid) else ["--session-id", sid]
+
+    def _after_the_round(self, sid: str | None, out: dict) -> None:
+        """ONLY A ROUND CUT AT ITS TURN CAP IS CONTINUED: the next round of any other starts with a clean context, each
+        agent's own (the author, 2026-09-27: «агенты … с чистым контекстом дешево»). Measured continuing every round
+        (GB_sql_database_tn9nii608): a disputing executor repeated its challenge out of the conversation every 24 s, 40
+        calls, each one's input 16k tokens longer."""
+        if sid and out.get("subtype") != "error_max_turns":
+            self.forget(sid)
 
     def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...],
                   cwd: str | None = None, timeout: int | None = None,
@@ -262,7 +253,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         # THE CAP FIRES WHETHER OR NOT THE CHILD SPEAKS. It was checked only as a line arrived, so a child that
         # goes silent holds the read past any cap, and only the node's state bound ends the wait around it (a root
         # validation stood 340 minutes with no answer across a sleep of the machine, AUTO json_parser, 2026-09-28).
-        timer = threading.Timer(max(0.0, cap - (time.monotonic() - t0)), kill_tree, args=(proc,))
+        timer = threading.Timer(max(0.0, cap - (time.monotonic() - t0)), self._exec.end, args=(proc,))
         timer.daemon = True
         timer.start()
         try:
@@ -305,7 +296,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         for line in proc.stdout:
             trace = _traced(trace, line)
             if time.monotonic() - t0 > cap:
-                kill_tree(proc)
+                self._exec.end(proc)
                 log.warning("headless claude call timed out mid-stream")
                 break
             line = line.strip()
@@ -357,7 +348,7 @@ class HeadlessClaudeLLM(LLMProviderPort):
         # author took the state home for the work's directory, pinned `cd <home> && …` on every probe of a plan, and a
         # validator following one removed the project's own database (GB_sql_database_tmzgc0724, 2026-10-16)
         if not cwd:
-            with tempfile.TemporaryDirectory(prefix="gfso-noplace-") as empty:
+            with self._exec.scratch("gfso-noplace-") as empty:
                 return self._call(system, user, tools_args, empty, timeout, session)
         env = subprocess_env(keep_key=self._keep_key)
         if self._max_thinking is not None:
@@ -391,22 +382,16 @@ class HeadlessClaudeLLM(LLMProviderPort):
                 # `--safe-mode` drops CLAUDE.md, skills, plugins, hooks and MCP and keeps auth (probed:
                 # none of those instructions reached the call; tools and the system prompt work).
                 "--safe-mode",
-                *_session_args(session),
+                *self._session_args(session),
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 *(tools_args if tools_args is not None else ["--disallowedTools", "*"])]
         t0 = time.monotonic()
         cap = timeout or self._timeout
         self._est_chars = 0  # per-call char-estimate (fallback token counter while usage is absent)
-        # Windows: a console child ALLOCATES ITS OWN console when the parent has none (the shared
-        # server is spawned detached) — every agent run popped an empty `claude` window on top of
-        # the user's screen, accidentally closable (= killing the run). CREATE_NO_WINDOW suppresses
-        # the console entirely; all real I/O rides the pipes and is unaffected.
-        no_window = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         proc, out = None, {}
         try:
-            proc = adopt(subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                          stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-                                          env=env, cwd=cwd, **no_window, **spawn_kw()))
+            proc = self._exec.popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
 
             def _feed():  # a writer thread — a large prompt would deadlock a same-thread pipe write
                 try:
@@ -478,13 +463,12 @@ class HeadlessClaudeLLM(LLMProviderPort):
             # A call that ended in an exception — `wait` timing out after the stream closed was one —
             # used to leave its child running until the server itself died.
             if proc is not None:           # the child's own shells too, on every path
-                kill_tree(proc)
-                release(proc)
-            _after_the_round(session, out)
+                self._exec.end(proc)
+            self._after_the_round(session, out)
         # Reached only by a conversation the CLI could not take up (gone, outgrown its window): that is not the round's
         # failure, so the round runs cold — after the first process is gone, which otherwise rewrote the transcript
         # just forgotten and sent the "cold" retry back to `--resume` (critic, live on CLI 2.1.306)
-        return forget_session(session) or self._call(system, user, tools_args, cwd, timeout, session)
+        return self.forget(session) or self._call(system, user, tools_args, cwd, timeout, session)
 
     def complete(self, prompt: str, context: str = "") -> str:
         return self._call(context or "You are a GFSO System LLM analyzing task decompositions.", prompt)

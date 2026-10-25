@@ -11,6 +11,7 @@ import io
 import json
 import sqlite3
 
+from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
 from gfso.adapters.storage.sqlite import SqliteStorage, peek_project
 from tests.support import make_engine
@@ -42,8 +43,8 @@ class _Proc:
 def _run(monkeypatch, events):
     monkeypatch.setattr(H.subprocess, "Popen", lambda *a, **k: _Proc(events))
     for name in ("adopt", "kill_tree", "release"):               # a fake child has no process to end
-        monkeypatch.setattr(H, name, (lambda p: p) if name == "adopt" else (lambda p: None))
-    llm = H.HeadlessClaudeLLM(model="sonnet")   # asked by its alias
+        monkeypatch.setattr(E, name, (lambda p: p) if name == "adopt" else (lambda p: None))
+    llm = H.ClaudeCodeProvider(model="sonnet")   # asked by its alias
     llm._cmd = llm._cmd or "claude"
     assert llm.complete("x") == "done"
     return llm.calls[-1]
@@ -98,8 +99,8 @@ def test_a_cut_session_is_signed_by_the_model_its_turns_name(monkeypatch):
     named = dict(_turn(1, 0, 900), message={**_turn(1, 0, 900)["message"], "model": "claude-haiku-4-5-20251001"})
     monkeypatch.setattr(H.subprocess, "Popen", lambda *a, **k: _Proc([named]))
     for name in ("adopt", "kill_tree", "release"):
-        monkeypatch.setattr(H, name, (lambda p: p) if name == "adopt" else (lambda p: None))
-    llm = H.HeadlessClaudeLLM(model="haiku")
+        monkeypatch.setattr(E, name, (lambda p: p) if name == "adopt" else (lambda p: None))
+    llm = H.ClaudeCodeProvider(model="haiku")
     llm._cmd = llm._cmd or "claude"
     llm.complete("x")
     assert llm.calls[-1]["model"] == "claude-haiku-4-5-20251001" and llm.calls[-1]["transport_torn"]
@@ -113,8 +114,8 @@ def test_a_cut_session_is_signed_by_the_model_its_turns_name(monkeypatch):
 def _ended(monkeypatch, events, asked="haiku"):
     monkeypatch.setattr(H.subprocess, "Popen", lambda *a, **k: _Proc(events))
     for name in ("adopt", "kill_tree", "release"):
-        monkeypatch.setattr(H, name, (lambda p: p) if name == "adopt" else (lambda p: None))
-    llm = H.HeadlessClaudeLLM(model=asked)
+        monkeypatch.setattr(E, name, (lambda p: p) if name == "adopt" else (lambda p: None))
+    llm = H.ClaudeCodeProvider(model=asked)
     llm._cmd = llm._cmd or "claude"
     llm.complete("x")
     return llm.calls[-1]
@@ -161,14 +162,14 @@ def test_a_call_that_continued_a_conversation_says_so(monkeypatch):
     real contexts are counted as the calls that did not continue one."""
     monkeypatch.setattr(H.subprocess, "Popen", lambda *a, **k: _Proc([_RESULT]))
     for name in ("adopt", "kill_tree", "release"):
-        monkeypatch.setattr(H, name, (lambda p: p) if name == "adopt" else (lambda p: None))
-    monkeypatch.setattr(H, "forget_session", lambda sid: None)
-    llm = H.HeadlessClaudeLLM(model="sonnet")
+        monkeypatch.setattr(E, name, (lambda p: p) if name == "adopt" else (lambda p: None))
+    monkeypatch.setattr(H.ClaudeCodeProvider, "forget", lambda self, sid: None)
+    llm = H.ClaudeCodeProvider(model="sonnet")
     llm._cmd = llm._cmd or "claude"
-    monkeypatch.setattr(H, "_transcripts", lambda sid: ["a transcript"])
+    monkeypatch.setattr(H.ClaudeCodeProvider, "_transcripts", lambda self, sid: ["a transcript"])
     llm._call("s", "u", session="sid")
     assert llm.calls[-1]["resumed"] is True
-    monkeypatch.setattr(H, "_transcripts", lambda sid: [])
+    monkeypatch.setattr(H.ClaudeCodeProvider, "_transcripts", lambda self, sid: [])
     llm._call("s", "u", session="sid")
     llm._call("s", "u")
     assert [c["resumed"] for c in llm.calls[-2:]] == [False, False]

@@ -22,6 +22,7 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso import delegate as D
 from gfso import sessions as S
+from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
 from gfso.adapters.llm.stats import is_limit, refused_by_limit
 from gfso.delegate import Dispatcher
@@ -48,10 +49,10 @@ class _Proc:
 
 def test_the_adapter_records_the_limit_where_its_readers_look(monkeypatch, tmp_path):
     monkeypatch.setattr(H.subprocess, "Popen", lambda args, **kw: _Proc())
-    monkeypatch.setattr(H.HeadlessClaudeLLM, "_read_stream", lambda self, p, t0, cap: (dict(LIMIT_ENVELOPE), [], 0))
+    monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", lambda self, p, t0, cap: (dict(LIMIT_ENVELOPE), [], 0))
     for name in ("adopt", "kill_tree", "release"):
-        monkeypatch.setattr(H, name, lambda p: p)
-    llm = H.HeadlessClaudeLLM()
+        monkeypatch.setattr(E, name, lambda p: p)
+    llm = H.ClaudeCodeProvider()
     llm._cmd = "claude"
     assert llm.run_agent("sys", "packet", ("Read",), cwd=str(tmp_path)) == ""
     assert "usage_limit_reached" in llm.calls[-1]["error"], llm.calls[-1]

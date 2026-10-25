@@ -12,7 +12,9 @@ import io
 import pytest
 
 from gfso import sessions as S
+from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
+from gfso.workspaces import session_key
 
 
 class _Proc:
@@ -49,11 +51,11 @@ def cli(tmp_path, monkeypatch):
         return {"result": "REPORT"}, [], 0
 
     monkeypatch.setattr(H.subprocess, "Popen", popen)
-    monkeypatch.setattr(H.HeadlessClaudeLLM, "_read_stream", read_stream)
-    monkeypatch.setattr(H, "adopt", lambda p: p)
-    monkeypatch.setattr(H, "kill_tree", lambda p: None)
-    monkeypatch.setattr(H, "release", lambda p: None)
-    llm = H.HeadlessClaudeLLM()
+    monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", read_stream)
+    monkeypatch.setattr(E, "adopt", lambda p: p)
+    monkeypatch.setattr(E, "kill_tree", lambda p: None)
+    monkeypatch.setattr(E, "release", lambda p: None)
+    llm = H.ClaudeCodeProvider()
     llm._cmd = "claude"
     return llm, seen, state, tmp_path
 
@@ -62,23 +64,23 @@ def _run(llm, place, session):
     return llm.run_agent("sys", "packet", ("Read",), cwd=str(place), session=session)
 
 
-_SID = H.session_key("proj", "root.dml", "", "exec-2", "executor")
+_SID = session_key("proj", "root.dml", "", "exec-2", "executor")
 
 
 def test_a_round_that_answered_leaves_nothing_to_continue(cli):
     llm, seen, _s, tmp = cli
     assert _run(llm, tmp, _SID) == "REPORT" and _run(llm, tmp, _SID) == "REPORT"
-    assert "--session-id" in seen[0] and "--session-id" in seen[1] and not H._transcripts(_SID)
+    assert "--session-id" in seen[0] and "--session-id" in seen[1] and not llm._transcripts(_SID)
 
 
 def test_a_round_cut_at_its_turn_cap_is_continued(cli):
     llm, seen, state, tmp = cli
     state["ends"] = "cap"
     assert _run(llm, tmp, _SID) == ""
-    assert H._transcripts(_SID)
+    assert llm._transcripts(_SID)
     state["ends"] = "answer"
     assert _run(llm, tmp, _SID) == "REPORT"
-    assert seen[1][seen[1].index("--resume") + 1] == _SID and not H._transcripts(_SID)
+    assert seen[1][seen[1].index("--resume") + 1] == _SID and not llm._transcripts(_SID)
 
 
 def test_a_continued_round_cut_again_stays_continued(cli):
@@ -86,7 +88,7 @@ def test_a_continued_round_cut_again_stays_continued(cli):
     state["ends"] = "cap"
     _run(llm, tmp, _SID)
     _run(llm, tmp, _SID)
-    assert len(seen) == 2 and "--resume" in seen[1] and H._transcripts(_SID)
+    assert len(seen) == 2 and "--resume" in seen[1] and llm._transcripts(_SID)
 
 
 def test_a_conversation_the_cli_cannot_take_up_runs_the_round_cold(cli):
@@ -105,7 +107,7 @@ def test_a_call_naming_no_conversation_saves_none(cli):
 
 
 def test_another_executor_or_role_is_another_conversation():
-    k = H.session_key
+    k = session_key
     assert k("proj", "root.dml", "", "exec-2", "executor") != k("proj", "root.dml", "", "exec-3", "executor")
     assert k("proj", "root.dml", "", "exec-2", "executor") != k("proj", "root.dml", "", "exec-2", "scope-executor")
 

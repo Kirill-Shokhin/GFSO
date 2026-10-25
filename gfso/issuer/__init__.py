@@ -394,9 +394,8 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         if said := answered_challenges(engine, task):
             out.append(said.strip())
     if question == "repair":
-        out.append("## What contact refuted\n" + ("\n".join(
-            filter(None, (engine.decomposition_refuted(task_id), engine.dep_order_refuted(task_id))))
-            or "- a child consumes a producer that was cancelled (see the split above)"))
+        out.append("## What contact refuted\n" + (what_contact_refuted(engine, task_id)
+                                                   or "- a child consumes a producer that was cancelled (see the split above)"))
         if seams := seam_findings(engine, task_id):
             out.append(_seams_text(seams))
     if question == "external" and (order := engine.order_refuted_by(task_id)):
@@ -1712,6 +1711,11 @@ def _review(engine, task_id: TaskId, verbs: Verbs) -> dict:
     return {"status": "applied" if moved else "unproductive", "kind": "review"}
 
 
+def what_contact_refuted(engine, task_id: TaskId) -> str:
+    """What contact refuted in this node's split — its FAIL over passing children, its order — as the engine states it."""
+    return "\n".join(filter(None, (engine.decomposition_refuted(task_id), engine.dep_order_refuted(task_id))))
+
+
 def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Verbs) -> dict:
     """Answer one question: the review first where the plan has none current, else the issuer's answer,
     and one retry with its refusal quoted — each only while the question is still the one that was asked.
@@ -1725,7 +1729,7 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
     # than a session, and only its author re-plans it — the run stops, its sessions finishing, its record whole
     if question in SPLIT_QUESTIONS and engine.users_plan():
         why = (f"the plan the user gave is refuted at {task_id} ({question}: "
-               f"{engine.decomposition_refuted(task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
+               f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
                f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec` on a new project), or `set_mode` "
                f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
         if not engine.paused():

@@ -6,7 +6,7 @@ import threading
 import time as _t
 
 import gfso.decompose as D
-from gfso.adapters.llm.headless import HeadlessClaudeLLM
+from gfso.adapters.llm.headless import ClaudeCodeProvider
 from gfso.adapters.llm.stats import readings
 from gfso.adapters.llm.structured import RETRY_SHORTER, RETRY_SUFFIX
 from gfso.core.types.ports import LLMProviderPort
@@ -34,7 +34,7 @@ def test_given_findings_skip_the_search(monkeypatch):
 
 
 def _llm_answering(*outs):
-    llm = HeadlessClaudeLLM.__new__(HeadlessClaudeLLM)
+    llm = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
     llm.calls, asked, it = [], [], iter(outs)
 
     def _call(system, user, **k):

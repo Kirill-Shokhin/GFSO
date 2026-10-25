@@ -538,8 +538,9 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
             + "\n" + _working_directory(workdir, validating=True) + _scratch_note(scratch))
 
 
-#: distinct rejected challenges a packet shows, newest last, and the characters of each side
-SHOWN_ANSWERS, ANSWER_CHARS = 5, 1500
+#: distinct rejected challenges a packet shows, newest last — each WHOLE: a ruling binds, and one cut at 1500 characters
+#: lost the reserved set it ruled on, the part the rework turned on (GB_sql_database_tng5od544 root.parse_stmt)
+SHOWN_ANSWERS = 5
 
 
 def _distinct_answers(pairs: list) -> list:
@@ -549,10 +550,6 @@ def _distinct_answers(pairs: list) -> list:
         k = (" ".join(asked.split()), " ".join(answer.split()))
         seen[k] = seen.pop(k, 0) + 1
     return [(a, j, n) for (a, j), n in list(seen.items())[-SHOWN_ANSWERS:]]
-
-
-def _cut(s: str) -> str:
-    return s if len(s) <= ANSWER_CHARS else s[:ANSWER_CHARS] + " …"
 
 
 def answered_challenges(engine: Engine, task) -> str:
@@ -571,8 +568,8 @@ def answered_challenges(engine: Engine, task) -> str:
             "same ground raised again is a question already answered and gets the same answer. Challenge again only "
             "with what the answer below does not meet — a new observation, quoted; otherwise meet the criteria as "
             "written and deliver.\n"
-            + "".join(f"- you said{f' ({n} times)' if n > 1 else ''}: «{_cut(a) or '(no reason recorded)'}»\n"
-                      f"  your issuer answered: «{_cut(j) or '(no justification)'}»\n" for a, j, n in got))
+            + "".join(f"- you said{f' ({n} times)' if n > 1 else ''}: «{a or '(no reason recorded)'}»\n"
+                      f"  your issuer answered: «{j or '(no justification)'}»\n" for a, j, n in got))
 
 
 def answers_given(engine: Engine, task) -> str:
@@ -582,8 +579,8 @@ def answers_given(engine: Engine, task) -> str:
     if not got:
         return ""
     return ("## Challenges of this contract you already REJECTED — judge what the dispute above adds to them\n"
-            + "".join(f"- asked{f' ({n} times)' if n > 1 else ''}: «{_cut(a) or '(no reason recorded)'}»\n"
-                      f"  you answered: «{_cut(j) or '(no justification)'}»\n" for a, j, n in got))
+            + "".join(f"- asked{f' ({n} times)' if n > 1 else ''}: «{a or '(no reason recorded)'}»\n"
+                      f"  you answered: «{j or '(no justification)'}»\n" for a, j, n in got))
 
 
 #: how much of the last report a rework round is handed: a note, not the conversation

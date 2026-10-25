@@ -186,9 +186,54 @@ class StoragePort(ABC):
         return []
 
 
+class ExecutionPort(ABC):
+    """WHERE a session or a command runs — this host, or a place isolated from it — as opposed to WHO answers
+    (`LLMProviderPort`) and who pumps the signals (`RunnerPort`). A launch touches the host only through it: the
+    program it finds, the process it starts and ends, the scratch place it lends, the directory the agent CLI keeps
+    its conversations in. One server can then run every project's work isolated without a second server."""
+
+    @abstractmethod
+    def which(self, program: str) -> Optional[str]:
+        """The program as this execution would start it, or None where it has none."""
+        ...
+
+    @abstractmethod
+    def popen(self, args: list[str], *, env: dict, cwd: str, **pipes):
+        """Start `args` in `cwd` with exactly `env`, with no window and in a group of its own; the process answers
+        `subprocess.Popen`'s stdin/stdout/poll/wait/kill/pid."""
+        ...
+
+    @abstractmethod
+    def end(self, proc) -> None:
+        """End the process AND what it started, however far it got, and stop holding it. Repeating it is harmless."""
+        ...
+
+    @abstractmethod
+    def scratch(self, prefix: str):
+        """A context manager lending an empty directory of its own, removed when the block leaves."""
+        ...
+
+    @abstractmethod
+    def state_dir(self):
+        """Where the agent CLI started here keeps its state — the conversations a session continues live under it."""
+        ...
+
+
 class LLMProviderPort(ABC):
     #: may independent calls run at once (`stats.readings`)? A provider says so only where each call stands alone.
     parallel_safe: bool = False
+    #: can it run an AGENT — tools, a place, a conversation (`run_agent`)? A provider of one-shots says no, and the
+    #: verbs that need one refuse before a paid call rather than halfway through it.
+    runs_agents: bool = False
+
+    def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,
+                  timeout: Optional[int] = None, max_turns: Optional[int] = None,
+                  session: Optional[str] = None) -> str:
+        """One agent run with work tools in `cwd`, continuing `session` where named; its final report."""
+        raise NotImplementedError(f"{type(self).__name__} runs no agents (`runs_agents` is False)")
+
+    def forget(self, session: str) -> None:
+        """Drop a conversation: the work it served is settled. A provider keeping none has nothing to drop."""
 
     @abstractmethod
     def complete(self, prompt: str, context: str = "") -> str:

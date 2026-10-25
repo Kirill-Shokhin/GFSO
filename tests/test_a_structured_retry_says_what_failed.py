@@ -2,7 +2,7 @@
 re-emitted the same malformed fold six calls of six (E3 c_compiler, own plan, 2026-10-23)."""
 import json
 
-from gfso.adapters.llm.headless import HeadlessClaudeLLM
+from gfso.adapters.llm.headless import ClaudeCodeProvider
 from gfso.adapters.llm.structured import RETRY_SUFFIX, retry_suffix
 
 SCHEMA = {"type": "object", "required": ["subtasks", "root_criteria"]}
@@ -24,7 +24,7 @@ def test_a_valid_complete_reply_adds_nothing():
 
 
 def test_the_headless_port_asks_again_with_it():
-    port = object.__new__(HeadlessClaudeLLM)
+    port = object.__new__(ClaudeCodeProvider)
     port.calls, asked = [], []
     replies = iter(['```json\n{"subtasks": [}\n```', '```json\n{"subtasks": [], "root_criteria": []}\n```'])
     port._call = lambda system, user, *a, **k: asked.append(user) or next(replies)

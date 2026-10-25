@@ -4,10 +4,11 @@ whole (`join_whole`), and clearing them at the root's PASS (`clear_workspaces`).
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
-from gfso.adapters.llm.headless import forget_session, session_key
 from gfso.config import DEFAULT_PROJECT
+from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task
 from gfso.core.types import Signal, TaskId, State
@@ -195,6 +196,14 @@ def _unjoined_text(unjoined: list) -> str:
 CONVERSING_ROLES = ("executor", "scope-executor")
 
 
+def session_key(*parts) -> str:
+    """The id of ONE conversation per (project, node — its first issue, so a later goal reusing the id is another —,
+    its executor, the role's session): a round cut at its turn cap is continued by the next one instead of starting
+    from zero — measured on three sql_database rows (haiku 4.5, 2026-10-21), 9 of 56 executor sessions ended at the cap
+    mid-work. Every other round starts clean (the provider forgets the rest). A new Del is a new conversation."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "gfso:" + "/".join(map(str, parts))))
+
+
 def conversation_of(engine, task_id, executor_id, role: str) -> str:
     """The conversation a role's session on this node continues: keyed by the node's FIRST issue as well as its id, so
     a later goal in the same project reusing the id (a root that never passed keeps its transcripts) is another."""
@@ -205,10 +214,10 @@ def conversation_of(engine, task_id, executor_id, role: str) -> str:
 def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
     """At the root's PASS every joined part is in the base: its worktree, branch and executor's conversation go (a node's tree is a whole
     checkout, so kept they cost the base's size each), and what did not join stays where it is, named."""
-    left, seen = [], set()
+    left, seen, llm = [], set(), llm_factory()
     for t in engine.all_tasks():
         for role in CONVERSING_ROLES:          # the work its conversations served is settled
-            forget_session(conversation_of(engine, t.id, t.assignee, role))
+            llm.forget(conversation_of(engine, t.id, t.assignee, role))
         w = _workspace(engine, agents, t)
         if w is None or w[2] in seen or not Path(w[1]).is_dir():
             continue

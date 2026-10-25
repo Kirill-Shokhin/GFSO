@@ -86,7 +86,7 @@ def test_a_call_naming_no_place_runs_in_an_empty_one(monkeypatch):
         seen.append(k.get("cwd"))
         raise RuntimeError("not spawned in a test")
     monkeypatch.setattr(H.subprocess, "Popen", popen)
-    llm = H.HeadlessClaudeLLM()
+    llm = H.ClaudeCodeProvider()
     llm._cmd = llm._cmd or "claude"
     llm.complete("x")
     assert seen and seen[0] and "gfso-noplace-" in seen[0], seen

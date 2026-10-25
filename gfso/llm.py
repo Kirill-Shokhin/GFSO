@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from gfso.adapters.llm.generic import GenericLLM
-from gfso.adapters.llm.headless import HeadlessClaudeLLM
+from gfso.adapters.llm.headless import ClaudeCodeProvider
 from gfso.adapters.llm.stats import calls_of, tag_stage
 from gfso import config as _config
 from gfso.config import MODEL_DEFAULT
 
 
-def llm_factory(model: str = MODEL_DEFAULT):
+def llm_factory(model: str = MODEL_DEFAULT, execution=None):
     """THE ONE switch every internal gfso LLM role goes through (decompose, validate, critic, future
     validate_result/delegate one-shots). Two env knobs, whole-system semantics (no per-role mixing):
 
@@ -21,14 +21,15 @@ def llm_factory(model: str = MODEL_DEFAULT):
         ANTHROPIC_API_KEY in the child env (per-token billing on the same transport, measured);
         `subscription` strips it (claude.ai login).
 
-    Flipping the whole system to a foreign provider and seamlessly back IS these two variables."""
+    Flipping the whole system to a foreign provider and seamlessly back IS these two variables. `execution` is WHERE
+    the provider's processes run (`ExecutionPort`; this host when None)."""
     if _config.provider() == "generic":
         _g = _config.generic_provider()
         if not _g["base_url"]:
             raise ValueError("GFSO_PROVIDER=generic needs GFSO_GENERIC_BASE_URL — the OpenAI-compatible "
                              "endpoint to talk to")
         return GenericLLM(base_url=_g["base_url"], model=_g["model"] or model, api_key=_g["api_key"])
-    return HeadlessClaudeLLM(model=model, keep_api_key=_config.api_billing())
+    return ClaudeCodeProvider(model=model, keep_api_key=_config.api_billing(), execution=execution)
 
 
 def session_calls(llm, stage: str) -> list:

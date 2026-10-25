@@ -103,6 +103,22 @@ def test_a_stop_the_system_sets_names_the_users_way_out(monkeypatch):
     e.stop()
 
 
+def test_a_stop_names_the_refutation_that_stands(monkeypatch):
+    """A stop on the plan's ORDER printed the q_D wording («FAILED on criteria its children cover») — the generic ask
+    — while what stood was a dependency against the order (GB_sql_database_tng5od544, 05:42): the user re-plans from
+    this line, so it says what contact refuted."""
+    e, _ = _users_part()
+    e.give_users_plan("root")
+    monkeypatch.setattr(I, "_still_open", lambda *a: True)
+    monkeypatch.setattr(e, "decomposition_refuted", lambda t: None)
+    monkeypatch.setattr(e, "dep_order_refuted", lambda t: "root.select_core waits on root.joins — the plan's order is "
+                                                          "refuted by contact; reshape the split")
+    I.settle(e, None, TaskId("root"), "repair", "exec-1", verbs=None)
+    why = e.paused()["why"]
+    assert "root.select_core waits on root.joins" in why and "children cover" not in why, why
+    e.stop()
+
+
 def test_an_accepted_dispute_does_not_re_pin_a_check_of_the_users_part():
     """Below the root of the user's plan an accepted dispute may only add: re-pinned to what a build printed, a part's
     expected output contradicted the root's and the root failed on it to the ceiling (GB_sql_database_tne9fg736 09:30)."""
