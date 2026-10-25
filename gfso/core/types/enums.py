@@ -163,6 +163,9 @@ class Stage(StrEnum):
     AUDIT_FOLD_REFINE = "audit-fold-refine"
     DECOMPOSER = "decomposer"
     EXECUTOR = "executor"
+    # an executor reading a contract to consent to it or not: its session, not execution — booked apart since
+    # 2026-10-25, when "executed by x37" counted consents as work (earlier rows say `executor`)
+    CONSENT = "consent"
     # …named for what it does, like `Action.CHECK_PLAN`: the identifier may not carry a word
     # v4 retired (the naming guard catches it), while the VALUE is the byte string already
     # in every database and measurement script and must not move.

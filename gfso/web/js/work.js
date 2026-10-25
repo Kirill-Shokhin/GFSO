@@ -58,7 +58,7 @@ const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r
 export const signedBy = (run, id) => [
     ...deliveredBy(run, id),
     ...Object.entries(run?.work.byNode[id] || {}).map(([kind, ms]) =>
-        `${{exec: 'executed', val: 'validated', issuer: 'issued', plan: 'planned'}[kind]} by `
+        `${{exec: 'executed', consent: 'consented', val: 'validated', issuer: 'issued', plan: 'planned'}[kind]} by `
         + Object.entries(ms).map(([m, n]) => `<b title="${esc(m)}">${esc(modelName(m))}</b>${n > 1 ? ` ×${n}` : ''}`).join(', ')),
     ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => `<span class="wk-none">${ended(n)} of ${KIND[k]} unanswered</span>`),
 ].join(' · ');

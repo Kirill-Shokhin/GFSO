@@ -221,6 +221,7 @@ body {
 .tl .tl-row.is-select .tl-band { fill: var(--hair); }
 .tl .tl-s { cursor: pointer; }
 .tl .tl-exec { fill: var(--ink); }
+.tl .tl-consent { fill: none; stroke: var(--ink); stroke-width: 1.2; }
 .tl .tl-val { fill: var(--ink-faint); }
 .tl .tl-issuer { fill: none; stroke: var(--ink-soft); stroke-width: 1.2; }
 .tl .tl-plan { fill: var(--paper); stroke: var(--ink-faint); }
@@ -293,6 +294,7 @@ body {
 
 .cs-num { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .cs-exec { background: var(--ink); }
+.cs-consent { background: var(--bg); box-shadow: inset 0 0 0 1px var(--ink); }
 .cs-val { background: var(--ink-faint); }
 .cs-issuer { background: var(--ink-soft); }
 .cs-plan { background: var(--paper); box-shadow: inset 0 0 0 1px var(--ink-faint); }

@@ -7,9 +7,9 @@
 const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
               CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
 
-const KIND = {executor: 'exec', validate_result: 'val', validator: 'val', issuer: 'issuer'};
+const KIND = {executor: 'exec', consent: 'consent', validate_result: 'val', validator: 'val', issuer: 'issuer'};
 const kindOf = stage => KIND[stage] || 'plan';
-export const KIND_NAME = {exec: 'execution', val: 'validation', issuer: 'issuer', plan: 'planning'};
+export const KIND_NAME = {exec: 'execution', consent: 'consent', val: 'validation', issuer: 'issuer', plan: 'planning'};
 export const levelName = d => +d === 0 ? 'goal' : +d === 1 ? 'parts' : `level ${d}`;
 // An idle stretch longer than this is folded to FOLD on the axis: a run's clock is its work, and a
 // host asleep overnight is not part of the run (mode_cost.py measures wall time by the same cut).

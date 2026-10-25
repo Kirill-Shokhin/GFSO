@@ -95,8 +95,9 @@ def _spawn(engine, node_id, executor_id: str, cfg: dict, _llm, role: str, prompt
         text = (_run_session(llm, system, user, cfg, cap, cwd, conversation_of(engine, node_id, executor_id, role))
                 if work else
                 llm.run_agent(system, user, allowed_tools=("Read", "Glob", "Grep"), cwd=cwd))
-    stats = session_calls(llm, Stage.EXECUTOR)
-    engine.record_llm_usage(Stage.EXECUTOR, llm, node_id)      # the session's spend, booked once to its node
+    stage = Stage.CONSENT if role == "consent" else Stage.EXECUTOR      # a consent reads; it is not the work
+    stats = session_calls(llm, stage)
+    engine.record_llm_usage(stage, llm, node_id)      # the session's spend, booked once to its node
     file_tech_reports(engine, report := parse_structured(text, schema), role, executor_id, node_id)
     return report, text, stats, llm, _cb
 

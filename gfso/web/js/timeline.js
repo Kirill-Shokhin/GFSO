@@ -7,7 +7,7 @@ import {tip, untip} from './tip.js';
 import {frame, hm, dur, mark, trim} from './draw.js';
 import {KIND_NAME, waitWords, atWork} from './run.js';
 
-const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, val: 4, issuer: 5, plan: 5};
+const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
 const STEM = 9, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
 
 // Rows: the goal's first; then what is at work now; then every node that has worked, in the order it
@@ -49,9 +49,12 @@ export function render(el, run, nodes) {
     const state = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const idle = id => run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${
         run.waits[id]?.deps.length ? `waits on ${esc(waitWords(run.waits[id], d => trim(name(d), 24)))}` : esc(state[id].toLowerCase())}</text>`;
-    const legend = [['exec', 'execution'], ['val', 'validation'], ['issuer', 'issuer']].map(([k, t], i) =>
+    // consent shown only where a run has it: rows recorded before it was booked apart have none
+    const kinds = [['exec', 'execution'], ...(run.sessions.some(s => s.kind === 'consent') ? [['consent', 'consent']] : []),
+                   ['val', 'validation'], ['issuer', 'issuer']], end = kinds.length * 92 - 14;
+    const legend = kinds.map(([k, t], i) =>
         `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${t}</text>`).join('')
-        + `${mark('PASS', 262, 4, 3.5)}<text x="269" y="8">PASS</text>${mark('FAIL', 308, 4, 3.5)}<text x="315" y="8">FAIL</text>`;
+        + `${mark('PASS', end, 4, 3.5)}<text x="${end + 7}" y="8">PASS</text>${mark('FAIL', end + 46, 4, 3.5)}<text x="${end + 53}" y="8">FAIL</text>`;
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 4}" width="${W}" height="${ROW}"/>
         <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" x="${LEFT - 10}" y="${Y(id) + 4}">${esc(trim(name(id)))}</text>
