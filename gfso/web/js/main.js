@@ -24,19 +24,20 @@ const afterDeck = () => { annotate(); refreshHeader(); if (focus().select) resig
 
 // THE COUNT OF WORK IN FLIGHT IS THE SERVER'S registry, not inferred from token ticks (an executor running
 // tools sends none; author, 2026-09-24). A run starting or ending elsewhere changes the picker's line.
-async function pollInFlight() {
-    try {
-        const before = JSON.stringify(busyByProject()), here = () => JSON.stringify(procs().map(w => [w.verb, w.task_id]));
-        const was = here();
-        S.inflight = (await getJSON('/api/runtime')).in_flight || [];
-        if (JSON.stringify(busyByProject()) !== before) projects();
-        onInflight(); annotate();
-        // a process starting or ending here re-reads the graph and the header: a plan authored, or a session ending,
-        // moves no transition this page hears, and the header said "no goal yet" through a whole planning (live run)
-        if (here() !== was) { await refreshAll(); refreshDeck().then(afterDeck); }
-        if (S.runState?.state === 'stopping') refreshHeader();   // until the last session the stop let finish has ended
-    } catch (e) { /* the strip keeps its last count; the socket banner says when the server is gone */ }
+// The server's processes, as the server pushes them on every start and end (and as read once on load or reconnect).
+async function applyInFlight(list) {
+    const before = JSON.stringify(busyByProject()), here = () => JSON.stringify(procs().map(w => [w.verb, w.task_id]));
+    const was = here();
+    S.inflight = list || [];
+    if (JSON.stringify(busyByProject()) !== before) projects();
+    onInflight(); annotate();
+    // a process starting or ending here re-reads the graph and the header: a plan authored, or a session ending,
+    // moves no transition this page hears, and the header said "no goal yet" through a whole planning (live run)
+    if (here() !== was) { await refreshAll(); refreshDeck().then(afterDeck); }
+    if (S.runState?.state === 'stopping') refreshHeader();   // until the last session the stop let finish has ended
 }
+const readInFlight = () => getJSON('/api/runtime').then(r => applyInFlight(r.in_flight))
+    .catch(() => { /* the strip keeps its last count; the socket banner says when the server is gone */ });
 
 const ACT = {
     'run-stop': stopRun, 'run-start': startRun,
@@ -72,7 +73,12 @@ const LIVE = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
     pipeline: d => { onPipeline(d); if (d.source === 'pause') { refreshHeader(); projects(); } },
     projects,                                          // a project appeared
-    reopened: () => S.reload(),                        // this tab's own project came to exist while the feed was refused
+    // this tab's own project came to exist while the feed was refused: nothing of it was pushed here, so read it all
+    async reopened() { await S.reload(); await readInFlight(); refreshDeck().then(afterDeck); },
+    inflight: d => applyInFlight(d.in_flight),         // a process of the server started or ended
+    opened: () => readInFlight(),
+    // the feed was lost and is back: what happened meanwhile reached no one, so read it all once
+    async resync() { await readInFlight(); await refreshAll(); refreshDeck().then(afterDeck); },
     async transition(d) {
         const t = S.tasks.find(x => x.id === d.task_id);
         if (t) t.state = d.new_state;                  // the tooltip reads the cache
@@ -112,8 +118,6 @@ async function init() {
     if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
     if (GOAL && !S.tasks.length) goal.openGoal();     // a new project's first act: its goal
     connectWS(LIVE);
-    pollInFlight();
-    setInterval(pollInFlight, 5000);
     projects();
 }
 

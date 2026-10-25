@@ -114,10 +114,13 @@ async function techReports() {
     $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${reports.length} tech report${reports.length > 1 ? 's' : ''}</button>`
         + `<div class="hd-pop"><div class="hq-means">What the system reported about ITSELF — a check contradicting its contract, a tool that `
         + `cannot run. A report stops and moves nothing; newest first.</div>${[...reports].reverse().map(r => `<div class="hq-row">`
-        + `<div class="hq-head"><i>${esc(ago(r.at))} ago · ${esc(r.role || '')}</i>${r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : ''}</div>`
+        + `<div class="hq-head"><i><span data-at="${esc(r.at)}">${esc(ago(r.at))}</span> ago · ${esc(r.role || '')}</i>${r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : ''}</div>`
         + `<div class="hq-means">${esc(r.text)}</div></div>`).join('')}</div>`;
 }
-export const toggleReports = () => $('hd-reports').classList.toggle('open');
+// the list is rebuilt only when a report arrives (it kept its scroll), so its ages are re-read when it is opened
+export const toggleReports = () => {
+    if ($('hd-reports').classList.toggle('open')) $('hd-reports').querySelectorAll('[data-at]').forEach(e => { e.textContent = ago(e.dataset.at); });
+};
 
 // A goal still open with nothing at work, no call on anyone, and no event for longer than the run folds as idle
 // is STALLED — the one quiet that must not read "leave it" (a json-parser run sat 642h so, under "nothing needs you").

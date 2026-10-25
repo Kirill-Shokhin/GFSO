@@ -92,10 +92,17 @@ export const refreshDeck = singleFlight(async () => {
         const [audit, usage, pl] = await Promise.all([getJSON('/api/audit'), getJSON('/api/usage?detail=true'), getJSON('/api/pipeline?limit=2000')]);
         pipeline = pl;
         await currentVerdicts(audit);
-        run = S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, audit, calls: usage.calls_detail || [], pipeline, verdicts});
-    } catch (e) { run = S.run = null; }
+        read = {audit, calls: usage.calls_detail || []};
+        rebuild();
+    } catch (e) { run = S.run = null; read = null; }
     paint();
 });
+let read = null;                                 // what the deck last read: the display clock rebuilds from it, reading nothing
+const rebuild = () => { run = S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read, pipeline, verdicts}); };
+// A DISPLAY CLOCK, not a poll: while something runs, the ages it shows ("validating · 2m") and the open bars grow
+// with time and with nothing pushed — a session busy with tools streams no tokens. Minutes are the coarsest unit
+// shown, so 30 s keeps every figure within half its own step; no server read.
+const retime = () => { if (read && (procs().length || run?.sessions?.some(s => s.open))) { rebuild(); paint(); } };
 
 // Each node's CURRENT verdict per criterion — the log keeps only what a FAIL named, and an undecidable
 // criterion is ⊥, not pass. Re-read only for a node whose verdicts changed since the last read.
@@ -150,5 +157,6 @@ export function mountDeck() {
     let w = 0;
     new ResizeObserver(([e]) => { if (Math.abs(e.contentRect.width - w) > 4) { w = e.contentRect.width; if (run) paint(); } }).observe(d);
     setInterval(() => { for (const [k, v] of ticks) if (v.t < Date.now() - 12e3) ticks.delete(k); }, 5e3);
-    setInterval(refreshDeck, 30e3);                     // the ledger is written when a call ends: re-read it now and then
+    // no data clock: a call booked in the ledger arrives as the engine's `usage` line, which re-reads the deck
+    setInterval(retime, 30e3);
 }

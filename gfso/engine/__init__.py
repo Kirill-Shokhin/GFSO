@@ -765,6 +765,10 @@ class Engine:
             except Exception as e:
                 log.warning(f"usage record could not be marked as counted ({e}) — the next drain may count it again")
             n += 1
+        # told to live observers the moment it is booked (not persisted: the ledger itself is the record), so an open
+        # page re-reads its spend when there is something new rather than on a clock of its own
+        if n:
+            self._events.emit_info("usage", f"{n} call(s) booked")
         return n
 
     def usage_calls(self, limit: int = USAGE_PAGE) -> list:

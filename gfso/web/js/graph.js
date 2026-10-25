@@ -128,6 +128,24 @@ export async function initGraph() {
     const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, 450); };
     cy.on('dbltap', 'node', evt => framing(subtree(evt.target)));
     cy.on('dbltap', evt => { if (evt.target === cy) framing(cy.elements()); });
+    // A node under the strip the panel opens over: the first click opens the panel there and the second lands on it,
+    // so the canvas never saw a double-click — and the click could press a button of the panel (critics 7, 9). A press
+    // on the panel within the double-click's time, where that node was pressed, is the node's second click. Delaying
+    // the selection instead lost clicks and blinked the outline (refuted, 97cfd80).
+    // The same when the first click's panel made the canvas pan the node into sight: the second click then met the
+    // background, which unselected the node and framed the whole graph.
+    let last = null, swallow = false;
+    const moved = () => { const p = last.n.renderedPosition(); return Math.hypot(p.x - last.p.x, p.y - last.p.y) > 4; };
+    cy.on('tap', 'node', evt => { const o = evt.originalEvent, p = evt.target.renderedPosition();
+        last = o && {n: evt.target, x: o.clientX, y: o.clientY, t: Date.now(), p: {x: p.x, y: p.y}}; });
+    addEventListener('pointerdown', e => {
+        const hit = last && Date.now() - last.t < DBL && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 8
+            && (e.target.closest?.('#sidebar') || (e.target.closest?.('#cy') && moved()));
+        if (!hit) return;
+        e.preventDefault(); e.stopPropagation(); framing(subtree(last.n)); last = null;
+        swallow = true; setTimeout(() => { swallow = false; }, DBL);   // its own click only, never a later one
+    }, true);
+    addEventListener('click', e => { if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); } }, true);
 }
 
 // A node and everything under it along D, read off the tasks' parents — never Dep (a leaf framed half the graph by its

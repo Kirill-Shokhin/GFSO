@@ -1,33 +1,46 @@
-// Progress by criteria, one track per tree level on the run's clock, and the goal's own coverage.
-// A part's PASS is its issuer's signature at that seam; the root's PASS is the goal delivered — so
-// each level is its own count ("k of N criteria passing at their latest verdict"), never one curve,
-// and the root's verdicts cross every track as the milestones they are. Counts, not percentages:
-// a share is not a verdict (canon §7.4).
+// Progress by criteria along the split: the goal's own criteria, then one track per part with ITS own criteria, and a
+// part unfolds into its parts. Each track counts one node's criteria passing at its own verdicts — a part's PASS is its
+// issuer's signature at that seam, the root's PASS the goal delivered — never a sum across a level, which added parts
+// of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
 import {esc, hint} from './dom.js';
 import {bindFocus} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, mark, glyph, trim} from './draw.js';
-import {levelName} from './run.js';
-// a track counts CRITERIA passing, not nodes: "its parts 3 of 31" read as parts (critic)
-const criteriaOf = d => +d === 0 ? "the goal's criteria" : +d === 1 ? "its parts' criteria" : `criteria, level ${d}`;
 
-const LEFT = 140, TRACK = 54, GAP = 14, TOP = 22;
+const LEFT = 220, GOAL = 54, PART = 30, GAP = 12, TOP = 22, INDENT = 12;
+const unfolded = new Set();                      // parts the reader opened; the goal is always open
 
-function tracks(el, run, name) {
-    const ls = Object.entries(run.criteria.levels).filter(([, L]) => L.total).sort(([a], [b]) => a - b);
-    const W = Math.max(el.clientWidth, 480), H = TOP + ls.length * (TRACK + GAP) + 6, f = frame(run, W, LEFT);
-    const goal = run.criteria.levels[0]?.marks.filter(m => m.signal === 'PASS') || [];
-    const body = ls.map(([d, L], i) => {
-        const y0 = TOP + i * (TRACK + GAP) + TRACK, y = k => y0 - (k / L.total) * TRACK, last = L.steps.at(-1)?.[1] ?? 0;
-        return `<g class="pg-track">
-            <text class="pg-level" x="${LEFT - 10}" y="${y0 - TRACK + 10}">${criteriaOf(d)}</text>
-            <text class="pg-count" x="${LEFT - 10}" y="${y0 - TRACK + 28}">${last}<tspan> of ${L.total}</tspan></text>
+// the rows in tree order: the goal, its parts, and the parts of every part the reader unfolded
+function rows(tasks, track) {
+    const kids = {}, out = [];
+    for (const t of tasks) if (t.parent_id) (kids[t.parent_id] ??= []).push(t.id);
+    const walk = (id, d) => {
+        if (track[id]?.total) out.push({id, d, kids: (kids[id] || []).length});
+        if (d === 0 || unfolded.has(id)) for (const k of kids[id] || []) walk(k, d + 1);
+    };
+    for (const t of tasks) if (!t.parent_id) walk(t.id, 0);
+    return out;
+}
+
+function tracks(el, run, name, tasks) {
+    const tr = run.criteria.track, rs = rows(tasks, tr), h = r => r.d ? PART : GOAL;
+    const W = Math.max(el.clientWidth, 480), f = frame(run, W, LEFT);
+    let y = TOP;
+    const body = rs.map(r => {
+        const T = tr[r.id], y0 = (y += h(r)), top = y0 - h(r), at = k => y0 - (k / T.total) * h(r), last = T.steps.at(-1)?.[1] ?? 0;
+        y += GAP;
+        const lx = 8 + Math.max(r.d - 1, 0) * INDENT;
+        const caret = r.kids && r.d ? `<tspan class="pg-caret">${unfolded.has(r.id) ? '▾' : '▸'} </tspan>` : '';
+        return `<g class="pg-track${r.d ? ' pg-part' : ''}" data-row="${esc(r.id)}">
+            <text class="pg-level" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}>${caret}${esc(trim(r.d ? name(r.id) : "the goal's criteria", 34 - Math.max(r.d - 1, 0) * 2))}</text>
+            <text class="pg-count" x="${LEFT - 10}" y="${top + (r.d ? 24 : 28)}">${last}<tspan> of ${T.total}</tspan></text>
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
-            <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${y(L.total)}" y2="${y(L.total)}"/>
-            <path class="pg-area" d="${f.area(L.steps, y0, TRACK, L.total)}"/>
-            ${L.marks.map((m, j) => `<g data-node="${esc(m.node)}" data-m="${d}:${j}">${mark(m.signal, f.X(m.t), y(m.k), +d ? 3.5 : 5)}</g>`).join('')}</g>`;
+            <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>
+            <path class="pg-area" d="${f.area(T.steps, y0, h(r), T.total)}"/>
+            ${T.marks.map((m, j) => `<g data-node="${esc(m.node)}" data-m="${esc(r.id)}:${j}">${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
     }).join('');
-    const miles = goal.map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>
+    const H = y + 6, root = rs.find(r => !r.d);
+    const miles = (root ? tr[root.id].marks : []).filter(m => m.signal === 'PASS').map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>
         <text x="${f.X(m.t) - 4}" y="${TOP - 10}">goal delivered ${hm(m.t)}</text></g>`).join('');
     return `<svg class="pg" width="${W}" height="${H}">${f.ticks(TOP - 6, H)}${f.folds(TOP - 6, H, H)}${miles}${body}</svg>`;
 }
@@ -53,16 +66,19 @@ function coverage(run, nodes, tasks) {
 export function render(el, run, nodes, tasks) {
     const name = run.name;
     el.innerHTML = `<div class="pg-wrap"><div class="pg-tracks"></div><div class="pg-side">${coverage(run, nodes, tasks)}</div></div>`;
-    const tr = el.querySelector('.pg-tracks');
-    tr.innerHTML = tracks(tr, run, name);
+    const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks); };
+    paint();
+    // a part's name unfolds it into its own parts, and folds it again
+    tr.onclick = e => { const id = e.target.closest('[data-unfold]')?.dataset.unfold;
+        if (id) { unfolded.has(id) ? unfolded.delete(id) : unfolded.add(id); paint(); } };
     bindFocus(el, e => {
         const g = e.target.closest('[data-m]');
         if (!g) return untip();
-        const [d, j] = g.dataset.m.split(':'), m = run.criteria.levels[d].marks[j], L = run.criteria.levels[d];
+        const i = g.dataset.m.lastIndexOf(':'), id = g.dataset.m.slice(0, i), L = run.criteria.track[id], m = L.marks[+g.dataset.m.slice(i + 1)];
         const r = (run.rounds[m.node] || []).find(r => r.at === m.t);
         tip(`<div class="tt-name">${esc(name(m.node))}</div>
             <div class="tt-row">${m.signal}${r ? ` · round ${r.n}` : ''} · ${hm(m.t)}</div>
             ${m.failed.length ? `<div class="tt-row">failed: ${esc(m.failed.join(', '))}</div>` : ''}
-            <div class="tt-row">${levelName(d)}: ${m.k} of ${L.total} criteria passing after it</div>`, e);
+            <div class="tt-row">${m.k} of ${L.total} of its own criteria passing after it</div>`, e);
     }, untip);
 }

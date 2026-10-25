@@ -43,7 +43,7 @@ from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
 from gfso.engine import Engine
 from gfso import tools_llm as _tools
 from gfso.tools import task_out
-from gfso.inflight import in_flight  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
+from gfso.inflight import in_flight, LISTENERS as INFLIGHT_LISTENERS  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
 
 from .models import (
     CheckResultOut,
@@ -619,14 +619,15 @@ def _mount_events(app) -> None:
         the same tab scope the HTTP calls carry — the middleware covers HTTP only, so it is read
         here by hand): `transition` for an accepted signal, `reject` for a refused one,
         `pipeline` for what a running verb reports. The callbacks are unregistered on disconnect,
-        so a dropped tab leaves nothing subscribed."""
-        await websocket.accept()
+        so a dropped tab leaves nothing subscribed. Accepted only once subscribed: a page reads what is in flight
+        when its socket opens, and a start or end between that and the subscription reached it from neither."""
         # the tab's project rides the WS url too (middleware covers HTTP only) — and, like every read,
         # names an EXISTING project: opening a page on a mistyped name created that project (2026-10-24)
         proj = websocket.query_params.get("project") or None
         try:
             eng: Engine = app.state.registry.engine(proj, create=False) if app.state.registry else app.state.engine
         except (KeyError, ValueError):
+            await websocket.accept()
             await websocket.close(code=4404)
             return
         loop = asyncio.get_event_loop()
@@ -658,10 +659,17 @@ def _mount_events(app) -> None:
                 "type": "pipeline", "source": source, "msg": message,
             })
 
+        def on_inflight(now):
+            """A process of this server started or ended: the whole list after it, every project's (the page keeps
+            its own and marks the busy ones in its project list) — it had polled `/api/runtime` every 5 s for this."""
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "inflight", "in_flight": now})
+
         eng.on_transition(on_transition)
         eng.on_reject(on_reject)
         eng.on_info(on_info)
+        INFLIGHT_LISTENERS.append(on_inflight)
         try:
+            await websocket.accept()
             while True:
                 event = await q.get()
                 await websocket.send_json(event)
@@ -669,12 +677,10 @@ def _mount_events(app) -> None:
             pass
         finally:
             app.state.ws_clients.discard(q)
-            if on_transition in eng._events._on_transition:
-                eng._events._on_transition.remove(on_transition)
-            if on_reject in eng._events._on_reject:
-                eng._events._on_reject.remove(on_reject)
-            if on_info in eng._events._on_info:
-                eng._events._on_info.remove(on_info)
+            for subs, cb in ((INFLIGHT_LISTENERS, on_inflight), (eng._events._on_transition, on_transition),
+                             (eng._events._on_reject, on_reject), (eng._events._on_info, on_info)):
+                if cb in subs:
+                    subs.remove(cb)
 
 def _mount_projects(app, _e) -> None:
     """Which graph a caller stands in: list, switch, delete.

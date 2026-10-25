@@ -192,21 +192,23 @@ function work(calls) {
 // ⊥, not pass. A Dep's carriage criterion (`dep__…`) is the system's, not the plan's, and is left out.
 const own = c => !String(c).startsWith('dep__');
 const V = {pass: 'pass', fail: 'fail'};
-function criteria(audit, tasks, depth, verdicts) {
+function criteria(audit, tasks, verdicts) {
     const names = Object.fromEntries(tasks.map(t => [t.id, (t.criteria || []).map(c => c.name || c).filter(own)]));
-    const status = {}, levels = {}, verdictRows = audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL') && names[a.task_id]);
+    // one track per NODE, its own criteria at its own verdicts: a count across a level summed parts of unrelated
+    // parents, one closed beside one not begun (author, 2026-10-25: «два внука от разного родителя … что отобразится»)
+    const status = {}, verdictRows = audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL') && names[a.task_id]);
     const last = Object.fromEntries(verdictRows.map(a => [a.task_id, a]));
-    for (const t of tasks) (levels[depth[t.id] ?? 0] ??= {total: 0, steps: [], marks: []}).total += names[t.id].length;
+    const track = Object.fromEntries(tasks.map(t => [t.id, {total: names[t.id].length, steps: [], marks: []}]));
     for (const a of verdictRows) {
-        const failed = new Set((a.failed_criteria || []).filter(own)), d = depth[a.task_id] ?? 0, L = levels[d];
+        const failed = new Set((a.failed_criteria || []).filter(own)), T = track[a.task_id];
         const per = last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal
             && Object.fromEntries((verdicts[a.task_id].per_criterion || []).map(c => [c.criterion, V[c.verdict] || '⊥']));
         status[a.task_id] = Object.fromEntries(names[a.task_id].map(c => [c, per ? per[c] || '⊥' : a.signal === 'FAIL' && failed.has(c) ? 'fail' : 'pass']));
-        const k = sum(tasks.filter(t => (depth[t.id] ?? 0) === d), t => Object.values(status[t.id] || {}).filter(v => v === 'pass').length);
-        L.steps.push([a.t, k]);
-        L.marks.push({t: a.t, node: a.task_id, signal: a.signal, failed: [...failed], k});
+        const k = Object.values(status[a.task_id]).filter(v => v === 'pass').length;
+        T.steps.push([a.t, k]);
+        T.marks.push({t: a.t, node: a.task_id, signal: a.signal, failed: [...failed], k});
     }
-    return {levels, status, names};
+    return {track, status, names};
 }
 
 export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, now = Date.now()}) {
@@ -218,7 +220,7 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
         sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges),
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
-        criteria: criteria(audit, tasks, depth, verdicts), work: work(calls),
+        criteria: criteria(audit, tasks, verdicts), work: work(calls),
         cost: {total: sum(ss, s => s.cost), tokens: sum(ss, s => s.tokens), busy: sum(ss, s => s.end - s.start),
                unpriced: ss.filter(s => !s.priced).length,
                byKind: rollup(ss, () => 'all').all || {}, byNode: rollup(ss, s => s.node), byDepth: rollup(ss, s => depth[s.node] ?? 0), byAgent: rollup(ss, s => s.agent || '—')},

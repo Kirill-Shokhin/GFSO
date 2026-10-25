@@ -229,7 +229,10 @@ body {
 .tl .tl-open { animation: tl-pulse 1.6s ease-in-out infinite; }
 @keyframes tl-pulse { 50% { opacity: .45; } }
 /* The brand's bordeaux marks the real done — a PASS; a FAIL speaks by its shape, in ink. */
-.mk-pass { fill: var(--acc); }   /* no halo: a ring in the background colour showed only where it cut what lay under it */
+/* The accent dot is kept for work running NOW (pulsing) and the one goal delivered. A verdict mark is a figure, not a
+   call on the reader: a FAIL sends its node back to rework by itself (a person is called by ESCALATED or BLOCKED, which
+   the header names) — so both marks are quiet, told apart by shape. Dozens of accent PASS dots had drowned the live one. */
+.mk-pass { fill: var(--ink-soft); }   /* no halo: a ring in the background colour showed only where it cut what lay under it */
 .mk-fail { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; fill: none; }
 .tl .tl-conc { fill: none; stroke: var(--ink-soft); stroke-width: 1.4; }
 .tl .tl-base { stroke: var(--hair); }
@@ -247,8 +250,13 @@ body {
 .pg-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: start; }
 .pg { display: block; font-family: var(--font-mono); }
 .pg text { font-size: 10px; fill: var(--ink-soft); }
-.pg .pg-level { text-anchor: end; text-transform: uppercase; letter-spacing: var(--tr-mono); font-size: 9px; fill: var(--ink-faint); }
+.pg .pg-level { text-anchor: start; text-transform: uppercase; letter-spacing: var(--tr-mono); font-size: 9px; fill: var(--ink-faint); }
 .pg .pg-count { text-anchor: end; font-family: var(--font-display); font-size: 18px; font-weight: 650; fill: var(--ink); }
+.pg .pg-part .pg-level { text-transform: none; letter-spacing: 0; font-size: 10px; fill: var(--ink-soft); }
+.pg .pg-part [data-unfold] { cursor: pointer; }
+.pg .pg-caret { font-family: var(--font-display); font-size: 12px; fill: var(--ink-soft); }
+.pg .pg-part [data-unfold]:hover { fill: var(--ink); }
+.pg .pg-part .pg-count { font-size: 12px; }
 .pg .pg-count tspan { font-family: var(--font-mono); font-size: 10px; font-weight: 400; fill: var(--ink-soft); }
 .pg .pg-base { stroke: var(--hair); }
 .pg .pg-full { stroke: var(--hair); stroke-dasharray: 2 3; }
