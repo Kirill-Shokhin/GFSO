@@ -58,7 +58,8 @@ export async function initGraph() {
                 'font-size': '11px', 'font-weight': '500',
                 'width': 'label', 'height': 30, 'padding': '8px',
                 'shape': 'round-rectangle', 'text-wrap': 'wrap', 'text-max-width': '140px'}},
-            {selector: 'node:selected', style: {'border-width': 2, 'border-color': INK, 'border-style': 'solid'}},
+            // the choice is an OUTLINE: a border moved the arrows' ends, and in ink it vanished on a dark node (author, 2026-10-25)
+            {selector: 'node:selected', style: {'outline-width': 2, 'outline-color': ACC, 'outline-offset': 3}},
             {selector: 'edge', style: {
                 'width': 1, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
                 'line-color': inkAlpha(0.30), 'target-arrow-color': inkAlpha(0.30), 'arrow-scale': 0.7}},
@@ -176,7 +177,8 @@ function placeBadges() {
         if (!work.has(id) && rs.length < 2) return '';
         const b = n.renderedBoundingBox(BODY);
         return `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
-            + (work.has(id) ? `<i class="cy-live${proc.has(id) ? ' on' : ''}"></i>` : '')
+            // the pulse keeps the page's one clock: a badge redrawn on every render restarted it mid-beat
+            + (work.has(id) ? `<i class="cy-live${proc.has(id) ? ' on' : ''}" style="animation-delay:-${Date.now() % 1600}ms"></i>` : '')
             + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''} title="${roundsLine(rs)}">${rs.length}</span>` : '') + '</div>';
     }).join('');
 }

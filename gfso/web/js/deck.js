@@ -48,13 +48,13 @@ function strip() {
         const w = mine.find(w => w.task_id === t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : carrier(t, mine);
         const what = w ? DOING[w.verb] || w.verb.replace(/_/g, ' ')
             : t.state === 'VALIDATING' ? 'validating' : t.state === 'REWORKING' ? 'reworking' : 'executing';
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : by ? `carried by the session on ${top.name || top.id} (${by.verb})` : 'in a working state; no process of this server runs it'))}"><i></i>${esc(name(t))}`
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : by ? `carried by the session on ${top.name || top.id} (${by.verb})` : 'in a working state; no process of this server runs it'))}"><i style="animation-delay:-${Date.now() % 1600}ms"></i>${esc(name(t))}`
             + `<span>${what}${w ? ' · ' + dur((now - w.since) * 1e3) : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
     for (const w of mine.filter(w => !w.task_id || !drawn.has(w.task_id)))
-        live.push(`<span class="dk-live on" title="${hint('The goal', `${w.verb} — a session running on this server`)}"><i></i>the goal`
+        live.push(`<span class="dk-live on" title="${hint('The goal', `${w.verb} — a session running on this server`)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i>the goal`
             + `<span>${DOING[w.verb] || w.verb.replace(/_/g, ' ')} · ${dur((now - w.since) * 1e3)}</span></span>`);
     // at most three chips, the rest counted: what waits and what it cost must stay on the line however much runs
     const more = live.length > 3 ? `<span class="dk-more" title="${hint(`${live.length - 3} more at work`, busy.slice(3).map(name))}">+${live.length - 3}</span>` : '';
@@ -64,7 +64,7 @@ function strip() {
     const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
         ? `<span class="dk-now dk-idle" title="Stopped&#10;nothing runs here until the run is started again&#10;these nodes keep the state their work was in">stopped · ${live.length} held mid-work</span>`
-          + `<span class="dk-chips">${busy.slice(0, 3).map(t => `<button class="dk-live" data-node="${esc(t.id)}"><i></i>${esc(name(t))}<span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
+          + `<span class="dk-chips">${busy.slice(0, 3).map(t => `<button class="dk-live" data-node="${esc(t.id)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i>${esc(name(t))}<span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
         : live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
         : '<span class="dk-now dk-idle">nothing at work</span>';
     // …and what waits on what is said whether the run runs or is held
