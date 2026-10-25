@@ -516,7 +516,9 @@ def materialize_inputs(criteria: Iterable[Criteria], base: str | Path) -> dict[s
                 # pinned files were stored so, 2026-10-22) — laid down where the command reads it
                 f = d / PurePosixPath(input_name(path))
                 f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(body, encoding="utf-8")
+                # byte for byte: a text-mode write on Windows made every newline a CRLF, and a check's `diff` against its
+                # expected file failed for every program inside a Linux execution (gb-sql-database-tngdkx244)
+                f.write_text(body, encoding="utf-8", newline="")
             dirs[pid] = d
     return dirs
 

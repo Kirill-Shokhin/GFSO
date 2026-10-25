@@ -64,6 +64,14 @@ def test_the_corpus_is_laid_down_by_the_system_where_the_validator_looks(tmp_pat
     assert tmp_path in d.parents
 
 
+def test_a_pinned_input_is_laid_down_byte_for_byte(tmp_path):
+    """An expected file written in text mode on Windows came out CRLF, and `diff - lex.out` failed for every lexer inside
+    the project's Linux execution (gb-sql-database-tngdkx244 root.lexer, root.storage)."""
+    crit = [Criteria("c", "prints", check=(_probe(**{"lex.out": "a\nb\n", "crlf.txt": "x\r\ny\r\n"}),))]
+    (d,) = materialize_inputs(crit, tmp_path).values()
+    assert (d / "lex.out").read_bytes() == b"a\nb\n" and (d / "crlf.txt").read_bytes() == b"x\r\ny\r\n"
+
+
 def test_an_input_that_would_land_outside_its_directory_is_refused_at_admission(tmp_path):
     """At ADMISSION — through the door, not only in the helper: a corpus that cannot be laid down
     as pinned would be laid down in part, and a command over a strict subset of the pinned set is

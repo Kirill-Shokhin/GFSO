@@ -236,7 +236,7 @@ def capped(lines: list, what: str, key: str) -> str:
     if len(lines) > SHOWN_FINDINGS:
         path = Path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(f"- {x}\n" for x in lines), encoding="utf-8")
+        path.write_text("".join(f"- {x}\n" for x in lines), encoding="utf-8", newline="")
         text += (f"\n  … and {len(lines) - SHOWN_FINDINGS} more {what} — all {len(lines)}, one per line with its id, in "
                  f"{path.as_posix()}: grep it for what you need, do not read it whole")
     return text
