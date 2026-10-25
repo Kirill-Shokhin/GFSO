@@ -84,10 +84,7 @@ export async function initGraph() {
     // The page follows the canvas's OWN selection, not its `tap`: a press that moves a few pixels is no tap, yet
     // cytoscape selects the node — the border showed, the panel stayed, and the next redraw took the border back
     // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
-    // …and the panel a click opens waits out a possible second click: opened at once over the canvas's right side, it
-    // took the second click of a double-click on a node there (critic, 5 of 5)
-    let pick;
-    cy.on('select', 'node', evt => { clearTimeout(pick); pick = setTimeout(() => point('select', evt.target.id()), DBL); });
+    cy.on('select', 'node', evt => point('select', evt.target.id()));
     cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;

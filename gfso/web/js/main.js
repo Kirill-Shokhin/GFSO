@@ -53,6 +53,8 @@ const ACT = {
     'submit-edit': author.submitEdit, 'add-child': author.addChildForm, 'submit-decompose': author.submitDecompose,
     'child-suggest': author.suggestChildCriteria, 'child-criterion': author.addChildCriterion, 'child-risk': author.addChildAcceptedRisk,
 };
+// Esc closes an open popover too, as it closes the panels
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.hd-quality.open').forEach(p => p.classList.remove('open')); });
 document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]'), mine = e.target.closest('.hd-quality');
     // one popover at a time: a click anywhere else, or on a link inside one, closes the open ones
