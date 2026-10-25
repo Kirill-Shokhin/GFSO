@@ -20,7 +20,7 @@ from gfso.engine.validation import users_criteria
 from gfso.inflight import in_flight
 from tests.support import criterion
 from tests.test_delegate import _agents
-from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid
+from tests.test_the_mode_decides_who_holds_what import _FakeLLM, _admit, _engine, _kid
 
 
 def _users_part():
@@ -100,4 +100,23 @@ def test_a_stop_the_system_sets_names_the_users_way_out(monkeypatch):
     I.settle(e, None, TaskId("root"), "repair", "exec-1", verbs=None)
     why = e.paused()["why"]
     assert "auto_decompose" in why and "set_mode" in why and "start_project" in why, why
+    e.stop()
+
+
+def test_an_accepted_dispute_does_not_re_pin_a_check_of_the_users_part():
+    """Below the root of the user's plan an accepted dispute may only add: re-pinned to what a build printed, a part's
+    expected output contradicted the root's and the root failed on it to the ceiling (GB_sql_database_tne9fg736 09:30)."""
+    e, part = _users_part()
+    e.give_users_plan("root")
+    ex = str(part.assignee)
+    T.signal(e, "root.part", "ACCEPT", ex)
+    T.signal(e, "root.part", "CHALLENGE", ex, reason="criterion k: its check expects the wrong output")
+    e.wait_idle()
+    (p,) = e.graph.get_task(TaskId("root.part")).spec.criteria[0].check
+    llm = _FakeLLM({"decision": "accept", "justification": "the build prints 1", "criteria": [
+        {"name": "k", "description": "K holds", "check": [{"behaviour": p.behaviour, "command": p.command,
+                                                           "expect": "what the build printed"}]}]})
+    out = I.answer_the_challenge(e, TaskId("root.part"), str(e.graph.issuer_of(TaskId("root.part"))), _llm=llm)
+    assert out["status"] != "accepted", out
+    assert e.graph.get_task(TaskId("root.part")).spec.criteria[0].check[0].expect == p.expect
     e.stop()
