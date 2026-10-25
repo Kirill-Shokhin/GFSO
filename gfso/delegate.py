@@ -12,6 +12,7 @@ never spawn (kind-guard). Identity/authority stays canon-exact: Del binds at del
 executor's own report IS its Inv-1 consent, no second timeout clock (the FSM monitor owns time)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -87,7 +88,17 @@ def _contact_place(engine, agents, node) -> "str | None":
     return where if where and provider() != "generic" and cheap_to_ask(where) and Path(where).is_dir() else None
 
 
-ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=T.review_decomposition,
+def _in_flight_as(name: str, fn):
+    """`fn(engine, node, …)` in flight for every reader while it runs (`gfso.inflight`), as each session the system
+    starts is — the plan review an issuer's turn runs was not, and a stop read `stopped` over it (critic over f622997)."""
+    def run(engine, node, *a, **kw):
+        """`fn` on `node`, registered while it runs."""
+        with _inflight(name, engine, node):
+            return fn(engine, node, *a, **kw)
+    return run
+
+
+ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=_in_flight_as("review_decomposition", T.review_decomposition),
                      # the split is its node's EXECUTOR's move: authored by him, it re-authors no contract (Inv-1)
                      refine=lambda engine, node: T.SYSTEM_TOOLS["auto_decompose"](
                          engine, root_id=node, depth=1, author=str(engine.graph.get_task(node).assignee)),
@@ -220,10 +231,12 @@ def _auto_validate_scope(engine, top_id: TaskId, agents: AgentRegistry, _llm=Non
     verdicts, out = _standing_verdicts(engine, top_id), {}
     if (missing := {str(t.id) for t in engine.scope_members(top_id) if t.state.name == "VALIDATING"} - set(verdicts)):
         vcfg = agents.get(validator_id) or {}
-        out = T.validate_scope(engine, str(top_id),
-                               validator_workdir(engine, agents, top_id, named_validator=str(validator_id), vcfg=vcfg),
-                               validator=str(validator_id), model=vcfg.get("model", MODEL_DEFAULT), _llm=_llm,
-                               only=missing)
+        # …in flight for every reader while it runs, as each session the system starts is: a stop read `stopped` over it
+        with _inflight("validate_scope", engine, top_id):
+            out = T.validate_scope(engine, str(top_id),
+                                   validator_workdir(engine, agents, top_id, named_validator=str(validator_id), vcfg=vcfg),
+                                   validator=str(validator_id), model=vcfg.get("model", MODEL_DEFAULT), _llm=_llm,
+                                   only=missing)
         if out.get("inflight"):
             return "rejected"
         verdicts = {**verdicts, **(out.get("verdicts") or {})}
@@ -837,6 +850,22 @@ class Dispatcher:
                                                 f"that opens it: {owed['opens_with']}.")
         return owed is not None
 
+    def _key_of(self, task_id: TaskId, prefix: str = "") -> str:
+        """The round key of the node by its id — none where the node is gone."""
+        t = self._engine.graph.get_task(task_id)
+        return self._round_key(t, prefix) if t is not None else ""
+
+    @contextlib.contextmanager
+    def _slot(self, lane, key: str):
+        """`lane`'s slot for the session claimed under `key`, yielding whether it may start: not where the run was
+        stopped while it waited — its claim is freed so the start dispatches it again, and the body starts nothing.
+        Checked only before the wait, a queued session started and signed after `stopped` was read (critic over
+        f622997)."""
+        with lane:
+            if stopped := self._engine.paused() is not None:
+                self._seen.discard(key)
+            yield not stopped
+
     def _claim(self, key: str) -> bool:
         """Claim a round for a node ONCE: True to the first caller, False to everyone after.
 
@@ -1198,8 +1227,9 @@ class Dispatcher:
         ids = [str(m.id) for m in self._engine.scope_members(top_id)]
         self._running.update(ids)
         try:
-            with self._cap.opening:
-                self._scope_body(top_id, executor_id, key)
+            with self._slot(self._cap.opening, key) as go:
+                if go:
+                    self._scope_body(top_id, executor_id, key)
         finally:
             self._running.difference_update(ids)
 
@@ -1248,7 +1278,9 @@ class Dispatcher:
 
     def _validate_scope_body(self, top_id: TaskId, key: str, vkey: str, sign: bool) -> None:
         """The scope's validation round under the cap (`_validate_scope_guarded`)."""
-        with self._cap.closing:
+        with self._slot(self._cap.closing, vkey) as go:
+            if not go:
+                return
             if self._scope_key(self._engine.scope_members(top_id)) != key:
                 return
             self._engine.parking.unpark_validation(top_id)   # a fresh attempt un-parks it
@@ -1427,7 +1459,9 @@ class Dispatcher:
     def _consent_guarded(self, task_id: TaskId, executor_id: str) -> None:
         """A consent round under the concurrency cap; one that signals nothing is retried once and then
         parked for the issuer, like any executor round that leaves the node where it stood."""
-        with self._cap.opening:
+        with self._slot(self._cap.opening, self._key_of(task_id, "consent")) as go:
+            if not go:
+                return
             try:
                 out = self._consent(self._engine, task_id, executor_id, self._agents)
             except Exception as e:                      # noqa: BLE001 — a failed round is not a signal
@@ -1457,8 +1491,8 @@ class Dispatcher:
             self._running.discard(str(task_id))
 
     def _run_guarded_body(self, task_id: TaskId, executor_id: str, expect_gen: tuple) -> None:
-        with self._cap.opening:
-            if not self._fresh(task_id, expect_gen, self._EXECUTOR_STATES, executor_id):
+        with self._slot(self._cap.opening, self._key_of(task_id)) as go:
+            if not go or not self._fresh(task_id, expect_gen, self._EXECUTOR_STATES, executor_id):
                 return
             # ACCEPT FIXES THE START OF THE OBLIGATION (§11.2) — so it is sent when the work
             # STARTS, not when the report comes back. Wrapping the finished report into
@@ -1599,9 +1633,9 @@ class Dispatcher:
 
     def _validate_guarded(self, task_id: TaskId, expect_gen: tuple = (0, 0, 0),
                           sign: bool = True) -> None:
-        with self._cap.closing:
+        with self._slot(self._cap.closing, self._key_of(task_id, "v:")) as go:
             _t0 = self._engine.graph.get_task(task_id)
-            if not self._fresh(task_id, expect_gen, ("VALIDATING",)):
+            if not go or not self._fresh(task_id, expect_gen, ("VALIDATING",)):
                 if _t0 is not None:
                     self._seen.discard(self._round_key(_t0, "v:"))
                 return

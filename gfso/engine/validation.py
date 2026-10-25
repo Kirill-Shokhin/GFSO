@@ -26,7 +26,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (PAUSE_KEY, admission_key, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (PAUSE_KEY, USERS_PLAN_KEY, admission_key, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer)
 
 
@@ -917,6 +917,22 @@ def is_auto_root(graph: Graph, task) -> bool:
     on it the system's on the user's behalf? One predicate for every rule that keeps that goal from being argued away:
     the machine issuer's dispute of a review finding, its answer to a challenge, a ruling retiring a finding."""
     return task is not None and task.parent_id is None and mode_kind(graph) == Mode.AUTO
+
+
+def users_plan(graph: Graph) -> bool:
+    """Is this project's plan the user's — handed in whole (`auto_decompose` with `spec`) and run under AUTO? Then it is
+    theirs as the root's criteria are: the system does not re-split it, nor rewrite any of its nodes' criteria — a weak
+    model re-splitting a given plan turned the "plan given" condition into its own plan (2, 9 and 16 nodes added on the
+    sql × haiku 4.5 rows of Amendment 2; none on coreutils), and an accepted dispute re-pinned a part's expected output
+    to what the build printed (GB_sql_database_tne9fg736, 09:30)."""
+    return mode_kind(graph) == Mode.AUTO and bool(graph._storage.get_setting(USERS_PLAN_KEY))
+
+
+def users_criteria(graph: Graph, task) -> bool:
+    """Are this node's criteria the user's, so that the system moving for them may only ADD to them — an AUTO root's
+    goal, and every node of a plan the user handed in (`users_plan`)? The one predicate every door that rewrites a
+    contract on the system's side reads."""
+    return is_auto_root(graph, task) or (task is not None and users_plan(graph))
 
 
 def ruling_refusal(signal_data: SignalData, graph: Graph, audit=None) -> Optional[str]:

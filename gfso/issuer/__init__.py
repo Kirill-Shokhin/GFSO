@@ -48,7 +48,7 @@ from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, Register
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
-from gfso.engine.validation import is_auto_root, party_kind
+from gfso.engine.validation import is_auto_root, party_kind, users_criteria, users_plan
 from gfso.packets import answered_challenges, answers_given, capped, list_key
 from gfso.engine.events import emit_cb
 from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
@@ -825,7 +825,7 @@ def _changes_what_failed(task, spec, to, budget) -> bool:
 
 
 def _reassign(engine, task, actor, answer, why, verbs):
-    spec = spec_with(task, answer["criteria"], additions_only=is_auto_root(engine.graph, task)) \
+    spec = spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task)) \
         if answer.get("criteria") else task.spec
     if bad := narrowing_at_the_root(engine, task, spec):
         return False, bad
@@ -1355,6 +1355,9 @@ def moves_for(engine, task, question: str) -> tuple:
         moves = tuple(m for m in moves if m != "drop_dependency")
     if "cancel" in moves and is_auto_root(engine.graph, task):
         moves = tuple(m for m in moves if m != "cancel")
+    # …nor `promote` into a plan the user handed in: a node it adds is a split the user did not make
+    if "promote" in moves and users_plan(engine.graph):
+        moves = tuple(m for m in moves if m != "promote")
     return moves
 
 
@@ -1505,8 +1508,11 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         # that only said the findings could not be met, until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16)
         return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(asked))}
     try:
-        spec = (spec_with(task, answer["criteria"], additions_only=is_auto_root(engine.graph, task),
-                          repin=questioned(engine, task)) if answer.get("criteria") else task.spec)
+        # …below an AUTO root, a node of the user's plan takes additions only — no re-pin: its expected outputs are the
+        # user's, and one re-pinned to what the build printed contradicted the root's own (GB_sql_database_tne9fg736)
+        spec = (spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task),
+                          repin=questioned(engine, task) if is_auto_root(engine.graph, task) else frozenset())
+                if answer.get("criteria") else task.spec)
     except Exception as e:                              # noqa: BLE001 — a malformed contract is refused
         return {"task_id": str(task_id), "status": "refused", "why": f"the corrected contract is malformed: {e}"}
     # an acceptance that changes no criterion as it will stand and retires no standing finding answers nothing:
@@ -1719,7 +1725,9 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
     # than a session, and only its author re-plans it — the run stops, its sessions finishing, its record whole
     if question in SPLIT_QUESTIONS and engine.users_plan():
         why = (f"the plan the user gave is refuted at {task_id} ({question}: "
-               f"{engine.decomposition_refuted(task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans it")
+               f"{engine.decomposition_refuted(task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
+               f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec` on a new project), or `set_mode` "
+               f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
         if not engine.paused():
             engine.pause("system", why)
         return {"status": "users", "why": why}
@@ -1796,7 +1804,8 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
             out = {"status": "error"}
             with cap:
                 try:
-                    out = settle(engine, agents, t, q, a, verbs)
+                    # …stopped while it waited for its slot: nothing starts, the question asked again after the start
+                    out = {"status": "gone"} if engine.paused() else settle(engine, agents, t, q, a, verbs)
                 except Unavailable as e:
                     out = {"status": "unavailable", "why": str(e), "limit": e.limit}
                 except Exception as e:                  # noqa: BLE001 — a failed turn is not a signal

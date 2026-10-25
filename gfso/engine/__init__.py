@@ -50,7 +50,7 @@ from .parking import Parking
 from .workforce import Workforce
 from .admission import (admit as _admit, admit_register as _admit_register, refuse_a_contract_that_pins_nothing,
                         refuse_a_d_cycle)
-from .validation import (AdmissionRefused, pause_record, _l0_holes, _l2_undischarged, l2_gate_on, no_live_deadline, dep_cycle_closed,
+from .validation import (AdmissionRefused, pause_record, users_plan as _users_plan, _l0_holes, _l2_undischarged, l2_gate_on, no_live_deadline, dep_cycle_closed,
                          issuing_condition, rule_refusal, signer_refusal, whole_waits_for_its_parts,
                          mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
@@ -554,11 +554,8 @@ class Engine:
         return rec
 
     def users_plan(self) -> bool:
-        """Is this project's plan the user's — handed in whole (`auto_decompose` with `spec`) and run under AUTO? Then it
-        is theirs as the root's criteria are, and the system does not re-split it: a weak model re-splitting a given plan
-        turned the "plan given" condition into its own plan (2, 9 and 16 nodes added on the sql × haiku 4.5 rows of
-        Amendment 2; none on coreutils)."""
-        return self.mode_kind() == Mode.AUTO and bool(self._storage.get_setting(USERS_PLAN_KEY))
+        """Is this project's plan the user's (`validation.users_plan`)?"""
+        return _users_plan(self._graph)
 
     def give_users_plan(self, root_id) -> None:
         """Record that the plan just built under `root_id` was the user's, handed in whole."""
