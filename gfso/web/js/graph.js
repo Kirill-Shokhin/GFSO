@@ -163,6 +163,7 @@ function placeBadges() {
     layer ??= $('cy').appendChild(Object.assign(document.createElement('div'), {className: 'cy-badges'}));
     // at work by the run's one rule; the pulse in the accent when this server has a process on it
     const work = atWork(S.run, S.tasks), proc = new Set(S.inflight.filter(w => w.project === S.project).map(w => w.task_id));
+    proc.forEach(id => id && work.add(id));      // a process on a node is work on it, whatever its state (deck.js)
     layer.innerHTML = cy.nodes().map(n => {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
         const id = n.id(), rs = S.run?.rounds[id] || [], failing = rs.at(-1)?.verdict === 'FAIL';

@@ -13,7 +13,11 @@ export const post = (url, body) => api(url, {method: 'POST', headers: {'Content-
 
 // SERIALISED: a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each
 // other's `cy.add` (wave 27, 2026-09-06). A caller arriving mid-run waits for the run doing its work.
+// …and a caller arriving mid-run is answered by ONE more run after it, never by the run already under way: that run
+// read the state before the caller's news — five ACCEPTs in 40 ms left the header saying "not started" for the
+// length of a run (a live run, 2026-10-25). Callers arriving meanwhile share that one trailing run.
 export const singleFlight = fn => {
-    let run = null;
-    return () => run ??= fn().finally(() => { run = null; });
+    let run = null, next = null;
+    const go = () => run = fn().finally(() => { run = null; });
+    return () => !run ? go() : next ??= run.catch(() => {}).then(() => { next = null; return go(); });
 };
