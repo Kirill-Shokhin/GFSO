@@ -365,7 +365,13 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         for table, column, decl in self._ADDITIVE_MIGRATIONS:
             have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if column not in have:
-                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                try:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                # another process opening the same file added it between the look and the ALTER — it is there
+                except sqlite3.OperationalError as ex:
+                    if "duplicate column" not in str(ex):
+                        raise
+                    continue
                 if (table, column) == ("dep_edges", "closed"):
                     # a record an older build left open after its node left BLOCKED was never answered:
                     # closed now, or the node's NEXT block is blamed on it (critic, 2026-09-27)

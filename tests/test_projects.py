@@ -9,6 +9,7 @@ import asyncio
 import inspect
 import os
 import sqlite3
+import threading as th
 import time
 from datetime import datetime
 
@@ -532,3 +533,30 @@ def test_a_session_that_names_no_project_is_told_the_projects_where_none_was_eve
         res()
     reg.use("gb-row")
     assert res() is reg.engine("gb-row"), "a project switched to is where an unnamed session lands"
+
+
+def test_a_project_opened_by_many_reads_at_once_gets_one_engine(monkeypatch, tmp_path):
+    """A page opening a project fires its first reads at once. Each built its own engine — its own dispatcher — over
+    the same file and ran the store's migrations twice: all but one answered 500 "duplicate column name", and the page
+    drew no graph until reloaded (2026-10-25)."""
+    reg = _reg(monkeypatch, tmp_path)
+    monkeypatch.delenv("GFSO_STORAGE")
+    _mk(reg.engine("old"), "root")
+    _closed(reg, "old")
+    with sqlite3.connect(str(tmp_path / "old.db")) as c:      # a file from before the newest columns
+        c.execute("ALTER TABLE llm_usage DROP COLUMN peak_context")
+    go, got, errs = th.Barrier(8), [], []
+
+    def open_it():
+        go.wait()
+        try:
+            got.append(reg.engine("old"))
+        except Exception as e:
+            errs.append(e)
+    ts = [th.Thread(target=open_it) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs, errs[:1]
+    assert len({id(e) for e in got}) == 1, "one engine per project"
+    for e in list(reg._engines.values()):
+        e.stop()

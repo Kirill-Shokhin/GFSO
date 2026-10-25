@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+import threading
 
 from gfso.engine import Engine
 from gfso.core.graph.model import root_of
@@ -80,6 +81,10 @@ class ProjectRegistry:
         self._dir = str(data_dir())
         self._engines: dict[str, Engine] = {}
         self._peeks: dict[str, tuple] = {}     # name → (the file's stamps, its peek)
+        # ONE ENGINE PER PROJECT: a page opening a project fires its first reads at once, and each built its own
+        # engine — its own dispatcher — and ran the store's migrations over the same file; all but one answered
+        # 500 "duplicate column name" and the page drew no graph until reloaded (2026-10-25)
+        self._creating = threading.RLock()
         self._active = active_project()
         ProjectRegistry._NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -103,35 +108,38 @@ class ProjectRegistry:
                 and name != DEFAULT_PROJECT
                 and not os.path.exists(os.path.join(self._dir, f"{name}.db"))):
             raise KeyError(name)
-        if name not in self._engines:
-            kw = dict(self._kw)
-            if name != "default":
-                kw["db_path"] = os.path.join(self._dir, f"{name}.db")
-                kw["seed"] = False
-            self._engines[name] = build_engine_from_env(**kw)
-            self._engines[name].project_name = name    # per-project instruments key off it
-            self._engines[name]._project_name = name    # (the older spelling, still read downstream)
-            try:  # delegation autostart rides with the engine (works under every entry point)
-                # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm →
-                # gfso.runtime), so delegation is reached from here only at call time.
-                from gfso.delegate import ensure_dispatcher
-                ensure_dispatcher(self._engines[name])
-            except Exception as ex:
-                # Swallowed, this left a project that never auto-executes and never auto-validates
-                # anything for the life of the process — indistinguishable, from outside, from an
-                # executor that is merely slow.
-                # stderr: stdout is `gfso mcp`'s JSON-RPC channel
-                print(f"gfso: delegation dispatcher failed to start for project {name!r} ({ex}) — "
-                      f"nothing will be dispatched or auto-validated there",
-                      file=sys.stderr, flush=True)
-            cb = getattr(self, "_on_create", None)   # notify listeners (e.g. UI project list) that a project appeared
-            if cb:
-                try:
-                    cb(name)
-                # a listener refresh is presentation — a UI that misses one project appearing must
-                # not break the door that created it
-                except Exception:
-                    pass
+        if (eng := self._engines.get(name)) is not None:    # open already: no wait behind another's opening
+            return eng
+        with self._creating:
+            if name not in self._engines:
+                kw = dict(self._kw)
+                if name != "default":
+                    kw["db_path"] = os.path.join(self._dir, f"{name}.db")
+                    kw["seed"] = False
+                self._engines[name] = build_engine_from_env(**kw)
+                self._engines[name].project_name = name    # per-project instruments key off it
+                self._engines[name]._project_name = name    # (the older spelling, still read downstream)
+                try:  # delegation autostart rides with the engine (works under every entry point)
+                    # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm →
+                    # gfso.runtime), so delegation is reached from here only at call time.
+                    from gfso.delegate import ensure_dispatcher
+                    ensure_dispatcher(self._engines[name])
+                except Exception as ex:
+                    # Swallowed, this left a project that never auto-executes and never auto-validates
+                    # anything for the life of the process — indistinguishable, from outside, from an
+                    # executor that is merely slow.
+                    # stderr: stdout is `gfso mcp`'s JSON-RPC channel
+                    print(f"gfso: delegation dispatcher failed to start for project {name!r} ({ex}) — "
+                          f"nothing will be dispatched or auto-validated there",
+                          file=sys.stderr, flush=True)
+                cb = getattr(self, "_on_create", None)   # notify listeners (e.g. UI project list) that a project appeared
+                if cb:
+                    try:
+                        cb(name)
+                    # a listener refresh is presentation — a UI that misses one project appearing must
+                    # not break the door that created it
+                    except Exception:
+                        pass
         return self._engines[name]
 
     def use(self, name: str) -> Engine:
@@ -157,7 +165,8 @@ class ProjectRegistry:
             raise ValueError("the default project cannot be deleted")
         if name == self._active:
             raise ValueError(f"{name!r} is the ACTIVE project — switch away first (use_project)")
-        eng = self._engines.pop(name, None)
+        with self._creating:                   # not while that same project is being opened
+            eng = self._engines.pop(name, None)
         if eng is not None:
             try:
                 # LEFT: import cycle gfso.runtime ↔ gfso.delegate (see `engine` above).
