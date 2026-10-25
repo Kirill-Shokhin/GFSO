@@ -54,7 +54,10 @@ async function goal() {
 const need = (n, text, ids, why, cls = '') => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
     + ` title="${hint(`${n} ${text}`, why)}"><b>${n}</b> ${esc(text)}</button>`;
 const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
-const byState = s => { const ts = S.tasks.filter(t => t.state === s);
+// Under AUTO the system makes every issuer move below the root (set_mode), so a challenge or a block there is the
+// machine issuer's to answer — in the strip as its turn or its wait, never here as a call on a person (critic).
+const onAPerson = t => S.graph.mode?.mode !== 'auto' || isRoot(t);
+const byState = s => { const ts = S.tasks.filter(t => t.state === s && onAPerson(t));
     return need(ts.length, label(s).toLowerCase(), ts.map(t => t.id), ts.map(t => named(t.id))); };
 // …AND HOW THOSE DONES REST: an instrument's proof and a signature are not one kind of green (§15.7).
 const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id), list.map(c => `${c.id} — ${closureNote(c)}`), cls);

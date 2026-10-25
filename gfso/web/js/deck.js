@@ -61,11 +61,13 @@ function strip() {
     // A STOPPED RUN RUNS NOTHING: its nodes still hold their working states, and the strip read "2 at work" over a run
     // with no process left (a live run, 2026-10-25) — said as held, not as work
     const held = S.runState?.state === 'stopped' && !mine.length;
-    if (held && live.length) return `<span class="dk-now dk-idle" title="Stopped&#10;nothing runs here until the run is started again&#10;these nodes keep the state their work was in">stopped · ${live.length} held mid-work</span>`
-        + `<span class="dk-chips">${busy.slice(0, 3).map(t => `<button class="dk-live" data-node="${esc(t.id)}"><i></i>${esc(name(t))}<span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
-        + (run ? `<span class="dk-sum">$${run.cost.total.toFixed(2)} · ${dur(run.clock.span)} run</span>` : '');
-    return (live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
-        : '<span class="dk-now dk-idle">nothing at work</span>')
+    const now_ = held && live.length
+        ? `<span class="dk-now dk-idle" title="Stopped&#10;nothing runs here until the run is started again&#10;these nodes keep the state their work was in">stopped · ${live.length} held mid-work</span>`
+          + `<span class="dk-chips">${busy.slice(0, 3).map(t => `<button class="dk-live" data-node="${esc(t.id)}"><i></i>${esc(name(t))}<span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
+        : live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
+        : '<span class="dk-now dk-idle">nothing at work</span>';
+    // …and what waits on what is said whether the run runs or is held
+    return now_
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
             return `<button class="dk-block" data-node="${esc(id)}" title="${hint(`${n} wait on ${run.name(id)}`, 'queued behind it along Dep', 'none starts until what it waits on passes')}">${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`

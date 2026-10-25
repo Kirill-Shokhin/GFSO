@@ -68,6 +68,7 @@ const LIVE = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
     pipeline: d => { onPipeline(d); if (d.source === 'pause') { refreshHeader(); projects(); } },
     projects,                                          // a project appeared
+    reopened: () => S.reload(),                        // this tab's own project came to exist while the feed was refused
     async transition(d) {
         const t = S.tasks.find(x => x.id === d.task_id);
         if (t) t.state = d.new_state;                  // the tooltip reads the cache
