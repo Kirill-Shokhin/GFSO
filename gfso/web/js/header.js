@@ -144,7 +144,9 @@ export const refreshHeader = singleFlight(async () => {
         if (!r.ok) throw r.status;
         const f = await r.json();
         // …and a node a state chip already shows is not counted twice.
-        const mine = (f.steps || []).filter(x => x.mine && !CALLS.includes(taskOf(x.task_id).state)), me = myRole() || 'you', blocked = f.blocked_by || [];
+        // (dropped only where that chip IS shown: under AUTO a person's own move below the root has none — critic)
+        const shown = t => CALLS.includes(t.state) && onAPerson(t);
+        const mine = (f.steps || []).filter(x => x.mine && !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 f.directive || 'no actionable node and the root is not DONE') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),

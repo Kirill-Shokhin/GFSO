@@ -60,7 +60,8 @@ function strip() {
     const more = live.length > 3 ? `<span class="dk-more" title="${hint(`${live.length - 3} more at work`, busy.slice(3).map(name))}">+${live.length - 3}</span>` : '';
     // A STOPPED RUN RUNS NOTHING: its nodes still hold their working states, and the strip read "2 at work" over a run
     // with no process left (a live run, 2026-10-25) — said as held, not as work
-    const held = S.runState?.state === 'stopped' && !mine.length;
+    // …under AUTO only, where the system holds every node: a stop pauses the system, never a person's own work (critic)
+    const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
         ? `<span class="dk-now dk-idle" title="Stopped&#10;nothing runs here until the run is started again&#10;these nodes keep the state their work was in">stopped · ${live.length} held mid-work</span>`
           + `<span class="dk-chips">${busy.slice(0, 3).map(t => `<button class="dk-live" data-node="${esc(t.id)}"><i></i>${esc(name(t))}<span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
