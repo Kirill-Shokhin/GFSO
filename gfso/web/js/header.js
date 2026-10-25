@@ -36,7 +36,8 @@ async function goal() {
     const root = S.tasks.find(isRoot), mode = S.graph.mode?.mode;
     // a project named to state its goal in does not exist until that goal is created — not an error
     if (!root) return GOAL && S.missing ? '<span class="hd-phrase">a new project — it exists once its goal is created</span>'
-        : `<span class="hd-phrase${S.missing ? ' acc' : ''}">${esc(S.missing || 'no goal yet')}</span>`;
+        : `<span class="hd-phrase${S.missing ? ' acc' : ''}">${esc(S.missing
+            || (S.inflight.some(w => w.project === S.project && w.verb === 'auto_decompose') ? 'the goal is being planned' : 'no goal yet'))}</span>`;
     const doc = mode ? await modeDoc() : {};
     const who = Object.entries(doc).map(([m, text]) => `${m === mode ? '▸ ' : ''}${m}: ${text}`);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover

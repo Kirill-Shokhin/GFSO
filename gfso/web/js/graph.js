@@ -1,7 +1,7 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc} from './dom.js';
 import {api, singleFlight} from './api.js';
-import {S, taskOf, myRole} from './state.js';
+import {S, taskOf, myRole, procs} from './state.js';
 import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
@@ -162,8 +162,7 @@ function placeBadges() {
     if (!cy) return;
     layer ??= $('cy').appendChild(Object.assign(document.createElement('div'), {className: 'cy-badges'}));
     // at work by the run's one rule; the pulse in the accent when this server has a process on it
-    const work = atWork(S.run, S.tasks), proc = new Set(S.inflight.filter(w => w.project === S.project).map(w => w.task_id));
-    proc.forEach(id => id && work.add(id));      // a process on a node is work on it, whatever its state (deck.js)
+    const work = atWork(S.run, S.tasks, procs()), proc = new Set(procs().map(w => w.task_id));
     layer.innerHTML = cy.nodes().map(n => {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
         const id = n.id(), rs = S.run?.rounds[id] || [], failing = rs.at(-1)?.verdict === 'FAIL';

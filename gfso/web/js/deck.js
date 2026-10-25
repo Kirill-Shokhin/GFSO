@@ -3,7 +3,7 @@
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
 import {$, esc, hint} from './dom.js';
 import {getJSON, singleFlight} from './api.js';
-import {S} from './state.js';
+import {S, procs} from './state.js';
 import {point} from './store.js';
 import {buildRun, said, blockers, atWork} from './run.js';
 import {dur, trim} from './draw.js';
@@ -33,24 +33,32 @@ const ticks = new Map();                               // `source|node` → {nod
 // offered root read "nothing at work" while the system worked (a live run, 2026-10-25). The process names the work.
 const DOING = {auto_decompose: 'planning', review_decomposition: 'reviewing the plan', delegated_execution: 'executing',
     delegated_consent: 'reading the contract', validate_result: 'validating', validate_scope: 'validating',
-    join_whole: 'joining the parts'};
+    join_whole: 'joining the parts', issuer_turn: "the issuer's turn"};
+// the session on this node, or on the nearest ancestor that carries it (one session may run a whole part of the plan)
+const carrier = (t, mine) => { for (let n = t; n?.id; n = S.tasks.find(x => x.id === n.parent_id)) {
+    const w = mine.find(w => w.task_id === n.id); if (w) return [n, w]; } return []; };
 function strip() {
-    const mine = S.inflight.filter(w => w.project === S.project), now = Date.now() / 1000;
-    const work = atWork(run, S.tasks), name = t => trim(t.name || t.id, 26);
-    mine.forEach(w => w.task_id && work.add(w.task_id));
-    const busy = S.tasks.filter(t => work.has(t.id));
+    const mine = procs(), now = Date.now() / 1000;
+    const work = atWork(run, S.tasks, mine), name = t => trim(t.name || t.id, 26), runs = t => mine.some(w => w.task_id === t.id);
+    // what a process runs on first: a session hidden under "+2" behind the leaves it carries told nothing (critic)
+    const busy = S.tasks.filter(t => work.has(t.id)).sort((a, b) => runs(b) - runs(a));
     // waiting on the issuer's decision — a verdict being validated is work, not a wait, so VALIDATING is left out
-    const issuer = S.tasks.filter(t => run?.waits[t.id]?.owes === 'issuer' && t.state !== 'VALIDATING');
+    const issuer = S.tasks.filter(t => run?.waits[t.id]?.owes === 'issuer' && t.state !== 'VALIDATING' && !runs(t));
     const live = busy.map(t => {
-        const w = mine.find(w => w.task_id === t.id), tk = [...ticks.values()].find(k => k.node === t.id);
+        const w = mine.find(w => w.task_id === t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : carrier(t, mine);
         const what = w ? DOING[w.verb] || w.verb.replace(/_/g, ' ')
             : t.state === 'VALIDATING' ? 'validating' : t.state === 'REWORKING' ? 'reworking' : 'executing';
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : 'in a working state; no process of this server runs it'))}"><i></i>${esc(name(t))}`
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : by ? `carried by the session on ${top.name || top.id} (${by.verb})` : 'in a working state; no process of this server runs it'))}"><i></i>${esc(name(t))}`
             + `<span>${what}${w ? ' · ' + dur((now - w.since) * 1e3) : ''}</span></button>`;
     });
+    // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
+    const drawn = new Set(S.tasks.map(t => t.id));
+    for (const w of mine.filter(w => !w.task_id || !drawn.has(w.task_id)))
+        live.push(`<span class="dk-live on" title="${hint('The goal', `${w.verb} — a session running on this server`)}"><i></i>the goal`
+            + `<span>${DOING[w.verb] || w.verb.replace(/_/g, ' ')} · ${dur((now - w.since) * 1e3)}</span></span>`);
     // at most three chips, the rest counted: what waits and what it cost must stay on the line however much runs
     const more = live.length > 3 ? `<span class="dk-more" title="${hint(`${live.length - 3} more at work`, busy.slice(3).map(name))}">+${live.length - 3}</span>` : '';
-    return (live.length ? `<span class="dk-now" title="At work&#10;a node with a session open, or a leaf in a working state&#10;a parent in EXECUTING waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
+    return (live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
         : '<span class="dk-now dk-idle">nothing at work</span>')
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));

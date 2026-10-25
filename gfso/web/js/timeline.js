@@ -6,6 +6,7 @@ import {bindFocus} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, dur, mark, trim} from './draw.js';
 import {KIND_NAME, waitWords, atWork} from './run.js';
+import {procs} from './state.js';
 
 const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
 const STEM = 9, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
@@ -14,7 +15,7 @@ const STEM = 9, JOIN = 3 * 60e3;                                   // a verdict'
 // first started; the nodes that never ran last, saying what they wait on.
 function rows(run, nodes) {
     const first = id => Math.min(...run.sessions.filter(s => s.node === id).map(s => s.start), Infinity);
-    const now = atWork(run, nodes), rank = id => run.depth[id] === 0 ? 0 : now.has(id) ? 1 : first(id) < Infinity ? 2 : 3;
+    const now = atWork(run, nodes, procs()), rank = id => run.depth[id] === 0 ? 0 : now.has(id) ? 1 : first(id) < Infinity ? 2 : 3;
     return nodes.map(n => n.id).sort((a, b) => rank(a) - rank(b) || first(a) - first(b) || run.depth[a] - run.depth[b]);
 }
 
@@ -51,7 +52,7 @@ export function render(el, run, nodes) {
         run.waits[id]?.deps.length ? `waits on ${esc(waitWords(run.waits[id], d => trim(name(d), 24)))}` : esc(state[id].toLowerCase())}</text>`;
     // consent shown only where a run has it: rows recorded before it was booked apart have none
     const kinds = [['exec', 'execution'], ...(run.sessions.some(s => s.kind === 'consent') ? [['consent', 'consent']] : []),
-                   ['val', 'validation'], ['issuer', 'issuer']], end = kinds.length * 92 - 14;
+                   ['val', 'validation'], ['issuer', 'issuer']], end = kinds.length * 92 - 14, legendW = end + 100;
     const legend = kinds.map(([k, t], i) =>
         `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${t}</text>`).join('')
         + `${mark('PASS', end, 4, 3.5)}<text x="${end + 7}" y="8">PASS</text>${mark('FAIL', end + 46, 4, 3.5)}<text x="${end + 53}" y="8">FAIL</text>`;
@@ -66,7 +67,7 @@ export function render(el, run, nodes) {
     const top = run.exec.steps.find(([, k]) => k === run.exec.peak);
     el.innerHTML = `<svg class="tl" width="${W}" height="${H}">
         ${f.ticks(30, H - AXIS, 22)}${f.folds(30, H - AXIS, H - 6)}
-        <g class="tl-legend" transform="translate(${W - 350},0)">${legend}</g>
+        <g class="tl-legend" transform="translate(${W - legendW},0)">${legend}</g>
         <text class="tl-peak" x="${LEFT - 10}" y="${cy(peak) + 3}">${run.exec.peak} at once</text>
         <text class="tl-peak tl-sub" x="${LEFT - 10}" y="${c0}">executors</text>
         <line class="tl-base" x1="${LEFT}" x2="${W - 16}" y1="${c0}" y2="${c0}"/>

@@ -16,8 +16,13 @@ export const post = (url, body) => api(url, {method: 'POST', headers: {'Content-
 // …and a caller arriving mid-run is answered by ONE more run after it, never by the run already under way: that run
 // read the state before the caller's news — five ACCEPTs in 40 ms left the header saying "not started" for the
 // length of a run (a live run, 2026-10-25). Callers arriving meanwhile share that one trailing run.
+// The trailing run starts inside the finishing one's `finally`, so no caller finds the flight empty between the two
+// and starts a second, concurrent one (critic: two runs at once once the gap was hit).
 export const singleFlight = fn => {
-    let run = null, next = null;
-    const go = () => run = fn().finally(() => { run = null; });
-    return () => !run ? go() : next ??= run.catch(() => {}).then(() => { next = null; return go(); });
+    let run = null, next = null, release;
+    const go = () => run = fn().finally(() => {
+        run = null;
+        if (next) { const r = release; next = null; r(go()); }
+    });
+    return () => !run ? go() : next ??= new Promise(res => { release = res; });
 };

@@ -7,6 +7,9 @@ import {PROJECT} from './api.js';
 export const S = {tasks: [], graph: {nodes: [], edges: []}, run: null, closures: [], missing: '', mineOnly: false,
                   inflight: [], project: PROJECT, reload: async () => {}};
 
+// the processes this server runs in this project now — the in-flight registry, the one reading of it
+export const procs = () => S.inflight.filter(w => w.project === S.project);
+
 export const taskOf = id => S.tasks.find(t => t.id === id) || {};
 export const critNames = id => (taskOf(id).criteria || []).map(c => c.name || c);
 export const hasKids = id => S.tasks.some(t => t.parent_id === id && t.state !== 'ABANDONED');

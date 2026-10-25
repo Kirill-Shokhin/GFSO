@@ -31,7 +31,7 @@ function depths(nodes) {
 }
 
 // The acts that close each kind of session — whoever signed the first of them after it is who ran it.
-const SIGNS = {exec: ['DELIVER', 'BLOCK', 'CHALLENGE'], val: ['PASS', 'FAIL'],
+const SIGNS = {exec: ['DELIVER', 'BLOCK', 'CHALLENGE'], consent: ['ACCEPT', 'CHALLENGE'], val: ['PASS', 'FAIL'],
                issuer: ['ASSIGN', 'CANCEL', 'RESOLVE_BLOCK', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE']};
 // Sessions from the usage ledger: a row is written when its call ends, so it starts `duration` before.
 function sessions(calls, audit) {
@@ -96,9 +96,12 @@ export function waitsOf(nodes, edges) {
 // What is AT WORK now, one rule for the strip and the graph: a node with a session open, or a leaf in a
 // working state (its executor may be a person or a process elsewhere). A parent EXECUTING waits on its parts.
 const WORKING = new Set(['EXECUTING', 'REWORKING', 'VALIDATING']);
-export function atWork(run, tasks) {
+// `procs`: the processes this server has in flight here — a node one runs on is at work whatever its state (a plan
+// authored over an offered root, one session carrying a part of the plan on its top node).
+export function atWork(run, tasks, procs = []) {
     const parent = new Set(tasks.map(t => t.parent_id)), open = new Set((run?.sessions || []).filter(s => s.open).map(s => s.node));
-    return new Set(tasks.filter(t => open.has(t.id) || (WORKING.has(t.state) && !parent.has(t.id))).map(t => t.id));
+    const on = new Set(procs.map(w => w.task_id));
+    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id) || (WORKING.has(t.state) && !parent.has(t.id))).map(t => t.id));
 }
 // The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
 export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
