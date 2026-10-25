@@ -3592,7 +3592,7 @@ verdict, 3.4 h into each row, failed 10–14 root criteria over parts that had a
 given plan (2 and 16 parts added), so those rows ran a plan of its own; one added part's expected output was re-pinned,
 on an accepted dispute, to what the build printed, contradicting the root's own pinned check, and the root failed on the
 pair to the 9-hour ceiling; repair parts pinned empty input files on their first issue (40 in one row; the fix named
-below covered re-written probes, not newly added parts); in the other row the machine issuer cancelled the root two
+above covered re-written probes, not newly added parts); in the other row the machine issuer cancelled the root two
 minutes before its ceiling.
 `c_compiler`: one row stopped by hand after two days whose integrated trees never rose above the task's starter code
 (11–20%, the starter at 20.4%) — a part kept failing the same criteria over children that all passed, re-worked rather
