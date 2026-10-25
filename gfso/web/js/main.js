@@ -36,7 +36,7 @@ async function pollInFlight() {
 
 const ACT = {
     'run-stop': stopRun, 'run-start': startRun,
-    close: () => point('select', null), select: d => point('select', d.id), read: d => openReader(d.facet),
+    close: () => point('select', null), select: d => point('select', d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip')),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,

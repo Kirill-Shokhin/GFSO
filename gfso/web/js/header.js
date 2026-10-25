@@ -89,7 +89,14 @@ export async function stopRun() {
         {yes: 'Stop', field: 'why — kept with the stop, shown to whoever looks (optional)'});
     if (why !== false) await switchRun('stop_project', {why, ...(myRole() ? {by: myRole()} : {})});
 }
-export const startRun = () => switchRun('start_project', myRole() ? {by: myRole()} : {});
+// Start sets the system working again — under AUTO its issuer and executors act and spend — so it is asked, as Stop is
+export async function startRun() {
+    const auto = S.graph.mode?.mode === 'auto';
+    if (await askInPage('Start this run again? The system starts sessions here once more'
+        + (auto ? ' — under AUTO its executors, validators and issuer act and spend on their own.' : '.')
+        + ' A bound that passed while it was stopped fires now.', {yes: 'Start'}))
+        await switchRun('start_project', myRole() ? {by: myRole()} : {});
+}
 
 // The system's reports about ITSELF (a check contradicting its contract, a tool that cannot run): a quiet channel —
 // they stop and move nothing — so a quiet chip, and none at all while there is none.
