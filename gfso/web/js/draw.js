@@ -36,7 +36,14 @@ export function frame(run, W, left, right = 16) {
                 if (step < 60e3) return hms(t);
                 if (!days || (i && new Date(shown[i - 1]).toDateString() === d.toDateString())) return hm(t);
                 return d.getHours() || d.getMinutes() ? `${day(t)} ${hm(t)}` : day(t); };
-            return shown.map((t, i) => `<g class="ax-tick"><line x1="${X(t)}" x2="${X(t)}" y1="${y0}" y2="${y1}"/>${ly == null ? '' : `<text x="${X(t)}" y="${ly}">${label(t, i)}</text>`}</g>`).join('');
+            // two labels that would overprint (a tick each side of a fold): the one naming a day is kept (critic)
+            const labs = shown.map(label), w = s => s.length * 6, keep = labs.map(() => true);
+            for (let i = 1; i < shown.length; i++) {
+                let j = i - 1; while (j >= 0 && !keep[j]) j--;
+                if (j >= 0 && X(shown[i]) - w(labs[i]) / 2 < X(shown[j]) + w(labs[j]) / 2 + 4)
+                    labs[i].length > labs[j].length ? keep[j] = false : keep[i] = false;
+            }
+            return shown.map((t, i) => `<g class="ax-tick"><line x1="${X(t)}" x2="${X(t)}" y1="${y0}" y2="${y1}"/>${ly == null || !keep[i] ? '' : `<text x="${X(t)}" y="${ly}">${labs[i]}</text>`}</g>`).join('');
         },
         folds(y0, y1, ly) {
             return run.clock.folds.map(f => { const x = left + f.at * k;
