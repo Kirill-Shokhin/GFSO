@@ -44,7 +44,7 @@ const ACT = {
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
-    mine: toggleMine, quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
+    mine: toggleMine, help: () => $('tb-help').classList.toggle('open'), quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
     projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects,
     'project-new': () => (closeProjects(), switchProject('__new__')),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,

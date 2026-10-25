@@ -101,7 +101,6 @@ export async function initGraph() {
         if (key === 'select' && st.select && !fresh) inSight(cy.getElementById(st.select));
     });
     cy.on('render', () => requestAnimationFrame(placeBadges));
-    $('cy').insertAdjacentHTML('beforeend', '<div class="cy-legend" title="How to read the graph&#10;solid arrow: a part of its parent — the split, parent to part&#10;dashed arrow: a dependency — the part at its end uses the result of the one it comes from and waits for it to pass&#10;double-click a node: frame it with its parts · on the background: the whole graph"><span><i class="lg-split"></i>part of</span><span><i class="lg-dep"></i>uses the result of</span></div>');
     // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the
     // canvas is told its new size and the graph stays where it was — a fit here made the graph jump each time a
     // click opened or closed the panel (author, 2026-10-25: «нажатие на некоторые ноды тригерит новую центровку»).
