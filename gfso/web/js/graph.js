@@ -90,12 +90,13 @@ export async function initGraph() {
         const t = taskOf(evt.target.id());
         if (t.id) tip(nodeTip(t), evt.originalEvent);
     });
-    // what another view points at is pointed at here too
-    watch(st => {
+    // what another view points at is pointed at here too — and a node chosen there is brought into sight here
+    watch((st, key) => {
         cy.nodes().removeClass('focus');
         if (st.hover && !own) cy.getElementById(st.hover).addClass('focus');
         cy.nodes(':selected').filter(n => n.id() !== st.select).unselect();
         if (st.select) cy.getElementById(st.select).select();
+        if (key === 'select' && st.select && !fresh) inSight(cy.getElementById(st.select));
     });
     cy.on('render', () => requestAnimationFrame(placeBadges));
     // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the
@@ -106,14 +107,27 @@ export async function initGraph() {
     let frame;
     // …and never in the middle of a gesture: a tap that opens the panel resizes the canvas while the button is still
     // down, and a resize then left the press stuck — the next move dragged the whole graph (author, 2026-10-24)
-    let held = false;
-    cy.on('tapstart', () => { held = true; fresh = false; });
-    cy.on('scrollzoom', () => { fresh = false; });
+    let held = false, want = null;
+    cy.on('tapstart', () => { held = true; });
+    // the reader's first press or wheel ANYWHERE ends the untouched view; a `?task=` link presses nothing
+    addEventListener('pointerdown', () => { fresh = false; }, true);
+    addEventListener('wheel', () => { fresh = false; }, true);
     addEventListener('pointerup', () => { held = false; }, true);
-    const reseat = () => held ? (frame = setTimeout(reseat, 120)) : (cy.resize(), fresh && !cy.nodes(':selected').length ? cy.fit(undefined, 30) : inSight(cy.nodes(':selected')));
+    // a double-click's own first click opens or closes the panel, and the frame is redone for the canvas it leaves
+    const reseat = () => held ? (frame = setTimeout(reseat, 120))
+        : (cy.resize(), want ? frameTo(want) : fresh ? cy.fit(undefined, 30) : inSight(cy.nodes(':selected')));
     new ResizeObserver(() => { clearTimeout(frame); frame = setTimeout(reseat, 120); }).observe($('cy'));
-    cy.on('dbltap', 'node', evt => cy.animate({fit: {eles: evt.target.union(evt.target.successors()), padding: 40}, duration: 200}));
-    cy.on('dbltap', evt => { if (evt.target === cy) cy.animate({fit: {eles: cy.elements(), padding: 30}, duration: 200}); });
+    const frameTo = eles => cy.animate({fit: {eles, padding: 40}, duration: 200});
+    const framing = eles => { want = eles; frameTo(eles); setTimeout(() => { if (want === eles) want = null; }, 1500); };
+    cy.on('dbltap', 'node', evt => framing(subtree(evt.target)));
+    cy.on('dbltap', evt => { if (evt.target === cy) framing(cy.elements()); });
+}
+
+// A node and everything under it along D — the split's edges, never Dep (a leaf framed half the graph by its chains).
+function subtree(n) {
+    let all = n, front = n;
+    while (front.length) all = all.union(front = front.outgoers('edge[type = "parent-child"]').targets());
+    return all;
 }
 
 let drawn = '';                        // the node set last drawn: a redraw of the same keeps the view

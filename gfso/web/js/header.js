@@ -61,7 +61,8 @@ const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id
 // THE RUN'S SWITCH: the engine's one state of the run (`next_steps.run`, never inferred here) and the button that
 // moves it. Three states, so a press of Stop is not read as done while the sessions it let finish still run:
 // running · stopping (who is still at work, on hover) · stopped (by whom, when, why) — author, 2026-10-25.
-const ago = t => dur(Date.now() - at(t));
+// the stop's `at` is an ISO stamp, a working session's `since` epoch seconds (the in-flight registry's)
+const ago = t => dur(Date.now() - (typeof t === 'number' ? t * 1e3 : at(t)));
 function runSwitch(r) {
     if (!r || !S.tasks.length) return '';
     if (r.state === 'running') return '<button class="hd-run" data-action="run-stop" title="Stop the run&#10;nothing new starts: no executor, validator or issuer session, no timeout&#10;'

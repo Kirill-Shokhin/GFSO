@@ -329,7 +329,9 @@ body {
 .ev details summary { cursor: pointer; font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: var(--tr-mono); }
 .ev details p { white-space: pre-wrap; font-size: 11.5px; color: var(--ink-soft); max-height: 240px; overflow: auto; margin: 4px 0; }
 .ev-narration { color: var(--ink-faint); }
-.ev-narration .ev-text { grid-column: 3 / -1; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* a narration line is no signal and no state move: its text spans those two columns, its source sits under "by" */
+.ev-narration .ev-text { grid-column: 2 / 4; grid-row: 1; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-narration .ev-src { grid-column: 4; grid-row: 1; }
 .ev-none { color: var(--ink-faint); font-size: 12px; padding: 8px; }
 /* The deck — under the graph, beside the panel. */
 .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }

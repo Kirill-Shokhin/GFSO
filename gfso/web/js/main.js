@@ -61,7 +61,8 @@ $('current-role').addEventListener('input', () => { rememberRole(myRole()); if (
 watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : closeSidebar(); });
 
 const LIVE = {
-    pipeline: onPipeline,
+    // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
+    pipeline: d => { onPipeline(d); if (d.source === 'pause') { refreshHeader(); projects(); } },
     projects,                                          // a project appeared
     async transition(d) {
         const t = S.tasks.find(x => x.id === d.task_id);
