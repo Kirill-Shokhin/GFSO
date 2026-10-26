@@ -1689,7 +1689,8 @@ def system_mover(engine, agents, task_id: TaskId, question: str) -> Optional[str
         # before modes, the only issuer move the system made was answering a dispute — kept, at a seam only: at a
         # self-assigned root it accepted its holder's own CHALLENGE 4 s later and retired a finding signed as him (ui, 2026-10-26)
         issuer = str(engine.graph.issuer_of(task_id))
-        return issuer if question == "dispute" and str(task.assignee) != issuer and (
+        # …the AGENT's own: a registered machine issuing to itself has no other live mover, so the system still answers it
+        return issuer if question == "dispute" and not (issuer == _config_agent_id() and str(task.assignee) == issuer) and (
             agents.get(issuer) is not None or issuer == _config_agent_id()) else None
     if question in SPLIT_QUESTIONS:
         return str(task.assignee) if agents.get(str(task.assignee)) is not None else None

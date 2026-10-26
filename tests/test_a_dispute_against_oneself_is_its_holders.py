@@ -20,7 +20,7 @@ from gfso.core.types import Signal, State, TaskId
 from tests.support import criterion
 from tests.test_a_ruling_is_part_of_the_acceptance import _challenged_with_a_finding
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
-from tests.test_the_mode_decides_who_holds_what import _Roster, _engine
+from tests.test_the_mode_decides_who_holds_what import _RISK, _Roster, _engine, _kid
 
 
 def _sweep(e, tmp_path, pid):
@@ -67,3 +67,17 @@ def test_control_the_system_still_answers_a_dispute_at_a_seam(tmp_path):
     llm = _sweep(e, tmp_path, pid)
     assert llm.calls and e.graph.get_state(TaskId("root")) == State.OFFERED, "the seam's dispute went unanswered"
     e.stop()
+
+
+def test_a_machine_issuing_to_itself_keeps_the_systems_answer():
+    """Only the AGENT's own node is its holder's to answer: a registered executor issuing to itself has no other live
+    mover, and with no answer its dispute would wait out its bound into an ESCALATED nobody moves (critic over af0d0a2)."""
+    e = _engine()
+    e.record_root_issuer(TaskId("root"), "agent")
+    T.TOOLS["create_task"](e, "root", {"description": "g", "criteria": [criterion("g", "G holds")]}, assignee="exec-1")
+    T.signal(e, "root", "ACCEPT", "exec-1")
+    T.TOOLS["decompose"](e, "root", [{**_kid("c", ["g"], criterion("k", "K holds")), "assignee": "exec-1"}],
+                         accepted_risks=_RISK)
+    T.signal(e, "c", "CHALLENGE", "exec-1", reason="k is unmeetable as written")
+    assert str(e.graph.issuer_of(TaskId("c"))) == "exec-1" == str(e.graph.get_task(TaskId("c")).assignee)
+    assert I.system_mover(e, _Roster(), TaskId("c"), "dispute") == "exec-1"
