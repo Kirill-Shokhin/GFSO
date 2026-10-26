@@ -9,7 +9,10 @@ const BLOCK = A('BLOCK', 'red', 'Block', 'reason');
 // Rows are in the stats bar's order. Bucket: canon §7.1 + §8 (see gfso.css). WHAT IS RUNNING MUST NOT
 // LOOK LIKE WHAT IS DEAD — EXECUTING is `busy`, waiting to be taken is `attend` (2026-09-02). OFFERED is
 // ASSIGNED AND NOT YET TAKEN: labelled "In Review" it sent a user waiting 25 min on a reviewer who did
-// not exist. V(t), §2.3: pass = DONE, fail = REWORKING/CHALLENGED, ⊥ otherwise.
+// not exist. V(t), §2.3: pass = DONE, fail = REWORKING/CHALLENGED, ⊥ otherwise. REWORKING is consented
+// work like EXECUTING (§12.1) and a FAIL sends to it by itself: in the accent it read as "step in" beside
+// "nothing needs you", and flipped colour with its own validation. CHALLENGED is a wait on the issuer, as
+// BLOCKED is (§12.1); under a mode that issuer is the machine.
 // Moves — the panel's controls the FSM admits here: E Edit (a re-ASSIGN, §12.3: every non-terminal
 // state but IDLE and CANCELLING), C Cancel (§12.6: no re-CANCEL from CANCELLING), D Decompose,
 // V Record verdict (the human counterpart of validate_result).
@@ -19,8 +22,8 @@ const ROWS = {
     EXECUTING:  ['busy',      'In Progress', '',     'ECD',  [A('DELIVER', 'blue', 'Deliver', 'result'), BLOCK]],
     OFFERED:    ['attend',    'Not started', '',     'ECD',  [A('ACCEPT', 'green', 'Accept'), A('CHALLENGE', 'orange', 'Challenge', 'reason')]],
     BLOCKED:    ['pathology', 'Blocked',     '',     'ECD',  [A('RESOLVE_BLOCK', 'blue', 'Resolve Block', 'action')]],
-    REWORKING:  ['fail',      'Rework',      'fail', 'ECD',  [A('DELIVER', 'blue', 'Re-deliver', 'result'), BLOCK]],
-    CHALLENGED: ['fail',      'Challenged',  'fail', 'ECD',  [A('ACCEPT_CHALLENGE', 'green', 'Accept Challenge'),
+    REWORKING:  ['busy',      'Rework',     'fail', 'ECD',  [A('DELIVER', 'blue', 'Re-deliver', 'result'), BLOCK]],
+    CHALLENGED: ['pathology', 'Challenged', 'fail', 'ECD',  [A('ACCEPT_CHALLENGE', 'green', 'Accept Challenge'),
                                                               A('REJECT_CHALLENGE', 'muted', 'Reject Challenge', 'justification')]],
     VALIDATING: ['busy',      'Validating',  '',     'ECV',  [A('PASS', 'green', 'Pass'), A('FAIL', 'red', 'Fail', '', true)]],
     IDLE:       ['quiet',     'Waiting',     '',     'C'],

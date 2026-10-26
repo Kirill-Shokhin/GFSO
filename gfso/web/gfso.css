@@ -19,17 +19,15 @@
     --hair-soft:      color-mix(in srgb, var(--ink)  5%, transparent);
     --hair-on-chrome: color-mix(in srgb, var(--bg)  12%, transparent);
 
-    /* Five visual buckets — direct translation of Applied-v3 theory:
-         done      = V=pass, ¬intervene   — DONE
-         quiet     = V=⊥,    ¬intervene   — IDLE, EXECUTING
-         attend   = V=⊥,    intervene    — OFFERED, VALIDATING
-         fail      = V=fail, intervene    — REWORKING, CHALLENGED        (only acc)
-         pathology = V=⊥ + FM, intervene  — BLOCKED, ESCALATED
-
-       Axes (§7.1 + §8):
-         A {intervene, ¬intervene} → fill weight (faint outline vs solid)
-         V {pass, fail, ⊥}         → fill identity (ink vs acc)
-         FM {present, absent}      → structural marker (dashed outline) */
+    /* Five visual buckets (the rows live in js/vocab.js):
+         done      — DONE
+         quiet     — IDLE, ABANDONED
+         attend    — OFFERED: issued, not yet taken
+         busy      — EXECUTING, REWORKING (consented work, §12.1), VALIDATING (a validator session
+                     runs): an accent border on the graph, a plain badge
+         pathology — CHALLENGED, BLOCKED, CANCELLING, ESCALATED: a wait on a party, dashed
+       No state fills with the accent: a FAIL sends to rework by itself, and who is called is the
+       header's calls and the engine's next_steps, not a state's colour. */
     /* Only the four the stylesheet actually reads. The other six were dead, and three of those
        spelled states v4.0 retired (review/rework/timeout) — a lowercase identifier the naming
        guard's uppercase patterns cannot see, which is how they outlived the migration. */
@@ -524,7 +522,6 @@ body {
 .b-done      { background: var(--ink);      color: var(--bg); }
 .b-quiet     { background: transparent;     color: var(--ink-faint); border-color: var(--ink-faint); padding: 1px 7px; }
 .b-attend    { background: var(--ink-soft); color: var(--bg); }
-.b-fail      { background: var(--acc);      color: var(--bg); }
 .b-pathology { background: var(--ink-soft); color: var(--bg); border-style: dashed; border-color: var(--ink); padding: 1px 7px; }
 .meta {
     font-family: var(--font-mono);

@@ -20,7 +20,6 @@ const NODE_STYLE = {
     done:      S_(INK, BG, 0, INK),
     quiet:     S_(BG, FAINT, 1, FAINT, 'solid', 0),
     attend:    S_(SOFT, BG, 0, SOFT),
-    fail:      S_(ACC, BG, 0, ACC),
     pathology: S_(SOFT, BG, 1.5, INK, 'dashed'),
     busy:      S_(BG, INK, 2, ACC),     // in flight: the accent border says "alive" without asking for attention
 };
