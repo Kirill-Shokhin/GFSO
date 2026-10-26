@@ -1958,6 +1958,13 @@ class Engine:
         old = self._graph.get_task(task_id)
         if old is None:
             raise ValueError(f"task {task_id} not found")
+        # …A ROOT HANDED ON KEEPS ITS ISSUER: a self-assigned root's issuer is its holder (§10.1), read off its Del
+        # while nothing is recorded — so a Del change made its new executor its own issuer, and the system answered
+        # that executor's dispute of the user's goal in its name (§10.3, §16.13; critic over 05c6903). Recorded as it
+        # reads now, before the change: no move already on the log is read otherwise.
+        if new_assignee and new_assignee != old.assignee and self._graph.get_parent(task_id) is None \
+                and not self._storage.get_setting(root_issuer_key(task_id)) and old.assignee:
+            self._storage.store_setting(root_issuer_key(task_id), str(old.assignee))
         # A Dep edge is no part of the contract (§2.7), so no revision deletes one by omission — while a seam rode in
         # `criteria`, a wholesale replacement deleted the graph's edges and CHECK-2 then read "no dependency edges"
         # (2026-09-05); `remove_dependency` cuts one. A bare `depends_on` entry the caller writes declares its edge —
