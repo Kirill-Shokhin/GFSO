@@ -1,13 +1,18 @@
 // What the person is pointing at, shared by every view: the node hovered and the node selected.
 // A view publishes a gesture and redraws its own emphasis on change — views never call each other.
-const subs = new Set(), state = {hover: null, select: null};
+// A watcher owned by an element lives as long as what is drawn there: the deck releases its view before it
+// draws the next one — a watcher left from another tab threw on markup that was gone and silenced every
+// watcher after it.
+const subs = new Map(), state = {hover: null, select: null, picks: 0};   // picks: selections made so far
 
 export const focus = () => state;
-export const watch = fn => (subs.add(fn), () => subs.delete(fn));
+export const watch = (fn, owner = null) => (subs.set(fn, owner), () => subs.delete(fn));
+export const release = root => subs.forEach((owner, fn) => owner && root.contains(owner) && subs.delete(fn));
 export function point(key, id) {
     if (state[key] === id) return;
     state[key] = id;
-    subs.forEach(fn => fn(state, key));
+    if (key === 'select') state.picks++;
+    subs.forEach((_, fn) => fn(state, key));
 }
 
 // Any element carrying `data-node` inside `el` takes part: hovering it points, clicking selects, and
@@ -23,7 +28,6 @@ export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     el.onmousemove = e => (point('hover', e.target.closest('[data-node]')?.dataset.node || null), onMove(e));
     el.onmouseleave = () => (point('hover', null), onLeave());
     el.onclick = e => { const n = e.target.closest('[data-node]'); if (n) point('select', n.dataset.node); };
-    el._unwatch?.();
-    el._unwatch = watch(paint);
+    watch(paint, el);
     paint(state);
 }

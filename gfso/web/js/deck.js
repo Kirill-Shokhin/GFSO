@@ -4,7 +4,7 @@
 import {$, esc, hint} from './dom.js';
 import {getJSON, singleFlight} from './api.js';
 import {S, procs} from './state.js';
-import {point} from './store.js';
+import {point, release} from './store.js';
 import {buildRun, said, blockers, atWork} from './run.js';
 import {dur, trim} from './draw.js';
 import * as timeline from './timeline.js';
@@ -92,7 +92,9 @@ function paint() {
     d.classList.toggle('closed', !!pref.closed);
     d.querySelector('.dk-strip').innerHTML = strip();
     d.querySelectorAll('.dk-tab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-    if (!pref.closed && run) VIEWS[view].render(d.querySelector('.dk-view'), run, S.graph.nodes, S.tasks, pipeline);
+    const el = d.querySelector('.dk-view');
+    release(el);
+    if (!pref.closed && run) VIEWS[view].render(el, run, S.graph.nodes, S.tasks, pipeline);
 }
 
 export const refreshDeck = singleFlight(async () => {

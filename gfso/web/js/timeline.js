@@ -2,7 +2,7 @@
 // standing ABOVE the bar it answers — the carrier and the mark kept apart — and over the rows how many
 // executors ran at once. Del names who is accountable for a node; this names what ran, when, and beside what.
 import {esc} from './dom.js';
-import {bindFocus} from './store.js';
+import {bindFocus, watch, focus} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, dur, mark, trim} from './draw.js';
 import {KIND_NAME, waitWords, atWork} from './run.js';
@@ -88,4 +88,16 @@ export function render(el, run, nodes) {
             ${r ? `<div class="tt-row">round ${r.n}${r.verdict ? ' → ' + r.verdict + (r.failed?.length ? ': ' + esc(r.failed.join(', ')) : '') : ''}</div>` : ''}
             ${x.priced === false ? '<div class="tt-row">no cost recorded for this call</div>' : ''}`, e);
     }, untip);
+    // a node selected elsewhere is brought into view: among fifty rows its highlighted band sat below the fold.
+    // Only for a selection not yet brought — a redraw on every feed event must not pull the reader's scroll back,
+    // but a node selected while another tab was open is brought when the timeline opens.
+    const bring = id => {
+        const box = el.closest('.dk-body'), band = id && el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`);
+        if (!box || !band) return;
+        el._brought = focus().picks;
+        const b = band.getBoundingClientRect(), v = box.getBoundingClientRect();
+        if (b.top < v.top || b.bottom > v.bottom) box.scrollTop += b.top - v.top - (v.height - b.height) / 2;
+    };
+    if (focus().picks !== el._brought) bring(focus().select);
+    watch((st, key) => key === 'select' && bring(st.select), el);
 }

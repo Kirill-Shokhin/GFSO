@@ -73,6 +73,6 @@ export function render(el, run, nodes, tasks, pipeline = []) {
     };
     find.oninput = draw;
     draw();
+    watch((st, key) => key === 'select' && draw(), el);   // before the focus paint: draw rebuilds what paint marks
     bindFocus(box);
-    el._unsel?.(); el._unsel = watch((st, key) => key === 'select' && draw());
 }
