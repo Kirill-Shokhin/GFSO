@@ -111,10 +111,12 @@ export function waitsOf(nodes, edges, engine = null) {
 // working state (its executor may be a person or a process elsewhere). A parent EXECUTING waits on its parts.
 // `procs`: the processes this server has in flight here — a node one runs on is at work whatever its state (a plan
 // authored over an offered root, one session carrying a part of the plan on its top node).
+// Under AUTO every executor is this server's, so a working state with no session of it open is not work but a stall —
+// read as "at work" it stood beside the header's "stalled — nothing at work for 3.3h" (critic, a rewound night).
 export function atWork(run, tasks, procs = []) {
     const parent = new Set(tasks.map(t => t.parent_id)), open = new Set((run?.sessions || []).filter(s => s.open).map(s => s.node));
-    const on = new Set(procs.map(w => w.task_id));
-    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id) || (working(t.state) && !parent.has(t.id))).map(t => t.id));
+    const on = new Set(procs.map(w => w.task_id)), elsewhere = !run?.auto;
+    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id) || (elsewhere && working(t.state) && !parent.has(t.id))).map(t => t.id));
 }
 // The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
 export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
@@ -243,12 +245,12 @@ function criteria(audit, tasks, verdicts) {
     return {track, status, names};
 }
 
-export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, now = Date.now()}) {
+export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, auto = false, now = Date.now()}) {
     audit = audit.map(a => ({...a, t: at(a.timestamp)})).sort((a, b) => a.t - b.t);
     const ss = sessions(calls, audit), open = openSessions(pipeline, ss, nodes, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
     return {
-        name: id => names[id] || id,
+        name: id => names[id] || id, auto,
         sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting),
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),

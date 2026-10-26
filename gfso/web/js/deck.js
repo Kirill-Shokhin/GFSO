@@ -84,7 +84,8 @@ function strip() {
         + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" title="${hint('Sent back', back.map(([id, n]) => `${run.name(id)} — ${n} FAIL${n > 1 ? 's' : ''}`))}">${back.length} sent back${back.length === 1 ? `: ${esc(trim(run.name(back[0][0]), 20))}` : ''}</button>` : '')
         // a session's cost is booked when it ENDS (the CLI reports it then): a running one is said, not guessed
         + (run ? `<span class="dk-sum" title="Spend&#10;booked when each session ends — the model reports its cost then${mine.length ? `&#10;${mine.length} running now, not booked yet` : ''}">`
-                 + `$${run.cost.total.toFixed(2)}${mine.length ? ` + ${mine.length} running` : ''} · ${dur(run.clock.span)} run</span>` : '');
+                 + `${run.cost.unpriced && run.cost.unpriced === Object.values(run.cost.byKind).reduce((n, p) => n + p.calls, 0) ? 'spend not reported' : '$' + run.cost.total.toFixed(2)}`
+                 + `${mine.length ? ` + ${mine.length} running` : ''} · ${dur(run.clock.span)} run</span>` : '');
 }
 
 function paint() {
@@ -109,7 +110,8 @@ export const refreshDeck = singleFlight(async () => {
     paint();
 });
 let read = null;                                 // what the deck last read: the display clock rebuilds from it, reading nothing
-const rebuild = () => { run = S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read, pipeline, verdicts, waiting: S.waiting}); };
+const rebuild = () => { run = S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read, pipeline, verdicts, waiting: S.waiting,
+                                              auto: S.graph.mode?.mode === 'auto'}); };
 // A DISPLAY CLOCK, not a poll: while something runs, the ages it shows ("validating · 2m") and the open bars grow
 // with time and with nothing pushed — a session busy with tools streams no tokens. Minutes are the coarsest unit
 // shown, so 30 s keeps every figure within half its own step; no server read.

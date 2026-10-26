@@ -24,7 +24,7 @@
          quiet     — IDLE, ABANDONED
          attend    — OFFERED: issued, not yet taken
          busy      — EXECUTING, REWORKING (consented work, §12.1), VALIDATING (a validator session
-                     runs): an accent border on the graph, a plain badge
+                     runs): an ink border on the graph (the accent is a running session's pulse), a plain badge
          pathology — CHALLENGED, BLOCKED, CANCELLING, ESCALATED: a wait on a party, dashed
        No state fills with the accent: a FAIL sends to rework by itself, and who is called is the
        header's calls and the engine's next_steps, not a state's colour. */
@@ -982,6 +982,7 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .fchip.acc, .fchip.acc:hover { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 35%, transparent); cursor: default; }
 /* A criterion: one line — glyph at the current verdict, name, one mark per round — unfolded in place. */
 .cr-row { border-bottom: 1px solid var(--hair-soft); }
+.cr-rest > summary { font-size: 11.5px; color: var(--ink-soft); padding: 5px 0; cursor: pointer; }
 .cr-row > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; font-size: 12px; }
 .cr-row > summary::-webkit-details-marker { display: none; }
 .cr-row > summary:hover .cr-name, .cr-row[open] > summary .cr-name { color: var(--ink); }

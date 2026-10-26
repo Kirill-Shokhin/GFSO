@@ -21,7 +21,7 @@ const NODE_STYLE = {
     quiet:     S_(BG, FAINT, 1, FAINT, 'solid', 0),
     attend:    S_(SOFT, BG, 0, SOFT),
     pathology: S_(SOFT, BG, 1.5, INK, 'dashed'),
-    busy:      S_(BG, INK, 2, ACC),     // in flight: the accent border says "alive" without asking for attention
+    busy:      S_(BG, INK, 2, INK),     // consented work: an ink border — the accent is the pulse of a session running now
 };
 const styleOf = s => NODE_STYLE[bucketOf(s)];
 // The drawing carries what the record carries (§15.7): contradicted → the accent, ringed (owed an

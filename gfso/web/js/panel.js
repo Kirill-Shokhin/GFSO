@@ -72,7 +72,10 @@ function criteria({d, vr, rounds}) {
     const cs = d.criteria.filter(conjunct);
     if (!cs.length) return '';
     const pc = perCrit(vr), k = cs.filter(c => pc[c.name]?.verdict === 'pass').length;
-    return section(`Criteria${vr?.verdict ? ` · ${k}/${cs.length} pass` : ''}`, cs.map(c => {
+    // ONE SCREEN at any count: what is not passing first, and past SHOWN the rest folded behind one line — 31 criteria
+    // made a 1168 px panel whose prose chips sat below the fold (critic, root.integrate)
+    const rank = c => ({fail: 0, undefined: 1, pass: 2})[pc[c.name]?.verdict] ?? 1, sorted = [...cs].sort((a, b) => rank(a) - rank(b));
+    const row = c => {
         const v = pc[c.name]?.verdict, ev = pc[c.name]?.evidence, key = `${d.id}|${c.name}`;
         return `<details class="cr-row" name="crit" data-key="${esc(key)}"><summary>`
             + `<span class="cr-g">${v === 'pass' ? glyph('PASS', 3.5) : v === 'fail' ? glyph('FAIL', 3.5) : '⊥'}</span>`
@@ -80,7 +83,10 @@ function criteria({d, vr, rounds}) {
             + `<div class="cr-more"><div class="crit-desc">${esc(c.description)}</div>`
             + (ev ? `<div class="verdict-evidence">${esc(ev)}</div>${link('verdict', 'full in reader')}` : '')
             + pinned(c, key + '|check') + `</div></details>`;
-    }).join(''));
+    };
+    const SHOWN = 8, head_ = sorted.slice(0, SHOWN).map(row).join(''), rest = sorted.slice(SHOWN);
+    return section(`Criteria${vr?.verdict ? ` · ${k}/${cs.length} pass` : ''}`, head_
+        + (rest.length ? `<details class="cr-rest"><summary>${rest.length} more${rest.every(c => pc[c.name]?.verdict === 'pass') ? ', all passing' : ''}</summary>${rest.map(row).join('')}</details>` : ''));
 }
 
 const facets = ctx => `<div class="pn-facets">${FACETS.map(f => chip(f, ctx)).join('')}</div>`;
@@ -136,7 +142,7 @@ const signedBy = (run, id) => [
     ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => `<span class="wk-none">${n} session${n > 1 ? 's' : ''} of ${KIND[k]} unanswered</span>`),
 ].join(' · ');
 
-const PARTS = [head, verdict, criteria, facets, actions];
+const PARTS = [head, verdict, facets, criteria, actions];   // the prose chips above the list, always on screen
 
 export async function selectTask(id) {
     try {
