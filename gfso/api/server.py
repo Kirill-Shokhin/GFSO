@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from gfso import __version__
-from gfso.tools import PARAM_CHOICES, admission_of
+from gfso.tools import PARAM_CHOICES, admission_of, get_task as _get_task_tool
 from gfso.core.handlers import solver_findings
 from gfso.core.handlers.recommend import suggest_criteria
 from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
@@ -519,7 +519,9 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
         rec = e.graph._storage.get_recommendation(TaskId(task_id))
         audit = e.audit_log(TaskId(task_id))
         children = e.graph.get_children(TaskId(task_id))
-        return {**task_out(t, e),
+        # the node as the tool door reads it (what blocks it, the findings a ruling names), so the panel and an agent
+        # read one node
+        return {**_get_task_tool(e, task_id),
                 "closure": e.closure_of(TaskId(task_id)),
                 "checks": [CheckResultOut.of(c).model_dump() for c in checks],
                 "recommendation": {"suggestions": list(rec.suggestions)} if rec else None,
