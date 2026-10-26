@@ -14,8 +14,9 @@ const panel = () => $('goal-panel');
 const say = text => { $('gp-out').innerHTML = text ? `<div class="gp-say">${esc(text)}</div>` : ''; };
 const mode = () => S.graph.mode?.mode || '';
 
-// one goal is one project (one root): a new project is started by stating its goal
-export const labelGoalButton = () => { $('btn-goal').textContent = root() ? '+ New project' : 'Pose the goal'; };
+// one goal is one project (one root): the button poses a project's goal while it has none; with one posed, a new project
+// is the projects list's own «+ new project» — a second one here was a duplicate on the main page (the author, 2026-10-27)
+export const labelGoalButton = () => { $('btn-goal').hidden = !!root(); };
 
 // ONE PROJECT HOLDS ONE GOAL: with a root here, a new goal means a new project — the tab goes there first,
 // so the form always states the goal of the project it stands in.
