@@ -10,7 +10,7 @@
 
 <img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A recorded run replayed in the web UI: parts of the plan run in parallel, each session on the timeline, a part and then the whole sent back and reworked, the goal delivered" width="860">
 <br>
-<sub>A recorded run, replayed in the UI: the goal's parts run in parallel, every session on the timeline below; a part, then the whole, sent back and reworked until its checks pass; the goal delivered. <em>(<code>sql_database</code> · Haiku 4.5, automatic mode — the run behind the table's 100% on the final plan; its idle stretch is folded)</em></sub>
+<sub>A recorded run, replayed in the UI: the goal's parts run in parallel, every session on the timeline below; a part, then the whole, sent back and reworked until its checks pass; the goal delivered. <em>(<code>sql_database</code> · Haiku 4.5, automatic mode — the run behind the table's 100% on the final plan. Midway an engine rule, since removed, stopped it for 6.6 h; it resumed on the fixed build, and the stop is folded out of the timeline.)</em></sub>
 
 </div>
 

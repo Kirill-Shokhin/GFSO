@@ -32,6 +32,7 @@ DOCS = ROOT / "docs"
 RUN = ROOT / "data" / "gb-sql-database-tnha1f292.db"
 SIZE = {"width": 1200, "height": 900}          # CSS px; at SCALE 1.5 the files are 1800 px wide, as the README's were
 SCALE = 1.5
+TZ = os.environ.get("MEDIA_TZ", "Asia/Bangkok")  # the zone the default run's stamps were written in (UTC+7)
 
 # What the README shows. `film` = one frame per state change of the run, the last held; `still` = the run's last moment.
 SHOTS = {
@@ -60,7 +61,7 @@ def moments(db: Path) -> list[str]:
 
 def cut(src: Path, dst: Path, T: str) -> None:
     """The run as it stood at T. The tables stamp differently ('T' in the audit, a space in the ledgers)."""
-    sqlite3.connect(src).execute(f"VACUUM INTO '{dst.as_posix()}'").connection.close()
+    sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True).execute(f"VACUUM INTO '{dst.as_posix()}'").connection.close()
     c = sqlite3.connect(dst)
     for table, at in (("audit_log", T.replace(" ", "T")), ("pipeline_log", T), ("llm_usage", T)):
         c.execute(f"delete from {table} where ts > ?", (at,))
@@ -72,16 +73,10 @@ def cut(src: Path, dst: Path, T: str) -> None:
         c.execute("update tasks set state=?, done_reason=case when ?='DONE' then done_reason else null end where id=?",
                   (st, st, tid))
     # A stop is a setting with no time of its own (its last value): it stood at T as the last stop or start logged by then.
-    # The project's clock leaves out the time nothing ran it (gfso/core/graph/model.py CLOCK_OFF_KEY), and the doors show
-    # a stored date that much later: off at T is the stops closed by T; the beat is now, so no gap is pending on top.
-    c.execute("delete from settings where key in ('paused', 'clock_off_s', 'clock_beat')")
-    off, since, last = 0.0, None, None
+    last = None
     for ts, msg in c.execute("select ts, message from pipeline_log where source='pause' order by ts, id").fetchall():
-        t = dt.datetime.fromisoformat(ts).timestamp()
-        if msg.startswith("STOPPED by "):
-            since, last = t, (ts, msg)
-        elif since is not None:
-            off, since, last = off + t - since, None, None
+        last = (ts, msg) if msg.startswith("STOPPED by ") else None
+    c.execute("delete from settings where key in ('paused', 'clock_off_s', 'clock_beat')")
     if last:
         by, _, why = last[1][len("STOPPED by "):].partition(": ")
         c.execute("insert into settings (key, value) values ('paused', ?)",
@@ -90,8 +85,11 @@ def cut(src: Path, dst: Path, T: str) -> None:
     if (rep := c.execute("select value from settings where key='tech_reports'").fetchone()):
         c.execute("update settings set value=? where key='tech_reports'",
                   (json.dumps([r for r in json.loads(rep[0]) if str(r.get("at", "")) <= T.replace(" ", "T")]),))
+    # The project's clock (gfso/core/graph/model.py CLOCK_OFF_KEY) adds the time nothing ran it to every date it shows;
+    # the record's own value was written by whatever engine loaded it later, and a run stamped on the wall read 6.6 h late
+    # (critic). Off is 0 and the beat now: the dates are shown as the run wrote them.
     c.executemany("insert into settings (key, value) values (?, ?)",
-                  [("clock_off_s", str(off)), ("clock_beat", str(dt.datetime.now().timestamp()))])
+                  [("clock_off_s", "0"), ("clock_beat", str(dt.datetime.now().timestamp()))])
     c.commit()
     c.close()
 
@@ -102,11 +100,12 @@ VERB = {"executor": "delegated_execution", "consent": "delegated_consent", "vali
 
 def running(src: Path, T: str, project: str) -> list[dict]:
     """Sessions running at T: booked after it, started before it."""
-    t = dt.datetime.fromisoformat(T).timestamp()
-    out = []
+    from zoneinfo import ZoneInfo
+    at = lambda s: dt.datetime.fromisoformat(s).replace(tzinfo=ZoneInfo(TZ)).timestamp()   # epoch, as the page's clock
+    t, out = at(T), []
     for stage, node, ts, ms in sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True).execute(
             "select stage, node_id, ts, duration_ms from llm_usage where ts > ?", (T,)):
-        end = dt.datetime.fromisoformat(ts).timestamp()
+        end = at(ts)
         if ms and end - ms / 1e3 <= t:
             out.append({"verb": VERB.get(stage, stage), "project": project, "task_id": node, "since": round(end - ms / 1e3, 1)})
     return out
@@ -152,11 +151,13 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
             body = json.dumps(fix(res.json())).encode()
         r.fulfill(status=res.status_code, content_type=kind or "application/octet-stream", body=body)
 
-    at = dt.datetime.fromisoformat(T)
+    # T is the run's wall clock in the zone it ran in; the page reads the same zone (MEDIA_TZ), so its dates are the run's
+    from zoneinfo import ZoneInfo
+    at = dt.datetime.fromisoformat(T).replace(tzinfo=ZoneInfo(TZ))
     with sync_playwright() as pw:
         b = pw.chromium.launch()
         pg = b.new_page(viewport=SIZE, device_scale_factor=SCALE, locale="en-GB",
-                        timezone_id=os.environ.get("MEDIA_TZ", "Asia/Bangkok"))
+                        timezone_id=TZ)
         pg.clock.install(time=at)
         pg.clock.pause_at(at)
         pg.route("**/*", route)
