@@ -9,6 +9,8 @@ from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, 
                              SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
 from tests.support import REGISTER_SPLIT, criterion, make_engine, pinned, REGISTER
 from gfso import tools as T
+from gfso.core.types import Mode
+from tests.test_the_mode_decides_who_holds_what import _RISK, _engine
 
 
 def _sp(d, *c):
@@ -268,4 +270,16 @@ def test_a_step_names_who_would_sign_it():
     val = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
     assert val["action"] == "validate" and val["signed_by"] == "boss", "the verdict is the issuer's"
     assert val["role"] == "issuer"            # the role, not only the name: one party may hold both
+    e.stop()
+
+
+def test_a_split_owed_is_the_executors_step_in_every_field():
+    """A leaf owing its split is its executor's act (§11.5); the step's `role` read it as the issuer's while its
+    `performed_by` said the executor, and the page trusts `role` (critic over 70452b2)."""
+    e = _engine(Mode.SEMI)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
+                                       "criteria": [criterion("g", "G holds")]})
+    e.wait_idle()
+    step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "root")
+    assert step["role"] == "executor" and step["signed_by"] == step["performed_by"] == str(step["assignee"]), step
     e.stop()

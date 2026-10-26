@@ -15,7 +15,20 @@ from .moves import Move
 from .validation import _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
 
 #: Actions whose signal is the ISSUER's to give (§11.2) — everything else is the executor's.
-_ISSUER_ACTIONS = frozenset({Action.VALIDATE, Action.RESOLVE, Action.REVISE, Action.CHECK_PLAN})
+
+
+def step_role(engine, task: Optional[Task], action) -> str:
+    """WHOSE ROLE a step's move is (§12.13, the state's owner) — `issuer` or `executor` — read once for every reader
+    (the step's `role` and `signed_by`, `tools._mark_mine`'s owner): validation and a block's ruling are the issuer's,
+    and so is a revision of an ESCALATED node or one whose execution is parked; a split owed, a plan repair and a plan
+    check are the node's executor's own act (§11.5). Two readings of it disagreed: a leaf owing its split was the
+    issuer's on the step and its executor's in `performed_by` (critic over 70452b2)."""
+    if action in (Action.VALIDATE, Action.RESOLVE):
+        return "issuer"
+    if action == Action.REVISE and task is not None and (
+            task.state == State.ESCALATED or engine.parking.is_execution_parked(task)):
+        return "issuer"
+    return "executor"
 
 
 class NodeSteps:
@@ -565,9 +578,10 @@ class NodeSteps:
         # that takes the signer as an argument can copy it.
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
                 "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
-                "signed_by": str(self.engine.graph.issuer_of(t.id)) if action in _ISSUER_ACTIONS else str(t.assignee or ""),
+                "signed_by": (str(self.engine.graph.issuer_of(t.id)) if (role := step_role(self.engine, t, action))
+                              == "issuer" else str(t.assignee or "")),
                 # …and in which ROLE (§12.13: the state's owner): where one party holds both, the name alone cannot say
-                "role": "issuer" if action in _ISSUER_ACTIONS else "executor",
+                "role": role,
                 # ALL of them: V is the conjunction over the whole contract (§2.3), and `record_verdict`
                 # enforces that — so a step that lists fewer is a step whose instruction cannot be followed.
                 "criteria": [c.name for c in t.spec.criteria], "directive": directive}

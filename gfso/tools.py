@@ -31,6 +31,7 @@ from gfso.config import (data_dir as _data_dir, WAIT_MAX_SECONDS, WAIT_POLL_SECO
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
                          agent_id as _config_agent_id)
 from gfso.engine import Engine
+from gfso.engine.frontier import step_role
 from gfso.engine.moves import Move, door_holder, signal_role
 
 
@@ -2516,9 +2517,7 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         # YOURS" about the one decision only he holds. A REVISE that repairs a node's own split stays
         # its executor's (§11.5: the split is authored by the node's executor).
         _t = engine.graph.get_task(TaskId(s["task_id"])) if s.get("task_id") else None
-        role = "issuer" if s.get("action") in (Action.VALIDATE, Action.RESOLVE) or (
-            s.get("action") == Action.REVISE and _t is not None
-            and (_t.state.name == "ESCALATED" or engine.parking.is_execution_parked(_t))) else "split"
+        role = "issuer" if step_role(engine, _t, s.get("action")) == "issuer" else "split"
         # …THE ENGINE'S RULE, ASKED (`issuer_of`), not a second reading of it. This one read the
         # PARENT alone, so a root — which has none — came back `mine: true` to whoever asked,
         # and the gate then refused their signal because a root's issuer is its own assignee.
