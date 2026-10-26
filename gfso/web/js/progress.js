@@ -73,10 +73,7 @@ function coverage(run, nodes, tasks) {
 
 export function render(el, run, nodes, tasks) {
     const name = run.name;
-    // the marks' key, said where they are: a faded mark read as another colour of the same thing (the author, 2026-10-27)
-    const key = `<p class="pg-legend">${glyph('PASS', 3.5)} PASS · ${glyph('FAIL', 3.5)} FAIL, its count exact · `
-        + `<span class="pg-atmost">${glyph('FAIL', 3.5)}</span> FAIL whose record names only what failed — the rest unknown, its count at most</p>`;
-    el.innerHTML = `<div class="pg-wrap"><div class="pg-tracks"></div><div class="pg-side">${coverage(run, nodes, tasks)}</div></div>${key}`;
+    el.innerHTML = `<div class="pg-wrap"><div class="pg-tracks"></div><div class="pg-side">${coverage(run, nodes, tasks)}</div></div>`;
     let lit;   // the shared selection's paint, re-applied to tracks drawn anew
     const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks); lit?.(focus()); };
     // a node selected under a folded part unfolds the path to it, so its track is there to light

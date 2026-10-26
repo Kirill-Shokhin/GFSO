@@ -36,13 +36,19 @@
         <label for="current-role">acting as</label>
         <input id="current-role" value="pm" placeholder="your name" spellcheck="false">
     </div>
-    <div class="hd-quality tb-help" id="tb-help"><button class="hd-q" data-action="help" title="How to read the graph">?</button>
+    <div class="hd-quality tb-help" id="tb-help"><button class="hd-q" data-action="help" title="How to read the graph and its marks">?</button>
         <div class="hd-pop"><div class="hq-row"><div class="hq-head"><b>How to read the graph</b></div></div>
             <div class="hq-row"><div class="hq-head"><i class="lg-split"></i><b>node → its part</b></div><div class="hq-means">a solid arrow runs from a node to one of its parts — the split</div></div>
             <div class="hq-row"><div class="hq-head"><i class="lg-dep"></i><b>producer → its user</b></div><div class="hq-means">a dashed arrow runs from a part to the one that uses its result; that one waits for it to pass (Dep)</div></div>
             <div class="hq-row"><div class="hq-head"><b>pulse</b></div><div class="hq-means">a node at work; filled in the accent when a process of this server runs it</div></div>
             <div class="hq-row"><div class="hq-head"><b>number</b></div><div class="hq-means">how many delivery rounds a node took; in the accent while its last one failed</div></div>
-            <div class="hq-row"><div class="hq-head"><b>double-click</b></div><div class="hq-means">a node: frame it with all its parts · the background: the whole graph</div></div></div></div>
+            <div class="hq-row"><div class="hq-head"><b>double-click</b></div><div class="hq-means">a node: frame it with all its parts · the background: the whole graph</div></div>
+            <div class="hq-row"><div class="hq-head"><b>How to read the marks</b></div></div>
+            <div class="hq-row"><div class="hq-head"><svg class="glyph" width="11" height="11" viewBox="-5.5 -5.5 11 11"><circle class="mk-pass" cx="0" cy="0" r="3.5"/></svg><b>dot</b></div><div class="hq-means">a PASS — in a criterion's row and its history, and on a progress track</div></div>
+            <div class="hq-row"><div class="hq-head"><svg class="glyph" width="11" height="11" viewBox="-5.5 -5.5 11 11"><path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/></svg><b>cross</b></div><div class="hq-means">a FAIL; on a progress track its count is exact</div></div>
+            <div class="hq-row"><div class="hq-head"><span class="pg-atmost"><svg class="glyph" width="11" height="11" viewBox="-5.5 -5.5 11 11"><path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/></svg></span><b>faded cross</b></div><div class="hq-means">a FAIL whose record names only what failed: the rest are unknown, so its count is an upper bound (≤)</div></div>
+            <div class="hq-row"><div class="hq-head"><svg class="glyph" width="11" height="11" viewBox="-5.5 -5.5 11 11"><circle class="mk-open" cx="0" cy="0" r="2.5"/></svg><b>ring</b></div><div class="hq-means">a criterion's round with no value: not checked, or not named by that round's FAIL</div></div>
+            <div class="hq-row"><div class="hq-head"><b>⊥</b></div><div class="hq-means">no verdict yet — not a third value: V is pass or fail once checked (§2.3)</div></div></div></div>
 </div>
 <div class="main">
     <aside class="reader goal-panel project-panel" id="project-panel" hidden>
