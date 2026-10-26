@@ -38,6 +38,7 @@ from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
 from gfso.decompose import NoPlan, decompose_into
 from gfso.engine.events import emit_cb
+from gfso.engine.moves import DOOR_KEYS, door_holder
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
 from gfso.core.graph.model import project_now
 from gfso.engine.loop import state_bound_left
@@ -1986,38 +1987,19 @@ _RAW_TOOLS = {
     "next_steps": next_steps,
 }
 
-# WHO MAY MOVE WHAT UNDER A MODE — checked at the doors only. The system's own moves (the dispatcher,
-# the issuer function) call the verbs in-process, not through this registry, so the lock binds the
-# people and agents outside and never the system it hands the work to. Each verb names the node its
-# move is about and whose move it is: the ISSUER's (the node's contract, its verdict, its Del) or the
-# SPLIT's (the node's decomposition — its executor's act, §11.5 "deferred decomposition").
-_MOVE_OWNER = {
-    "edit_criteria": ("task_id", "issuer"), "revise": ("task_id", "issuer"),
-    "reassign": ("task_id", "issuer"), "reopen": ("task_id", "issuer"),
-    "record_verdict": ("task_id", "issuer"),
-    "map_criterion": ("parent_id", "split"), "dispute_finding": ("task_id", "split"),
-    # the split's register where its Del writes over a split, else the packet's pre-fill — the issuer's (§9.2, §10.1)
-    "edit_accepted_risks": ("task_id", "risks"), "create_task": ("parent_id", "split"),
-    "decompose": ("parent_id", "split"), "auto_decompose": ("root_id", "split"),
-    "signal": ("task_id", "signal"),
-    "validate_result": ("task_id", "issuer"), "edit_scope": ("task_id", "issuer"),
-    "review_decomposition": ("task_id", "split"),
-    "add_dependency": ("to_id", "issuer"), "remove_dependency": ("to_id", "issuer"),
-    # the roster names no node: under AUTO re-staffing the validator is a move on the work, below it is free
-    "register_agent": (None, None), "unregister_agent": (None, None),
-}
-
-
 def _mode_lock(name: str, fn):
-    """Refuse, at a door, a move the project's mode gave to the system.
+    """Refuse, at a door, a move the project's mode gave to the system — checked at the doors only: the system's own
+    moves (the dispatcher, the issuer function) call the verbs in-process, so the lock binds the people and agents
+    outside and never the system it hands the work to. The key and the holder are `engine.moves`' (`DOOR_KEYS`,
+    `door_holder`), the ones every offering sentence is built from.
 
     Under AUTO the user-agent is the customer and does not intervene: every move but stating the goal
     (`auto_decompose` on a project with no root yet) is refused. Under any mode, a move whose owner the
     mode made a system executor is refused. With no mode set nothing changes."""
-    if name not in _MOVE_OWNER:
+    if name not in DOOR_KEYS:
         return fn
     sig = inspect.signature(fn)
-    key, side = _MOVE_OWNER[name]
+    key = DOOR_KEYS[name][0]
 
     @functools.wraps(fn)
     def _call(*a, **kw):
@@ -2026,22 +2008,10 @@ def _mode_lock(name: str, fn):
         except TypeError:
             return fn(*a, **kw)                  # the door answers a malformed call in its own terms
         engine, node = args.get("engine"), args.get(key)
-        mode = engine.mode() if engine is not None else None
-        if mode is None or (name == "auto_decompose" and not engine.all_tasks()):
-            return fn(*a, **kw)                  # stating the goal is the customer's one act
-        _sig = str(args.get("signal", "")).upper()
-        if side == "signal":
-            role = "split" if _sig in _tools.EXECUTOR_SIGNALS else "issuer"
-        elif side == "risks":
-            # a machine Del's own moves are in-process, never through this door: here the caller writes as the issuer
-            # (the packet's pre-fill) wherever the Del is a machine, and as the split's decomposer otherwise
-            t = engine.graph.get_task(TaskId(node)) if node else None
-            role = None if t is None else "issuer" if AgentId(t.assignee) in engine.workforce.executor_pool() else "split"
-        else:
-            role = side
-        holder = engine.mode_holder(node, role,
-                                    ruling=name == "signal" and _sig in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE"))
-        if holder is not None and engine.mode_kind() == Mode.AUTO:
+        if engine is None or (holder := door_holder(engine, name, node, args.get("signal"))) is None:
+            return fn(*a, **kw)
+        mode = engine.mode()
+        if engine.mode_kind() == Mode.AUTO:
             raise ValueError(
                 f"this project runs in AUTO (set by {mode.get('by')}): every role on its nodes is held "
                 f"by a machine — the autonomous level of §10.4 — and you are the goal's customer: you "
@@ -2051,13 +2021,11 @@ def _mode_lock(name: str, fn):
                    if not engine.all_tasks() else "") +
                 f"The mode is the USER's choice, not yours: if the work seems to need another holder, "
                 f"tell the user and ask — change it only on their word.")
-        if holder is not None:
-            raise ValueError(
-                f"this project runs in {mode['mode']} (set by {mode.get('by')}): '{node}' is held "
-                f"below the boundary, so `{name}` on it is {holder}'s move — a machine's role at the "
-                f"autonomous level of §10.4, whatever name the call is signed with. You hold the "
-                f"levels above; moving the boundary is the user's choice — ask them.")
-        return fn(*a, **kw)
+        raise ValueError(
+            f"this project runs in {mode['mode']} (set by {mode.get('by')}): '{node}' is held "
+            f"below the boundary, so `{name}` on it is {holder}'s move — a machine's role at the "
+            f"autonomous level of §10.4, whatever name the call is signed with. You hold the "
+            f"levels above; moving the boundary is the user's choice — ask them.")
     return _call
 
 

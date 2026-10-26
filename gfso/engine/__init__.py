@@ -47,6 +47,7 @@ from .findings import disputed_findings, ever_pinned, released, regression as st
 from .frontier import Frontier
 from .claims import Claims
 from .joins import Joins
+from .moves import Move, door_holder
 from .parking import Parking
 from .workforce import Workforce
 from .admission import (admit as _admit, admit_register as _admit_register, refuse_a_contract_that_pins_nothing,
@@ -2431,15 +2432,21 @@ class Engine:
         t = self._graph.get_task(TaskId(node)) if node else None
         return None if t is None or role is None else self._graph.issuer_of(t.id) if role == "issuer" else t.assignee
 
-    def held_by_mode(self, node, role: str, move: str) -> Optional[str]:
-        """What a surface says IN PLACE of naming `move` on `node` where the mode lock holds it — whose it is — or None,
-        where the asker's door takes it and the surface names the move as it always did. Prose read the lock no less
-        than the lists: under AUTO an escalated root's `recovery` told its customer to `revise` it, refused at the door
-        (critic over 9853468)."""
-        if (held := self.mode_holder(node, role)) is None:
-            return None
-        return (f"{move} on '{node}' is {held}'s under the project's mode ({self.mode()['mode']}), and the door "
-                f"refuses it from anyone else — it is made without you")
+    def offer(self, *moves: Move, sep: str = ", or ", lead: str = "") -> str:
+        """THE ONE WAY A SENTENCE OFFERS A MOVE: the words of each move the door takes (after `lead`), and for those the
+        mode holds, whose they are and that they are made without the asker (`moves.door_holder`, the doors' own
+        lock). Prose that named its moves by hand offered the customer refused ones three times over (critics over
+        9853468 and 25faf94)."""
+        free, held = [], {}
+        for m in moves:
+            if (h := door_holder(self, m.verb, m.node, m.signal)) is None:
+                free.append(m.say)
+            else:
+                held.setdefault(h, {}).setdefault(f"{m.signal or m.verb} on '{m.node}'", None)
+        notes = [f"{', '.join(v)} {'is' if len(v) == 1 else 'are'} {h}'s under the project's mode "
+                 f"({self.mode()['mode']}) — the door refuses {'it' if len(v) == 1 else 'them'} from anyone else, so "
+                 f"{'it is' if len(v) == 1 else 'they are'} made without you" for h, v in held.items()]
+        return "; ".join(([lead + sep.join(free)] if free else []) + notes)
 
     def holder_signs(self, task_id: TaskId) -> bool:
         """Is this node's verdict its HOLDER's to sign on the observation? Under SOLO or SEMI the user's
@@ -3023,9 +3030,7 @@ class Engine:
         t = self._graph.get_task(task_id)
         if t is None:
             return "the ISSUER decides — the node is gone from this graph."
-        if held := self.held_by_mode(task_id, "issuer", "the issuer's decision"):
-            return f"{held}. Silence closes it too, by the state's own timeout — it never drifts to PASS."
-        spent = t.done_reason == DoneReason.FAIL
+        spent, n = t.done_reason == DoneReason.FAIL, str(task_id)
         first = (f"raise the rework bound (`revise('{task_id}', max_iterations=N)`; "
                  f"{t.iteration}/{t.max_iterations} spent) if the forecast was short rather than "
                  f"the plan wrong"
@@ -3035,10 +3040,13 @@ class Engine:
                  f"help: RESOLVE_BLOCK is not admissible here, so clear it outside the graph and "
                  f"revise, or revise the contract around it (`get_dependencies('{task_id}')` names "
                  f"what it was waiting on)")
-        return (f"the ISSUER decides, and has three moves: {first}; change or narrow the criteria "
-                f"(`revise`) if the plan is what is wrong; or close it "
-                f"(`signal('{task_id}', 'CANCEL')`, which cascades the live subtree). Silence "
-                f"closes it too, by the state's own timeout — it never drifts to PASS.")
+        return (self.offer(Move("revise", n, first),
+                           Move("revise", n, f"change or narrow the criteria (`revise('{n}', …)`) if the plan is what "
+                                             f"is wrong"),
+                           Move("signal", n, f"or close it (`signal('{n}', 'CANCEL')`, which cascades the live "
+                                             f"subtree)", Signal.CANCEL.name),
+                           sep="; ", lead="the ISSUER decides, and has three moves: ")
+                + ". Silence closes it too, by the state's own timeout — it never drifts to PASS.")
 
     def why_escalated(self, task_id) -> str:
         """Why this node is waiting — the same route split, said where a reader meets the state."""

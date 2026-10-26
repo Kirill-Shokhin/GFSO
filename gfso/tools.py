@@ -26,11 +26,12 @@ from gfso.core.graph.model import door_off_s, on_the_wall, root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
-from gfso.core.protocol.validation import P2P_SIGNALS, SIGNAL_ROLES, Role
+from gfso.core.protocol.validation import P2P_SIGNALS, Role
 from gfso.config import (data_dir as _data_dir, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
                          agent_id as _config_agent_id)
 from gfso.engine import Engine
+from gfso.engine.moves import Move, door_holder, signal_role
 
 
 # The verbs that may bring a PROJECT into existence — everything else answers "no such project"
@@ -1031,15 +1032,6 @@ def is_refusal(out) -> bool:
                 or out.get("accepted") is False or out.get("recorded") is False)
 
 
-#: the executor's signals, read off the one table of who sends what (§11.2) — a hand copy was the second list (D-F18)
-EXECUTOR_SIGNALS = frozenset(s.name for s, r in SIGNAL_ROLES.items() if r is Role.EXECUTOR)
-
-
-def _signal_side(a: str) -> tuple[str, bool]:
-    """A signal's role for `Engine.mode_holder` (the mode lock), and whether it rules on a CHALLENGE."""
-    return ("split" if a in EXECUTOR_SIGNALS else "issuer"), a in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE")
-
-
 def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[list, Optional[str]]:
     """The signals the FSM lists but the machine would refuse, removed — each with the machine's own reason
     (`Engine.refusal_for`, the dry run of the gate the loop runs). Six hand mirrors of the engine's rules lived here,
@@ -1056,14 +1048,17 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
     asides: list[str] = []
     withheld: dict[str, str] = {}
     for a in list(acts):
-        if (r := engine.refusal_for(TaskId(task_id), Signal[a], None if who == "*" else AgentId(who))) is not None                 and r.kind != "role":
-            acts.remove(a)
-            notes.append(f"{a} is refused here: {r.why}")
-            withheld[a] = notes[-1]
-        elif (held := engine.mode_holder(task_id, *_signal_side(a))) is not None:
+        # the mode first: the door refuses by it before the machine is asked, and the machine's reason, naming the
+        # holder's own way out, is not the asker's to act on
+        if (held := door_holder(engine, "signal", task_id, a)) is not None:
             acts.remove(a)
             notes.append(f"{a} is {held}'s under the project's mode ({engine.mode()['mode']}): the door refuses it "
                          f"from anyone else, whatever name it is signed with")
+            withheld[a] = notes[-1]
+        elif (r := engine.refusal_for(TaskId(task_id), Signal[a], None if who == "*" else AgentId(who))) is not None \
+                and r.kind != "role":
+            acts.remove(a)
+            notes.append(f"{a} is refused here: {r.why}")
             withheld[a] = notes[-1]
     if Signal.PASS.name in withheld and engine.claims.validation_in_flight(TaskId(task_id)):
         # not a rule — the timing a signer needs: a signature landing before the instrument's verdict meets that verdict
@@ -1131,8 +1126,8 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
     acts, gate_note, withheld = _gated_out(engine, t, task_id, who, acts)
     # …and WHO performs each: the party the engine takes it from, not one a client infers from `perform` and the act
     out = {"task_id": task_id, "state": t.state.name, "actions": acts,
-           "performed_by": {a: (engine.mode_holder(task_id, *_signal_side(a))
-                                or str(engine.owner_of(task_id, _signal_side(a)[0]) or "")) for a in acts}}
+           "performed_by": {a: (door_holder(engine, "signal", task_id, a)
+                                or str(engine.owner_of(task_id, signal_role(a)) or "")) for a in acts}}
     # WHOSE the open acts are, where the state is about that and not about the acts. ESCALATED
     # admits CANCEL and ASSIGN — both the ISSUER's — and a list of two signals does not say so; a
     # reader who does not know they are his reads "the node admits things" and keeps polling.
@@ -1171,11 +1166,12 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
                 # the issuer's waiting state (§12.5) and the moves are his.
                 out["recovery"] = f"'{task_id}' is waiting: {engine.issuer_moves_on(TaskId(task_id))}"
             elif t.state in (State.DONE, State.ABANDONED):
-                _held = engine.held_by_mode(task_id, "issuer", "Reopening it")
-                out["recovery"] = f"'{task_id}' is finished. " + (f"{_held}." if _held else (
-                    f"`reopen` puts it back to OFFERED under its standing "
-                    f"contract (R′, §12.14) unless the graph has CONSUMED it — the refusal says which "
-                    f"gate stopped it; `revise` reopens it WITH a new contract."))
+                out["recovery"] = f"'{task_id}' is finished. " + engine.offer(
+                    Move("reopen", task_id, f"`reopen('{task_id}')` puts it back to OFFERED under its standing "
+                                            f"contract (R′, §12.14) unless the graph has CONSUMED it — the refusal "
+                                            f"says which gate stopped it"),
+                    Move("revise", task_id, f"`revise('{task_id}', …)` reopens it WITH a new contract"),
+                    sep="; ") + "."
         elif role is None:
             out["why_none"] = (f"{who} holds no role on {task_id}: its executor is "
                                f"{t.assignee or 'nobody'} and its issuer is {issuer}. Each signal "

@@ -8,8 +8,8 @@ validator in flight a consumer's wait on its producer vanished from `waiting` fo
 
 CONTROLS: let `_mark_mine` skip `mode_holder` and the dispute test goes red; drop the lock from `_gated_out` and the
 `/actions` assertions go red; drop the waits from the dict-shaped answers of `Frontier.next_steps` and the wait test
-goes red; let `Engine.held_by_mode` answer None and the AUTO prose test goes red; let `Frontier._open_producers` read
-`settled_positive` instead of `joins.landed` and the joining test goes red.
+goes red; let `Frontier._open_producers` read `settled_positive` instead of `joins.landed` and the joining test goes
+red. The prose is swept as a whole in `test_no_sentence_offers_a_move_the_door_refuses`.
 """
 from __future__ import annotations
 
@@ -92,36 +92,6 @@ def _settle(e, tid, state, reason=None):
     t.state, t.done_reason = state, reason
     e._graph.save_task(t)
     e.wait_idle()
-
-
-def _offers(text) -> list:
-    """The moves named in `text` that the door refuses the customer under AUTO."""
-    return [v for v in ("revise(", "signal(", "reopen(", "revise the parent", "map_criterion") if v in (text or "")]
-
-
-@pytest.mark.parametrize("mode", [Mode.AUTO, None])
-def test_the_prose_names_the_holder_where_the_mode_holds_the_move(mode):
-    """An ESCALATED (FAIL), DONE/FAIL or ABANDONED AUTO root: every sentence names the system as the one who moves and
-    offers its customer none of the moves the door refuses him; with no mode set the same sentences still name them."""
-    for st, dr in ((State.ESCALATED, DoneReason.FAIL), (State.DONE, DoneReason.FAIL), (State.ABANDONED, None)):
-        e = _engine(mode)
-        _auto_root(e)
-        if mode is None:
-            assert T.signal(e, "root", "ACCEPT", "agent")["accepted"]
-        _settle(e, "root", st, dr)
-        out = T.next_steps(e, actor="agent")
-        said = [out.get("directive")] + [s.get("directive") for s in out.get("steps", [])] + [
-            s["opens_with"] for s in out.get("stranded", [])]
-        if st == State.ESCALATED:
-            aa = T.TOOLS["available_actions"](e, "root", "agent")
-            said.append(aa.get("recovery"))
-            assert aa["waiting_on"] == ("system" if mode else "issuer"), aa
-        said = [x for x in said if x]
-        if mode:
-            assert said and all(not _offers(x) for x in said) and any("system" in x for x in said), (st, said)
-        else:
-            assert any(_offers(x) for x in said), (st, said)
-        e.stop()
 
 
 def test_a_dep_wait_stands_while_its_producer_is_joined():
