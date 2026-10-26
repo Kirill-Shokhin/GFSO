@@ -6,6 +6,7 @@ import {esc, hint} from './dom.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, mark, glyph, trim} from './draw.js';
+import {countWords} from './run.js';
 
 const LEFT = 220, GOAL = 54, PART = 30, GAP = 12, TOP = 22, INDENT = 12;
 const unfolded = new Set();                      // parts the reader opened; the goal is always open
@@ -31,7 +32,8 @@ function tracks(el, run, name, tasks) {
     const W = Math.max(el.clientWidth, 480), f = frame(run, W, LEFT);
     let y = TOP;
     const body = rs.map(r => {
-        const T = tr[r.id], y0 = (y += h(r)), top = y0 - h(r), at = k => y0 - (k / T.total) * h(r), last = T.steps.at(-1)?.[1] ?? 0;
+        const T = tr[r.id], y0 = (y += h(r)), top = y0 - h(r), at = k => y0 - (k / T.total) * h(r), lm = T.marks.at(-1);
+        const last = lm?.atMost ? `≤ ${lm.k}` : T.steps.at(-1)?.[1] ?? (lm ? lm.k : 0);   // an unrecorded FAIL gives a bound only
         y += GAP;
         const lx = 8 + Math.max(r.d - 1, 0) * INDENT;
         const caret = r.kids && r.d ? `<tspan class="pg-caret">${unfolded.has(r.id) ? '▾' : '▸'} </tspan>` : '';
@@ -42,7 +44,8 @@ function tracks(el, run, name, tasks) {
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>
             <path class="pg-area" d="${f.area(T.steps, y0, h(r), T.total)}"/>
-            ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}">${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
+            ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}"${m.atMost ? ' class="pg-atmost"' : ''}>${m.atMost
+                ? `<line class="pg-range" x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${y0}" y2="${at(m.k)}"/>` : ''}${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
     }).join('');
     const H = y + 6, root = rs.find(r => !r.d);
     const miles = (root ? tr[root.id].marks : []).filter(m => m.signal === 'PASS').map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>
@@ -90,7 +93,7 @@ export function render(el, run, nodes, tasks) {
         tip(`<div class="tt-name">${esc(name(m.node))}</div>
             <div class="tt-row">${m.signal}${r ? ` · round ${r.n}` : ''} · ${hm(m.t)}</div>
             ${m.failed.length ? `<div class="tt-row">failed: ${esc(m.failed.join(', '))}</div>` : ''}
-            <div class="tt-row">${m.k} of ${L.total} of its own criteria passing after it</div>`, e);
+            <div class="tt-row">${countWords(m, L.total)}</div>`, e);
     }, untip);
     bringSelected(el, id => tr.querySelector(`.pg-track[data-node="${CSS.escape(id)}"] .pg-band`));
 }

@@ -76,7 +76,7 @@ function rounds(audit) {
         const list = r[a.task_id] ??= [];
         if (a.signal === 'DELIVER') list.push({n: list.length + 1, delivered: a.t, verdict: null, by: a.source});
         else if ((a.signal === 'PASS' || a.signal === 'FAIL') && list.length && !list.at(-1).verdict)
-            Object.assign(list.at(-1), {verdict: a.signal, at: a.t, failed: a.failed_criteria || [], validator: a.source});
+            Object.assign(list.at(-1), {verdict: a.signal, at: a.t, failed: a.failed_criteria || [], validator: a.source, per: a.per_criterion});
     }
     return r;
 }
@@ -200,6 +200,9 @@ export const conjunct = c => !c?.depends_on || !!c.check?.length;
 export const failedOf = (run, id, failed = []) => ({own: failed.filter(c => run.criteria.names[id]?.includes(c)),
                                                      edges: failed.filter(c => !run.criteria.names[id]?.includes(c))});
 export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
+export const countWords = (m, total) => m.atMost
+    ? `at most ${m.k} of ${total} of its own criteria passing after it — this FAIL's record keeps only what it named`
+    : `${m.k} of ${total} of its own criteria passing after it`;
 export const failedWords = (run, id, failed) => { const {own, edges} = failedOf(run, id, failed);
     return [own.join(' · '), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`].filter(Boolean).join('; ') || 'no criterion named'; };
 const V = {pass: 'pass', fail: 'fail'};
@@ -212,12 +215,20 @@ function criteria(audit, tasks, verdicts) {
     const track = Object.fromEntries(tasks.map(t => [t.id, {total: names[t.id].length, steps: [], marks: []}]));
     for (const a of verdictRows) {
         const failed = new Set((a.failed_criteria || []).filter(c => names[a.task_id].includes(c))), T = track[a.task_id];
-        const per = last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal
-            && Object.fromEntries((verdicts[a.task_id].per_criterion || []).map(c => [c.criterion, V[c.verdict] || '⊥']));
-        status[a.task_id] = Object.fromEntries(names[a.task_id].map(c => [c, per ? per[c] || '⊥' : a.signal === 'FAIL' && failed.has(c) ? 'fail' : 'pass']));
-        const k = Object.values(status[a.task_id]).filter(v => v === 'pass').length;
-        T.steps.push([a.t, k]);
-        T.marks.push({t: a.t, node: a.task_id, signal: a.signal, failed: [...failed], k});
+        // each verdict's own per-criterion record where its audit row carries one; else the node's current verdict for its last
+        const rec = a.per_criterion || (last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal && verdicts[a.task_id].per_criterion);
+        const per = rec && Object.fromEntries(rec.map(c => [c.criterion, V[c.verdict] || '⊥']));
+        // a PASS is every criterion passing (V, §2.3); a FAIL's record keeps only what it named (Inv-3), so the rest of a
+        // past FAIL is ⊥, not pass — read as pass, a root's curve rose to 14/16 over rounds whose own record was 0/16
+        status[a.task_id] = Object.fromEntries(names[a.task_id].map(c => [c, per ? per[c] || '⊥'
+            : a.signal === 'PASS' ? 'pass' : failed.has(c) ? 'fail' : '⊥']));
+        const known = !!per || a.signal === 'PASS' || failed.size === T.total,
+              k = known ? Object.values(status[a.task_id]).filter(v => v === 'pass').length
+                        : T.total - failed.size;                      // unknown: at most the criteria it did not name
+        // an unrecorded FAIL still caps the curve, never above its bound — after a PASS it may not stand at the PASS's level;
+        // under-reading is the safe side, as a false FAIL is (§8.4)
+        if (known) T.steps.push([a.t, k]); else if (T.steps.length) T.steps.push([a.t, Math.min(T.steps.at(-1)[1], k)]);
+        T.marks.push({t: a.t, node: a.task_id, signal: a.signal, failed: [...failed], k, atMost: !known});
     }
     return {track, status, names};
 }

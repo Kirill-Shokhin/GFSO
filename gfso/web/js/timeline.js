@@ -5,7 +5,7 @@ import {esc} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, dur, mark, trim} from './draw.js';
-import {KIND_NAME, waitWords, atWork, failedOf, failedWords, EDGE_NOTE} from './run.js';
+import {KIND_NAME, waitWords, atWork, failedOf, failedWords, EDGE_NOTE, countWords} from './run.js';
 import {procs} from './state.js';
 
 const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
@@ -84,7 +84,7 @@ export function render(el, run, nodes) {
             const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), {own, edges} = failedOf(run, id, r.failed);
             return tip(`<div class="tt-name">${esc(name(id))}</div><div class="tt-row">${r.verdict} · round ${r.n} · ${hm(r.at)}</div>
                 ${own.length ? `<div class="tt-row">failed: ${esc(own.join(', '))}</div>` : ''}
-                ${m ? `<div class="tt-row">${m.k} of ${T.total} of its own criteria passing after it</div>` : ''}
+                ${m ? `<div class="tt-row">${countWords(m, T.total)}</div>` : ''}
                 ${edges.length ? `<div class="tt-row">${esc(edges.join(', '))}: ${EDGE_NOTE}</div>` : ''}`, e);
         }
         const s = e.target.closest('.tl-s');

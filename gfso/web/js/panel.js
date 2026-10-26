@@ -52,13 +52,15 @@ function verdict({vr}) {
         + `${esc(vr.refused_report.note || 'the issuer decides')}</span>${link('verdict', 'why')}</div>` : '';
 }
 
-// One mark per round (run.js): this criterion named in a FAIL → the accent cross; a verdict that let it
-// stand → an ink dot; a delivery still unanswered, or a criterion the current verdict left undecided
-// (⊥ — the log of past rounds keeps only names, the current verdict keeps values) → hollow. The last 12.
+// One mark per round (run.js): this criterion named in a FAIL → the cross; a PASS (every criterion passing) → an ink
+// dot; a FAIL that did not name it, a delivery still unanswered, or a criterion the current verdict left undecided →
+// hollow: the log of past rounds keeps only what a FAIL named, so an unnamed one is ⊥, not pass. The last 12.
 const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = (x, i) => `<circle class="mk-open" cx="${x}" cy="0" r="2.5"/>`;
-    return !rs.length ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10" title="${hint(`${rounds.length} rounds`, 'this criterion in each round: dot pass, cross fail, ring not checked')}">`
+    return !rs.length ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10" title="${hint(`${rounds.length} rounds`, 'this criterion in each round: dot pass, cross fail, ring not checked or not recorded')}">`
         + rs.map((r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? open(i * 8 + 4)
-            : mark(r.verdict === 'FAIL' && r.failed.includes(name) ? 'FAIL' : 'PASS', i * 8 + 4, 0, 2.5)).join('') + '</svg>'; };
+            : r.per ? (v => v === 'pass' || v === 'fail' ? mark(v.toUpperCase(), i * 8 + 4, 0, 2.5) : open(i * 8 + 4))(r.per.find(c => c.criterion === name)?.verdict)
+            : r.verdict === 'FAIL' && !r.failed.includes(name) && !(i === rs.length - 1 && now === 'pass') ? open(i * 8 + 4)
+            : mark(r.verdict === 'FAIL' && !r.failed.includes(name) ? 'PASS' : r.verdict, i * 8 + 4, 0, 2.5)).join('') + '</svg>'; };
 
 // A criterion is one line at the current verdict; unfolded (one at a time) it reads what it asks, what the
 // verdict found, and its pinned check.
