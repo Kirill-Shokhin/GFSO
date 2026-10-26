@@ -2413,6 +2413,34 @@ class Engine:
         """The project's mode, typed (`validation.mode_kind`)."""
         return mode_kind(self._graph)
 
+    def mode_holder(self, node, role: Optional[str], ruling: bool = False) -> Optional[str]:
+        """Who the project's mode gives a move on `node` to when no door may take it — the machine holding `role` there
+        ("issuer": the node's issuer; "split": its Del), "system" for one the mode hands to no named machine — or None:
+        the door admits it. THE MODE LOCK: the doors refuse by it (`tools_llm._mode_lock`), and every surface that offers
+        a move reads it, so none offers what the door then refuses (UI stream 2026-10-26: under AUTO the customer was
+        offered the system's dispute). `ruling` is a ruling on a CHALLENGE — the user's own where it rules a finding
+        out of his goal, which the system does not."""
+        if self.mode() is None or (ruling and node and self.users_dispute(TaskId(node))):
+            return None
+        owner = self.owner_of(node, role)
+        machine = str(owner) if owner is not None and AgentId(owner) in self.workforce.executor_pool() else None
+        return machine or ("system" if self.mode_kind() == Mode.AUTO else None)
+
+    def owner_of(self, node, role: Optional[str]) -> Optional[str]:
+        """The party the FSM takes a move on `node` from: its issuer for the issuer's, its Del for the split's."""
+        t = self._graph.get_task(TaskId(node)) if node else None
+        return None if t is None or role is None else self._graph.issuer_of(t.id) if role == "issuer" else t.assignee
+
+    def held_by_mode(self, node, role: str, move: str) -> Optional[str]:
+        """What a surface says IN PLACE of naming `move` on `node` where the mode lock holds it — whose it is — or None,
+        where the asker's door takes it and the surface names the move as it always did. Prose read the lock no less
+        than the lists: under AUTO an escalated root's `recovery` told its customer to `revise` it, refused at the door
+        (critic over 9853468)."""
+        if (held := self.mode_holder(node, role)) is None:
+            return None
+        return (f"{move} on '{node}' is {held}'s under the project's mode ({self.mode()['mode']}), and the door "
+                f"refuses it from anyone else — it is made without you")
+
     def holder_signs(self, task_id: TaskId) -> bool:
         """Is this node's verdict its HOLDER's to sign on the observation? Under SOLO or SEMI the user's
         agent holds nodes, and where it is a node's issuer the verdict is its decision, not the
@@ -2995,6 +3023,8 @@ class Engine:
         t = self._graph.get_task(task_id)
         if t is None:
             return "the ISSUER decides — the node is gone from this graph."
+        if held := self.held_by_mode(task_id, "issuer", "the issuer's decision"):
+            return f"{held}. Silence closes it too, by the state's own timeout — it never drifts to PASS."
         spent = t.done_reason == DoneReason.FAIL
         first = (f"raise the rework bound (`revise('{task_id}', max_iterations=N)`; "
                  f"{t.iteration}/{t.max_iterations} spent) if the forecast was short rather than "

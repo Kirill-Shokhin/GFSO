@@ -2039,7 +2039,7 @@ def _mode_lock(name: str, fn):
             role = None if t is None else "issuer" if AgentId(t.assignee) in engine.workforce.executor_pool() else "split"
         else:
             role = side
-        holder = _tools.mode_holder(engine, node, role,
+        holder = engine.mode_holder(node, role,
                                     ruling=name == "signal" and _sig in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE"))
         if holder is not None and engine.mode_kind() == Mode.AUTO:
             raise ValueError(

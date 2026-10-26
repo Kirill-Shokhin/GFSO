@@ -591,7 +591,7 @@ class Frontier:
         return [k for k in self.engine.graph.get_active_children(task_id)
                 if not settled_positive(k) and k.state in TERMINAL_STATES]
 
-    def _nothing_to_take(self, tasks, deps, _deps_ready, _passed) -> dict:
+    def _nothing_to_take(self, tasks, deps, _deps_ready) -> dict:
         """The answer when no node is takeable: working, blocked by dep order, or stuck.
 
         Three different facts share one silence — an instrument is running, a producer has
@@ -621,11 +621,13 @@ class Frontier:
         # in a minute", this is a run that polls for ever: measured on a root delivered over one
         # ESCALATED child and one DONE one, where the only move — the issuer's own FAIL — was named
         # nowhere. Asked BEFORE the in-flight branch, because that branch is what hid it.
-        _dead_waits = []
+        _dead_waits, _held = [], []
         for t in tasks:
             if t.state != State.VALIDATING:
                 continue
             _gone = self._never_passes(t.id)
+            if _gone or any(k.state == State.ESCALATED for k in self.engine.graph.get_active_children(t.id)):
+                _held.append(self.engine.held_by_mode(t.id, "issuer", "The FAIL and the re-decomposition"))
             if _gone:
                 _dead_waits.append(
                     f"'{t.id}' is delivered and waits on "
@@ -645,9 +647,10 @@ class Frontier:
                         "; ".join(_dead_waits)
                         + ". The AND over a node's children (Thm 1) can never be satisfied while "
                           "one of them is settled and not passed, so no verdict will arrive here "
-                          "on its own — this is not a wait that ends. Either FAIL the delivered "
-                          "node and re-decompose around the hole, or REOPEN the settled child if "
-                          "it still has reopens left (§12.14).")}
+                          "on its own — this is not a wait that ends. "
+                        + ("; ".join(dict.fromkeys(_held)) + "." if all(_held) else
+                           "Either FAIL the delivered node and re-decompose around the hole, or REOPEN the "
+                           "settled child if it still has reopens left (§12.14)."))}
         # A STRANDED NODE IS A FACT NO RUNNING WORK CAN CHANGE, so it is asked BEFORE what is in
         # flight — the in-flight branch was what hid it. That branch's own test is `state in
         # (EXECUTING, REWORKING) and the roster calls the assignee an executor`, which is a property
@@ -676,14 +679,12 @@ class Frontier:
                           "on this: what lands may be yours to sign.")}
         where = "; ".join(f"'{t.id}' ({t.spec.name or t.id}) is {t.state.name}"
                           for t in stranded)
-        waiting = [
-            f"'{t.id}' waits on " + ", ".join(
-                sorted(f"'{e.from_id}'" for e in deps if e.to_id == t.id
-                       and not (self.engine.graph.get_task(e.from_id) is not None
-                                and _passed(self.engine.graph.get_task(e.from_id)))))
-            for t in tasks
-            if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
-            and not _deps_ready(t.id)]
+        _held_up = [t for t in tasks if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
+                    and not _deps_ready(t.id)]
+        waiting = [f"'{t.id}' waits on " + ", ".join(f"'{p}'" for p in self._open_producers(t.id, deps))
+                   for t in _held_up]
+        _redo = [self._held_around(t, "Re-decomposing around it") for t in stranded if t.state != State.ESCALATED]
+        _drop = [self.engine.held_by_mode(t.id, "issuer", "Dropping its edge") for t in _held_up]
         return {"complete": False, "stuck": True,
                 "blocked_by": [str(t.id) for t in stranded],
                 **({"in_flight": _running} if _running else {}),
@@ -693,9 +694,9 @@ class Frontier:
                     f"ISSUER (§12.5). "
                     + "; ".join(f"on '{t.id}' {self.engine.issuer_moves_on(t.id)}"
                                 for t in stranded if t.state == State.ESCALATED)
-                    + (" For a node settled for good, re-decompose around it (revise the parent so "
-                       "another child carries the criteria it left uncovered)."
-                       if any(t.state != State.ESCALATED for t in stranded) else "")
+                    + ((" For a node settled for good: " + "; ".join(_redo) + "." if all(_redo) else
+                        " For a node settled for good, re-decompose around it (revise the parent so "
+                        "another child carries the criteria it left uncovered).") if _redo else "")
                     if stranded else
                     # …and when the hold IS the dependency order, name the pair. The frontier
                     # now gates OFFERED and REWORKING on producers too (a leaf handed out before
@@ -704,8 +705,9 @@ class Frontier:
                     # to work out which, exactly as the ESCALATED case used to.
                     (f"Stuck: no actionable node, and the root is not DONE/PASS. What is waiting "
                      f"is the dependency order: " + "; ".join(waiting) + ". Those producers are "
-                     f"not PASSED, and nothing else can run meanwhile — drive them, or drop the "
-                     f"edge (`remove_dependency`) if it was declared in error."
+                     f"not PASSED, and nothing else can run meanwhile — "
+                     + ("; ".join(dict.fromkeys(_drop)) + "." if all(_drop) else
+                        "drive them, or drop the edge (`remove_dependency`) if it was declared in error.")
                      if waiting else
                      self._why_nothing_is_open()))}
 
@@ -722,14 +724,18 @@ class Frontier:
         if root is not None and root.state in (State.ABANDONED, State.DONE):
             what = ("abandoned" if root.state == State.ABANDONED else
                     "closed on a FAIL" if root.done_reason == DoneReason.FAIL else "done")
+            held = self.engine.held_by_mode(root.id, "issuer", "Reopening the goal")
             if root.state == State.DONE and root.done_reason != DoneReason.FAIL:
                 return (f"Nothing is open because the goal is finished: '{root.id}' is DONE. "
-                        f"If it should not be, `reopen('{root.id}')` puts it back to OFFERED while "
-                        f"nothing has been staked on it and reopens remain (§12.14).")
+                        + (f"{held}." if held else
+                           f"If it should not be, `reopen('{root.id}')` puts it back to OFFERED while "
+                           f"nothing has been staked on it and reopens remain (§12.14)."))
             left = max(0, root.max_reopens - root.reopens)
             return (f"Nothing is open, and that is not a block: the goal itself is settled — "
                     f"'{root.id}' is {root.state.name} ({what}). Nothing below a settled root can "
-                    + (f"move it. To take the goal up again: `reopen('{root.id}')` "
+                    + (f"move it. {held}. To start a different goal, open another project (`use_project`)."
+                       if held and left else
+                       f"move it. To take the goal up again: `reopen('{root.id}')` "
                        f"({left} of {root.max_reopens} reopens left), which returns it to OFFERED "
                        f"to be re-earned by fresh contact. To start a different goal, open another "
                        f"project (`use_project`)." if left else
@@ -979,11 +985,7 @@ class Frontier:
         deps = self.engine.graph.dep_edges(adopted=True)
         def _deps_ready(tid: TaskId) -> bool:
             """A consumer is executable only once every producer it depends on has PASSED (dep order)."""
-            # A producer that does not EXIST yet counts as not ready (mid-build a consumer's ASSIGN
-            # can land before its producer's) — `_passed(None)` would have raised here instead.
-            return all(self.engine.graph.get_task(e.from_id) is not None
-                       and _passed(self.engine.graph.get_task(e.from_id))
-                       for e in deps if e.to_id == tid)
+            return not self._open_producers(tid, deps)
 
         cands = []  # (priority, task, action, directive); lower priority acts first
         for t in tasks:
@@ -1004,7 +1006,7 @@ class Frontier:
                 cands.append(_c)
 
         if not cands:
-            return self._nothing_to_take(tasks, deps, _deps_ready, _passed)
+            return self._nothing_to_take(tasks, deps, _deps_ready)
         cands.sort(key=lambda c: (c[0], str(c[1].id)))
         return cands
 
@@ -1124,6 +1126,7 @@ class Frontier:
                          f"its rework loop was exhausted (§12.5) — a settled FAIL, and a parent's "
                          f"PASS is the AND over its children, so nothing above it can complete"),
                  "opens_with": (self.engine.issuer_moves_on(t.id) if t.state == State.ESCALATED else
+                                self._held_around(t, "Re-decomposing around it") or
                                 f"re-decompose around it: add a child that carries what "
                                 f"'{t.id}' left uncovered and map it (`map_criterion`). A terminal "
                                 f"node is not reopened and takes no revision.")}
@@ -1166,9 +1169,8 @@ class Frontier:
         for t in self.engine.graph._storage.get_all_tasks():
             if str(t.id) in shown or t.state.name in ("DONE", "ABANDONED", "ESCALATED"):
                 continue
-            open_prod = sorted({str(e.from_id) for e in deps if str(e.to_id) == str(t.id)
-                                and not settled_positive(self.engine.graph.get_task(e.from_id))})
-            if open_prod:
+            if open_prod := self._open_producers(t.id, deps):
+                _held = self.engine.held_by_mode(t.id, "issuer", "dropping the edge")
                 # The SAME shape as a plan-gated wait, because the two sat side by side in one answer
                 # with only one of them explaining itself (measured on the human door 2026-08-21).
                 out.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
@@ -1183,7 +1185,19 @@ class Frontier:
                                 # by the counterparty is not a lift).
                                 opens_with=(
                                     f"finish {', '.join(open_prod)} — or, if this node's contract "
-                                    f"does not really need what they produce, its ISSUER can "
-                                    f"`remove_dependency` and revise it")).as_dict())
+                                    f"does not really need what they produce, "
+                                    + (_held or
+                                       "its ISSUER can `remove_dependency` and revise it"))).as_dict())
         out += self._held_by_plan
         return {"waiting": out} if out else {}
+
+    def _open_producers(self, tid, deps) -> list[str]:
+        """The producers `tid` consumes (over `deps`) that have not landed (`joins.landed`) — a producer not yet
+        created counts as open. ONE reading for the dep gate and every wait reported over it: the gate read the join,
+        the waits the bare pass, so a consumer whose producer was being joined was neither a step nor a wait."""
+        return sorted({str(e.from_id) for e in deps if str(e.to_id) == str(tid)
+                       and not ((p := self.engine.graph.get_task(e.from_id)) is not None and self.engine.joins.landed(p))})
+
+    def _held_around(self, t, move: str) -> Optional[str]:
+        """`Engine.held_by_mode` for re-decomposing around a settled node — a move on its parent's contract."""
+        return self.engine.held_by_mode((self.engine.graph.get_parent(t.id) or t).id, "issuer", move)

@@ -19,7 +19,7 @@ from typing import Optional, Union
 from gfso.core.types import (
     TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping,
     SignalData, Signal, Predictability, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS, Verdict, State,
-    RevisionReason, Register, register_of, settled_positive, passed, Mode,
+    RevisionReason, Register, register_of, settled_positive, passed,
 )
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_T_numerator, q_V_reversed
 from gfso.core.graph.model import door_off_s, on_the_wall, root_of
@@ -1035,28 +1035,8 @@ def is_refusal(out) -> bool:
 EXECUTOR_SIGNALS = frozenset(s.name for s, r in SIGNAL_ROLES.items() if r is Role.EXECUTOR)
 
 
-def mode_holder(engine: Engine, node: Optional[str], role: Optional[str], ruling: bool = False) -> Optional[str]:
-    """Who the project's mode gives a move on `node` to when no door may take it — the machine holding `role` there
-    ("issuer": the node's issuer; "split": its Del), "system" for one the mode hands to no named machine — or None:
-    the door admits it. THE MODE LOCK: the doors refuse by it (`tools_llm._mode_lock`), and every surface that offers
-    a move reads it, so none offers what the door then refuses (UI stream 2026-10-26: under AUTO the customer was
-    offered the system's dispute). `ruling` is a ruling on a CHALLENGE — the user's own where it rules a finding
-    out of his goal, which the system does not."""
-    if engine.mode() is None or (ruling and node and engine.users_dispute(TaskId(node))):
-        return None
-    owner = _owner(engine, node, role)
-    machine = str(owner) if owner is not None and AgentId(owner) in engine.workforce.executor_pool() else None
-    return machine or ("system" if engine.mode_kind() == Mode.AUTO else None)
-
-
-def _owner(engine: Engine, node: Optional[str], role: Optional[str]) -> Optional[str]:
-    """The party the FSM takes a move on `node` from: its issuer for the issuer's, its Del for the split's."""
-    t = engine.graph.get_task(TaskId(node)) if node else None
-    return None if t is None or role is None else engine.graph.issuer_of(t.id) if role == "issuer" else t.assignee
-
-
 def _signal_side(a: str) -> tuple[str, bool]:
-    """A signal's role for `mode_holder`, and whether it rules on a CHALLENGE."""
+    """A signal's role for `Engine.mode_holder` (the mode lock), and whether it rules on a CHALLENGE."""
     return ("split" if a in EXECUTOR_SIGNALS else "issuer"), a in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE")
 
 
@@ -1080,7 +1060,7 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
             acts.remove(a)
             notes.append(f"{a} is refused here: {r.why}")
             withheld[a] = notes[-1]
-        elif (held := mode_holder(engine, task_id, *_signal_side(a))) is not None:
+        elif (held := engine.mode_holder(task_id, *_signal_side(a))) is not None:
             acts.remove(a)
             notes.append(f"{a} is {held}'s under the project's mode ({engine.mode()['mode']}): the door refuses it "
                          f"from anyone else, whatever name it is signed with")
@@ -1151,13 +1131,13 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
     acts, gate_note, withheld = _gated_out(engine, t, task_id, who, acts)
     # …and WHO performs each: the party the engine takes it from, not one a client infers from `perform` and the act
     out = {"task_id": task_id, "state": t.state.name, "actions": acts,
-           "performed_by": {a: (mode_holder(engine, task_id, *_signal_side(a))
-                                or str(_owner(engine, task_id, _signal_side(a)[0]) or "")) for a in acts}}
+           "performed_by": {a: (engine.mode_holder(task_id, *_signal_side(a))
+                                or str(engine.owner_of(task_id, _signal_side(a)[0]) or "")) for a in acts}}
     # WHOSE the open acts are, where the state is about that and not about the acts. ESCALATED
     # admits CANCEL and ASSIGN — both the ISSUER's — and a list of two signals does not say so; a
     # reader who does not know they are his reads "the node admits things" and keeps polling.
     if t.state == State.ESCALATED:
-        out["waiting_on"] = "issuer"
+        out["waiting_on"] = engine.mode_holder(task_id, "issuer") or "issuer"
         out["recovery"] = engine.issuer_moves_on(TaskId(task_id))
     if gate_note:
         out["gate"] = gate_note
@@ -1191,10 +1171,11 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
                 # the issuer's waiting state (§12.5) and the moves are his.
                 out["recovery"] = f"'{task_id}' is waiting: {engine.issuer_moves_on(TaskId(task_id))}"
             elif t.state in (State.DONE, State.ABANDONED):
-                out["recovery"] = (
-                    f"'{task_id}' is finished. `reopen` puts it back to OFFERED under its standing "
+                _held = engine.held_by_mode(task_id, "issuer", "Reopening it")
+                out["recovery"] = f"'{task_id}' is finished. " + (f"{_held}." if _held else (
+                    f"`reopen` puts it back to OFFERED under its standing "
                     f"contract (R′, §12.14) unless the graph has CONSUMED it — the refusal says which "
-                    f"gate stopped it; `revise` reopens it WITH a new contract.")
+                    f"gate stopped it; `revise` reopens it WITH a new contract."))
         elif role is None:
             out["why_none"] = (f"{who} holds no role on {task_id}: its executor is "
                                f"{t.assignee or 'nobody'} and its issuer is {issuer}. Each signal "
@@ -2510,10 +2491,10 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         # …THE ENGINE'S RULE, ASKED (`issuer_of`), not a second reading of it. This one read the
         # PARENT alone, so a root — which has none — came back `mine: true` to whoever asked,
         # and the gate then refused their signal because a root's issuer is its own assignee.
-        owner = _owner(engine, s.get("task_id"), role)
+        owner = engine.owner_of(s.get("task_id"), role)
         # …AND THE MODE'S LOCK, the one the door refuses by: under AUTO the root's dispute, the system's to answer, was
         # `mine` to the customer the root names its issuer, and the door then refused his ruling (UI stream 2026-10-26)
-        held = mode_holder(engine, s.get("task_id"), role, ruling=s.get("action") == Action.RESOLVE)
+        held = engine.mode_holder(s.get("task_id"), role, ruling=s.get("action") == Action.RESOLVE)
         s["performed_by"] = by = held or str(owner or "")
         s["mine"] = by == me or not by
         if held and not s["mine"] and (owner == me or not owner):
