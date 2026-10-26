@@ -178,10 +178,10 @@ export const refreshHeader = singleFlight(async () => {
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;
         S.runState = f.run;
-        // the engine's Dep waits (run.js) — only from an answer that lists steps: with nothing actionable (a validator
-        // running, stuck, joining) `waiting` holds the other kinds alone and a Dep wait vanished (critic); and only the
+        // the engine's Dep waits (run.js) — from an answer that lists steps or carries `waiting` (every answer does since
+        // 9853468; before it, one with nothing actionable held the other kinds alone and a Dep wait vanished); only the
         // `dependency` kind, whose `waits_on` are node ids — the others' are sentences
-        S.waiting = (f.steps || []).length ? new Map((f.waiting || []).filter(w => w.kind === 'dependency')
+        S.waiting = (f.steps || []).length || f.waiting ? new Map((f.waiting || []).filter(w => w.kind === 'dependency')
             .map(w => [w.task_id, [...(w.waits_on || [])]])) : null;
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }

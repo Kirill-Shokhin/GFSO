@@ -91,15 +91,18 @@ const sig = (id, a) => btn(a.cls, a.label, 'signal', {id, sig: a.s, prompt: a.pr
 // Every signal the engine admits here (/actions) and the moves that are no signal (vocab.js) — the plan-repair Edit
 // wherever a re-ASSIGN is legal, not on OFFERED alone (a tester was trapped on an EXECUTING root, wave 27). The forms
 // these open go in #inline-form, never a native dialog.
-// UNDER A MODE the panel says no more than the engine does: on a node next_steps names as this person's it shows the
-// step's own directive and the signals /actions admits for them — no table of its own of what a step means (a copy
-// of that hid moves the directives name and offered ones they forbid, two critics). Work the mode DISPATCHES (the
-// executor's steps but consent, SPAWNABLE_ACTIONS less ACCEPT) is the clean session's: its directive says wait.
+// UNDER A MODE the panel says no more than the engine does: on a node next_steps names as this person's it offers the
+// signals /actions admits whose `performed_by` is this person (or anyone) — the door's own mode lock, read, not copied
+// (a table of the page's own hid moves the directives name and offered work the mode dispatches, two critics). The
+// step's directive is shown beside them, but not on an AUTO project, whose prose may still name moves the door
+// refuses (engineering, 9853468). Before the engine served `performed_by`, dispatched work fell back to the mode's
+// `perform`: the executor's steps but consent are the clean session's.
 const DISPATCHED = new Set(['execute', 'rework', 'deliver']);
 function actions({d, acts}) {
-    const s = d.state, id = {id: d.id}, kids = hasKids(d.id), m = S.graph.mode;
+    const s = d.state, id = {id: d.id}, kids = hasKids(d.id), m = S.graph.mode, me = myRole();
+    const by = acts?.performed_by, mineSig = sg => !m?.mode || !by || !by[sg] || by[sg] === me;
     // the signals the ENGINE admits here for whoever this page signs as (/actions); how each is offered is vocab's
-    const open = (acts?.actions || []).map(look).filter(Boolean)
+    const open = (acts?.actions || []).filter(mineSig).map(look).filter(Boolean)
         .map(a => a.s === 'DELIVER' && s === 'REWORKING' ? {...a, label: 'Re-deliver'} : a).map(a => sig(d.id, a));
     // the moves that are no signal: refused on the nodes of an AUTO project, the person's own elsewhere
     const moves = m?.mode === 'auto' ? [] : [
@@ -111,10 +114,11 @@ function actions({d, acts}) {
         can(s, 'E') && btn('btn-muted', 'Edit', 'edit', id)].filter(Boolean);
     const foot = (note, btns) => `<div class="pn-foot">${note}${btns ? `<div class="actions">${btns}</div>` : ''}<div id="inline-form"></div></div>`;
     if (!m?.mode) { const btns = [...open, ...moves].join(''); return btns ? foot('', btns) : ''; }
-    const steps = S.mySteps?.get(d.id) || [];
+    const steps = (S.mySteps?.get(d.id) || []).filter(x => !x.performed_by || x.performed_by === me);
     if (!steps.length) return '';
-    const said = steps.map(x => `<div class="pn-step" title="${esc(x.directive || '')}">${esc(x.action)} — ${esc(trimTo(x.directive || '', 220))}</div>`).join('');
-    const waits = m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
+    const said = steps.map(x => `<div class="pn-step" title="${esc(m.mode === 'auto' ? '' : x.directive || '')}">${esc(x.action)}`
+        + `${m.mode === 'auto' ? '' : ` — ${esc(trimTo(x.directive || '', 220))}`}</div>`).join('');
+    const waits = !by && m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
     return foot(said, waits ? '' : [...open, ...moves].join(''));
 }
 const trimTo = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
