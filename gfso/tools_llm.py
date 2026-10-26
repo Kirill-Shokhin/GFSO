@@ -42,7 +42,7 @@ from gfso.engine.moves import DOOR_KEYS, door_holder
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
 from gfso.core.graph.model import project_now
 from gfso.engine.loop import state_bound_left
-from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
+from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.engine import Engine
 from gfso import tools as _tools
 from gfso.tools import _agent_id
@@ -1232,11 +1232,11 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
         # (`the_call_was_cut`, the provider's own observation first) is a run that stopped, worth re-running on the
         # same tier, unlike a report that parsed and decided nothing (measured 2026-09-06: fifteen minutes, one
         # sentence, $0.00).
-        if refused_by_limit(calls_of(llm)):
+        if (_stopped := what_stopped(calls_of(llm))):
             # …AND A CALL THE ACCOUNT'S LIMIT REFUSED IS NO REPORT AT ALL: booked as a refused one, every probe of a
             # limit window raised the node's refusal count — the next validation bought on the retry tier, the issuer
             # told to narrow the contract, the validator told "attempt 16" (critic over this fix, 2026-10-24)
-            return {**out, "error": "the account's usage limit refused the validator's call — nothing was validated"}, text
+            return {**out, "error": f"{_stopped}: the validator's call was refused — nothing was validated"}, text
         if getattr(llm, "calls", None):
             llm.calls[-1]["parse_failed"] = True
         _said = text.strip()
@@ -1392,6 +1392,14 @@ def _what_the_gate_does(engine: Engine, root_id, kids: list, n: int) -> str:
             f"takes them — EXPLORE, §9.9) — fix the criteria they name and run `review_decomposition('{root_id}')`.")
 
 
+def _no_plan(no) -> str:
+    """Why no plan was built — and where a system stop refused its calls, that none was written, not that it was
+    unreadable (critic over b5f7350)."""
+    stopped = what_stopped(no.stats)
+    return (f"{stopped}: no plan was authored — the project is stopped until it lifts; then call auto_decompose again"
+            if stopped else str(no))
+
+
 def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    assignee: Optional[str] = None, executor: Optional[str] = None,
                    depth: int = 1, model: Optional[str] = None, fast: bool = False,
@@ -1486,7 +1494,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                              # against, so the seams move with the model rather than with a number we set
                              executor=engine.workforce.executor_session(executor or assignee))
     except NoPlan as no:            # no root built: what was spent is still on the record
-        return {"root_id": None, "subtasks": [], "holes": [], "stats": no.stats, "error": str(no)}
+        return {"root_id": None, "subtasks": [], "holes": [], "stats": no.stats, "error": _no_plan(no)}
     finally:
         # …on every path: a build that raised took its calls with it, and a row's ledger showed no plan at all
         # while the plan's author and auditors had spent $0.56 (GB_sql_database_tmu9cb784)

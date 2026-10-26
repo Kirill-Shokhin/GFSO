@@ -13,7 +13,8 @@ import time
 from pathlib import Path
 
 import gfso.tools as T
-from gfso import delegate as D, issuer as I, sessions as S
+import gfso.tools_llm as TL
+from gfso import decompose as DEC, delegate as D, issuer as I, sessions as S
 from gfso.adapters import execution as E
 from gfso.adapters.llm.headless import ClaudeCodeProvider
 from gfso.adapters.storage.sqlite import SqliteStorage
@@ -217,3 +218,40 @@ def test_a_probe_that_raises_is_a_place_that_does_not_answer_and_the_monitor_liv
         time.sleep(0.1)
     assert e.paused() is None, "the place answered and the monitor never started the project"
     e.stop()
+
+
+# ── every door names the place, not a limit (critic over b5f7350, 2026-10-27) ─────────────────────────────────
+
+
+def _dead_place(tmp_path, monkeypatch):
+    monkeypatch.setattr(E, "run", _Docker())
+    (tmp_path / "ws").mkdir(exist_ok=True)
+    ex = E.ContainerExecution("e3-linux", "img", str(tmp_path / "env"), str(tmp_path / "state"), str(tmp_path / "ws"), "p")
+    monkeypatch.setattr(TL, "execution_of", lambda *a, **k: ex)
+    return ex
+
+
+def test_the_validation_door_names_the_place_down(tmp_path, monkeypatch):
+    ex = _dead_place(tmp_path, monkeypatch)
+    e = make_engine(llm=None)
+    e.start()
+    T.TOOLS["create_task"](e, "root", {"description": "r", "criteria": [criterion("c", "C")]})
+    e.wait_idle()
+    T.signal(e, "root", "ACCEPT", "agent")
+    T.signal(e, "root", "DELIVER", "agent", result="x")
+    out = TL.TOOLS["validate_result"](e, task_id="root", workdir=str(tmp_path / "ws"),
+                                      _llm=ClaudeCodeProvider("haiku", execution=ex))
+    assert "execution place e3-linux" in str(out.get("error")) and "usage limit" not in str(out.get("error")), out
+    assert e.paused() and e.paused().get("place") == "e3-linux"
+    e.stop()
+
+
+def test_the_planning_door_says_no_plan_was_written_not_that_it_was_unreadable(tmp_path, monkeypatch):
+    _dead_place(tmp_path, monkeypatch)
+    monkeypatch.setattr(DEC, "_default_llm", lambda model, execution=None: ClaudeCodeProvider(model, execution=execution))
+    monkeypatch.setattr(TL, "_work_place_documents", lambda *a, **k: "")
+    e = make_engine(llm=None)
+    out = TL.TOOLS["auto_decompose"](e, request="build a calculator", root_id="root", depth=1)
+    assert out.get("root_id") is None and "execution place e3-linux" in str(out.get("error")), out
+    assert "parseable" not in str(out.get("error"))
+    assert not any(c.get("parse_failed") for c in out.get("stats") or ())

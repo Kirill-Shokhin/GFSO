@@ -34,7 +34,7 @@ from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec
                              SPAWNABLE_ACTIONS, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
                           split_has_a_mover)
-from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among
+from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what_stopped
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace,
                              clear_workspaces, execution_of, join_whole, node_workspace, session_scope)
@@ -501,7 +501,7 @@ def _classify_no_verdict(engine, task_id: TaskId, out: dict) -> str:
     _why = str(out.get("error") or "").strip()
     engine.emit_info("delegate",
                      f"{task_id}: validator verdict UNPARSED/error — "
-                     + ("the account's limit refused it" if refused_by_limit(out.get("stats")) else "issuer must decide")
+                     + (f"{_stopped} refused it" if (_stopped := what_stopped(out.get("stats"))) else "issuer must decide")
                      + (f" · {_why}" if _why else "")
                      + (f" · this run cost ${_spent:.4f} (recorded in `usage`)" if _spent
                         else " · no model call is recorded for it, so `usage` will not show it")

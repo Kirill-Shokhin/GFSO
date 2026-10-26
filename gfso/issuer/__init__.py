@@ -35,7 +35,7 @@ from typing import Optional
 
 from gfso import tools as _tools
 from gfso.adapters.execution import LocalExecution
-from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut
+from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_now
@@ -1356,8 +1356,8 @@ def _refine(engine, task, actor, answer, why, verbs):
     out = verbs.refine(engine, str(task.id))
     # …and a round the account's limit refused authored nothing: read as "no split can be built", one probe of a limit
     # window lapsed contact's refutation and handed a node that had failed four rounds its single session back (critic)
-    if refused_by_limit(out.get("stats")):
-        raise Unavailable("the account's usage limit refused the refine round", limit=True)
+    if (_stopped := what_stopped(out.get("stats"))):
+        raise Unavailable(f"{_stopped}: the refine round was refused", limit=True)
     return not out.get("error"), str(out.get("error") or "")
 
 

@@ -502,6 +502,8 @@ class ClaudeCodeProvider(LLMProviderPort):
         parsed = parse_structured(text, schema)
         if parsed is not None:
             return parsed
+        if refused_by_limit(self.calls[-1:]):
+            return {}                          # nothing ran: no reply to have failed parsing, nothing to retry
         if self.calls:
             self.calls[-1]["parse_failed"] = True  # keep the wasted attempt visible in stats
         if text:  # one repair retry with the failure fed back

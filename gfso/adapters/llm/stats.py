@@ -40,6 +40,16 @@ def refused_by_limit(calls) -> bool:
                for c in calls or ())
 
 
+def what_stopped(calls) -> "str | None":
+    """WHAT stopped the project, named for the person who lifts it — the execution place down, or the account's limit —
+    or None where nothing of the kind ended these calls. One sentence for every door: three of them said "the account's
+    usage limit" of a Docker daemon that was down (critic over b5f7350), and the user would wait a window out."""
+    for c in calls or ():
+        if isinstance(c, dict) and c.get("ended") == "unavailable":
+            return f"the execution place {c.get('place') or ''} is unavailable".replace("  ", " ")
+    return "the account's usage limit" if refused_by_limit(calls) else None
+
+
 def calls_of(llm) -> tuple:
     """The stat dicts this provider recorded, or nothing — the ONE place that asks a provider for
     them. Duck-typed for the reason this module exists: only a stat-collecting adapter has `calls`,
