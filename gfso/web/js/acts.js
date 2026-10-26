@@ -2,7 +2,7 @@
 // EVERY SIGNAL THAT CARRIES TEXT ASKS FOR IT IN THE PANEL: a native `prompt()` is one line, unstylable,
 // and BLOCKS the page — a tester's tab froze on `Deliver` and the delivery was lost (wave 26).
 import {$, esc, data} from './dom.js';
-import {post, refusal} from './api.js';
+import {getJSON, post, refusal} from './api.js';
 import {S, taskOf, critNames, hasKids, myRole} from './state.js';
 import {mark, PLAN_COST} from './vocab.js';
 import {notice, clearNotice, askInPage} from './overlays.js';
@@ -19,7 +19,26 @@ const faint = (text, style = '', tag = 'div') => `<${tag} style="${style}font-si
 
 // `Fail` asked for failed criteria as free text, and a name outside the contract is refused (Inv-3) —
 // so they are the node's own criteria, as checkboxes.
+// ACCEPT_CHALLENGE is a ruling: it may retire the validator's findings standing on the node that the challenge named by
+// id (`regression_probes`; tools.py `signal`), with the recorded why — sent bare it accepted the dispute and left every
+// finding demanded (critic). The candidates are only the ids the standing CHALLENGE named; the door refuses others.
+let ruling = [];
+async function acceptChallenge(a) {
+    const d = await getJSON(`/api/tasks/${encodeURIComponent(a.id)}`).catch(() => null);
+    const said = [...(d?.audit || [])].reverse().find(x => x.signal === 'CHALLENGE' && !x.rejected)?.reason || '';
+    ruling = (d?.regression_probes || []).filter(p => p.id && said.includes(p.id));
+    if (!ruling.length) return submitAction(a.id, a.sig, {});
+    form(`<div class="section-title">${a.sig}</div>`
+        + faint('Findings the challenge names — tick those this ruling retires (they stop being demanded):', 'display:block;', 'label')
+        + ruling.map((p, i) => `<label style="display:block;font-size:13px"><input type="checkbox" id="sa-ret-${i}"> ${esc(p.id)}`
+            + `${p.criterion ? ` · ${esc(p.criterion)}` : ''}${p.command ? ` — <code>${esc(p.command)}</code>` : ''}</label>`).join('')
+        + faint('Why (recorded with the ruling; needed when a finding is retired)', 'display:block;margin-top:6px;', 'label')
+        + `<textarea id="sa-text" rows="3" style="width:100%;box-sizing:border-box"></textarea>`
+        + buttons({...a, retire: 1, action: 'send-signal'}, `Send ${a.sig}`));
+}
+
 export function sendAction(a) {
+    if (a.sig === 'ACCEPT_CHALLENGE') return acceptChallenge(a);
     if (!a.prompt && !a.fail) return submitAction(a.id, a.sig, {});
     form(`<div class="section-title">${a.sig}</div>`
         + (a.prompt ? faint(a.prompt, 'display:block;', 'label')
@@ -32,6 +51,11 @@ export function sendAction(a) {
 
 export function submitActionForm(a) {
     const body = {};
+    if (a.retire) {
+        const ids = ruling.filter((p, i) => $('sa-ret-' + i)?.checked).map(p => p.id), why = $('sa-text')?.value.trim() || '';
+        if (ids.length && !why) return notice('say why these findings are retired — it is recorded with the ruling', 'bad');
+        return submitAction(a.id, a.sig, ids.length ? {retire_findings: ids, justification: why} : {});
+    }
     if (a.prompt) {
         const v = $('sa-text')?.value || '';
         if (!v.trim()) return notice(`${a.prompt} is required`, 'bad');
