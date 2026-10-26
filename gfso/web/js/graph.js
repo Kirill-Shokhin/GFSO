@@ -65,10 +65,12 @@ export async function initGraph() {
                 'width': 1, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
                 'line-color': inkAlpha(0.30), 'target-arrow-color': inkAlpha(0.30), 'arrow-scale': 0.7}},
             {selector: 'edge[type="dependency"]', style: {'line-style': 'dashed', 'line-color': ACC, 'target-arrow-color': ACC}},
-            // a node pointed at from another view takes the palette's paper, its name in ink — one tint for every node: the
-            // accent over a light face was a pink no palette has, an outline read fainter, and two tints read as two things
-            // (the author, 2026-10-27). Its box is unchanged: an underlay grew it and the edges re-anchored.
-            {selector: 'node.focus', style: {'background-color': PAPER, 'background-opacity': 1, 'color': INK}},
+            // a node pointed at from another view is marked in ONE colour, the palette's paper: a filled node's name dims to
+            // it (what the accent tint did there — it barely touched an ink face), a light face takes it whole. The accent
+            // over a light face was a pink no palette has, an outline read fainter, a paper face on a filled node read as
+            // another node (the author, 2026-10-27). The box is unchanged: an underlay grew it and the edges re-anchored.
+            {selector: 'node.focus', style: {'color': PAPER}},
+            {selector: `node.focus[bg = "${BG}"]`, style: {'background-color': PAPER, 'background-opacity': 1, 'color': 'data(fg)'}},
             // no grey press overlay: the selection border is the one mark a tap leaves
             {selector: 'node:active', style: {'overlay-opacity': 0}},
             {selector: 'core', style: {'active-bg-opacity': 0}},
