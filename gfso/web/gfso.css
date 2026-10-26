@@ -264,7 +264,7 @@ body {
 .pg .pg-track.is-hover .pg-band { fill: var(--hair-soft); }
 .pg .pg-track.is-select .pg-band { fill: var(--hair); }
 .pg .pg-base { stroke: var(--hair); }
-.pg .pg-atmost { opacity: .45; }   /* a past FAIL: only an upper bound is known */
+.pg .pg-atmost, .pg-legend .pg-atmost { opacity: .45; }   /* a past FAIL: only an upper bound is known */
 .pg .pg-range { stroke: var(--ink-faint); stroke-dasharray: 2 2; }
 .pg .pg-full { stroke: var(--hair); stroke-dasharray: 2 3; }
 .pg .pg-area { fill: var(--ink); opacity: .12; stroke: var(--ink); stroke-width: 1.5; stroke-opacity: 1; }
