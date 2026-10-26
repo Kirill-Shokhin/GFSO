@@ -33,7 +33,6 @@ from gfso.adapters.snapshots import snapshot, swap
 from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import canonical_citations, laid_down_dirs, with_part_observations
-from gfso.core.protocol.validation import SIGNAL_ROLES, Role
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
@@ -2007,8 +2006,6 @@ _MOVE_OWNER = {
     # the roster names no node: under AUTO re-staffing the validator is a move on the work, below it is free
     "register_agent": (None, None), "unregister_agent": (None, None),
 }
-#: the executor's signals, read off the one table of who sends what (§11.2) — a hand copy was the second list (D-F18)
-_EXECUTOR_SIGNALS = frozenset(s.name for s, r in SIGNAL_ROLES.items() if r is Role.EXECUTOR)
 
 
 def _mode_lock(name: str, fn):
@@ -2030,14 +2027,21 @@ def _mode_lock(name: str, fn):
             return fn(*a, **kw)                  # the door answers a malformed call in its own terms
         engine, node = args.get("engine"), args.get(key)
         mode = engine.mode() if engine is not None else None
-        if mode is None:
-            return fn(*a, **kw)
-        if name == "auto_decompose" and not engine.all_tasks():
+        if mode is None or (name == "auto_decompose" and not engine.all_tasks()):
             return fn(*a, **kw)                  # stating the goal is the customer's one act
-        if (name == "signal" and str(args.get("signal", "")).upper() in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE")
-                and node and engine.users_dispute(TaskId(node))):
-            return fn(*a, **kw)                  # …and ruling a finding out of his own goal, which the system does not
-        if engine.mode_kind() == Mode.AUTO:
+        _sig = str(args.get("signal", "")).upper()
+        if side == "signal":
+            role = "split" if _sig in _tools.EXECUTOR_SIGNALS else "issuer"
+        elif side == "risks":
+            # a machine Del's own moves are in-process, never through this door: here the caller writes as the issuer
+            # (the packet's pre-fill) wherever the Del is a machine, and as the split's decomposer otherwise
+            t = engine.graph.get_task(TaskId(node)) if node else None
+            role = None if t is None else "issuer" if AgentId(t.assignee) in engine.workforce.executor_pool() else "split"
+        else:
+            role = side
+        holder = _tools.mode_holder(engine, node, role,
+                                    ruling=name == "signal" and _sig in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE"))
+        if holder is not None and engine.mode_kind() == Mode.AUTO:
             raise ValueError(
                 f"this project runs in AUTO (set by {mode.get('by')}): every role on its nodes is held "
                 f"by a machine — the autonomous level of §10.4 — and you are the goal's customer: you "
@@ -2047,22 +2051,10 @@ def _mode_lock(name: str, fn):
                    if not engine.all_tasks() else "") +
                 f"The mode is the USER's choice, not yours: if the work seems to need another holder, "
                 f"tell the user and ask — change it only on their word.")
-        t = engine.graph.get_task(TaskId(node)) if node else None
-        if t is None or side is None:
-            return fn(*a, **kw)
-        if side == "signal":
-            role = "split" if str(args.get("signal", "")).upper() in _EXECUTOR_SIGNALS else "issuer"
-        elif side == "risks":
-            # a machine Del's own moves are in-process, never through this door: here the caller writes as the issuer
-            # (the packet's pre-fill) wherever the Del is a machine, and as the split's decomposer otherwise
-            role = "issuer" if AgentId(t.assignee) in engine.workforce.executor_pool() else "split"
-        else:
-            role = side
-        owner = engine.graph.issuer_of(t.id) if role == "issuer" else t.assignee
-        if owner is not None and AgentId(owner) in engine.workforce.executor_pool():
+        if holder is not None:
             raise ValueError(
-                f"this project runs in {mode['mode']} (set by {mode.get('by')}): '{t.id}' is held "
-                f"below the boundary, so `{name}` on it is {owner}'s move — a machine's role at the "
+                f"this project runs in {mode['mode']} (set by {mode.get('by')}): '{node}' is held "
+                f"below the boundary, so `{name}` on it is {holder}'s move — a machine's role at the "
                 f"autonomous level of §10.4, whatever name the call is signed with. You hold the "
                 f"levels above; moving the boundary is the user's choice — ask them.")
         return fn(*a, **kw)

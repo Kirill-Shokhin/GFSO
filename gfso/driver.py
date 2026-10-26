@@ -396,7 +396,7 @@ def _frontier_line(nxt: dict) -> str:
         head = f", first: {mine[0].get('action')} {mine[0].get('task_id')}"
     elif steps:
         head = ", but " + "; ".join(
-            f"{s.get('action')} {s.get('task_id')} is {s.get('assignee') or 'unassigned'}'s"
+            f"{s.get('action')} {s.get('task_id')} is {s.get('performed_by') or s.get('assignee') or 'unassigned'}'s"
             for s in steps[:3]) + ("…" if len(steps) > 3 else "")
     else:
         head = f" — {nxt['directive']}" if nxt.get("directive") else ""

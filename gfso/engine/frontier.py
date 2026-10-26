@@ -1100,7 +1100,10 @@ class Frontier:
         output + `parallel_ok`)."""
         result = self._frontier(root_id)
         if isinstance(result, dict):
-            return result if result.get("complete") or "steps" in result else {**result, "steps": []}
+            # …the waits in EVERY answer: given only beside steps, a consumer's wait on its producer vanished for the
+            # length of every validation, stuck or join (UI stream 2026-10-26)
+            return (result if result.get("complete") else
+                    {**result, "steps": result.get("steps", []), **self._waiting_on([])})
         steps = []
         for _, t, action, directive in result:
             step = self.steps._step_out(t, action, directive)
@@ -1113,8 +1116,6 @@ class Frontier:
         # `get_dependencies` had every edge and glue note. The pairs go in the answer, not in a
         # second verb the reader has to know about.
         out = {"complete": False, "steps": steps, **self._waiting_on(steps)}
-        if self._held_by_plan:
-            out["waiting"] = list(out.get("waiting", ())) + self._held_by_plan
         if stranded := [t for t in self.engine.stranded_nodes() if t.state != State.ABANDONED]:
             # …AND WHAT THE GRAPH CANNOT MOVE PAST, whether or not something else is actionable.
             out["stranded"] = [
@@ -1157,7 +1158,8 @@ class Frontier:
         return [t for t in self.engine.stranded_nodes() if t.state is not State.ABANDONED]
 
     def _waiting_on(self, steps: list) -> dict:
-        """`waiting`: the nodes not on the frontier because a producer of theirs has not passed."""
+        """`waiting`: the nodes not on the frontier because a producer of theirs has not passed, and what the last
+        walk's plan gate held back."""
         shown = {s["task_id"] for s in steps}
         deps = self.engine.graph.dep_edges(adopted=True)
         out = []
@@ -1183,4 +1185,5 @@ class Frontier:
                                     f"finish {', '.join(open_prod)} — or, if this node's contract "
                                     f"does not really need what they produce, its ISSUER can "
                                     f"`remove_dependency` and revise it")).as_dict())
+        out += self._held_by_plan
         return {"waiting": out} if out else {}

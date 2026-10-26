@@ -19,14 +19,14 @@ from typing import Optional, Union
 from gfso.core.types import (
     TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping,
     SignalData, Signal, Predictability, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS, Verdict, State,
-    RevisionReason, Register, register_of, settled_positive, passed,
+    RevisionReason, Register, register_of, settled_positive, passed, Mode,
 )
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_T_numerator, q_V_reversed
 from gfso.core.graph.model import door_off_s, on_the_wall, root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
-from gfso.core.protocol.validation import P2P_SIGNALS, Role
+from gfso.core.protocol.validation import P2P_SIGNALS, SIGNAL_ROLES, Role
 from gfso.config import (data_dir as _data_dir, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
                          agent_id as _config_agent_id)
@@ -1028,6 +1028,35 @@ def is_refusal(out) -> bool:
                 or out.get("accepted") is False or out.get("recorded") is False)
 
 
+#: the executor's signals, read off the one table of who sends what (§11.2) — a hand copy was the second list (D-F18)
+EXECUTOR_SIGNALS = frozenset(s.name for s, r in SIGNAL_ROLES.items() if r is Role.EXECUTOR)
+
+
+def mode_holder(engine: Engine, node: Optional[str], role: Optional[str], ruling: bool = False) -> Optional[str]:
+    """Who the project's mode gives a move on `node` to when no door may take it — the machine holding `role` there
+    ("issuer": the node's issuer; "split": its Del), "system" for one the mode hands to no named machine — or None:
+    the door admits it. THE MODE LOCK: the doors refuse by it (`tools_llm._mode_lock`), and every surface that offers
+    a move reads it, so none offers what the door then refuses (UI stream 2026-10-26: under AUTO the customer was
+    offered the system's dispute). `ruling` is a ruling on a CHALLENGE — the user's own where it rules a finding
+    out of his goal, which the system does not."""
+    if engine.mode() is None or (ruling and node and engine.users_dispute(TaskId(node))):
+        return None
+    owner = _owner(engine, node, role)
+    machine = str(owner) if owner is not None and AgentId(owner) in engine.workforce.executor_pool() else None
+    return machine or ("system" if engine.mode_kind() == Mode.AUTO else None)
+
+
+def _owner(engine: Engine, node: Optional[str], role: Optional[str]) -> Optional[str]:
+    """The party the FSM takes a move on `node` from: its issuer for the issuer's, its Del for the split's."""
+    t = engine.graph.get_task(TaskId(node)) if node else None
+    return None if t is None or role is None else engine.graph.issuer_of(t.id) if role == "issuer" else t.assignee
+
+
+def _signal_side(a: str) -> tuple[str, bool]:
+    """A signal's role for `mode_holder`, and whether it rules on a CHALLENGE."""
+    return ("split" if a in EXECUTOR_SIGNALS else "issuer"), a in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE")
+
+
 def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[list, Optional[str]]:
     """The signals the FSM lists but the machine would refuse, removed — each with the machine's own reason
     (`Engine.refusal_for`, the dry run of the gate the loop runs). Six hand mirrors of the engine's rules lived here,
@@ -1047,6 +1076,11 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
         if (r := engine.refusal_for(TaskId(task_id), Signal[a], None if who == "*" else AgentId(who))) is not None                 and r.kind != "role":
             acts.remove(a)
             notes.append(f"{a} is refused here: {r.why}")
+            withheld[a] = notes[-1]
+        elif (held := mode_holder(engine, task_id, *_signal_side(a))) is not None:
+            acts.remove(a)
+            notes.append(f"{a} is {held}'s under the project's mode ({engine.mode()['mode']}): the door refuses it "
+                         f"from anyone else, whatever name it is signed with")
             withheld[a] = notes[-1]
     if Signal.PASS.name in withheld and engine.claims.validation_in_flight(TaskId(task_id)):
         # not a rule — the timing a signer needs: a signature landing before the instrument's verdict meets that verdict
@@ -1112,7 +1146,10 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
     # verifier ≠ executor gate rejects it is the same lie in the other direction: the affordance
     # surface must agree with the machine, in both directions (§10.3).
     acts, gate_note, withheld = _gated_out(engine, t, task_id, who, acts)
-    out = {"task_id": task_id, "state": t.state.name, "actions": acts}
+    # …and WHO performs each: the party the engine takes it from, not one a client infers from `perform` and the act
+    out = {"task_id": task_id, "state": t.state.name, "actions": acts,
+           "performed_by": {a: (mode_holder(engine, task_id, *_signal_side(a))
+                                or str(_owner(engine, task_id, _signal_side(a)[0]) or "")) for a in acts}}
     # WHOSE the open acts are, where the state is about that and not about the acts. ESCALATED
     # admits CANCEL and ASSIGN — both the ISSUER's — and a list of two signals does not say so; a
     # reader who does not know they are his reads "the node admits things" and keeps polling.
@@ -2464,16 +2501,25 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         # YOURS" about the one decision only he holds. A REVISE that repairs a node's own split stays
         # its executor's (§11.5: the split is authored by the node's executor).
         _t = engine.graph.get_task(TaskId(s["task_id"])) if s.get("task_id") else None
-        if s.get("action") in (Action.VALIDATE, Action.RESOLVE) or (
-                s.get("action") == Action.REVISE and _t is not None
-                and (_t.state.name == "ESCALATED" or engine.parking.is_execution_parked(_t))):
-            # …THE ENGINE'S RULE, ASKED (`issuer_of`), not a second reading of it. This one read the
-            # PARENT alone, so a root — which has none — came back `mine: true` to whoever asked,
-            # and the gate then refused their signal because a root's issuer is its own assignee.
-            issuer = engine.graph.issuer_of(TaskId(s["task_id"])) if s.get("task_id") else None
-            s["mine"] = (issuer == me) or not issuer
+        role = "issuer" if s.get("action") in (Action.VALIDATE, Action.RESOLVE) or (
+            s.get("action") == Action.REVISE and _t is not None
+            and (_t.state.name == "ESCALATED" or engine.parking.is_execution_parked(_t))) else "split"
+        # …THE ENGINE'S RULE, ASKED (`issuer_of`), not a second reading of it. This one read the
+        # PARENT alone, so a root — which has none — came back `mine: true` to whoever asked,
+        # and the gate then refused their signal because a root's issuer is its own assignee.
+        owner = _owner(engine, s.get("task_id"), role)
+        # …AND THE MODE'S LOCK, the one the door refuses by: under AUTO the root's dispute, the system's to answer, was
+        # `mine` to the customer the root names its issuer, and the door then refused his ruling (UI stream 2026-10-26)
+        held = mode_holder(engine, s.get("task_id"), role, ruling=s.get("action") == Action.RESOLVE)
+        s["performed_by"] = by = held or str(owner or "")
+        s["mine"] = by == me or not by
+        if held and not s["mine"] and (owner == me or not owner):
+            s["parallel_ok"] = False
+            s["directive"] = (f"NOT YOURS — the project's mode gives this move to {held}, and the door refuses it "
+                              f"from anyone else; it is made without you. | contract was: " + s.get("directive", ""))
             continue
-        s["mine"] = (a == me) or not a
+        if role == "issuer":
+            continue
         if s["mine"] and s.get("action") in SPAWNABLE_ACTIONS and (hands := engine.hands_of(a)):
             # DISPATCH: consent is the holder's, the work its hands' — told so, or it builds the node in its chat
             s["directive"] = ((f"ACCEPT it (consent is yours); then {hands} performs it in a clean session in the "
@@ -2741,8 +2787,9 @@ def next_step(engine: Engine, root_id: Optional[str] = None, actor: Optional[str
     returns complete=True. It hands you the single next required action for the current frontier node
     (children before parents): accept / execute / deliver / validate / rework / confirm_cancel. You CANNOT stop
     until the root is DONE/PASS — the graph drives, you execute. Returns {complete, task_id, name, state,
-    action, assignee, mine, criteria, directive}; `mine=false` = the node belongs to ANOTHER executor
-    (human/external) — hands off, it waits for them. For PARALLEL delegation use next_steps.
+    action, assignee, mine, performed_by, criteria, directive}; `performed_by` = the party the engine takes
+    the move from ("system" where the mode gives it to no named machine); `mine=false` = that is not you —
+    hands off, it waits for them. For PARALLEL delegation use next_steps.
 
     `actor=<name>` asks the question AS SOMEONE ELSE — the human door, where a person names
     themselves the way the UI always has. Without it the caller is the standing agent identity, and
@@ -2756,8 +2803,8 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
     """The PARALLEL frontier: EVERY currently actionable node at once, priority-ordered. Steps with
     parallel_ok=true are independent execute-leaves (their Dep producers PASSED) — delegate each to its own
     executor subagent CONCURRENTLY. Do the non-parallel steps (accept/validate/rework/resolve/deliver)
-    yourself in the returned order; `mine=false` steps belong to OTHER executors (human/external) — visible
-    but hands-off. Loop until complete=True (root DONE/PASS). Returns {complete, steps}.
+    yourself in the returned order; `mine=false` steps are another party's (`performed_by`) — visible
+    but hands-off. Loop until complete=True (root DONE/PASS). Returns {complete, steps, waiting}.
     `actor=<name>` asks as someone else — for a person driving their own graph from the CLI.
 
     `wait=<seconds>` BLOCKS until the frontier has something to hand back (or the root completes, or
