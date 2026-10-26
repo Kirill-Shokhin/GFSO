@@ -3602,7 +3602,7 @@ work to the oracle holds on `coreutils` only (where the system added no part to 
 agent alone claims no "done" (12–15%), so that cell carries no false-done comparison. The defects named are the
 system's and the plan's, not the model's; the cell is re-run under Amendment 4 of the pre-registration.
 
-### 13.47 `sql_database` on the final given plan: both smaller models build it to held-out 1.0; the older one's root verdict is held by one stale check of the plan (2026-10-25 → 10-26)
+### 13.47 `sql_database` on the final given plan: both smaller models close it DONE at held-out 1.0 (2026-10-25 → 10-26)
 
 **What was asked** (`experiments/e3_specbench/PREREGISTERED_table_v1.md`, Amendment 4, each row designated before it
 started). The automatic mode, every role on one model, on the given plan v16 for `sql_database` (ten parts; the SELECT
@@ -3613,7 +3613,7 @@ pipeline one part), graded in Linux on the oracle.
 | model | automatic, plan given: claim | held-out | public | wall |
 |---|---|---|---|---|
 | `claude-haiku-5-5` | DONE — every pinned check of every passing verdict ran (24 at the root) | 1.000 (11/11) | 1.000 | 52 min |
-| `claude-haiku-4-5-20251001` | not settled at this writing — every part passed; the root's verdict FAILs on one part's check run on the whole; no "done" claimed | 1.000 (11/11, the root's signed branch) | 1.000 | 2 h 14 min, then resumed |
+| `claude-haiku-4-5-20251001` | DONE — resumed after an engine fix (Amendment 5), one build for the resumed attempt | 1.000 (11/11, the tree the root's verdict signed) | 1.000 | 5 h 50 min (2 h 14 min + 3 h 36 min; the 6 h 36 min the engine's stop held nothing running left out) |
 
 On `claude-haiku-4-5-20251001` eight of the ten parts passed in 85 minutes; `select` failed four deliveries of four
 different trees on true failures (its pinned checks re-run on each tree reproduce the failed sets; 2 of 7 pass), and an
@@ -3621,14 +3621,16 @@ engine rule read the four equal FAILs as the node exceeding one session of its e
 2 h 14 min with held-out 0.091. That rule was the implementation's, not the canon's: §3.7 places κ in the leaf test, and
 a count of rounds measures no κ — every one of those sessions had ended by itself with turns to spare. With the rule
 removed the run was resumed from where it stood: `select` passed nine rounds later (7 of 7 of its checks), `integrate`
-after it, and the root's signed branch scores held-out 1.000 and public 1.000. Its validation FAILs one criterion,
-`build and hygiene`, on part `eval`'s pinned check re-run on the whole: that check compiles a subset of the files, and the
-integrated `eval.c` calls into `select.c`, so it cannot link — a check of the given plan that no finished tree passes, a
-false FAIL (guarantee-safe, §8.4), while every check of the root's own passes. The bare agent on the same model and
-contract (§13.46) claims DONE in 5 of 6 runs at held-out 0.091.
+after it. The root then failed nine rounds on part `eval`'s pinned check re-run on the whole: that check links a fixed
+list of files, and the integrated `eval.c` called into `select.c`. In the tenth the root's executor decoupled `eval.c` from
+`select.c` (a callback), the check held, and the root passed — the plan unchanged; the signed tree scores held-out 1.000
+and public 1.000. Those rounds also lost criteria to an engine refusal to credit one pinned check carried by two parts
+under two names (`integrate` copies `scaffold`'s), named here and fixed apart from this row. The bare agent on the same
+model and contract (§13.46) claims DONE in 5 of 6 runs at held-out 0.091.
 
 **What it does not show.** The plan's checks were verified against the oracle beforehand and polished on
 `claude-haiku-5-5`'s own runs, so the first row says what the system does with checks that hold; it carries no value
-claim by itself (§13.46's condition). The second row has no root verdict yet; what it shows is the
-tree the system built under its checks (held-out 1.000 against the bare arm's 0.091 with a false "done"), not a DONE. The
-plan's stale check is the given plan's to fix (a check made build-agnostic), not run.
+claim by itself (§13.46's condition). The second row ran across two builds (the engine's κ-by-count rule removed between
+its attempts, disclosed under Amendment 5), n = 1 per row; its harness flagged it invalid on the repository's source
+moving during the row, while the server that ran it was one process on the recorded build throughout — adjudicated valid
+in its record.
