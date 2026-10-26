@@ -94,11 +94,14 @@ export const roundsOf = (audit, id) => rounds(audit.map(a => ({...a, t: at(a.tim
 // the next move (canon §12.13). A finished node waits on nothing.
 // A producer is passed as the engine reads it (settled_positive): a DONE closed by FAIL or a cancellation still holds
 // its consumer. An ESCALATED node waits on its issuer's decision, not on its producers (frontier._waiting_on).
-export function waitsOf(nodes, edges) {
+// `engine`: next_steps' own `waiting` (node → producers) where the page has it — the engine reads adopted edges only
+// (a BLOCK's discovered edge stays provisional until resolved) and never lists a node on the frontier; the graph's
+// edges carry no such mark, so the page's own reading is the fallback before the engine is asked.
+export function waitsOf(nodes, edges, engine = null) {
     const by = Object.fromEntries(nodes.map(n => [n.id, n]));
     return Object.fromEntries(nodes.map(n => {
         if (terminal(n.state)) return [n.id, {owes: null, deps: [], parts: []}];
-        const deps = n.state === 'ESCALATED' ? []
+        const deps = n.state === 'ESCALATED' ? [] : engine ? engine.get(n.id) || []
             : edges.filter(e => e.type !== 'parent-child' && e.target === n.id && !delivered(by[e.source])).map(e => e.source);
         const parts = ['EXECUTING', 'REWORKING'].includes(n.state) ? nodes.filter(k => k.parent_id === n.id && !terminal(k.state)).map(k => k.id) : [];
         return [n.id, {owes: deps.length || parts.length ? null : OWES[n.state] || null, deps, parts}];
@@ -240,13 +243,13 @@ function criteria(audit, tasks, verdicts) {
     return {track, status, names};
 }
 
-export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, now = Date.now()}) {
+export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, now = Date.now()}) {
     audit = audit.map(a => ({...a, t: at(a.timestamp)})).sort((a, b) => a.t - b.t);
     const ss = sessions(calls, audit), open = openSessions(pipeline, ss, nodes, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
     return {
         name: id => names[id] || id,
-        sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges),
+        sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting),
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
         criteria: criteria(audit, tasks, verdicts), work: work(calls),

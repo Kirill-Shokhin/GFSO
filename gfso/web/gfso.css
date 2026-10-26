@@ -1004,6 +1004,7 @@ body.manual .toolbar .tb-help { margin-left: 0; }
     border-top: 1px solid var(--hair);
 }
 .pn-foot .actions { margin-top: 0; }
+.pn-step { font-size: 11.5px; color: var(--ink-soft); line-height: 1.45; margin-bottom: 6px; }   /* the engine's own words for the step */
 
 /* ============ Reader — the node's long texts, a slide-over left of the panel ============ */
 .main { position: relative; }

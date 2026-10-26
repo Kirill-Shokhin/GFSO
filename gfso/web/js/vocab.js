@@ -13,25 +13,31 @@ const BLOCK = A('BLOCK', 'red', 'Block', 'reason');
 // work like EXECUTING (§12.1) and a FAIL sends to it by itself: in the accent it read as "step in" beside
 // "nothing needs you", and flipped colour with its own validation. CHALLENGED is a wait on the issuer, as
 // BLOCKED is (§12.1); under a mode that issuer is the machine.
-// Moves — the panel's controls the FSM admits here: E Edit (a re-ASSIGN, §12.3: every non-terminal
-// state but IDLE and CANCELLING), C Cancel (§12.6: no re-CANCEL from CANCELLING), D Decompose,
-// V Record verdict (the human counterpart of validate_result).
+// Moves — the panel's controls that are no signal: E Edit (a re-ASSIGN, §12.3), D Decompose, V Record verdict (the
+// human counterpart of validate_result).
 const ROWS = {
-    //           bucket       label          V       moves   signals
+    //           bucket       label          V       moves
     DONE:       ['done',      'Done',        'pass', ''],
-    EXECUTING:  ['busy',      'In Progress', '',     'ECD',  [A('DELIVER', 'blue', 'Deliver', 'result'), BLOCK]],
-    OFFERED:    ['attend',    'Not started', '',     'ECD',  [A('ACCEPT', 'green', 'Accept'), A('CHALLENGE', 'orange', 'Challenge', 'reason')]],
-    BLOCKED:    ['pathology', 'Blocked',     '',     'ECD',  [A('RESOLVE_BLOCK', 'blue', 'Resolve Block', 'action')]],
-    REWORKING:  ['busy',      'Rework',     'fail', 'ECD',  [A('DELIVER', 'blue', 'Re-deliver', 'result'), BLOCK]],
-    CHALLENGED: ['pathology', 'Challenged', 'fail', 'ECD',  [A('ACCEPT_CHALLENGE', 'green', 'Accept Challenge'),
-                                                              A('REJECT_CHALLENGE', 'muted', 'Reject Challenge', 'justification')]],
-    VALIDATING: ['busy',      'Validating',  '',     'ECV',  [A('PASS', 'green', 'Pass'), A('FAIL', 'red', 'Fail', '', true)]],
-    IDLE:       ['quiet',     'Waiting',     '',     'C'],
-    // §12.6 handshake settlement: the executor confirms, reporting in-flight state (Thm 11).
-    CANCELLING: ['pathology', 'Cancelling',  '',     '',     [A('CONFIRM_CANCEL', 'muted', 'Confirm Cancel', 'in_flight')]],
+    EXECUTING:  ['busy',      'In Progress', '',     'ED'],
+    OFFERED:    ['attend',    'Not started', '',     'ED'],
+    BLOCKED:    ['pathology', 'Blocked',     '',     'ED'],
+    REWORKING:  ['busy',      'Rework',      'fail', 'ED'],
+    CHALLENGED: ['pathology', 'Challenged',  'fail', 'ED'],
+    VALIDATING: ['busy',      'Validating',  '',     'EV'],
+    IDLE:       ['quiet',     'Waiting',     '',     ''],
+    CANCELLING: ['pathology', 'Cancelling',  '',     ''],
     ABANDONED:  ['quiet',     'Cancelled',   '',     ''],
-    ESCALATED:  ['pathology', 'Escalated',   '',     'EC'],
+    ESCALATED:  ['pathology', 'Escalated',   '',     'E'],
 };
+// WHICH signals a node admits is the engine's answer (`/api/tasks/{id}/actions`): a copy of the FSM here had drifted —
+// no Challenge after consent, no reopen of a DONE (ortho audit). What stays here is how each signal is offered.
+const LOOK = Object.fromEntries([
+    A('ACCEPT', 'green', 'Accept'), A('CHALLENGE', 'orange', 'Challenge', 'reason'), A('DELIVER', 'blue', 'Deliver', 'result'),
+    BLOCK, A('RESOLVE_BLOCK', 'blue', 'Resolve Block', 'action'), A('ACCEPT_CHALLENGE', 'green', 'Accept Challenge'),
+    A('REJECT_CHALLENGE', 'muted', 'Reject Challenge', 'justification'), A('PASS', 'green', 'Pass'), A('FAIL', 'red', 'Fail', '', true),
+    A('CANCEL', 'muted', 'Cancel', 'reason'), A('CONFIRM_CANCEL', 'muted', 'Confirm Cancel', 'in_flight'),
+].map(a => [a.s, a]));
+export const look = sig => LOOK[sig];
 // The state predicates every view reads, written once: terminal (§12.1), delivered — the engine's settled_positive,
 // DONE by a PASS or the timeout's AUTO_PASS — and working (consented work or its validation in course).
 export const terminal = s => s === 'DONE' || s === 'ABANDONED';
@@ -42,8 +48,6 @@ export const bucketOf = s => row(s)[0];
 export const label = s => row(s)[1];
 export const vOf = s => row(s)[2] || 'undef';
 export const can = (s, move) => row(s)[3].includes(move);
-export const signals = s => row(s)[4] || [];
-export const CANCEL = A('CANCEL', 'muted', 'Cancel', 'reason');
 export const V_SYMBOL = {pass: '✓', fail: '✗', undef: '⊥'};
 // A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO_PASS — canon §12).
 // A model id as a person says it — claude-haiku-4-5-20251001 → haiku 4.5; a bare alias, recorded before the model

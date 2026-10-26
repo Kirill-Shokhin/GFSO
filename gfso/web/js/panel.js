@@ -5,8 +5,8 @@
 // nothing here sends anything.
 import {$, el, esc, data, section, ul, rebuild, hint} from './dom.js';
 import {getJSON} from './api.js';
-import {S, hasKids, taskOf} from './state.js';
-import {bucketOf, statusLabel, vOf, V_SYMBOL, can, signals, CANCEL, closureNote, contested, terminal, modelName,
+import {S, hasKids, taskOf, myRole} from './state.js';
+import {bucketOf, statusLabel, vOf, V_SYMBOL, can, look, closureNote, contested, terminal, modelName,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE} from './vocab.js';
 import {roundsOf, at, waitsOf, waitWords, conjunct, KIND_NAME as KIND} from './run.js';
 import {glyph, mark} from './draw.js';
@@ -19,7 +19,7 @@ const ISSUER_MOVES = "the executor stopped and the decision is the issuer's: rai
 
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
-    const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges)[d.id], id => taskOf(id).name || id);
+    const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting)[d.id], id => taskOf(id).name || id);
     return words === '—' ? '' : `<span title="${hint('Waiting on', d.state === 'ESCALATED' ? ISSUER_MOVES : words)}">waiting on <b>${esc(words)}</b></span> · `;
 }
 
@@ -47,7 +47,8 @@ function verdict({vr}) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
         + `<span class="pn-who" title="${hint('Validator', vr.validator)}">${signer(vr)}${vr.ts ? ' · ' + when(vr.ts) : ''}</span>`
         + `${vr.current === false ? '<span class="check-fail" title="An earlier delivery&#10;this verdict is about a delivery the current one replaced">earlier</span>' : ''}`
-        + `${vr.refused_report ? `<span class="check-fail" title="${hint('A report was refused', vr.refused_report.note || '')}">a report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
+        // a refused report LATER than this verdict asks for a look; an earlier one is history this verdict answered
+        + `${vr.refused_report && at(vr.refused_report.ts) > at(vr.ts) ? `<span class="check-fail" title="${hint('A later report was refused', vr.refused_report.note || '')}">a later report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
     // what failed is not repeated here: it is the ✗ rows of the criteria list just below
     // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
     return vr?.refused_report ? `<div class="pn-verdict check-fail"><span class="pn-who">a validator reported and the report was REFUSED as ⊥ — `
@@ -87,31 +88,36 @@ const facets = ctx => `<div class="pn-facets">${FACETS.map(f => chip(f, ctx)).jo
 const btn = (cls, label, action, attrs) => `<button class="btn btn-sm ${cls}"${data({action, ...attrs})}>${label}</button>`;
 const sig = (id, a) => btn(a.cls, a.label, 'signal', {id, sig: a.s, prompt: a.prompt, fail: a.needsCriteria && 1});
 
-// Every control the FSM admits on this state (vocab.js) — the plan-repair Edit wherever a re-ASSIGN is
-// legal, not on OFFERED alone (a tester was trapped on an EXECUTING root, wave 27). The forms these open
-// go in #inline-form, never a native dialog.
-// The controls each step the engine names carries out (Action, enums.py): under a mode the panel offers only these, on
-// a node next_steps says is this person's — the whole FSM set there opened reassign and child-Assignee forms (critic).
-const FOR = {accept: ['ACCEPT', 'CHALLENGE'], execute: ['DELIVER', 'BLOCK', 'CHALLENGE'], deliver: ['DELIVER', 'BLOCK', 'CHALLENGE'],
-             rework: ['DELIVER', 'BLOCK', 'CHALLENGE'], validate: ['PASS', 'FAIL', 'verdict'],
-             resolve: ['RESOLVE_BLOCK', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE'], revise: ['edit', 'CANCEL', 'decompose', 'ai-decompose'],
-             review: ['ai-review'], confirm_cancel: ['CONFIRM_CANCEL']};
-function actions({d}) {
-    const s = d.state, id = {id: d.id}, kids = hasKids(d.id);
-    const all = [...signals(s).map(a => [a.s, sig(d.id, a)]),
-        can(s, 'V') && ['verdict', btn('btn-muted', 'Record verdict', 'verdict', id)],
-        can(s, 'C') && ['CANCEL', sig(d.id, CANCEL)],
+// Every signal the engine admits here (/actions) and the moves that are no signal (vocab.js) — the plan-repair Edit
+// wherever a re-ASSIGN is legal, not on OFFERED alone (a tester was trapped on an EXECUTING root, wave 27). The forms
+// these open go in #inline-form, never a native dialog.
+// UNDER A MODE the panel says no more than the engine does: on a node next_steps names as this person's it shows the
+// step's own directive and the signals /actions admits for them — no table of its own of what a step means (a copy
+// of that hid moves the directives name and offered ones they forbid, two critics). Work the mode DISPATCHES (the
+// executor's steps but consent, SPAWNABLE_ACTIONS less ACCEPT) is the clean session's: its directive says wait.
+const DISPATCHED = new Set(['execute', 'rework', 'deliver']);
+function actions({d, acts}) {
+    const s = d.state, id = {id: d.id}, kids = hasKids(d.id), m = S.graph.mode;
+    // the signals the ENGINE admits here for whoever this page signs as (/actions); how each is offered is vocab's
+    const open = (acts?.actions || []).map(look).filter(Boolean)
+        .map(a => a.s === 'DELIVER' && s === 'REWORKING' ? {...a, label: 'Re-deliver'} : a).map(a => sig(d.id, a));
+    // the moves that are no signal: refused on the nodes of an AUTO project, the person's own elsewhere
+    const moves = m?.mode === 'auto' ? [] : [
+        can(s, 'V') && btn('btn-muted', 'Record verdict', 'verdict', id),
         // ONE AI verb, dispatched by the node's state: undecomposed → author; decomposed → one refine round.
         // AI review is the standalone L2 door — hand-authored graphs never pass decompose's semantic pass.
-        ...can(s, 'D') ? [['decompose', btn('btn-purple', 'Decompose', 'decompose', id)],
-                          ['ai-decompose', btn('btn-purple', kids ? 'AI refine' : 'AI decompose', 'ai-decompose', id)],
-                          kids && ['ai-review', btn('btn-purple', 'AI review', 'ai-review', id)]] : [],
-        can(s, 'E') && ['edit', btn('btn-muted', 'Edit', 'edit', id)]].filter(Boolean);
-    // under a mode the agents and the system move the nodes; a person keeps only the moves of a step that is theirs
-    const mine = S.graph.mode?.mode && new Set([...(S.mySteps?.get(d.id) || [])].flatMap(a => FOR[a] || []));
-    const btns = all.filter(([k]) => !mine || mine.has(k)).map(([, b]) => b).join('');
-    return btns ? `<div class="pn-foot"><div class="actions">${btns}</div><div id="inline-form"></div></div>` : '';
+        ...can(s, 'D') ? [btn('btn-purple', 'Decompose', 'decompose', id), btn('btn-purple', kids ? 'AI refine' : 'AI decompose', 'ai-decompose', id),
+                          kids && btn('btn-purple', 'AI review', 'ai-review', id)] : [],
+        can(s, 'E') && btn('btn-muted', 'Edit', 'edit', id)].filter(Boolean);
+    const foot = (note, btns) => `<div class="pn-foot">${note}${btns ? `<div class="actions">${btns}</div>` : ''}<div id="inline-form"></div></div>`;
+    if (!m?.mode) { const btns = [...open, ...moves].join(''); return btns ? foot('', btns) : ''; }
+    const steps = S.mySteps?.get(d.id) || [];
+    if (!steps.length) return '';
+    const said = steps.map(x => `<div class="pn-step" title="${esc(x.directive || '')}">${esc(x.action)} — ${esc(trimTo(x.directive || '', 220))}</div>`).join('');
+    const waits = m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
+    return foot(said, waits ? '' : [...open, ...moves].join(''));
 }
+const trimTo = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
 
 // Who ran a node, in one line for its panel: by role, each model with its sessions on it.
 // A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
@@ -131,8 +137,9 @@ const PARTS = [head, verdict, criteria, facets, actions];
 export async function selectTask(id) {
     try {
         const base = `/api/tasks/${encodeURIComponent(id)}`, soft = p => p.catch(() => null);
-        const [d, vr, cr] = await Promise.all([getJSON(base), soft(getJSON(base + '/verdict')), soft(getJSON(base + '/critique'))]);
-        const ctx = {d, vr, cr, rounds: roundsOf(d.audit, d.id)}, sb = $('sidebar');
+        const [d, vr, cr, acts] = await Promise.all([getJSON(base), soft(getJSON(base + '/verdict')), soft(getJSON(base + '/critique')),
+            soft(getJSON(`${base}/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
+        const ctx = {d, vr, cr, acts, rounds: roundsOf(d.audit, d.id)}, sb = $('sidebar');
         sb.classList.remove('hidden');
         rebuild(sb, d.id, PARTS.map(f => f(ctx)).join(''));
         showReader(ctx);

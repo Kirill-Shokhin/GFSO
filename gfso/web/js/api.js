@@ -17,7 +17,8 @@ export const post = (url, body) => api(url, {method: 'POST', headers: {'Content-
 export async function refusal(r) {
     const out = await r.json().catch(() => ({}));
     const no = !r.ok || out.refused || out.error || out.accepted === false || out.recorded === false;
-    return !no ? '' : String(out.error || out.reason || (typeof out.detail === 'string' ? out.detail : JSON.stringify(out.detail ?? out)) || r.status);
+    const said = out.error || out.reason || (typeof out.detail === 'string' ? out.detail : out.detail ?? (Object.keys(out).length ? out : null));
+    return !no ? '' : String(said == null ? `the server answered ${r.status}` : typeof said === 'string' ? said : JSON.stringify(said));
 }
 
 // SERIALISED: a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each

@@ -159,7 +159,7 @@ export const refreshHeader = singleFlight(async () => {
     // WHAT THE ENGINE SAYS IS OWED, asked AS WHOEVER THIS PAGE IS: `mine` is computed for `actor`, the YOU
     // ARE box that signs; `stuck` comes with its `directive`. NAME WHO — "you" is nobody on a shared graph.
     let heard = false;                // "nothing needs you" is said only when the engine was asked
-    const mySteps = new Map();       // node → the actions next_steps names as this person's
+    const mySteps = new Map();       // node → the steps next_steps names as this person's, with their directives
     if (S.tasks.length) try {
         const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {});
         if (!r.ok) throw r.status;
@@ -167,17 +167,18 @@ export const refreshHeader = singleFlight(async () => {
         // …and a node a state chip already shows is not counted twice.
         // (dropped only where that chip IS shown: under AUTO a person's own move below the root has none — critic)
         const shown = t => CALLS.includes(t.state) && onAPerson(t);
-        // under AUTO the page acts as the server's agent, which is the system's own issuer: its steps are the system's,
-        // never a person's — offered here they came back as "for agent" on the root (critic)
-        const own = S.graph.mode?.mode === 'auto' ? [] : (f.steps || []).filter(x => x.mine);
+        // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute);
+        // what the mode refuses them, /actions leaves out (panel.js)
+        const own = (f.steps || []).filter(x => x.mine);
         const mine = own.filter(x => !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
         // the nodes where the move is this page's person's, with the move: their panel keeps that move under a mode (panel.js)
-        own.forEach(x => mySteps.set(x.task_id, (mySteps.get(x.task_id) || new Set()).add(x.action)));
+        own.forEach(x => mySteps.set(x.task_id, [...(mySteps.get(x.task_id) || []), x]));
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 f.directive || 'no actionable node and the root is not DONE') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;
         S.runState = f.run;
+        S.waiting = new Map((f.waiting || []).map(w => [w.task_id, [...(w.waits_on || [])]]));   // the engine's waits (run.js)
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }
     // the panel keeps its moves on these only (panel.js): what the ENGINE says is this person's move — a state chip is
