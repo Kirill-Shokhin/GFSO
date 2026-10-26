@@ -76,3 +76,53 @@ def test_a_hash_two_demanded_probes_share_credits_neither_and_says_why():
     assert not any("nothing of it" in g for g in gaps["B"])
     # …and its full id disambiguates
     assert unrun_parts(parts, _report({"id": _CAT_ID}, {"id": twin_id})) == {}
+
+
+_S = part_criteria("root.scaffold", [Criteria("build", check=(Probe("clean build", "make build", "0"),))])
+_I = part_criteria("root.integrate", [Criteria("scaffold: build", check=(Probe("clean build", "make build", "0"),))])
+_S_ID, _I_ID = probe_id(_S[0].name, _S[0].check[0]), probe_id(_I[0].name, _I[0].check[0])
+
+
+@pytest.mark.parametrize("held", [True, None])
+def test_a_hash_two_parts_copies_of_one_check_share_names_both(held):
+    """The measured shape: `integrate` copies `scaffold`'s pin (one hash, two ids); the validator cites the hash —
+    under a criterion resting on the copy — and every criterion resting on either is observed (the haiku 4.5 sql root,
+    2026-10-26: 15 of 16 criteria ⊥ when such a citation named neither)."""
+    report = [{"criterion": "A", "verdict": "pass", "probe": [{"id": _hash(_S_ID), **({"held": True} if held else {})}]},
+              {"criterion": "B", "verdict": "pass", "probe": [{"id": _hash(_S_ID), **({"held": True} if held else {})}]}]
+    assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID, _I_ID}
+    assert unrun_parts({"A": _S, "B": _I}, report) == {}
+
+
+def test_a_copy_cited_by_its_own_id_touches_only_itself():
+    """A full id names one probe: a copy cited without `held` under a failing criterion voids no original reported holding,
+    and a copy reported not holding is never credited through the original (critic r3, 2026-10-26)."""
+    report = [{"criterion": "A", "verdict": "pass", "probe": [{"id": _S_ID, "held": True}]},
+              {"criterion": "B", "verdict": "fail", "probe": [{"id": _I_ID}]}]
+    assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID}
+    report[1]["probe"] = [{"id": _I_ID, "held": False}]
+    assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID}
+    assert unrun_parts({"A": _S, "B": _I}, report) == {}       # B fails: a failing criterion is not asked for credit
+
+
+def test_a_shared_hash_reported_not_holding_voids_every_copy():
+    report = [{"criterion": "A", "verdict": "pass", "probe": [{"id": _S_ID, "held": True}]},
+              {"criterion": "B", "verdict": "fail", "probe": [{"id": _hash(_S_ID), "held": False}]}]
+    assert part_credit({"A": _S, "B": _I}, report)[0] == set()
+
+
+def test_copies_differing_by_a_space_inside_the_command_are_two_checks():
+    twin = part_criteria("root.integrate", [Criteria("t", check=(Probe("t", "test x = 'a  b'", "0"),))])
+    one = part_criteria("root.scaffold", [Criteria("t", check=(Probe("t", "test x = 'a b'", "0"),))])
+    report = [{"criterion": "A", "verdict": "pass", "probe": [{"id": probe_id(one[0].name, one[0].check[0]), "held": True}]},
+              {"criterion": "B", "verdict": "pass", "probe": []}]
+    assert unrun_parts({"A": one, "B": twin}, report) == {"B": [probe_id(twin[0].name, twin[0].check[0])]}
+
+
+def test_a_shared_hash_cited_once_without_held_under_a_criterion_on_one_copy_observes_both():
+    """One run of one check over one delivery, under a criterion that passes and rests on one copy, is the observation
+    the other copy's criterion rests on too — read over the copies as one, not copy by copy."""
+    report = [{"criterion": "A", "verdict": "pass", "probe": []},
+              {"criterion": "B", "verdict": "pass", "probe": [{"id": _hash(_S_ID)}]}]
+    assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID, _I_ID}
+    assert unrun_parts({"A": _S, "B": _I}, report) == {}

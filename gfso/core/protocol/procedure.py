@@ -1027,6 +1027,14 @@ def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterio
     return lent
 
 
+def _copies_of_one(named: set, demanded: Mapping) -> bool:
+    """Are these demanded probes byte copies of one PART's check — same command, expectation and inputs, as `integrate`
+    copying `scaffold`'s? A hash they share then names each: nothing tells them apart, one observation of all (the haiku
+    4.5 sql root, 2026-10-26: 15 of 16 criteria ⊥ over such a hash). The whole's own probes are never among them."""
+    return named <= set(demanded) and len({(demanded[x][1].command.strip(), (demanded[x][1].expect or "").strip(),
+                                             tuple(demanded[x][1].inputs or ())) for x in named}) == 1
+
+
 def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
                 dirs: Iterable[tuple[str, object]] = (), own: Sequence[Criteria] = ()) -> tuple[set[str], dict[str, list[str]]]:
     """(the parts' pinned probes this report shows holding over the delivery, {demanded part probe it names but cannot
@@ -1065,7 +1073,7 @@ def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
             m = {x for k in {_cmd_key(cmd), _cmd_key(tokenized(cmd, dirs))} for x in by_cmd.get(k, ())} if _norm(cmd) else set()
             cand = h | m
             named = {i} if i in known else (h & m) or cand
-            if len(named) > 1:
+            if len(named) > 1 and not _copies_of_one(named, demanded):
                 for pid in named & set(demanded):
                     why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which names {len(named)} "
                                                    f"demanded probes ({', '.join(sorted(named))}) — cite it by its full id")
@@ -1075,19 +1083,20 @@ def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
                                                "— cite this one by its own full id")
             if not named & set(demanded):
                 continue
-            pid, held = next(iter(named)), probe_held(p.get("held"))
-            if held is True or (held is None and verdict == "pass" and pid in rests.get(name, ())):
-                good.add(pid)
-                continue
-            if held is None and verdict == "pass":
-                why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which does not rest on it, "
-                                               "without `held: true` — say whether it held")
-                continue
-            bad.add(pid)
-            why.setdefault(pid, []).append(
-                f"reported `held: false` under '{name}' — it did not hold, and every criterion resting on it fails"
-                if held is False else f"cited by {_cited_as(p)} under '{name}', which the report does not pass, "
-                                      "without `held: true` — say whether it held")
+            held = probe_held(p.get("held"))
+            for pid in named & set(demanded):
+                if held is True or (held is None and verdict == "pass" and named & rests.get(name, set())):
+                    good.add(pid)
+                    continue
+                if held is None and verdict == "pass":
+                    why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which does not rest on it, "
+                                                   "without `held: true` — say whether it held")
+                    continue
+                bad.add(pid)
+                why.setdefault(pid, []).append(
+                    f"reported `held: false` under '{name}' — it did not hold, and every criterion resting on it fails"
+                    if held is False else f"cited by {_cited_as(p)} under '{name}', which the report does not pass, "
+                                          "without `held: true` — say whether it held")
     credited = good - bad
     return credited, {pid: w for pid, w in why.items() if pid not in credited}
 
