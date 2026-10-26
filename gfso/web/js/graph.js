@@ -86,6 +86,8 @@ export async function initGraph() {
     // cytoscape selects the node — the border showed, the panel stayed, and the next redraw took the border back
     // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
     cy.on('select', 'node', evt => point('select', evt.target.id()));
+    // …and a tap on the node already selected picks it again: its row in the deck, scrolled away, is brought back
+    cy.on('tap', 'node', evt => evt.target.selected() && point('select', evt.target.id()));
     cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
@@ -101,7 +103,7 @@ export async function initGraph() {
         if (st.hover && !own) cy.getElementById(st.hover).addClass('focus');
         cy.nodes(':selected').filter(n => n.id() !== st.select).unselect();
         if (st.select) cy.getElementById(st.select).select();
-        if (key === 'select' && st.select && !fresh) inSight(cy.getElementById(st.select));
+        if ((key === 'select' || key === 'bring') && st.select && !fresh) inSight(cy.getElementById(st.select));
     });
     cy.on('render', () => requestAnimationFrame(placeBadges));
     // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the

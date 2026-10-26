@@ -9,7 +9,8 @@ export const focus = () => state;
 export const watch = (fn, owner = null) => (subs.set(fn, owner), () => subs.delete(fn));
 export const release = root => subs.forEach((owner, fn) => owner && root.contains(owner) && subs.delete(fn));
 export function point(key, id) {
-    if (state[key] === id) return;
+    // the selected node picked again is brought into sight again (its row scrolled away), nothing re-read or redrawn
+    if (state[key] === id) { if (key === 'select' && id) (state.picks++, subs.forEach((_, fn) => fn(state, 'bring'))); return; }
     state[key] = id;
     if (key === 'select') state.picks++;
     subs.forEach((_, fn) => fn(state, key));
@@ -29,7 +30,7 @@ export function bringSelected(el, find) {
         if (b.top < v.top || b.bottom > v.bottom) box.scrollTop += b.top - v.top - (v.height - b.height) / 2;
     };
     if (el._brought !== state.picks) bring();
-    watch((st, key) => key === 'select' && bring(), el);
+    watch((st, key) => (key === 'select' || key === 'bring') && bring(), el);
 }
 
 // Any element carrying `data-node` inside `el` takes part: hovering it points, clicking selects, and

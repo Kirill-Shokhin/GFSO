@@ -81,7 +81,7 @@ export function render(el, run, nodes, tasks) {
     const open = id => { let shut = false; for (let x = parent[id]; x && parent[x]; x = parent[x]) if (!unfolded.has(x)) unfolded.add(x), shut = true; return shut; };
     if (focus().select) open(focus().select);
     paint();
-    watch((st, key) => key === 'select' && st.select && open(st.select) && paint(), el);
+    watch((st, key) => (key === 'select' || key === 'bring') && st.select && open(st.select) && paint(), el);
     // a part's name unfolds it into its own parts, and folds it again
     tr.onclick = e => { const id = e.target.closest('[data-unfold]')?.dataset.unfold;
         if (id) { e.stopPropagation(); unfolded.has(id) ? unfolded.delete(id) : unfolded.add(id); paint(); } };   // unfolding is no selection
