@@ -3532,10 +3532,10 @@ windows taken out, disclosed per row in `results/_grid/E3_TABLE.md`); cost is th
 | coreutils | haiku 4.5 | DONE ×5 (0.59–0.76) — **5/5 false** | DONE ×5 (1.000 ×5, signed 1.000 ×5) | 8–13 min · $1.3–2.3 | 120–253 min · $21–40 |
 | coreutils | haiku 5.5 | DONE ×4 (1.000 ×4) | DONE ×7 (1.000 ×7); 2 NOT DONE | 8–15 min · $0.3–1.0 | 14–55 min · $0.4–0.9 |
 | coreutils | sonnet 5.5 | DONE ×6 (1.000 ×6) | DONE ×2 (1.000 ×2) | 4–12 min · $0.7–2.3 | 7–10 min · $4.2–4.5 |
-| sql_database | haiku 4.5 | DONE ×5 (0.09–0.18), NOT DONE ×1 — **5/6 false** | NOT DONE ×1 (an earlier build; a row on the final build in flight) | 10–12 min · $1.3–2.2 | 1019 min · $83 |
+| sql_database | haiku 4.5 | DONE ×5 (0.09–0.18), NOT DONE ×1 — **5/6 false** | NOT DONE ×1 (an earlier build); on the final plan v16: DONE (1.000) — §13.47 | 10–12 min · $1.3–2.2 | 1019 min · $83 |
 | sql_database | haiku 5.5 | DONE ×4 (1.000, 1.000, 0.909, 1.000) — **1/4 false** | DONE ×3 (1.000 ×3) | 16–21 min · $0.3–1.3 | 56–97 min · $1.0–1.9 |
 | sql_database | sonnet 5.5 | DONE ×4 (1.000 ×4) | DONE ×2 (1.000 ×2) | 6–8 min · $1.0–1.3 | 13–17 min · $4.3–5.6 |
-| c_compiler | haiku 4.5 | NOT DONE ×3 (0.12–0.15) | no verdict yet (two rows of an earlier build cut at the 9-h ceiling; a row on the final build in flight) | 7–10 min · $0.9–1.6 | — |
+| c_compiler | haiku 4.5 | NOT DONE ×3 (0.12–0.15) | no verdict (two rows of an earlier build cut at the 9-h ceiling; the final-build row GB_c_compiler_tncfs1160 stopped unsettled on 2026-10-24, not re-run) | 7–10 min · $0.9–1.6 | — |
 | c_compiler | haiku 5.5 | NOT DONE ×4 (0.74–0.95) | **DONE ×2 (0.987, 0.997)** | 19–36 min · $1.4–4.6 | 71–92 min · $5.5–9.3 |
 | c_compiler | sonnet 5.5 | DONE ×2 (0.997 ×2) — **2/2 false** | DONE ×2 (0.997, 0.990) | 112–117 min · $48–52 | 35–43 min · $12–15 |
 
