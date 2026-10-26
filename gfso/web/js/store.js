@@ -9,11 +9,18 @@ export const focus = () => state;
 export const watch = (fn, owner = null) => (subs.set(fn, owner), () => subs.delete(fn));
 export const release = root => subs.forEach((owner, fn) => owner && root.contains(owner) && subs.delete(fn));
 export function point(key, id) {
-    // the selected node picked again is brought into sight again (its row scrolled away), nothing re-read or redrawn
-    if (state[key] === id) { if (key === 'select' && id) (state.picks++, subs.forEach((_, fn) => fn(state, 'bring'))); return; }
+    if (state[key] === id) return;
     state[key] = id;
     if (key === 'select') state.picks++;
     subs.forEach((_, fn) => fn(state, key));
+}
+
+// The person picks the selected node again: its row, scrolled away, is brought back — a gesture of theirs only. Fired
+// from point()'s same-id branch, every redraw's restored selection pulled the reader's scroll back (critic).
+export function rebring() {
+    if (!state.select) return;
+    state.picks++;
+    subs.forEach((_, fn) => fn(state, 'bring'));
 }
 
 // The selected node's row in a deck view is brought into the deck's sight: among fifty rows it sat below the fold.

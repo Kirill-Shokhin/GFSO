@@ -48,14 +48,18 @@ const row = s => ROWS[s] || ['quiet', s, ''];
 export const bucketOf = s => row(s)[0];
 export const label = s => row(s)[1];
 export const can = (s, move) => row(s)[2].includes(move);
-// V(t) as the log says it, not as a state implies it — the state is orthogonal to V (§12.1): a CHALLENGE before any
-// delivery read V = fail. A PASS is V = pass and a FAIL V = fail (§11.2); a delivery awaiting its verdict, or a contract
-// installed since (ASSIGN, ACCEPT_CHALLENGE), is ⊥ (§2.3), and so is a cancelled node (§12.1). Without the node's log
-// (a part listed under its parent) only the states that carry V by entry: DONE by its done_reason, REWORKING by a FAIL.
+// V(t), never a table of state → V — the state is orthogonal to V (§12.1): a CHALLENGE before any delivery read V = fail.
+// A PASS is V = pass, a FAIL V = fail (§11.2); a delivery awaiting its verdict or a contract installed since (ASSIGN,
+// ACCEPT_CHALLENGE) is ⊥ (§2.3). The states those signals enter carry V by that entry and are read off the fresh state:
+// DONE by its done_reason (a legacy CANCELLED is a cancellation), REWORKING (entered by FAIL), VALIDATING and OFFERED (no
+// verdict on this version), ABANDONED (⊥, §12.1). The rest — entered by signals that leave V as it was — read the node's
+// log, which may be a read behind (a part's row reads the run's); without one they are ⊥.
+const BY_ENTRY = {REWORKING: 'fail', VALIDATING: 'undef', OFFERED: 'undef', IDLE: 'undef', ABANDONED: 'undef'};
 export const vNow = (t, audit) => {
     if (delivered(t)) return 'pass';
-    if (t?.state === 'ABANDONED') return 'undef';
-    if (!audit) return t?.state === 'DONE' || t?.state === 'REWORKING' ? 'fail' : 'undef';
+    if (t?.state === 'DONE') return t.done_reason === 'CANCELLED' ? 'undef' : 'fail';
+    if (BY_ENTRY[t?.state]) return BY_ENTRY[t.state];
+    if (!audit) return 'undef';
     let v = 'undef';
     for (const a of audit) if (!a.rejected)
         v = a.signal === 'PASS' ? 'pass' : a.signal === 'FAIL' ? 'fail' : ['DELIVER', 'ASSIGN', 'ACCEPT_CHALLENGE'].includes(a.signal) ? 'undef' : v;

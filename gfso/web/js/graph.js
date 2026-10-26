@@ -5,7 +5,7 @@ import {S, taskOf, myRole, procs} from './state.js';
 import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
-import {point, watch, focus} from './store.js';
+import {point, watch, focus, rebring} from './store.js';
 import {roundsLine, waitWords, atWork, conjunct, failingNow} from './run.js';
 
 // Leaf tokens are hex literals; getComputedStyle returns the specified value of an unregistered property.
@@ -87,7 +87,7 @@ export async function initGraph() {
     // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
     cy.on('select', 'node', evt => point('select', evt.target.id()));
     // …and a tap on the node already selected picks it again: its row in the deck, scrolled away, is brought back
-    cy.on('tap', 'node', evt => evt.target.selected() && point('select', evt.target.id()));
+    cy.on('tap', 'node', evt => evt.target.id() === focus().select && rebring());
     cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
