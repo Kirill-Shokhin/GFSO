@@ -439,6 +439,22 @@ itself, not a pre-contact check level (a recurring conflation, named here on pur
 
 Both use LLMProviderPort (in core/types/ports.py). Different roles, different locations, shared provider.
 
+## Which provider answers — a model spec, one registry
+
+Every role takes its provider from `llm_factory(model, execution)`, and the model is a spec `provider/model` resolved in
+one place (`adapters/llm/registry.py`): an unprefixed id is Anthropic's, through the Claude Code CLI
+(`ClaudeCodeProvider`); a prefix names a preset — data, an OpenAI-compatible address and the variable its key is read
+from (`ollama`, `lmstudio`, `vllm`, `llamacpp`, `deepseek`, `qwen`, `openrouter`, `groq`, `together`, `mistral`,
+`gemini`, `openai`) — a user's own (`GFSO_PROVIDER_<NAME>_BASE_URL`, `_API_KEY`, `_CONTEXT`, `_MAX_TOKENS`, `_PRICE`), or
+a third party's class (entry-point group `gfso.providers`). The spec rides wherever a model id rides, so each role may
+run on its own provider. Every provider records its calls in one neutral shape (`adapters/llm/base.py`); a chat API is a
+`ChatWire` with one required method, `turn` (`adapters/llm/chat.py`), and its agent roles run in the system's own tool
+loop (`adapters/llm/toolloop.py`: the six work tools the roles and prompts already name, confined to the run's place,
+commands through its execution). `gfso provider-check <spec>` measures which roles a provider can hold — a completion, a
+structured answer and their tokens for the one-shot roles, a tool round trip and a schema-valid report for the agent
+roles, the optional fields (cache split, cost, window) reported. A rate limit, out of credit, a refused key and a model
+server that does not answer stop the project as the account's limit does.
+
 ## Where a project's work runs — one server, execution isolated
 
 WHO answers is the provider (`LLMProviderPort`: `ClaudeCodeProvider`, the `claude -p` path, in adapters/llm/headless.py);

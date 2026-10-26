@@ -12,7 +12,18 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 
 ## [Unreleased]
 
+### Added
+- Any model provider: a model spec `provider/model` per role (`ollama/…`, `deepseek/…`, `openrouter/…` and other
+  OpenAI-compatible presets, a user's own by `GFSO_PROVIDER_<NAME>_*`, a third party's class by the entry-point group
+  `gfso.providers`); agent roles over a chat API run in the system's own tool loop; `gfso provider-check <spec>` names
+  the roles a provider can hold. `GFSO_PROVIDER=generic` keeps its meaning.
+
 ### Changed
+- A refused authentication (the account signed out, a key refused or missing) and an execution place down stop the
+  project as the account's limit does, and every door names which of them stopped it.
+- A continued round of the Claude Code provider books its own cost, not the whole conversation's.
+- A root handed to another holder keeps its issuer: no executor becomes the issuer of the root it executes.
+- A step's `role` is read by one rule: a split owed, a plan repair and a plan check are the executor's own act.
 - A Dep edge is no criterion of its consumer: a `dep__` entry that pins no check declares the edge and is left out of the
   node's verdict on every door (a seam that pins a consumer-side check stays a criterion). A node's PASS/FAIL and failed
   list are computed from the validator's per-criterion entries; the validator is no longer asked for a verdict word.
