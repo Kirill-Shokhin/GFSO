@@ -3,7 +3,7 @@
 // popover carries the meanings the server sends beside them.
 import {$, esc, data, hint} from './dom.js';
 import {getJSON, post, refusal, singleFlight, GOAL} from './api.js';
-import {S, taskOf, myRole} from './state.js';
+import {S, taskOf, myRole, procs} from './state.js';
 import {label, closureNote, contested, modeDoc, terminal, delivered, modelName} from './vocab.js';
 import {GAP, at} from './run.js';
 import {dur, trim} from './draw.js';
@@ -37,7 +37,7 @@ async function goal() {
     // a project named to state its goal in does not exist until that goal is created — not an error
     if (!root) return GOAL && S.missing ? '<span class="hd-phrase">a new project — it exists once its goal is created</span>'
         : `<span class="hd-phrase${S.missing ? ' acc' : ''}">${esc(S.missing
-            || (S.inflight.some(w => w.project === S.project && w.verb === 'auto_decompose') ? 'the goal is being planned' : 'no goal yet'))}</span>`;
+            || (procs().some(w => w.verb === 'auto_decompose') ? 'the goal is being planned' : 'no goal yet'))}</span>`;
     const doc = mode ? await modeDoc() : {};
     const who = Object.entries(doc).map(([m, text]) => `${m === mode ? '▸ ' : ''}${m}: ${text}`);
     // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
@@ -142,7 +142,7 @@ function stalled(calls) {
     // …and a run the person stopped is not stalled: it is stopped, and says so beside the goal
     if (calls || !run || !root || terminal(root.state) || run.sessions.some(s => s.open)
         || S.runState?.state !== 'running'
-        || S.inflight.some(w => w.project === S.project)) return '';
+        || procs().length) return '';
     const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0), idle = Date.now() - last;
     return idle > GAP ? need(1, `stalled — nothing at work for ${dur(idle)}`, [root.id],
         'the goal is open, nothing is at work, nobody owes a move the engine names, and nothing has happened since — '

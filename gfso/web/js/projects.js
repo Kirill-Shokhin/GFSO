@@ -113,9 +113,9 @@ export const moreProjects = () => { shown += SHOWN; draw(); };
 export const searchProjects = () => { shown = SHOWN; draw(); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !panel().hidden) closeProjects(); });
 
-export const NAME = /^[A-Za-z0-9_-]+$/;
+const NAME = /^[A-Za-z0-9_-]+$/;
 // TAB-local switch; `goal` opens the goal constructor there — a new project's first act is stating its goal
-export const openProject = (name, {goal} = {}) => { location.search = '?project=' + encodeURIComponent(name) + (goal ? '&goal=1' : ''); };
+const openProject = (name, {goal} = {}) => { location.search = '?project=' + encodeURIComponent(name) + (goal ? '&goal=1' : ''); };
 
 export async function switchProject(name, then = {}) {
     // A NAME IS REQUIRED: an empty one landed silently in `default` (reached programmatically, wave 26).

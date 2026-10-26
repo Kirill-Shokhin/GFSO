@@ -11,6 +11,9 @@ export const mark = (v, x, y, r = 4) => v === 'PASS' ? `<circle class="mk-pass" 
     : `<path class="mk-fail" d="M${x - r},${y - r}l${2 * r},${2 * r}m0,-${2 * r}l-${2 * r},${2 * r}"/>`;
 // the same glyph standing alone in text or a table cell
 export const glyph = (v, r = 4) => `<svg class="glyph" width="${2 * r + 4}" height="${2 * r + 4}" viewBox="${-r - 2} ${-r - 2} ${2 * r + 4} ${2 * r + 4}">${mark(v, 0, 0, r)}</svg>`;
+// money and token counts, one spelling for every view; a count a provider did not report says so (`none`)
+export const usd = x => `$${x < 10 ? x.toFixed(2) : x.toFixed(1)}`;
+export const tok = (x, none = 'not reported') => x == null ? none : !x ? '0' : x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : `${x}`;
 export const trim = (s, n = 20) => s.length > n ? s.slice(0, n - 1) + '…' : s;
 
 

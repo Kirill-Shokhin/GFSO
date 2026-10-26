@@ -4,7 +4,7 @@
 import {$, esc, hint} from './dom.js';
 import {getJSON, singleFlight} from './api.js';
 import {S, procs} from './state.js';
-import {point, release} from './store.js';
+import {point, release, forgetBrought} from './store.js';
 import {buildRun, said, blockers, atWork, failingNow} from './run.js';
 import {dur, trim} from './draw.js';
 import * as timeline from './timeline.js';
@@ -94,7 +94,7 @@ function paint() {
     d.querySelectorAll('.dk-tab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
     const el = d.querySelector('.dk-view'), drawn = pref.closed || !run ? null : view;
     release(el);
-    if (el._drawn !== drawn) el._brought = null, el._drawn = drawn;   // a view opened brings the selection again
+    if (el._drawn !== drawn) forgetBrought(el), el._drawn = drawn;   // a view opened brings the selection again
     if (!pref.closed && run) VIEWS[view].render(el, run, S.graph.nodes, S.tasks, pipeline);
 }
 

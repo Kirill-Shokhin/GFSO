@@ -3,10 +3,9 @@
 import {esc, hint} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
-import {dur, trim} from './draw.js';
+import {dur, trim, usd, tok} from './draw.js';
 import {KIND_NAME as KIND, levelName, concurrency} from './run.js';
 
-const usd = x => `$${x < 10 ? x.toFixed(2) : x.toFixed(1)}`, tok = x => x == null ? 'not reported' : x > 1e6 ? `${(x / 1e6).toFixed(1)}M` : `${Math.round(x / 1e3)}k`;
 
 // the shared head of the assignee ids (the project's name), cut at a '-' so the distinct tail stays
 const commonPrefix = ids => { if (ids.length < 2) return 0;

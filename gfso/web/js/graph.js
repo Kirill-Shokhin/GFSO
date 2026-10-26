@@ -26,7 +26,7 @@ const NODE_STYLE = {
 const styleOf = s => NODE_STYLE[bucketOf(s)];
 // The drawing carries what the record carries (§15.7): contradicted → the accent, ringed (owed an
 // answer); asserted by hand → dotted in paper (closed, on somebody's word).
-export const closureStyle = (st, cl) => !cl ? st
+const closureStyle = (st, cl) => !cl ? st
     : contested(cl) ? {...st, bw: 3, bc: ACC, bs: 'solid', bo: 1}
     : cl.by_hand    ? {...st, bw: 2, bc: PAPER, bs: 'dotted', bo: 1}
     : st;

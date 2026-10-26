@@ -19,6 +19,7 @@ export function point(key, id) {
 // Only a selection not yet brought on this drawing of the view — a redraw on a feed event must not pull the reader's
 // scroll back; the deck forgets what was brought when it opens a view, so a tab returned to brings it again.
 // `find(id)` is the row's element.
+export const forgetBrought = el => { el._brought = null; };   // the deck, on opening a view
 export function bringSelected(el, find) {
     const bring = () => {
         const box = el.closest('.dk-body'), row = state.select && find(state.select);

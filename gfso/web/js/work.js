@@ -4,11 +4,11 @@
 import {esc, hint} from './dom.js';
 import {KIND_NAME as KIND} from './run.js';
 import {modelName} from './vocab.js';
+import {usd, tok as fmtTok} from './draw.js';
 
-const usd = x => `$${x < 10 ? x.toFixed(2) : x.toFixed(1)}`;
 // what a provider did not report is said so; a reported 0 is a 0
 const NOT = '<span class="wk-none">not reported</span>';
-const tok = x => x == null ? NOT : !x ? '0' : x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : `${x}`;
+const tok = x => fmtTok(x, NOT);
 const pct = x => `${Math.round(x * 100)}%`;
 const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.length - 1) >> 1]; };
 
@@ -47,22 +47,9 @@ export function render(el, run) {
 }
 
 // sessions no model answered, said once under the table rather than counted as anyone's work
-const ended = n => `${n} session${n > 1 ? 's' : ''}`;
 const WHY = {limit: 'an account limit', prompt_too_long: 'the context outgrew the window', cut: 'cut', max_turns: 'out of turns',
              error_max_turns: 'out of turns', error: 'an error', '': 'cause not recorded'};
 const unansweredLine = u => !Object.keys(u).length ? '' : `<div class="pn-meta wk-note">not counted above — sessions that spent `
     + `nothing: ${Object.entries(u).map(([k, why]) => `${KIND[k]}: ` + Object.entries(why).sort((a, b) => b[1] - a[1])
         .map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')).join(' · ')}</div>`;
 
-// Who ran a node, in one line for its panel: by role, each model with its sessions on it.
-// A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
-// user's agent or a person, whose model the system is not told — is signed by who delivered it, and says so.
-const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r.by).filter(Boolean).at(-1);
-    return by && !run.work.byNode[id]?.exec ? [`executed by <b>${esc(by)}</b> <span class="wk-none">· no session booked to this node — its model is not reported here</span>`] : []; };
-export const signedBy = (run, id) => [
-    ...deliveredBy(run, id),
-    ...Object.entries(run?.work.byNode[id] || {}).map(([kind, ms]) =>
-        `${{exec: 'executed', consent: 'consented', val: 'validated', issuer: 'issued', plan: 'planned'}[kind]} by `
-        + Object.entries(ms).map(([m, n]) => `<b title="${esc(m)}">${esc(modelName(m))}</b>${n > 1 ? ` ×${n}` : ''}`).join(', ')),
-    ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => `<span class="wk-none">${ended(n)} of ${KIND[k]} unanswered</span>`),
-].join(' · ');

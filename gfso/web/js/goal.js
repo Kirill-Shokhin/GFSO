@@ -6,7 +6,7 @@ import {getJSON, post, refusal} from './api.js';
 import {S, myRole} from './state.js';
 import {notice, askInPage} from './overlays.js';
 import {PLAN_COST, modeDoc} from './vocab.js';
-import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest} from './author.js';
+import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest} from './forms.js';
 import {switchProject} from './projects.js';
 
 const root = () => S.tasks.find(t => !t.parent_id);
