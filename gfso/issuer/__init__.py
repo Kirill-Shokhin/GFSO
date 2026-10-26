@@ -37,7 +37,7 @@ from gfso import tools as _tools
 from gfso.adapters.execution import LocalExecution
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
-from gfso.config import agent_id as _config_agent_id
+from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
@@ -1586,11 +1586,6 @@ UNANSWERED = ("unavailable", "error")
 #: per such settle up to this — a transport that keeps failing is retried rarely, never muted (a cap that
 #: muted a node's every question left a short outage to cancel the goal by its bounds).
 MAX_BACKOFF_S = 2 * 3600
-
-#: The longest a question waits while the account's usage limit refuses every call: the limit lifts at a time of day, so
-#: probing it costs a refused call of a second and nothing else, and a doubling past it idled a root for an hour after
-#: the window closed.
-LIMIT_RETRY_S = 600
 
 
 #: Applied answers in a row that leave their question open, taken at the pace they come before each further one waits

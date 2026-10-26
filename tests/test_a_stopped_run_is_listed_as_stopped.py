@@ -14,7 +14,8 @@ def test_the_stop_is_read_from_the_file(tmp_path):
     eng = make_engine(storage=SqliteStorage(db))
     assert peek_project(db)["stopped"] is None, "a run nobody stopped is not stopped"
     eng.pause("someone", "imported to read")
-    assert peek_project(db)["stopped"] | {"at": None} == {"by": "someone", "at": None, "why": "imported to read"}
+    assert peek_project(db)["stopped"] | {"at": None, "off_s": None} == {"by": "someone", "at": None, "off_s": None,
+                                                           "why": "imported to read"}
     eng.resume("someone")
     assert peek_project(db)["stopped"] is None, "started again, it is no longer stopped"
 

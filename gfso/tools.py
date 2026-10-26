@@ -22,7 +22,7 @@ from gfso.core.types import (
     RevisionReason, Register, register_of, settled_positive, passed,
 )
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_T_numerator, q_V_reversed
-from gfso.core.graph.model import clock_off_s, on_the_wall, root_of
+from gfso.core.graph.model import door_off_s, on_the_wall, root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
@@ -1518,7 +1518,7 @@ def _deadline(raw, graph=None):
         return None
     if isinstance(raw, datetime):
         return raw
-    return datetime.fromisoformat(str(raw)) - timedelta(seconds=clock_off_s(graph))
+    return datetime.fromisoformat(str(raw)) - timedelta(seconds=door_off_s(graph))
 
 
 #: a spec's keys as `_spec_from` reads them — each the Spec field of the same name

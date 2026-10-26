@@ -71,6 +71,13 @@ def _ended(envelope: dict, torn: bool) -> str:
     return str(envelope.get("terminal_reason") or "error")
 
 
+def _lifts_at(ev: dict):
+    """When the account's limit that refused this call lifts (epoch s), if the event says: the CLI's
+    `rate_limit_event`, or the refused turn's `api_error_params` — `rejected` only, an `allowed` one reports every call."""
+    info = _obj(ev.get("rate_limit_info")) or _obj(_obj(ev.get("api_error_params")).get("rate_limit_info"))
+    return _count(info.get("resetsAt")) or None if info.get("status") == "rejected" else None
+
+
 def _count(v) -> float:
     """A stream value as a number, or zero — read through like `_obj`, for the same reason."""
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
@@ -150,6 +157,7 @@ class ClaudeCodeProvider(LLMProviderPort):
         self.last_model = ""          # the model its turns name — what a cut session ran on
         self.last_turns: dict = {}    # each turn's own usage, by message id — what a cut session spent
         self._turn_id = ""            # the message whose closing `message_delta` is still to come
+        self.last_lift = None         # when the account's limit that refused the call being read lifts (`_lifts_at`)
         # Live ticks: the CLI streams (stream-json + partial messages), so generation progress is REAL
         # (actual output tokens so far), not an estimate. The caller wires `on_tick(msg)` and may set
         # `stage_hint` before each call; both are optional presentation.
@@ -236,7 +244,7 @@ class ClaudeCodeProvider(LLMProviderPort):
         real output tokens, never an estimate. Returns (envelope, text, out_tokens)."""
         envelope, text_acc, out_tokens, last_tick = None, [], 0, t0
         self.last_tool_calls = {}
-        self.last_peak_context, self.last_model, self.last_turns, self._turn_id = 0, "", {}, ""
+        self.last_peak_context, self.last_model, self.last_turns, self._turn_id, self.last_lift = 0, "", {}, "", None
         # WHAT AN AGENT RUN DID, KEPT WHEN ASKED (`GFSO_AGENT_TRACE_DIR`): each call's raw stream, one
         # file per call. `--no-session-persistence` keeps these runs out of the operator's history, which
         # also left no record of what a delegated executor or validator actually ran — an audit that reads
@@ -269,6 +277,7 @@ class ClaudeCodeProvider(LLMProviderPort):
     def _observe(self, ev: dict, inner: dict) -> None:
         """What one event says about the session itself: a tool it called, how full its context got."""
         self.last_peak_context = max(self.last_peak_context, _turn_context(ev, inner))
+        self.last_lift = _lifts_at(ev) or self.last_lift
         msg = _obj(ev.get("message") or inner.get("message"))
         self._note_turn(msg, inner)
         named = msg.get("model")
@@ -436,6 +445,8 @@ class ClaudeCodeProvider(LLMProviderPort):
                 # WHY A SESSION GAVE NO ANSWER, kept with it: a context grown past the window and an account
                 # limit both come back as zero tokens at zero cost, and only this layer can tell them apart
                 "ended": _ended(out, envelope is None),
+                # …and when the limit that refused it lifts: the system stops the project until then (`Engine.pause`)
+                "limit_resets_at": _lifts_at(out) or self.last_lift,
                 # whether it CONTINUED a conversation (`--resume`, a round cut at its turn cap) rather than opening
                 # a context of its own: real contexts are the calls that did not
                 "resumed": "--resume" in args,

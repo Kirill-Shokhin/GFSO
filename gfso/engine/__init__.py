@@ -5,6 +5,7 @@ import dataclasses
 import json
 import logging
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -19,7 +20,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutations, dep_scope, generation_of_task,
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
-                                   register_log_key, stamp, stamped_with, leave_off_the_gap, project_now)
+                                   register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s)
 from gfso.core.graph.mutations import InvariantViolation, with_its_seams
 from gfso.core.handlers.structural import run_structural
 from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_was_refuted
@@ -35,7 +36,7 @@ from gfso.core.protocol.procedure import (admission_defects, canonical_citations
                                           claim_digest)
 
 from gfso.config import (
-                         PIPELINE_PAGE, USAGE_PAGE,
+                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S,
                          MODEL_DEFAULT, agent_id as _config_agent_id,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
@@ -67,6 +68,9 @@ from .events import EventBus, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, refresh_checks, timeout_monitor
 
 log = logging.getLogger(__name__)
+
+#: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
+LIFT_MARGIN_S = 30
 
 
 # live token ticks ("<stage>: N tokens · Ss") update in place — WS-only, never persisted
@@ -114,6 +118,7 @@ class Engine:
     ):
         self._graph = Graph(storage)
         self._storage = storage           # the port this engine was given — its own, not reached for under the graph
+        self._stop_lock = threading.Lock()  # a person's stop and the system's start of a limit stop never cross
         self._tech_lock = threading.Lock()  # one writer of the tech-report list (read-modify-write of one setting)
         self._agents = agents
         self._llm = llm
@@ -176,7 +181,7 @@ class Engine:
 
         self._runner.spawn(
             lambda: timeout_monitor(self._graph, self._queue, self._check_interval, self._stop,
-                                    self._state_timeout, self._clock),
+                                    self._state_timeout, self._clock, self.lift_the_limit),
             name="gfso-timeout-monitor")
 
         self._recover_orphans()
@@ -535,26 +540,52 @@ class Engine:
         """The project's stop as set — {by, at, why} — or None while it runs (`validation.pause_record`)."""
         return pause_record(self._graph)
 
-    def pause(self, by: str, why: str = "") -> dict:
+    def pause(self, by: str, why: str = "", until: Optional[float] = None) -> dict:
         """STOP: the system starts no session of any role here — sessions already running finish and their signals land
         — and the clock fires no timeout; its time is left off the project's clocks, tick by tick. It writes
         nothing into the graph: a stop is the user's act on the run, not a protocol move. A stop standing already is
-        kept as it was: a second one would lose the time of the first."""
-        if was := self.paused():
-            return was
-        rec = {"by": str(by), "at": datetime.now().isoformat(timespec="seconds"), "why": str(why or "")}
-        self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
+        kept as it was: a second one would lose the time of the first — except one the system starts again by itself
+        (`until`, the account's limit): a later lift extends it, and any other stop over it takes it, keeping its
+        start, so the system never starts what a person stopped. `off_s`: the doors' off time while it stands
+        (`model.door_off_s`)."""
+        with self._stop_lock:
+            was = self.paused()
+            if was and not (was.get("until") and (until is None or until > was["until"])):
+                return was
+            rec = {**(was or {"at": datetime.now().isoformat(timespec="seconds"), "off_s": clock_off_s(self._graph)}),
+                   "by": str(by), "why": str(why or "")}
+            rec.pop("until", None)
+            rec.update({"until": until} if until else {})
+            self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
         self.emit_info("pause", f"STOPPED by {by}" + (f": {why}" if why else "") + " — nothing new starts")
         return rec
 
     def resume(self, by: str) -> Optional[dict]:
         """START again: the stop that stood, or None where none did. Its time is already off the project's clocks: the
         monitor leaves off every tick made under a stop (`project_now`)."""
-        was = self.paused()
-        self._storage.store_setting(PAUSE_KEY, "")
+        with self._stop_lock:
+            was = self.paused()
+            self._storage.store_setting(PAUSE_KEY, "")
         if was:
             self.emit_info("pause", f"STARTED again by {by} (stopped since {was.get('at')})")
         return was
+
+    def stop_for_the_limit(self, role: str, lifts_at: Optional[float]) -> dict:
+        """THE ACCOUNT'S LIMIT IS A STOP IN SUBSTANCE: while it refuses every call nobody can move, so no bound may run
+        (docs/notes/PROJECT_CLOCK.md, case 10). The system stops the project until the limit lifts — when the CLI said,
+        else after LIMIT_RETRY_S, when the next refused call (a second's probe) stops it again."""
+        until = float(lifts_at) + LIFT_MARGIN_S if lifts_at else time.time() + LIMIT_RETRY_S
+        return self.pause("system", f"the account's usage limit refused {role}'s call — until "
+                                    f"{datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
+
+    def lift_the_limit(self, wall: float) -> None:
+        """START what the account's limit stopped, once it has lifted — only that stop (`until`): a person's never. The
+        monitor asks at every tick under a stop, so an engine started over a standing one re-arms it from its record."""
+        with self._stop_lock:
+            if not ((was := self.paused()) and was.get("until") and was["until"] <= wall):
+                return
+            self._storage.store_setting(PAUSE_KEY, "")
+        self.emit_info("pause", f"STARTED again by system: the account's limit lifted (stopped since {was.get('at')})")
 
     def tech_report(self, text: str, role: str, actor: str, task_id=None) -> dict:
         """A report about the SYSTEM, not the task — a check contradicting its contract, a tool that cannot run, an answer
@@ -775,6 +806,10 @@ class Engine:
             except Exception as e:
                 log.warning(f"usage record could not be marked as counted ({e}) — the next drain may count it again")
             n += 1
+            # …THE ONE PLACE EVERY ROLE'S CALL PASSES: a call the account's limit refused stops the project — on the
+            # provider's own reading of how it ended (`headless._ended`): the engine reads no transport's words
+            if c.get("ended") == "limit":
+                self.stop_for_the_limit(str(c.get("stage") or stage), c.get("limit_resets_at"))
         # told to live observers the moment it is booked (not persisted: the ledger itself is the record), so an open
         # page re-reads its spend when there is something new rather than on a clock of its own
         if n:

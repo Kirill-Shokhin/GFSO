@@ -569,8 +569,12 @@ def timeout_monitor(
     stop_event: threading.Event | None = None,
     state_timeout: float | None = None,
     clock: ClockPort | None = None,
+    lift=None,
 ) -> None:
     """Background thread: checks deadlines AND per-state age, emits timeout signals.
+
+    `lift(wall)`, asked at every tick under a stop: starts a stop the account's limit made once it lifted
+    (`Engine.lift_the_limit`) — from the stop's record, so a restart re-arms it.
 
     Inv-5 (§12.12): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
     (a) the task's own deadline (exact, when set); (b) the per-STATE clock — a state older than
@@ -617,6 +621,8 @@ def timeout_monitor(
         stopped = pause_record(graph)
         keep_off(graph, wall - last if stopped or wall - last > NO_TICK_S else 0.0, beat=wall)
         if stopped:
+            if lift is not None:
+                lift(wall)
             continue
         now -= clock_off_s(graph)
         for task in _active:

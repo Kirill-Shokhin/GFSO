@@ -184,9 +184,18 @@ def project_now(graph: Optional["Graph"]) -> datetime:
     return datetime.now() - timedelta(seconds=clock_off_s(graph))
 
 
+def door_off_s(graph: Optional["Graph"]) -> float:
+    """The off time EVERY DOOR converts with, both ways (`on_the_wall`, `tools._deadline`): `clock_off_s`, except that
+    while the project stands stopped it is the one taken at the stop (`Engine.pause`). Under a stop the project's time
+    stands while the wall runs, so a date shown grew every tick, and a client feeding it back (an unchanged child
+    re-admitted) had it taken off with a larger off — read as changed. Started again, a date reads the stop's length later."""
+    stop = json.loads(graph.setting(PAUSE_KEY) or "null") if graph is not None else None
+    return float(stop["off_s"]) if stop and stop.get("off_s") is not None else clock_off_s(graph)
+
+
 def on_the_wall(graph: Optional["Graph"], at: datetime) -> datetime:
     """A time on the project's clocks as it reads outside: on the wall (`project_now`'s inverse at the doors)."""
-    return at + timedelta(seconds=clock_off_s(graph))
+    return at + timedelta(seconds=door_off_s(graph))
 
 
 def project_deadline_s(graph: "Graph") -> float:

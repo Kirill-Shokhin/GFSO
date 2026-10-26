@@ -580,3 +580,8 @@ def spawned_server_popen_env() -> dict:
     raised for somebody's session is a background service, not that session's property.
     """
     return dict(os.environ, GFSO_AUTOEXIT=os.environ.get("GFSO_AUTOEXIT", "0"))
+
+#: The longest a question — and a project the account's limit stopped with no lift time said (`Engine.stop_for_the_limit`)
+#: — waits while the account's usage limit refuses every call: the limit lifts at a time of day, so probing it costs a
+#: refused call of a second and nothing else, and a doubling past it idled a root for an hour after the window closed.
+LIMIT_RETRY_S = 600
