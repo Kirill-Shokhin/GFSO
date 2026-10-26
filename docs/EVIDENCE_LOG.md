@@ -3532,7 +3532,7 @@ windows taken out, disclosed per row in `results/_grid/E3_TABLE.md`); cost is th
 | coreutils | haiku 4.5 | DONE ×5 (0.59–0.76) — **5/5 false** | DONE ×5 (1.000 ×5, signed 1.000 ×5) | 8–13 min · $1.3–2.3 | 120–253 min · $21–40 |
 | coreutils | haiku 5.5 | DONE ×4 (1.000 ×4) | DONE ×7 (1.000 ×7); 2 NOT DONE | 8–15 min · $0.3–1.0 | 14–55 min · $0.4–0.9 |
 | coreutils | sonnet 5.5 | DONE ×6 (1.000 ×6) | DONE ×2 (1.000 ×2) | 4–12 min · $0.7–2.3 | 7–10 min · $4.2–4.5 |
-| sql_database | haiku 4.5 | DONE ×5 (0.09–0.18), NOT DONE ×1 — **5/6 false** | NOT DONE ×1 (an earlier build); on the final plan v16: DONE (1.000) — §13.47 | 10–12 min · $1.3–2.2 | 1019 min · $83 |
+| sql_database | haiku 4.5 | DONE ×5 (0.09–0.18), NOT DONE ×1 — **5/6 false** | NOT DONE ×1 (an earlier build); on the final plan v16: DONE ×2 (1.000, 0.818) — §13.47 | 10–12 min · $1.3–2.2 | 1019 min · $83 |
 | sql_database | haiku 5.5 | DONE ×4 (1.000, 1.000, 0.909, 1.000) — **1/4 false** | DONE ×3 (1.000 ×3) | 16–21 min · $0.3–1.3 | 56–97 min · $1.0–1.9 |
 | sql_database | sonnet 5.5 | DONE ×4 (1.000 ×4) | DONE ×2 (1.000 ×2) | 6–8 min · $1.0–1.3 | 13–17 min · $4.3–5.6 |
 | c_compiler | haiku 4.5 | NOT DONE ×3 (0.12–0.15) | no verdict (two rows of an earlier build cut at the 9-h ceiling; the final-build row GB_c_compiler_tncfs1160 stopped unsettled on 2026-10-24, not re-run) | 7–10 min · $0.9–1.6 | — |
@@ -3602,7 +3602,7 @@ work to the oracle holds on `coreutils` only (where the system added no part to 
 agent alone claims no "done" (12–15%), so that cell carries no false-done comparison. The defects named are the
 system's and the plan's, not the model's; the cell is re-run under Amendment 4 of the pre-registration.
 
-### 13.47 `sql_database` on the final given plan: both smaller models close it DONE at held-out 1.0 (2026-10-25 → 10-26)
+### 13.47 `sql_database` on the final given plan: both smaller models close it DONE (2026-10-25 → 10-27)
 
 **What was asked** (`experiments/e3_specbench/PREREGISTERED_table_v1.md`, Amendment 4, each row designated before it
 started). The automatic mode, every role on one model, on the given plan v16 for `sql_database` (ten parts; the SELECT
@@ -3614,23 +3614,38 @@ pipeline one part), graded in Linux on the oracle.
 |---|---|---|---|---|
 | `claude-haiku-5-5` | DONE — every pinned check of every passing verdict ran (24 at the root) | 1.000 (11/11) | 1.000 | 52 min |
 | `claude-haiku-4-5-20251001` | DONE — resumed after an engine fix (Amendment 5), one build for the resumed attempt | 1.000 (11/11, the tree the root's verdict signed) | 1.000 | 5 h 50 min (2 h 14 min + 3 h 36 min; the 6 h 36 min the engine's stop held nothing running left out) |
+| `claude-haiku-4-5-20251001`, second row | DONE — a fresh run on one build, start to end | 0.818 (9/11, the tree the root's verdict signed) | 0.933 | 7 h 36 min |
 
 On `claude-haiku-4-5-20251001` eight of the ten parts passed in 85 minutes; `select` failed four deliveries of four
 different trees on true failures (its pinned checks re-run on each tree reproduce the failed sets; 2 of 7 pass), and an
 engine rule read the four equal FAILs as the node exceeding one session of its executor, so the run was stopped at
 2 h 14 min with held-out 0.091. That rule was the implementation's, not the canon's: §3.7 places κ in the leaf test, and
 a count of rounds measures no κ — every one of those sessions had ended by itself with turns to spare. With the rule
-removed the run was resumed from where it stood: `select` passed nine rounds later (7 of 7 of its checks), `integrate`
-after it. The root then failed nine rounds on part `eval`'s pinned check re-run on the whole: that check links a fixed
-list of files, and the integrated `eval.c` called into `select.c`. In the tenth the root's executor decoupled `eval.c` from
-`select.c` (a callback), the check held, and the root passed — the plan unchanged; the signed tree scores held-out 1.000
+removed the run was resumed from where it stood: `select` failed six more deliveries and passed on the seventh (7 of 7 of
+its checks), `integrate` after it. The root then failed ten deliveries on part `eval`'s pinned check re-run on the whole:
+that check links a fixed list of files, and the integrated `eval.c` called into `select.c`. On the eleventh the root's
+executor had decoupled `eval.c` from `select.c` (a callback), the check held, and the root passed — the plan unchanged; the signed tree scores held-out 1.000
 and public 1.000. Those rounds also lost criteria to an engine refusal to credit one pinned check carried by two parts
 under two names (`integrate` copies `scaffold`'s), named here and fixed apart from this row. The bare agent on the same
 model and contract (§13.46) claims DONE in 5 of 6 runs at held-out 0.091.
 
+The second row on `claude-haiku-4-5-20251001` (Amendment 4's row (c), an independent sample) ran on one build with no
+engine stop: the ten parts passed by 02:58, `select` on its fifteenth delivery after fourteen true failures (a crash
+across statements, DESC ignored), `integrate` on its seventh after six failures on an interface its executor had widened
+against the contract; the root
+passed on its first delivery. Its signed tree fails two of the eleven held-out tests, both on one defect: an `UPDATE …
+WHERE col = expr` runs the WHERE as one more assignment, so every row is rewritten (`UPDATE t SET x = 9 WHERE x = 2` over
+1, 2, 3 leaves 2, 2, 2). The plan names the behaviour — `dml`'s and the root's criteria cover UPDATE with WHERE — and every
+pinned probe of it uses a predicate other than `=` (`<`, `<>`, `>`, `IS NULL`): FM-3 of the plan's checks, a criterion
+whose procedure cannot see the case. The first row's tree encodes the SET items apart from the WHERE and passes the same
+tests through the same blind checks. Cost on the ledger: $62.51, of it executors $47.1, validation $12.7, the issuer
+$2.5.
+
 **What it does not show.** The plan's checks were verified against the oracle beforehand and polished on
 `claude-haiku-5-5`'s own runs, so the first row says what the system does with checks that hold; it carries no value
-claim by itself (§13.46's condition). The second row ran across two builds (the engine's κ-by-count rule removed between
-its attempts, disclosed under Amendment 5), n = 1 per row; its harness flagged it invalid on the repository's source
-moving during the row, while the server that ran it was one process on the recorded build throughout — adjudicated valid
-in its record.
+claim by itself (§13.46's condition). The first row on `claude-haiku-4-5-20251001` ran across two builds (the engine's κ-by-count
+rule removed between its attempts, disclosed under Amendment 5); n = 2 on that model, the rows reported side by side,
+never pooled. The harness flagged each haiku 4.5 row invalid on the repository's source moving during the row, while
+the server that ran it was one process on the recorded build throughout, and the second also on a false leak (its
+pattern read an executor's own place, `/gfso-nodes-ws/…`, as gfso's source; the pattern now matches whole path
+segments) — each adjudicated valid in its record.
