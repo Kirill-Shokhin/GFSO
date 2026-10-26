@@ -19,8 +19,8 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import ExecutionPort, LLMProviderPort
-from .stats import is_limit
+from gfso.core.types import ExecutionPort, LLMProviderPort, PlaceUnavailable
+from .stats import is_limit, refused_by_limit
 from .structured import holds_an_object, schema_instruction, parse_structured, retry_suffix, RETRY_SHORTER
 from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
 from gfso.adapters.execution import LocalExecution
@@ -193,6 +193,14 @@ class ClaudeCodeProvider(LLMProviderPort):
         if not sid:
             return ["--no-session-persistence"]
         return ["--resume", sid] if self._transcripts(sid) else ["--session-id", sid]
+
+    def _never_started(self, e: PlaceUnavailable, resumed: bool) -> str:
+        """NOTHING STARTED: read as an empty answer, a dead Docker daemon was redialled as a cut call four times, then
+        parked the node as an unreadable report (GB_sql_database_tnij0m952). Recorded as its own ending, so booking it
+        stops the project (`Engine.record_llm_usage`); no answer."""
+        self.calls.append({"duration_ms": 0, "model": self._model, "ended": "unavailable", "place": e.place,
+                           "error": str(e), "transport_torn": False, "resumed": resumed})
+        return ""
 
     def _after_the_round(self, sid: str | None, out: dict) -> None:
         """ONLY A ROUND CUT AT ITS TURN CAP IS CONTINUED: the next round of any other starts with a clean context, each
@@ -397,7 +405,7 @@ class ClaudeCodeProvider(LLMProviderPort):
         t0 = time.monotonic()
         cap = timeout or self._timeout
         self._est_chars = 0  # per-call char-estimate (fallback token counter while usage is absent)
-        proc, out = None, {}
+        proc, out, n0 = None, {}, len(self.calls)
         try:
             proc = self._exec.popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
@@ -467,6 +475,8 @@ class ClaudeCodeProvider(LLMProviderPort):
                     return ""
             else:
                 return (out.get("result") if isinstance(out.get("result"), str) else "") or "".join(text_acc)
+        except PlaceUnavailable as e:
+            return self._never_started(e, "--resume" in args)
         except Exception as e:
             log.warning(f"headless claude call failed: {e}", exc_info=True)   # the cause was once only inferred
             return ""
@@ -475,7 +485,9 @@ class ClaudeCodeProvider(LLMProviderPort):
             # used to leave its child running until the server itself died.
             if proc is not None:           # the child's own shells too, on every path
                 self._exec.end(proc)
-            self._after_the_round(session, out)
+            # …a round what stops the project refused never ran: the conversation it would continue is kept
+            if not refused_by_limit(self.calls[n0:]):
+                self._after_the_round(session, out)
         # Reached only by a conversation the CLI could not take up (gone, outgrown its window): that is not the round's
         # failure, so the round runs cold — after the first process is gone, which otherwise rewrote the transcript
         # just forgotten and sent the "cold" retry back to `--resume` (critic, live on CLI 2.1.306)

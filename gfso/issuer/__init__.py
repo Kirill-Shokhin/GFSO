@@ -1855,7 +1855,13 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
                         n = n + counted if (t, q) in open_questions(engine) else 0
                         ledger[g] = (0, now_ + (backoff(n - FREE_ANSWERS - 1) if counted and n > FREE_ANSWERS else 0), n)
                     elif st in UNANSWERED:
-                        ledger[g] = (w + 1, now_ + ((engine.limit_wait_s() or min(backoff(w), LIMIT_RETRY_S)) if out.get("limit") else backoff(w)), n)
+                        wait = (engine.stop_wait_s() or min(backoff(w), LIMIT_RETRY_S)) if out.get("limit") else backoff(w)
+                        ledger[g] = (w + 1, now_ + wait, n)
+                        # …SAID (a failed turn is, above): a parked leaf's issuer met a dead Docker daemon at every ask,
+                        # and 40 min passed with not one line in the log (GB_sql_database_tnij0m952)
+                        if st == "unavailable":
+                            engine.emit_info("issuer", f"{t}: the issuer's turn on {q} was not answered — "
+                                                       f"{out.get('why')}; asked again in {wait:.0f}s")
                     elif st == "inflight":
                         ledger[g] = (w, now_ + PACE_S, n)
                     elif st != "gone":

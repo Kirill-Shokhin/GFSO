@@ -186,11 +186,26 @@ class StoragePort(ABC):
         return []
 
 
+class PlaceUnavailable(OSError):
+    """The execution place cannot start anything now (its container daemon does not answer): a state of the
+    environment that stops the whole project, not a call that was cut nor a report that did not parse
+    (`Engine.stop_for_the_place`). An OSError, so a door that already falls back on a place it cannot use does."""
+
+    def __init__(self, place: str, why: str):
+        super().__init__(f"the execution place {place} is unavailable: {why}")
+        self.place, self.why = place, why
+
+
 class ExecutionPort(ABC):
     """WHERE a session or a command runs — this host, or a place isolated from it — as opposed to WHO answers
     (`LLMProviderPort`) and who pumps the signals (`RunnerPort`). A launch touches the host only through it: the
     program it finds, the process it starts and ends, the scratch place it lends, the directory the agent CLI keeps
-    its conversations in. One server can then run every project's work isolated without a second server."""
+    its conversations in. One server can then run every project's work isolated without a second server. A launch
+    the place cannot start raises `PlaceUnavailable`."""
+
+    def unavailable(self) -> Optional[str]:
+        """Why this place cannot start a call now, or None where it can — a cheap health check. This host always can."""
+        return None
 
     @abstractmethod
     def which(self, program: str) -> Optional[str]:

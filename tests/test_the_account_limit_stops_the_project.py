@@ -63,9 +63,9 @@ def test_a_refused_call_stops_the_project_until_the_limit_lifts():
     e.record_llm_usage("executor", _refused(lift), TaskId("n"))
     stop = e.paused()
     assert stop and stop["until"] >= lift and "usage limit" in stop["why"] and "executor" in stop["why"], stop
-    e.lift_the_limit(lift - 1)
+    e.lift_the_system_stop(lift - 1)
     assert e.paused(), "started before the limit lifted"
-    e.lift_the_limit(stop["until"])
+    e.lift_the_system_stop(stop["until"])
     assert e.paused() is None, "the system did not start what it stopped"
 
 
@@ -80,12 +80,12 @@ def test_a_persons_stop_is_never_started_by_the_system_and_a_persons_start_is_ho
     e = make_engine(llm=None)
     e.pause("alice", "mine")
     e.record_llm_usage("executor", _refused(time.time()), TaskId("n"))
-    e.lift_the_limit(time.time() + 10 ** 6)
+    e.lift_the_system_stop(time.time() + 10 ** 6)
     assert e.paused()["by"] == "alice", "the system took over a person's stop"
     e.resume("alice")
     e.record_llm_usage("executor", _refused(time.time()), TaskId("n"))
     e.pause("alice", "mine, over the limit's")                 # a person's stop over the system's is the person's
-    e.lift_the_limit(time.time() + 10 ** 6)
+    e.lift_the_system_stop(time.time() + 10 ** 6)
     assert e.paused()["by"] == "alice", "the system started a stop a person had made over its own"
     e.resume("alice")
     assert e.paused() is None
@@ -130,6 +130,6 @@ def test_a_round_the_limit_refused_comes_back_at_the_lift_not_on_its_own_timer()
     """A round given back on a fixed LIMIT_RETRY_S after a lift due sooner would spend project time with nobody moving
     (critic, 2026-10-26: up to ~570 s); it waits exactly until the system's limit stop lifts."""
     e = make_engine(llm=None)
-    assert e.limit_wait_s() is None                            # no limit stop: each door keeps its own pace
+    assert e.stop_wait_s() is None                            # no limit stop: each door keeps its own pace
     e.record_llm_usage("executor", _refused(time.time() + 120), TaskId("n"))
-    assert 120 < e.limit_wait_s() < 200 < LIMIT_RETRY_S
+    assert 120 < e.stop_wait_s() < 200 < LIMIT_RETRY_S

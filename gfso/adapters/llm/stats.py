@@ -33,9 +33,11 @@ def is_limit(error) -> bool:
 
 
 def refused_by_limit(calls) -> bool:
-    """Did the account's limit end any call of this run? Such a run answered nothing — an executor's session, a
-    validation, a consent — and is asked again when the limit can have lifted, spending none of the node's budget."""
-    return any(isinstance(c, dict) and is_limit(c.get("error")) for c in calls or ())
+    """Did what stops the whole project — the account's limit, or the execution place down (`ended == "unavailable"`)
+    — end any call of this run? Such a run answered nothing — an executor's session, a validation, a consent — and is
+    asked again when the system's stop lifts, spending none of the node's budget."""
+    return any(isinstance(c, dict) and (c.get("ended") == "unavailable" or is_limit(c.get("error")))
+               for c in calls or ())
 
 
 def calls_of(llm) -> tuple:

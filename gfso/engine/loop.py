@@ -573,8 +573,9 @@ def timeout_monitor(
 ) -> None:
     """Background thread: checks deadlines AND per-state age, emits timeout signals.
 
-    `lift(wall)`, asked at every tick under a stop: starts a stop the account's limit made once it lifted
-    (`Engine.lift_the_limit`) — from the stop's record, so a restart re-arms it.
+    `lift(wall)`, asked at every tick under a stop: starts a stop the system made by itself once what made it is gone —
+    the account's limit lifted, the execution place answering (`Engine.lift_the_system_stop`) — from the stop's record,
+    so a restart re-arms it.
 
     Inv-5 (§12.12): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
     (a) the task's own deadline (exact, when set); (b) the per-STATE clock — a state older than

@@ -120,7 +120,8 @@ class Engine:
     ):
         self._graph = Graph(storage)
         self._storage = storage           # the port this engine was given — its own, not reached for under the graph
-        self._stop_lock = threading.Lock()  # a person's stop and the system's start of a limit stop never cross
+        self._stop_lock = threading.Lock()  # a person's stop and the system's start of its own stop never cross
+        self._place_probe = None            # where the project runs, asked while it is down (`probe_the_place_with`)
         self._tech_lock = threading.Lock()  # one writer of the tech-report list (read-modify-write of one setting)
         self._agents = agents
         self._llm = llm
@@ -183,7 +184,7 @@ class Engine:
 
         self._runner.spawn(
             lambda: timeout_monitor(self._graph, self._queue, self._check_interval, self._stop,
-                                    self._state_timeout, self._clock, self.lift_the_limit),
+                                    self._state_timeout, self._clock, self.lift_the_system_stop),
             name="gfso-timeout-monitor")
 
         self._recover_orphans()
@@ -532,22 +533,24 @@ class Engine:
         """The project's stop as set — {by, at, why} — or None while it runs (`validation.pause_record`)."""
         return pause_record(self._graph)
 
-    def pause(self, by: str, why: str = "", until: Optional[float] = None) -> dict:
+    def pause(self, by: str, why: str = "", until: Optional[float] = None, place: Optional[str] = None) -> dict:
         """STOP: the system starts no session of any role here — sessions already running finish and their signals land
         — and the clock fires no timeout; its time is left off the project's clocks, tick by tick. It writes
         nothing into the graph: a stop is the user's act on the run, not a protocol move. A stop standing already is
         kept as it was: a second one would lose the time of the first — except one the system starts again by itself
-        (`until`, the account's limit): a later lift extends it, and any other stop over it takes it, keeping its
-        start, so the system never starts what a person stopped. `off_s`: the doors' off time while it stands
-        (`model.door_off_s`)."""
+        (`until`, the account's limit; `place`, an execution place down): a later lift extends it, and any other stop
+        over it takes it, keeping its start, so the system never starts what a person stopped. `off_s`: the doors' off
+        time while it stands (`model.door_off_s`)."""
         with self._stop_lock:
             was = self.paused()
-            if was and not (was.get("until") and (until is None or until > was["until"])):
+            held = {k: was[k] for k in ("until", "place") if (was or {}).get(k)}
+            lifts = {**held, **({"until": max(until, held.get("until", 0))} if until else {}),
+                     **({"place": place} if place else {})} if until or place else {}
+            if was and (not held or lifts == held):
                 return was
-            rec = {**(was or {"at": datetime.now().isoformat(timespec="seconds"), "off_s": clock_off_s(self._graph)}),
-                   "by": str(by), "why": str(why or "")}
-            rec.pop("until", None)
-            rec.update({"until": until} if until else {})
+            rec = {**{k: v for k, v in (was or {"at": datetime.now().isoformat(timespec="seconds"),
+                                                "off_s": clock_off_s(self._graph)}).items() if k not in held},
+                   "by": str(by), "why": str(why or ""), **lifts}
             self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
         self.emit_info("pause", f"STOPPED by {by}" + (f": {why}" if why else "") + " — nothing new starts")
         return rec
@@ -570,20 +573,49 @@ class Engine:
         return self.pause("system", f"the account's usage limit refused {role}'s call — until "
                                     f"{datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
 
-    def limit_wait_s(self) -> Optional[float]:
-        """Seconds until the system's limit stop lifts (its `until`), or None where none stands — a round the limit
-        refused, parked on a wall timer past the lift, would spend project time with nobody moving."""
-        until = (self.paused() or {}).get("until")
-        return max(1.0, float(until) - time.time() + 1.0) if until else None
+    def stop_for_the_place(self, place: str, why: str) -> dict:
+        """AN EXECUTION PLACE DOWN IS A STOP IN SUBSTANCE, as the limit is: no session of any role can start, so nobody
+        can move (PROJECT_CLOCK.md, case 14). Stopped until the place answers its probe (`lift_the_system_stop`)."""
+        return self.pause("system", why, place=place)
 
-    def lift_the_limit(self, wall: float) -> None:
-        """START what the account's limit stopped, once it has lifted — only that stop (`until`): a person's never. The
-        monitor asks at every tick under a stop, so an engine started over a standing one re-arms it from its record."""
+    def probe_the_place_with(self, probe) -> None:
+        """Hand the engine the probe of where its project runs — `probe()`: why the place cannot start a call, or None
+        (`ExecutionPort.unavailable`) — from the layer that knows the place, as `joins.set_join_owed` is handed."""
+        self._place_probe = probe
+
+    def _probe_says(self) -> Optional[str]:
+        """The place probe's answer; one that raises did not answer — raised here, it killed the monitor's thread, and
+        no bound fired again (Inv-5)."""
+        try:
+            return self._place_probe()
+        except Exception as e:                          # noqa: BLE001 — a probe that fails is a place that does not answer
+            return f"{type(e).__name__}: {e}"
+
+    def stop_wait_s(self) -> Optional[float]:
+        """Seconds until the system's own stop can lift — its `until`; a place's next probe is a tick away and nothing
+        starts meanwhile — or None where none stands: a round it refused, parked on a wall timer past the lift, would
+        spend project time with nobody moving."""
+        stop = self.paused() or {}
+        if until := stop.get("until"):
+            return max(1.0, float(until) - time.time() + 1.0)
+        return 1.0 if stop.get("place") else None
+
+    def lift_the_system_stop(self, wall: float) -> None:
+        """START what the system stopped by itself once what stopped it is gone — the limit lifted (`until`), the place
+        answering its probe (`place`) — only that stop: a person's never. The monitor asks at every tick under a stop,
+        so an engine started over a standing one re-arms it from its record."""
+        was = self.paused()
+        if not (was and (was.get("until") or was.get("place"))) or (was.get("until") or 0) > wall:
+            return
+        if was.get("place") and (self._place_probe is None or self._probe_says() is not None):
+            return
         with self._stop_lock:
-            if not ((was := self.paused()) and was.get("until") and was["until"] <= wall):
+            if self.paused() != was:      # a stop made while the place was probed is that stop's
                 return
             self._storage.store_setting(PAUSE_KEY, "")
-        self.emit_info("pause", f"STARTED again by system: the account's limit lifted (stopped since {was.get('at')})")
+        self.emit_info("pause", "STARTED again by system: " + " and ".join(
+            ([f"the execution place {was['place']} answers"] if was.get("place") else [])
+            + (["the account's limit lifted"] if was.get("until") else [])) + f" (stopped since {was.get('at')})")
 
     def tech_report(self, text: str, role: str, actor: str, task_id=None) -> dict:
         """A report about the SYSTEM, not the task — a check contradicting its contract, a tool that cannot run, an answer
@@ -804,10 +836,13 @@ class Engine:
             except Exception as e:
                 log.warning(f"usage record could not be marked as counted ({e}) — the next drain may count it again")
             n += 1
-            # …THE ONE PLACE EVERY ROLE'S CALL PASSES: a call the account's limit refused stops the project — on the
-            # provider's own reading of how it ended (`headless._ended`): the engine reads no transport's words
+            # …THE ONE PLACE EVERY ROLE'S CALL PASSES: a call the account's limit refused, or one its execution place
+            # could not start, stops the project — on the provider's own reading of how it ended (`headless._ended`,
+            # `PlaceUnavailable`): the engine reads no transport's words
             if c.get("ended") == "limit":
                 self.stop_for_the_limit(str(c.get("stage") or stage), c.get("limit_resets_at"))
+            elif c.get("ended") == "unavailable":
+                self.stop_for_the_place(str(c.get("place")), str(c.get("error")))
         # told to live observers the moment it is booked (not persisted: the ledger itself is the record), so an open
         # page re-reads its spend when there is something new rather than on a clock of its own
         if n:

@@ -69,6 +69,13 @@ def _too_late(engine, node_id, cap) -> dict | None:
     return {"task_id": str(node_id), "status": "too_late"}
 
 
+def _unread(llm, unparsed: str) -> str:
+    """The headline of a session that left no report: `unparsed` — unless what stops the project (the account's limit,
+    the execution place down) refused its call: then nothing came to be read and no issuer's attention is owed."""
+    return ("no report — the call was refused by what stops the project, nothing was answered"
+            if refused_by_limit(calls_of(llm)) else unparsed)
+
+
 def _run_session(llm, system: str, user: str, cfg: dict, cap, cwd: str | None, session: str | None = None) -> str:
     """One headless executor session with the work tools, in its node's place, under the role's caps — continuing
     the node's conversation with this executor where one is named (`session_key`)."""
@@ -151,7 +158,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     if report is None:
         # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
         # monitor escalates a stuck node (no second clock). Visible in the observation field.
-        _cb(f"{task_id}: executor report DID NOT PARSE — no signals sent; issuer attention needed "
+        _cb(f"{task_id}: {_unread(llm, 'executor report DID NOT PARSE — no signals sent; issuer attention needed')} "
             f"· executor {_stat_line(llm)}")
         return {"task_id": str(task_id), "status": "unparsed", "report_text": text, "stats": stats,
                 "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm))}
@@ -202,7 +209,8 @@ def run_consent(engine, task_id: TaskId, executor_id: str, agents: "AgentRegistr
     answer, _t, _s, _l, _cb = _spawn(engine, task_id, executor_id, cfg, _llm, "consent", "consent.md", packet,
                                      CONSENT_SCHEMA, "delegated_consent", here, work=False)
     if answer is None:
-        _cb(f"{task_id}: {executor_id}'s consent DID NOT PARSE — nothing signalled · {_stat_line(_l)}")
+        _cb(f"{task_id}: " + _unread(_l, f"{executor_id}'s consent DID NOT PARSE — nothing signalled")
+            + f" · {_stat_line(_l)}")
         return {"task_id": str(task_id), "status": "unparsed", "limit": refused_by_limit(calls_of(_l))}
     decision = str(answer.get("decision", "")).strip().lower()
     if decision not in ("accept", "challenge"):
@@ -255,7 +263,8 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
                                            "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined),
                                            SCOPE_SCHEMA, "delegated_execution", cwd, cap)
     if report is None:
-        _cb(f"{top_id}: the scope session's report DID NOT PARSE — no signals sent · {_stat_line(llm)}")
+        _cb(f"{top_id}: " + _unread(llm, "the scope session's report DID NOT PARSE — no signals sent")
+            + f" · {_stat_line(llm)}")
         return {"task_id": str(top_id), "status": "unparsed", "report_text": text, "stats": stats,
                 "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm))}
     _scope_report_into_signals(engine, order, executor_id, report, llm, _cb, workspace=ws, started_on=started_on,

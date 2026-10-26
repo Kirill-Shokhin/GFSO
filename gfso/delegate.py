@@ -30,7 +30,7 @@ from gfso.adapters.verifiers import evaluate_unittest
 from gfso.core.graph.model import generation_of_task
 from gfso.core.protocol.procedure import criterionless, probes_from as _checks_of
 from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
-                             Verdict, Action, Mode,
+                             Verdict, Action, Mode, PlaceUnavailable,
                              SPAWNABLE_ACTIONS, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
                           split_has_a_mover)
@@ -73,6 +73,14 @@ def _reask_wait(ret) -> float:
 #: A refused root join is tried again after this many seconds, doubling per refusal up to the cap: the refusal
 #: (a dirty base, a conflict) waits on a person, and each try is a merge and an abort on the user's own tree.
 JOIN_RETRY_S, JOIN_RETRY_MAX_S = 5, 300
+
+
+def _the_place_is_down(engine, e: Exception) -> bool:
+    """Did a round meet its execution place down outside a model call (a git or a copy in the container)? Then it is
+    the stop a booked call makes (`Engine.stop_for_the_place`), and the round answered nothing."""
+    if isinstance(e, PlaceUnavailable):
+        engine.stop_for_the_place(e.place, str(e))
+    return isinstance(e, PlaceUnavailable)
 
 
 def _system_issues(engine, agents, task_id) -> bool:
@@ -692,6 +700,8 @@ class Dispatcher:
         # a root that has a place owes a join, and is complete only once it landed (`Joins.root_landed`)
         self._engine.joins.set_join_owed(lambda t: (w := _place_of(self._engine, self._agents, t)) is not None
                                    and Path(w[1]).is_dir())
+        # …and the place the project runs in, probed while it is down (`Engine.lift_the_system_stop`)
+        self._engine.probe_the_place_with(lambda: execution_of(self._engine, self._agents).unavailable())
         # Subscribed HERE, not in `start()`: the callback no longer only sets a flag — it is what
         # makes a cleared block executable again (see `_on_bus`), and that must not depend on
         # whether this dispatcher's poll loop was ever started.
@@ -1240,7 +1250,8 @@ class Dispatcher:
                                           cut=bool((out or {}).get("cut")), limit=bool((out or {}).get("limit")))
         except Exception as e:                          # noqa: BLE001 — a failed round is not a signal
             log.warning(f"delegate: scope session of {top_id} failed: {e}")
-            self._one_retry_then_park(top_id, "x:", f"scope session failed — {e}", claim=key)
+            self._one_retry_then_park(top_id, "x:", f"scope session failed — {e}", claim=key,
+                                      limit=_the_place_is_down(self._engine, e))
 
     def _validate_scope_guarded(self, top_id: TaskId, key: str, sign: bool = True) -> None:
         """The scope's one validation under the concurrency cap. A run that yields no verdict gets one more;
@@ -1266,7 +1277,7 @@ class Dispatcher:
                 ret = self._scope_validate(self._engine, top_id, self._agents, sign=sign)
             except Exception as e:                      # noqa: BLE001 — a failed run is not a verdict
                 log.warning(f"auto-validate of scope {top_id} failed: {e}")
-                ret = None
+                ret = "no-verdict:limit" if _the_place_is_down(self._engine, e) else None
             if ret == "rejected":
                 self._seen.discard(vkey)                # revalidates, on the standing records, when the graph moves
             if ret in ("pass", "fail", "recorded", "no-instrument", "rejected"):
@@ -1554,7 +1565,8 @@ class Dispatcher:
                     # transport, the model factory, the usage record, reading the prompt file — and
                     # it used to log the failure and leave the key spent, which the comment here
                     # described in as many words and did not fix: "a graph which simply stops".
-                    self._one_retry_then_park(task_id, "x:", f"dispatch failed — {e}")
+                    self._one_retry_then_park(task_id, "x:", f"dispatch failed — {e}",
+                                              limit=_the_place_is_down(self._engine, e))
                 # the log line above already carries the failure; the observation strip must not be
                 # able to mask the dispatch error it is reporting
                 except Exception:
@@ -1596,11 +1608,13 @@ class Dispatcher:
         """The account's limit refused the call: nothing was answered, so neither the node's retry nor a redial is
         spent — the round comes back when the limit can have lifted, probed every LIMIT_RETRY_S as the issuer's door
         does, and the node's own clock still bounds it (§12.2). Read as an unreadable report, two limit-ended sessions
-        parked a node for the 2.5 h of the window and after it (GB_c_compiler_tncfs1160, 2026-10-23)."""
-        self._give_back(key, wait := self._engine.limit_wait_s() or LIMIT_RETRY_S)
-        self._engine.emit_info("delegate", f"{task_id}: {whose} call was refused by the account's usage limit — "
-                                           f"asked again in {wait:.0f}s; nothing was answered, so this spends "
-                                           f"none of the node's retries")
+        parked a node for the 2.5 h of the window and after it (GB_c_compiler_tncfs1160, 2026-10-23). An execution place
+        down is the same stop (`Engine.stop_for_the_place`): read as a cut call and then an unreadable report, a dead
+        Docker daemon parked the first leaf in 8 min (GB_sql_database_tnij0m952)."""
+        self._give_back(key, wait := self._engine.stop_wait_s() or LIMIT_RETRY_S)
+        why = f": {stop['why']}" if (stop := self._engine.paused() or {}).get("place") else " by the account's usage limit"
+        self._engine.emit_info("delegate", f"{task_id}: {whose} call was refused{why} — asked again in {wait:.0f}s; "
+                                           f"nothing was answered, so this spends none of the node's retries")
 
     def _validate_queued(self, task_id: TaskId, expect_gen: tuple = (0, 0, 0), sign: bool = True) -> None:
         """A node's validation from the moment the dispatcher takes it on: in flight for every reader while it waits for
@@ -1637,6 +1651,7 @@ class Dispatcher:
                                      **({"sign": sign} if not sign else {}))
             except Exception as e:
                 log.warning(f"auto-validate failed on {task_id}: {e}")
+                ret = "no-verdict:limit" if _the_place_is_down(self._engine, e) else ret
             t = self._engine.graph.get_task(task_id)
             if ret == "rejected":
                 # the FSM refused the verdict (e.g. children not settled yet) — NOT a validator

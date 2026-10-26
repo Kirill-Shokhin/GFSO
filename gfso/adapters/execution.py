@@ -14,7 +14,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from gfso.core.types import ExecutionPort
+from gfso.core.types import ExecutionPort, PlaceUnavailable
 from gfso.config import claude_config_dir, host_env
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
@@ -156,6 +156,8 @@ class ContainerExecution(ExecutionPort):
         with _START:
             if _STARTED.get(self.container) == self.run_args() and self._running():
                 return
+            if why := self.unavailable():
+                raise PlaceUnavailable(self.name, why)
             for d in [self.parent / m for m in self.mounts] + [self.state]:
                 d.mkdir(parents=True, exist_ok=True)
             run(["docker", "rm", "-f", self.container], timeout=60)      # a container of a server that is gone
@@ -174,6 +176,15 @@ class ContainerExecution(ExecutionPort):
         every later call of the project then failed `No such container` (critic over d5c8f7a)."""
         got = run(["docker", "inspect", "-f", "{{.State.Running}}", self.container], timeout=30, text=True)
         return got.returncode == 0 and (got.stdout or "").strip() == "true"
+
+    def unavailable(self):
+        """The daemon's own words where it does not answer — Docker Desktop not running reads "failed to connect to the
+        docker API at npipe:////./pipe/dockerDesktopLinuxEngine …" — else None."""
+        try:
+            got = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=60, text=True)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return str(e)
+        return None if got.returncode == 0 else ((got.stderr or "").strip() or f"docker info exited {got.returncode}")
 
     def stop(self) -> None:
         run(["docker", "rm", "-f", self.container], timeout=60)
