@@ -857,6 +857,18 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    EACH role a move" — was the wrong shape: in the issuer's waits (CHALLENGED, BLOCKED, VALIDATING) only
    the issuer has one, correctly. Inv-8 asks for the OWNER's move, which is what is decided. The
    engine's own conformance to it is the test suite's (`tests/test_model_conformance.py`), not Lean's.
+16. **Bounds run on the project's clock — a reading of §12.2, declared.** §12.2: the deadline "runs across every state
+   of the contract and is never suspended"; the canon names no clock. A user's stop and a server that is not running are
+   no states of the contract: in them no party's move is made. So every bound is written and read on `project_now` —
+   the wall less the time the project did not run (a tick under a stop, a gap between ticks over 120 s, the gap since
+   the last beat at an engine's start; `gfso/core/graph/model.py`) — which moves every bound of the project by one amount
+   and keeps every order between them (child inside parent, Dep, CHECK-3). Outside, every time reads on the wall. Two
+   consequences are named: a project nobody loads keeps its bounds still, a person's included; an account-limit window is
+   not yet left off (no server-wide fact for it).
+17. **The machine's re-issues of the AUTO root out of ESCALATED are counted (`MAX_EXTENSIONS`).** §12.15: "ESCALATED's
+   re-ASSIGN unmakes no settlement and is not counted". Below the AUTO root nothing is counted — the parent's deadline
+   bounds every re-issue. At the AUTO root the machine stands in for the user, the root's issuer (§10.1), and nothing above
+   it bounds its patience; past the count it is told so and may still write a contract that changes what failed.
 
 **Two boundaries the E3 measurement walked into, delineated rather than patched (2026-08-16).**
 

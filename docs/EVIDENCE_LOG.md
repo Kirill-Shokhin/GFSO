@@ -3602,7 +3602,7 @@ work to the oracle holds on `coreutils` only (where the system added no part to 
 agent alone claims no "done" (12–15%), so that cell carries no false-done comparison. The defects named are the
 system's and the plan's, not the model's; the cell is re-run under Amendment 4 of the pre-registration.
 
-### 13.47 `sql_database` on the final given plan: the newer smaller model closes it at held-out 1.0; the older one stops honestly at the part larger than one of its sessions (2026-10-25 → 10-26)
+### 13.47 `sql_database` on the final given plan: both smaller models build it to held-out 1.0; the older one's root verdict is held by one stale check of the plan (2026-10-25 → 10-26)
 
 **What was asked** (`experiments/e3_specbench/PREREGISTERED_table_v1.md`, Amendment 4, each row designated before it
 started). The automatic mode, every role on one model, on the given plan v16 for `sql_database` (ten parts; the SELECT
@@ -3613,16 +3613,22 @@ pipeline one part), graded in Linux on the oracle.
 | model | automatic, plan given: claim | held-out | public | wall |
 |---|---|---|---|---|
 | `claude-haiku-5-5` | DONE — every pinned check of every passing verdict ran (24 at the root) | 1.000 (11/11) | 1.000 | 52 min |
-| `claude-haiku-4-5-20251001` | NOT DONE — the system stopped the run: the given plan refuted at its `select` part | 0.091 | 0.0 | 2 h 14 min |
+| `claude-haiku-4-5-20251001` | not settled at this writing — every part passed; the root's verdict FAILs on one part's check run on the whole; no "done" claimed | 1.000 (11/11, the root's signed branch) | 1.000 | 2 h 14 min, then resumed |
 
 On `claude-haiku-4-5-20251001` eight of the ten parts passed in 85 minutes; `select` failed four deliveries of four
-different trees, the same four criteria from the second on (a segfault on `SELECT t.*`, GROUP BY grouping only NULL keys,
-ORDER BY printing nothing), and its issuer judged it larger than one session of its executor (§3.7's leaf test). A plan
-the user gave is not changed by the system: it stopped with that reason, and no "done" was claimed. The bare agent on the
-same model and contract (§13.46) claims DONE in 5 of 6 runs at held-out 0.091.
+different trees on true failures (its pinned checks re-run on each tree reproduce the failed sets; 2 of 7 pass), and an
+engine rule read the four equal FAILs as the node exceeding one session of its executor, so the run was stopped at
+2 h 14 min with held-out 0.091. That rule was the implementation's, not the canon's: §3.7 places κ in the leaf test, and
+a count of rounds measures no κ — every one of those sessions had ended by itself with turns to spare. With the rule
+removed the run was resumed from where it stood: `select` passed nine rounds later (7 of 7 of its checks), `integrate`
+after it, and the root's signed branch scores held-out 1.000 and public 1.000. Its validation FAILs one criterion,
+`build and hygiene`, on part `eval`'s pinned check re-run on the whole: that check compiles a subset of the files, and the
+integrated `eval.c` calls into `select.c`, so it cannot link — a check of the given plan that no finished tree passes, a
+false FAIL (guarantee-safe, §8.4), while every check of the root's own passes. The bare agent on the same model and
+contract (§13.46) claims DONE in 5 of 6 runs at held-out 0.091.
 
 **What it does not show.** The plan's checks were verified against the oracle beforehand and polished on
 `claude-haiku-5-5`'s own runs, so the first row says what the system does with checks that hold; it carries no value
-claim by itself (§13.46's condition). The second row's held-out equals the bare arm's: on this cell the automatic mode
-removes the false "done" and does not yet finish — finishing needs `select` split for the older model's session, a new
-plan version not run.
+claim by itself (§13.46's condition). The second row has no root verdict yet; what it shows is the
+tree the system built under its checks (held-out 1.000 against the bare arm's 0.091 with a false "done"), not a DONE. The
+plan's stale check is the given plan's to fix (a check made build-agnostic), not run.
