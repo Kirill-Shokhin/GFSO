@@ -65,8 +65,9 @@ export async function initGraph() {
                 'width': 1, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
                 'line-color': inkAlpha(0.30), 'target-arrow-color': inkAlpha(0.30), 'arrow-scale': 0.7}},
             {selector: 'edge[type="dependency"]', style: {'line-style': 'dashed', 'line-color': ACC, 'target-arrow-color': ACC}},
-            // a hover from another view TINTS the node: an underlay grew its box, so the edges re-anchored and the pulse moved
-            {selector: 'node.focus', style: {'overlay-color': ACC, 'overlay-opacity': 0.22, 'overlay-padding': 0}},
+            // a hover from another view is a thin OUTLINE, as the choice is a thick one: an underlay grew the box (the edges
+            // re-anchored), and a tint in the accent turned a light node's whole face a pink no palette has (the author)
+            {selector: 'node.focus:unselected', style: {'outline-width': 1, 'outline-color': ACC, 'outline-offset': 3}},
             // no grey press overlay: the selection border is the one mark a tap leaves
             {selector: 'node:active', style: {'overlay-opacity': 0}},
             {selector: 'core', style: {'active-bg-opacity': 0}},
