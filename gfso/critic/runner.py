@@ -552,7 +552,7 @@ def _still_undecided(engine, task, llm, prior: tuple, *,
         return ()
     listed = "\n".join(f"{i + 1}. {g.get('obligation', '')}" for i, g in enumerate(prior))
     crits = "\n".join(f"- {c.name}: {c.description}"
-                      for c in task.spec.criteria if not c.depends_on) or "- (none)"
+                      for c in task.spec.criteria) or "- (none)"
     user = (f"# THE NODE: {task.id}\n\n# GOAL\n{task.spec.description}\n\n"
             f"# ITS CRITERIA NOW\n{crits}\n\n"
             f"# OBLIGATIONS NAMED EARLIER AS UNDECIDED BY THEM\n{listed}\n\n"
@@ -629,7 +629,7 @@ def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_
     """
     system = (Path(__file__).parent / "prompts" / "undecided.md").read_text(encoding="utf-8")
     crits = "\n".join(f"- {c.name}: {c.description}"
-                      for c in task.spec.criteria if not c.depends_on) or "- (none)"
+                      for c in task.spec.criteria) or "- (none)"
     excluded = "\n".join(f"- {x}" for x in task.spec.scope) or "- (none declared)"
     user = (f"# THE NODE UNDER CHECK: {task.id}\n"
             f"Its OWN criteria are the whole of what you quantify over — never its children's.\n\n"

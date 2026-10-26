@@ -146,12 +146,12 @@ def _consumer(check=None):
     return e, e.graph.get_task(TaskId("b"))
 
 
-def test_a_bare_dep_edge_is_no_conjunct_and_the_validator_is_not_asked_for_it():
+def test_a_dep_edge_is_no_criterion_and_the_validator_is_not_asked_for_it():
     """A Dep is a relation, not a predicate on the consumer's result (§2.7): its glue was a sentence a validator passed
-    or failed by reading it (9 of 416 archived FAILs rested on one alone). It stays in `criteria` as the edge's
-    declaration and leaves V — the packet shows it as an edge, and a verdict over the node's own criteria stands."""
+    or failed by reading it (9 of 416 archived FAILs rested on one alone). It is an edge record, not in `criteria` —
+    the packet shows it as an edge, and a verdict over the node's own criteria stands."""
     e, b = _consumer()
-    assert [c.name for c in b.spec.conjuncts] == ["kb"] and "dep__a" in [c.name for c in b.spec.criteria]
+    assert [c.name for c in b.spec.criteria] == ["kb"] and [(x.from_id, x.glue) for x in e.get_dependencies()] == [("a", "b reads a")]
     text = _validator_packet(e, b, "built it", ".")
     assert "**dep__a**" not in text and "b reads a" in text, text
     e.stop()
@@ -159,7 +159,7 @@ def test_a_bare_dep_edge_is_no_conjunct_and_the_validator_is_not_asked_for_it():
 
 def test_a_seam_that_pins_a_consumer_side_check_is_a_conjunct():
     e, b = _consumer(check=[{"behaviour": "reads a", "command": "grep -q a b.txt && echo ok", "expect": "ok"}])
-    assert sorted(c.name for c in b.spec.conjuncts) == ["dep__a", "kb"]
+    assert sorted(c.name for c in b.spec.criteria) == ["dep__a", "kb"]
     e.stop()
 
 

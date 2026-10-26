@@ -59,7 +59,7 @@ def test_the_engine_survives_the_step_that_actually_killed_it():
                         AgentId("agent"))
     # …and the refusal does not blame a rule that was never consulted
     assert "the FSM refused" not in str(refusal.value)
-    assert "dropped" in str(refusal.value)
+    assert "ONE producer" in str(refusal.value)
 
     T.signal(e, "kid", "ACCEPT", "agent")            # …the engine is still serving
     e.wait_idle()

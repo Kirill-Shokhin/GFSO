@@ -176,18 +176,11 @@ def criteria_without_procedure(criteria: Iterable[Criteria]) -> list[str]:
     supplied later out of someone's head, and a behaviour named with no way to observe it is that
     same defect written one line higher.
 
-    A SEAM criterion (`depends_on` — the `dep__<producer>` encoding of a declared Dep) is not in
-    this population, and not as a convenience: it is not a claim the consumer decides at all. It
-    DECLARES a coupling; what makes the coupling true is the producer's own PASS, and the claim
-    that the joined parts constitute the parent is the **integration implication**, which the canon
-    attributes to the PARENT and to no child (§6.5; §8.7 "a forgotten glue criterion = FM-1" — at
-    the parent's level). Demanding a probe here would put the integration truth-maker on the wrong
-    node, and — measured while landing this rule — it made every graph carrying a declared seam
-    unexecutable, with no door able to supply what was demanded. A caller who WANTS the seam probed
-    from the consumer's side may still pin one (`add_dependency(..., check=[…])`).
+    A declared Dep edge is no criterion (§2.7), so nothing here asks it for a probe: the coupling holds by the
+    producer's own PASS, and the integration implication is the PARENT's (§6.5, §8.7). A criterion that reads a
+    producer's result (`depends_on`, `add_dependency(..., check=[…])`) is a criterion like any other.
     """
-    return [c.name for c in (criteria or ())
-            if not c.depends_on and not any(_norm(p.command) for p in (c.check or ()))]
+    return [c.name for c in (criteria or ()) if not any(_norm(p.command) for p in (c.check or ()))]
 
 
 INPUTS_TOKEN = "{inputs}"
@@ -409,10 +402,8 @@ def criterionless(criteria: Iterable[Criteria]) -> Optional[str]:
     V is the empty AND: every result passes and "every criterion pins its check" holds of nothing —
     the measured shape (spreadsheet_engine, 2026-10-11): an authoring that came back empty built a
     root with `criteria: []`, a system executor took it, and its delivery waited in VALIDATING for a
-    verdict over nothing. A `depends_on` seam is not one (`criteria_without_procedure`): it declares a
-    coupling the producer's PASS makes true and decides nothing about this node's result — a node left
-    holding only seams ran to DONE over no check at all."""
-    if any(not c.depends_on for c in criteria or ()):
+    verdict over nothing."""
+    if criteria:
         return None
     return ("the contract has no criterion the node itself decides — a task's criteria are a finite NONEMPTY set of "
             "decidable predicates (§2.2, A1), and over none every result passes; give it at least one "
@@ -1171,7 +1162,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     """
     # …the behaviours named beyond a pinned procedure the report ran whole are exploration, not gaps — unless the
     # criterion falls short on another count below, where the refusal names everything it is short of, as before
-    stood = named_beyond_procedure(task.spec.conjuncts, per_criterion, dirs) if task is not None else {}
+    stood = named_beyond_procedure(task.spec.criteria, per_criterion, dirs) if task is not None else {}
     gaps = underprobed(per_criterion)
     # The internal-node exemption (§10.3) is narrowed to the case that HAS it: §10.3 lets an INTERNAL node
     # self-verify; at a seam independence is owed and a self-validation is not a verdict at all. The
@@ -1179,7 +1170,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # holds at one door and not at the next — so it is checked here, where the rule lives.
     if task is None or (bool(by_hand) and internal and str(validator_id) == str(task.assignee)):
         return {c: b for c, b in gaps.items() if b != stood.get(c)}
-    for name, ids in unrun_pinned(task.spec.conjuncts, per_criterion, dirs).items():
+    for name, ids in unrun_pinned(task.spec.criteria, per_criterion, dirs).items():
         gaps.setdefault(name, []).append(
             "the procedure this criterion PINS was not run: " + ", ".join(ids)
             + " — the contract fixed these before the work (Inv-1, §12.3); a pass that skips them "
@@ -1187,7 +1178,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # What contact already found here was paid for with a round (§9.9). Re-running it is what makes
     # a repair CHECKED rather than asserted: the loop this closes is the executor fixing what was
     # named while the next validator writes fresh probes and never looks there again.
-    layable = layable_over(task.spec.conjuncts, parts)
+    layable = layable_over(task.spec.criteria, parts)
     for name, ids in unrun_regression(regression, per_criterion, dirs, layable, delivery).items():
         gaps.setdefault(name, []).append(
             "a probe that REFUTED this criterion in an earlier round was not re-run: "
@@ -1195,8 +1186,8 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
             + " — a pass over a repair nobody re-observed is not a verdict on the repair")
     # …SAID AS IT IS: a probe the report names but cannot be credited with is not a probe "not run" — told so, the
     # validator re-read every probe and dropped a different subset each round (GB_c_compiler_tmqn88552)
-    _, why = part_credit(parts, per_criterion, dirs, task.spec.conjuncts)
-    for name, ids in unrun_parts(parts, per_criterion, dirs, own=task.spec.conjuncts).items():
+    _, why = part_credit(parts, per_criterion, dirs, task.spec.criteria)
+    for name, ids in unrun_parts(parts, per_criterion, dirs, own=task.spec.criteria).items():
         if unseen := [i for i in ids if i not in why]:
             gaps.setdefault(name, []).append(
                 "the pinned procedure of a part this criterion rests on was not run over this delivery — nothing of "

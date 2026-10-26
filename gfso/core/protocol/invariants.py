@@ -211,7 +211,7 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
         defects.append(f"criterion '{missing}' has no verdict — V = AND over ALL criteria (§2); "
                        f"an unevaluated criterion is ⊥, not pass. Speak to it under its exact name — in a "
                        f"validator's report, its own `per_criterion` entry {{criterion: '{missing}', verdict, "
-                       f"evidence, behaviours, probe, divergences}}; a `dep__*` seam criterion too, since the "
+                       f"evidence, behaviours, probe, divergences}} — the "
                        f"`seams` note is free text and decides no criterion")
     # …SAVE AN EMPTY PASS: about a non-criterion it observes nothing, no conjunct of V; "every criterion spoken" guards.
     # Refused, one `placeholder` entry voided a root's validation of seven criteria (GB_coreutils_tmsq57348).

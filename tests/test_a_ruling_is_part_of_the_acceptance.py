@@ -26,6 +26,7 @@ the signal (drop `retire_findings` from the log row) and the interleaving test g
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -34,9 +35,9 @@ import gfso.tools as T
 from gfso import issuer as I
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.protocol.procedure import orphaned_regression, probe_id
-from gfso.core.types import Mode, Signal, SignalData, TaskId
+from gfso.core.types import Criteria, Mode, Signal, SignalData, TaskId
 from gfso.packets import _validator_packet
-from tests.support import criterion, emptied
+from tests.support import criterion, emptied, pinned
 from tests.test_a_finding_binds_the_criterion_it_refuted import _OWN, _delivered, _id, _pinned, _refute, _seam
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
 from tests.test_the_mode_decides_who_holds_what import _Roster, _admit, _engine, _goal, _kid
@@ -238,7 +239,11 @@ def test_a_ruling_only_on_the_twin_the_dispute_did_not_name_is_told_so_not_count
 
 
 def test_a_finding_on_a_seam_the_merge_drops_gates_the_members_carried_criteria():
-    e = _ring()
+    e = _ring()      # …libc's criterion that reads pp's result through a check of its own: a seam that is a criterion
+    e.revise(TaskId("root.libc"), dataclasses.replace(e.graph.get_task(TaskId("root.libc")).spec, criteria=e.graph.get_task(
+        TaskId("root.libc")).spec.criteria + (Criteria("dep__root.pp", "reads pp", depends_on=TaskId("root.pp"),
+                                                       check=pinned("dep__root.pp")),)), e.graph.issuer_of(TaskId("root.libc")))
+    e.wait_idle()
     _found(e, "root.libc", "dep__root.pp", "./cc -E pp_out.c; echo exit=$?")
     _found(e, "root.pp", "kp", "./cc -E macros.c; echo exit=$?")                    # control: not a seam
     root = e.graph.get_task(TaskId("root"))

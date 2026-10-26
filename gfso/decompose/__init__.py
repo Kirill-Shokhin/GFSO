@@ -334,9 +334,9 @@ def _no_plan(spec: dict, engine: Engine, root_id: str, llm, contract_fixed: bool
         before the rule (a seams-only DONE child) would otherwise refuse every refine of its parent for good."""
         t = engine.graph.get_task(TaskId(f"{root_id}.{sid}"))
         return t is not None and t.state.name in ("DONE", "ABANDONED")
-    empty = ([root_id] if new_root and criterionless(_criteria_of(spec.get("root_criteria"))) else []) + [
+    empty = ([root_id] if new_root and criterionless(spec.get("root_criteria")) else []) + [
         str(k.get("id")) for k in spec.get("subtasks") or []
-        if criterionless(_criteria_of(k.get("criteria"))) and not settled(k.get("id"))]
+        if criterionless(k.get("criteria")) and not settled(k.get("id"))]
     if not empty:
         return
     calls = [c for c in calls_of(llm) if isinstance(c, dict)]
@@ -351,10 +351,6 @@ def _no_plan(spec: dict, engine: Engine, root_id: str, llm, contract_fixed: bool
                  + ("The project is unchanged: call auto_decompose again with the same request." if new_root else
                     f"What stands on '{root_id}' is unchanged: call auto_decompose again."), list(calls))
 
-
-def _criteria_of(items) -> list:
-    """A spec's criteria as the admission reads them (a seam by its `depends_on`)."""
-    return [Criteria(str(c.get("name", "")), depends_on=c.get("depends_on")) for c in items or []]
 
 
 def _dens_patch(patch: dict, root_id: str) -> dict:
@@ -623,7 +619,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     the FSM (signals) under `root_id`, verify + repair until `list_holes` is clean (or return the
     residue honestly) — then apply `depth−1` refine operations over the BUILT graph (each verified;
     the graph only ever holds verified states). Every node is authored by a logged ASSIGN; Dep seams
-    are declared as `depends_on` criteria at creation. The entry the MCP/API surface calls. `fast` =
+    are declared edges of the admission that creates them. The entry the MCP/API surface calls. `fast` =
     the measured pace-suffixes (init round only; ~1.5× faster on simple tasks, content quality
     unvalidated). `progress(msg)` mirrors pipeline stages to a transport channel (stderr always written).
     `spec` — a plan already authored (`extract_spec` of another graph) is built as it stands, with no

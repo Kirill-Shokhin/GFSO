@@ -70,18 +70,16 @@ def _delivered_node(e, tid="n1", extra_dep=False):
 def test_validate_result_happy_path_embeds_contract_and_deliver():
     e = _eng()
     _delivered_node(e, extra_dep=True)
-    # the seam is criteria-content (§2 Dep): `dep__prod` is a CRITERION of this node, so a verdict
-    # must speak to it too — a report silent on the seam is ⊥ over the seam (anti-mock has teeth)
+    # the seam is an edge, no criterion of this node (§2.7): the packet shows it upstream, and a report over the
+    # node's own criteria decides it
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
                                  "per_criterion": [
                                      {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "dep__prod", "verdict": "pass",
-                                      "evidence": "grep: uses the real bought nails, no stub", "behaviours": ["the criterion holds"], "probe": [{"command": "check dep__prod", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "seams": "checked prod output", "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "PASS" and out["failed_criteria"] == []
-    assert len(out["per_criterion"]) == 3 and out["state"] == "VALIDATING"
+    assert len(out["per_criterion"]) == 2 and out["state"] == "VALIDATING"
     assert out["stats"][-1]["stage"] == "validate_result"
     # the packet is SELF-CONTAINED: contract + seam + the audit-log DELIVER result, read-only tool set
     assert "flush" in llm.seen["user"] and "holds verified with 2kg frame" in llm.seen["user"]
@@ -437,7 +435,7 @@ def _seen(e, tid):
     t = e.graph.get_task(T.TaskId(tid))
     return {c.name: {"note": f"checked {c.name} by hand",
                      "ran": [p.command for p in (c.check or ())]}
-            for c in t.spec.criteria if not c.depends_on}
+            for c in t.spec.criteria}
 
 
 def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gate():

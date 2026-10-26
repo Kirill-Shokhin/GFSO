@@ -141,7 +141,7 @@ def reviewer_passes(engine, task_id, reviewer: str = "reviewer") -> None:
         task_id, "PASS", [], reviewer,
         observed={c.name: {"note": f"checked `{c.name}` by hand against the delivery: it holds",
                            "ran": [p.command for p in procedure_under(engine, task_id, c)]}
-                  for c in task.spec.criteria if not c.depends_on})
+                  for c in task.spec.criteria})
 
 
 def procedure_under(engine, task_id, c) -> list:
@@ -181,9 +181,9 @@ def instrument_passes(engine, task_id, validator: str = "validate_result", **kw)
 
 
 def emptied(engine, task_id, seams: bool = False) -> None:
-    """The node's contract emptied in storage of every criterion it decides (`seams` keeps its Dep seams) — the node no
-    door makes since the admission held §2.2, standing as one stored before it, for the rules downstream that must still
-    meet it — its checks recomputed."""
+    """The node's contract emptied in storage of every criterion (`seams` keeps those whose check reads a producer; its
+    Dep edges, no criteria, stand) — the node no door makes since the admission held §2.2, standing as one stored
+    before it, for the rules downstream that must still meet it — its checks recomputed."""
     t = engine.graph.get_task(TaskId(task_id))
     kept = tuple(c for c in t.spec.criteria if seams and c.depends_on)
     engine._graph.save_task(dataclasses.replace(t, spec=dataclasses.replace(t.spec, criteria=kept)))
@@ -263,7 +263,4 @@ def workdir(base, *parts) -> str:
 
 
 class FakeSpec(SimpleNamespace):
-    """A spec stand-in for tests that build nodes by hand: `conjuncts` read as `Spec.conjuncts` reads them."""
-    @property
-    def conjuncts(self):
-        return tuple(c for c in self.criteria if not getattr(c, "depends_on", None) or getattr(c, "check", None))
+    """A spec stand-in for tests that build nodes by hand."""

@@ -16,6 +16,13 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - A Dep edge is no criterion of its consumer: a `dep__` entry that pins no check declares the edge and is left out of the
   node's verdict on every door (a seam that pins a consumer-side check stays a criterion). A node's PASS/FAIL and failed
   list are computed from the validator's per-criterion entries; the validator is no longer asked for a verdict word.
+- A declared Dep edge is a record of its own, with its glue, written by the act that declares it — a split's admission
+  (`decompose`'s child `deps: [{from, glue}]`), `add_dependency`, or a criterion whose check reads the producer's
+  result — and no longer an entry of its consumer's criteria: node criteria lists carry no bare `dep__` entry, and an
+  edge is not deleted by a revision that leaves it out. `add_dependency` without `check` no longer re-offers the
+  consumer (unless its supplied deadline must move). A `depends_on` entry with no check is still read on the wire, as
+  the edge it declares. A database written before is migrated when it is opened — each such entry becomes its declared
+  edge record, logged as a migration; no conjunct of V changes.
 
 ## [0.2.0] — 2026-10-15
 

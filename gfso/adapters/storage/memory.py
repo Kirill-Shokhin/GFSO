@@ -106,10 +106,9 @@ class MemoryStorage(StoragePort):
     def add_dep_edge(self, edge: DepEdge) -> None:
         self._dep_edges.append(edge)
 
-    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
-        self._dep_edges = [
-            e for e in self._dep_edges if not (e.from_id == from_id and e.to_id == to_id)
-        ]
+    def remove_dep_edge(self, edge: DepEdge) -> None:
+        if edge in self._dep_edges:
+            self._dep_edges.remove(edge)
 
     def get_dep_edges(self) -> list[DepEdge]:
         return list(self._dep_edges)

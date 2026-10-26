@@ -95,14 +95,13 @@ class StoragePort(ABC):
 
     @abstractmethod
     def add_dep_edge(self, edge: DepEdge) -> None:
-        """Record a dependency (§2: a Dep is criteria content — the consumer's criterion names the
-        producer). Adding one twice is not an error; the edge set is what matters, not the calls."""
+        """Record a dependency, declared or discovered — a record of its own (§2.7: Dep is a primitive beside T)."""
         ...
 
     @abstractmethod
-    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
-        """Drop one edge. A no-op when it is not there — removal is idempotent because the callers that
-        reconcile a plan cannot know which edges a previous round already withdrew."""
+    def remove_dep_edge(self, edge: DepEdge) -> None:
+        """Drop one record equal to `edge`: a declared and a discovered record of one pair are two records, and
+        rewriting one must not take the other. A no-op when it is not there."""
         ...
 
     @abstractmethod

@@ -36,7 +36,7 @@ from tests.test_a_node_works_in_its_own_place import _repo
 
 
 def _deps(e, tid) -> set:
-    return {str(c.depends_on) for c in e.graph.get_task(TaskId(tid)).spec.criteria if c.depends_on}
+    return {str(x.from_id) for x in e.graph.declared_edges(TaskId(tid))}
 
 
 _DUE = [datetime.now() + timedelta(hours=h) for h in (4, 8, 16)]

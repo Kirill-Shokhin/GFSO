@@ -12,7 +12,7 @@ from typing import Optional
 from gfso.core.types import (
     Signal, State, SignalData, SignalOutcome, Refusal,
     TaskId, AgentId, Verdict, passed, settled_positive,
-    Spec, Criteria, Probe, AcceptedRiskItem, Register, register_of, Task, CheckResult, CriterionMapping, DepEdge,
+    Spec, Criteria, Probe, AcceptedRiskItem, Register, register_of, Task, CheckResult, CriterionMapping, DepEdge, seams_apart,
     LLMProviderPort, AgentPort, StoragePort,
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
     TERMINAL_STATES, DoneReason, DEFAULT_MAX_ITERATIONS, Mode,
@@ -20,8 +20,9 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutations, dep_scope, generation_of_task,
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
-                                   register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s)
-from gfso.core.graph.mutations import InvariantViolation, with_its_seams
+                                   register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
+                                   logged_criteria, goal_deps_key)
+from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
 from gfso.core.handlers.structural import run_structural
 from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_was_refuted
 from gfso.core.graph.review import finding_keys, progress_baseline
@@ -249,6 +250,7 @@ class Engine:
         """
         if max_iterations is None:
             max_iterations = DEFAULT_MAX_ITERATIONS
+        spec, seams = self._wire_seams(spec, task_id)       # the wire's bare `depends_on` entries: declared edges
         # ONE ROOT PER PROJECT. A parentless node is not a free-standing task, it is THE goal: V(root)
         # is the project's verdict, and the canon's one composition rule (V(parent)=AND(children))
         # needs a parent, so a second parentless node is a second verdict with nothing to combine
@@ -298,7 +300,7 @@ class Engine:
         if parent is not None and self._graph.get_task(task_id) is None:
             # a child created into a split is an admission of it (§11.5): the same act `decompose_task` performs
             self._admit(parent_id, [(task_id, spec, assignee, deadline)], {str(task_id): tuple(covers)},
-                        max_iterations=max_iterations)
+                        max_iterations=max_iterations, deps={str(task_id): seams} if seams else None)
             return self._graph.get_task(task_id)
         if issuer and parent is not None and str(issuer) != str(parent.assignee):
             raise ValueError(
@@ -306,6 +308,8 @@ class Engine:
                 f"{issuer}: below a root the issuer is Del(parent) by definition (§10.1).")
         if issuer and parent is None and self._graph.get_task(task_id) is None:
             self.record_root_issuer(task_id, issuer)
+        if why := dep_cycle_closed(self._graph, task_id, [e.from_id for e in seams]):
+            raise ValueError(why)
         source = (parent.assignee if parent and parent.assignee
                   else self._graph.issuer_of(task_id) if self._graph.get_task(task_id) is not None
                   else AgentId(self._storage.get_setting(root_issuer_key(task_id)) or assignee))
@@ -317,6 +321,8 @@ class Engine:
         if a is not None and a.rejected:
             # a refused ASSIGN creates nothing — said in the rule's own sentence, not as a node that is not there
             raise ValueError(self.refusal_of(task_id, Signal.ASSIGN, a).refusal.why)
+        if seams:
+            self._redeclare(self._graph.get_task(task_id), tuple(self._graph.declared_edges(task_id)) + seams)
         if parent_id:
             # cross-node invalidation: a (re-)assigned child changes the parent's
             # CHECK-1/CHECK-7 (coverage / sufficiency read child criteria) → recompute + dirty.
@@ -367,29 +373,14 @@ class Engine:
 
     def edit_criteria(self, task_id: TaskId, criteria: tuple, agent: AgentId, reason=None) -> Task:
         """UPPER convenience = RMW over REVISE: replace a node's criteria, keep description/ACCEPTED_RISKS.
-        Dep criteria (depends_on) are part of `criteria` — pass the full set (RMW carries the unchanged).
+        The node's Dep edges are no part of them (§2.7) and stand as they are — `remove_dependency` cuts one.
         `reason` (§15.4): SPEC_DEFECT = the criteria were WRONG (counts in q_T); SCOPE_EXPANSION =
         sanctioned growth of the goal (§15.4 — never counts); untyped = uncounted (documented bias)."""
         t = self._graph.get_task(task_id)
         if t is None:
             raise ValueError(f"task {task_id} not found")
-        # A Dep SEAM is stored as a criterion (`dep__{producer}` carrying `depends_on`), so a
-        # wholesale replacement of the criteria array deletes the graph's EDGES — silently, with no
-        # diff and no warning. The verb's own contract says "replace the criteria, carry the rest",
-        # and an edge is emphatically the rest: nobody editing what a node must ACHIEVE is asking to
-        # sever what it WAITS FOR. Worse, restoring a staled plan gate forces the caller through
-        # this verb, so the trap sits on the recovery path. Measured 2026-08-20: an agent rebuilt
-        # each array by hand from the previous response, none of the rebuilt entries carried
-        # `depends_on`, and the loss is invisible until a consumer runs against an input nothing
-        # connected it to (FM-5 — the freshness face of an undeclared coupling, §8.6).
-        # Removing an edge stays possible and stays EXPLICIT: `remove_dependency`, or passing the
-        # `dep__` criterion yourself, which this respects.
-        named = {c.name for c in criteria}
-        carried = tuple(c for c in t.spec.criteria
-                        if c.depends_on and c.name not in named)
-        # …AND THE PINNED PROCEDURE OF A CRITERION THE CALLER RE-SENT WITHOUT ONE. Same argument as
-        # the seam above, one field along: nobody rewording a criterion is asking to DELETE the
-        # check that decides it, and losing it is invisible until the node is refused for pinning
+        # …THE PINNED PROCEDURE OF A CRITERION THE CALLER RE-SENT WITHOUT ONE. Nobody rewording a criterion is asking
+        # to DELETE the check that decides it, and losing it is invisible until the node is refused for pinning
         # nothing — after the work exists, which is when a procedure may no longer be authored
         # honestly. Passing the criterion WITH a `check` still replaces it, so an issuer who means
         # to change the procedure can; only silence carries the old one forward.
@@ -402,7 +393,7 @@ class Engine:
                                   c.depends_on, c.check or _had.get(c.name, ()),
                                   c.composition or _had_fn.get(c.name, ""))
                          for c in criteria)
-        new_spec = dataclasses.replace(t.spec, criteria=tuple(criteria) + carried)
+        new_spec = dataclasses.replace(t.spec, criteria=tuple(criteria))
         return self.revise(task_id, new_spec, agent, reason=reason)
 
     def reassign(self, task_id: TaskId, new_assignee: AgentId, reason=None) -> Task:
@@ -858,17 +849,9 @@ class Engine:
 
     def _as_reported(self, task_id: TaskId, per_criterion: Optional[list], failed: list) -> tuple:
         """(the node, its report with every pinned probe it cites as the system spelled it cited by its id —
-        `canonical_citations`, the node's own and its parts', its failed list).
-
-        Both read less what they say of a Dep edge's bare declaration: not a conjunct (`Spec.conjuncts`), so neither owed
-        nor foreign — a report, or a record from a door without entries or from before the edge left V, that still names
-        one is read without it rather than refused for it."""
+        `canonical_citations`, the node's own and its parts', its failed list)."""
         task = self._graph.get_task(task_id)
-        if task is not None:
-            edges = {c.name for c in task.spec.criteria} - {c.name for c in task.spec.conjuncts}
-            per_criterion = per_criterion and [e for e in per_criterion if str(e.get("criterion")) not in edges]
-            failed = [n for n in failed or () if n not in edges]
-        return task, (canonical_citations(per_criterion, task.spec.conjuncts, self.parts_procedure(task_id))
+        return task, (canonical_citations(per_criterion, task.spec.criteria, self.parts_procedure(task_id))
                       if per_criterion and task is not None else per_criterion), failed
 
     def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
@@ -941,7 +924,7 @@ class Engine:
                 f"over the contract (§2); a conjunct nobody spoke to is ⊥, and ⊥ does not carry a "
                 f"pass. Say what was observed per criterion, or record what actually happened.")
         if per_criterion is not None and task is not None:
-            defects = verdict_report_defects([c.name for c in task.spec.conjuncts], verdict,
+            defects = verdict_report_defects([c.name for c in task.spec.criteria], verdict,
                                              per_criterion, list(failed_criteria or ()),
                                              require_probe=require_probe)
             if defects:
@@ -1147,11 +1130,8 @@ class Engine:
         validated: dict = {}
         for e in self._audit.get_entries(task_id):
             if e.signal in VERSION_INSTALLING and not e.rejected and e.spec:
-                try:
-                    in_force = {c.get("name"): criterion_version(c.get("description"), c.get("check"))
-                                for c in (json.loads(e.spec).get("criteria") or ()) if c.get("name")}
-                except (ValueError, TypeError):
-                    in_force = {}
+                in_force = {c.get("name"): criterion_version(c.get("description"), c.get("check"))
+                            for c in logged_criteria(e.spec) if c.get("name")}
             elif e.signal == Signal.DELIVER and not e.rejected:
                 validated = dict(in_force)
         return validated
@@ -1557,7 +1537,7 @@ class Engine:
                 d.get("description", ""),
                 tuple(Criteria(c.get("name", ""), c.get("description", ""),
                                check=tuple(Probe.of(p) for p in (c.get("check") or ())))
-                      for c in (d.get("criteria") or ())),
+                      for c in logged_criteria(e.spec)),
                 tuple(AcceptedRiskItem(str(n.get("item", "") if isinstance(n, dict) else n))
                       for n in (d.get("accepted_risks") or ())),
                 scope=tuple(str(x) for x in (d.get("scope") or ()))),
@@ -1683,11 +1663,7 @@ class Engine:
                     "note": "no ASSIGN with a recorded contract — nothing to compare"}
 
         def _crit(raw: str) -> dict:
-            try:
-                d = json.loads(raw)
-            except (ValueError, TypeError):
-                return {}
-            return {c.get("name"): c for c in (d.get("criteria") or ()) if c.get("name")}
+            return {c.get("name"): c for c in logged_criteria(raw) if c.get("name")}
 
         def _reg(raw: str) -> tuple[set, set]:
             """(accepted risks, scope) as a version declared them."""
@@ -1779,22 +1755,24 @@ class Engine:
         register: Optional[Register] = None,
         drops: tuple = (),
         contract: Optional[Spec] = None,
+        deps: Optional[dict] = None,
     ) -> list[Task]:
         """A split's admission (§11.5) — `admission.admit`, the one act every door performs. Each child is
         (task_id, spec, assignee[, deadline]); `criterion_mappings` given = the node's FULL coverage, None adds to
         it; `drops` — live children this re-admission leaves out; `contract` — the node's own contract re-authored
-        with its split by its issuer, revised only once the act is admitted."""
+        with its split by its issuer, revised only once the act is admitted; `deps` — child → the declared Dep
+        edges into it (`DepEdge`s), whole: the split's declared E_Dep (§15.1)."""
         covers = {}
         for m in (criterion_mappings or []):
             covers.setdefault(str(m.child_id), []).append(m.criterion_name)
         self._admit(parent_id, children, covers, replace=criterion_mappings is not None, register=register,
-                    drops=drops, contract=contract, max_iterations=max_iterations)
+                    drops=drops, contract=contract, max_iterations=max_iterations, deps=deps)
         return [self._graph.get_task(TaskId(str(c[0]))) for c in children]
 
     def _admit(self, parent_id, children, covers, **act):
         """The engine's hands for the act: its signals, its issuer's revision, its R′ gate, its log."""
         return _admit(self._graph, self._storage, lambda: len(self._audit), parent_id, children, covers,
-                      send=self.send_signal_sync, reopen_refusal=self.reopen_refusal, check=self._validate,
+                      send=self.send_signal_sync, reopen_refusal=self.reopen_refusal, check=act.pop("check", self._validate),
                       revise=lambda c: self._revise(TaskId(str(parent_id)), c,
                                                     self._graph.issuer_of(TaskId(str(parent_id)))), **act)
 
@@ -1804,9 +1782,10 @@ class Engine:
                        check: tuple = ()) -> None:
         """Record a dependency: to_id depends on from_id's output.
 
-        DECLARED (discovered=False): Dep is **criteria-content** (§2) — recorded as a criterion on the
-        CONSUMER (to_id) referencing from_id (glue = its description), applied via REVISE (logged, no
-        bypass). A cycle is rejected (CHECK-2's Dep clause / FM-5). The DepEdge is then DERIVED (graph.dep_edges()).
+        DECLARED (discovered=False): an edge record of its own, the glue on it (Dep is a primitive beside T, §2.7,
+        §7.5), declared by a re-admission of the consumer's parent split (`_redeclare`). With `check`, the consumer's
+        own pinned check on the producer's result — a criterion of the consumer (`dep__<producer>`), added by revising
+        it, its edge declared with it (§15.1). A cycle is rejected (CHECK-2's Dep clause / FM-5).
         DISCOVERED (discovered=True, surfaced via BLOCK): runtime provenance — stored as an edge, even if
         cyclic (a Dep cycle IS the FM-5 finding to surface, not hide). Affects q_Dep.
         """
@@ -1821,34 +1800,66 @@ class Engine:
         to = self._graph.get_task(to_id)
         if to is None:
             raise ValueError(f"consumer {to_id} not found")
-        if why := dep_cycle_closed(self._graph, to_id, to.spec.criteria + (Criteria("dep", "", depends_on=from_id),)):
+        if why := dep_cycle_closed(self._graph, to_id, (from_id,)):
             raise ValueError(why)
-        if not any(c.depends_on == from_id for c in to.spec.criteria):  # idempotent
-            dep_crit = Criteria(name=f"dep__{from_id}", description=glue, depends_on=from_id,
-                                check=tuple(check or ()))
-            # `scope` carried EXPLICITLY. Declaring a dependency desugars to a re-author of the
-            # consumer, and this rebuilt its Spec positionally without the scope field — so the
-            # node's declared boundary ("what this goal deliberately does NOT include", §9.2)
-            # vanished the moment anyone drew an edge into it. Silent, and invisible in the diff:
-            # the field simply defaulted to empty.
-            new_spec = dataclasses.replace(to.spec, criteria=to.spec.criteria + (dep_crit,))
-            self._revise(to_id, new_spec, self._graph.issuer_of(to_id))
+        if check and not any(c.depends_on == from_id for c in to.spec.criteria):
+            self._revise(to_id, dataclasses.replace(to.spec, criteria=to.spec.criteria + (
+                Criteria(name=f"dep__{from_id}", description=glue, depends_on=from_id, check=tuple(check)),)),
+                self._graph.issuer_of(to_id))
+        elif not any(str(e.from_id) == str(from_id) for e in self._graph.declared_edges(to_id)):   # idempotent
+            self._redeclare(to, tuple(self._graph.declared_edges(to_id)) + (DepEdge(from_id, to_id, glue=glue),))
         self._recompute_seam_parents(from_id, to_id)
 
     def remove_dependency(self, from_id: TaskId, to_id: TaskId) -> None:
-        """Drop a dependency. Declared → remove the consumer's dep criterion (re-author); a stored (discovered)
+        """Drop a dependency. Its declared records are marked removed by the act that re-declares the consumer's edges
+        without it (`_redeclare`) — no edge, still counted by q_Dep (§15.5) — and a criterion of the consumer whose
+        check reads the producer's result goes with it (a revision: it would imply the edge again, §2.7); a discovered
         record for the pair is CLOSED: it stops asking and leaves E_Dep, and the discovery that was made stays in
         q_Dep's population — only an adjudication refuting it takes it out (§15.5)."""
         to = self._graph.get_task(to_id)
         if to is not None and any(c.depends_on == from_id for c in to.spec.criteria):
             new_crits = tuple(c for c in to.spec.criteria if c.depends_on != from_id)
-            new_spec = dataclasses.replace(to.spec, criteria=new_crits)
-            self._revise(to_id, new_spec, self._graph.issuer_of(to_id), severing=(from_id,))
+            self._revise(to_id, dataclasses.replace(to.spec, criteria=new_crits), self._graph.issuer_of(to_id))
+        if to is not None and any(str(e.from_id) == str(from_id) for e in self._graph.declared_edges(to_id)):
+            self._redeclare(self._graph.get_task(to_id), tuple(e for e in self._graph.declared_edges(to_id)
+                                                               if str(e.from_id) != str(from_id)))
         for e in self._storage.get_dep_edges():
-            if str(e.from_id) == str(from_id) and str(e.to_id) == str(to_id) and not e.closed:
-                self._storage.remove_dep_edge(from_id, to_id)
+            if e.discovered and str(e.from_id) == str(from_id) and str(e.to_id) == str(to_id) and not e.closed:
+                self._storage.remove_dep_edge(e)
                 self._storage.add_dep_edge(dataclasses.replace(e, provisional=False, closed=True))
         self._recompute_seam_parents(from_id, to_id)
+
+    @staticmethod
+    def _wire_seams(spec: Spec, task_id) -> tuple:
+        """(the spec as a contract, the edges its bare `depends_on` entries declare) — those `_redeclare` declares; a
+        criterion's own reference to a producer is declared by the version that carries it (§15.1)."""
+        kept, _ = seams_apart(spec, task_id)
+        if kept is spec:
+            return spec, ()
+        return kept, seams_apart(dataclasses.replace(spec, criteria=tuple(c for c in spec.criteria
+                                                                          if c not in kept.criteria)), task_id)[1]
+
+    def _redeclare(self, to: Task, edges: tuple) -> None:
+        """The consumer's declared edges, whole, re-declared by the act that may change them. Dep is a form item of the
+        SPLIT (§4.5 item 4), and a split changes only by its re-admission (§11.5), so this is one: the consumer named as
+        it stands, its edges whole, recorded with the act (`record_admission`) — gated on what the edge change brings
+        (CHECK-2's cycle, CHECK-3's order of the deadlines the act sets, item (6)), not on the standing split, which a
+        re-admission does not re-check (§11.5). The consumer is not re-offered (Dep is no packet field, §10.1), save
+        where a deadline the engine supplied it must move after a new producer — a packet field, so a version. A ROOT
+        sits in no split: its goal's issuer joins it to a producer by Dep (§15.2), and the declaration is recorded as
+        that act (`goal_deps_key`), no revision — the root's contract does not change."""
+        edges = one_per_pair(edges)
+        if to.parent_id is None:
+            if why := dep_cycle_closed(self._graph, to.id, [e.from_id for e in edges]):
+                raise ValueError(why)
+            declare(self._graph, edges, replacing=(to.id,))
+            key = goal_deps_key(to.id)
+            log_ = json.loads(self._storage.get_critique(key) or "[]")
+            log_.append({"log_at": len(self._audit), "by": str(self._graph.issuer_of(to.id)),
+                         "deps": [[str(e.from_id), e.glue] for e in edges]})
+            self._storage.store_critique(key, json.dumps(log_))
+            return
+        self._admit(to.parent_id, [(to.id, to.spec, to.assignee)], {}, deps={str(to.id): tuple(edges)}, check=False)
 
 
     def map_criterion(self, parent_id: TaskId, covers: dict) -> Task:
@@ -1900,7 +1911,7 @@ class Engine:
 
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
                 new_assignee: Optional[AgentId] = None, covers: tuple = (),
-                reason=None, severing: tuple = (), deadline=None,
+                reason=None, deadline=None,
                 max_iterations: Optional[int] = None,
                 block_sources: tuple = (), block_refuted: bool = False) -> Task:
         """Canon v3.7 Inv-1 (§12.3): a spec/Del change = REVISION — ONE re-ASSIGN under the SAME id → OFFERED,
@@ -1912,26 +1923,24 @@ class Engine:
         old = self._graph.get_task(task_id)
         if old is None:
             raise ValueError(f"task {task_id} not found")
+        # A Dep edge is no part of the contract (§2.7), so no revision deletes one by omission — while a seam rode in
+        # `criteria`, a wholesale replacement deleted the graph's edges and CHECK-2 then read "no dependency edges"
+        # (2026-09-05); `remove_dependency` cuts one. A bare `depends_on` entry the caller writes declares its edge —
+        # by the act that declares edges (`_redeclare`), first, so the version's deadline reads the order it leaves; the
+        # revision changes what is a packet field, and where none changes it is no revision at all.
+        new_spec, seams = self._wire_seams(new_spec, task_id)
+        if why := dep_cycle_closed(self._graph, task_id, [e.from_id for e in seams]):
+            raise ValueError(why)
+        if seams:
+            self._redeclare(old, tuple(self._graph.declared_edges(task_id)) + seams)
+            old = self._graph.get_task(task_id)
+            if new_spec == old.spec and not (new_assignee or covers or deadline is not None or max_iterations is not None
+                                             or block_sources or block_refuted or reason is not None):
+                return old
         # …AND A REVISION IS AN ASSIGN. Admitting the first packet on a pinned procedure and letting
         # the next version strip it would make the gate a formality: the same contract, one act
         # later, deciding nothing.
         refuse_a_contract_that_pins_nothing(self._graph, task_id, new_spec)
-        # A Dep SEAM RIDES IN `criteria`, AND AN EDGE IS NOT DELETED BY OMISSION. `edit_criteria`
-        # has carried `dep__*` across a replacement since 2026-08-20, with the argument written
-        # out there: nobody editing what a node must ACHIEVE is asking to sever what it WAITS
-        # FOR, and the loss is invisible until a consumer runs against an input nothing connected
-        # it to. That rule sat on ONE door. `revise` — the verb whose whole contract IS wholesale
-        # replacement — went straight past it, so the defect the comment describes happened
-        # through the widest door onto the same edge. Two strangers hit it the same afternoon
-        # (2026-09-05), and the graph then read CLEAN: `list_holes` empty and CHECK-2 answering
-        # "D acyclic; no dependency edges" — a check passing because its subject was destroyed.
-        # Carried here, at the chokepoint every spec change lands on. Removing an edge stays
-        # possible and stays EXPLICIT — `remove_dependency` says WHICH producer it is severing
-        # (`severing`), and nothing else can sever one. Without that the carry became a CAGE:
-        # `remove_dependency` re-authors the consumer WITHOUT the criterion, which is exactly
-        # the shape being defended against, so the edge came straight back and the verb for
-        # deleting edges stopped deleting them (caught by its own test, minutes after the fix).
-        new_spec = with_its_seams(old.spec, new_spec, severing)
         # Snapshot the CONTENT before the signal: ASSIGN applies the new spec onto the same live
         # object, so reading `old.spec` afterwards compares the new contract with itself.
         _before = (old.spec.description, old.spec.criteria, old.spec.accepted_risks,
@@ -2277,7 +2286,7 @@ class Engine:
                 # exists, so it is named here rather than lost. Silence is the failure mode this
                 # whole change exists against.
                 "orphaned_refutations": orphaned_regression(       # a finding filed under a bare Dep edge is one too
-                    t.spec.conjuncts, self.regression_probes(task_id)) or None,
+                    t.spec.criteria, self.regression_probes(task_id)) or None,
                 # THE RESIDUE, AND IT IS NOT ONE SENTENCE. What the pinned set does not reach is
                 # unchecked; so is a pinned probe that never ran (the internal self-report door, §10.3, closes a
                 # node without running any); and so is the sensitivity of the procedure ITSELF — no
@@ -2703,7 +2712,7 @@ class Engine:
                         # …a revision asked with its contract carries the deadline the revision will: none, the
                         # node's own kept — a live one invented here approved what the revision then refused (critic C1)
                         deadline=project_now(self._graph) + timedelta(hours=1) if signal == Signal.ASSIGN and spec is None else None,
-                        failed_criteria=tuple(c.name for c in t.spec.conjuncts[:1]) if signal == Signal.FAIL else (),
+                        failed_criteria=tuple(c.name for c in t.spec.criteria[:1]) if signal == Signal.FAIL else (),
                         result="the delivered result" if signal == Signal.DELIVER else None)
         if why := signer_refusal(self._graph, task_id, signal, source):
             return Refusal(kind="role", why=why)
@@ -2831,7 +2840,7 @@ class Engine:
         # with itself is trusting the half nobody can tell apart from the other.
         if any(spoken_verdict(e.get("verdict")) != "pass" for e in entries):
             return []
-        known = {c.name for c in task.spec.conjuncts}
+        known = {c.name for c in task.spec.criteria}
         regression, parts = self.regression_probes(task_id), self.parts_procedure(task_id)
         # Each entry against ITS OWN run's ledger — a shell in the next run must not vouch for a
         # probe the earlier one never executed (`unrun_probes`).

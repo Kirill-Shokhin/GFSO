@@ -1,9 +1,10 @@
-"""A bare Dep edge (`dep__x` with no check) is no conjunct of its consumer (`Spec.conjuncts`, §2.7) on every door of the
-verdict: the issuer is not told FAIL is refused because the edge is listed first, and a FAIL record naming the edge — from
-a door without entries, or from before the edge left V — neither stores it nor blocks a correct repair (critic over
-657ea68)."""
-from gfso.core.types import AgentId, Criteria, CriterionMapping, Signal, SignalData, Spec, State, TaskId
+"""A Dep edge is no conjunct of its consumer on any door of the verdict (§2.7): the issuer is not told FAIL is refused
+for it, and a FAIL record an older engine's door wrote naming the edge's old entry (`dep__x`, kept among the criteria
+then) blocks no correct repair — the name was no criterion of the contract the FAIL read, so nothing was dropped
+(critic over 657ea68)."""
+from gfso.core.types import AgentId, Criteria, CriterionMapping, DepEdge, Signal, SignalData, Spec, State, TaskId
 from tests.support import REGISTER_ITEMS, REGISTER_SPLIT, make_engine, pinned, reviewer_passes
+from gfso.engine.validation import _refuted_coverage_refusal
 from tests.test_fm1_repair import _review
 
 T_, A_ = TaskId, AgentId
@@ -21,15 +22,14 @@ def _consumer_validating():
     e.assign_task(T_("root"), Spec("root goal", (Criteria("g", "g", check=pinned("g")),), accepted_risks=REGISTER_ITEMS), A_("pm"))
     e.wait_idle()
     e.decompose_task(T_("root"), [(T_("x"), Spec("producer", (Criteria("px", "px", check=pinned("px")),)), A_("w")),
-                                  (T_("p"), Spec("consumer", (Criteria("dep__x", "p reads x", depends_on=T_("x")),
-                                                               Criteria("rc", "rc", check=pinned("rc"))),
+                                  (T_("p"), Spec("consumer", (Criteria("rc", "rc", check=pinned("rc")),),
                                                  accepted_risks=REGISTER_ITEMS), A_("pm"))],
                      criterion_mappings=[CriterionMapping("g", T_("x")), CriterionMapping("g", T_("p"))],
-                     register=REGISTER_SPLIT)
+                     register=REGISTER_SPLIT, deps={"p": (DepEdge(T_("x"), T_("p"), glue="p reads x"),)})
     e.wait_idle()
     _review(e)
     e.decompose_task(T_("p"), [(T_("ch"), Spec("child", (Criteria("cc", "cc", check=pinned("cc")),)), A_("w"))],
-                     criterion_mappings=[CriterionMapping("rc", T_("ch")), CriterionMapping("dep__x", T_("ch"))],
+                     criterion_mappings=[CriterionMapping("rc", T_("ch"))],
                      register=REGISTER_SPLIT)
     e.wait_idle()
     _review(e, node="p")
@@ -44,14 +44,17 @@ def _consumer_validating():
     return e
 
 
-def test_the_issuer_is_not_told_fail_is_refused_when_the_edge_is_listed_first():
+def test_the_issuer_is_not_told_fail_is_refused_for_the_edge():
     e = _consumer_validating()
+    assert [c.name for c in e.graph.get_task(T_("p")).spec.criteria] == ["rc"]
     assert e.refusal_for(T_("p"), Signal.FAIL) is None
     e.stop()
 
 
-def test_a_fail_record_naming_the_edge_stores_only_the_conjuncts():
+def test_a_fail_record_naming_the_edges_old_entry_reads_as_no_criterion_dropped():
     e = _consumer_validating()
     rec = e.record_exec_verdict(T_("p"), "FAIL", ["rc", "dep__x"], "rev")
-    assert list(rec.get("failed_criteria") or e.get_exec_verdict(T_("p"))["failed_criteria"]) == ["rc"]
+    _go(e, SignalData(signal=Signal.FAIL, task_id=T_("p"), source=A_("pm"), failed_criteria=("rc",)))
+    why = _refuted_coverage_refusal(e.graph, e.graph.get_task(T_("p")), rec, e._audit) or ""
+    assert "REMOVED" not in why and "dep__x" not in why, why
     e.stop()

@@ -17,7 +17,7 @@ from gfso import __version__
 from gfso.core.types import (
     TaskId, AgentId, Task, State, DoneReason, AutonomyLevel,
     Spec, Criteria, Probe, CriterionMapping, AcceptedRiskItem, Register,
-    CheckResult, Recommendation, DepEdge,
+    CheckResult, Recommendation, DepEdge, seams_apart,
     StoragePort, TERMINAL_STATES, RETIRED_STATES, state_named,
 )
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
@@ -137,6 +137,55 @@ class _ProjectSettings:
         return row["value"] if row else None
 
 
+#: a Dep record's columns, in `DepEdge`'s field order
+_EDGE_FIELDS = ("from_id", "to_id", "discovered", "glue", "provisional", "closed", "declared_first", "refuted", "removed")
+_INSERT_EDGE = f"INSERT INTO dep_edges ({', '.join(_EDGE_FIELDS)}) VALUES ({', '.join('?' * len(_EDGE_FIELDS))})"
+
+
+def _edge_row(edge: DepEdge) -> tuple:
+    return tuple(v if isinstance(v, str) else int(v) for v in (getattr(edge, k) for k in _EDGE_FIELDS))
+
+
+def _seams_to_edges(conn, spec_of, spec_json, maps_of, maps_json) -> None:
+    """An older engine wrote a declared Dep edge as an entry of its consumer's criteria (`dep__<producer>`, its
+    `depends_on` and the glue as its description) and derived E_Dep from those entries. Dep is a primitive beside T
+    (§2.7, §7.5): each such entry that pins no check becomes the declared edge record it stood for and leaves the
+    spec — with its node's mappings onto it — LOGGED AS A MIGRATION, not as a signal; V loses no conjunct (the
+    entry was none, `seams_apart`). An entry that pins a check on the producer's result stays a criterion and gains
+    its record. One pair is one edge (§2.7), however many entries named it. Idempotent: what it converts is gone, and
+    a pair already stored is not stored again."""
+    conn.execute("UPDATE dep_edges SET glue = '' WHERE glue IS NULL")
+    live = {(r["from_id"], r["to_id"]) for r in
+            conn.execute("SELECT from_id, to_id FROM dep_edges WHERE discovered = 0 AND removed = 0")}
+    notes = []
+    for row in conn.execute("SELECT id, spec_json, criterion_mappings_json FROM tasks").fetchall():
+        spec = spec_of(row["spec_json"])
+        try:
+            kept, edges = seams_apart(spec, row["id"])
+        except ValueError:          # a malformed producer (a list) is the signal gate's to refuse, never the open's
+            continue
+        bare = [c for c in spec.criteria if c not in kept.criteria]
+        # one pair one edge, the later entry's glue (`one_per_pair`); a pair already stored is not stored again
+        edges = [e for e in {(e.from_id, e.to_id): e for e in edges}.values() if (e.from_id, e.to_id) not in live]
+        if not (edges or bare):
+            continue
+        conn.executemany(_INSERT_EDGE, [_edge_row(e) for e in edges])
+        live |= {(e.from_id, e.to_id) for e in edges}
+        if bare:
+            names = {c.name for c in bare} - {c.name for c in kept.criteria}
+            maps = tuple(m for m in maps_of(row["criterion_mappings_json"] or "[]") if m.criterion_name not in names)
+            conn.execute("UPDATE tasks SET spec_json = ?, criterion_mappings_json = ? WHERE id = ?",
+                         (spec_json(kept), maps_json(maps), row["id"]))
+            notes.append(f"{row['id']}: {', '.join(f'{c.name} ({c.depends_on})' for c in bare)} — a Dep edge's "
+                         f"declaration an older engine kept among the criteria, now its declared edge record; "
+                         f"no conjunct of V changes (a migration, not a signal)")
+    conn.executemany("INSERT INTO pipeline_log (ts, source, message) VALUES (?, ?, ?)",
+                     [(datetime.now().isoformat(sep=" ", timespec="seconds"), "migration", n) for n in notes])
+    if notes:
+        log.info("migrated %d node(s)' Dep declarations from criteria to edge records", len(notes))
+    conn.commit()
+
+
 class SqliteStorage(_ProjectSettings, StoragePort):
     def __init__(self, db_path: str = "data/gfso.db"):
         self._db_path = db_path
@@ -242,6 +291,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         ("dep_edges", "closed", "INTEGER DEFAULT 0"),                   # a record nobody answered (§15.5)
         ("dep_edges", "declared_first", "INTEGER DEFAULT 0"),           # declared before its first BLOCK (§15.5)
         ("dep_edges", "refuted", "INTEGER DEFAULT 0"),                  # refuted, kept for the order (§15.5)
+        ("dep_edges", "removed", "INTEGER DEFAULT 0"),                  # a declaration taken out, still counted (§15.5)
         ("tasks", "verified", "INTEGER DEFAULT 0"),
         ("tasks", "reopens", "INTEGER DEFAULT 0"),                      # R′ (§12.14)
         ("tasks", "max_reopens", "INTEGER DEFAULT 1"),
@@ -311,7 +361,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 provisional INTEGER DEFAULT 0,
                 closed INTEGER DEFAULT 0,
                 declared_first INTEGER DEFAULT 0,
-                refuted INTEGER DEFAULT 0
+                refuted INTEGER DEFAULT 0,
+                removed INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -391,6 +442,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                     self._conn.execute("UPDATE dep_edges SET closed = 1, provisional = 0 WHERE provisional = 1 "
                                        "AND to_id NOT IN (SELECT id FROM tasks WHERE state = 'BLOCKED')")
         self._migrate_retired_states()
+        _seams_to_edges(self._conn, self._spec_from_json, self._spec_to_json, self._mappings_from_json,
+                        self._mappings_to_json)
 
     def _migrate_retired_states(self):
         """A node stored in a state this machine no longer has is moved to the state that replaced
@@ -634,26 +687,18 @@ class SqliteStorage(_ProjectSettings, StoragePort):
 
     def add_dep_edge(self, edge: DepEdge) -> None:
         with self._write() as c:
-            c.execute(
-                "INSERT INTO dep_edges (from_id, to_id, discovered, glue, provisional, closed, declared_first, "
-                "refuted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (edge.from_id, edge.to_id, int(edge.discovered), edge.glue, int(edge.provisional),
-                 int(edge.closed), int(edge.declared_first), int(edge.refuted)),
-            )
+            c.execute(_INSERT_EDGE, _edge_row(edge))
 
-    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
+    def remove_dep_edge(self, edge: DepEdge) -> None:
         with self._write() as c:
-            c.execute(
-                "DELETE FROM dep_edges WHERE from_id = ? AND to_id = ?", (from_id, to_id)
-            )
+            c.execute(f"DELETE FROM dep_edges WHERE id = (SELECT id FROM dep_edges WHERE "
+                      f"{' AND '.join(f'{k} = ?' for k in _EDGE_FIELDS)} LIMIT 1)", _edge_row(edge))
 
     def get_dep_edges(self) -> list[DepEdge]:
         with self._read() as c:
-            rows = c.execute("SELECT * FROM dep_edges").fetchall()
-        return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]),
-                        r["glue"] or "", bool(r["provisional"]),
-                        *(bool(r[k]) if k in r.keys() else False for k in ("closed", "declared_first", "refuted")))
-                for r in rows]
+            return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]), r["glue"] or "",
+                            *(bool(r[k]) for k in _EDGE_FIELDS[4:]))
+                    for r in c.execute("SELECT * FROM dep_edges ORDER BY id").fetchall()]
 
     def store_critique(self, task_id: TaskId, critique_json: str) -> None:
         with self._write() as c:

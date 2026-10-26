@@ -91,7 +91,7 @@ def test_edit_criteria_help_shows_the_object_and_warns_it_replaces(capsys):
     assert example, "the help shows no concrete criteria object"
     parsed = json.loads(re.sub(r"\s+", " ", example.group(0)))
     assert isinstance(parsed, list) and {"name", "description"} <= set(parsed[0])
-    assert "REPLACE" in out and "dep__" in out
+    assert "REPLACE" in out and "dependency edges" in out
 
 
 def test_an_unreadable_file_argument_answers_in_words(tmp_path, capsys):

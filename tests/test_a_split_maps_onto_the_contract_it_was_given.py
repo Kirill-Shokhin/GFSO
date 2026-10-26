@@ -75,24 +75,25 @@ def test_an_auto_root_whose_split_is_owed_has_the_system_as_its_mover(tmp_path):
     e.stop()
 
 
-def test_a_held_split_of_a_consumer_maps_its_dep_seam_too():
-    """CHECK-1 reads every criterion of the node, its Dep seams included (§9.5): left out of the names a held split may
-    map onto, a consumer's seam was a hole no repair round could close (critic r5)."""
+def test_a_held_split_of_a_consumer_covers_its_criteria_and_owes_its_dep_edge_nothing():
+    """CHECK-1 reads every criterion of the node (§9.5). While a consumer's seam rode among its criteria, a held split
+    had to map it too, or it was a hole no repair round could close (critic r5); the seam is an edge now, no criterion
+    a split covers (§2.7)."""
     e = _goal()
     T.decompose(e, "root", [
         {"task_id": "p", "spec": {"description": "produce", "criteria": [criterion("p_ok", "made")]},
          "assignee": "w", "covers": ["g"]},
-        {"task_id": "c", "spec": {"description": "consume", "criteria": [
-            criterion("c_ok", "used"), {"name": "dep__p", "description": "reads p", "depends_on": "p"}]},
-         "assignee": "w", "covers": ["g"]}], accepted_risks=REGISTER)
+        {"task_id": "c", "spec": {"description": "consume", "criteria": [criterion("c_ok", "used")]},
+         "deps": [{"from": "p", "glue": "reads p"}], "assignee": "w", "covers": ["g"]}], accepted_risks=REGISTER)
     e.wait_idle()
     plan = {"name": "c", "root_criteria": [criterion("c_ok", "used")],
             "subtasks": [{"id": "c1", "name": "c1", "description": "part", "criteria": [criterion("c1_ok", "c1")]}],
-            "mappings": [{"criterion": "c_ok", "child_id": "c1"}, {"criterion": "dep__p", "child_id": "c1"}],
+            "mappings": [{"criterion": "c_ok", "child_id": "c1"}],
             "deps": [], "accepted_risks": REGISTER, "scope": []}
     decompose_into(e, "", root_id="c", assignee="w", spec=plan, llm=object(), author="w")
     e.wait_idle()
     assert [str(k.id) for k in e.graph.get_active_children(TaskId("c"))] == ["c.c1"]
+    assert [str(x.from_id) for x in e.graph.declared_edges(TaskId("c"))] == ["p"]
     e.stop()
 
 

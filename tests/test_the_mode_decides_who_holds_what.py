@@ -1286,7 +1286,7 @@ def test_a_sibling_the_same_act_adds_is_read_under_the_id_it_will_have(drop, mon
         new("D5_Executor", ["root.D3_Parser", "root.D2"])]}, "j", None)
     assert ok, why
     e.wait_idle()
-    deps = [c.depends_on for c in e.graph.get_task(TaskId("root.d5_executor")).spec.criteria if c.depends_on]
+    deps = [str(x.from_id) for x in e.graph.declared_edges(TaskId("root.d5_executor"))]
     assert sorted(deps) == ["root.D2", "root.d3_parser"], deps
     e.stop()
 

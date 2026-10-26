@@ -5,7 +5,7 @@ import logging
 from gfso.core.types import (
     Probe,
     TaskId, AgentId, Signal, SignalData, Spec, Criteria,
-    CriterionMapping, AcceptedRiskItem, Predictability, Register,
+    CriterionMapping, AcceptedRiskItem, Predictability, Register, DepEdge,
 )
 from gfso.engine import Engine
 
@@ -57,9 +57,6 @@ def seed_demo(engine: Engine) -> None:
                 criteria=(
                     Criteria("responsive", "Works on mobile and desktop", check=(Probe("the layout holds at phone width", "npx playwright test --grep viewport", "passed"),)),
                     Criteria("accessible", "WCAG 2.1 AA compliant", check=(Probe("no WCAG violations", "npx axe dist/index.html", "0 violations"),)),
-                    # Dep is criteria-content (§2): the UI depends on the backend API's contract.
-                    Criteria("uses_backend_api", "UI calls the backend API; breaks if the API contract differs",
-                             depends_on=TaskId("backend-api")),
                 ),
                 accepted_risks=("IE11 support",),
             ), AgentId("dev-bob")),
@@ -88,6 +85,9 @@ def seed_demo(engine: Engine) -> None:
             CriterionMapping("data_migrated", TaskId("db-migration")),
             CriterionMapping("docs_updated", TaskId("docs")),
         ],
+        # the split's declared Dep (§15.1): the UI depends on the backend API's contract
+        deps={"frontend-ui": (DepEdge(TaskId("backend-api"), TaskId("frontend-ui"),
+                                      glue="UI calls the backend API; breaks if the API contract differs"),)},
         # the split's register, its decomposer's (§9.2), rides the admission (§11.5): one grouped entry per STD-3
         # component (§9.4) and the split's own denial by S (§9.5)
         register=Register((

@@ -5,7 +5,7 @@ from gfso.engine import Engine
 from gfso.adapters.llm.stub import StubLLM
 import json
 
-from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, Signal,
+from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, DepEdge, Signal,
                              SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
 from tests.support import REGISTER_SPLIT, criterion, make_engine, pinned, REGISTER
 from gfso import tools as T
@@ -83,10 +83,11 @@ def test_next_step_respects_dependency_order():
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
-    b_spec = Spec("b", (Criteria("y", "y", check=pinned("y")), Criteria("dep__a", "needs a's output", depends_on=TaskId("a"))))
+    b_spec = Spec("b", (Criteria("y", "y", check=pinned("y")),))
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), b_spec, A)],
-                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))], register=REGISTER_SPLIT); e.wait_idle()
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))], register=REGISTER_SPLIT,
+                     deps={"b": (DepEdge(TaskId("a"), TaskId("b"), glue="needs a's output"),)}); e.wait_idle()
     for cid in ("a", "b"):  # both EXECUTING leaves now
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
 
@@ -131,12 +132,13 @@ def test_next_steps_parallel_frontier():
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b"), ("rc", "c")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     # a and b are independent leaves; c consumes a's output (dep-gated until a PASSES)
-    c_spec = Spec("c", (Criteria("z", "z", check=pinned("z")), Criteria("dep__a", "needs a", depends_on=TaskId("a"))))
+    c_spec = Spec("c", (Criteria("z", "z", check=pinned("z")),))
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), _sp("b", ("y", "y")), A),
                       (TaskId("c"), c_spec, A)],
                      [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b")),
-                      CriterionMapping("rc", TaskId("c"))], register=REGISTER_SPLIT); e.wait_idle()
+                      CriterionMapping("rc", TaskId("c"))], register=REGISTER_SPLIT,
+                     deps={"c": (DepEdge(TaskId("a"), TaskId("c"), glue="needs a"),)}); e.wait_idle()
     for cid in ("a", "b", "c"):
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
 

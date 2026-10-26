@@ -386,7 +386,7 @@ def test_a_report_cannot_buy_coverage_with_junk_probes():
     `echo ok` probes bought a clean report on a criterion naming three behaviours and probing one.
     Forgiveness is now bounded by the bar the unlabelled arm always used — cardinality.
 
-    The label rule governs a criterion that pins NO procedure (a `dep__*` seam, a row from an older build): one that
+    The label rule governs a criterion that pins NO procedure (a row from an older build): one that
     pins one stands on it, run whole, and what the report names past it is exploration
     (`test_a_criterion_stands_on_its_pinned_procedure`).
     """

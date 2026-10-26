@@ -371,7 +371,7 @@ def test_fold_removal_unmaps_and_cancels_the_dropped_child():
 
 
 def test_extract_spec_roundtrips_build():
-    """extract_spec is the exact inverse of build_graph_live (ids de-namespaced, dep__ criteria back
+    """extract_spec is the exact inverse of build_graph_live (ids de-namespaced, declared edges back
     to seams, scope strings verbatim)."""
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
@@ -380,7 +380,7 @@ def test_extract_spec_roundtrips_build():
     assert got["name"] == want["name"]
     assert {c["id"] for c in got["subtasks"]} == {"a", "b"}
     a = [c for c in got["subtasks"] if c["id"] == "a"][0]
-    assert a["criteria"] == [criterion("a1", "A ok")]                   # dep__ criteria NOT here
+    assert a["criteria"] == [criterion("a1", "A ok")]                   # a seam is no criterion
     assert got["deps"] == [{"from": "a", "to": "b", "glue": "B reads A's output"}]
     assert sorted((m["criterion"], m["child_id"]) for m in got["mappings"]) == \
         [("rc1", "a"), ("rc2", "b")]

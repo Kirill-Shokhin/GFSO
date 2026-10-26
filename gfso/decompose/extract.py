@@ -2,11 +2,10 @@
 of `build_graph_live`, so refine rounds operate on the GRAPH as the state (extract → fold → rebuild
 as revision, same ids).
 
-Inverse mapping (see build.py): child ids are de-namespaced (`{root}.{id}` → `{id}`); a child's
-`dep__{producer}` criterion (build's encoding of a Dep seam, §2 Dep=criteria-content) becomes a
-{from, to, glue} seam and leaves the child's criteria list; only DECLARED seams extract (discovered
-edges live in storage independently and survive a rebuild); scope strings pass through verbatim
-(build re-emits them as-is via the no-why_out branch — the roundtrip is idempotent).
+Inverse mapping (see build.py): child ids are de-namespaced (`{root}.{id}` → `{id}`); a child's declared Dep edges
+from its siblings are its {from, to, glue} seams; a criterion whose check reads a producer keeps its `depends_on`;
+only DECLARED seams extract (discovered edges live in storage independently and survive a rebuild); scope strings
+pass through verbatim (build re-emits them as-is via the no-why_out branch — the roundtrip is idempotent).
 """
 from __future__ import annotations
 
@@ -28,21 +27,20 @@ def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
         return str(nid).removeprefix(p)
 
     subtasks, deps = [], []
-    for c in engine.graph.get_active_children(TaskId(root_id)):
-        crit, claim = [], engine.seam_claim(c.id)
-        for cr in c.spec.criteria:
-            if cr.depends_on:  # build's seam encoding: dep__{producer} criterion on the CONSUMER
-                f = dens(cr.depends_on)
-                deps.append({"from": f, "to": dens(c.id), "glue": cr.description}
-                            | ({"reads": claim["reads"][f]} if f in (claim.get("reads") or {}) else {}))
-            else:
-                crit.append({"name": cr.name, "description": cr.description,
-                             # …WITH ITS PROCEDURE. This function calls itself the exact data
-                             # inverse of `build_graph_live`, and an inverse that drops a field
-                             # DELETES it: one refine round stripped every pinned check off a
-                             # contract that had just been authored with one, and the plan then
-                             # failed A1 where a minute earlier it had passed.
-                             "check": [p.to_dict() for p in (cr.check or ())]})
+    kids = engine.graph.get_active_children(TaskId(root_id))
+    for c in kids:
+        claim = engine.seam_claim(c.id)
+        for e in (e for e in engine.graph.declared_edges(c.id) if str(e.from_id) in {str(k.id) for k in kids}):
+            f = dens(e.from_id)
+            deps.append({"from": f, "to": dens(c.id), "glue": e.glue}
+                        | ({"reads": claim["reads"][f]} if f in (claim.get("reads") or {}) else {}))
+        crit = [{"name": cr.name, "description": cr.description,
+                 # …WITH ITS PROCEDURE. This function calls itself the exact data inverse of `build_graph_live`, and
+                 # an inverse that drops a field DELETES it: one refine round stripped every pinned check off a
+                 # contract that had just been authored with one, and the plan then failed A1 where a minute
+                 # earlier it had passed.
+                 "check": [p.to_dict() for p in (cr.check or ())],
+                 **({"depends_on": dens(cr.depends_on)} if cr.depends_on else {})} for cr in c.spec.criteria]
         subtasks.append({"id": dens(c.id), "name": c.spec.name, "description": c.spec.description,
                          "criteria": crit, **_fit(engine, c.id, ""),
                          **{k: claim[k] for k in ("writes", "runs") if k in claim}})

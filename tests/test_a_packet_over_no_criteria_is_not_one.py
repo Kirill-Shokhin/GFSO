@@ -211,7 +211,8 @@ def test_the_reply_names_the_refusal_only_where_the_gate_holds_the_children(monk
 
 def test_a_contract_of_seams_alone_is_refused_and_one_with_its_own_criterion_is_not():
     """Measured by probe: `edit_criteria(cons, [])` kept the carried `dep__prod` and the consumer ran to DONE over no
-    check — a seam is made true by the producer's PASS and decides nothing about this node's result."""
+    check — a seam is made true by the producer's PASS and decides nothing about this node's result. The seam is an
+    edge now, no criterion, and an empty contract is refused whatever edges stand into it."""
     e = make_engine()
     e.start()
     _a_producer_and_a_consumer(e)
@@ -220,7 +221,8 @@ def test_a_contract_of_seams_alone_is_refused_and_one_with_its_own_criterion_is_
     assert any(not c.depends_on for c in e.graph.get_task(TaskId("root.cons")).spec.criteria)
     out = TL.TOOLS["edit_criteria"](e, "root.cons", [criterion("own", "its own result holds")], "agent")
     assert not out.get("error"), out
-    assert {c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria} == {"own", "dep__root.prod"}
+    assert {c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria} == {"own"}
+    assert [str(x.from_id) for x in e.graph.declared_edges(TaskId("root.cons"))] == ["root.prod"]
     e.stop()
 
 
@@ -229,8 +231,8 @@ def test_the_execution_gate_holds_a_node_of_seams_alone():
     e.start()
     _a_producer_and_a_consumer(e)
     assert e.execution_blocked_by(TaskId("root.cons")) is None
-    emptied(e, "root.cons", seams=True)
-    assert [c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria] == ["dep__root.prod"]
+    emptied(e, "root.cons")
+    assert e.graph.get_task(TaskId("root.cons")).spec.criteria == () and e.graph.declared_edges(TaskId("root.cons"))
     assert e.execution_blocked_by(TaskId("root.cons")), "a node deciding nothing of its own was ready to execute"
     e.stop()
 
@@ -262,14 +264,14 @@ def _settled_seams_only(done: bool):
     for tid in ("root.prod", "root.cons"):
         sig(tid, Signal.ACCEPT)
         if tid == "root.cons" and not done:
-            emptied(e, tid, seams=True)
+            emptied(e, tid)
         sig(tid, Signal.DELIVER, result="made")
         if tid == "root.cons" and not done:
             return e, instrument_passes
         instrument_passes(e, TaskId(tid))
         e.wait_idle()
         sig(tid, Signal.PASS)
-    emptied(e, "root.cons", seams=True)
+    emptied(e, "root.cons")
     return e, None
 
 
@@ -283,7 +285,7 @@ def test_a_verdict_over_seams_alone_is_refused_where_it_lands():
 def test_a_settled_child_of_seams_alone_neither_blocks_a_refine_nor_holes_its_plan():
     e, _ = _settled_seams_only(done=True)
     cons = e.graph.get_task(TaskId("root.cons"))
-    assert cons.state.name == "DONE" and [c.name for c in cons.spec.criteria] == ["dep__root.prod"]
+    assert cons.state.name == "DONE" and cons.spec.criteria == () and e.graph.declared_edges(cons.id)
     D._no_plan(extract_spec(e, "root"), e, "root", _Model(), contract_fixed=False)   # no NoPlan
     assert check_procedure(cons).passed
     e.stop()

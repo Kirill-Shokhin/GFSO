@@ -522,7 +522,7 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 | decompose | one `ASSIGN` per child (+ `covers` → parent mapping effect) | mappings = the child's declaration, logged; a FULL mappings list SETS the parent's coverage (pairs absent from it are removed — reconcile); `None` adds without wiping |
 | **revise** | re-`ASSIGN` (SAME id) → OFFERED | revision per Inv-1 §12.3: NOT a CANCEL; version appended to the log (Inv-7); **subtree RETAINED — no cascade**; staleness surfaces via CHECK-1/1b/3; issuer-gated |
 | edit_accepted_risks / edit_criteria | revise (RMW) | change one field, carry the rest |
-| add_dependency (declared) | re-`ASSIGN` of the **consumer** (gains a `depends_on` criterion) | Dep is criteria-content (§2); edge derived |
+| add_dependency (declared) | a declared edge record; no signal — with `check`, a re-`ASSIGN` of the **consumer** adding the criterion that reads the producer | Dep is a primitive beside T (§2.7): the edge carries its glue and is no criterion of its consumer; a split's admission writes its declared edges (§15.1) |
 | map_criterion | a re-admission of the parent's split (§11.5), no child signal | binds an existing child to a parent criterion — the mapping is the split's (§2.4); logged as the admission it is |
 | reassign | re-`ASSIGN` with a new executor | Del change per Inv-1 (q_Del) |
 | **reopen** | re-`ASSIGN` out of DONE/ABANDONED → OFFERED | R′ (§12.15): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |

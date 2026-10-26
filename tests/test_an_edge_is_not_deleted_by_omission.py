@@ -1,22 +1,10 @@
 """A dependency edge is removed by the verb for removing edges, not by leaving it out of a spec.
 
-A Dep seam is stored as a criterion (`dep__{producer}`, carrying `depends_on`), so a wholesale
-replacement of a node's criteria takes the graph's EDGES with it. `edit_criteria` has carried those
-across since 2026-08-20, and the argument is written out beside it: nobody editing what a node must
-ACHIEVE is asking to sever what it WAITS FOR, and the loss is invisible until a consumer runs against
-an input nothing connected it to (FM-5).
-
-That rule sat on one door. `revise` — the verb whose whole contract IS wholesale replacement — went
-straight past it, so the defect the comment describes happened through the widest door onto the same
-edge. Two strangers hit it the same afternoon (2026-09-05), one through `revise` and one through a
-path that reached it, and both reported the same second half: the graph then read CLEAN. `list_holes`
-returned `[]` and CHECK-2 answered *"D acyclic; no dependency edges"* — a check passing because its
-subject had been destroyed.
-
-Removing an edge stays possible and stays explicit: `remove_dependency` names the producer it is
-severing, and nothing else can. That half is not decoration — the first cut of the carry had no such
-exemption, and since `remove_dependency` works by RE-AUTHORING the consumer without the criterion,
-the carry put the edge straight back and the verb for deleting edges stopped deleting them.
+While a Dep seam was stored as a criterion (`dep__{producer}`, carrying `depends_on`), a wholesale replacement of a
+node's criteria took the graph's EDGES with it — and the graph then read CLEAN: `list_holes` returned `[]` and
+CHECK-2 answered *"D acyclic; no dependency edges"*, a check passing because its subject had been destroyed (two
+strangers, 2026-09-05). The edge is a record of its own now (§2.7), so no revision of the contract reaches it, and
+`remove_dependency` stays the one verb that cuts one.
 """
 from __future__ import annotations
 
@@ -63,7 +51,7 @@ def test_revise_does_not_sever_what_the_node_waits_for():
     e.wait_idle()
 
     assert _edges(e) == [("root.prod", "root.cons")], "the edge was deleted by omission"
-    assert "dep__root.prod" in [c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria]
+    assert [c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria] == ["c"], "the edge is no criterion"
     e.stop()
 
 

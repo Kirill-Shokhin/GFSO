@@ -566,10 +566,9 @@ class NodeSteps:
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
                 "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
                 "signed_by": str(self.engine.graph.issuer_of(t.id)) if action in _ISSUER_ACTIONS else str(t.assignee or ""),
-                # ALL of them, seams included: a `dep__` criterion is a criterion of this node, V
-                # is the conjunction over the whole contract (§2.3), and `record_verdict` enforces
-                # that — so a step that lists fewer is a step whose instruction cannot be followed.
-                "criteria": [c.name for c in t.spec.conjuncts], "directive": directive}
+                # ALL of them: V is the conjunction over the whole contract (§2.3), and `record_verdict`
+                # enforces that — so a step that lists fewer is a step whose instruction cannot be followed.
+                "criteria": [c.name for c in t.spec.criteria], "directive": directive}
 
 
 class Frontier:
@@ -997,12 +996,10 @@ class Frontier:
         cands = []  # (priority, task, action, directive); lower priority acts first
         for t in tasks:
             kids = self.engine.graph.get_active_children(t.id)
-            # EVERY criterion, seams included. The directive listed only the node's OWN criteria and
-            # dropped the `dep__` ones — and V is the conjunction over ALL of them (§2.3), which is
-            # what `record_verdict` enforces: a person who validated exactly the printed list was
-            # refused for "criterion 'dep__x' has no verdict" (measured on the human door
+            # EVERY criterion: V is the conjunction over ALL of them (§2.3), which is what `record_verdict`
+            # enforces — a directive listing fewer had a person refused for the one it left out (human door
             # 2026-08-22, two round-trips). Following the instruction has to be enough.
-            crits = [c.name for c in t.spec.conjuncts]
+            crits = [c.name for c in t.spec.criteria]
             nm = t.spec.name or str(t.id)
             if self.steps._plan_gate_step(t, kids, crits, nm, cands, held, _passed):
                 continue

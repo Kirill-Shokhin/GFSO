@@ -4,7 +4,7 @@ Critic V1 over the one validation pass (D-F2): reading a scope report node by no
 entry passed — naming nothing, or naming what is no criterion — gave every node a PASS claim, and the project closed
 DONE on a report that decided nothing (Inv-3: a FAIL names its failed criteria; §2.3: ⊥ is not pass). And taking a
 node's failed list from the report's bare names refused a correct PASS wherever two nodes share a criterion name —
-two consumers of one producer both carry `dep__<producer>`.
+two consumers of one producer both carried `dep__<producer>` while a Dep edge was one.
 """
 from __future__ import annotations
 
@@ -76,18 +76,21 @@ def _two_consumers_of_one_producer(tmp_path):
 
 
 def test_a_glue_failed_by_reading_it_fails_neither_consumer(tmp_path):
-    """Two consumers of one producer each carry a bare `dep__a` edge. It was a shared criterion NAME, and a validator's
-    fail of its glue sentence failed the consumer it was placed under (critic V1 kept it from failing the other). A bare
-    edge is no conjunct (`Spec.conjuncts`, §2.7): its fail is read as nothing, each consumer stands on its own criteria."""
+    """Two consumers of one producer each carried a bare `dep__a` entry. It was a shared criterion NAME, and a
+    validator's fail of its glue sentence failed the consumer it was placed under (critic V1 kept it from failing the
+    other). The edge is no criterion now (§2.7): neither consumer's contract lists it, so no report can fail it there, and
+    a report over their own criteria passes each."""
     e, agents = _two_consumers_of_one_producer(tmp_path)
+    assert {t: [c.name for c in e.graph.get_task(TaskId(t)).spec.criteria] for t in ("root.b", "root.c")} == {
+        "root.b": ["b_ok"], "root.c": ["c_ok"]}
     S._drive(e, S._dispatcher(e, agents, S._LLM(S._delivered("root.a", "root.b", "root.c", "root")), S._NeverAnswers(), []),
              lambda: e.graph.get_state(TaskId("root")) == State.VALIDATING, rounds=60)
     for tid in ("root", "root.a", "root.b", "root.c"):
         e.claims.end_validation(S._free_claim(e, tid))
 
     def report():
-        ents = [x for t in e.all_tasks() if t.state == State.VALIDATING for x in S._entries(e, t, {("root.b", "dep__a")})]
-        return S._fenced({"verdict": "FAIL", "per_criterion": ents, "failed_criteria": ["dep__a"]})
+        ents = [x for t in e.all_tasks() if t.state == State.VALIDATING for x in S._entries(e, t)]
+        return S._fenced({"verdict": "PASS", "per_criterion": ents, "failed_criteria": []})
     out = TL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
     assert (out["verdicts"]["root.b"]["verdict"], out["verdicts"]["root.c"]["verdict"]) == ("PASS", "PASS")
     e.stop()

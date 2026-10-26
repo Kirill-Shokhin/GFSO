@@ -253,7 +253,7 @@ def test_a_rebuild_reissues_a_child_for_its_contract_not_for_its_coverage():
     k1 = e.graph.get_task(TaskId("k1"))
     dropped: list = []
     same = [(k1.id, k1.spec, AgentId("agent"))]
-    assert _children_that_changed(e, TaskId("root"), same, [CriterionMapping("b", k1.id)], dropped) == []
+    assert _children_that_changed(e, TaskId("root"), same, [CriterionMapping("b", k1.id)], dropped, {"k1": ()}) == []
     e.stop()
 
 

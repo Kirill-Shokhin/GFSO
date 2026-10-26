@@ -595,8 +595,9 @@ def test_add_dependency():
     discovered = [d for d in deps if d.discovered]
     assert len(declared) == 1 and declared[0].from_id == TaskId("t1") and declared[0].to_id == TaskId("t2")
     assert len(discovered) == 1
-    # the declared edge is derived from t2's criteria, not stored
-    assert any(c.depends_on == TaskId("t1") for c in engine.graph.get_task(TaskId("t2")).spec.criteria)
+    # the declared edge is a record of its own, no criterion of t2 (§2.7)
+    assert not any(c.depends_on for c in engine.graph.get_task(TaskId("t2")).spec.criteria)
+    assert [(x.from_id, x.discovered) for x in engine.graph._storage.get_dep_edges()][0] == (TaskId("t1"), False)
 
     assert engine.metrics()["q_Dep"] == 0.5  # 1 declared / 2 total
     engine.stop()

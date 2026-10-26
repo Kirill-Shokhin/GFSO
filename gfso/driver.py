@@ -242,9 +242,8 @@ _HELP_EXAMPLES = {
 
 THIS REPLACES THE CONTRACT. The set you pass becomes the whole set — every criterion you do
 not name is dropped. Read what is there first (`gfso run get_task <id>`) and include what you
-mean to keep. One exception, and it is deliberate: the `dep__<producer>` criteria that carry
-the node's dependency edges are carried over unless you name one yourself, so hand-writing the
-list cannot silently sever what this node WAITS FOR — cutting an edge stays explicit
+mean to keep. The node's dependency edges are no criteria and are not touched, so hand-writing
+the list cannot silently sever what this node WAITS FOR — cutting an edge stays explicit
 (`remove_dependency`).""",
 }
 

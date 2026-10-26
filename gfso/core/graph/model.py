@@ -81,7 +81,7 @@ def coverage_history(storage, audit, parent_id) -> list:
         if isinstance(x, dict):
             cov = frozenset((c, k) for c, k in x.get("mappings", ()))
         elif cov is not None:
-            names = {c.get("name") for c in json.loads(x.spec).get("criteria", ())}
+            names = {c.get("name") for c in logged_criteria(x.spec)}
             cov = frozenset((c, k) for c, k in cov if c in names)
         if cov is not None:
             out.append((key, cov))
@@ -98,6 +98,12 @@ def admission_key(task_id) -> str:
     """Where a node's split admissions are recorded (§11.5: a logged act of its own) — each with the children it
     issued, its drops, its mappings and its place in the signal log."""
     return f"admission:{task_id}"
+
+
+def goal_deps_key(task_id) -> str:
+    """Where the declarations of a ROOT's Dep edges are recorded — a root sits in no split to re-admit (§15.2: the goal's
+    issuer joins a second goal to it by Dep) — each with its producers as they then stand and its place in the log."""
+    return f"goal_deps:{task_id}"
 
 
 def replaces_key(task_id) -> str:
@@ -280,44 +286,42 @@ class Graph:
                 out.append(e)
         return out
 
+    def declared_edges(self, to_id) -> list:
+        """The declared edges standing into `to_id` — the producers its versions read along Dep (§2.7)."""
+        return [e for e in self._storage.get_dep_edges()
+                if not e.discovered and not e.removed and str(e.to_id) == str(to_id)]
+
     def _dep_records(self, ever: bool = False) -> tuple[list, list]:
-        """(declared, stored-only). DECLARED edges are DERIVED from criteria (§2): a criterion with
-        `depends_on=X` means this task depends on X's output, with the criterion's description as the
-        glue (anti-mock truth-maker) — Dep is criteria-content, not a standalone stored record.
-        DISCOVERED edges (surfaced at runtime via BLOCK) remain stored. `ever`: the declared edges of cancelled
+        """(declared, discovered-only). DECLARED edges are records of their own, written by the act that declares
+        them (§15.1); DISCOVERED ones by the BLOCK that surfaced them (§11.3). `ever`: the declared edges of cancelled
         consumers too — the plan that was, which q_Dep counts "whatever state it reaches later" (§15.4); filtered,
         a declared edge left the population when its consumer was cancelled and a discovered one never did
         (critic B1: 0.5 → 0.0)."""
-        found = self._storage.get_dep_edges()      # discovered (BLOCK) / legacy-stored
-        # A PAIR ALREADY DISCOVERED STAYS DISCOVERED (§15.5). "Declared" means declared at
-        # admission, and the declared side is derived from the criteria as they stand NOW — so
-        # writing the seam into the plan after a BLOCK exposed it moved the edge from the
-        # denominator's discovered half into its declared half, and q_Dep — the share of the
-        # discoveries that WERE made that the plan had declared in advance (§15.5; it is not a share
-        # of S, which nobody observes) — rose for the repair.
+        found = self._storage.get_dep_edges()
+        # A PAIR ALREADY DISCOVERED STAYS DISCOVERED (§15.5): "a discovered edge never joins" the declared side, so
+        # declaring the seam after a BLOCK exposed it leaves the pair discovered — else q_Dep, the share of the
+        # discoveries that WERE made that the plan had declared in advance (not a share of S, which nobody
+        # observes), rose for the repair.
         pair = lambda e: (str(e.from_id), str(e.to_id))
-        records = [e for e in found if not e.refuted]     # a refuted record asks nothing and is no edge (§15.5)
-        _discovered = {pair(e) for e in records if e.discovered}
+        records = [e for e in found if e.discovered and not e.refuted]   # a refuted record asks nothing (§15.5)
+        _discovered = {pair(e) for e in records}
         if ever:
             # …and q_Dep reads DISCOVERIES, not records: a record whose pair a version had declared before its first
             # BLOCK met a known dependency (declared), and a pair a BLOCK named first and the issuer refuted is in
             # neither half — a later declaration does not make it "declared before any BLOCK named it" (§15.5)
-            _discovered = {pair(e) for e in records if e.discovered and not e.declared_first}
-            _out = {pair(e) for e in found if e.refuted and not e.declared_first}
-        edges = [
-            DepEdge(from_id=c.depends_on, to_id=t.id, glue=c.description,
-                    discovered=(str(c.depends_on), str(t.id)) in _discovered)
-            for t in self._storage.get_all_tasks()
-            if ever or t.state not in (State.CANCELLING, State.ABANDONED)  # cancellation excluded (§12.6)
-            for c in t.spec.criteria
-            if c.depends_on
-        ]
-        _have = {(str(e.from_id), str(e.to_id)) for e in edges}
+            _discovered = {pair(e) for e in records if not e.declared_first}
+            _out = {pair(e) for e in found if e.discovered and e.refuted and not e.declared_first}
+        tasks = {str(t.id): t for t in self._storage.get_all_tasks()}
+        edges = [dataclasses.replace(e, discovered=pair(e) in _discovered) for e in found
+                 if not e.discovered and not e.removed and str(e.to_id) in tasks
+                 and (ever or tasks[str(e.to_id)].state not in (State.CANCELLING, State.ABANDONED))]  # §12.6
+        _have = {pair(e) for e in edges}
         if ever:
-            # …and the edges a LATER version took out: a dependency removed from its consumer's criteria
-            # (`remove_dependency`) was declared all the same, and §15.5 has no clause taking a declared edge out
-            # of the population — read off every version the log installed (Inv-7), not the criteria standing now
-            for frm, to, glue in logged_declarations(self._storage.load_audit()):
+            # …and the edges a LATER act took out: a declaration removed (`remove_dependency`, a re-admission) was
+            # declared all the same, and §15.5 has no clause taking a declared edge out of the population — its
+            # record, or, written by an older engine, every version the log installed (Inv-7)
+            for frm, to, glue in [(str(e.from_id), str(e.to_id), e.glue) for e in found if not e.discovered and e.removed] \
+                    + logged_declarations(self._storage.load_audit()):
                 if (frm, to) not in _have:
                     _have.add((frm, to))
                     edges.append(DepEdge(from_id=TaskId(frm), to_id=TaskId(to), glue=glue,
@@ -714,9 +718,20 @@ def non_leaf_ids(graph: Graph, children: list[Task]) -> set[str]:
     return {str(c.id) for c in children if graph.get_active_children(c.id)}
 
 
+def logged_criteria(raw) -> list[dict]:
+    """A logged version's criteria (its `spec` JSON) as the contract it installed: an entry an older engine wrote there
+    to declare a Dep edge — a `depends_on` pinning no check — is that edge (`logged_declarations`), no criterion
+    (`seams_apart`). Read as one, every node with a seam reads as having dropped a criterion since its authoring."""
+    try:
+        crits = json.loads(raw).get("criteria") or []
+    except (TypeError, ValueError, AttributeError):
+        return []
+    return [c for c in crits if isinstance(c, dict) and not (c.get("depends_on") and not c.get("check"))]
+
+
 def logged_declarations(log: list) -> list[tuple[str, str, str]]:
-    """(producer, consumer, glue) for every `depends_on` criterion of every packet version the log (`load_audit` rows)
-    installed."""
+    """(producer, consumer, glue) for every `depends_on` entry of every packet version the log (`load_audit` rows)
+    installed — the declarations an older engine kept among the criteria, and a criterion's reference since."""
     out = []
     for row in log:
         if row.get("rejected") or not row.get("spec"):

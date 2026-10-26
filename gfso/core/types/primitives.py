@@ -6,7 +6,7 @@ back — the log is the record of change, and a mutable primitive would make it 
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Mapping, NewType, Optional
 
@@ -82,8 +82,8 @@ class Criteria:
     expected: Optional[str] = None
     n: Optional[int] = None
     timeout: Optional[int] = None
-    depends_on: Optional[TaskId] = None  # §2: this criterion references a sibling's output (the glue)
-                                         # → induces a Dep edge (from=depends_on, to=this task)
+    depends_on: Optional[TaskId] = None  # §2.7: this criterion's pinned check reads that node's result,
+                                         # which implies the Dep edge (from=depends_on, to=this task)
     check: tuple[Probe, ...] = ()        # the pinned decision procedure (§2/A1): what will be run to
                                          # decide this criterion, authored with the criterion by the
                                          # ISSUER side and before execution — never invented at
@@ -195,14 +195,22 @@ class Spec:
         exactly the composition failure it states."""
         return tuple(n for n in self.accepted_risks if not n.denial)
 
-    @property
-    def conjuncts(self) -> tuple[Criteria, ...]:
-        """criteria(t) as V reads them (§2.3): every criterion but a Dep edge's bare declaration. A `dep__` entry that
-        pins no check only carries the edge — Dep is a relation, not a predicate on this node's result (§2.7); the
-        coupling holds by the producer's own PASS and the integration is the parent's criterion (§8.7). Left in V it was
-        a glue sentence a validator passed or failed by reading it (9 of 416 archived FAILs rested on one alone). A seam
-        that pins a consumer-side check (`add_dependency(check=…)`) is a predicate on this result, so a conjunct."""
-        return tuple(c for c in self.criteria if not c.depends_on or c.check)
+
+
+def seams_apart(spec: Optional["Spec"], to_id) -> tuple[Optional["Spec"], tuple["DepEdge", ...]]:
+    """(the spec without the entries that only declare a Dep edge, the declared edges every `depends_on` entry implies).
+    An entry that names a producer and pins no check is no predicate on this node's result — Dep is a relation, not a
+    criterion (§2.7, §7.5); left among the criteria it was a glue sentence a validator passed or failed by reading it
+    (9 of 416 archived FAILs rested on one alone). One that pins a check on the producer's result is a criterion, and
+    its edge is declared too. What an older engine, or a caller of the wire's `depends_on`, wrote is read so."""
+    if spec is None:
+        return None, ()
+    if bad := [c.name for c in spec.criteria if c.depends_on is not None and not isinstance(c.depends_on, str)]:
+        raise ValueError(f"criteria {bad}: `depends_on` names ONE producer — a Dep edge has one (§2.7)")
+    edges = tuple(DepEdge(TaskId(str(c.depends_on)), TaskId(str(to_id)), glue=c.description)
+                  for c in spec.criteria if c.depends_on)
+    bare = tuple(c for c in spec.criteria if c.depends_on and not c.check)
+    return (replace(spec, criteria=tuple(c for c in spec.criteria if c not in bare)) if bare else spec), edges
 
 
 @dataclass(frozen=True)
@@ -234,14 +242,16 @@ class CriterionMapping:
 
 @dataclass(frozen=True)
 class DepEdge:
-    """Dependency edge (a cross-subtask seam).
+    """Dependency edge (a cross-subtask seam) — a record of its own, Dep being a primitive beside T (§2.7, §7.5).
 
-    Direction: `from_id` = PRODUCER, `to_id` = CONSUMER (to_id depends on from_id's
-    output — the consumer carries the `depends_on=from_id` criterion, §2).
-    glue = the anti-mock truth-maker (canon §2 / §3): what of `from_id`'s output
-    `to_id`'s criterion references, and what breaks if the edge is mishandled. A seam
-    without glue is the FM-1 forgotten-glue hole — so glue is first-class on the edge,
+    Direction: `from_id` = PRODUCER, `to_id` = CONSUMER (to_id depends on from_id's output).
+    glue = the anti-mock truth-maker (canon §2 / §3): what of `from_id`'s output `to_id` reads, and what breaks if the
+    edge is mishandled. A seam without glue is the FM-1 forgotten-glue hole — so glue is first-class on the edge,
     not folded into a node-local criterion (which would be mock-satisfiable).
+    discovered=False: DECLARED, by the act that declares it — an admission (§15.1), `add_dependency`, or a version whose
+    criterion's check reads the producer's result (§2.7). removed=True once a later act took the declaration out
+    (`remove_dependency`, a re-admission re-declaring its consumer's edges): no edge of E_Dep, and still in q_Dep's
+    population — it was declared (§15.5).
     discovered=True if found via BLOCK, not declared upfront.
     provisional=True while the two-phase record (§11.3/§15.5) awaits adjudication: BLOCK
     registers provisional, RESOLVE_BLOCK confirms/re-attributes/retracts; an escalated-
@@ -264,6 +274,7 @@ class DepEdge:
     closed: bool = False
     declared_first: bool = False
     refuted: bool = False
+    removed: bool = False
 
 
 @dataclass

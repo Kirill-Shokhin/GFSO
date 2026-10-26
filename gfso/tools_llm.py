@@ -425,9 +425,9 @@ def _left_to_validate(engine: Engine, task) -> tuple[list, list]:
     (`reused_from_refused`), and the merged report is checked whole against THIS run's ledger."""
     kept = engine.reusable_from_refused(task.id)
     names = {str(e.get("criterion")) for e in kept}
-    crits = [c for c in task.spec.conjuncts if c.name not in names]
+    crits = [c for c in task.spec.criteria if c.name not in names]
     if not kept or not crits:
-        return list(task.spec.conjuncts), []
+        return list(task.spec.criteria), []
     return crits, kept
 
 
@@ -954,10 +954,10 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
     against its own entries (`_report_contradicts_itself`) — a FAIL that names nothing or names what no entry failed
     decided nothing, for every node it covers (Inv-3; critic V1: read per node, such a report closed a project DONE).
     Each node's failed list is then its own entries' red set — names alone collide, two consumers of one producer both
-    carrying `dep__<producer>` (critic V1)."""
+    carrying a criterion of one name (critic V1)."""
     owners: dict = {}
     for task, _, crits in parts:   # …over the WHOLE contract: a criterion kept from a refused attempt has its owner too
-        for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.conjuncts]):   # (critic r5)
+        for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.criteria]):   # (critic r5)
             owners.setdefault(name, []).append(str(task.id))
     out: dict = {str(t.id): [] for t, _, _ in parts}
     said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "",
@@ -1097,12 +1097,10 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
     node parked, and the only trace of what was checked was a text file); with how many refusals the node has had."""
     tools, _model = _instrument_of(llm, model)
     parts = engine.parts_procedure(task.id)
-    entries = with_part_observations(parts, canonical_citations(entries, task.spec.conjuncts, parts))   # the packet's `{id, held}` form, read
+    entries = with_part_observations(parts, canonical_citations(entries, task.spec.criteria, parts))   # the packet's `{id, held}` form, read
     # THE ENGINE'S CONJUNCTION, NOT THE REPORT'S WORD: V is the AND of the per-criterion values (§2.3) and the FAIL
-    # payload is their red set (Inv-3), so both are computed here from the entries over this node's conjuncts — an
-    # entry on a bare Dep edge read as nothing (`Spec.conjuncts`); a word or list the report adds decides nothing
-    edges = {c.name for c in task.spec.criteria} - {c.name for c in task.spec.conjuncts}
-    entries = [e for e in entries if str(e.get("criterion")) not in edges]
+    # payload is their red set (Inv-3), so both are computed here from the entries over this node's criteria; a word or
+    # list the report adds decides nothing
     failed = list(dict.fromkeys(str(e.get("criterion")) for e in entries if spoken_verdict(e.get("verdict")) != "pass"))
     verdict = Verdict.FAIL if failed else Verdict.PASS
     try:
@@ -1158,7 +1156,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         else:
             (task, deliverable, crits, *carry), = batch
             body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
-                                      criteria=None if len(crits) == len(task.spec.conjuncts) else crits,
+                                      criteria=None if len(crits) == len(task.spec.criteria) else crits,
                                       carry=carry[0] if carry else None)
                     + schema_instruction(_VALIDATOR_SCHEMA))
             cap = lambda: _validation_cap(task, engine.graph)

@@ -593,7 +593,8 @@ def _probes(stored, answered: tuple) -> tuple:
 def spec_with(task, criteria: list, additions_only: bool = False, repin: frozenset = frozenset()) -> Spec:
     """The node's contract with its criteria as the answer states them — merged BY NAME onto the stored
     ones, so what the answer does not speak to (Dep glue, composition, pinned inputs) is carried, not
-    silently dropped. A criterion the answer leaves out is dropped, except the engine-authored Dep glue.
+    silently dropped. A criterion the answer leaves out is dropped, except one whose check reads a producer's result
+    (`depends_on`), which carries its Dep edge.
     `additions_only`: every stored criterion's text stands exactly and none is dropped; the answer adds new names, and
     re-pins the check of a criterion named in `repin` — the ones a dispute questioned — never with fewer probes. The
     procedure is the issuer side's instrument, not the user's word: a probe its own criterion's text refutes was
@@ -849,8 +850,8 @@ def _reassign(engine, task, actor, answer, why, verbs):
     # equal deadline (critic r7, B2); re-issued before its producer, a consumer lapsed again. No ordered one ahead — the
     # parent already due — the issuer types the one it wants (§2.5), the crossing flagged (§12.10).
     parent = engine.graph.get_task(task.parent_id) if task.parent_id else None
-    deadline = Schedule(engine.graph, parent, {str(task.id): (None, producers_of(spec), None)}, want=want).defaults()[
-        str(task.id)] or want
+    reads = producers_of(spec, engine.graph.declared_edges(task.id))
+    deadline = Schedule(engine.graph, parent, {str(task.id): (None, reads, None)}, want=want).defaults()[str(task.id)] or want
     # TYPED (§15.6 dial 3 — the cause is the issuer's to give): a re-issue out of ESCALATED is routine, and a change
     # of executor to keep the seams is no capability mismatch; untyped, every machine re-issue counted against q_Del
     # (sync audit, C-F3). A criteria change here answers no spec defect the machine could name.
@@ -960,8 +961,8 @@ def _in_act(engine, task, ref, ids: dict, standing: set) -> str:
 
 
 def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -> tuple[dict | None, str]:
-    """One child `cid` for a re-admission of `task`'s split, as `decompose` takes it: its criteria with the Dep seams
-    of the siblings it `reads`, the node's criteria it `covers`. (None, why) refused. `reads` names a standing child,
+    """One child `cid` for a re-admission of `task`'s split, as `decompose` takes it: its criteria, its declared Dep
+    edges onto the siblings it `reads`, the node's criteria it `covers`. (None, why) refused. `reads` names a standing child,
     or what `ids` resolves — a child the same act creates, by its name, and one it drops, to what replaces it."""
     covers = [x for x in (c.get("covers") or []) if x in {k.name for k in task.spec.criteria}]
     if not (c.get("criteria") and covers):
@@ -978,12 +979,12 @@ def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -
     reads = [_in_act(engine, task, r, ids, standing) for r in c.get("reads") or []]
     if bad := [r for r in reads if r not in standing and r not in set(ids.values())]:
         return None, f"`reads` names {', '.join(bad)} — not an active child of {task.id}, nor one this act adds"
-    seams = [{"name": f"dep__{r.rsplit('.', 1)[-1]}", "description": f"reads {r}'s result", "depends_on": r}
-             for r in reads]
-    return {"task_id": cid, "covers": covers, "spec": {
+    return {"task_id": cid, "covers": covers,
+            "deps": list(c.get("deps") or ()) + [{"from": r, "glue": f"reads {r}'s result"} for r in reads],
+            "spec": {
         "name": c.get("name", ""), "description": c.get("description", ""),
         "criteria": [with_named_files(_with_corpora(x, _corpora(engine, task)), _files_of(engine, task))
-                     for x in c["criteria"]] + seams,
+                     for x in c["criteria"]],
         **({"accepted_risks": c["accepted_risks"]} if c.get("accepted_risks") else {})},
         **{k: c[k] for k in ("deadline", "max_iterations") if c.get(k)}}, ""
 
@@ -1122,22 +1123,36 @@ def _readmit(engine, task, answer) -> tuple[bool, str]:
 
 def _repointed(engine, task, replaced: dict, leaving: frozenset) -> list[dict]:
     """Each unsettled child standing in the split that consumes one `replaced` takes out, named again in the same act
-    with its seams onto the replacement — its issuer's revision of his own child. Left on the dropped producer it waited
-    on a cancelled node and starved, a repair nobody needed. Seams onto one producer collapse to one; its deadline and
-    rework bound ride as they stand (`deadlines_the_act_sets` keeps a re-issued child's that still fits)."""
+    with its seams onto the replacement — its declared edges and the criteria whose checks read it. Left on the dropped
+    producer it waited on a cancelled node and starved, a repair nobody needed. Seams onto one producer collapse to one;
+    its deadline and rework bound ride as they stand (`deadlines_the_act_sets` keeps a re-issued child's that still
+    fits)."""
     out = []
     for k in engine.graph.get_active_children(task.id):
         if (str(k.id) in leaving or k.state in (State.DONE, State.ABANDONED, State.CANCELLING)
-                or not any(str(c.depends_on) in replaced for c in k.spec.criteria if c.depends_on)):
+                or not set(producers_of(k.spec, engine.graph.declared_edges(k.id))) & set(replaced)):
             continue
         crits = _onto_once(str(k.id), _tools.task_out(k, engine, plan=False)["criteria"], replaced)
-        out.append({"task_id": str(k.id), "assignee": str(k.assignee), "spec": {"criteria": [c for _, c in crits]}})
+        out.append({"task_id": str(k.id), "assignee": str(k.assignee), "deps": _edges_onto(engine, [k], replaced),
+                    "spec": {"criteria": [c for _, c in crits]}})
     return out
 
 
+def _edges_onto(engine, kids: list, onto: dict, skip=frozenset()) -> list[dict]:
+    """The declared edges into `kids` as `decompose` takes a child's `deps`: each moved by `onto` (producer → its
+    stand-in), one onto `skip` dropped, one producer read once."""
+    out: dict = {}
+    for k in kids:
+        for e in engine.graph.declared_edges(k.id):
+            p = onto.get(str(e.from_id), str(e.from_id))
+            if p not in skip:
+                out.setdefault(p, {"from": p, "glue": e.glue})
+    return list(out.values())
+
+
 def _onto_once(owner: str, crits: list, onto: dict, skip=frozenset(), seen: set | None = None) -> list[tuple]:
-    """(owner, criterion) for `crits` as `task_out` gives them, each seam moved by `onto` (producer → its stand-in),
-    a seam onto `skip` dropped, and one producer read once (across calls sharing `seen`)."""
+    """(owner, criterion) for `crits` as `task_out` gives them, each one reading a producer moved by `onto` (producer →
+    its stand-in), one onto `skip` dropped, and one producer read once (across calls sharing `seen`)."""
     seen, out = set() if seen is None else seen, []
     for c in crits:
         dep = onto.get(str(c["depends_on"]), str(c["depends_on"])) if c["depends_on"] else None
@@ -1151,8 +1166,9 @@ def _onto_once(owner: str, crits: list, onto: dict, skip=frozenset(), seen: set 
 
 def _merged(engine, task, members: list[str]) -> dict:
     """The one child that carries a refuted cycle's `members` (§15.5: two units that each need the other are one): their
-    criteria BY REFERENCE, as `task_out` gives them — check with its inputs, composition, seams — their seams onto one
-    another dropped and onto any one producer kept once, a name two members share told apart by its member's; the
+    criteria BY REFERENCE, as `task_out` gives them — check with its inputs, composition, seams — and their declared
+    edges, their seams onto one another dropped and onto any one producer kept once, a name two members share told
+    apart by its member's; the
     node's criteria they were mapped to; `replaces` them, so their consumers are handed to it in the same act and their
     work is its start (`carried_work`). Its terms are the members' widest, the work being theirs together: the latest of
     their live deadlines, the largest rework bound, every risk their packets set aside. `onto` says where each member's
@@ -1175,7 +1191,8 @@ def _merged(engine, task, members: list[str]) -> dict:
     own = {m: [final[(x, c["name"])] for x, c in crits if x == m and not c["depends_on"]] for m in members}
     # a member all of whose criteria read other members: its work feeds the members that read it, and failing those,
     # the merged child as a whole — never a name the merged child lacks
-    fed = {m: own[m] or [n for x in members if any(str(c["depends_on"]) == m for c in whole[x]) for n in own[x]]
+    fed = {m: own[m] or [n for x, kx in zip(members, kids) if m in producers_of(kx.spec, engine.graph.declared_edges(x))
+                         for n in own[x]]
            or list(final.values()) for m in members}
     onto: dict = {}
     for m in members:
@@ -1191,7 +1208,7 @@ def _merged(engine, task, members: list[str]) -> dict:
             "criteria": [{**c, "name": renames.get(m, {}).get(c["name"], c["name"])} for m, c in crits],
             "covers": list(dict.fromkeys(m.criterion_name for m in task.criterion_mappings
                                          if str(m.child_id) in members)),
-            "replaces": list(members), "onto": onto}
+            "deps": _edges_onto(engine, kids, {}, set(members)), "replaces": list(members), "onto": onto}
 
 
 def merge_the_refuted_cycle(engine, task, actor: str) -> Optional[dict]:
@@ -1246,6 +1263,9 @@ def _promote(engine, task, actor, answer, why, verbs):
         return False, bad
     made = next(str(k.id) for k in engine.graph.get_active_children(parent.id) if str(k.id) not in before)
     engine.add_dependency(TaskId(made), task.id, glue=f"{task.id} was blocked on what {made} produces: {why}")
+    # …and its BLOCK answered by a re-ASSIGN under the contract it has (§11.3): the edge is no part of the contract
+    if engine.graph.get_state(task.id) == State.BLOCKED:      # …unless the edge's deadline already re-issued it
+        engine.revise(task.id, engine.graph.get_task(task.id).spec, AgentId(engine.graph.issuer_of(task.id)))
     return True, ""
 
 

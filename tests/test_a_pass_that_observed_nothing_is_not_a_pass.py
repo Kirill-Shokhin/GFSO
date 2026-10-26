@@ -1,8 +1,8 @@
 """A node closed DONE/PASS on a record that said nothing about any of its criteria.
 
 Reproduced 2026-09-07 through ordinary verbs, nothing patched and nothing private reached:
-`add_dependency(A, B)` makes the engine author a `dep__A` criterion on B; `edit_criteria(B, [])`
-then wipes B's own criteria and the authored one survives; a reviewer records
+`add_dependency(A, B)` made the engine author a `dep__A` criterion on B (an edge record now, no criterion);
+`edit_criteria(B, [])` then wiped B's own criteria and the authored one survived; a reviewer records
 `PASS, observed={}`; the issuer signs it; B is DONE/PASS with `per_criterion: []` — beside a record
 whose own `independence` line says its weight IS the observation text next to each criterion.
 
@@ -54,8 +54,8 @@ def test_a_node_left_holding_only_glue_cannot_be_passed():
     T.add_dependency(e, "A", "B")
     with pytest.raises(ValueError, match="NONEMPTY"):   # the door no longer wipes it (§2.2)…
         T.edit_criteria(e, "B", [])
-    emptied(e, "B", seams=True)                       # …so the contract is wiped as stored before; `dep__A` survives
-    assert [c.name for c in e.graph.get_task("B").spec.criteria] == ["dep__A"], \
+    emptied(e, "B")                      # …so the contract is wiped as stored before; the edge, no criterion, stands
+    assert e.graph.get_task("B").spec.criteria == () and e.graph.declared_edges("B"), \
         "the setup no longer produces the shape under test — re-derive it before trusting the rest"
     _delivered(e)
 
@@ -63,7 +63,7 @@ def test_a_node_left_holding_only_glue_cannot_be_passed():
     assert out.get("recorded") is False, \
         "a PASS was recorded over a contract that asks for nothing — the empty requirement met " \
         "itself, which is the rule's absence wearing its name"
-    assert "obligation of its own" in out.get("error", ""), \
+    assert "no criteria" in out.get("error", ""), \
         "the refusal must name the CONTRACT as the defect; a verdict cannot repair one"
     assert e.graph.get_task("B").state.name == "VALIDATING", "the node must not have closed"
     e.stop()

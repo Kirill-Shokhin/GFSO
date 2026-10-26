@@ -100,11 +100,11 @@ def test_create_task_refuses_an_id_that_already_exists():
 
 
 def test_editing_criteria_keeps_the_dependency_edges():
-    """Dep seams are stored AS criteria (`dep__{producer}` carrying `depends_on`), so replacing the
-    whole set used to delete the graph's edges without a word — and restoring a staled plan gate
-    forces the caller through this very verb, putting the trap on the recovery path. Editing what a
-    node must ACHIEVE is not a request to sever what it WAITS FOR; removal stays explicit
-    (`remove_dependency`, or passing the `dep__` criterion yourself)."""
+    """While Dep seams were stored AS criteria (`dep__{producer}` carrying `depends_on`), replacing the
+    whole set deleted the graph's edges without a word — and restoring a staled plan gate forces the
+    caller through this very verb, putting the trap on the recovery path. Editing what a node must
+    ACHIEVE is not a request to sever what it WAITS FOR; the edge is a record of its own now (§2.7),
+    and removal stays explicit (`remove_dependency`)."""
     e = _engine()
     _root(e, [criterion("c2", "the other thing")])
     _split(e, {"prod": "c2", "cons": "c1"}, "agent")
@@ -1906,10 +1906,10 @@ def test_a_rebuild_leaves_one_criterion_per_name():
 def test_the_directive_lists_every_criterion_the_record_will_demand():
     """A person validated exactly the criteria the directive printed and was refused for missing one.
 
-    V is the conjunction over ALL criteria (§2) — seams included, since a `dep__` criterion IS a
-    criterion of the consumer — and `record_verdict` enforces exactly that. The directive listed only
-    the node's own, dropping the seams, so following the instruction was an error (measured on the
-    human door 2026-08-22, two round-trips)."""
+    V is the conjunction over ALL criteria (§2) — one whose check reads the producer's result included —
+    and `record_verdict` enforces exactly that. The directive listed only the node's own, dropping the
+    seams, so following the instruction was an error (measured on the human door 2026-08-22, two
+    round-trips)."""
     e = _engine()
     _root(e)
     T.edit_criteria(e, "root", [criterion("c1", "one"),

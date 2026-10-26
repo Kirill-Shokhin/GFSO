@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Union
 
 from gfso.core.types import (
-    TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping,
+    TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping, DepEdge, seams_apart,
     SignalData, Signal, Predictability, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS, Verdict, State,
     RevisionReason, Register, register_of, settled_positive, passed,
 )
@@ -80,14 +80,14 @@ def _accepted_risks_from(items: list) -> tuple[AcceptedRiskItem, ...]:
 
 
 def _dep_of(c: dict) -> Optional[TaskId]:
-    """The producer this criterion consumes — ONE node, or none.
+    """The producer this criterion consumes — ONE node, or none. On the wire an entry with `depends_on` and no
+    `check` declares that Dep edge, its description the glue, and is no criterion (`seams_apart`); with a check it
+    is a criterion reading the producer's result, and implies the edge (§2.7).
 
-    A Dep is criteria-content (§2): the seam lives on the consumer as a criterion naming its
-    producer, so two producers are two criteria, not one criterion naming two. A list here used to
-    be stored verbatim and surfaced later as a Dep edge whose `from` was a list — which crashed the
-    cycle check (`unhashable type: 'list'`) and took down a run mid-flight, four hours in. An
-    agent's malformed input must be REFUSED at the door with a sentence it can act on, never
-    accepted into the graph to fail somewhere else.
+    One per entry: a list here used to be stored verbatim and surfaced later as a Dep edge whose `from` was a
+    list — which crashed the cycle check (`unhashable type: 'list'`) and took down a run mid-flight, four hours in.
+    An agent's malformed input must be REFUSED at the door with a sentence it can act on, never accepted into the
+    graph to fail somewhere else.
     """
     dep = c.get("depends_on")
     if dep is None or dep == "":
@@ -95,8 +95,8 @@ def _dep_of(c: dict) -> Optional[TaskId]:
     if isinstance(dep, (list, tuple, set)):
         raise ValueError(
             f"criterion '{c.get('name')}': depends_on names {len(dep)} producers "
-            f"({', '.join(map(str, list(dep)[:4]))}) — a Dep is carried by ONE criterion per seam "
-            f"(§2), so declare one `depends_on` criterion for each producer you consume")
+            f"({', '.join(map(str, list(dep)[:4]))}) — a Dep edge has ONE producer (§2.7), so "
+            f"declare one per producer you consume (`add_dependency`, or a child's `deps` in `decompose`)")
     if not isinstance(dep, str):
         raise ValueError(f"criterion '{c.get('name')}': depends_on must be a task id, got "
                          f"{type(dep).__name__}")
@@ -169,6 +169,9 @@ def task_out(t, engine: Engine, plan: bool = True) -> Optional[dict]:
                       # field the next `edit_criteria` silently drops.
                       "composition": c.composition}
                      for c in t.spec.criteria],
+        # …AND THE PRODUCERS IT WAITS FOR, in the form `decompose` takes them: the edges were read off its criteria
+        # while they rode there, and a read of the node lost them when they became records of their own (§2.7)
+        "deps": [{"from": str(e.from_id), "glue": e.glue} for e in engine.graph.declared_edges(t.id)],
         # THE REGISTER AS RECORDED, not its item texts. `edit_accepted_risks` learned to answer this
         # in full on 2026-08-21 and every OTHER read of a node kept returning bare strings — so a
         # caller who classified a risk STATISTICAL, justified it and named its invalidation
@@ -1268,8 +1271,9 @@ def list_holes(engine: Engine, root_id: Optional[str] = None) -> dict:
 
 
 def get_dependencies(engine: Engine) -> list[dict]:
-    """All Dep edges (declared = derived from criteria `depends_on`; discovered = BLOCK-surfaced;
-    provisional = discovered edge awaiting RESOLVE_BLOCK adjudication)."""
+    """All Dep edges (declared = written by the act that declared it — a split's admission, `add_dependency`, a
+    criterion whose check reads the producer; discovered = BLOCK-surfaced; provisional = discovered edge awaiting
+    RESOLVE_BLOCK adjudication)."""
     return [{"from": e.from_id, "to": e.to_id,
              # WHICH END IS WHICH, said rather than conventional. `from`/`to` do not carry a
              # direction on their own, and a competent reader took them for "waits on" — the exact
@@ -1423,7 +1427,7 @@ def admission_of(spec: dict) -> list[str]:
     (`admission_defects`), read; a form gating itself on a copy of its first rungs let a hollow `echo ok`
     through (2026-10-24). Pure: no engine, no project, no write."""
     try:
-        return admission_defects(_spec_from(spec or {}).criteria)
+        return admission_defects(seams_apart(_spec_from(spec or {}), "")[0].criteria)   # a seam is the edge it declares
     except (ValueError, TypeError, KeyError) as ex:
         return [str(ex)]
 
@@ -1565,8 +1569,10 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     A standing child named again keeps every `spec` field left out, and is re-issued only where its contract changes;
     its `spec.accepted_risks` is its packet's pre-fill — `prefilled_accepted_risks` on `get_task`, whose
     `accepted_risks` is the register of the child's own split.
-    Desugars to one ASSIGN per child. children: [{task_id, spec, assignee, covers, deadline?, max_iterations?}]; an
-    omitted assignee = `agent` (you execute it yourself; name someone only to really delegate).
+    Desugars to one ASSIGN per child. children: [{task_id, spec, assignee, covers, deadline?, max_iterations?,
+    deps?}]; an omitted assignee = `agent` (you execute it yourself; name someone only to really delegate).
+    `deps: [{from, glue}]` — the split's declared Dep edges into that child, whole (§15.1): the producers it waits
+    for and what of their result it reads; left out, a standing child keeps the edges it has.
 
     `accepted_risks` (and its STD-3 `risk_components`) is the SPLIT's register, yours as its decomposer (§9.2):
     it rides this admission, no revision of the node; each entry as `edit_accepted_risks` documents it.
@@ -1647,9 +1653,22 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # decomposition — not a property of whichever process happens to be serving.
     register = (Register(_accepted_risks_from(accepted_risks or []), tuple(risk_components or ()))
                 if accepted_risks is not None or risk_components is not None else None)
+    # …each edge names a producer that is a node, or one this act creates; one producer named twice is one edge, its
+    # glue the later statement's — as a re-statement across acts reads (`mutations.declare`)
+    _named = {str(c["task_id"]) for c in children}
+    if _bad := [f"{c['task_id']} ← {x.get('from')!r}" for c in children for x in (c.get("deps") or ())
+                if not isinstance(x, dict) or not x.get("from")
+                or (str(x["from"]) not in _named and engine.graph.get_task(TaskId(str(x["from"]))) is None)]:
+        return {"error": f"`deps` names no producer, or one that is no node of the graph nor of this act: "
+                         f"{', '.join(_bad)} — each edge is {{from: <producer id>, glue: <what is read>}}",
+                "refused": True}
+    deps = {str(c["task_id"]): tuple(DepEdge(TaskId(f), TaskId(str(c["task_id"])), glue=g) for f, g in
+                                     {str(x["from"]): str(x.get("glue") or "") for x in c["deps"] or ()}.items())
+            for c in children if "deps" in c}
     return [task_out(t, engine, plan=False) for t in engine.decompose_task(TaskId(parent_id), kids, maps, max_iterations,
                                                        register=register,
-                                                       drops=tuple(TaskId(str(d)) for d in (drops or ())))]
+                                                       drops=tuple(TaskId(str(d)) for d in (drops or ())),
+                                                       deps=deps or None)]
 
 
 #: The closed sets a verb's string parameters accept, as DATA — keyed by VERB and parameter, never by
@@ -1861,7 +1880,8 @@ def edit_scope(engine: Engine, task_id: str, scope: list, agent: str = "") -> Op
 def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str = "",
                   reason: Optional[str] = None, accept_coverage_loss: bool = False,
                   expect_criteria: Optional[list] = None) -> Optional[dict]:
-    """Replace a node's criteria, carry the rest. RMW over revise. (Dep criteria use `depends_on`.)
+    """Replace a node's criteria, carry the rest. RMW over revise. The node's Dep edges are no criteria and stand
+    (`remove_dependency` cuts one); a criterion whose check reads a producer's result names it in `depends_on`.
     `reason` (optional, §15.4): spec_defect = the criteria were WRONG (counts in q_T) |
     scope_expansion = sanctioned growth of the goal (§15.4; never counts) | other.
 
@@ -1910,11 +1930,8 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
     # nothing about them, with no history verb to recover from: the caller had to invent a contract
     # from the node's description (measured on the human door 2026-08-22). The old set is in the
     # log (Inv-7) and now in the reply, which is where a mistaken call is read.
-    # …AND WHAT SURVIVED IS READ OFF THE RESULT, not off the request. A `dep__*` criterion the new
-    # set does not name is CARRIED OVER by the engine (the edge it holds may not be cut by omission)
-    # — and this list was computed from what the caller sent, so the reply announced a removal that
-    # had not happened, in the same object whose own `criteria` still showed it (CLI door,
-    # 2026-09-02: "I spent a beat believing I had silently severed a dependency edge").
+    # …AND WHAT SURVIVED IS READ OFF THE RESULT, not off the request: computed from what the caller sent, the
+    # reply announced a removal that had not happened (CLI door, 2026-09-02).
     _kept = {c.get("name") for c in (out.get("criteria") or ())} if isinstance(out, dict)         else {c["name"] for c in criteria}
     # …AND WHAT THE EDIT LEFT UNCOVERED, in the same breath. Replacing the set dangles every mapping
     # it does not re-name: a caller who added five criteria to a root found — one paid review round
@@ -1944,7 +1961,7 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
                 f"`map_criterion` can re-make them onto the children still in the split, a passed one included.")
         _covered = {m.criterion_name for m in (_after.criterion_mappings or ())}
         if _uncovered := [c.name for c in _after.spec.criteria
-                          if c.name not in _covered and not c.depends_on]:
+                          if c.name not in _covered]:
             if engine.graph.get_active_children(TaskId(task_id)):
                 out["still_uncovered"] = _uncovered
                 out["still_uncovered_note"] = (
@@ -2093,40 +2110,58 @@ def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "",
     """Declare `to_id depends on from_id`'s output — **`from_id` is the PRODUCER, `to_id` the
     CONSUMER**, and the arrow runs producer → consumer: `to_id` is the one that waits.
 
-    Dep is criteria-content (§2): desugars to a re-author of the CONSUMER adding the glue
-    criterion; the edge is derived. Cycle → rejected. `glue` is the anti-mock truth-maker — what
-    the consumer must do with the real output, not "depends on it". `check` optionally PINS the
-    seam's own probe from the consumer's side ([{behaviour, command, expect}]) — the integration
-    implication itself is the PARENT's claim (§6.5), which is why a seam criterion is not required
-    to carry one.
+    The edge is a record of its own, no criterion of the consumer (§2.7): declared by a re-admission of
+    the consumer's parent split, logged with the act; the consumer's contract does not change and it is
+    not re-offered — unless the deadline the engine supplied it must now come after the producer's, which
+    the answer says. Cycle → rejected. `glue` is the anti-mock truth-maker — what the consumer must do
+    with the real output, not "depends on it". `check` optionally adds the consumer's own probe of the
+    producer's result ([{behaviour, command, expect}]) — a criterion of the consumer, by a revision;
+    the integration implication itself is the PARENT's claim (§6.5), which is why the edge needs none.
 
     The direction is worth one sentence because getting it backwards is silent: a person wrote the
     glue "render imports and calls the scan() function delivered by scan", passed them the other way
     round, and made SCAN wait on RENDER — the reply said `ok`, the Level-2 review passed the graph,
     and only `next_steps` (`waits_on`) showed it. So the answer says which way it went."""
+    was = _version(engine, to_id)
     engine.add_dependency(TaskId(from_id), TaskId(to_id), glue=glue,
                           check=_checks_of({"check": check}) if check else ())
     return {"ok": True, "from": from_id, "to": to_id,
             "declared": f"'{to_id}' now WAITS for '{from_id}' to pass — '{from_id}' produces, "
-                        f"'{to_id}' consumes. If that is backwards, `remove_dependency` and swap."}
+                        f"'{to_id}' consumes. If that is backwards, `remove_dependency` and swap.",
+            **_the_dep_act(engine, to_id, was)}
 
 
 def remove_dependency(engine: Engine, from_id: str, to_id: str) -> dict:
-    """Drop a dependency (re-authors the consumer to remove the glue criterion).
-
-    Removing an edge REWRITES the consumer's contract (the glue criterion goes with it), which is a
-    revision — so it stales the plan's Level-2 verdict and the children stop being admitted to
-    execution until the check runs again (§9.1). Both are canon and both were silent: the answer
-    was `{"ok": true}` and the graph then simply did not move (measured on the human door
-    2026-08-22)."""
+    """Drop a dependency: a re-admission of the consumer's parent split without the edge, logged with the act — the
+    consumer's contract untouched, unless a criterion of it reads the producer's result through its check, which goes
+    with the edge (a revision). Either way the plan changed, so its Level-2 verdict is staled and the children stop
+    being admitted to execution until the check runs again (§9.1) — said in the answer: `{"ok": true}` alone left a
+    person watching a graph that did not move (measured on the human door 2026-08-22)."""
+    was = _version(engine, to_id)
     engine.remove_dependency(TaskId(from_id), TaskId(to_id))
-    out = {"ok": True, "removed": f"{from_id} -> {to_id}"}
+    return {"ok": True, "removed": f"{from_id} -> {to_id}", **_the_dep_act(engine, to_id, was)}
+
+
+def _version(engine: Engine, to_id: str) -> Optional[tuple]:
+    t = engine.graph.get_task(TaskId(to_id))
+    return None if t is None else (t.revisions, t.deadline, [c.name for c in t.spec.criteria])
+
+
+def _the_dep_act(engine: Engine, to_id: str, was: Optional[tuple]) -> dict:
+    """What a declaration's act did beside the edge: the consumer re-issued — a new version, for a criterion that reads
+    the producer, or for the deadline the engine supplied it, which had to move along Dep (§2.7) — and the plan's
+    Level-2 verdict staled."""
+    out, now = {}, _version(engine, to_id)
+    if was is not None and now is not None and now[0] != was[0]:
+        wall = lambda at: on_the_wall(engine.graph, at).isoformat(timespec="minutes") if at else "none"
+        why = (f"its criteria are now {now[2]}" if now[2] != was[2] else
+               f"the deadline the engine supplied it had to move along Dep: {wall(was[1])} → {wall(now[1])}")
+        out["consumer_reissued"] = f"'{to_id}' was re-issued — {why}; its executor consents to the new version afresh"
     _parent = engine.graph.get_parent(TaskId(to_id))
     if _parent is not None and not _parent.verified:
         out["plan_verdict_staled"] = (
-            f"this re-authored '{to_id}', which is a revision — the Level-2 verdict on "
-            f"'{_parent.id}'s plan no longer covers it, so its children are not admitted to "
-            f"execution until `review_decomposition('{_parent.id}')` runs again (§9.1).")
+            f"the split of '{_parent.id}' changed with this edge — its Level-2 verdict no longer covers it, so its "
+            f"children are not admitted to execution until `review_decomposition('{_parent.id}')` runs again (§9.1).")
     return out
 
 
@@ -2665,24 +2700,7 @@ def record_verdict(engine: Engine, task_id: str, verdict: str,
                          f"(`edit_criteria`) and validate those.",
                 "criteria": []}
     if verdict == Verdict.PASS and _t is not None:
-        # A GLUE CRITERION IS NOT SOMETHING THE EXECUTOR OBSERVES — its truth is the producer's
-        # passing — so it is excluded from what a PASS must speak to. But a node whose criteria are
-        # ALL glue has nothing of its own left to observe, and the floor then passes over an empty
-        # requirement: the rule that is vacuously true at zero X, which is the rule's absence
-        # wearing its name. Reproduced 2026-09-07: `edit_criteria(B, [])` wiped the contract, the
-        # engine kept the `dep__A` criterion it had authored itself, and a PASS observing nothing
-        # met a floor that asked for nothing. That is a defect of the CONTRACT, not of the verdict,
-        # so it is named as one rather than papered over by demanding evidence for the glue.
-        _need = [c.name for c in _t.spec.criteria if not c.depends_on]
-        if not _need:
-            return {"recorded": False,
-                    "error": f"{task_id} carries no obligation of its own: every criterion it has "
-                             f"is a dependency link the engine authored ("
-                             + ", ".join(c.name for c in _t.spec.criteria) +
-                             f"), so there is nothing a PASS could report having observed. A "
-                             f"verdict cannot repair a contract — give the node criteria of its "
-                             f"own (`edit_criteria`), or remove it if the work belongs elsewhere.",
-                    "criteria": [c.name for c in _t.spec.criteria]}
+        _need = [c.name for c in _t.spec.criteria]
         _said = {k for k, v in (observed or {}).items() if str(v).strip()}
         # …AND AN OBSERVATION THAT RESTATES THE VERDICT IS NOT ONE. Treated as unsaid, so the refusal
         # below names it in the same breath as one that was left out entirely — which is what it is.

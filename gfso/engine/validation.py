@@ -23,10 +23,11 @@ from gfso.core.handlers.structural import run_structural
 from gfso.core.protocol.procedure import criteria_without_procedure, part_criteria
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
-from gfso.core.graph.mutations import version_deadline
+from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
 from gfso.core.graph.model import (PAUSE_KEY, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
-                                   recorded_by_an_appointed_observer)
+                                   recorded_by_an_appointed_observer, logged_criteria)
+from gfso.engine.audit import VERSION_INSTALLING
 
 
 class ValidationError(Exception):
@@ -259,7 +260,7 @@ def parts_procedure(graph: Graph, task) -> dict:
 def settled_procedure(graph: Graph, task) -> tuple:
     """Every criterion whose pinned probes a validation of `task` runs over its delivery: its own, then its DONE
     parts' (`parts_procedure`) — what a whole above it demands again of it."""
-    return tuple(task.spec.conjuncts) + tuple(c for cs in parts_procedure(graph, task).values() for c in cs)
+    return tuple(task.spec.criteria) + tuple(c for cs in parts_procedure(graph, task).values() for c in cs)
 
 
 def record_stands(graph: Graph, audit, task, rec: Optional[dict]) -> bool:
@@ -429,6 +430,16 @@ def _split_the_fail_refutes(graph: Graph, task, covered_then, audit, fail_at: in
     return split, {k for _, k in covered_then or () if k not in active and -1 < audit.last_at(TaskId(k)) < fail_at}
 
 
+def _failed_criteria(rec: dict, audit, task_id, fail_at: int, was: dict, now: dict) -> list:
+    """The names a FAIL record lists that are criteria now or were of the version in force at the FAIL (off the log) —
+    a name that version did not hold was dropped by nobody: an older engine's FAIL could name a Dep edge's declaration,
+    kept among the criteria then (`logged_criteria`)."""
+    read = next((e.spec for e in reversed(audit.get_entries()[:fail_at + 1]) if e.task_id == task_id
+                 and e.signal in VERSION_INSTALLING and not e.rejected and e.spec), None)
+    then = {c.get("name") for c in logged_criteria(read)} if read else set(was) or set(now)
+    return [n for n in rec.get("failed_criteria") or () if n in now or n in then]
+
+
 def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[str]:
     """The disposition of a re-delivery under a contact-refuted decomposition — the FM-1 branch.
 
@@ -457,7 +468,7 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
       · REPAIRED — a coverer was touched (reopened, revised, or newly added), or the criterion's coverage was
         re-admitted (§2.4: a remap is the split's, and moves no child): admitted, as before.
     """
-    now = {c.name: c for c in task.spec.conjuncts}
+    now = {c.name: c for c in task.spec.criteria}
     was = rec.get("criteria_text") or {}
     fail_at = audit.last_at(task.id, signal=Signal.FAIL)
     covered_then, _ = coverage_at(coverage_history(graph._storage, audit, task.id), fail_at)
@@ -466,9 +477,7 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
     read_here = rec.get("parts_not_shown_holding") or {}
     dropped, loosened, edited, unrepaired = [], [], [], []
     split, left = _split_the_fail_refutes(graph, task, covered_then, audit, fail_at)
-    # a bare edge a record names refuted no conjunct (`Spec.conjuncts`)
-    for crit in (n for n in rec.get("failed_criteria") or ()
-                 if n in now or n not in {c.name for c in task.spec.criteria}):
+    for crit in _failed_criteria(rec, audit, task.id, fail_at, was, now):
         coverers = [m.child_id for m in split.criterion_mappings if m.criterion_name == crit]
         if crit not in now:
             dropped.append(crit)
@@ -1283,14 +1292,15 @@ def issuing_condition(parent, task_id) -> Optional[str]:
     return None
 
 
-def dep_cycle_closed(graph: Graph, task_id, criteria) -> Optional[str]:
-    """Why a contract for `task_id` with these criteria would close a Dep cycle, or None. Of the guards a revision
-    re-runs only CHECK-2's Dep clause refuses (§12.10): the node's declared edges are its criteria's `depends_on`, the rest
-    of E_Dep stands. One owner — the signal gate (every ASSIGN and ACCEPT_CHALLENGE) and `add_dependency` read it; a
-    revision closing a cycle used to be admitted wherever it did not come through `add_dependency` (sync audit, A-F4)."""
+def dep_cycle_closed(graph: Graph, task_id, producers) -> Optional[str]:
+    """Why `task_id` reading these `producers` along Dep would close a cycle, or None. Of the guards a revision
+    re-runs only CHECK-2's Dep clause refuses (§12.10): E_Dep stands, and the edges a version's criteria reference, or a
+    declaration names, are added. One owner — the signal gate (every ASSIGN and ACCEPT_CHALLENGE) and `add_dependency`
+    read it; a revision closing a cycle used to be admitted wherever it did not come through `add_dependency` (sync
+    audit, A-F4)."""
     tid = str(task_id)
-    rest = [(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True) if e.discovered or str(e.to_id) != tid]
-    new = [(str(c.depends_on), tid) for c in criteria if c.depends_on is not None]
+    rest = [(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True)]
+    new = [(str(p), tid) for p in producers]
     if not new:
         return None
     # THIS contract closes a cycle iff one of its producers is reached from the node itself — asked of the node, not of
@@ -1360,7 +1370,7 @@ def packet_refusal(signal_data: SignalData, graph: Graph, state) -> Optional[str
             return why
     # the dispute's answer installs `new_spec` exactly as ASSIGN installs `spec` (§12.16)
     packet = signal_data.spec or signal_data.new_spec
-    return dep_cycle_closed(graph, signal_data.task_id, packet.criteria) if packet else None
+    return dep_cycle_closed(graph, signal_data.task_id, producers_of(packet)) if packet else None
 
 
 def signer_refusal(graph: Graph, task_id, signal: Signal, source) -> Optional[str]:
@@ -1440,7 +1450,7 @@ def _rules(signal_data: SignalData, graph: Graph, audit=None) -> None:
     # advisory for the person (audited 2026-09-05, F5).
     _t = graph.get_task(signal_data.task_id)
     if signal_data.signal == Signal.FAIL and _t is not None:
-        _names = [c.name for c in _t.spec.conjuncts]
+        _names = [c.name for c in _t.spec.criteria]
         if _foreign := fail_names_this_contract(signal_data.failed_criteria, _names):
             raise ValidationError(
                 f"FAIL on {signal_data.task_id} names {_foreign} — not criteria of this node, whose "
