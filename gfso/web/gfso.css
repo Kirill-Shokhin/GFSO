@@ -369,6 +369,10 @@ body {
 .dk-live i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--ink-soft); }
 .dk-live.on i { background: var(--acc); border-color: var(--acc); animation: tl-pulse 1.6s ease-in-out infinite; }
 .dk-live span { font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft); }
+/* a chip shortens its name to a readable floor, never its state; below that floor it goes into the count (deck.js drawStrip) */
+.dk-live { flex: 0 1 auto; min-width: 10.5em; overflow: hidden; }
+.dk-live em { font-style: normal; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.dk-live i, .dk-live span { flex-shrink: 0; }
 .dk-wait { color: var(--ink-soft); border-left: 1px solid var(--hair); padding-left: 10px; }
 .dk-sum { margin-left: auto; flex-shrink: 0; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .dk-fold { background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; }
@@ -1039,7 +1043,8 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .cs-chart h4 span { text-transform: none; letter-spacing: 0; }
 .dk-chips { display: flex; gap: 6px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
 .dk-more { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); align-self: center; }
-.dk-block, .dk-wait { flex-shrink: 0; }
+/* what is at work keeps its chips; the wait lines give way first, shortened, their whole text on hover */
+.dk-block, .dk-wait { flex: 0 3 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; }
 
 /* ============ The goal constructor — the reader's slide-over, from the left ============ */
 .goal-panel { left: 0; right: auto; z-index: 30; border-left: none; box-shadow: 16px 0 32px -20px color-mix(in srgb, var(--ink) 30%, transparent); }

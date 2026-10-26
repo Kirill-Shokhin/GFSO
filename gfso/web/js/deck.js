@@ -48,24 +48,24 @@ function strip() {
         const w = mine.find(w => w.task_id === t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : carrier(t, mine);
         const what = w ? DOING[w.verb] || w.verb.replace(/_/g, ' ')
             : t.state === 'VALIDATING' ? 'validating' : t.state === 'REWORKING' ? 'reworking' : 'executing';
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : by ? `carried by the session on ${top.name || top.id} (${by.verb})` : 'in a working state; no process of this server runs it'))}"><i style="animation-delay:-${Date.now() % 1600}ms"></i>${esc(name(t))}`
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : by ? `carried by the session on ${top.name || top.id} (${by.verb})` : 'in a working state; no process of this server runs it'))}"><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>${esc(name(t))}</em>`
             + `<span>${what}${w ? ' · ' + dur((now - w.since) * 1e3) : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
     for (const w of mine.filter(w => !w.task_id || !drawn.has(w.task_id)))
-        live.push(`<span class="dk-live on" title="${hint('The goal', `${w.verb} — a session running on this server`)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i>the goal`
+        live.push(`<span class="dk-live on" title="${hint('The goal', `${w.verb} — a session running on this server`)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>the goal</em>`
             + `<span>${DOING[w.verb] || w.verb.replace(/_/g, ' ')} · ${dur((now - w.since) * 1e3)}</span></span>`);
-    // at most three chips, the rest counted: what waits and what it cost must stay on the line however much runs
-    const more = live.length > 3 ? `<span class="dk-more" title="${hint(`${live.length - 3} more at work`, busy.slice(3).map(name))}">+${live.length - 3}</span>` : '';
+    // as many chips as the line holds, the rest counted (`drawStrip`): what waits and what it cost stay on the line
+    const more = '<span class="dk-more"></span>';
     // A STOPPED RUN RUNS NOTHING: its nodes still hold their working states, and the strip read "2 at work" over a run
     // with no process left (a live run, 2026-10-25) — said as held, not as work
     // …under AUTO only, where the system holds every node: a stop pauses the system, never a person's own work (critic)
     const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
         ? `<span class="dk-now dk-idle" title="Stopped&#10;nothing runs here until the run is started again&#10;these nodes keep the state their work was in">stopped · ${live.length} held mid-work</span>`
-          + `<span class="dk-chips">${busy.slice(0, 3).map(t => `<button class="dk-live" data-node="${esc(t.id)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i>${esc(name(t))}<span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
-        : live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.slice(0, 3).join('')}${more}</span>`
+          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}" title="${hint(t.name || t.id)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>${esc(name(t))}</em><span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
+        : live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
         : '<span class="dk-now dk-idle">nothing at work</span>';
     // …and what waits on what is said whether the run runs or is held
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
@@ -88,10 +88,22 @@ function strip() {
                  + `${mine.length ? ` + ${mine.length} running` : ''} · ${dur(run.clock.span)} run</span>` : '');
 }
 
+// The strip drawn, then its chips fitted: those the line holds are shown, the rest counted with their names on hover —
+// three at a fixed cap were cut mid-word, their state with them, on 1280 px beside the panel.
+function drawStrip() {
+    const box = $('deck').querySelector('.dk-strip');
+    box.innerHTML = strip();
+    const chips = box.querySelector('.dk-chips'), more = chips?.querySelector('.dk-more');
+    if (!chips) return;
+    const all = [...chips.querySelectorAll('.dk-live')], gone = [];
+    while (all.length > 1 && chips.scrollWidth > chips.clientWidth + 1) gone.unshift(all.pop()), gone[0].remove(), more.textContent = `+${gone.length}`;
+    if (gone.length) more.title = [`${gone.length} more at work`, ...gone.map(c => c.title.split('\n')[0])].join('\n');
+}
+
 function paint() {
     const d = $('deck');
     d.classList.toggle('closed', !!pref.closed);
-    d.querySelector('.dk-strip').innerHTML = strip();
+    drawStrip();
     d.querySelectorAll('.dk-tab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
     const el = d.querySelector('.dk-view'), drawn = pref.closed || !run ? null : view;
     release(el);
@@ -142,9 +154,9 @@ export function onPipeline(d) {
     const node = said(d.msg).node;
     if (isTick(d.msg)) ticks.set(`${d.source}|${node}`, {node, source: d.source, msg: d.msg, t: Date.now()});
     else later();
-    $('deck').querySelector('.dk-strip').innerHTML = strip();
+    drawStrip();
 }
-export const onInflight = () => { $('deck').querySelector('.dk-strip').innerHTML = strip(); };
+export const onInflight = drawStrip;
 
 export function mountDeck() {
     const d = $('deck');
