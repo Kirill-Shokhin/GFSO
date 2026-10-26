@@ -124,8 +124,10 @@ async function techReports() {
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
     $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${reports.length} tech report${reports.length > 1 ? 's' : ''}</button>`
-        + `<div class="hd-pop"><div class="hq-means">What the system reported about ITSELF — a check contradicting its contract, a tool that `
-        + `cannot run. A report stops and moves nothing; newest first.</div>${[...reports].reverse().map(r => `<div class="hq-row">`
+        // headed as every popover is (the graph's key, quality): a bare line above the reports read as one of them (the author)
+        + `<div class="hd-pop"><div class="hq-row"><div class="hq-head"><b>Tech reports</b></div><div class="hq-means">What the system `
+        + `reported about ITSELF — a check contradicting its contract, a tool that cannot run. A report stops and moves nothing; `
+        + `newest first.</div></div>${[...reports].reverse().map(r => `<div class="hq-row">`
         + `<div class="hq-head"><i><span data-at="${esc(r.at)}">${esc(ago(r.at))}</span> ago · ${esc(r.role || '')}</i>${r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : ''}</div>`
         + `<div class="hq-means">${esc(r.text)}</div></div>`).join('')}</div>`;
 }
