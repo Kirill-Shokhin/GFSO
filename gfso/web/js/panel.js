@@ -19,7 +19,7 @@ const ISSUER_MOVES = "the executor stopped and the decision is the issuer's: rai
 
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
-    const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting)[d.id], id => taskOf(id).name || id);
+    const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], id => taskOf(id).name || id);
     return words === '—' ? '' : `<span title="${hint('Waiting on', d.state === 'ESCALATED' ? ISSUER_MOVES : words)}">waiting on <b>${esc(words)}</b></span> · `;
 }
 

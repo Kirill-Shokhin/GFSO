@@ -1041,7 +1041,7 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .tl .tl-legend text { font-size: 9.5px; fill: var(--ink-soft); }
 .dk-block span { color: var(--ink-faint); }
 .cs-chart h4 span { text-transform: none; letter-spacing: 0; }
-.dk-chips { display: flex; gap: 6px; min-width: 13.5em; overflow: hidden; flex: 0 1 auto; }   /* one chip and its +N, always */
+.dk-chips { display: flex; gap: 6px; min-width: min(13.5em, 30%); overflow: hidden; flex: 0 1 auto; }   /* one chip and its +N, within a third of the line: below 1280 px the waits pushed off */
 .dk-more { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); align-self: center; }
 /* what is at work keeps its chips; the wait lines give way first, shortened, their whole text on hover */
 .dk-block, .dk-wait { flex: 0 3 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; }

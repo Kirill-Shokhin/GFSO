@@ -184,6 +184,8 @@ export const refreshHeader = singleFlight(async () => {
         // `dependency` kind, whose `waits_on` are node ids — the others' are sentences
         S.waiting = (f.steps || []).length || f.waiting ? new Map((f.waiting || []).filter(w => w.kind === 'dependency')
             .map(w => [w.task_id, [...(w.waits_on || [])]])) : null;
+        // …and each node's step as the engine names it: whose move it is (run.js `owes`)
+        S.steps = new Map((f.steps || []).filter(x => x.task_id).map(x => [x.task_id, x]));
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }
     // the panel keeps its moves on these only (panel.js): what the ENGINE says is this person's move — a state chip is

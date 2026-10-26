@@ -9,7 +9,10 @@ import {terminal, delivered, working} from './vocab.js';
 // or being cancelled — one rule for the strip's «sent back» and the graph's red rounds badge.
 export const failingNow = (rounds, state) => rounds?.at(-1)?.verdict === 'FAIL' && !terminal(state) && state !== 'ESCALATED' && state !== 'CANCELLING';
 
-// Who owes the next move in each state (canon §12.13).
+// Who owes the next move: the party the engine names for the node's step (next_steps: the step is `signed_by` the node's
+// executor or by its issuer; `performed_by` is the door, `system` for every role under AUTO) — a node whose executor stopped twice without a report is its issuer's to revise in any state, and the
+// state's owner (§12.13, below) read it as the executor's at work. The state's owner only where the engine named no step.
+const owes = (n, step) => step?.signed_by ? (step.signed_by === step.assignee ? 'executor' : 'issuer') : OWES[n.state] || null;
 const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
               CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
 
@@ -59,18 +62,17 @@ function sessions(calls, audit) {
 // spawned", "independent validator …" — so a start with no end of its kind strictly after it (a
 // respawn lands in the same second the last call ended), on a node still in that kind of work, is
 // open until now. A parent EXECUTING while its parts work is not a session, and draws none.
-const STARTS = [['exec', /^executor (\S+) spawned/, ['EXECUTING', 'REWORKING']], ['val', /^independent validator/, ['VALIDATING']]];
-function openSessions(pipeline, closed, nodes, now) {
-    const state = Object.fromEntries(nodes.map(n => [n.id, n.state])), out = {};
-    for (const p of pipeline) {
-        const {node, text} = said(p.message);
-        for (const [kind, re, states] of STARTS) {
-            const hit = node && re.exec(text);
-            if (hit && states.includes(state[node])) out[`${kind}|${node}`] = {node, kind, start: at(p.ts), agent: hit[1] || null};
-        }
-    }
-    return Object.values(out).filter(o => !closed.some(s => s.node === o.node && s.kind === o.kind && s.end > o.start))
-        .map(o => ({...o, end: now, open: true, cost: 0, tokens: 0, out: 0}));
+// What runs now is the server's own record of its processes (`in_flight`: every session the engine spawns enters it and
+// leaves it), never a start line read off the log — a call cut before it answered booked nothing and left its "spawned"
+// line standing, and a node parked for its issuer drew an open execution for 40 min (a void row, 2026-10-26). The log
+// gives only who was spawned, for the bar's label.
+const PROC_KIND = {delegated_execution: 'exec', delegated_consent: 'consent', validate_result: 'val', validate_scope: 'val',
+                   issuer_turn: 'issuer', auto_decompose: 'plan', review_decomposition: 'plan'};
+function openSessions(procs, pipeline, now) {
+    const who = {};
+    for (const p of pipeline) { const {node, text} = said(p.message), hit = node && /^executor (\S+) spawned/.exec(text); if (hit) who[node] = hit[1]; }
+    return procs.filter(w => w.task_id && PROC_KIND[w.verb]).map(w => ({node: w.task_id, kind: PROC_KIND[w.verb], start: w.since * 1e3,
+        agent: PROC_KIND[w.verb] === 'exec' ? who[w.task_id] || null : null, end: now, open: true, cost: 0, tokens: 0, out: 0}));
 }
 
 // A round is one delivery and the verdict it got; the counter on the task resets on a re-ASSIGN, so
@@ -97,14 +99,14 @@ export const roundsOf = (audit, id) => rounds(audit.map(a => ({...a, t: at(a.tim
 // `engine`: next_steps' own `waiting` (node → producers) where the page has it — the engine reads adopted edges only
 // (a BLOCK's discovered edge stays provisional until resolved) and never lists a node on the frontier; the graph's
 // edges carry no such mark, so the page's own reading is the fallback before the engine is asked.
-export function waitsOf(nodes, edges, engine = null) {
+export function waitsOf(nodes, edges, engine = null, steps = null) {
     const by = Object.fromEntries(nodes.map(n => [n.id, n]));
     return Object.fromEntries(nodes.map(n => {
         if (terminal(n.state)) return [n.id, {owes: null, deps: [], parts: []}];
         const deps = n.state === 'ESCALATED' ? [] : engine ? engine.get(n.id) || []
             : edges.filter(e => e.type !== 'parent-child' && e.target === n.id && !delivered(by[e.source])).map(e => e.source);
         const parts = ['EXECUTING', 'REWORKING'].includes(n.state) ? nodes.filter(k => k.parent_id === n.id && !terminal(k.state)).map(k => k.id) : [];
-        return [n.id, {owes: deps.length || parts.length ? null : OWES[n.state] || null, deps, parts}];
+        return [n.id, {owes: deps.length || parts.length ? null : owes(n, steps?.get(n.id)), deps, parts}];
     }));
 }
 // What is AT WORK now, one rule for the strip and the graph: a node with a session open, or a leaf in a
@@ -118,8 +120,10 @@ export function atWork(run, tasks, procs = []) {
     const on = new Set(procs.map(w => w.task_id)), elsewhere = !run?.auto, up = Object.fromEntries(tasks.map(t => [t.id, t.parent_id]));
     // …but a leaf one scope session carries is at work: a process or an open session on an ancestor is its session
     const carried = id => { for (let x = up[id]; x; x = up[x]) if (on.has(x) || open.has(x)) return true; return false; };
+    // …and a node whose move the engine names as its issuer's is no one's work, whatever its state
+    const theirs = id => run?.waits[id]?.owes !== 'issuer';
     return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id)
-        || (working(t.state) && !parent.has(t.id) && (elsewhere || carried(t.id)))).map(t => t.id));
+        || (working(t.state) && !parent.has(t.id) && theirs(t.id) && (elsewhere || carried(t.id)))).map(t => t.id));
 }
 // The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
 export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
@@ -248,13 +252,14 @@ function criteria(audit, tasks, verdicts) {
     return {track, status, names};
 }
 
-export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, auto = false, now = Date.now()}) {
+export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, steps = null, procs = [],
+                          auto = false, now = Date.now()}) {
     audit = audit.map(a => ({...a, t: at(a.timestamp)})).sort((a, b) => a.t - b.t);
-    const ss = sessions(calls, audit), open = openSessions(pipeline, ss, nodes, now);
+    const ss = sessions(calls, audit), open = openSessions(procs, pipeline, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
     return {
         name: id => names[id] || id, auto,
-        sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting),
+        sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting, steps),
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
         criteria: criteria(audit, tasks, verdicts), work: work(calls),

@@ -122,7 +122,7 @@ export const refreshDeck = singleFlight(async () => {
     paint();
 });
 let read = null;                                 // what the deck last read: the display clock rebuilds from it, reading nothing
-const rebuild = () => { run = S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read, pipeline, verdicts, waiting: S.waiting,
+const rebuild = () => { run = S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read, pipeline, verdicts, waiting: S.waiting, steps: S.steps, procs: procs(),
                                               auto: S.graph.mode?.mode === 'auto'}); };
 // A DISPLAY CLOCK, not a poll: while something runs, the ages it shows ("validating · 2m") and the open bars grow
 // with time and with nothing pushed — a session busy with tools streams no tokens. Minutes are the coarsest unit
