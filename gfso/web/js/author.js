@@ -132,7 +132,7 @@ export function addChildForm() {
     const f = el('div', {className: 'child-form'});
     f.innerHTML = `
         <input placeholder="Subtask description" class="dc-desc">
-        <input placeholder="Assignee" class="dc-assignee" style="width:120px">
+        <input placeholder="Assignee" class="dc-assignee manual-only" style="width:120px">
         <input type="datetime-local" class="dc-deadline" style="width:180px" title="Deadline&#10;when this part is due — before its parent is">
         <button class="btn btn-sm btn-purple" data-action="child-suggest" style="margin-left:4px">AI</button>
         <div class="dc-criteria-rows" style="margin-top:4px"></div>
@@ -167,8 +167,10 @@ export async function submitDecompose() {
     const children = childForms().map(f => ({
         spec: {description: f.querySelector('.dc-desc').value.trim(), criteria: readCrits(f),
                accepted_risks: readList(f.querySelector('.dc-accepted_risks-rows'))},
-        assignee: f.querySelector('.dc-assignee').value.trim(), deadline: iso(f.querySelector('.dc-deadline').value),
-    })).filter(c => c.spec.description && c.assignee);
+        // under a mode the mode assigns every child and an `assignee=` is refused (tools.py del_by_mode): none is sent
+        ...S.graph.mode?.mode ? {} : {assignee: f.querySelector('.dc-assignee').value.trim()},
+        deadline: iso(f.querySelector('.dc-deadline').value),
+    })).filter(c => c.spec.description && (S.graph.mode?.mode || c.assignee));
     if (!children.length) return;
     // The API maps criteria to EXISTING child ids, and these are about to be created: ids are minted here.
     children.forEach((c, i) => { c.task_id = `c${Date.now().toString(36)}-${i}`; });

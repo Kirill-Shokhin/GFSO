@@ -47,9 +47,9 @@ export const CANCEL = A('CANCEL', 'muted', 'Cancel', 'reason');
 export const V_SYMBOL = {pass: '✓', fail: '✗', undef: '⊥'};
 // A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO_PASS — canon §12).
 // A model id as a person says it — claude-haiku-4-5-20251001 → haiku 4.5; a bare alias, recorded before the model
-// that ran was kept, says the version is unknown; any other id as written.
+// that ran was kept, says the version is unknown; any other id — another provider's — as written.
 export const modelName = m => { const x = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(m || '');
-    return x ? `${x[1]} ${x[2]}${x[3] ? '.' + x[3] : ''}` : /^[a-z]+$/.test(m || '') ? `${m} · version not recorded` : m || 'model not recorded'; };
+    return x ? `${x[1]} ${x[2]}${x[3] ? '.' + x[3] : ''}` : /^(haiku|sonnet|opus|fable)$/.test(m || '') ? `${m} · version not recorded` : m || 'model not recorded'; };
 export const statusLabel = (s, doneReason) => (s === 'DONE' && doneReason) ? doneReason : label(s);
 
 // A CLOSED NODE IS NOT ONE KIND OF THING (§15.7): what the drawing says about a closure, in words.

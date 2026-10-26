@@ -9,27 +9,30 @@ import {at, said, roundsLine, failedWords} from './run.js';
 const KINDS = {
     verdict: ['PASS', 'FAIL'], delivery: ['DELIVER'], assignment: ['ASSIGN', 'ACCEPT', 'REOPEN'],
     clock: ['TIMEOUT'], dispute: ['CHALLENGE', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE', 'BLOCK', 'RESOLVE_BLOCK'],
-    close: ['CANCEL', 'CONFIRM_CANCEL'], refused: [], narration: [],
+    close: ['CANCEL', 'CONFIRM_CANCEL'], refused: [], run: [], narration: [],
 };
+// the run's own course, on no node: a stop and its reason, a start, the mode set — kept, not dropped with the narration
+const RUN = '';
 // a move the engine refused changed nothing: its own kind, so the column of state moves holds only moves
 const signalKind = a => a.rejected ? 'refused' : Object.keys(KINDS).find(k => KINDS[k].includes(a.signal)) || 'assignment';
 const day = t => new Date(t).toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
 
 // One stream of rows per node: signals from the audit, narration from the pipeline ("<node>: …").
 function streams(run, nodes, pipeline) {
-    const ids = new Set(nodes.map(n => n.id)), out = Object.fromEntries(nodes.map(n => [n.id, []]));
+    const ids = new Set(nodes.map(n => n.id)), out = Object.fromEntries([...nodes.map(n => [n.id, []]), [RUN, []]]);
     for (const a of run.audit) if (out[a.task_id]) out[a.task_id].push({t: a.t, kind: signalKind(a), a});
     for (const p of pipeline) {
         const {node, text} = said(p.message);
         if (ids.has(node)) out[node].push({t: at(p.ts), kind: 'narration', p: {source: p.source, text}});
+        else out[RUN].push({t: at(p.ts), kind: 'run', p: {source: p.source, text: p.message}});
     }
     Object.values(out).forEach(rs => rs.sort((x, y) => y.t - x.t));
     return out;
 }
 
 function row(r) {
-    if (r.p) return `<li class="ev ev-narration"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text">${esc(r.p.text)}</span></li>`;
-    const a = r.a, prose = [a.rejected && a.error && ['why refused', a.error], a.reason && ['reason', a.reason], a.justification && ['justification', a.justification], a.result && ['report', a.result]].filter(Boolean);
+    if (r.p) return `<li class="ev ev-narration${r.kind === 'run' ? ' ev-run' : ''}"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text">${esc(r.p.text)}</span></li>`;
+    const a = r.a, prose = [a.rejected && a.error && ['why refused', a.error], a.reason && ['reason', a.reason], a.justification && ['justification', a.justification], a.action && ['resolution', a.action], a.result && ['report', a.result]].filter(Boolean);
     const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
@@ -40,6 +43,8 @@ function row(r) {
 }
 
 function head(id, name, node, run, rs) {
+    if (id === RUN) return `<summary><span class="ev-node">the run</span><span class="ev-rounds">on no node — stops, starts, the mode, tech reports</span>
+        <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
     const rounds = run.rounds[id] || [], fails = rounds.filter(r => r.verdict === 'FAIL'), lastFail = fails.at(-1);
     const last = rounds.at(-1);
     return `<summary><span class="ev-node">${esc(name)}</span>
@@ -51,7 +56,7 @@ function head(id, name, node, run, rs) {
 
 export function render(el, run, nodes, tasks, pipeline = []) {
     const name = run.name, by = streams(run, nodes, pipeline);
-    const order = nodes.map(n => n.id).sort((a, b) => (by[b][0]?.t || 0) - (by[a][0]?.t || 0));
+    const order = [...nodes.map(n => n.id), RUN].sort((a, b) => (by[b][0]?.t || 0) - (by[a][0]?.t || 0));
     const on = new Set(Object.keys(KINDS).filter(k => k !== 'narration'));
     el.innerHTML = `<div class="ev-bar">${Object.keys(KINDS).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}</button>`).join('')}
         <input class="ev-find" type="search" placeholder="find in events…"><span class="ev-only"></span></div><div class="ev-groups"></div>`;
@@ -61,7 +66,7 @@ export function render(el, run, nodes, tasks, pipeline = []) {
         box.innerHTML = order.filter(id => !sel || id === sel).map(id => {
             const rs = by[id].filter(r => on.has(r.kind) && (!q || JSON.stringify(r.a || r.p).toLowerCase().includes(q)));
             if (!rs.length && (q || sel !== id)) return '';
-            return `<details class="ev-group" data-node="${esc(id)}"${sel === id ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, by[id])}
+            return `<details class="ev-group"${id === RUN ? '' : ` data-node="${esc(id)}"`}${sel === id ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, by[id])}
                 <ol><li class="ev ev-cols"><span>time</span><span>signal</span><span>state</span><span>by</span></li>${rs.map(row).join('')}</ol></details>`;
         }).join('') || '<p class="ev-none">nothing matches</p>';
         el.querySelector('.ev-only').innerHTML = sel ? `only <b>${esc(name(sel))}</b> <button data-clear>show all</button>` : '';

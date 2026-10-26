@@ -156,8 +156,8 @@ export function concurrency(list) {
 function rollup(list, key) {
     const out = {};
     for (const s of list) {
-        const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, cost: 0, tokens: null, busy: 0};
-        o.calls++; o.cost += s.cost; o.tokens = add(o.tokens, s.tokens); o.busy += s.end - s.start;
+        const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, cost: 0, unpriced: 0, tokens: null, busy: 0};
+        o.calls++; o.cost += s.cost; o.unpriced += s.priced ? 0 : 1; o.tokens = add(o.tokens, s.tokens); o.busy += s.end - s.start;
     }
     return out;
 }

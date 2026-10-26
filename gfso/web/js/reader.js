@@ -23,10 +23,16 @@ export const pinned = (c, key) => (c.check || []).length
 // THE EXECUTION VERDICT, criterion by criterion. ONE `<li>`, TWO FLEX CHILDREN: the icon, and one body
 // block — siblings in a flex row tore the result apart (author, 2026-09-12). A command run for several
 // behaviours is shown once, the behaviours as its tooltip; evidence is shown whole.
+// ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision. A refused
+// report stands beside a verdict too (a later report refused), and is shown there as well (critic: hidden beside a PASS).
+const refusedOf = rr => !rr ? '' : `<div class="check-fail">a validator reported and the report was REFUSED as ⊥ — ${esc(rr.note || 'the issuer decides')}</div>`
+    + (rr.why_it_is_not_a_verdict ? `<div class="verdict-evidence">${esc(rr.why_it_is_not_a_verdict)}</div>` : '');
 function verdict({vr}) {
     if (vr?.verdict) return section('Verdict on the work',
         `<div class="${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${vr.verdict} — ${signer(vr)}`
         + `${vr.current === false ? ' <span class="check-fail">(validated an EARLIER delivery)</span>' : ''}</div>`
+        + (vr.independence ? `<div class="verdict-evidence" title="Who signed it (§10.3)">${esc(vr.independence)}</div>` : '')
+        + refusedOf(vr.refused_report)
         + ((vr.failed_criteria || []).length ? `<div class="check-fail">failed: ${esc(vr.failed_criteria.join(', '))}</div>` : '')
         + ((vr.undecidable || []).length ? `<div class="check-skip">undecidable (never observed): ${esc(vr.undecidable.join(', '))}</div>` : '')
         + ul('item-list', (vr.per_criterion || []).map(c => {
@@ -38,15 +44,13 @@ function verdict({vr}) {
             const [cls, icon] = c.verdict === 'pass' ? ['check-pass', '✓'] : c.verdict === 'fail' ? ['check-fail', '✗'] : ['check-skip', '⊥'];
             return `<li class="${cls}"><span class="check-icon">${icon}</span><div class="verdict-body"><strong>${esc(c.criterion)}</strong>`
                 + (c.evidence ? `<div class="verdict-evidence">${esc(c.evidence)}</div>` : '')
+                + (c.reused_from_refused ? `<div class="check-skip">reused from a refused report (${esc(c.reused_from_refused.validator || '')}${c.reused_from_refused.ts ? ', ' + esc(String(c.reused_from_refused.ts).slice(0, 16).replace('T', ' ')) : ''})</div>` : '')
+                + ((c.divergences || []).length ? `<div class="check-fail">divergences: ${esc(c.divergences.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('; '))}</div>` : '')
                 + (byCmd.size ? `<div class="verdict-probes">${[...byCmd].map(([cmd, bhs]) =>
                     `<code title="${hint('What it checks', bhs)}">${esc(cmd)}</code>`).join('')}</div>` : '')
                 + `</div></li>`;
         })));
-    // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
-    const rr = vr?.refused_report;
-    return !rr ? '' : section('Verdict on the work',
-        `<div class="check-fail">a validator reported and the report was REFUSED as ⊥ — ${esc(rr.note || 'the issuer decides')}</div>`
-        + (rr.why_it_is_not_a_verdict ? `<div class="verdict-evidence">${esc(rr.why_it_is_not_a_verdict)}</div>` : ''));
+    return vr?.refused_report ? section('Verdict on the work', refusedOf(vr.refused_report)) : '';
 }
 
 // Checks grouped by failure mode (§8). A SKIPPED check says nothing, and is not drawn; TRUE OVER NOTHING
@@ -106,7 +110,7 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
     const line = `${a.timestamp.slice(5, 19).replace('T', ' ')} ${a.signal} ${a.old_state || ''}→${a.new_state || 'rej'}${a.source ? ' · ' + esc(a.source) : ''}`;
-    const more = ['reason', 'justification', 'result', 'error', 'failed_criteria', 'in_flight'].filter(k => a[k] && a[k].length !== 0)
+    const more = ['reason', 'justification', 'action', 'result', 'error', 'failed_criteria', 'in_flight'].filter(k => a[k] && a[k].length !== 0)
         .map(k => `<div class="rd-field"><b>${k}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;

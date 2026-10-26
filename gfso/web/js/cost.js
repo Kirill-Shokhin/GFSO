@@ -12,6 +12,9 @@ const usd = x => `$${x < 10 ? x.toFixed(2) : x.toFixed(1)}`, tok = x => x == nul
 const commonPrefix = ids => { if (ids.length < 2) return 0;
     let n = 0; while (ids.every(s => s[n] === ids[0][n]) && n < ids[0].length) n++;
     return ids[0].lastIndexOf('-', n - 1) + 1; };
+// money for sessions some of which reported no price: never a $0.00 for "not reported" (another provider's case)
+const money = ps => { const calls = ps.reduce((s, p) => s + p.calls, 0), un = ps.reduce((s, p) => s + (p.unpriced || 0), 0);
+    return calls && un === calls ? 'not reported' : usd(ps.reduce((s, p) => s + p.cost, 0)) + (un ? ` + ${un} not priced` : ''); };
 const tile = (v, label, note = '') => `<div class="cs-tile"><b>${v}</b><span>${label}</span>${note ? `<i>${note}</i>` : ''}</div>`;
 
 // One bar chart: rows of [key, label, parts{exec,val,…}], the bar split by role so the cost of
@@ -47,11 +50,11 @@ export function render(el, run, nodes) {
             ${tile(dur(c.busy), 'session time', `${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}× the run`)}
             ${tile(run.exec.peak, 'executors at once', `validators ${run.val.peak}`)}
         </div>
-        <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k]} ${usd(c.byKind[k].cost)} · ${c.byKind[k].calls} sessions · ${dur(c.byKind[k].busy)}</span>`).join('')}</div>
+        <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k]} ${money([c.byKind[k]])} · ${c.byKind[k].calls} sessions · ${dur(c.byKind[k].busy)}</span>`).join('')}</div>
         <div class="cs-grid">
-            ${bars('cost by node', nodeRows, p => p.cost, usd, r => `data-node="${esc(r.id)}"`)}
+            ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`)}
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`)}
-            ${bars('cost by level', levelRows, p => p.cost, usd, () => '')}
+            ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '')}
             ${bars(`sessions by assignee${cut ? ` <span title="${hint(ids[0].slice(0, cut) + '…', 'the start every assignee id shares, cut from the bars')}">(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
                    (n, r) => `${n} · ${r.peak} at once`, () => '')}
         </div></div>`;
@@ -60,8 +63,8 @@ export function render(el, run, nodes) {
         if (!row) return untip();
         const parts = node[row.dataset.node], all = Object.values(parts);
         tip(`<div class="tt-name">${esc(name(row.dataset.node))}</div>
-            ${Object.entries(parts).map(([k, p]) => `<div class="tt-row">${KIND[k]}: ${usd(p.cost)} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tok</div>`).join('')}
-            <div class="tt-row">${rounds(row.dataset.node)} delivery round${rounds(row.dataset.node) === 1 ? '' : 's'} · ${usd(all.reduce((s, p) => s + p.cost, 0))} in all</div>`, e);
+            ${Object.entries(parts).map(([k, p]) => `<div class="tt-row">${KIND[k]}: ${money([p])} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tok</div>`).join('')}
+            <div class="tt-row">${rounds(row.dataset.node)} delivery round${rounds(row.dataset.node) === 1 ? '' : 's'} · ${money(all)} in all</div>`, e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));
 }

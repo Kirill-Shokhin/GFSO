@@ -4,7 +4,7 @@
 import {$, esc, data, hint} from './dom.js';
 import {getJSON, post, refusal, singleFlight, GOAL} from './api.js';
 import {S, taskOf, myRole} from './state.js';
-import {label, closureNote, contested, modeDoc, terminal, delivered} from './vocab.js';
+import {label, closureNote, contested, modeDoc, terminal, delivered, modelName} from './vocab.js';
 import {GAP, at} from './run.js';
 import {dur, trim} from './draw.js';
 import {notice, askInPage} from './overlays.js';
@@ -40,6 +40,13 @@ async function goal() {
             || (S.inflight.some(w => w.project === S.project && w.verb === 'auto_decompose') ? 'the goal is being planned' : 'no goal yet'))}</span>`;
     const doc = mode ? await modeDoc() : {};
     const who = Object.entries(doc).map(([m, text]) => `${m === mode ? '▸ ' : ''}${m}: ${text}`);
+    // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
+    const m = S.graph.mode, st = m?.settings || {};
+    if (m?.by) who.push(`set by ${m.by}${m.at ? ' · ' + String(m.at).slice(0, 16).replace('T', ' ') : ''}${m.boundary ? ` · boundary ${m.boundary}` : ''}`
+        + `${m.perform ? ` · perform ${m.perform}` : ''}${m.hands ? ` · hands ${m.hands}` : ''}`);
+    if (st.system_model) who.push(`the system's roles run on ${modelName(st.system_model)}`);
+    const rest = Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => `${k} ${v}`);
+    if (rest.length) who.push(rest.join(' · '));
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = root.name || root.id, short = full.split(/\s[(:—]/)[0].slice(0, 40);
     const done = delivered(root);
@@ -152,7 +159,7 @@ export const refreshHeader = singleFlight(async () => {
     // WHAT THE ENGINE SAYS IS OWED, asked AS WHOEVER THIS PAGE IS: `mine` is computed for `actor`, the YOU
     // ARE box that signs; `stuck` comes with its `directive`. NAME WHO — "you" is nobody on a shared graph.
     let heard = false;                // "nothing needs you" is said only when the engine was asked
-    const mySteps = new Set();
+    const mySteps = new Map();       // node → the actions next_steps names as this person's
     if (S.tasks.length) try {
         const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {});
         if (!r.ok) throw r.status;
@@ -160,9 +167,12 @@ export const refreshHeader = singleFlight(async () => {
         // …and a node a state chip already shows is not counted twice.
         // (dropped only where that chip IS shown: under AUTO a person's own move below the root has none — critic)
         const shown = t => CALLS.includes(t.state) && onAPerson(t);
-        const mine = (f.steps || []).filter(x => x.mine && !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
-        // the nodes where the move is this page's person's: their panel keeps its moves under a mode too (panel.js)
-        (f.steps || []).filter(x => x.mine).forEach(x => mySteps.add(x.task_id));
+        // under AUTO the page acts as the server's agent, which is the system's own issuer: its steps are the system's,
+        // never a person's — offered here they came back as "for agent" on the root (critic)
+        const own = S.graph.mode?.mode === 'auto' ? [] : (f.steps || []).filter(x => x.mine);
+        const mine = own.filter(x => !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
+        // the nodes where the move is this page's person's, with the move: their panel keeps that move under a mode (panel.js)
+        own.forEach(x => mySteps.set(x.task_id, (mySteps.get(x.task_id) || new Set()).add(x.action)));
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 f.directive || 'no actionable node and the root is not DONE') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),

@@ -45,7 +45,8 @@ function head({d, rounds}) {
 function verdict({vr}) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
         + `<span class="pn-who" title="${hint('Validator', vr.validator)}">${signer(vr)}${vr.ts ? ' · ' + when(vr.ts) : ''}</span>`
-        + `${vr.current === false ? '<span class="check-fail" title="An earlier delivery&#10;this verdict is about a delivery the current one replaced">earlier</span>' : ''}${link('verdict', 'evidence')}</div>`;
+        + `${vr.current === false ? '<span class="check-fail" title="An earlier delivery&#10;this verdict is about a delivery the current one replaced">earlier</span>' : ''}`
+        + `${vr.refused_report ? `<span class="check-fail" title="${hint('A report was refused', vr.refused_report.note || '')}">a report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
     // what failed is not repeated here: it is the ✗ rows of the criteria list just below
     // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
     return vr?.refused_report ? `<div class="pn-verdict check-fail"><span class="pn-who">a validator reported and the report was REFUSED as ⊥ — `
@@ -88,18 +89,27 @@ const sig = (id, a) => btn(a.cls, a.label, 'signal', {id, sig: a.s, prompt: a.pr
 // Every control the FSM admits on this state (vocab.js) — the plan-repair Edit wherever a re-ASSIGN is
 // legal, not on OFFERED alone (a tester was trapped on an EXECUTING root, wave 27). The forms these open
 // go in #inline-form, never a native dialog.
+// The controls each step the engine names carries out (Action, enums.py): under a mode the panel offers only these, on
+// a node next_steps says is this person's — the whole FSM set there opened reassign and child-Assignee forms (critic).
+const FOR = {accept: ['ACCEPT', 'CHALLENGE'], execute: ['DELIVER', 'BLOCK', 'CHALLENGE'], deliver: ['DELIVER', 'BLOCK', 'CHALLENGE'],
+             rework: ['DELIVER', 'BLOCK', 'CHALLENGE'], validate: ['PASS', 'FAIL', 'verdict'],
+             resolve: ['RESOLVE_BLOCK', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE'], revise: ['edit', 'CANCEL', 'decompose', 'ai-decompose'],
+             review: ['ai-review'], confirm_cancel: ['CONFIRM_CANCEL']};
 function actions({d}) {
     const s = d.state, id = {id: d.id}, kids = hasKids(d.id);
-    const btns = [...signals(s).map(a => sig(d.id, a)),
-        can(s, 'V') ? btn('btn-muted', 'Record verdict', 'verdict', id) : '',
-        can(s, 'C') ? sig(d.id, CANCEL) : '',
+    const all = [...signals(s).map(a => [a.s, sig(d.id, a)]),
+        can(s, 'V') && ['verdict', btn('btn-muted', 'Record verdict', 'verdict', id)],
+        can(s, 'C') && ['CANCEL', sig(d.id, CANCEL)],
         // ONE AI verb, dispatched by the node's state: undecomposed → author; decomposed → one refine round.
         // AI review is the standalone L2 door — hand-authored graphs never pass decompose's semantic pass.
-        ...can(s, 'D') ? [btn('btn-purple', 'Decompose', 'decompose', id), btn('btn-purple', kids ? 'AI refine' : 'AI decompose', 'ai-decompose', id),
-                          kids ? btn('btn-purple', 'AI review', 'ai-review', id) : ''] : [],
-        can(s, 'E') ? btn('btn-muted', 'Edit', 'edit', id) : ''].join('');
-    // under a mode the agents and the system move the nodes; a person's own moves stay where one is theirs (header.js)
-    return btns ? `<div class="pn-foot${S.mySteps?.has(d.id) ? '' : ' manual-only'}"><div class="actions">${btns}</div><div id="inline-form"></div></div>` : '';
+        ...can(s, 'D') ? [['decompose', btn('btn-purple', 'Decompose', 'decompose', id)],
+                          ['ai-decompose', btn('btn-purple', kids ? 'AI refine' : 'AI decompose', 'ai-decompose', id)],
+                          kids && ['ai-review', btn('btn-purple', 'AI review', 'ai-review', id)]] : [],
+        can(s, 'E') && ['edit', btn('btn-muted', 'Edit', 'edit', id)]].filter(Boolean);
+    // under a mode the agents and the system move the nodes; a person keeps only the moves of a step that is theirs
+    const mine = S.graph.mode?.mode && new Set([...(S.mySteps?.get(d.id) || [])].flatMap(a => FOR[a] || []));
+    const btns = all.filter(([k]) => !mine || mine.has(k)).map(([, b]) => b).join('');
+    return btns ? `<div class="pn-foot"><div class="actions">${btns}</div><div id="inline-form"></div></div>` : '';
 }
 
 const PARTS = [head, verdict, criteria, facets, actions];
