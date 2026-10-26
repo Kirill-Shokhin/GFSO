@@ -29,13 +29,14 @@ export async function refreshProjects() {
 function where(p, busy) {
     const r = p.goal;
     if (!r) return ['empty', 'no goal yet'];
-    if (delivered(r)) return ['done', 'delivered'];
+    if (delivered(r)) return ['done', 'done'];
     if (r.done_reason === 'FAIL') return ['bad', 'failed'];
     if (r.state === 'DONE' || r.state === 'ABANDONED') return ['bad', 'abandoned · not delivered'];
     // a stop is the person's act on the run, not a failure: said as theirs, with why — and while sessions it let
     // finish still run, as stopping (the engine's three states, `run_state`)
     const stop = p.stopped;
-    if (stop) return ['open', `${busy ? `stopping · ${busy} still at work` : 'stopped'}${stop.why ? ` · ${stop.why}` : ` · by ${stop.by}`}`];
+    // …its why on hover: written by whoever stopped it, it ran to a paragraph where every other status is a phrase
+    if (stop) return ['open', `${busy ? `stopping · ${busy} still at work` : 'stopped'} · by ${stop.by}`, stop.why];
     if (busy) return ['live', `running · ${busy}`];
     const since = p.t ? ` · last act ${when(p.t)}` : '';
     if (r.state === 'ESCALATED') return ['bad', `awaits a decision${since}`];
@@ -59,18 +60,19 @@ const date = t => new Date(t * 1e3).toLocaleDateString(LOCALE, {day: 'numeric', 
 const recent = p => p.t && Date.now() / 1e3 - p.t < DAY / 1e3;
 const when = t => day(t) === day(Date.now() / 1e3) ? clock(t) : `${date(t)} ${clock(t)}`;
 
-// A row is timed by what its group is about: the last day's band by the last act, the launch beside it (an
-// old run woken today reads as woken); a launch group by the launch, a finished run's last act beside it when
-// that came on another day (how long it ran). An unfinished one says its last act in its status.
+// A row is timed by what its group is about, one rule a group: the last day's band by the last act, the launch beside
+// it (an old run woken today reads as woken); a launch group by the launch, a finished or stopped run's last act beside
+// it (how long it ran) — said only on another day before, which read as some rows having it and others not (the
+// author). An unfinished one says its last act in its status. The model comes before the time: the line is cut at its end.
 function row(p, busy, active) {
-    const [cls, text] = where(p, busy), r = p.goal, cur = p.n === S.project;
+    const [cls, text, why] = where(p, busy), r = p.goal, cur = p.n === S.project;
     const acted = active ? r?.started && `launched ${when(r.started)}`
-        : ['DONE', 'ABANDONED'].includes(r?.state) && r.started && p.t && day(r.started) !== day(p.t) && `last act ${when(p.t)}`;
+        : (['DONE', 'ABANDONED'].includes(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t)}`;
     const t = active ? p.t : r?.started;
     return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}" title="${hint(r?.name || p.n, r?.name && p.n)}">`
         + `<span class="pl-time">${t ? clock(t) : ''}</span>`
-        + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, acted, (p.models || []).map(modelName).join(' + ')].filter(Boolean).map(esc).join(' · ')}</i></span>`
-        + `<span class="pl-where ${cls}">${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
+        + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(esc).join(' · ')}</i></span>`
+        + `<span class="pl-where ${cls}"${why ? ` title="${esc(why)}"` : ''}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
         + `<span class="pl-mode">${esc(p.mode || '')}</span>`
         + `<span class="pl-cost">${p.cost ? '$' + p.cost.toFixed(2) : ''}</span></a>`;
 }
