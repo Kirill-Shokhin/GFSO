@@ -58,7 +58,8 @@ function dayName(ms) {
 const clock = t => new Date(t * 1e3).toLocaleTimeString(LOCALE, {hour: '2-digit', minute: '2-digit'});
 const date = t => new Date(t * 1e3).toLocaleDateString(LOCALE, {day: 'numeric', month: 'short'});
 const recent = p => p.t && Date.now() / 1e3 - p.t < DAY / 1e3;
-const when = t => day(t) === day(Date.now() / 1e3) ? clock(t) : `${date(t)} ${clock(t)}`;
+// a time said against a day the reader already has (today, the launch's): the clock alone on that day
+const when = (t, ref = Date.now() / 1e3) => day(t) === day(ref) ? clock(t) : `${date(t)} ${clock(t)}`;
 
 // A row is timed by what its group is about, one rule a group: the last day's band by the last act, the launch beside
 // it (an old run woken today reads as woken); a launch group by the launch, a finished or stopped run's last act beside
@@ -67,11 +68,11 @@ const when = t => day(t) === day(Date.now() / 1e3) ? clock(t) : `${date(t)} ${cl
 function row(p, busy, active) {
     const [cls, text, why] = where(p, busy), r = p.goal, cur = p.n === S.project;
     const acted = active ? r?.started && `launched ${when(r.started)}`
-        : (['DONE', 'ABANDONED'].includes(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t)}`;
+        : (['DONE', 'ABANDONED'].includes(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t, r.started)}`;
     const t = active ? p.t : r?.started;
     return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}" title="${hint(r?.name || p.n, r?.name && p.n)}">`
         + `<span class="pl-time">${t ? clock(t) : ''}</span>`
-        + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(esc).join(' · ')}</i></span>`
+        + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(x => `<span>${esc(x)}</span>`).join(' · ')}</i></span>`
         + `<span class="pl-where ${cls}"${why ? ` title="${esc(why)}"` : ''}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
         + `<span class="pl-mode">${esc(p.mode || '')}</span>`
         + `<span class="pl-cost">${p.cost ? '$' + p.cost.toFixed(2) : ''}</span></a>`;
