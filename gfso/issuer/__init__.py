@@ -1757,10 +1757,6 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
         split = done and engine.split_owed(task_id) is None
         if not done:   # …SAID, where it was not: a refused split left root.tr OFFERED 2 h 35 min with no line (tn73sy660)
             engine.emit_info("issuer", f"{task_id}: the split owed here was REFUSED — {why}")
-        # …and where contact, not the plan's author, made it owed, a split that cannot be built gives the node its
-        # session back: its DELIVER refused for a lift nobody can build leaves it with no move (§12.16 (ii))
-        if not split and engine.lapse_session_refutation(task_id):
-            engine.emit_info("issuer", f"{task_id}: no split could be built for it — it takes a session again")
         return {"status": "applied" if split else "refused" if not done else "unproductive", "move": "refine",
                 "why": why or ("" if split else "the refine round built no split")}
     # A REFUTED ORDER IS REPAIRED BEFORE ANY MODEL IS ASKED: its one move is computed from the graph

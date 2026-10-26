@@ -620,21 +620,18 @@ def test_an_undated_record_over_a_footing_stands_only_if_it_refuses(tmp_path):
     e.stop()
 
 
-def test_a_scope_whose_part_fails_the_same_criterion_round_after_round_is_no_longer_one_session(tmp_path):
-    """One haiku session carried a whole plan for 16 rounds over three hours, failing the same criteria, and the parts,
-    re-split, finished in less (GB_sql_database_tmzgc0724, 2026-10-16): the estimate "one session carries it" is
-    refuted by contact after the rounds that make a criterion a suspect, and the parts take a session each."""
+def test_a_scope_whose_part_fails_the_same_criterion_round_after_round_stays_one_session(tmp_path):
+    """Equal FAILs say the work is not there yet, not that one session is too small for the scope (§3.7): past the
+    rounds that make a criterion a suspect the scope keeps its one session, and no part is handed one of its own."""
     e, agents = _project(tmp_path)
-    rounds = e.CONTRACT_SUSPECT_ROUNDS
-    executor = _LLM(*[_delivered("root.a", "root.b", "root")] * (rounds + 3))
-    validator = _Validator(e, *[{("root.a", "a_ok")}] * (rounds + 3))
+    rounds = e.CONTRACT_SUSPECT_ROUNDS + 2
+    executor = _LLM(*[_delivered("root.a", "root.b", "root")] * (rounds + 1))
+    validator = _Validator(e, *[{("root.a", "a_ok")}] * (rounds + 1))
     per_node = []
     d = _dispatcher(e, agents, executor, validator, per_node)
-    _drive(e, d, lambda: len(executor.calls) >= rounds and len(validator.calls) >= rounds
-           and e.scope_top(TaskId("root.a")) is None, rounds=400)
-    assert len(executor.calls) == rounds, "a scope stuck on one criterion ran another round in one session"
-    assert e.scope_top(TaskId("root.a")) is None and (e.session_fit(TaskId("root")) or {}).get("fits") is False
-    _drive(e, d, lambda: ("exec", "root.a") in per_node, rounds=200)
-    assert ("exec", "root.a") in per_node, "the stuck part was not given a session of its own"
+    _drive(e, d, lambda: len(executor.calls) >= rounds and len(validator.calls) >= rounds, rounds=400)
+    assert len(executor.calls) >= rounds, "a scope stuck on one criterion stopped getting its session"
+    assert e.scope_top(TaskId("root.a")) is not None and (e.session_fit(TaskId("root")) or {}).get("fits") is not False
+    assert ("exec", "root.a") not in per_node, "a count of equal FAILs handed a part a session of its own"
     e.stop()
 

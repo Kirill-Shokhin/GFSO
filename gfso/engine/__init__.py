@@ -55,7 +55,7 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
                          fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here,
-                         session_fit as _session_fit, version_of as _version_of, scope_top as _scope_top,
+                         session_fit as _session_fit, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
                          parts_procedure as _parts_procedure, settled_procedure as _settled_procedure,
                          observation_binds as _observation_binds,
@@ -2397,42 +2397,6 @@ class Engine:
         self._storage.store_setting(f"session_fit:{task_id}",
                                            json.dumps({"volume": volume, "fits": fits}))
 
-    def _store_fit(self, task_id: TaskId, rec: dict) -> None:
-        self._storage.store_setting(f"session_fit:{task_id}", json.dumps(rec))
-
-    def refute_session_fit(self, top_id: TaskId, members: list) -> None:
-        """Contact refuted "one session carries `top`" (§3.7, the leaf test is agent-relative): recorded beside the
-        decomposer's judgement, never over it, for the version of `top` that stands, with each member's FAILs it
-        spent. It reads as "does not fit" only while that version stands and the refutation is open
-        (`validation.session_fit`): a new version resets the rounds it rested on (§12.15 Φ2)."""
-        raw = json.loads(self._storage.get_setting(f"session_fit:{top_id}") or "{}")
-        self._store_fit(top_id, {**raw, "refuted": {
-            "version": list(_version_of(self._graph.get_task(top_id))), "open": True,
-            "upto": {str(m.id): [list(_version_of(m)), len(self.fails_of(m.id))] for m in members}}})
-
-    def lapse_session_refutation(self, task_id: TaskId) -> bool:
-        """Close the contact refutation on this node, its spent FAILs kept: where the split it owes cannot be built,
-        a refusal of the leaf's DELIVER has no lift (§12.16 (ii)), so the node gets a session again. True if one
-        was open."""
-        raw = json.loads(self._storage.get_setting(f"session_fit:{task_id}") or "{}")
-        if not (raw.get("refuted") or {}).get("open"):
-            return False
-        self._store_fit(task_id, {**raw, "refuted": {**raw["refuted"], "open": False}})
-        return True
-
-    def spent_fails(self, task_id: TaskId) -> int:
-        """How many of this node's FAILs on its current version a refutation already spent — one recorded on it or on
-        a scope above it. Those rounds were judged once; a part a refuted scope hands a session of its own has not
-        yet been tried alone."""
-        t, out = self._graph.get_task(task_id), 0
-        n = t
-        while n is not None:
-            got = ((_session_fit(self._graph, n.id) or {}).get("refuted") or {}).get("upto", {}).get(str(task_id))
-            if got and tuple(got[0]) == _version_of(t):
-                out = max(out, int(got[1]))
-            n = self._graph.get_parent(n.id)
-        return out
-
     def record_seam_claim(self, task_id: TaskId, claim: dict) -> None:
         """The decomposer's claim of what a part's work touches — the files it `writes`, the parts whose code its probes
         `runs`, and, per producer, what its work `reads` of it — kept beside the contract like the session fit: it is
@@ -2820,13 +2784,12 @@ class Engine:
         """The node's FAIL verdicts under the packet version that stands, in order."""
         return [e for e in on_current_version(self._audit.get_entries(task_id)) if e.signal == Signal.FAIL]
 
-    def fails_over_new_work(self, task_id: TaskId, after: int = 0) -> list:
-        """`fails_of` from the `after`-th on, less each FAIL over an artifact an earlier one of them already judged: a
-        re-delivery of the same files is no new attempt at the work. A delivery of no known identity counts as new.
-        Both leaves the user's plan lost to the leaf test today were four FAILs over ONE tree, the executor re-handing
-        it while it said the fix lay in another node's file (GB_sql_database_tngo2o700 root.joins, tngn3j412
-        root.scaffold)."""
-        fails, judged, handed, out = set(map(id, self.fails_of(task_id)[after:])), set(), None, []
+    def fails_over_new_work(self, task_id: TaskId) -> list:
+        """`fails_of`, less each FAIL over an artifact an earlier one of them already judged: a re-delivery of the same
+        files is no new attempt at the work. A delivery of no known identity counts as new. Measured: executors
+        re-handed ONE tree four times while saying the fix lay in another node's file (GB_sql_database_tngo2o700
+        root.joins, tngn3j412 root.scaffold)."""
+        fails, judged, handed, out = set(map(id, self.fails_of(task_id))), set(), None, []
         for e in on_current_version(self._audit.get_entries(task_id)):
             if e.signal == Signal.DELIVER:
                 handed = e.artifact
@@ -2841,8 +2804,7 @@ class Engine:
         fails = self.fails_of(task_id)
         return bool(fails) and all(f is not fails[-1] for f in self.fails_over_new_work(task_id))
 
-    def stuck_on(self, task_id: TaskId, rounds: int = CONTRACT_SUSPECT_ROUNDS, after: int = 0,
-                 new_work: bool = False) -> list[str]:
+    def stuck_on(self, task_id: TaskId, rounds: int = CONTRACT_SUSPECT_ROUNDS) -> list[str]:
         """The criteria that failed in EVERY one of this node's last `rounds` FAILs, or [].
 
         A node can fail the same criterion round after round for two very different reasons — the
@@ -2851,13 +2813,9 @@ class Engine:
         against `unicode_and_surrogate_policy`, which asks for a round-trip of lone surrogates and is
         unsatisfiable with strict UTF-8; the artifact scored 0.972 on the held-out suite and the run
         stalled. The count is a fact in the log; this reads it out so both doors can say it.
-        Only the version that stands counts — a new one resets the budget (§12.15 Φ2) — and `after` skips the FAILs a
-        refutation already spent (`spent_fails`).
-
-        `new_work`: only FAILs over work not yet judged count (`fails_over_new_work`) — the reading of the leaf test
-        (§3.7): κ is what one act can realize-and-check, and handing the same artifact again is no act on it. Without
-        it the count stays the contract's suspicion, which an unchanged re-delivery only sharpens."""
-        fails = self.fails_over_new_work(task_id, after) if new_work else self.fails_of(task_id)[after:]
+        Only the version that stands counts — a new one resets the budget (§12.15 Φ2). The count is the contract's
+        suspicion, which an unchanged re-delivery only sharpens; it measures no κ (§3.7)."""
+        fails = self.fails_of(task_id)
         if len(fails) < max(2, rounds):
             return []
         sets = [set(e.failed_criteria or ()) for e in fails[-rounds:]]

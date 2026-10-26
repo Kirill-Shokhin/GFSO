@@ -1,11 +1,11 @@
-"""The leaf test (§3.7) counts attempts, not hand-ins: κ is what one act can realize-and-check, and handing the same files
-again is no act on them. Measured 2026-10-25 on two AUTO projects whose plan the user gave whole: root.joins
-(GB_sql_database_tngo2o700) and root.scaffold (tngn3j412) were each FAILed four times over ONE git tree — the executor
-re-handing it while its report said the fix lay in another node's file — and the four FAILs were read as "one session
-does not carry it": split owed, the user's plan refuted, the run STOPPED.
+"""An unchanged re-delivery is no new attempt, and the rework packet says so: handing the same files again moves nothing.
+Measured 2026-10-25 on two AUTO projects whose plan the user gave whole: root.joins (GB_sql_database_tngo2o700) and
+root.scaffold (tngn3j412) were each FAILed four times over ONE git tree, the executor re-handing it while its report
+said the fix lay in another node's file. No count of FAILs, over one tree or over four, owes a split: no count measures
+κ (`test_equal_fails_do_not_measure_kappa`).
 
-CONTROLS: count every FAIL in `Engine.stuck_on(new_work=True)` (return `self.fails_of(task_id)[after:]`), and the first
-test goes red; let `commit_all` return the commit, not its tree, and the second does; drop `artifact` from the sqlite
+CONTROLS: let `Engine.fails_over_new_work` return every FAIL (`list(self.fails_of(task_id))`), and the first test goes
+red; let `commit_all` return the commit, not its tree, and the second does; drop `artifact` from the sqlite
 row, and the third does; render this round's probes without their id, and the fourth does.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ from gfso.reports import _report_into_signals
 from gfso.sessions import EXECUTOR_SCHEMA
 from gfso.tools_llm import _SCOPE_VALIDATOR_SCHEMA, _VALIDATOR_SCHEMA
 from tests.support import criterion, make_engine, REGISTER
-from tests.test_a_leaf_one_session_cannot_carry_is_split import _leaf, _leaves
+from tests.test_equal_fails_do_not_measure_kappa import _leaf, _leaves
 from tests.test_a_node_works_in_its_own_place import _repo
 from tests.test_one_session_carries_a_scope import _entry, _free_claim
 
@@ -54,7 +54,7 @@ def _fail_over(e, tid, crit, tree, probe=None):
     e.wait_idle()
 
 
-def test_four_fails_over_one_tree_owe_no_split_and_four_attempts_do(tmp_path, monkeypatch):
+def test_four_fails_over_one_tree_owe_no_split_and_neither_do_four_attempts(tmp_path, monkeypatch):
     e, _, d = _leaves(tmp_path, monkeypatch)
     for _ in range(4):
         _fail_over(e, "root.a", "a_ok", "tree-1")
@@ -66,8 +66,8 @@ def test_four_fails_over_one_tree_owe_no_split_and_four_attempts_do(tmp_path, mo
     for tree in ("tree-2", "tree-3"):
         _fail_over(e, "root.a", "a_ok", tree)
     assert not d._split_owed_said(_leaf(e)) and packets._REHANDED not in packets._rework_section(e, _leaf(e))
-    _fail_over(e, "root.a", "a_ok", "tree-4")             # the fourth attempt that failed it: contact refuted κ
-    assert d._split_owed_said(_leaf(e)) and e.split_owed(TaskId("root.a")) is not None
+    _fail_over(e, "root.a", "a_ok", "tree-4")             # four attempts: the work is not there yet, κ is not shown
+    assert not d._split_owed_said(_leaf(e)) and e.split_owed(TaskId("root.a")) is None
     e.stop()
 
 

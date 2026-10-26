@@ -31,7 +31,7 @@ from gfso.critic.runner import _already_decided, _criterion_stamps
 from gfso.issuer import Unavailable, Verbs, _what_happened, settle, unanswered
 from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _a_delivery, _an_offer
 from tests.support import make_engine
-from tests.test_a_leaf_one_session_cannot_carry_is_split import _fail_once, _leaf, _leaves
+from tests.test_equal_fails_do_not_measure_kappa import _leaf, _leaves
 from tests.test_one_session_carries_a_scope import _project
 from tests.test_delegate import _agents
 
@@ -222,11 +222,10 @@ class _LimitedModel(_LimitedProvider):
 
 
 def test_a_split_the_limit_refused_keeps_it_owed(tmp_path, monkeypatch):
-    """Read as "no split can be built", one probe of a limit window lapsed contact's refutation and gave a node that
-    had failed four rounds its single session back (critic r3): the round is unanswered, the split stays owed."""
+    """A split its plan's author owes, asked of a model that hit its limit window: the round is unanswered, not "no split
+    can be built" (critic r3), so the split stays owed."""
     e, agents, d = _leaves(tmp_path, monkeypatch)
-    for _ in range(4):
-        _fail_once(e, "root.a", "a_ok")
+    e.record_session_fit(TaskId("root.a"), "too big for one session", False)
     assert d._split_owed_said(_leaf(e))
     owed = e.split_owed(TaskId("root.a"))
     assert owed is not None

@@ -33,7 +33,7 @@ from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec
                              Verdict, Action, Mode,
                              SPAWNABLE_ACTIONS, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
-                          split_has_a_mover, held_by_a_holder)
+                          split_has_a_mover)
 from gfso.adapters.llm.stats import is_limit, refused_by_limit
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace,
@@ -836,16 +836,11 @@ class Dispatcher:
         (measured: two paid sessions, then parked, then two more). The split is made by the machine issuer's
         question `split`, or by its issuer, whose step names it (`NodeSteps._step_for`).
 
-        A leaf the system executes is judged by the scope's rule (`_one_session_refuted`) one round later: the round
-        after three equal FAILs is the one its packet names CHALLENGE in, for a criterion that cannot hold as written
-        (§12.4) — a split then would pre-empt it. A haiku 4.5 leaf building a whole C compiler failed the same four
-        criteria nineteen rounds running, five hours, on real crashes its probes caught, until the ceiling cut the row
-        (GB_c_compiler_tnani8860, 2026-10-22)."""
-        if (self._engine.mode() is not None and not self._engine.graph.get_active_children(task.id)
-                and not held_by_a_holder(self._engine, str(task.assignee))
-                and (self._engine.session_fit(task.id) or {}).get("fits") is not False):
-            self._one_session_refuted(task, [task], self._engine.CONTRACT_SUSPECT_ROUNDS + 1)
-        owed =self._engine.split_owed(task.id) if split_has_a_mover(self._engine, self._agents, task) else None
+        Owed only by its plan's author's judgement, never by a count of rounds: equal FAILs say the work is not there
+        yet, not that the node is above its executor's κ (§3.7) — every session of the haiku 4.5 `select` that a count
+        stopped had ended by itself, turns to spare (GB_sql_database_tnha1f292). A node that does not converge runs
+        its rounds and its clock (§12.15 Φ3)."""
+        owed = self._engine.split_owed(task.id) if split_has_a_mover(self._engine, self._agents, task) else None
         if owed is not None:
             self._say_once(f"split:{task.id}", f"{task.id}: no session started — {owed['why']}. The step "
                                                 f"that opens it: {owed['opens_with']}.")
@@ -1138,21 +1133,6 @@ class Dispatcher:
                            f"every node of it and one validation checks each node's own criteria")
         return top is not None
 
-    def _one_session_refuted(self, top, members: list, rounds: int) -> bool:
-        """Did contact refute that one session carries `top` — a node of it failing the same criteria in each of its
-        last `rounds` rounds on its current version, rounds a refutation already spent not counted again, nor a round
-        over files a FAIL had already judged — an unchanged re-delivery is no attempt one session made? Then `top`
-        is above its holder's κ (§3.7, the leaf test is agent-relative): recorded refuted (`refute_session_fit`) — a
-        scope's nodes take a session each, a leaf's split is owed (`split_owed`)."""
-        if not (stuck := {str(m.id): s for m in members
-                          if (s := self._engine.stuck_on(m.id, rounds, after=self._engine.spent_fails(m.id),
-                                                             new_work=True))}):
-            return False
-        self._engine.refute_session_fit(top.id, members)
-        self._engine.emit_info("delegate", f"{top.id}: one session no longer carries it — " + "; ".join(
-            f"{n} failed {', '.join(c)} in each of its last {rounds} rounds" for n, c in stuck.items()))
-        return True
-
     def _scope_key(self, members: list, prefix: str = "") -> str:
         """The dedup key of a scope's round: every node's generation and state — a round is one per visit of the
         scope, so a node answered or re-delivered makes the next one."""
@@ -1170,13 +1150,6 @@ class Dispatcher:
         for top in tops.values():
             members = self._engine.scope_members(top.id)
             if any(str(m.id) in self._running or self._being_rewritten(m.id) for m in members):
-                continue
-            # …A SCOPE WHOSE NODE FAILS THE SAME CRITERIA ROUND AFTER ROUND IS ABOVE ITS HOLDER'S κ: the decomposer's
-            # "one session carries it" is an estimate (§3.7, the leaf test is agent-relative), and contact refuted it —
-            # one haiku session carried a whole plan for 16 rounds over three hours failing the same criteria, and the
-            # parts, re-split, finished in less (GB_sql_database_tmzgc0724, 2026-10-16). Recorded refuted, its nodes
-            # take a session each; the estimate is no packet field (no revision, Inv-1)
-            if self._one_session_refuted(top, members, self._engine.CONTRACT_SUSPECT_ROUNDS):
                 continue
             ready = self._scope_ready(top, members)
             # …and a delivery does not wait for what cannot come now: with no session to start (a sibling's dispute

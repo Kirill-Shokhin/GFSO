@@ -157,11 +157,7 @@ def _rework_section(engine, task) -> str:
         if stuck := engine.stuck_on(task.id):
             rework += (f"\n{', '.join(stuck)} failed in each of the last {engine.CONTRACT_SUSPECT_ROUNDS} rounds. If "
                        f"it cannot be met AS WRITTEN, report `status: \"challenge\"` naming it and why, instead of "
-                       f"delivering against it again."
-                       + (" If it can, this round decides: one session that fails it once more is judged too small "
-                          "for this node, and the node is split." if engine.mode() is not None
-                          and not engine.graph.get_active_children(task.id)
-                          and engine.stuck_on(task.id, after=engine.spent_fails(task.id), new_work=True) else ""))
+                       f"delivering against it again.")
     elif (last := next((a for a in reversed(engine.audit_log(task.id))
                         if a.signal == Signal.FAIL and not a.rejected and a.failed_criteria), None)):
         # A new version (an escalation's re-ASSIGN, a raised bound) re-validates nothing by itself: that

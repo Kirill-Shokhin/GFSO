@@ -172,17 +172,14 @@ def version_of(task) -> tuple:
 
 
 def session_fit(graph: Graph, task_id) -> Optional[dict]:
-    """The decomposer's recorded count and judgement for a node (`Engine.record_session_fit`), or None — read as
-    "does not fit" while a contact refutation of it is open on the version that stands (`Engine.refute_session_fit`)."""
+    """The decomposer's recorded count and judgement for a node (`Engine.record_session_fit`), or None. Only his: a
+    count of equal FAILs is no measure of κ (§3.7), so a `refuted` key an earlier engine stored beside it reads as
+    nothing."""
     raw = graph._storage.get_setting(f"session_fit:{task_id}")
     try:
-        rec = json.loads(raw) if raw else None
+        return json.loads(raw) if raw else None
     except (ValueError, TypeError):
         return None
-    ref = (rec or {}).get("refuted") or {}
-    if ref.get("open") and tuple(ref.get("version") or ()) == version_of(graph.get_task(task_id)):
-        return {**rec, "fits": False}
-    return rec
 
 
 def fits_one_session(graph: Graph, task_id) -> bool:
@@ -315,12 +312,9 @@ def split_owed(graph: Graph, task) -> Optional[dict]:
     if (not fit or fit.get("fits") is not False or graph.get_active_children(task.id)
             or project_mode(graph) is None):
         return None
-    by_contact = bool((fit.get("refuted") or {}).get("open"))
     return {"kind": "split_owed", "fails": [],
-            "why": (("one session of its executor failed the same criteria round after round, so contact refuted that "
-                     "one session carries it" if by_contact else
-                     "its plan's author judged it larger than one session of its executor")
-                    + (f" ({fit.get('volume')})" if fit.get("volume") and not by_contact else "")
+            "why": ("its plan's author judged it larger than one session of its executor"
+                    + (f" ({fit.get('volume')})" if fit.get("volume") else "")
                     + " — a node above κ, one executor session (§3.7), is not a leaf (§3.7), and its split is owed "
                       "(§11.5, deferred decomposition): its parts are what get delivered and validated"),
             "opens_with": (f"its executor splits it — `auto_decompose(root_id='{task.id}')`, or `decompose` "
