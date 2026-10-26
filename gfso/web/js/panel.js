@@ -6,7 +6,7 @@
 import {$, el, esc, data, section, ul, rebuild, hint} from './dom.js';
 import {getJSON} from './api.js';
 import {S, hasKids, taskOf, myRole} from './state.js';
-import {bucketOf, statusLabel, vOf, V_SYMBOL, can, look, closureNote, contested, terminal, modelName,
+import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE} from './vocab.js';
 import {roundsOf, at, waitsOf, waitWords, conjunct, KIND_NAME as KIND} from './run.js';
 import {glyph, mark} from './draw.js';
@@ -24,7 +24,7 @@ function waiting(d) {
 }
 
 function head({d, rounds}) {
-    const v = vOf(d.state), name = d.name || d.description || d.id, note = closureNote(d.closure), bad = contested(d.closure);
+    const v = vNow(d, d.audit), name = d.name || d.description || d.id, note = closureNote(d.closure), bad = contested(d.closure);
     const live = !terminal(d.state), mode = S.graph.mode?.mode;
     return `<div class="sidebar-header"><h2 title="${esc(name)}">${esc(name)}</h2><button class="sidebar-close" data-action="close">&times;</button></div>`
         + `<div class="pn-meta" title="${hint('Executor (Del)', d.assignee || 'none')}">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
@@ -152,8 +152,13 @@ export async function selectTask(id) {
         const [d, vr, cr, acts] = await Promise.all([getJSON(base), soft(getJSON(base + '/verdict')), soft(getJSON(base + '/critique')),
             soft(getJSON(`${base}/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
         const ctx = {d, vr, cr, acts, rounds: roundsOf(d.audit, d.id)}, sb = $('sidebar');
+        // An open form outlives the re-read — any transition in the project re-reads the panel, and the text and ticks
+        // being entered were wiped mid-entry on a live run. It stays while the engine still admits its signal here.
+        const form = sb.dataset.key === d.id && $('inline-form')?.firstChild ? $('inline-form') : null;
+        const sig = form?.querySelector('[data-action="send-signal"]')?.dataset.sig;
         sb.classList.remove('hidden');
         rebuild(sb, d.id, PARTS.map(f => f(ctx)).join(''));
+        if (form && (!sig || acts?.actions?.includes(sig))) $('inline-form')?.replaceWith(form);
         showReader(ctx);
     } catch (e) { console.error('selectTask:', e); }
 }
@@ -262,11 +267,11 @@ function review({cr}) {
 
 // The parts' states are a FORECAST of the parent: Theorem 1 holds under a correct decomposition only, and
 // the parent's V is its own contact over the result (§12.8) — never AND-ed into it here.
-const kids = d => d.children || [], passing = d => kids(d).filter(c => vOf(c.state) === 'pass').length;
+const kids = d => d.children || [], passing = d => kids(d).filter(c => vNow(c) === 'pass').length;
 const composition = ({d}) => section('Composition — the parts', `<div class="composition-panel"><div class="composition-formula">`
     + `${passing(d)} of ${kids(d).length} parts pass — a forecast: V(parent) = AND(parts) holds `
     + `under a correct decomposition (Th. 1), and the parent's V is its own verdict over the result (§12.8)</div>`
-    + kids(d).map(c => { const v = vOf(c.state);
+    + kids(d).map(c => { const v = vNow(c);
         return `<div class="composition-row v-${v}"><span class="v-sym">${V_SYMBOL[v]}</span>`
             + `<span class="child-name" data-action="select" data-id="${esc(c.id)}">${esc(c.name || c.description)}</span></div>`; }).join('')
     + `</div>`);

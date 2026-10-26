@@ -1,4 +1,4 @@
-// The protocol's words, written once: what each FSM state is called, how it is drawn, what V it
+// The protocol's words, written once: what each FSM state is called, how it is drawn, what V a node
 // carries and what the panel may offer on it; how a closure is described; how a check is routed.
 import {getJSON} from './api.js';
 
@@ -9,25 +9,25 @@ const BLOCK = A('BLOCK', 'red', 'Block', 'reason');
 // Rows are in the stats bar's order. Bucket: canon §7.1 + §8 (see gfso.css). WHAT IS RUNNING MUST NOT
 // LOOK LIKE WHAT IS DEAD — EXECUTING is `busy`, waiting to be taken is `attend` (2026-09-02). OFFERED is
 // ASSIGNED AND NOT YET TAKEN: labelled "In Review" it sent a user waiting 25 min on a reviewer who did
-// not exist. V(t), §2.3: pass = DONE, fail = REWORKING/CHALLENGED, ⊥ otherwise. REWORKING is consented
+// not exist. REWORKING is consented
 // work like EXECUTING (§12.1) and a FAIL sends to it by itself: in the accent it read as "step in" beside
 // "nothing needs you", and flipped colour with its own validation. CHALLENGED is a wait on the issuer, as
 // BLOCKED is (§12.1); under a mode that issuer is the machine.
 // Moves — the panel's controls that are no signal: E Edit (a re-ASSIGN, §12.3), D Decompose, V Record verdict (the
 // human counterpart of validate_result).
 const ROWS = {
-    //           bucket       label          V       moves
-    DONE:       ['done',      'Done',        'pass', ''],
-    EXECUTING:  ['busy',      'In Progress', '',     'ED'],
-    OFFERED:    ['attend',    'Not started', '',     'ED'],
-    BLOCKED:    ['pathology', 'Blocked',     '',     'ED'],
-    REWORKING:  ['busy',      'Rework',      'fail', 'ED'],
-    CHALLENGED: ['pathology', 'Challenged',  'fail', 'ED'],
-    VALIDATING: ['busy',      'Validating',  '',     'EV'],
-    IDLE:       ['quiet',     'Waiting',     '',     ''],
-    CANCELLING: ['pathology', 'Cancelling',  '',     ''],
-    ABANDONED:  ['quiet',     'Cancelled',   '',     ''],
-    ESCALATED:  ['pathology', 'Escalated',   '',     'E'],
+    //           bucket       label          moves
+    DONE:       ['done',      'Done',        ''],
+    EXECUTING:  ['busy',      'In Progress', 'ED'],
+    OFFERED:    ['attend',    'Not started', 'ED'],
+    BLOCKED:    ['pathology', 'Blocked',     'ED'],
+    REWORKING:  ['busy',      'Rework',      'ED'],
+    CHALLENGED: ['pathology', 'Challenged',  'ED'],
+    VALIDATING: ['busy',      'Validating',  'EV'],
+    IDLE:       ['quiet',     'Waiting',     ''],
+    CANCELLING: ['pathology', 'Cancelling',  ''],
+    ABANDONED:  ['quiet',     'Cancelled',   ''],
+    ESCALATED:  ['pathology', 'Escalated',   'E'],
 };
 // WHICH signals a node admits is the engine's answer (`/api/tasks/{id}/actions`): a copy of the FSM here had drifted —
 // no Challenge after consent (ortho audit). What stays here is how each signal is offered; ASSIGN is not offered as a
@@ -44,11 +44,23 @@ export const look = sig => LOOK[sig];
 export const terminal = s => s === 'DONE' || s === 'ABANDONED';
 export const delivered = t => t?.state === 'DONE' && (t.done_reason === 'PASS' || t.done_reason === 'AUTO_PASS');
 export const working = s => s === 'EXECUTING' || s === 'REWORKING' || s === 'VALIDATING';
-const row = s => ROWS[s] || ['quiet', s, '', ''];
+const row = s => ROWS[s] || ['quiet', s, ''];
 export const bucketOf = s => row(s)[0];
 export const label = s => row(s)[1];
-export const vOf = s => row(s)[2] || 'undef';
-export const can = (s, move) => row(s)[3].includes(move);
+export const can = (s, move) => row(s)[2].includes(move);
+// V(t) as the log says it, not as a state implies it — the state is orthogonal to V (§12.1): a CHALLENGE before any
+// delivery read V = fail. A PASS is V = pass and a FAIL V = fail (§11.2); a delivery awaiting its verdict, or a contract
+// installed since (ASSIGN, ACCEPT_CHALLENGE), is ⊥ (§2.3), and so is a cancelled node (§12.1). Without the node's log
+// (a part listed under its parent) only the states that carry V by entry: DONE by its done_reason, REWORKING by a FAIL.
+export const vNow = (t, audit) => {
+    if (delivered(t)) return 'pass';
+    if (t?.state === 'ABANDONED') return 'undef';
+    if (!audit) return t?.state === 'DONE' || t?.state === 'REWORKING' ? 'fail' : 'undef';
+    let v = 'undef';
+    for (const a of audit) if (!a.rejected)
+        v = a.signal === 'PASS' ? 'pass' : a.signal === 'FAIL' ? 'fail' : ['DELIVER', 'ASSIGN', 'ACCEPT_CHALLENGE'].includes(a.signal) ? 'undef' : v;
+    return v;
+};
 export const V_SYMBOL = {pass: '✓', fail: '✗', undef: '⊥'};
 // A terminal DONE is discriminated by its done_reason (PASS/FAIL/AUTO_PASS — canon §12).
 // A model id as a person says it — claude-haiku-4-5-20251001 → haiku 4.5; a bare alias, recorded before the model
