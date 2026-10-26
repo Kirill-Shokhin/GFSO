@@ -39,7 +39,7 @@ function row(r) {
         <span class="ev-move">${a.old_state && a.new_state ? `${a.old_state} → ${a.new_state}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
         <span class="ev-src">${esc(a.source || '')}</span>
         ${a.failed_criteria?.length ? `<span class="ev-failed">${a.failed_criteria.map(c => `<em>${esc(c)}</em>`).join('')}</span>` : ''}
-        ${prose.length ? `<details><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
+        ${prose.length ? `<details data-key="${esc(`r|${a.task_id}|${a.timestamp}|${a.signal}`)}"${opened.has(`r|${a.task_id}|${a.timestamp}|${a.signal}`) ? ' open' : ''}><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
 }
 
 function head(id, name, node, run, rs) {
@@ -54,19 +54,27 @@ function head(id, name, node, run, rs) {
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
 }
 
+// What the reader set here outlives the view's redraw — every event of a live run redraws the deck, and a group opened,
+// a kind switched off or a search typed was undone a few seconds later (the author, 2026-10-27).
+const on = new Set(Object.keys(KINDS).filter(k => k !== 'narration')), opened = new Set();
+let query = '', shown = null;
+
 export function render(el, run, nodes, tasks, pipeline = []) {
     const name = run.name, by = streams(run, nodes, pipeline);
     const order = [...nodes.map(n => n.id), RUN].sort((a, b) => (by[b][0]?.t || 0) - (by[a][0]?.t || 0));
-    const on = new Set(Object.keys(KINDS).filter(k => k !== 'narration'));
     el.innerHTML = `<div class="ev-bar">${Object.keys(KINDS).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}</button>`).join('')}
         <input class="ev-find" type="search" placeholder="find in events…"><span class="ev-only"></span></div><div class="ev-groups"></div>`;
     const box = el.querySelector('.ev-groups'), find = el.querySelector('.ev-find');
+    find.value = query;
+    // a details opened or closed by the reader is remembered by its key; a node newly selected opens its own group
+    box.addEventListener('toggle', e => { const k = e.target.dataset?.key; if (k) e.target.open ? opened.add(k) : opened.delete(k); }, true);
     const draw = () => {
         const q = find.value.trim().toLowerCase(), sel = focus().select;
+        if (sel !== shown) { shown = sel; if (sel) opened.add(`g|${sel}`); }
         box.innerHTML = order.filter(id => !sel || id === sel).map(id => {
             const rs = by[id].filter(r => on.has(r.kind) && (!q || JSON.stringify(r.a || r.p).toLowerCase().includes(q)));
             if (!rs.length && (q || sel !== id)) return '';
-            return `<details class="ev-group"${id === RUN ? '' : ` data-node="${esc(id)}"`}${sel === id ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, by[id])}
+            return `<details class="ev-group" data-key="${esc(`g|${id}`)}"${id === RUN ? '' : ` data-node="${esc(id)}"`}${opened.has(`g|${id}`) ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, by[id])}
                 <ol><li class="ev ev-cols"><span>time</span><span>signal</span><span>state</span><span>by</span></li>${rs.map(row).join('')}</ol></details>`;
         }).join('') || '<p class="ev-none">nothing matches</p>';
         el.querySelector('.ev-only').innerHTML = sel ? `only <b>${esc(name(sel))}</b> <button data-clear>show all</button>` : '';
@@ -76,7 +84,7 @@ export function render(el, run, nodes, tasks, pipeline = []) {
         if (k) { on.has(k) ? on.delete(k) : on.add(k); e.target.classList.toggle('on'); draw(); }
         if (e.target.matches('[data-clear]')) point('select', null);
     };
-    find.oninput = draw;
+    find.oninput = () => { query = find.value; draw(); };
     draw();
     watch((st, key) => key === 'select' && draw(), el);   // before the focus paint: draw rebuilds what paint marks
     bindFocus(box);
