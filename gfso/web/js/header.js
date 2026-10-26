@@ -20,7 +20,8 @@ function phrase(root) {
     const done = parts.length ? `${k} of ${parts.length} parts done` : 'not split yet', said = s => label(s).toLowerCase();
     return {
         DONE: {FAIL: 'goal closed — failed', CANCELLED: said('ABANDONED')}[root.done_reason] || 'goal delivered',
-        OFFERED: said('OFFERED'), IDLE: said('OFFERED'),
+        // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)
+        OFFERED: parts.length ? `${done} · the goal itself ${said('OFFERED')}` : said('OFFERED'), IDLE: said('OFFERED'),
         EXECUTING: `${said('EXECUTING')} — ${done}`,
         REWORKING: `the goal's validation failed — reworking (${done})`,
         VALIDATING: 'delivered — awaiting the verdict',
