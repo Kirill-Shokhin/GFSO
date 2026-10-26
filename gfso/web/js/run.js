@@ -9,10 +9,11 @@ import {terminal, delivered, working} from './vocab.js';
 // or being cancelled — one rule for the strip's «sent back» and the graph's red rounds badge.
 export const failingNow = (rounds, state) => rounds?.at(-1)?.verdict === 'FAIL' && !terminal(state) && state !== 'ESCALATED' && state !== 'CANCELLING';
 
-// Who owes the next move: the party the engine names for the node's step (next_steps: the step is `signed_by` the node's
-// executor or by its issuer; `performed_by` is the door, `system` for every role under AUTO) — a node whose executor stopped twice without a report is its issuer's to revise in any state, and the
-// state's owner (§12.13, below) read it as the executor's at work. The state's owner only where the engine named no step.
-const owes = (n, step) => step?.signed_by ? (step.signed_by === step.assignee ? 'executor' : 'issuer') : OWES[n.state] || null;
+// Who owes the next move: the role the engine names for the node's step (next_steps `role`, asked of engineering
+// 2026-10-26 — a node whose executor stopped twice without a report is its issuer's to revise in any state); until it is
+// served, the state's owner (§12.13). Not the step's signer: in solo and with no mode the issuer and the executor are one
+// name, and every issuer move read as the executor's (critic).
+const owes = (n, step) => ({executor: 'executor', issuer: 'issuer'})[step?.role] || OWES[n.state] || null;
 const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
               CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
 
@@ -120,10 +121,8 @@ export function atWork(run, tasks, procs = []) {
     const on = new Set(procs.map(w => w.task_id)), elsewhere = !run?.auto, up = Object.fromEntries(tasks.map(t => [t.id, t.parent_id]));
     // …but a leaf one scope session carries is at work: a process or an open session on an ancestor is its session
     const carried = id => { for (let x = up[id]; x; x = up[x]) if (on.has(x) || open.has(x)) return true; return false; };
-    // …and a node whose move the engine names as its issuer's is no one's work, whatever its state
-    const theirs = id => run?.waits[id]?.owes !== 'issuer';
     return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id)
-        || (working(t.state) && !parent.has(t.id) && theirs(t.id) && (elsewhere || carried(t.id)))).map(t => t.id));
+        || (working(t.state) && !parent.has(t.id) && (elsewhere || carried(t.id)))).map(t => t.id));
 }
 // The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
 export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
