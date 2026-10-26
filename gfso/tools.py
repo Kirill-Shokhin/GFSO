@@ -249,6 +249,9 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
     out = task_out(t, engine)
     if (blocked := _blocked_by(engine, t)):
         out["blocked_by"] = blocked
+    # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id
+    if (found := engine.regression_probes(TaskId(task_id))):
+        out["regression_probes"] = found
     return out
 
 

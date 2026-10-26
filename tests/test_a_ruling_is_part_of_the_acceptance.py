@@ -78,6 +78,8 @@ def test_a_ruling_on_the_users_own_goal_is_the_users_question(tmp_path):
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert step["mine"] and "THE USER'S QUESTION" in step["directive"] and pid in step["directive"], step
     assert [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid]
+    # …and the node's read serves them: a ruling's picker reads its ids there (ui, 2026-10-26: it found none)
+    assert [p["id"] for p in T.get_task(e, "root")["regression_probes"]["g"]] == [pid]
     # …and the user's own ruling there is his to make, through the door the mode otherwise locks
     out = LOCKED["signal"](e, "root", "ACCEPT_CHALLENGE", "agent", retire_findings=[pid], justification="not my goal")
     e.wait_idle()
