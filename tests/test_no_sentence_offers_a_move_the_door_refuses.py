@@ -52,6 +52,10 @@ _PATTERNS = (
     (re.compile(r"\b([A-Z_]{4,}) (?:the|it|this)\b"),
      lambda m: ("signal", {"signal": m[1]}) if m[1] in _SIGNALS else (m[1].lower(), {})),
     (re.compile(r"\brevise the parent\b"), lambda m: ("revise", {"task_id": "^"})),
+    # …and the prose forms a sentence also names moves in (critic over ad1dfb5: "re-decompose" passed unread)
+    (re.compile(r"\bre-?(?:decompose|split)\b(?: '([^']+)')?"),
+     lambda m: ("decompose", {"parent_id": m[1]} if m[1] else {})),
+    (re.compile(r"\bsignal ([A-Z_]{4,})\b"), lambda m: ("signal", {"signal": m[1]})),
 )
 
 

@@ -1226,7 +1226,9 @@ class Frontier:
         """The ways out of a delivery whose parts settled without passing: its issuer's FAIL and a re-decomposition
         around the hole, or a REOPEN of a settled part (§12.14) — each its own holder's."""
         return self.engine.offer(
-            Move("signal", str(t.id), f"`signal('{t.id}', 'FAIL')` and re-decompose around the hole", Signal.FAIL.name),
+            Move("signal", str(t.id), f"`signal('{t.id}', 'FAIL')`", Signal.FAIL.name),
+            # …the re-decomposition is the split's move, keyed on the node's own split — never folded into the FAIL's words
+            Move("decompose", str(t.id), f"re-decompose around the hole (`decompose(parent_id='{t.id}', …)`)"),
             *(Move("reopen", str(k.id), f"`reopen('{k.id}')` if it still has reopens left (§12.14)")
               for k in dead if k.state != State.ESCALATED),
             lead="either ")
