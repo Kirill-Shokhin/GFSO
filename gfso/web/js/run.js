@@ -115,8 +115,11 @@ export function waitsOf(nodes, edges, engine = null) {
 // read as "at work" it stood beside the header's "stalled — nothing at work for 3.3h" (critic, a rewound night).
 export function atWork(run, tasks, procs = []) {
     const parent = new Set(tasks.map(t => t.parent_id)), open = new Set((run?.sessions || []).filter(s => s.open).map(s => s.node));
-    const on = new Set(procs.map(w => w.task_id)), elsewhere = !run?.auto;
-    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id) || (elsewhere && working(t.state) && !parent.has(t.id))).map(t => t.id));
+    const on = new Set(procs.map(w => w.task_id)), elsewhere = !run?.auto, up = Object.fromEntries(tasks.map(t => [t.id, t.parent_id]));
+    // …but a leaf one scope session carries is at work: a process or an open session on an ancestor is its session
+    const carried = id => { for (let x = up[id]; x; x = up[x]) if (on.has(x) || open.has(x)) return true; return false; };
+    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id)
+        || (working(t.state) && !parent.has(t.id) && (elsewhere || carried(t.id)))).map(t => t.id));
 }
 // The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
 export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')

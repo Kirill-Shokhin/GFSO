@@ -26,7 +26,9 @@ let ruling = [];
 async function acceptChallenge(a) {
     const d = await getJSON(`/api/tasks/${encodeURIComponent(a.id)}`).catch(() => null);
     const said = [...(d?.audit || [])].reverse().find(x => x.signal === 'CHALLENGE' && !x.rejected)?.reason || '';
-    ruling = (d?.regression_probes || []).filter(p => p.id && said.includes(p.id));
+    // the engine keeps them as {criterion: [probes]} (engine/__init__.py); a finding is named by its id or its bare hash
+    const rp = d?.regression_probes || [], all = Array.isArray(rp) ? rp : Object.values(rp).flat();
+    ruling = all.filter(p => p?.id && (said.includes(p.id) || said.includes(String(p.id).split('#').pop())));
     if (!ruling.length) return submitAction(a.id, a.sig, {});
     form(`<div class="section-title">${a.sig}</div>`
         + faint('Findings the challenge names — tick those this ruling retires (they stop being demanded):', 'display:block;', 'label')

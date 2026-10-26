@@ -101,8 +101,8 @@ const sig = (id, a) => btn(a.cls, a.label, 'signal', {id, sig: a.s, prompt: a.pr
 // signals /actions admits whose `performed_by` is this person (or anyone) — the door's own mode lock, read, not copied
 // (a table of the page's own hid moves the directives name and offered work the mode dispatches, two critics). The
 // step's directive is shown beside them, but not on an AUTO project, whose prose may still name moves the door
-// refuses (engineering, 9853468). Before the engine served `performed_by`, dispatched work fell back to the mode's
-// `perform`: the executor's steps but consent are the clean session's.
+// refuses (engineering, 9853468). Work the mode dispatches is read off its `perform`: the executor's steps but consent
+// are the clean session's, whatever `performed_by` names (outside AUTO it names the holder).
 const DISPATCHED = new Set(['execute', 'rework', 'deliver']);
 function actions({d, acts}) {
     const s = d.state, id = {id: d.id}, kids = hasKids(d.id), m = S.graph.mode, me = myRole();
@@ -124,7 +124,9 @@ function actions({d, acts}) {
     if (!steps.length) return '';
     const said = steps.map(x => `<div class="pn-step" title="${esc(m.mode === 'auto' ? '' : x.directive || '')}">${esc(x.action)}`
         + `${m.mode === 'auto' ? '' : ` — ${esc(trimTo(x.directive || '', 220))}`}</div>`).join('');
-    const waits = !by && m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
+    // outside AUTO the engine's performed_by names the holder even for work its hands do, so the mode's perform still
+    // decides that work is the clean session's (critic: Deliver offered beside «PERFORMED BY … WAIT»)
+    const waits = m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
     return foot(said, waits ? '' : [...open, ...moves].join(''));
 }
 const trimTo = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
