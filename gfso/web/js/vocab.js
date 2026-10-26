@@ -32,7 +32,11 @@ const ROWS = {
     ABANDONED:  ['quiet',     'Cancelled',   '',     ''],
     ESCALATED:  ['pathology', 'Escalated',   '',     'EC'],
 };
-export const STATES = Object.keys(ROWS);
+// The state predicates every view reads, written once: terminal (§12.1), delivered — the engine's settled_positive,
+// DONE by a PASS or the timeout's AUTO_PASS — and working (consented work or its validation in course).
+export const terminal = s => s === 'DONE' || s === 'ABANDONED';
+export const delivered = t => t?.state === 'DONE' && (t.done_reason === 'PASS' || t.done_reason === 'AUTO_PASS');
+export const working = s => s === 'EXECUTING' || s === 'REWORKING' || s === 'VALIDATING';
 const row = s => ROWS[s] || ['quiet', s, '', ''];
 export const bucketOf = s => row(s)[0];
 export const label = s => row(s)[1];

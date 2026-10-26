@@ -2,11 +2,11 @@
 // plans it. A slide-over from the left; nothing is sent until one of its two buttons. What the engine owns it
 // READS: admission (`/api/admission`, the ladder every ASSIGN runs) and who holds the work (`/api/modes`).
 import {$, esc} from './dom.js';
-import {getJSON, post} from './api.js';
+import {getJSON, post, refusal} from './api.js';
 import {S, myRole} from './state.js';
 import {notice, askInPage} from './overlays.js';
 import {PLAN_COST, modeDoc} from './vocab.js';
-import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest, refusal} from './author.js';
+import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest} from './author.js';
 import {switchProject} from './projects.js';
 
 const root = () => S.tasks.find(t => !t.parent_id);

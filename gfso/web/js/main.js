@@ -4,7 +4,7 @@ import {$} from './dom.js';
 import {TASK, GOAL, getJSON} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
-import {loadCheckMap} from './vocab.js';
+import {loadCheckMap, terminal} from './vocab.js';
 import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {refreshHeader, refreshQuality, toggleQuality, toggleReports, stopRun, startRun} from './header.js';
 import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
@@ -89,7 +89,7 @@ const LIVE = {
         if (t) t.state = d.new_state;                  // the tooltip reads the cache
         // A node that SETTLES changes more than its colour — how it closed is drawn on it — so terminal
         // transitions take the long way round, which is one read.
-        if (!restyle(d.task_id, d.new_state) || ['DONE', 'ABANDONED', 'ESCALATED'].includes(d.new_state)) await refreshGraph();
+        if (!restyle(d.task_id, d.new_state) || terminal(d.new_state) || d.new_state === 'ESCALATED') await refreshGraph();
         await refreshQuality(); await refreshHeader();
         // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION: its checks are computed from the CHILDREN.
         if (focus().select) await selectTask(focus().select);

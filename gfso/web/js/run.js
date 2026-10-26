@@ -3,6 +3,12 @@
 // progress, cost, events, the graph's badges) reads this and nothing else, so two views can never
 // disagree on a fact. Pure: payloads in, model out — no fetch, no DOM, no imports.
 
+import {terminal, delivered, working} from './vocab.js';
+
+// Sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one)
+// or being cancelled — one rule for the strip's «sent back» and the graph's red rounds badge.
+export const failingNow = (rounds, state) => rounds?.at(-1)?.verdict === 'FAIL' && !terminal(state) && state !== 'ESCALATED' && state !== 'CANCELLING';
+
 // Who owes the next move in each state (canon §12.13).
 const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
               CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
@@ -86,25 +92,26 @@ export const roundsOf = (audit, id) => rounds(audit.map(a => ({...a, t: at(a.tim
 // What a node waits on, ONE rule for every view: the Dep producers not yet passed (the engine hands
 // no such node to anyone — frontier.py), else the parts of a parent still working, else whoever owes
 // the next move (canon §12.13). A finished node waits on nothing.
-const SETTLED = new Set(['DONE', 'ABANDONED']);
+// A producer is passed as the engine reads it (settled_positive): a DONE closed by FAIL or a cancellation still holds
+// its consumer. An ESCALATED node waits on its issuer's decision, not on its producers (frontier._waiting_on).
 export function waitsOf(nodes, edges) {
-    const st = Object.fromEntries(nodes.map(n => [n.id, n.state]));
+    const by = Object.fromEntries(nodes.map(n => [n.id, n]));
     return Object.fromEntries(nodes.map(n => {
-        if (SETTLED.has(n.state)) return [n.id, {owes: null, deps: [], parts: []}];
-        const deps = edges.filter(e => e.type !== 'parent-child' && e.target === n.id && st[e.source] !== 'DONE').map(e => e.source);
-        const parts = ['EXECUTING', 'REWORKING'].includes(n.state) ? nodes.filter(k => k.parent_id === n.id && !SETTLED.has(k.state)).map(k => k.id) : [];
+        if (terminal(n.state)) return [n.id, {owes: null, deps: [], parts: []}];
+        const deps = n.state === 'ESCALATED' ? []
+            : edges.filter(e => e.type !== 'parent-child' && e.target === n.id && !delivered(by[e.source])).map(e => e.source);
+        const parts = ['EXECUTING', 'REWORKING'].includes(n.state) ? nodes.filter(k => k.parent_id === n.id && !terminal(k.state)).map(k => k.id) : [];
         return [n.id, {owes: deps.length || parts.length ? null : OWES[n.state] || null, deps, parts}];
     }));
 }
 // What is AT WORK now, one rule for the strip and the graph: a node with a session open, or a leaf in a
 // working state (its executor may be a person or a process elsewhere). A parent EXECUTING waits on its parts.
-const WORKING = new Set(['EXECUTING', 'REWORKING', 'VALIDATING']);
 // `procs`: the processes this server has in flight here — a node one runs on is at work whatever its state (a plan
 // authored over an offered root, one session carrying a part of the plan on its top node).
 export function atWork(run, tasks, procs = []) {
     const parent = new Set(tasks.map(t => t.parent_id)), open = new Set((run?.sessions || []).filter(s => s.open).map(s => s.node));
     const on = new Set(procs.map(w => w.task_id));
-    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id) || (WORKING.has(t.state) && !parent.has(t.id))).map(t => t.id));
+    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id) || (working(t.state) && !parent.has(t.id))).map(t => t.id));
 }
 // The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
 export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')

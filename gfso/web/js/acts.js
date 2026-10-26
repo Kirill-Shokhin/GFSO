@@ -2,7 +2,7 @@
 // EVERY SIGNAL THAT CARRIES TEXT ASKS FOR IT IN THE PANEL: a native `prompt()` is one line, unstylable,
 // and BLOCKS the page — a tester's tab froze on `Deliver` and the delivery was lost (wave 26).
 import {$, esc, data} from './dom.js';
-import {post} from './api.js';
+import {post, refusal} from './api.js';
 import {S, taskOf, critNames, hasKids, myRole} from './state.js';
 import {mark, PLAN_COST} from './vocab.js';
 import {notice, clearNotice, askInPage} from './overlays.js';
@@ -46,11 +46,11 @@ export function submitActionForm(a) {
 
 // A REFUSAL IS THE ENGINE TALKING TO YOU: it arrives as a 200 whose body says no, and the page used to
 // drop it and refresh — the node did not move and nothing said why.
-async function send(url, body, refusal) {
+async function send(url, body, what) {
     clearNotice();
     try {
-        const out = await (await post(url, body)).json().catch(() => ({}));
-        if (out && (out.error || out.accepted === false)) return notice(out.error || refusal, 'bad');
+        const no = await refusal(await post(url, body));
+        if (no) return notice(`${what}: ${no}`, 'bad');
         closeForm();
         await S.reload();
     } catch (e) { console.error(url, e); }
@@ -92,10 +92,8 @@ export async function aiDecompose({id}) {
     const before = critNames(id);
     try {
         const r = await post('/api/run/auto_decompose', {request: taskOf(id).description || '', root_id: id, depth: 1});
-        if (!r.ok) {
-            const e = await r.json().catch(() => ({}));
-            notice('Decomposition refused: ' + (e.detail || e.error || r.status), 'bad');
-        }
+        const no = await refusal(r);
+        if (no) notice('Decomposition refused: ' + no, 'bad');
         await S.reload();
         const after = critNames(id), gone = before.filter(n => !after.includes(n));
         if (gone.length)

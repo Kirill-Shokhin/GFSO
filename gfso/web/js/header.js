@@ -2,9 +2,9 @@
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
 import {$, esc, data, hint} from './dom.js';
-import {getJSON, post, singleFlight, GOAL} from './api.js';
+import {getJSON, post, refusal, singleFlight, GOAL} from './api.js';
 import {S, taskOf, myRole} from './state.js';
-import {label, closureNote, contested, modeDoc} from './vocab.js';
+import {label, closureNote, contested, modeDoc, terminal, delivered} from './vocab.js';
 import {GAP, at} from './run.js';
 import {dur, trim} from './draw.js';
 import {notice, askInPage} from './overlays.js';
@@ -42,10 +42,10 @@ async function goal() {
     const who = Object.entries(doc).map(([m, text]) => `${m === mode ? '▸ ' : ''}${m}: ${text}`);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = root.name || root.id, short = full.split(/\s[(:—]/)[0].slice(0, 40);
-    const delivered = root.state === 'DONE' && !['FAIL', 'CANCELLED'].includes(root.done_reason);
+    const done = delivered(root);
     // left: WHICH goal and who holds its work; where it stands goes to the middle, beside what needs a person —
     // the brand's dot marking the one real done: the goal delivered
-    status = `<span class="hd-phrase">${phrase(root)}${delivered ? '<i class="brand-dot" title="Delivered&#10;the root passed — the goal is reached"></i>' : ''}</span>`;
+    status = `<span class="hd-phrase">${phrase(root)}${done ? '<i class="brand-dot" title="Delivered&#10;the root passed — the goal is reached"></i>' : ''}</span>`;
     return `<button class="hd-root"${data({action: 'select', id: root.id})} title="${hint(full, 'click to open the goal')}">${esc(short)}</button>`
         + (mode ? `<span class="hd-mode" title="${hint(`${mode} — who holds the work`, who)}">${esc(mode)}</span>` : '');
 }
@@ -86,8 +86,8 @@ function runSwitch(r) {
 }
 async function switchRun(verb, body) {
     try {
-        const out = await (await post(`/api/run/${verb}`, body)).json();
-        if (out.error || out.refused) return notice(out.error || 'the engine refused', 'bad');
+        const no = await refusal(await post(`/api/run/${verb}`, body));
+        if (no) return notice(no, 'bad');
     } catch (e) { return notice(`${verb}: the server did not answer`, 'bad'); }
     await refreshHeader();
 }
@@ -133,7 +133,7 @@ function stalled(calls) {
     // at work HERE means a session open or a process in flight — a leaf left EXECUTING by an executor that died is
     // exactly the stall to name, so a working STATE does not count
     // …and a run the person stopped is not stalled: it is stopped, and says so beside the goal
-    if (calls || !run || !root || ['DONE', 'ABANDONED'].includes(root.state) || run.sessions.some(s => s.open)
+    if (calls || !run || !root || terminal(root.state) || run.sessions.some(s => s.open)
         || S.runState?.state !== 'running'
         || S.inflight.some(w => w.project === S.project)) return '';
     const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0), idle = Date.now() - last;

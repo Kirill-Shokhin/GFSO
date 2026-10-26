@@ -11,6 +11,15 @@ export const getJSON = async url => (await api(url)).json();
 export const post = (url, body) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                              body: JSON.stringify(body)});
 
+// The engine's no, as the engine wrote it, or '' — the server's contract (server.py): a malformed call or a `refused`
+// is a 422 carrying `detail` or the verb's dict, an `accepted: false` / `recorded: false` / `error` a 200 saying so.
+// Read once here: five call sites read it five ways, two of them took a 422 with no `error` for success.
+export async function refusal(r) {
+    const out = await r.json().catch(() => ({}));
+    const no = !r.ok || out.refused || out.error || out.accepted === false || out.recorded === false;
+    return !no ? '' : String(out.error || out.reason || (typeof out.detail === 'string' ? out.detail : JSON.stringify(out.detail ?? out)) || r.status);
+}
+
 // SERIALISED: a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each
 // other's `cy.add` (wave 27, 2026-09-06). A caller arriving mid-run waits for the run doing its work.
 // …and a caller arriving mid-run is answered by ONE more run after it, never by the run already under way: that run

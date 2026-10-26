@@ -5,7 +5,7 @@ import {$, esc, hint} from './dom.js';
 import {getJSON, singleFlight} from './api.js';
 import {S, procs} from './state.js';
 import {point, release} from './store.js';
-import {buildRun, said, blockers, atWork} from './run.js';
+import {buildRun, said, blockers, atWork, failingNow} from './run.js';
 import {dur, trim} from './draw.js';
 import * as timeline from './timeline.js';
 import * as progress from './progress.js';
@@ -71,7 +71,7 @@ function strip() {
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
     // the red rounds badge's rule; a count of every FAIL ever never went away on a green run (critic)
     const state = id => S.tasks.find(t => t.id === id)?.state;
-    const back = run ? Object.entries(run.rounds).filter(([id, rs]) => rs.at(-1)?.verdict === 'FAIL' && !['DONE', 'ABANDONED', 'ESCALATED', 'CANCELLING'].includes(state(id)))
+    const back = run ? Object.entries(run.rounds).filter(([id, rs]) => failingNow(rs, state(id)))
         .map(([id, rs]) => [id, rs.filter(r => r.verdict === 'FAIL').length]).sort((x, y) => y[1] - x[1]) : [];
     return now_
         // what holds the most back: the producer most nodes wait on, the count beside it

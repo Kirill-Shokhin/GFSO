@@ -1,7 +1,7 @@
 // Authoring contracts: a revision of a node (Edit) and a split into children (Decompose), and the rows
 // every authoring form writes with — this one builder and reader, shared with the goal constructor.
 import {$, el, esc} from './dom.js';
-import {getJSON, post} from './api.js';
+import {getJSON, post, refusal} from './api.js';
 import {S, myRole} from './state.js';
 import {notice} from './overlays.js';
 
@@ -67,13 +67,6 @@ export async function suggest(btn, desc) {
     finally { btn.textContent = label; btn.disabled = false; }
 }
 
-// The engine's no, as the engine wrote it, or '' — a refusal is a 200 whose body says so (`refused`,
-// `error`, `accepted: false`), a malformed call a 422 carrying the verb's own dict.
-export async function refusal(r) {
-    const out = await r.json().catch(() => ({}));
-    const no = !r.ok || out.refused || out.error || out.accepted === false;
-    return !no ? '' : String(out.error || (typeof out.detail === 'string' ? out.detail : JSON.stringify(out.detail ?? out)) || r.status);
-}
 
 const modal = (id, on) => $(id).classList.toggle('active', on);
 export const closeModal = ({modal: id}) => modal(id, false);
@@ -112,15 +105,12 @@ export async function submitEdit() {
     const critsMoved = JSON.stringify(criteria) !== JSON.stringify(edit.crits);
     const risksMoved = JSON.stringify(riskItems) !== JSON.stringify(edit.risks);
     try {
-        let r = {ok: true};
-        if (critsMoved) r = await send('edit_criteria', {criteria, agent});
-        if (r.ok && risksMoved) r = await send('edit_accepted_risks', {accepted_risks: riskItems.map(i => edit.recorded[i] || i), agent});
-        if (r.ok && assignee && assignee !== edit.assignee) r = await send('reassign', {assignee});
-        if (r.ok && !critsMoved && !risksMoved && assignee === edit.assignee) notice('Nothing changed — no revision sent.', 'ok');
-        if (!r.ok) {
-            const e = await r.json().catch(() => ({}));
-            notice('Edit rejected: ' + (e.detail || r.status) + '\n(a delegated/committed node → cancel + re-assign)', 'bad');
-        }
+        let no = '';
+        if (critsMoved) no = await refusal(await send('edit_criteria', {criteria, agent}));
+        if (!no && risksMoved) no = await refusal(await send('edit_accepted_risks', {accepted_risks: riskItems.map(i => edit.recorded[i] || i), agent}));
+        if (!no && assignee && assignee !== edit.assignee) no = await refusal(await send('reassign', {assignee}));
+        if (!no && !critsMoved && !risksMoved && assignee === edit.assignee) notice('Nothing changed — no revision sent.', 'ok');
+        if (no) notice('Edit rejected: ' + no + '\n(a delegated/committed node → cancel + re-assign)', 'bad');
     } catch (e) { console.error('edit:', e); }
     modal('edit-modal', false);
     await S.reload();

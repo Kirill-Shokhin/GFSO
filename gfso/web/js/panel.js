@@ -4,7 +4,7 @@
 import {$, esc, data, section, rebuild, hint} from './dom.js';
 import {getJSON} from './api.js';
 import {S, hasKids, taskOf} from './state.js';
-import {bucketOf, statusLabel, vOf, V_SYMBOL, can, signals, CANCEL, closureNote, contested} from './vocab.js';
+import {bucketOf, statusLabel, vOf, V_SYMBOL, can, signals, CANCEL, closureNote, contested, terminal} from './vocab.js';
 import {roundsOf, at, waitsOf, waitWords, conjunct} from './run.js';
 import {signedBy} from './work.js';
 import {glyph, mark} from './draw.js';
@@ -24,7 +24,7 @@ function waiting(d) {
 
 function head({d, rounds}) {
     const v = vOf(d.state), name = d.name || d.description || d.id, note = closureNote(d.closure), bad = contested(d.closure);
-    const live = d.state !== 'DONE' && d.state !== 'ABANDONED', mode = S.graph.mode?.mode;
+    const live = !terminal(d.state), mode = S.graph.mode?.mode;
     return `<div class="sidebar-header"><h2 title="${esc(name)}">${esc(name)}</h2><button class="sidebar-close" data-action="close">&times;</button></div>`
         + `<div class="pn-meta" title="${hint('Executor (Del)', d.assignee || 'none')}">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
         + `<div class="pn-status"><span class="v-badge v-${v}" title="V(t) — the validation outcome&#10;pass only when every criterion passes; ⊥ while not yet checked (§2.3)"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`

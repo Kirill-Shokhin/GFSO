@@ -6,7 +6,7 @@ import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
 import {point, watch, focus} from './store.js';
-import {roundsLine, waitWords, atWork, conjunct} from './run.js';
+import {roundsLine, waitWords, atWork, conjunct, failingNow} from './run.js';
 
 // Leaf tokens are hex literals; getComputedStyle returns the specified value of an unregistered property.
 const cs = getComputedStyle(document.documentElement), tok = n => cs.getPropertyValue(n).trim();
@@ -194,7 +194,7 @@ function placeBadges() {
     const work = atWork(S.run, S.tasks, procs()), proc = new Set(procs().map(w => w.task_id));
     layer.innerHTML = cy.nodes().map(n => {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
-        const id = n.id(), rs = S.run?.rounds[id] || [], failing = rs.at(-1)?.verdict === 'FAIL';
+        const id = n.id(), rs = S.run?.rounds[id] || [], failing = failingNow(rs, n.data('state') ?? taskOf(id).state);
         if (!work.has(id) && rs.length < 2) return '';
         const b = n.renderedBoundingBox(BODY);
         return `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`

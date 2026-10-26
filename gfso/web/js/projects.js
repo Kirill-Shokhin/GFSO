@@ -6,7 +6,7 @@ import {$, el, esc, hint} from './dom.js';
 import {PROJECT, getJSON} from './api.js';
 import {S} from './state.js';
 import {notice} from './overlays.js';
-import {modelName} from './vocab.js';
+import {modelName, delivered} from './vocab.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
 export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (m[w.project] || 0) + 1, m), {});
@@ -29,7 +29,7 @@ export async function refreshProjects() {
 function where(p, busy) {
     const r = p.goal;
     if (!r) return ['empty', 'no goal yet'];
-    if (r.state === 'DONE' && !['FAIL', 'CANCELLED'].includes(r.done_reason)) return ['done', 'delivered'];
+    if (delivered(r)) return ['done', 'delivered'];
     if (r.done_reason === 'FAIL') return ['bad', 'failed'];
     if (r.state === 'DONE' || r.state === 'ABANDONED') return ['bad', 'abandoned · not delivered'];
     // a stop is the person's act on the run, not a failure: said as theirs, with why — and while sessions it let
