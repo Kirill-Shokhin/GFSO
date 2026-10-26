@@ -1681,13 +1681,16 @@ def system_mover(engine, agents, task_id: TaskId, question: str) -> Optional[str
 
     A split question is the node's executor's (a registered one). An issuer question is the machine
     issuer's (`_machine_issuer`); with NO mode set the standing agent's disputes are still answered by
-    the system — the one issuer move it made before modes existed — and nothing else of it is."""
+    the system — the one issuer move it made before modes existed — and nothing else of it is, nor that one where the
+    node's issuer is its own executor: a dispute against oneself is meaningless (§10.3), and its answer is the node's own
+    holder's — the system answering it is a party outside Del deciding the contract under the holder's name (§11.6)."""
     task = engine.graph.get_task(task_id)
     if engine.mode() is None:
-        # before modes, the only issuer move the system made was answering a dispute — kept exactly
+        # before modes, the only issuer move the system made was answering a dispute — kept, at a seam only: at a
+        # self-assigned root it accepted its holder's own CHALLENGE 4 s later and retired a finding signed as him (ui, 2026-10-26)
         issuer = str(engine.graph.issuer_of(task_id))
-        return issuer if question == "dispute" and (agents.get(issuer) is not None
-                                                    or issuer == _config_agent_id()) else None
+        return issuer if question == "dispute" and str(task.assignee) != issuer and (
+            agents.get(issuer) is not None or issuer == _config_agent_id()) else None
     if question in SPLIT_QUESTIONS:
         return str(task.assignee) if agents.get(str(task.assignee)) is not None else None
     if (issuer := _machine_issuer(engine, agents, task_id)) is not None:

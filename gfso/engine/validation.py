@@ -1106,8 +1106,8 @@ def party_kind(graph: Graph, party: str, registered=None) -> str:
     """WHO makes a party's issuer moves — the one owner of a question four places answered four ways (D-F9):
     `holder` — the user's standing agent under SOLO/SEMI, whose moves the system never makes;
     `machine` — the standing agent under AUTO (the customer, who does not intervene), or a registered participant;
-    `legacy` — the standing agent with no mode set: as before modes, the system answers its disputes and resolves its
-    mechanical blocks, the instrument signs, and its plan moves stay its own;
+    `legacy` — the standing agent with no mode set: as before modes, the system answers its disputes at a seam (one its
+    own node raises is its own, §10.3) and resolves its mechanical blocks, the instrument signs, and its plan moves stay its own;
     `person` — anyone else, unregistered: the system is passive.
     The standing agent is read first: a role registered under the user's own id does not make it a machine.
     `registered` is the registry consulted (the dispatcher's own; the engine's published roster by default)."""

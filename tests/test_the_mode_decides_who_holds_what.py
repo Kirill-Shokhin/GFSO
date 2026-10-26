@@ -267,10 +267,13 @@ def test_a_system_held_parent_gives_its_own_consent():
 
 
 def test_with_no_mode_the_system_answers_only_the_disputes_it_always_answered():
+    """…at a seam: a node its own issuer executes has no counterparty to its dispute (§10.3) — its holder answers it."""
     e = _engine()
     _goal(e)
-    assert I.system_mover(e, _Roster(), TaskId("kid"), "dispute") == "agent"
-    assert I.system_mover(e, _Roster(), TaskId("kid"), "escalation") is None,         "a solo user's escalation is theirs to decide; the system must not write or close their contract"
+    _admit(e, "root", {**_kid("seam", ["g"], criterion("s", "S holds")), "assignee": "exec-1"})
+    assert I.system_mover(e, _Roster(), TaskId("seam"), "dispute") == "agent"
+    assert I.system_mover(e, _Roster(), TaskId("kid"), "dispute") is None, "the system answered its holder's own dispute"
+    assert I.system_mover(e, _Roster(), TaskId("seam"), "escalation") is None,         "a solo user's escalation is theirs to decide; the system must not write or close their contract"
 
 
 def test_a_holder_cannot_take_a_system_node_back_by_reassigning_it():
