@@ -153,11 +153,15 @@ export async function selectTask(id) {
             soft(getJSON(`${base}/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
         const ctx = {d, vr, cr, acts, rounds: roundsOf(d.audit, d.id)}, sb = $('sidebar');
         // An open form outlives the re-read — any transition in the project re-reads the panel, and the text and ticks
-        // being entered were wiped mid-entry on a live run. It stays while the engine still admits its signal here.
-        const form = sb.dataset.key === d.id && $('inline-form')?.firstChild ? $('inline-form') : null;
+        // being entered were wiped mid-entry on a live run — while nothing has happened to THIS node: a form opened on
+        // one delivery must not be sent against the next (critic: a verdict form kept over VALIDATING → REWORKING).
+        const last = JSON.stringify([d.state, d.audit.at(-1) || null]);
+        // …and while its signal is still admitted to the one acting (a role or a mode changes that with no new record)
+        const form = sb.dataset.key === d.id && sb.dataset.last === last && $('inline-form')?.firstChild ? $('inline-form') : null;
         const sig = form?.querySelector('[data-action="send-signal"]')?.dataset.sig;
         sb.classList.remove('hidden');
         rebuild(sb, d.id, PARTS.map(f => f(ctx)).join(''));
+        sb.dataset.last = last;
         if (form && (!sig || acts?.actions?.includes(sig))) $('inline-form')?.replaceWith(form);
         showReader(ctx);
     } catch (e) { console.error('selectTask:', e); }
@@ -267,13 +271,15 @@ function review({cr}) {
 
 // The parts' states are a FORECAST of the parent: Theorem 1 holds under a correct decomposition only, and
 // the parent's V is its own contact over the result (§12.8) — never AND-ed into it here.
-const kids = d => d.children || [], passing = d => kids(d).filter(c => vNow(c) === 'pass').length;
+// a part's V read off the same log as its own panel's (the run's), else what its state carries
+const kids = d => d.children || [], vPart = c => vNow(c, S.run?.audit.filter(a => a.task_id === c.id));
+const passing = d => kids(d).filter(c => vPart(c) === 'pass').length;
 const composition = ({d}) => section('Composition — the parts', `<div class="composition-panel"><div class="composition-formula">`
     + `${passing(d)} of ${kids(d).length} parts pass — a forecast: V(parent) = AND(parts) holds `
     + `under a correct decomposition (Th. 1), and the parent's V is its own verdict over the result (§12.8)</div>`
-    + kids(d).map(c => { const v = vNow(c);
+    + kids(d).map(c => { const v = vPart(c);
         return `<div class="composition-row v-${v}"><span class="v-sym">${V_SYMBOL[v]}</span>`
-            + `<span class="child-name" data-action="select" data-id="${esc(c.id)}">${esc(c.name || c.description)}</span></div>`; }).join('')
+            + `<span class="child-name" data-action="select" data-id="${esc(c.id)}">${esc(c.name || c.description || c.id)}</span></div>`; }).join('')
     + `</div>`);
 
 // The node's audit slice, newest first; what a signal carried is folded under its line.

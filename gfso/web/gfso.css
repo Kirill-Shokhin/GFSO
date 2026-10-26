@@ -374,7 +374,7 @@ body {
 .dk-live em { font-style: normal; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .dk-live i, .dk-live span { flex-shrink: 0; }
 .dk-wait { color: var(--ink-soft); border-left: 1px solid var(--hair); padding-left: 10px; }
-.dk-sum { margin-left: auto; flex-shrink: 0; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
+.dk-sum { margin-left: auto; flex: 0 2 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .dk-fold { background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; }
 .deck.closed .dk-fold { transform: rotate(180deg); }
 .dk-body { flex: 1; overflow: auto; padding: 12px 16px 16px; min-height: 0; }
@@ -1041,7 +1041,7 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .tl .tl-legend text { font-size: 9.5px; fill: var(--ink-soft); }
 .dk-block span { color: var(--ink-faint); }
 .cs-chart h4 span { text-transform: none; letter-spacing: 0; }
-.dk-chips { display: flex; gap: 6px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
+.dk-chips { display: flex; gap: 6px; min-width: 13.5em; overflow: hidden; flex: 0 1 auto; }   /* one chip and its +N, always */
 .dk-more { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); align-self: center; }
 /* what is at work keeps its chips; the wait lines give way first, shortened, their whole text on hover */
 .dk-block, .dk-wait { flex: 0 3 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; }
