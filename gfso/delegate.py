@@ -34,7 +34,7 @@ from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec
                              SPAWNABLE_ACTIONS, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
                           split_has_a_mover)
-from gfso.adapters.llm.stats import is_limit, refused_by_limit
+from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace,
                              clear_workspaces, execution_of, join_whole, node_workspace, session_scope)
@@ -243,7 +243,9 @@ def _auto_validate_scope(engine, top_id: TaskId, agents: AgentRegistry, _llm=Non
         verdicts = {**verdicts, **(out.get("verdicts") or {})}
     if verdicts:
         return _sign_scope(engine, top, verdicts, str(validator_id), sign)
-    return "no-verdict:limit" if refused_by_limit(out.get("stats")) else "no-verdict"
+    if refused_by_limit(out.get("stats")):
+        return "no-verdict:limit"
+    return "no-verdict:torn" if torn_among(out.get("stats") or ()) else "no-verdict"   # as a node's (`_classify_no_verdict`)
 
 
 def _oracle_workdir(engine, vcfg: dict):
@@ -505,7 +507,7 @@ def _classify_no_verdict(engine, task_id: TaskId, out: dict) -> str:
     _stats = out.get("stats") or ()
     if refused_by_limit(_stats) or is_limit(_why):
         return "no-verdict:limit"
-    if _stats and _stats[-1].get("transport_torn"):
+    if torn_among(_stats):
         return "no-verdict:torn"
     return "no-verdict" if (_stats or _spent) else "no-verdict:never-ran"
 
@@ -1271,6 +1273,8 @@ class Dispatcher:
                 return
             if ret == "no-verdict:limit":
                 return self._wait_out_limit(top_id, vkey, "the scope's validator")
+            if ret == "no-verdict:torn" and self._redial(top_id, vkey):   # a cut call is no answer: it spends no retry
+                return
             if vkey not in self._retried:
                 self._retried.add(vkey)
                 self._seen.discard(vkey)

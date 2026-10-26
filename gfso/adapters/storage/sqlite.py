@@ -7,7 +7,7 @@ import os
 import sqlite3
 import threading
 from contextlib import closing, contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from urllib.request import pathname2url
@@ -397,8 +397,9 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         it, once, here — and the move is LOGGED AS A MIGRATION, not as a signal: nobody sent one,
         and an audit row would claim a transition the protocol never made. The node enters its new
         state now, so its bound counts from the migration (a node parked in OVERDUE under the old
-        machine reaches ESCALATED with the issuer's whole window ahead of it)."""
-        now = datetime.now().isoformat()
+        machine reaches ESCALATED with the issuer's whole window ahead of it) — on the project's clocks (`project_now`)."""
+        off = float((self._conn.execute("SELECT value FROM settings WHERE key = 'clock_off_s'").fetchone() or [0])[0] or 0)
+        now = (datetime.now() - timedelta(seconds=off)).isoformat()
         for old, new in RETIRED_STATES.items():
             ids = [r["id"] for r in self._conn.execute("SELECT id FROM tasks WHERE state = ?", (old,))]
             if not ids:

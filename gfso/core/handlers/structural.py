@@ -405,7 +405,8 @@ def check_vertical_deadlines(task: Task, children: list[Task]) -> CheckResult:
     Its silence at zero is real silence. A deadline is a design decision and not a mandatory field
     (`formal/README.md` #6: absence stays silent), so a plan that declares none says nothing here.
     """
-    violations = [f"child {c.id}(deadline={c.deadline}) >= parent {task.id}(deadline={task.deadline})"
+    # the order, not the dates: a handler holds no project clock, and a date read here would be typed back off by it
+    violations = [f"child {c.id} is due at or after its parent {task.id}"
                   for c in children
                   if c.deadline is not None and task.deadline is not None
                   and c.deadline >= task.deadline]

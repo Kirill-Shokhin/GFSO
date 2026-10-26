@@ -25,7 +25,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (PAUSE_KEY, USERS_PLAN_KEY, admission_key, project_deadline_s, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (PAUSE_KEY, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer)
 
 
@@ -1257,9 +1257,9 @@ def no_live_deadline(graph: Graph, task, parent_id=None) -> Optional[str]:
     one, or its parent leaves no time inside its own for a default. With the default switched off
     (`GFSO_DEFAULT_DEADLINE_S=0`) a packet without one is the installation's choice; only a spent kept one is refused."""
     dl, _ = version_deadline(graph, None, task, parent_id)
-    if dl is not None and dl > datetime.now() or dl is None and not project_deadline_s(graph):
+    if dl is not None and dl > project_now(graph) or dl is None and not project_deadline_s(graph):
         return None
-    return ((f"it would keep {dl:%Y-%m-%d %H:%M}, already passed" if dl is not None else
+    return ((f"it would keep {on_the_wall(graph, dl):%Y-%m-%d %H:%M}, already passed" if dl is not None else
              "its parent leaves no time inside its own for a default")
             + " — a task is given out with a live deadline, and under a parent whose deadline has passed the issuer "
               "types one (§2.5, §12.16); give one")
@@ -1345,9 +1345,9 @@ def packet_refusal(signal_data: SignalData, graph: Graph, state) -> Optional[str
     §12.14), and no Dep cycle closed by its criteria (§12.10)."""
     if signal_data.signal not in (Signal.ASSIGN, Signal.ACCEPT_CHALLENGE):
         return None
-    if signal_data.deadline is not None and signal_data.deadline <= datetime.now():
+    if signal_data.deadline is not None and signal_data.deadline <= project_now(graph):
         return (f"{signal_data.signal.name} on {signal_data.task_id} carries a deadline already passed "
-                f"({signal_data.deadline:%Y-%m-%d %H:%M}) — a task is given out with a live deadline, one still ahead "
+                f"({on_the_wall(graph, signal_data.deadline):%Y-%m-%d %H:%M}) — a task is given out with a live deadline, one still ahead "
                 f"(§2.5); give one that is")
     if why := refuse_a_version_with_no_live_deadline(signal_data, graph):
         return why

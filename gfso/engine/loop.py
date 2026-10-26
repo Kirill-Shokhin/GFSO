@@ -5,6 +5,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from dataclasses import replace
 from datetime import datetime
 from typing import Optional
@@ -19,7 +20,8 @@ from gfso.core.protocol.fsm import transition, not_admissible_here
 from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.core.graph import Graph
-from gfso.core.graph.model import dep_scope, non_leaf_ids, standing_split
+from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, non_leaf_ids, project_now,
+                                   standing_split)
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
 from gfso.core.handlers import run_all_checks, recommend
 from gfso.config import state_bound
@@ -461,14 +463,13 @@ def _execute_effects(
                                        str(m.child_id) == str(t.id) for m in _parent.criterion_mappings))
                 if affected:
                     # The subtree cascade (canon §12.6/§15.1: CANCEL cascades — the protocol sends CANCEL to
-                    # every descendant; each runs its own handshake). An issuer action: each child's issuer
-                    # is the cancelling parent's assignee — carried as source so the cascade is a VALID
-                    # issuer-CANCEL (else it is rejected under validate_signals).
-                    parent = graph.get_task(mg.task_id)
-                    src = parent.assignee if parent else None
+                    # every descendant; each runs its own handshake). An issuer action, signed by EACH descendant's
+                    # issuer (§10.1, Del of its own parent): the cascade walks through a settled child to its live
+                    # ones, whose issuer is that child's Del — signed as the cancelled node's, a grandchild under a
+                    # DONE child was refused and kept working for a goal that no longer exists.
                     for child_id in affected:
                         signal_queue.put(SignalData(
-                            signal=Signal.CANCEL, task_id=child_id, source=src,
+                            signal=Signal.CANCEL, task_id=child_id, source=graph.issuer_of(child_id),
                             reason="cascade from parent cancel",
                         ))
 
@@ -514,7 +515,7 @@ def state_bound_passed(task, now: float) -> bool:
     return left is not None and left < 0
 
 
-def entered_on_a_spent_bound(task) -> bool:
+def entered_on_a_spent_bound(task, graph: Graph) -> bool:
     """Was the bound that governs this state ALREADY passed when the state was entered (§12.2)?
 
     A per-state bound cannot be: it starts at entry. What can be is the packet DEADLINE, which runs
@@ -527,7 +528,7 @@ def entered_on_a_spent_bound(task) -> bool:
     node escalated — a refusal no admissible move of the refused party could lift, which §12.16's
     conformance clause forbids. Found by an outside reviewer with a reproduction."""
     return (task.deadline is not None and task.state not in _OWN_BOUND_ONLY
-            and task.deadline < datetime.now())
+            and task.deadline < project_now(graph))
 
 
 def _the_clock_speaks_first(signal_data: SignalData, graph: Graph, state: State, signal_queue,
@@ -550,7 +551,7 @@ def _the_clock_speaks_first(signal_data: SignalData, graph: Graph, state: State,
         log.debug(f"a timeout for a visit already left is dropped: {task.id} {signal_data.visit}")
         return True
     if (not validate or signal_data.signal in (Signal.TIMEOUT, Signal.CANCEL)
-            or state in TERMINAL_STATES or not entered_on_a_spent_bound(task)):
+            or state in TERMINAL_STATES or not entered_on_a_spent_bound(task, graph)):
         return False
     signal_queue.put(SignalData(signal=Signal.TIMEOUT, task_id=task.id, visit=visit))
     _refused(signal_data, state,
@@ -589,10 +590,15 @@ def timeout_monitor(
     """
     clock = clock or SystemClock()   # Inv-5 reads the ClockPort, never the wall clock directly
     last_fired: dict[TaskId, tuple[State, object]] = {}   # task → (state, entered_at) of the fired visit
+    # …ON THE PROJECT'S CLOCKS (`project_now`): every wall second between two ticks is the project's or off, once — off
+    # under a stop, off in a gap too long to be a tick (a host asleep); the gap before this engine was left off at its
+    # start (`Engine.start`)
+    wall = time.time()
     while True:
         if stop_event and stop_event.is_set():
             break
         clock.wait(check_interval)
+        last, wall = wall, time.time()
         now = clock.now()
         try:
             _active = graph.active_tasks()
@@ -604,10 +610,15 @@ def timeout_monitor(
             # 2026-09-02). A monitor whose graph has closed has nothing left to monitor: it leaves.
             log.debug(f"the timeout monitor is stopping: its graph is closed ({e})")
             break
-        # …AND WHILE THE USER HAS STOPPED THE PROJECT, NO TIMEOUT: a stop writes nothing into the graph, and a bound
-        # passed meanwhile fires on the first tick after the start, as any passed bound does (§12.2)
-        if pause_record(graph):
+        # …AND WHILE THE USER HAS STOPPED THE PROJECT, NO TIMEOUT: a stop writes nothing into the graph, and every tick
+        # under it is left off the project's clocks (above), so no bound ran out during it
+        # …the beat kept at every tick, with what the tick leaves off (`keep_off`): pending between ticks is read by
+        # `clock_off_s` by this same rule, so the clock is the same whether a reader comes before or after a tick
+        stopped = pause_record(graph)
+        keep_off(graph, wall - last if stopped or wall - last > NO_TICK_S else 0.0, beat=wall)
+        if stopped:
             continue
+        now -= clock_off_s(graph)
         for task in _active:
             overdue = task.deadline and now > task.deadline.timestamp()
             # …EXCEPT in the issuer's waiting state, where the deadline is already spent by

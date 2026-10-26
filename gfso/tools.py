@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 import uuid
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Union
 
 from gfso.core.types import (
@@ -22,7 +22,7 @@ from gfso.core.types import (
     RevisionReason, Register, register_of, settled_positive, passed,
 )
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_T_numerator, q_V_reversed
-from gfso.core.graph.model import root_of
+from gfso.core.graph.model import clock_off_s, on_the_wall, root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
@@ -140,7 +140,7 @@ def _spec_from(d: dict) -> Spec:
                 covers_risks=tuple(d.get("covers_risks", ())))
 
 
-def task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
+def task_out(t, engine: Engine, plan: bool = True) -> Optional[dict]:
     """The node as a reader sees it — THE one shaping of a node, every door's (the HTTP door kept a second one, and the
     two drifted: a criterion's `depends_on` on one side only, the rework count and deadline on the other — D-F16). `plan_verified` is about the node's DECOMPOSITION (its Level-2
     review is current), never about the work — it used to be called `verified`, and on a leaf that
@@ -149,6 +149,7 @@ def task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
     there rather than false."""
     if t is None:
         return None
+    wall = lambda at: on_the_wall(engine.graph, at).isoformat() if at else None   # outside, every time is the wall's
     out = {
         "id": t.id, "name": t.spec.name, "description": t.spec.description, "state": t.state.name,
         "assignee": t.assignee, "parent_id": t.parent_id,
@@ -189,23 +190,23 @@ def task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
         "covers_risks": list(t.spec.covers_risks),
         "done_reason": t.done_reason.name if t.done_reason else None,
         "iteration": t.iteration, "max_iterations": t.max_iterations, "reopens": t.reopens,
-        "deadline": t.deadline.isoformat() if t.deadline else None,
+        "deadline": wall(t.deadline),
         "created_at": t.created_at.isoformat() if t.created_at else None,
-        "state_entered_at": t.state_entered_at.isoformat() if t.state_entered_at else None,
+        "state_entered_at": wall(t.state_entered_at),
         "was_challenged": t.was_challenged,
         "criterion_mappings": [{"criterion_name": m.criterion_name, "child_id": str(m.child_id)}
                                for m in t.criterion_mappings],
     }
     # a leaf has no plan to verify, so the field is absent there; read without an engine, a node with no mapping holds no
     # split (the polled list served `plan_verified: false` on every leaf — critic O2)
-    if engine.graph.get_active_children(t.id) if engine is not None else t.criterion_mappings:
+    if engine.graph.get_active_children(t.id) if plan else t.criterion_mappings:
         out["plan_verified"] = t.verified
         # …AND WHETHER THAT LETS THE CHILDREN START, which is the question a reader actually has.
         # `plan_verified: true` means the STRUCTURAL levels are current; a caller read it as "the
         # plan is admitted" while `review_decomposition` was answering `execution_admitted: false`
         # about the same node in the same minute, and only that verb's payload carried the
         # disclaimer (measured on the human door 2026-08-22). Two surfaces, one fact.
-        if engine is not None:
+        if plan:
             out["execution_admitted"] = engine.execution_admitted(t.id)
             if _open := engine.open_l2_findings(t.id):
                 out["l2_open"] = _open
@@ -1359,7 +1360,7 @@ def metrics(engine: Engine) -> dict:
 
 # ── AUTHORING (each desugars to the 12-signal FSM — logged, no bypass) ────────
 
-def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str]) -> AgentId:
+def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str], task_id: Optional[str] = None) -> AgentId:
     """Del of a node about to be issued: the one the caller named, checked against the project's mode.
 
     With no mode set it is exactly what it always was — the named party, else the caller. With one,
@@ -1375,11 +1376,13 @@ def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str]) 
     me = _agent_id()
     parent = engine.graph.get_task(TaskId(parent_id)) if parent_id else None
     system_side = str(want) != me
-    if system_side and str(asked) != me and AgentId(asked) in engine.workforce.executor_pool()             and (parent is None or str(asked) != str(parent.assignee)):
+    keepers = [str(a) for a in engine.seam_keepers(parent.assignee if parent else None,
+                                                   TaskId(task_id) if task_id else None)]
+    if system_side and str(asked) != me and str(asked) in keepers:
         return AgentId(asked)
     mode = engine.mode_kind()
     # the lift is the caller's own (§12.16 (ii)), and `reassign` takes a name it cannot leave out (critic round 10)
-    others = [str(a) for a in engine.workforce.executor_pool() if parent is None or str(a) != str(parent.assignee)]
+    others = keepers
     lift = (f"name one of this project's executors ({', '.join(others) or 'none registered'})"
             if system_side else f"keep it with you ({me})")
     raise ValueError(
@@ -1474,7 +1477,7 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
                 f"criteria it is responsible for; once that split stands, `create_task(parent_id='{_root.id}', "
                 f"covers=[…], …)` adds one child to it. If it is a different goal, it belongs in a different project: "
                 f"`use_project('<name>')`.")}
-    dl = _deadline(deadline)
+    dl = _deadline(deadline, engine.graph)
     # The SPEC is parsed outside the guard below: a malformed packet is the caller's own shape
     # error, and its message (which word was not a predictability, say) is the answer — the guard is
     # for the engine's ADMISSION refusals, which are about a well-formed packet.
@@ -1483,10 +1486,13 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
         _del = del_by_mode(engine, parent_id, assignee)
         t = engine.assign_task(tid, _spec, _del,
                                parent_id=TaskId(parent_id) if parent_id else None, deadline=dl,
-                               # a root under a mode keeps its creator as the goal's issuer even
-                               # when the mode hands its execution to the system; with no mode a
-                               # root is self-assigned, as before
-                               issuer=AgentId(_agent_id()) if not parent_id and engine.mode() else None,
+                               # a root keeps its creator as the goal's issuer (§10.1) wherever the system
+                               # executes it — under a mode, or handed to a REGISTERED executor with none:
+                               # recorded only under a mode, such an executor became its own issuer and the
+                               # system answered its dispute in its name (§10.3); a root a person or an agent
+                               # holds is self-assigned, as before
+                               issuer=AgentId(_agent_id()) if not parent_id and (
+                                   engine.mode() or engine.workforce.kind_of(str(_del)) is not None) else None,
                                covers=tuple(covers or ()))
     except ValueError as ex:
         # AN ADMISSION REFUSAL IS AN ANSWER, NOT A CRASH. The engine refuses a packet whose criteria
@@ -1495,11 +1501,12 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
         # message, and a traceback is the one shape that hides it — the same reading the one-root
         # refusal above already had.
         return {"error": str(ex)}
-    return task_out(t)
+    return task_out(t, engine, plan=False)
 
 
-def _deadline(raw):
-    """An ISO-8601 string into the `datetime` the graph compares, or None.
+def _deadline(raw, graph=None):
+    """An ISO-8601 string into the `datetime` the graph compares, or None — a typed date is the wall's, put on the
+    project's clocks (`project_now`); outside, a deadline always reads as the wall's (`task_out`).
 
     ONE owner, because two verbs feed the same field and only one of them parsed it: `create_task`
     turned the string into a datetime and `decompose` (once it began carrying the field at all)
@@ -1509,7 +1516,9 @@ def _deadline(raw):
     """
     if raw is None or raw == "":
         return None
-    return raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+    if isinstance(raw, datetime):
+        return raw
+    return datetime.fromisoformat(str(raw)) - timedelta(seconds=clock_off_s(graph))
 
 
 #: a spec's keys as `_spec_from` reads them — each the Spec field of the same name
@@ -1588,7 +1597,7 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # deadlines is not thereby defective (`formal/README.md` #6). What changes is that a plan which
     # DECLARES one is no longer quietly stripped of it.
     kids = [(TaskId(c["task_id"]), _named_spec(engine, c),
-             del_by_mode(engine, parent_id, c.get("assignee")), _deadline(c.get("deadline")), c.get("max_iterations"))
+             del_by_mode(engine, parent_id, c.get("assignee")), _deadline(c.get("deadline"), engine.graph), c.get("max_iterations"))
             for c in children]
     declared = [CriterionMapping(name, TaskId(c["task_id"]))
                 for c in children for name in (c.get("covers") or ())]
@@ -1621,7 +1630,7 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # decomposition — not a property of whichever process happens to be serving.
     register = (Register(_accepted_risks_from(accepted_risks or []), tuple(risk_components or ()))
                 if accepted_risks is not None or risk_components is not None else None)
-    return [task_out(t) for t in engine.decompose_task(TaskId(parent_id), kids, maps, max_iterations,
+    return [task_out(t, engine, plan=False) for t in engine.decompose_task(TaskId(parent_id), kids, maps, max_iterations,
                                                        register=register,
                                                        drops=tuple(TaskId(str(d)) for d in (drops or ())))]
 
@@ -1759,9 +1768,9 @@ def revise(engine: Engine, task_id: str, spec: Optional[dict] = None, agent: str
     return task_out(engine.revise(TaskId(task_id),
                                    _spec_from(spec) if spec is not None else t.spec,
                                    AgentId(agent),
-                                   reason=_reason_from(reason), deadline=_deadline(deadline),
+                                   reason=_reason_from(reason), deadline=_deadline(deadline, engine.graph),
                                    max_iterations=max_iterations, block_sources=tuple(block_sources or ()),
-                                   block_refuted=block_refuted))
+                                   block_refuted=block_refuted), engine, plan=False)
 
 
 def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
@@ -1782,7 +1791,7 @@ def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
     decomposer = (was is not None and str(agent) == str(was.assignee)
                   and bool(engine.graph.get_active_children(TaskId(task_id))))
     out = task_out(engine.admit_register(TaskId(task_id), Register(items, register_of(was).components), AgentId(agent))
-                    if decomposer else engine.edit_accepted_risks(TaskId(task_id), items, AgentId(agent)))
+                    if decomposer else engine.edit_accepted_risks(TaskId(task_id), items, AgentId(agent)), engine, plan=False)
     if isinstance(out, dict):
         # THE REGISTER AS RECORDED, not just the item texts. The node projection carries each risk's
         # `item` alone, so a person who classified one as STATISTICAL with a justification and an
@@ -1824,7 +1833,7 @@ def edit_scope(engine: Engine, task_id: str, scope: list, agent: str = "") -> Op
     out = task_out(engine.revise(
         TaskId(task_id),
         dataclasses.replace(spec, scope=items),
-        AgentId(agent), reason="scope_expansion"))
+        AgentId(agent), reason="scope_expansion"), engine, plan=False)
     if isinstance(out, dict):
         t = engine.graph.get_task(TaskId(task_id))
         out["scope_recorded"] = list(t.spec.scope) if t is not None else []
@@ -1878,7 +1887,7 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
     # cannot take a new `covers`") read the mapping as the child's contract (critic r15). `accept_coverage_loss` is
     # accepted and no longer needed.
     out = task_out(engine.edit_criteria(TaskId(task_id), crits, AgentId(agent),
-                                         reason=_reason_from(reason)))
+                                         reason=_reason_from(reason)), engine, plan=False)
     # WHAT THIS REPLACED, IN THE REPLY. The verb REPLACES the set — that is its contract — and the
     # answer showed only the new one, so five authored criteria vanished in a call whose reply said
     # nothing about them, with no history verb to recover from: the caller had to invent a contract
@@ -1993,9 +2002,9 @@ def reassign(engine: Engine, task_id: str, assignee: str,
     # itself undoes the mode node by node, with the mode record untouched (measured 2026-09-24: a
     # semi-auto holder took three repair nodes back and edited the program itself)
     if engine.mode() is not None and (t := engine.graph.get_task(TaskId(task_id))) is not None:
-        del_by_mode(engine, str(t.parent_id) if t.parent_id else None, assignee)
+        del_by_mode(engine, str(t.parent_id) if t.parent_id else None, assignee, str(t.id))
     out = task_out(engine.reassign(TaskId(task_id), AgentId(assignee),
-                                    reason=_reason_from(reason)))
+                                    reason=_reason_from(reason)), engine, plan=False)
     # Say what the untyped act COSTS, at the moment of the act. The verb's help has said this since
     # 2026-08-21 and the caller still has to be reading help to see it; measured 2026-09-02 on a live
     # delegated run, whose DEL read 25% in red because three ordinary hand-offs to the run's own

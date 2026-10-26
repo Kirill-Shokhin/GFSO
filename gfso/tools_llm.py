@@ -40,6 +40,7 @@ import gfso.decompose as _decompose
 from gfso.decompose import NoPlan, decompose_into
 from gfso.engine.events import emit_cb
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
+from gfso.core.graph.model import project_now
 from gfso.engine.loop import state_bound_left
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
 from gfso.engine import Engine
@@ -430,13 +431,13 @@ def _left_to_validate(engine: Engine, task) -> tuple[list, list]:
     return crits, kept
 
 
-def _validation_cap(task) -> Optional[int]:
+def _validation_cap(task, graph) -> Optional[int]:
     """THE VALIDATOR'S PROCESS CAP IS WHAT IS LEFT OF THIS VISIT'S T_validate (§12.2) — one clock, as the
     executor's cap is its deadline. It was the adapter's fixed 900 s: on the delegated coreutils run
     four validations of rich nodes were cut at it mid-stream (725–913 s) and came back ⊥, paid for again
     on a slower tier. And the REMAINDER, not the whole bound: a retry after ⊥ runs in the same visit,
     and a validator outliving it would land its verdict on a node the clock has already handed on."""
-    if task.state.name == "VALIDATING" and (left := state_bound_left(task, time.time())) is not None:
+    if task.state.name == "VALIDATING" and (left := state_bound_left(task, project_now(graph).timestamp())) is not None:
         return max(60, int(left))
     return int(state_bound("VALIDATING")) or None
 
@@ -1128,12 +1129,12 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
             "validator": rec.get("validator")}
 
 
-def _scope_cap(batch: list) -> Optional[int]:
+def _scope_cap(batch: list, graph) -> Optional[int]:
     """A scope run's cap: the longest bound left among the nodes it validates. One run serves every node in it, and
     each node's own clock hands it on when its own bound passes (`_validation_cap` is that bound for a run of one);
     capped at the first-listed node's remainder, or the shortest, a top that had waited in VALIDATING cut a run over
     deliveries made seconds before to 119 s and 299 s, and every verdict in it came back ⊥ (critics, 2026-09-28)."""
-    return max((c for t, *_ in batch if (c := _validation_cap(t))), default=None)
+    return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
 
 
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
@@ -1153,14 +1154,14 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         if inside is not None:
             body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside)
                     + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
-            cap = lambda: _scope_cap(batch)
+            cap = lambda: _scope_cap(batch, engine.graph)
         else:
             (task, deliverable, crits, *carry), = batch
             body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
                                       criteria=None if len(crits) == len(task.spec.conjuncts) else crits,
                                       carry=carry[0] if carry else None)
                     + schema_instruction(_VALIDATOR_SCHEMA))
-            cap = lambda: _validation_cap(task)
+            cap = lambda: _validation_cap(task, engine.graph)
         # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
         # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
         # A run alone (`place` None) works in the place itself. Mapped back, the report reads as run in the place.
@@ -1829,7 +1830,8 @@ def stop_project(engine: Engine, why: str = "", by: Optional[str] = None) -> dic
 
 
 def start_project(engine: Engine, by: Optional[str] = None) -> dict:
-    """RUN the project again after `stop_project`; a bound that passed meanwhile fires as any passed bound does."""
+    """RUN the project again after `stop_project`; the time it stood stopped is left off its clocks, so no bound ran out
+    in it (`project_now`)."""
     engine.resume(by or _agent_id())
     return run_state(engine)
 

@@ -19,7 +19,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutations, dep_scope, generation_of_task,
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
-                                   register_log_key, stamp, stamped_with)
+                                   register_log_key, stamp, stamped_with, leave_off_the_gap, project_now)
 from gfso.core.graph.mutations import InvariantViolation, with_its_seams
 from gfso.core.handlers.structural import run_structural
 from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_was_refuted
@@ -162,6 +162,7 @@ class Engine:
         if self._started:
             return
         self._started = True
+        leave_off_the_gap(self._graph)   # before anything reads a bound (§12.2)
         # THE CACHED CHECKS ARE THIS BUILD'S: a project written by an older one carried its verdicts, and `list_holes`
         # answered [] from them while the plan gate, reading the live rule, named the hole (critic r15)
         for t in self.all_tasks():
@@ -536,15 +537,19 @@ class Engine:
 
     def pause(self, by: str, why: str = "") -> dict:
         """STOP: the system starts no session of any role here — sessions already running finish and their signals land
-        — and the clock fires no timeout; on resume a bound passed meanwhile fires as any passed bound does (§12.2). It
-        writes nothing into the graph: a stop is the user's act on the run, not a protocol move."""
+        — and the clock fires no timeout; its time is left off the project's clocks, tick by tick. It writes
+        nothing into the graph: a stop is the user's act on the run, not a protocol move. A stop standing already is
+        kept as it was: a second one would lose the time of the first."""
+        if was := self.paused():
+            return was
         rec = {"by": str(by), "at": datetime.now().isoformat(timespec="seconds"), "why": str(why or "")}
         self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
         self.emit_info("pause", f"STOPPED by {by}" + (f": {why}" if why else "") + " — nothing new starts")
         return rec
 
     def resume(self, by: str) -> Optional[dict]:
-        """START again: the stop that stood, or None where none did."""
+        """START again: the stop that stood, or None where none did. Its time is already off the project's clocks: the
+        monitor leaves off every tick made under a stop (`project_now`)."""
         was = self.paused()
         self._storage.store_setting(PAUSE_KEY, "")
         if was:
@@ -2491,6 +2496,14 @@ class Engine:
         return self.del_at(0 if parent is None else self.depth_of(parent.id) + 1,
                            parent.assignee if parent is not None else None)
 
+    def seam_keepers(self, parent_del: Optional[AgentId], task_id: Optional[TaskId] = None) -> list[AgentId]:
+        """THE ONE RULE for who may hold a node the system executes: this project's executors but the parent's Del and
+        any of the node's own children's Del — else the node, or its child, would verify its own work (§10.3). Asked by
+        every door that names a holder: the re-issue, the user's `reassign`, a build's issue."""
+        kids = {str(k.assignee) for k in self._graph.get_active_children(task_id)} if task_id else set()
+        return [a for a in self.workforce.executor_pool()
+                if (parent_del is None or str(a) != str(parent_del)) and str(a) not in kids]
+
     def del_at(self, depth: int, parent_del: Optional[AgentId]) -> Optional[AgentId]:
         """`del_for` for a node that does not exist yet under a parent that may not either — the
         decomposition verb issues a root and its children in one build."""
@@ -2500,7 +2513,7 @@ class Engine:
         me = AgentId(_config_agent_id())
         if held and (depth == 0 or str(parent_del) == str(me)):
             return me
-        pool = [a for a in self.workforce.executor_pool() if depth == 0 or str(a) != str(parent_del)]
+        pool = self.seam_keepers(parent_del if depth else None)
         if not pool:
             raise ValueError(
                 f"the project runs in {self.mode()['mode']} and a node at depth {depth} is the "
@@ -2613,7 +2626,7 @@ class Engine:
                         spec=None if terminal else (spec or t.spec) if signal == Signal.ASSIGN else None,
                         # …a revision asked with its contract carries the deadline the revision will: none, the
                         # node's own kept — a live one invented here approved what the revision then refused (critic C1)
-                        deadline=datetime.now() + timedelta(hours=1) if signal == Signal.ASSIGN and spec is None else None,
+                        deadline=project_now(self._graph) + timedelta(hours=1) if signal == Signal.ASSIGN and spec is None else None,
                         failed_criteria=tuple(c.name for c in t.spec.conjuncts[:1]) if signal == Signal.FAIL else (),
                         result="the delivered result" if signal == Signal.DELIVER else None)
         if why := signer_refusal(self._graph, task_id, signal, source):

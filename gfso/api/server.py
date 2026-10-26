@@ -504,7 +504,7 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
         else:
             tasks = e.all_tasks()
         # the one shaping of a node, without the plan reads a polled list does not owe (`task_out`, D-F16)
-        return [task_out(t) for t in tasks]
+        return [task_out(t, e, plan=False) for t in tasks]
 
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str):
@@ -524,7 +524,7 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
                 "checks": [CheckResultOut.of(c).model_dump() for c in checks],
                 "recommendation": {"suggestions": list(rec.suggestions)} if rec else None,
                 "audit": [audit_to_out(a).model_dump() for a in audit],
-                "children": [task_out(c) for c in children]}
+                "children": [task_out(c, e, plan=False) for c in children]}
 
     # === Unified authoring surface: every gfso tool over HTTP (the SAME gfso.tools.TOOLS that MCP + CLI bind) ===
     # Adding an authoring verb = ONE Engine method + ONE gfso.tools entry → it appears HERE, on MCP, and on the

@@ -4,6 +4,8 @@ from __future__ import annotations
 import dataclasses
 
 import json
+import time
+from datetime import datetime, timedelta
 from typing import Optional
 
 from gfso.config import default_deadline_s
@@ -123,6 +125,70 @@ TECH_KEY = "tech_reports"
 USERS_PLAN_KEY = "users_plan"
 
 
+#: The seconds this project did NOT run, kept off its clocks. ONE RULE: its time runs only while its own monitor ticks
+#: over it and it is not stopped — a tick under a stop, a gap between two ticks (a host asleep), the gap since the last
+#: beat when its engine starts (a server down, the project not loaded) are left off, each wall second once. A bound times
+#: a party's wait (§12.2); where nothing runs the project, no party's move is made, and a deadline spent there was spent
+#: by nobody (measured: a row stopped 6.5 h woke with every work node ESCALATED). docs/notes/PROJECT_CLOCK.md.
+CLOCK_OFF_KEY = "clock_off_s"
+#: The wall time its engine last ticked over it (`loop.timeout_monitor`): the start of a gap nobody ran in.
+CLOCK_BEAT_KEY = "clock_beat"
+
+
+#: A gap between two of its monitor's ticks longer than this is time nobody ran the project in (a host asleep).
+NO_TICK_S = 120.0
+
+
+def _kept_off(graph: "Graph") -> float:
+    v = graph.setting(CLOCK_OFF_KEY) if graph is not None else None
+    return float(v) if v else 0.0
+
+
+def clock_off_s(graph: "Graph") -> float:
+    """How much wall time this project's clocks leave out NOW: what the ticks kept off (`CLOCK_OFF_KEY`), plus what is
+    pending since the last beat by the same rule — all of it under a stop, all of a gap too long to be a tick — so a bound
+    read between two ticks (a delivery landing right after a wake) already sees the sleep off (critic over the clock, r3)."""
+    if graph is None:
+        return 0.0
+    pending = 0.0
+    if beat := graph.setting(CLOCK_BEAT_KEY):
+        gap = time.time() - float(beat)
+        stopped = bool(json.loads(graph.setting(PAUSE_KEY) or "null"))
+        pending = gap if stopped or gap > NO_TICK_S else 0.0
+    return _kept_off(graph) + max(0.0, pending)
+
+
+def keep_off(graph: "Graph", seconds: float, beat: Optional[float] = None) -> None:
+    """Leave `seconds` of wall time off this project's clocks — and, with `beat`, move the beat with it, so what was
+    pending becomes kept without a second carrier: the beat first, then the off time (a reader between the two writes
+    sees the gap neither kept nor pending — never both)."""
+    if beat is not None:
+        graph.store_setting(CLOCK_BEAT_KEY, str(beat))
+    if seconds > 0:
+        graph.store_setting(CLOCK_OFF_KEY, str(_kept_off(graph) + seconds))
+
+
+def leave_off_the_gap(graph: "Graph") -> float:
+    """At an engine's start, before anything reads a bound: the wall time since the project's last beat is left off its
+    clocks, and the beat is kept at once, so a death in the next seconds counts nothing twice. Returns the beat."""
+    now = time.time()
+    was = graph.setting(CLOCK_BEAT_KEY)
+    keep_off(graph, now - float(was) if was else 0.0, beat=now)
+    return now
+
+
+def project_now(graph: Optional["Graph"]) -> datetime:
+    """THE PROJECT'S NOW — the one time every deadline and state bound is written in and read against: the wall clock
+    less the time the project did not run. Every stamp a bound is measured from is taken on it, so a stop or a down
+    server moves no wait closer to its end."""
+    return datetime.now() - timedelta(seconds=clock_off_s(graph))
+
+
+def on_the_wall(graph: Optional["Graph"], at: datetime) -> datetime:
+    """A time on the project's clocks as it reads outside: on the wall (`project_now`'s inverse at the doors)."""
+    return at + timedelta(seconds=clock_off_s(graph))
+
+
 def project_deadline_s(graph: "Graph") -> float:
     """How far ahead a deadline nobody typed is written in this project: its own setting, else the server's."""
     v = graph.setting("deadline_s")
@@ -145,6 +211,10 @@ class Graph:
     def setting(self, key: str) -> Optional[str]:
         """A setting of this graph's project as stored, or None — the user's choices for it (`set_mode`)."""
         return self._storage.get_setting(key)
+
+    def store_setting(self, key: str, value: str) -> None:
+        """Keep a setting of this graph's project — the clocks' own record (`keep_off`, the monitor's beat)."""
+        self._storage.store_setting(key, value)
 
     def get_state(self, task_id: TaskId) -> Optional[State]:
         """The node's current state, or `None` if this id is not in the graph. `None` is what the

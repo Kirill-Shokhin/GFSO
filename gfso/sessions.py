@@ -10,7 +10,7 @@ from gfso.inflight import _inflight
 from gfso.llm import session_calls
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import schema_instruction, parse_structured
-from gfso.core.graph.model import generation_of_task
+from gfso.core.graph.model import generation_of_task, project_now
 from gfso.core.types import TaskId, Signal, Stage, State, Verdict
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
@@ -46,13 +46,13 @@ EXECUTOR_SCHEMA = {
 }
 
 
-def _session_cap(tasks) -> int | None:
+def _session_cap(engine, tasks) -> int | None:
     """The process cap of an executor session: the earliest deadline among the nodes it holds, else the
     adapter's default. No second clock (§12.2): on expiry the process is killed, NO signal forged, and the FSM
     timeout monitor escalates — and a session holding several nodes cannot run past the contract of any of
     them, so none lapses while the session that would deliver it is still working."""
     deadlines = [t.deadline for t in tasks if t.deadline]
-    return int((min(deadlines) - datetime.now()).total_seconds()) if deadlines else None
+    return int((min(deadlines) - project_now(engine.graph)).total_seconds()) if deadlines else None
 
 
 #: The shortest session worth spawning: one with less left before its deadline is killed before it can report — floored
@@ -136,7 +136,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
                                      f"('{_wd}') - not spawned")
         return {"task_id": str(task_id), "status": "no_workdir", "workdir": _wd,
                 "error": f"the registered workdir of {executor_id!r} is not an existing directory"}
-    cap = _session_cap([task])
+    cap = _session_cap(engine, [task])
     if late := _too_late(engine, task_id, cap):
         return late
     cwd, unjoined, ws = _enter_workspace(engine, agents, task, [task])
@@ -244,7 +244,7 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     if agents.get(executor_id) is None and any(t.state.name == "OFFERED" for t in todo):
         return {"task_id": str(top_id), "status": "not_consented"}
     _cb = emit_cb(engine, "delegate")
-    cap = _session_cap(todo)
+    cap = _session_cap(engine, todo)
     if late := _too_late(engine, top_id, cap):
         return late
     top = engine.graph.get_task(top_id)

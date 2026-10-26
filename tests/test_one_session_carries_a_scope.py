@@ -264,8 +264,8 @@ def test_a_scope_run_is_not_cut_to_the_bound_of_a_node_that_waited_longest(monke
     """One run serves every node in it; a top that had waited must not cut a run over fresh deliveries to its own
     remainder (critics, 2026-09-28: 119 s, then 299 s, every verdict ⊥)."""
     left = {"root.a": 3599, "root.b": 3599, "root": 299}
-    monkeypatch.setattr(TL, "_validation_cap", lambda t: left[str(t.id)])
-    assert TL._scope_cap([(type("T", (), {"id": k})(), "", []) for k in ("root", "root.a", "root.b")]) == 3599
+    monkeypatch.setattr(TL, "_validation_cap", lambda t, g: left[str(t.id)])
+    assert TL._scope_cap([(type("T", (), {"id": k})(), "", []) for k in ("root", "root.a", "root.b")], None) == 3599
 
 
 def test_a_split_nobody_judged_keeps_a_session_and_a_validation_per_node(tmp_path):

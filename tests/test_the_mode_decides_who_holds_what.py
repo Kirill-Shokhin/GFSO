@@ -218,23 +218,24 @@ def test_under_semi_the_holder_keeps_its_discretion():
 
 
 def test_past_two_contracts_the_issuer_is_asked_and_a_next_one_must_change_what_failed(monkeypatch):
-    """§12.15: a counter at ESCALATED "would, exhausted, leave the owner of a live goal only CANCEL or silence"; under
-    AUTO the machine IS that owner. The count used to close the node before any issuer turn was asked (critic over
-    session 475ba784). Past it the issuer decides, told the count; a contract changing only the date is refused."""
+    """§12.15: a counter at ESCALATED "would, exhausted, leave the owner of a live goal only CANCEL or silence". Kept at
+    the AUTO root only, where the machine stands in for the user and nothing above bounds it: there, past it, the issuer
+    decides, told the count, and a contract changing only the date is refused. Below it no count at all (the parent's
+    deadline bounds every re-issue) — `test_who_signs_and_which_visit`."""
     e = _engine(Mode.AUTO)
     _goal(e)
     monkeypatch.setattr(I, "extensions_granted", lambda engine, task_id: I.MAX_EXTENSIONS)
     monkeypatch.setattr(I, "_still_open", lambda *a: True)          # the node stands ESCALATED
     asked = []
     monkeypatch.setattr(I, "issuer_turn", lambda *a, refusal="", **k: asked.append(refusal) or {"status": "applied"})
-    I.settle(e, _Roster(), TaskId("kid"), "escalation", "exec-1", verbs=None)
+    I.settle(e, _Roster(), TaskId("root"), "escalation", "exec-1", verbs=None)
     assert asked and "none reached a verdict" in asked[0], asked
-    assert e.graph.get_state(TaskId("kid")) != State.CANCELLING, "nobody decided to close it"
+    assert e.graph.get_state(TaskId("root")) != State.CANCELLING, "nobody decided to close it"
     monkeypatch.setattr(I, "seam_keeping_executor", lambda engine, task, other: task.assignee)
-    kid = e.graph.get_task(TaskId("kid"))
-    ok, why = I._reassign(e, kid, "exec-1", {"extend_hours": 24}, "again", None)
+    root = e.graph.get_task(TaskId("root"))
+    ok, why = I._reassign(e, root, str(e.graph.issuer_of(root.id)), {"extend_hours": 24}, "again", None)
     assert not ok and "change what failed" in why, why
-    ok, why = I._reassign(e, kid, "exec-1", {"max_iterations": kid.max_iterations + 2}, "a raised budget", None)
+    ok, why = I._reassign(e, root, str(e.graph.issuer_of(root.id)), {"max_iterations": root.max_iterations + 2}, "a raised budget", None)
     assert ok, why
 
 

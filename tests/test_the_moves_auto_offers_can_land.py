@@ -97,6 +97,11 @@ def test_drop_dependency_is_offered_only_where_a_producer_was_cancelled():
     T.signal(e, "root.other", "CANCEL", str(e.graph.issuer_of(TaskId("root.other"))), reason="no longer needed")
     e.wait_idle()
     assert "drop_dependency" in I.moves_for(e, root, "repair")
+    # …AND IT LANDS: two definitions of `_cancelled_producers` had diverged, and the offered move raised (OD-1)
+    ok, why = I.apply_move(e, TaskId("root"), "repair", str(root.assignee),
+                           {"move": "drop_dependency", "child_id": "root.part"})
+    assert ok, why
+    assert not [d for d in e.get_dependencies() if str(d.to_id) == "root.part"]
 
 
 def test_a_probe_over_empty_pinned_code_or_stdin_is_refused_at_admission():

@@ -23,7 +23,7 @@ def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_
         task.reassign_reason_typed = True
         if r == RevisionReason.CAPABILITY_MISMATCH:
             task.reassign_capability_mismatch = True
-from .model import Graph, logged_declarations, project_deadline_s
+from .model import Graph, logged_declarations, project_deadline_s, project_now
 from gfso.core.types import settled_positive
 from gfso.config import default_deadline_s
 
@@ -114,7 +114,7 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
 
     task_was = task.state
     if task.state != new_state:
-        task.state_entered_at = datetime.now()   # Inv-5: every state carries its own clock
+        task.state_entered_at = project_now(graph)   # Inv-5: every state carries its own clock, on the project's
     task.state = new_state
 
     if effect.done_reason is not None:
@@ -195,6 +195,9 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # voiding the RECORD alone loses the race to a validator that is still running on the superseded
     # delivery and lands its PASS afterwards, stamped with unchanged (iteration, reopens).
     task.revisions = task.revisions + 1
+    # …A NEW VERSION IS A NEW VISIT (§12.2): restamped here, so a re-ASSIGN landing OFFERED → OFFERED poses a new wait and
+    # a timeout fired for the old version's visit is dropped rather than carried onto the new contract
+    task.state_entered_at = project_now(graph)
     # THE REWORKING BUDGET IS THIS VERSION'S, so a new version starts it over (Φ3, §12.15):
     # `max_iterations` is the issuer's forecast of rounds for ONE contract, and counting a previous
     # contract's refusals against a repaired one spends the new forecast before the work begins —
@@ -474,7 +477,7 @@ class Schedule:
     live deadline ahead bounds anything: a settled end orders nothing to come (§11.5), a spent one is re-issued."""
 
     def __init__(self, graph: Graph, parent: Optional[Task], act: dict, want: Optional[datetime] = None):
-        self.now = datetime.now()
+        self.now = project_now(graph)
         self.graph = graph
         self.act = {str(k): (typed, tuple(str(p) for p in reads), keep) for k, (typed, reads, keep) in act.items()}
         dated = parent is not None and parent.deadline is not None
@@ -589,7 +592,7 @@ def version_deadline(graph: Graph, deadline: Optional[datetime], task: Optional[
         return deadline, supplied          # handed in: typed, or a default `Schedule` chose for the act (§2.5)
     kept = (task.deadline, task.deadline_supplied) if task is not None else (None, False)
     tid = str(task_id if task_id is not None else task.id if task is not None else "")
-    live = task is not None and task.deadline is not None and task.deadline > datetime.now()
+    live = task is not None and task.deadline is not None and task.deadline > project_now(graph)
     if live and not task.deadline_supplied:
         return kept
     pid = parent_id if parent_id is not None else (task.parent_id if task is not None else None)
@@ -614,6 +617,7 @@ def _create_task(graph: Graph, effect: MutateGraph) -> list[TaskId]:
         max_iterations=effect.max_iterations,
         # the claim as authored, frozen here and nowhere else (revisions leave it alone)
         authored=effect.spec,
+        state_entered_at=project_now(graph),
     )
     graph.save_task(task)
     # Mapping = the child declares which parent criteria it covers (§2 non-redundancy). Recorded as a

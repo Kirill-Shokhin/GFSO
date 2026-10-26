@@ -38,6 +38,7 @@ from gfso.adapters.execution import LocalExecution
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import agent_id as _config_agent_id
+from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, pinned_files, probe_id,
@@ -56,8 +57,8 @@ log = logging.getLogger("gfso.issuer")
 
 PROMPT = Path(__file__).parent / "issuer.md"
 
-#: How many re-ASSIGNs out of ESCALATED this issuer grants one node before it answers CANCEL. A
-#: How many contracts this issuer writes for one node out of ESCALATED before the next must CHANGE what failed. Not a
+#: How many contracts the machine writes for the AUTO ROOT out of ESCALATED before the next must CHANGE what failed — there
+#: it stands in for the user, the root's issuer, and nothing above bounds it; below the root no count (§12.15). Not a
 #: close by count: §12.15 — "a counter there would, exhausted, leave the owner of a live goal only CANCEL or silence …
 #: re-created by fiat" — and under AUTO the machine IS that owner. Past it the issuer is asked, told the count; it may
 #: write a contract that changes the criteria, the executor or the budget, or close with its reason (critic over
@@ -384,7 +385,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
     out.append(f"# The node: `{task.id}` — {task.spec.name}\n\n{task.spec.description}\n\n"
                f"State {task.state.name} · Del {task.assignee}"
                + ("" if plan else f" · rework {task.iteration}/{task.max_iterations} · deadline "
-                                  f"{task.deadline or 'none'}")
+                                  f"{on_the_wall(engine.graph, task.deadline) if task.deadline else 'none'}")
                + "\n\n## Its contract (the WHOLE obligation)\n"
                + ("\n".join(crit_block(c, laid) for c in task.spec.criteria) or "- (no criteria)"))
     if engine.graph.get_active_children(task.id):
@@ -767,9 +768,7 @@ def seam_keeping_executor(engine, task, another: bool) -> Optional[AgentId]:
     """An executor for a re-issued node that keeps every seam around it: from this project's pool,
     not its parent's Del, not any child's Del — else a node would verify itself or its own work."""
     parent = engine.graph.get_task(task.parent_id) if task.parent_id else None
-    kids = {str(k.assignee) for k in engine.graph.get_active_children(task.id)}
-    ok = [a for a in engine.workforce.executor_pool()
-          if (parent is None or str(a) != str(parent.assignee)) and str(a) not in kids]
+    ok = engine.seam_keepers(parent.assignee if parent else None, task.id)
     if not another and str(task.assignee) in {str(a) for a in ok}:
         return task.assignee
     return ([a for a in ok if str(a) != str(task.assignee)] or ok or [None])[0]
@@ -783,6 +782,12 @@ def what_can_change(engine, task) -> str:
     return ("the criteria, the executor (`another_executor`) or the rework budget (`max_iterations`)"
             if other is not None and str(other) != str(task.assignee) else
             "the criteria or the rework budget (`max_iterations`) — no other executor keeps this node's seams")
+
+
+def extensions_spent(engine, task) -> bool:
+    """Are the AUTO root's re-issues out of ESCALATED spent (`MAX_EXTENSIONS`)? Below the AUTO root never (§12.15): the
+    one rule `settle` tells the issuer and `_reassign` holds it to."""
+    return is_auto_root(engine.graph, task) and extensions_granted(engine, task.id) >= MAX_EXTENSIONS
 
 
 def extensions_granted(engine, task_id: TaskId) -> int:
@@ -830,13 +835,15 @@ def _reassign(engine, task, actor, answer, why, verbs):
         return False, bad
     to = seam_keeping_executor(engine, task, bool(answer.get("another_executor")))
     budget = min(max(1, int(answer.get("max_iterations") or task.max_iterations)), MAX_REWORK_BUDGET)
-    if extensions_granted(engine, task.id) >= MAX_EXTENSIONS and not _changes_what_failed(task, spec, to, budget):
+    # …AT THE AUTO ROOT ONLY: below it the parent's deadline bounds every re-issue (`Schedule`), and §12.15 counts no
+    # re-ASSIGN out of ESCALATED; at the AUTO root nothing above bounds the machine standing in for the user's patience
+    if extensions_spent(engine, task) and not _changes_what_failed(task, spec, to, budget):
         return False, (f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict: "
                        f"another must change what failed — {what_can_change(engine, task)} — not only the date; or "
                        f"close it with the reason")
     if to is None:
         return False, "no executor of this project keeps the seams around this node"
-    want = datetime.now() + timedelta(hours=min(MAX_EXTEND_HOURS, max(1.0, float(answer.get("extend_hours") or 24))))
+    want = project_now(engine.graph) + timedelta(hours=min(MAX_EXTEND_HOURS, max(1.0, float(answer.get("extend_hours") or 24))))
     # INSIDE the parent's deadline, BEFORE its consumers' and AFTER its producers' along Dep (§4.5 item 6, §2.7) — the
     # one writer of ordered deadlines (`Schedule`): written on the parent's, two Dep-linked siblings re-issued got one
     # equal deadline (critic r7, B2); re-issued before its producer, a consumer lapsed again. No ordered one ahead — the
@@ -1123,7 +1130,7 @@ def _repointed(engine, task, replaced: dict, leaving: frozenset) -> list[dict]:
         if (str(k.id) in leaving or k.state in (State.DONE, State.ABANDONED, State.CANCELLING)
                 or not any(str(c.depends_on) in replaced for c in k.spec.criteria if c.depends_on)):
             continue
-        crits = _onto_once(str(k.id), _tools.task_out(k)["criteria"], replaced)
+        crits = _onto_once(str(k.id), _tools.task_out(k, engine, plan=False)["criteria"], replaced)
         out.append({"task_id": str(k.id), "assignee": str(k.assignee), "spec": {"criteria": [c for _, c in crits]}})
     return out
 
@@ -1156,7 +1163,7 @@ def _merged(engine, task, members: list[str]) -> dict:
     kids = [engine.graph.get_task(TaskId(m)) for m in members]
     short = {m: m.rsplit(".", 1)[-1] for m in members}
     seen: set = set()
-    crits = [x for k in kids for x in _onto_once(str(k.id), _tools.task_out(k)["criteria"], {}, set(members), seen)]
+    crits = [x for k in kids for x in _onto_once(str(k.id), _tools.task_out(k, engine, plan=False)["criteria"], {}, set(members), seen)]
     names = [c["name"] for _, c in crits]
     renames: dict = {}
     for m, c in crits:
@@ -1164,7 +1171,7 @@ def _merged(engine, task, members: list[str]) -> dict:
             renames.setdefault(m, {})[c["name"]] = f"{c['name']} ({short[m]})"
     final = {(m, c["name"]): renames.get(m, {}).get(c["name"], c["name"]) for m, c in crits}
     reads = {c["depends_on"]: final[(m, c["name"])] for m, c in crits if c["depends_on"]}
-    whole = {m: _tools.task_out(k)["criteria"] for m, k in zip(members, kids)}
+    whole = {m: _tools.task_out(k, engine, plan=False)["criteria"] for m, k in zip(members, kids)}
     own = {m: [final[(x, c["name"])] for x, c in crits if x == m and not c["depends_on"]] for m in members}
     # a member all of whose criteria read other members: its work feeds the members that read it, and failing those,
     # the merged child as a whole — never a name the merged child lacks
@@ -1176,7 +1183,7 @@ def _merged(engine, task, members: list[str]) -> dict:
             dep = str(c["depends_on"]) if c["depends_on"] else None
             onto.setdefault(m, {})[c["name"]] = ([final[(m, c["name"])]] if (m, c["name"]) in final
                                                  else fed[m] if dep in members else [reads[dep]])
-    due = max((k.deadline for k in kids if k.deadline and k.deadline > datetime.now()), default=None)
+    due = max((k.deadline for k in kids if k.deadline and k.deadline > project_now(engine.graph)), default=None)
     return {"deadline": due, "max_iterations": max(k.max_iterations for k in kids),
             "accepted_risks": list({n.item: n.to_dict() for k in kids for n in k.spec.accepted_risks}.values()),
             "name": "_".join(short[m] for m in members),
@@ -1227,13 +1234,13 @@ def _promote(engine, task, actor, answer, why, verbs):
     before = {str(k.id) for k in engine.graph.get_active_children(parent.id)}
     # DUE BEFORE THE NODE IT UNBLOCKS (§2.7): the Dep is written after the producer exists, so the one writer of ordered
     # deadlines is told of its consumer now — born with the parent's default, the producer came due after it (critic r2, F3)
-    blocked = task.deadline if task.deadline and task.deadline > datetime.now() else None
+    blocked = task.deadline if task.deadline and task.deadline > project_now(engine.graph) else None
     made_by = Schedule(engine.graph, parent, {"(promoted)": (None, (), None),
                                               str(task.id): (blocked, ("(promoted)",), None)}).defaults()["(promoted)"]
-    if made_by is None and parent.deadline and parent.deadline <= datetime.now():
-        made_by = datetime.now() + timedelta(hours=24)   # past the parent's deadline the issuer types one (§12.16)
+    if made_by is None and parent.deadline and parent.deadline <= project_now(engine.graph):
+        made_by = project_now(engine.graph) + timedelta(hours=24)   # past the parent's deadline the issuer types one (§12.16)
     ok, bad = _add_child(engine, parent, actor, {"child": {**(answer.get("child") or {}), "covers": covers, "reads": [],
-                                                           **({"deadline": made_by.isoformat()} if made_by else {})}},
+                                                           **({"deadline": made_by} if made_by else {})}},   # a datetime on the project's clock, not a typed date
                          why, verbs)
     if not ok:
         return False, bad
@@ -1334,12 +1341,6 @@ def _refine(engine, task, actor, answer, why, verbs):
     return not out.get("error"), str(out.get("error") or "")
 
 
-def _cancelled_producers(engine, child) -> list:
-    return [e for e in engine.get_dependencies() if str(e.to_id) == str(child.id)
-            and (p := engine.graph.get_task(TaskId(e.from_id))) is not None
-            and p.state in (State.ABANDONED, State.CANCELLING)]
-
-
 def moves_for(engine, task, question: str) -> tuple:
     """The moves this question admits on THIS node: `drop_dependency` only where a child waits on a cancelled
     producer — offered on a dependency-order refutation it could never land, and an AUTO issuer spent four answers on
@@ -1368,8 +1369,8 @@ def _drop_dependency(engine, task, actor, answer, why, verbs):
         return False, f"`{answer.get('child_id')}` is not a child of {task.id}"
     if not (gone := _cancelled_producers(engine, child)):
         return False, f"{child.id} consumes no cancelled producer"
-    for e in gone:
-        _tools.remove_dependency(engine, str(e.from_id), str(child.id))
+    for producer in gone:
+        _tools.remove_dependency(engine, producer, str(child.id))
     return True, ""
 
 
@@ -1762,7 +1763,7 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
     # A REFUTED ORDER IS REPAIRED BEFORE ANY MODEL IS ASKED: its one move is computed from the graph
     if question == "repair" and (out := merge_the_refuted_cycle(engine, engine.graph.get_task(task_id), actor)):
         return out
-    spent = question in ("escalation", "parked") and extensions_granted(engine, task_id) >= MAX_EXTENSIONS
+    spent = question in ("escalation", "parked") and extensions_spent(engine, engine.graph.get_task(task_id))
     # an issuer's question is about the contract against the world — what failed, what blocks — and is answered from
     # contact; the split's questions are the executor's planning over the map
     where = (verbs.place(engine, agents, task_id)

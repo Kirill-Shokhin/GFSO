@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from gfso.core.graph import Graph
-from gfso.core.graph.model import admission_key, dep_scope, drops_key, non_leaf_ids, register_log_key
+from gfso.core.graph.model import admission_key, dep_scope, drops_key, non_leaf_ids, on_the_wall, project_now, register_log_key
 from gfso.core.graph.mutations import InvariantViolation, Schedule, producers_of, with_its_seams
 from gfso.core.protocol.procedure import admission_defects
 from gfso.core.handlers.structural import run_structural
@@ -213,7 +213,7 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple]) -> dict:
     Where no choice orders them all — an end fixed, or the parent's deadline in the way — nothing is refused: the
     crossings stand as CHECK-3's flag for the issuers whose deadlines bound the choice. Returns the defaults
     `Schedule` chose for the children typing none (§2.5) — the deadlines this admission sets beside the typed ones."""
-    now = datetime.now()
+    now = project_now(graph)
     # THE ACT: every child this admission gives a version — a re-issued one too, standing on its own deadline, typed
     # as it was or, where supplied, re-chosen if it no longer fits (critic r2 over F3: left out, a re-issued child's
     # new Dep was invisible to the writer)
@@ -232,8 +232,8 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple]) -> dict:
     if parent.deadline is not None and parent.deadline > now:
         for cid, dl in typed.items():
             if dl >= parent.deadline:
-                raise ValueError(f"{cid}'s deadline {dl:%Y-%m-%d %H:%M} is not inside its parent {parent.id}'s "
-                                 f"({parent.deadline:%Y-%m-%d %H:%M}) — a child that may finish when its parent is "
+                raise ValueError(f"{cid}'s deadline {on_the_wall(graph, dl):%Y-%m-%d %H:%M} is not inside its parent "
+                                 f"{parent.id}'s ({on_the_wall(graph, parent.deadline):%Y-%m-%d %H:%M}) — a child that may finish when its parent is "
                                  f"due cannot compose into it (§11.5, item (6)); give one before it")
     defaults = Schedule(graph, parent, act).defaults()
     # A CHILD ITS ASSIGN WILL CARRY NO DEADLINE FOR asks the packet gate's own question here, new or re-issued: a
@@ -255,8 +255,8 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple]) -> dict:
     crossed = [(p, c) for c in sets for p in act[c][1] if (pd := dl(p)) and pd >= sets[c]]
     if crossed and free.orderable():
         p, c = crossed[0]
-        raise ValueError(f"{c} depends on {p}, whose deadline {dl(p):%Y-%m-%d %H:%M} is not before {c}'s "
-                         f"{sets[c]:%Y-%m-%d %H:%M} — a consumer cannot be due before its producer (CHECK-3, §11.5); "
+        raise ValueError(f"{c} depends on {p}, whose deadline {on_the_wall(graph, dl(p)):%Y-%m-%d %H:%M} is not "
+                         f"before {c}'s {on_the_wall(graph, sets[c]):%Y-%m-%d %H:%M} — a consumer cannot be due before its producer (CHECK-3, §11.5); "
                          f"order the deadlines this split sets")
     return {c: d for c, d in defaults.items() if d and d != act[c][2]}   # a re-issued child that still fits rides as is
 

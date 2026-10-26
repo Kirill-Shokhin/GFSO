@@ -61,10 +61,15 @@ def the_call_was_cut(llm, said: str) -> bool:
     # node's ONE retry and then parks it. A run stops on a coin toss, and the doctrine this function
     # exists for — a cut call is not an answer, so it does not spend the answer's budget — held only
     # by luck. If any batch of this validation was severed, the validation was severed.
-    _typed = [c for c in calls if isinstance(c, dict) and "transport_torn" in c]
-    if _typed:
-        return any(bool(c["transport_torn"]) for c in _typed)
-    return len(said) < 400 and "{" not in said
+    torn = torn_among(calls)
+    return torn if torn is not None else len(said) < 400 and "{" not in said
+
+
+def torn_among(calls) -> "bool | None":
+    """Was ANY of these calls severed — None where none of them could say (`the_call_was_cut`'s one rule, read by every
+    door that holds the calls rather than the provider)."""
+    typed = [c for c in calls if isinstance(c, dict) and "transport_torn" in c]
+    return any(bool(c["transport_torn"]) for c in typed) if typed else None
 
 
 def _stat_line(llm) -> str:

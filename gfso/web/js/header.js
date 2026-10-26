@@ -102,7 +102,7 @@ export async function startRun() {
     const auto = S.graph.mode?.mode === 'auto';
     if (await askInPage('Start this run again? The system starts sessions here once more'
         + (auto ? ' — under AUTO its executors, validators and issuer act and spend on their own.' : '.')
-        + ' A bound that passed while it was stopped fires now.', {yes: 'Start'}))
+        + ' The time it stood stopped does not count against any deadline.', {yes: 'Start'}))
         await switchRun('start_project', myRole() ? {by: myRole()} : {});
 }
 

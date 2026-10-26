@@ -362,7 +362,7 @@ def test_the_runs_cap_is_read_once_its_copy_stands(monkeypatch, place):
             super().copy_tree(src, dst)
     real = TL._validation_cap
     monkeypatch.setattr(TL, "_validation_cap",
-                        lambda t: order.setdefault(threading.get_ident(), []).append("cap") or real(t))
+                        lambda t, g: order.setdefault(threading.get_ident(), []).append("cap") or real(t, g))
     monkeypatch.setattr(TL, "execution_of", lambda *_: _Ex())
     e, out, _ = _validate(monkeypatch, at)
     runs = [o for o in order.values() if "copy" in o]
