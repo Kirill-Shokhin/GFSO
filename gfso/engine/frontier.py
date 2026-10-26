@@ -566,6 +566,8 @@ class NodeSteps:
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
                 "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
                 "signed_by": str(self.engine.graph.issuer_of(t.id)) if action in _ISSUER_ACTIONS else str(t.assignee or ""),
+                # …and in which ROLE (§12.13: the state's owner): where one party holds both, the name alone cannot say
+                "role": "issuer" if action in _ISSUER_ACTIONS else "executor",
                 # ALL of them: V is the conjunction over the whole contract (§2.3), and `record_verdict`
                 # enforces that — so a step that lists fewer is a step whose instruction cannot be followed.
                 "criteria": [c.name for c in t.spec.criteria], "directive": directive}

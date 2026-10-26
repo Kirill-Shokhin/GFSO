@@ -261,9 +261,11 @@ def test_a_step_names_who_would_sign_it():
 
     step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
     assert step["signed_by"] == "worker", "taking and doing the work is the executor's signature"
+    assert step["role"] == "executor"
 
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="did it")
     val = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
     assert val["action"] == "validate" and val["signed_by"] == "boss", "the verdict is the issuer's"
+    assert val["role"] == "issuer"            # the role, not only the name: one party may hold both
     e.stop()
