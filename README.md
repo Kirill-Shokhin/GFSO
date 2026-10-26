@@ -8,9 +8,9 @@
 ![Python](https://img.shields.io/badge/python-3.11%20%E2%80%93%203.13-blue)
 ![Status](https://img.shields.io/badge/status-preliminary-orange)
 
-<img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A task graph building itself, each node stepping through its states to Done, live" width="860">
+<img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A recorded run replayed in the web UI: parts of the plan run in parallel, each session on the timeline, a part and then the whole sent back and reworked, the goal delivered" width="860">
 <br>
-<sub>A goal becomes a live graph; each node is driven through its states to <code>DONE</code> — the protocol as agents and humans operate the same graph. <em>(a short capture, not the full flow)</em></sub>
+<sub>A recorded run, replayed in the UI: the goal's parts run in parallel, every session on the timeline below; a part, then the whole, sent back and reworked until its checks pass; the goal delivered. <em>(<code>sql_database</code> · Haiku 4.5, automatic mode — the run behind the table's 100% on the final plan; its idle stretch is folded)</em></sub>
 
 </div>
 
@@ -120,7 +120,15 @@ The verifier ≠ executor gate from the opening runs in both of the system's reg
 - **Sequential** — one agent session structures a goal (`auto_decompose` runs the search↔audit method in one call), executes the frontier itself, and after each delivery gets a verdict from a fresh read-only validator that *runs* the criteria. The gate is on the node, not on the name signing it: at a seam a `PASS` needs a verdict for the delivery that stands, from the instrument or from a person recording what they observed.
 - **Delegated** — register executor and validator roles once, and assignment *is* delegation: a node assigned to a registered executor is picked up automatically, its report wrapped into the canonical signals, the validator auto-runs on delivery, and a failed criterion re-enters a bounded rework loop with the failure as feedback. Humans are never registered — a node assigned to a person simply waits for *their* signals. Mixed human/agent graphs are the normal case.
 
-The UI (shown at the top) surfaces every write live, and draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different greens, and the page tells them apart. Visual design beyond that is out of scope at this stage.
+The UI (shown at the top) surfaces every write live and says what the engine says: what is at work now and on which node, what waits and on what, the run's sessions in time and its spend. A node's panel fits one screen — its state, its last verdict, every criterion with its history across rounds; the long texts are one click away:
+
+<p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/ui-panel.png" alt="A node's panel: state, last verdict, and each criterion with its rounds — crosses where a round failed it, a dot where it passed" width="820"></p>
+
+Progress reads the goal's criteria along the split — each part's own criteria at its own verdicts, never a sum across a level — beside the parts the split made responsible for each of the goal's criteria:
+
+<p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/ui-progress.png" alt="The progress view: one track per part counting its criteria passing at each verdict, and the goal's criteria against the parts responsible for them" width="820"></p>
+
+The page also draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different greens, and the page tells them apart.
 
 ---
 
