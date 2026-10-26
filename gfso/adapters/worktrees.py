@@ -22,6 +22,18 @@ from pathlib import Path
 from gfso.adapters import children
 from gfso.config import subprocess_env
 
+#: a base's node places stand beside it, under this prefix and the base's name
+NODES = ".gfso-nodes-"
+
+
+def base_of(place: str | None) -> str | None:
+    """The base a node's place is a checkout of — `_place_of` read backwards; None for a place that is no node's."""
+    p = Path(place) if place else None
+    if p is None or len(p.parents) < 3 or not p.parent.parent.name.startswith(NODES):
+        return None
+    return str(p.parent.parent.parent / p.parent.parent.name[len(NODES):])
+
+
 _LOCKS: dict[str, threading.RLock] = {}
 _GUARD = threading.Lock()
 _TOPS: dict[str, bool] = {}

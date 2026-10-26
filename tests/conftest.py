@@ -16,8 +16,11 @@ import os
 import subprocess
 import tempfile
 import threading
+from urllib.parse import urlparse
 
 import pytest
+
+from gfso.adapters.llm import chat as _chat
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -115,6 +118,15 @@ def _no_live_model():
     # installed for the life of the PROCESS, never restored: a worker thread a test left behind may spawn
     # after the last teardown, and a restored Popen would hand it the real binary
     subprocess.Popen = _NoLiveModel
+    # …nor a model behind an API: a wire may talk only to a server the test itself stands up on this machine
+    _post = _chat.OpenAIWire._post
+
+    def _local_only(self, body, timeout):
+        if urlparse(self.address).hostname not in ("127.0.0.1", "localhost"):
+            _LIVE_SPAWNS.append(f"[thread {threading.current_thread().name}] {self.address}")
+            raise OSError("a live model API was called inside the test suite")
+        return _post(self, body, timeout)
+    _chat.OpenAIWire._post = _local_only
     yield
 
 

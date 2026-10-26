@@ -6,8 +6,8 @@ search over the real projection → audit fold-patch → deterministic merge →
 REVISION (same ids, subtree retained, Del of existing children preserved). `refine(engine, root_id)`
 is also public: "+1 iteration" applies to whatever decomposition already exists. The graph only ever
 holds VERIFIED states (each round closes on dropped-item + `list_holes` with a bounded repair cycle).
-The transport comes from `runtime.llm_factory()` — headless `claude -p` one-shots for Anthropic
-(billing per GFSO_BILLING) or GenericLLM for a foreign provider (GFSO_PROVIDER=generic).
+The transport comes from `llm_factory(model spec)` — headless `claude -p` one-shots for Anthropic
+(billing per GFSO_BILLING), or a chat API's wire for any other provider (`adapters/llm/registry.py`).
 
 Termination & validity guarantees (all bounds hard):
   ≤ depth search calls + ≤ depth fold calls (ALREADY-COVERED / empty-fold exits can only shorten)

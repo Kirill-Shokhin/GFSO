@@ -573,21 +573,31 @@ class Engine:
         return self.pause("system", f"the account's usage limit refused {role}'s call — until "
                                     f"{datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
 
+    def stop_for_the_account(self, role: str, why: str) -> dict:
+        """AN ACCOUNT THAT REFUSES AUTHENTICATION IS A STOP IN SUBSTANCE, as the limit is: no call of any role answers
+        until a person signs it in, and the redials of a cut call spent an hour on it while every bound ran
+        (GB_c_compiler_tncfs1160, 2026-10-23 11:29–12:29: four nodes timed out). Stopped, and asked again after
+        LIMIT_RETRY_S — the next refused call stops it again."""
+        until = time.time() + LIMIT_RETRY_S
+        return self.pause("system", f"the account refused authentication for {role}'s call ({why[:160]}) — sign it in; "
+                                    f"asked again {datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
+
     def stop_for_the_place(self, place: str, why: str) -> dict:
         """AN EXECUTION PLACE DOWN IS A STOP IN SUBSTANCE, as the limit is: no session of any role can start, so nobody
         can move (PROJECT_CLOCK.md, case 14). Stopped until the place answers its probe (`lift_the_system_stop`)."""
         return self.pause("system", why, place=place)
 
     def probe_the_place_with(self, probe) -> None:
-        """Hand the engine the probe of where its project runs — `probe()`: why the place cannot start a call, or None
-        (`ExecutionPort.unavailable`) — from the layer that knows the place, as `joins.set_join_owed` is handed."""
+        """Hand the engine the probe of where its project runs — `probe(place)`: why the place its stop names cannot
+        answer a call, or None — the execution's (`ExecutionPort.unavailable`), or a model server's address
+        (`chat.answers`) — from the layer that knows the places, as `joins.set_join_owed` is handed."""
         self._place_probe = probe
 
-    def _probe_says(self) -> Optional[str]:
+    def _probe_says(self, place: str) -> Optional[str]:
         """The place probe's answer; one that raises did not answer — raised here, it killed the monitor's thread, and
         no bound fired again (Inv-5)."""
         try:
-            return self._place_probe()
+            return self._place_probe(place)
         except Exception as e:                          # noqa: BLE001 — a probe that fails is a place that does not answer
             return f"{type(e).__name__}: {e}"
 
@@ -607,7 +617,7 @@ class Engine:
         was = self.paused()
         if not (was and (was.get("until") or was.get("place"))) or (was.get("until") or 0) > wall:
             return
-        if was.get("place") and (self._place_probe is None or self._probe_says() is not None):
+        if was.get("place") and (self._place_probe is None or self._probe_says(was["place"]) is not None):
             return
         with self._stop_lock:
             if self.paused() != was:      # a stop made while the place was probed is that stop's
@@ -843,6 +853,8 @@ class Engine:
                 self.stop_for_the_limit(str(c.get("stage") or stage), c.get("limit_resets_at"))
             elif c.get("ended") == "unavailable":
                 self.stop_for_the_place(str(c.get("place")), str(c.get("error")))
+            elif c.get("ended") == "unauthorized":
+                self.stop_for_the_account(str(c.get("stage") or stage), str(c.get("error")))
         # told to live observers the moment it is booked (not persisted: the ledger itself is the record), so an open
         # page re-reads its spend when there is something new rather than on a clock of its own
         if n:

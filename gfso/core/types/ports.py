@@ -203,6 +203,11 @@ class ExecutionPort(ABC):
     its conversations in. One server can then run every project's work isolated without a second server. A launch
     the place cannot start raises `PlaceUnavailable`."""
 
+    def to_outside(self, text: str) -> str:
+        """`text` with every path spelled as this execution sees it respelled as the host does — a container's mount
+        points; on this host, as it is."""
+        return text
+
     def unavailable(self) -> Optional[str]:
         """Why this place cannot start a call now, or None where it can — a cheap health check. This host always can."""
         return None
@@ -271,6 +276,11 @@ class LLMProviderPort(ABC):
     #: can it run an AGENT — tools, a place, a conversation (`run_agent`)? A provider of one-shots says no;
     #: `validate_result` reads it to refuse before a paid call, every other agent door raises at `run_agent`.
     runs_agents: bool = False
+    #: the work tools the LAST agent run reached for, by name — what a verdict's record and the invariants read of a run;
+    #: a provider that runs agents keeps its own, set per run (this empty default is never written)
+    last_tool_calls: dict = {}
+    #: WHERE its processes and commands run (`ExecutionPort`), or None for a provider that runs none here
+    execution: Optional["ExecutionPort"] = None
 
     def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,
                   timeout: Optional[int] = None, max_turns: Optional[int] = None,

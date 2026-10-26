@@ -26,17 +26,33 @@ def tag_stage(llm, stage: str) -> None:
 ACCOUNT_LIMIT = ("usage limit", "usage_limit", "session limit", "weekly limit", "spend limit", "rate_limit", "rate limit")
 
 
+#: How a refused authentication reads in a call's error: the account is signed out or its key refused — no call of any
+#: role can answer until a person signs it in (the CLI's "403 Failed to authenticate", a chat API's HTTP 401/403).
+UNAUTHORIZED = ("failed to authenticate", "authentication_error", "unauthorized", "api error: 401", "api error: 403",
+                "invalid api key", "invalid x-api-key")
+
+
+def is_unauthorized(error) -> bool:
+    """Was this call's error a refused authentication?"""
+    e = str(error or "").lower()
+    return any(m in e for m in UNAUTHORIZED)
+
+
 def is_limit(error) -> bool:
     """Was this call's error the account's limit?"""
     e = str(error or "").lower()
     return any(m in e for m in ACCOUNT_LIMIT)
 
 
+#: the endings that stop the whole project: no role's call can answer until they lift (`Engine.record_llm_usage`)
+STOPS = ("limit", "unavailable", "unauthorized")
+
+
 def refused_by_limit(calls) -> bool:
     """Did what stops the whole project — the account's limit, or the execution place down (`ended == "unavailable"`)
     — end any call of this run? Such a run answered nothing — an executor's session, a validation, a consent — and is
     asked again when the system's stop lifts, spending none of the node's budget."""
-    return any(isinstance(c, dict) and (c.get("ended") == "unavailable" or is_limit(c.get("error")))
+    return any(isinstance(c, dict) and (c.get("ended") in STOPS or is_limit(c.get("error")))
                for c in calls or ())
 
 
@@ -47,6 +63,8 @@ def what_stopped(calls) -> "str | None":
     for c in calls or ():
         if isinstance(c, dict) and c.get("ended") == "unavailable":
             return f"the execution place {c.get('place') or ''} is unavailable".replace("  ", " ")
+        if isinstance(c, dict) and c.get("ended") == "unauthorized":
+            return "the account refused authentication (sign it in)"
     return "the account's usage limit" if refused_by_limit(calls) else None
 
 

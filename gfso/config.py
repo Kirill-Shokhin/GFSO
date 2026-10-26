@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 # The installation root — the package's parent, used when the checkout itself is the home.
@@ -322,6 +323,33 @@ def generic_provider() -> dict:
     return {"base_url": os.environ.get("GFSO_GENERIC_BASE_URL"),
             "model": os.environ.get("GFSO_GENERIC_MODEL"),
             "api_key": os.environ.get("GFSO_GENERIC_API_KEY")}
+
+
+def provider_env(name: str, field: str) -> str | None:
+    """`GFSO_PROVIDER_<NAME>_<FIELD>` — a model provider's own setting (`BASE_URL`, `API_KEY`, `CONTEXT`,
+    `MAX_TOKENS`, `PRICE`), or None (`adapters/llm/registry.py`)."""
+    return os.environ.get(f"GFSO_PROVIDER_{name.upper().replace('-', '_')}_{field}") or None
+
+
+def providers_in_env() -> set[str]:
+    """The provider names the environment defines by a `GFSO_PROVIDER_<NAME>_BASE_URL`."""
+    return {k[len("GFSO_PROVIDER_"):-len("_BASE_URL")].lower() for k in os.environ
+            if k.startswith("GFSO_PROVIDER_") and k.endswith("_BASE_URL")}
+
+
+def env_var(name: str) -> str | None:
+    """One variable a provider's preset names for its API key, or None."""
+    return os.environ.get(name) or None
+
+
+#: what a model's own shell never inherits: the keys this process holds for its providers
+SECRET_ENV = re.compile(r"(API_KEY|AUTH_TOKEN|_SECRET|_PASSWORD)$")
+
+
+def env_without_secrets() -> dict:
+    """This process's environment less every key and token (`SECRET_ENV`) and the server's mark (`subprocess_env`) —
+    what an agent run's commands start with."""
+    return {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and k != "GFSO_SERVING"}
 
 
 def api_billing() -> bool:

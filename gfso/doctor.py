@@ -40,8 +40,8 @@ def claude_cli() -> tuple[bool, str]:
     """
     exe = shutil.which("claude")
     if exe is None:
-        return False, ("not on PATH — install Claude Code (https://claude.com/claude-code), or set "
-                       "GFSO_PROVIDER=generic with GFSO_GENERIC_BASE_URL for an OpenAI-compatible one")
+        return False, ("not on PATH — install Claude Code (https://claude.com/claude-code), or name another "
+                       "provider in the model spec (`ollama/<model>`, `deepseek/<model>`: `gfso provider-check --list`)")
     try:
         out = subprocess.run([exe, "--version"], capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=30)

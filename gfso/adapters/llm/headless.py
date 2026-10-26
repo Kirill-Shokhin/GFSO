@@ -19,9 +19,10 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import ExecutionPort, LLMProviderPort, PlaceUnavailable
-from .stats import is_limit, refused_by_limit
-from .structured import holds_an_object, schema_instruction, parse_structured, retry_suffix, RETRY_SHORTER
+from gfso.core.types import ExecutionPort, PlaceUnavailable
+from .base import RecordingProvider
+from .stats import is_limit, is_unauthorized, refused_by_limit
+from .structured import holds_an_object
 from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
 from gfso.adapters.execution import LocalExecution
 
@@ -61,13 +62,17 @@ def _summed(turns) -> dict:
 
 def _ended(envelope: dict, torn: bool) -> str:
     """How a session ended: `answered`; `cut` (its stream stopped before a result); `limit` (the account's);
+    `unauthorized` (the account signed out or refused);
     else the CLI's own terminal reason (`prompt_too_long` …), or `error`."""
     if torn:
         return "cut"
     if not envelope.get("is_error"):
         return "answered"
-    if is_limit(f"{envelope.get('api_error') or ''} {envelope.get('result') or ''}"):
+    said = f"{envelope.get('api_error') or ''} {envelope.get('result') or ''}"
+    if is_limit(said):
         return "limit"
+    if is_unauthorized(said):
+        return "unauthorized"
     return str(envelope.get("terminal_reason") or "error")
 
 
@@ -134,7 +139,7 @@ def _is_the_answer(result: dict, live: bool) -> bool:
     return not live or (isinstance(said, str) and holds_an_object(said))
 
 
-class ClaudeCodeProvider(LLMProviderPort):
+class ClaudeCodeProvider(RecordingProvider):
     """Anthropic's models through the Claude Code CLI: this class builds every `claude -p` invocation and reads its
     stream; WHERE the process runs is its execution's (`ExecutionPort`, this host by default)."""
     #: each call is its own `claude -p` process, so independent readings may run at once (`stats.readings`)
@@ -144,7 +149,7 @@ class ClaudeCodeProvider(LLMProviderPort):
     def __init__(self, model: str = MODEL_DEFAULT, timeout: int = 900, claude_cmd: str = "claude",
                  max_thinking_tokens: int | None = None, keep_api_key: bool = False,
                  execution: ExecutionPort | None = None):
-        self._model = model
+        super().__init__(model)
         self._timeout = timeout
         self._exec = execution or LocalExecution()
         self._cmd = self._exec.which(claude_cmd)
@@ -152,38 +157,48 @@ class ClaudeCodeProvider(LLMProviderPort):
         # output. Caps the child CLI's thinking budget (MAX_THINKING_TOKENS env); None = CLI default.
         self._max_thinking = max_thinking_tokens
         self._keep_key = keep_api_key  # True = api billing (key kept in child env); False = subscription
-        self.calls: list[dict] = []   # per-call stats: {stage?, duration_ms, input/output/cache tokens}
-        self.last_peak_context = 0    # the fullest turn of the call being read
         self.last_model = ""          # the model its turns name — what a cut session ran on
         self.last_turns: dict = {}    # each turn's own usage, by message id — what a cut session spent
         self._turn_id = ""            # the message whose closing `message_delta` is still to come
         self.last_lift = None         # when the account's limit that refused the call being read lifts (`_lifts_at`)
-        # Live ticks: the CLI streams (stream-json + partial messages), so generation progress is REAL
-        # (actual output tokens so far), not an estimate. The caller wires `on_tick(msg)` and may set
-        # `stage_hint` before each call; both are optional presentation.
-        self.on_tick = None
-        self.stage_hint = ""
-        # Which work tools the LAST run reached for — a field of this object, not of one call inside
-        # it: the verdict record carries it, and a client whose run never started (or whose result is
-        # merged from concurrent siblings) still has to answer the question.
-        self.last_tool_calls: dict[str, int] = {}
+        # Live ticks are REAL (stream-json + partial messages: actual output tokens so far), never an estimate.
         self._tick_every = 2.0
         if self._cmd is None:
             log.warning("claude CLI not found — headless LLM degraded to stub")
 
-    def tag_last(self, stage: str) -> None:
-        """Label the most recent call with its pipeline stage (the caller knows; the port API doesn't)."""
-        if self.calls:
-            self.calls[-1]["stage"] = stage
+    @property
+    def execution(self) -> ExecutionPort:
+        """Where its processes run."""
+        return self._exec
 
     def _transcripts(self, sid: str) -> list[Path]:
         """Where the CLI keeps the conversation: `<its state dir>/projects/<its cwd, encoded>/<id>.jsonl`."""
         return list((Path(self._exec.state_dir()) / "projects").glob(f"*/{sid}.jsonl"))
 
     def forget(self, session: str) -> None:
-        """Drop a conversation's transcript: the work it served is settled, or it would not resume."""
+        """Drop a conversation's transcript: the work it served is settled, or it would not resume — and what this
+        execution keeps of it beside the CLI's state, whichever provider kept it (a chat run's transcript too: the
+        workspaces forget a project's conversations through one provider)."""
         for p in self._transcripts(session):
             p.unlink(missing_ok=True)
+        for p in (Path(self._exec.state_dir()) / "gfso-sessions").glob(f"{session}.*"):
+            p.unlink(missing_ok=True)
+
+    def _spent_file(self, sid: str) -> Path:
+        """What a conversation cost up to the round its next one continues — beside the CLI's own state."""
+        return Path(self._exec.state_dir()) / "gfso-sessions" / f"{sid}.spent"
+
+    def _own_cost(self, sid: str | None, total, resumed: bool):
+        """THE ROUND'S OWN COST: on `--resume` the CLI's `total_cost_usd` is the whole conversation's, so a continued
+        round of one turn booked $1.64, its predecessor's $1.60 again (GB_sql_database_tnildb300, 4 rounds, +$5.86).
+        Less what the conversation had cost when the round before it was cut; None stays None."""
+        if not (resumed and sid and isinstance(total, (int, float))):
+            return total
+        try:
+            before = float(self._spent_file(sid).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return total                   # nothing kept (a conversation from before this was kept): as the CLI said
+        return max(0.0, total - before)
 
     def _session_args(self, sid: str | None) -> list[str]:
         """A call naming no conversation SAVES none: each would otherwise land in the operator's session history for
@@ -209,13 +224,17 @@ class ClaudeCodeProvider(LLMProviderPort):
         calls, each one's input 16k tokens longer."""
         if sid and out.get("subtype") != "error_max_turns":
             self.forget(sid)
+        elif sid and isinstance(out.get("total_cost_usd"), (int, float)):
+            f = self._spent_file(sid)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(str(out["total_cost_usd"]), encoding="utf-8")
 
     def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...],
                   cwd: str | None = None, timeout: int | None = None,
                   max_turns: int | None = None, session: str | None = None) -> str:
         """Port B — the AGENT-RUNNER: one headless run WITH work tools (multi-step inside one
         process), returning its final report text. Headless-by-necessity: an agent run needs a harness
-        (tools/permissions/cwd), which a bare completion API can't provide — GenericLLM never covers this.
+        (tools/permissions/cwd); a chat API gets one from the system's own loop (`toolloop.ToolLoop`).
         `--dangerously-skip-permissions` is REQUIRED for non-interactivity (headless can't answer
         prompts); the safety envelope = the tool allowlist + scoped cwd (probed live 2026-07-03).
         `timeout` = a per-run process cap (e.g. deadline-derived); on expiry the process is killed and
@@ -251,8 +270,8 @@ class ClaudeCodeProvider(LLMProviderPort):
         reading what it streams is another, and it is where the live progress comes from —
         real output tokens, never an estimate. Returns (envelope, text, out_tokens)."""
         envelope, text_acc, out_tokens, last_tick = None, [], 0, t0
-        self.last_tool_calls = {}
-        self.last_peak_context, self.last_model, self.last_turns, self._turn_id, self.last_lift = 0, "", {}, "", None
+        self.begin_run()
+        self.last_model, self.last_turns, self._turn_id, self.last_lift = "", {}, "", None
         # WHAT AN AGENT RUN DID, KEPT WHEN ASKED (`GFSO_AGENT_TRACE_DIR`): each call's raw stream, one
         # file per call. `--no-session-persistence` keeps these runs out of the operator's history, which
         # also left no record of what a delegated executor or validator actually ran — an audit that reads
@@ -284,7 +303,7 @@ class ClaudeCodeProvider(LLMProviderPort):
 
     def _observe(self, ev: dict, inner: dict) -> None:
         """What one event says about the session itself: a tool it called, how full its context got."""
-        self.last_peak_context = max(self.last_peak_context, _turn_context(ev, inner))
+        self.note_peak(_turn_context(ev, inner))
         self.last_lift = _lifts_at(ev) or self.last_lift
         msg = _obj(ev.get("message") or inner.get("message"))
         self._note_turn(msg, inner)
@@ -292,7 +311,7 @@ class ClaudeCodeProvider(LLMProviderPort):
         if isinstance(named, str) and named and not named.startswith("<"):   # `<synthetic>`: the CLI's own refusal
             self.last_model = named
         if (tname := _tool_use_name(ev)):
-            self.last_tool_calls[tname] = self.last_tool_calls.get(tname, 0) + 1
+            self.note_tool(tname)
 
     def _note_turn(self, msg: dict, inner: dict) -> None:
         """A turn's own usage, by message id. What it was read over arrives with the message; its output arrives
@@ -436,7 +455,7 @@ class ClaudeCodeProvider(LLMProviderPort):
                 # The envelope has carried the cost all along and nothing read it: the tokens were
                 # recorded, the dollars were dropped, and "what did this graph cost" stayed a
                 # question the system could not answer about itself.
-                "cost_usd": out.get("total_cost_usd"),
+                "cost_usd": self._own_cost(session, out.get("total_cost_usd"), "--resume" in args),
                 **_who_ran(out, self.last_model or self._model),   # the model that ran it and its window
                 "peak_context": self.last_peak_context or None,
                 "turns": _count(out.get("num_turns")) or None,
@@ -492,26 +511,3 @@ class ClaudeCodeProvider(LLMProviderPort):
         # failure, so the round runs cold — after the first process is gone, which otherwise rewrote the transcript
         # just forgotten and sent the "cold" retry back to `--resume` (critic, live on CLI 2.1.306)
         return self.forget(session) or self._call(system, user, tools_args, cwd, timeout, session)
-
-    def complete(self, prompt: str, context: str = "") -> str:
-        return self._call(context or "You are a GFSO System LLM analyzing task decompositions.", prompt)
-
-    def complete_structured(self, system: str, user: str, schema: dict) -> dict:
-        """The port's structured contract: a dict satisfying `schema`'s required keys, {} on failure."""
-        text = self._call(system, user + schema_instruction(schema))
-        parsed = parse_structured(text, schema)
-        if parsed is not None:
-            return parsed
-        if refused_by_limit(self.calls[-1:]):
-            return {}                          # nothing ran: no reply to have failed parsing, nothing to retry
-        if self.calls:
-            self.calls[-1]["parse_failed"] = True  # keep the wasted attempt visible in stats
-        if text:  # one repair retry with the failure fed back
-            parsed = parse_structured(
-                self._call(system, user + schema_instruction(schema)
-                           + (RETRY_SHORTER if self.calls and self.calls[-1].get("stop_reason") == "max_tokens"
-                              else retry_suffix(text, schema))), schema)
-            if parsed is not None:
-                return parsed
-        log.warning("headless structured call: no schema-valid json after retry")
-        return {}

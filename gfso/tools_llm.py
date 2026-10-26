@@ -750,8 +750,8 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
     _cb = emit_cb(engine, "validate_result", _progress)
     llm = _llm or llm_factory(model, execution=execution_of(engine))
     if not (llm.runs_agents if isinstance(llm, LLMProviderPort) else hasattr(llm, "run_agent")):
-        return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
-                         "GFSO_PROVIDER=generic covers zero-tool one-shots only"}, None
+        return {"error": f"validate_result needs a provider that runs agents (tool calling): {model!r} answers "
+                         f"one-shots only — `gfso provider-check {model}` names the roles it can hold"}, None
     # the claim names the delivery THIS run reads — the node's generation (§10.3 gate) — and where the log stood
     inflight_key = engine.claims.begin_validation(TaskId(task_id))
     if inflight_key is None:

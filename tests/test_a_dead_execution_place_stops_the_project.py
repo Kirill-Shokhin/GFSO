@@ -146,7 +146,7 @@ def test_only_the_system_s_stop_is_started_by_the_probe(tmp_path):
     """A person's stop over the place's is the person's; a place stop over a limit stop starts only when both are gone;
     a restarted engine re-arms the start from the stop's record."""
     e = make_engine(llm=None)
-    e.probe_the_place_with(lambda: None)
+    e.probe_the_place_with(lambda place: None)
     e.stop_for_the_place("e3-linux", "the execution place e3-linux is unavailable: down")
     e.pause("alice", "mine, over the system's")
     e.lift_the_system_stop(time.time())
@@ -162,7 +162,7 @@ def test_only_the_system_s_stop_is_started_by_the_probe(tmp_path):
     e = make_engine(storage=SqliteStorage(db), llm=None)
     e.stop_for_the_place("e3-linux", "down")
     e = make_engine(storage=SqliteStorage(db), llm=None, check_interval=0.1)
-    e.probe_the_place_with(lambda: None)
+    e.probe_the_place_with(lambda place: None)
     e.start()
     t0 = time.time()
     while e.paused() and time.time() - t0 < 5:
@@ -204,7 +204,7 @@ def test_a_probe_that_raises_is_a_place_that_does_not_answer_and_the_monitor_liv
     e = make_engine(llm=None, check_interval=0.1)
     answer = {"raise": True}
 
-    def probe():
+    def probe(place):
         if answer["raise"]:
             raise KeyError("e3-linux")
     e.probe_the_place_with(probe)

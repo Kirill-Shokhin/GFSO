@@ -14,9 +14,12 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from importlib.resources import files
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
 from gfso.adapters.execution import end_leftovers
+from gfso.adapters.llm import registry
+from gfso.adapters.llm.conformance import assess, report
 from gfso import __version__, serverctl
 from gfso.config import LOOPBACK, install_mcp_env, install_serve_env
 from gfso import serverctl
@@ -184,6 +187,8 @@ def build_parser() -> argparse.ArgumentParser:
                                   "where state lives, who holds the port, whether the Claude Code "
                                   "CLI answers. Paste its output into a bug report.")
 
+    _add_provider_parser(sub)
+
     demo = sub.add_parser("demo", help="Run a shipped example (no name lists them). `human_only` "
                                        "shows the gate refusing a self-signed PASS, with no AI.")
     demo.add_argument("name", nargs="?", default=None)
@@ -201,6 +206,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
+
+
+def _add_provider_parser(sub) -> None:
+    """`gfso provider-check` — the conformance battery on one provider (`adapters/llm/conformance.py`)."""
+    provp = sub.add_parser("provider-check", help="Whether a model provider can run on gfso and in which roles: a "
+                                                  "battery of small real calls (a completion, a structured answer, "
+                                                  "a tool round trip in a place of its own). `--list` names the "
+                                                  "providers a model spec may start with.")
+    provp.add_argument("spec", nargs="?", default=None, help="a model spec, e.g. ollama/qwen3:32b or deepseek/deepseek-chat")
+    provp.add_argument("--list", action="store_true")
 
 def _dispatch(args) -> None:
     if args.command == "serve":
@@ -253,6 +268,23 @@ def _dispatch(args) -> None:
         sys.exit(doctor())
     elif args.command == "demo":
         sys.exit(_demo(args.name))
+    elif args.command == "provider-check":
+        sys.exit(_provider_check(args))
+
+
+def _provider_check(args) -> int:
+    """`gfso provider-check SPEC`: the conformance battery on one provider; non-zero when it can hold no role."""
+    if args.list or not args.spec:
+        for n in registry.names():
+            p = registry.preset(n)
+            print(f"{n:12} {p.base_url if p else ('Claude Code CLI' if n == 'claude' else 'plugin')}"
+                  + (f"  key: {p.key_env}" if p and p.key_env else "") + (f"  ({p.note})" if p and p.note else ""))
+        return 0
+    # the report case under the executor's own system prompt, as a real executor reads it
+    found = assess(registry.provider_for(args.spec),
+                   files("gfso.mcp").joinpath("prompts", "executor.md").read_text(encoding="utf-8"))
+    print(report(args.spec, found))
+    return 0 if found["roles"] else 1
 
 
 def _demo(name: str | None) -> int:

@@ -34,6 +34,7 @@ from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec
                              SPAWNABLE_ACTIONS, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
                           split_has_a_mover)
+from gfso.adapters.llm.chat import answers, is_address
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what_stopped
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace,
@@ -701,7 +702,8 @@ class Dispatcher:
         self._engine.joins.set_join_owed(lambda t: (w := _place_of(self._engine, self._agents, t)) is not None
                                    and Path(w[1]).is_dir())
         # …and the place the project runs in, probed while it is down (`Engine.lift_the_system_stop`)
-        self._engine.probe_the_place_with(lambda: execution_of(self._engine, self._agents).unavailable())
+        self._engine.probe_the_place_with(lambda place: (answers(place) if is_address(place)
+                                                         else execution_of(self._engine, self._agents).unavailable()))
         # Subscribed HERE, not in `start()`: the callback no longer only sets a flag — it is what
         # makes a cleared block executable again (see `_on_bus`), and that must not depend on
         # whether this dispatcher's poll loop was ever started.

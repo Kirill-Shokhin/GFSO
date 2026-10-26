@@ -7,6 +7,7 @@ import re
 import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
+from gfso.adapters.worktrees import NODES as _NODES, base_of
 from gfso.adapters.execution import ContainerExecution, LocalExecution
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
@@ -46,7 +47,6 @@ def _safe(s) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", str(s)).replace("..", "_").strip(".") or "_"
 
 
-_NODES = ".gfso-nodes-"   # a base's node places stand beside it, under this prefix and the base's name
 
 
 def _workspace(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | None:
@@ -67,14 +67,6 @@ def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | N
     key, proj = _safe((session_scope(engine, agents, task) or task).id), _safe(engine.project_name or DEFAULT_PROJECT)
     return base, str(Path(base).parent / f"{_NODES}{Path(base).name}" / proj / key), f"gfso/{proj}/{key}"
 
-
-
-def base_of(place: str | None) -> str | None:
-    """The base a node's place is a checkout of — `_place_of` read backwards; None for a place that is no node's."""
-    p = Path(place) if place else None
-    if p is None or len(p.parents) < 3 or not p.parent.parent.name.startswith(_NODES):
-        return None
-    return str(p.parent.parent.parent / p.parent.parent.name[len(_NODES):])
 
 
 def node_workspace(engine, agents: "AgentRegistry", task_id) -> str | None:
