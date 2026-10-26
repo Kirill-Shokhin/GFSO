@@ -193,18 +193,25 @@ function work(calls) {
 // issuer's signature at that seam, the root's is the goal delivered — never summed into one curve.
 // The log keeps only what a FAIL named (Inv-3), so an unnamed criterion of a past verdict is read as
 // standing; a node's CURRENT verdict is read per criterion (`/verdict`), where an undecidable one is
-// ⊥, not pass. A Dep's carriage criterion (`dep__…`) is the system's, not the plan's, and is left out.
-const own = c => !String(c).startsWith('dep__');
+// ⊥, not pass. A Dep edge's bare declaration (`dep__…` with no check) is no criterion of its consumer — V leaves it
+// out (Spec.conjuncts); a `dep__` that pins a check on this result is one, like any other.
+export const conjunct = c => !c?.depends_on || !!c.check?.length;
+// What a FAIL named, read by that rule: the node's criteria it failed, and the bare Dep edges an older engine judged.
+export const failedOf = (run, id, failed = []) => ({own: failed.filter(c => run.criteria.names[id]?.includes(c)),
+                                                     edges: failed.filter(c => !run.criteria.names[id]?.includes(c))});
+export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
+export const failedWords = (run, id, failed) => { const {own, edges} = failedOf(run, id, failed);
+    return [own.join(' · '), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`].filter(Boolean).join('; ') || 'no criterion named'; };
 const V = {pass: 'pass', fail: 'fail'};
 function criteria(audit, tasks, verdicts) {
-    const names = Object.fromEntries(tasks.map(t => [t.id, (t.criteria || []).map(c => c.name || c).filter(own)]));
+    const names = Object.fromEntries(tasks.map(t => [t.id, (t.criteria || []).filter(conjunct).map(c => c.name || c)]));
     // one track per NODE, its own criteria at its own verdicts: a count across a level summed parts of unrelated
     // parents, one closed beside one not begun (author, 2026-10-25: «два внука от разного родителя … что отобразится»)
     const status = {}, verdictRows = audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL') && names[a.task_id]);
     const last = Object.fromEntries(verdictRows.map(a => [a.task_id, a]));
     const track = Object.fromEntries(tasks.map(t => [t.id, {total: names[t.id].length, steps: [], marks: []}]));
     for (const a of verdictRows) {
-        const failed = new Set((a.failed_criteria || []).filter(own)), T = track[a.task_id];
+        const failed = new Set((a.failed_criteria || []).filter(c => names[a.task_id].includes(c))), T = track[a.task_id];
         const per = last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal
             && Object.fromEntries((verdicts[a.task_id].per_criterion || []).map(c => [c.criterion, V[c.verdict] || '⊥']));
         status[a.task_id] = Object.fromEntries(names[a.task_id].map(c => [c, per ? per[c] || '⊥' : a.signal === 'FAIL' && failed.has(c) ? 'fail' : 'pass']));

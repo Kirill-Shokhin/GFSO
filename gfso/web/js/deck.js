@@ -92,8 +92,9 @@ function paint() {
     d.classList.toggle('closed', !!pref.closed);
     d.querySelector('.dk-strip').innerHTML = strip();
     d.querySelectorAll('.dk-tab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-    const el = d.querySelector('.dk-view');
+    const el = d.querySelector('.dk-view'), drawn = pref.closed || !run ? null : view;
     release(el);
+    if (el._drawn !== drawn) el._brought = null, el._drawn = drawn;   // a view opened brings the selection again
     if (!pref.closed && run) VIEWS[view].render(el, run, S.graph.nodes, S.tasks, pipeline);
 }
 

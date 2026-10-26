@@ -3,7 +3,7 @@
 // issuer's signature at that seam, the root's PASS the goal delivered — never a sum across a level, which added parts
 // of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
 import {esc, hint} from './dom.js';
-import {bindFocus} from './store.js';
+import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, mark, glyph, trim} from './draw.js';
 
@@ -35,13 +35,14 @@ function tracks(el, run, name, tasks) {
         y += GAP;
         const lx = 8 + Math.max(r.d - 1, 0) * INDENT;
         const caret = r.kids && r.d ? `<tspan class="pg-caret">${unfolded.has(r.id) ? '▾' : '▸'} </tspan>` : '';
-        return `<g class="pg-track${r.d ? ' pg-part' : ''}" data-row="${esc(r.id)}">
+        return `<g class="pg-track${r.d ? ' pg-part' : ''}" data-node="${esc(r.id)}">
+            <rect class="pg-band" x="0" y="${top - GAP / 2}" width="${W}" height="${h(r) + GAP}"/>
             <text class="pg-level" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}>${caret}${esc(trim(r.d ? name(r.id) : "the goal's criteria", 34 - Math.max(r.d - 1, 0) * 2))}</text>
             <text class="pg-count" x="${LEFT - 10}" y="${top + (r.d ? 24 : 28)}">${last}<tspan> of ${T.total}</tspan></text>
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>
             <path class="pg-area" d="${f.area(T.steps, y0, h(r), T.total)}"/>
-            ${T.marks.map((m, j) => `<g data-node="${esc(m.node)}" data-m="${esc(r.id)}:${j}">${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
+            ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}">${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
     }).join('');
     const H = y + 6, root = rs.find(r => !r.d);
     const miles = (root ? tr[root.id].marks : []).filter(m => m.signal === 'PASS').map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>
@@ -70,12 +71,18 @@ function coverage(run, nodes, tasks) {
 export function render(el, run, nodes, tasks) {
     const name = run.name;
     el.innerHTML = `<div class="pg-wrap"><div class="pg-tracks"></div><div class="pg-side">${coverage(run, nodes, tasks)}</div></div>`;
-    const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks); };
+    let lit;   // the shared selection's paint, re-applied to tracks drawn anew
+    const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks); lit?.(focus()); };
+    // a node selected under a folded part unfolds the path to it, so its track is there to light
+    const parent = Object.fromEntries(tasks.map(t => [t.id, t.parent_id]));
+    const open = id => { let shut = false; for (let x = parent[id]; x && parent[x]; x = parent[x]) if (!unfolded.has(x)) unfolded.add(x), shut = true; return shut; };
+    if (focus().select) open(focus().select);
     paint();
+    watch((st, key) => key === 'select' && st.select && open(st.select) && paint(), el);
     // a part's name unfolds it into its own parts, and folds it again
     tr.onclick = e => { const id = e.target.closest('[data-unfold]')?.dataset.unfold;
-        if (id) { unfolded.has(id) ? unfolded.delete(id) : unfolded.add(id); paint(); } };
-    bindFocus(el, e => {
+        if (id) { e.stopPropagation(); unfolded.has(id) ? unfolded.delete(id) : unfolded.add(id); paint(); } };   // unfolding is no selection
+    lit = bindFocus(el, e => {
         const g = e.target.closest('[data-m]');
         if (!g) return untip();
         const i = g.dataset.m.lastIndexOf(':'), id = g.dataset.m.slice(0, i), L = run.criteria.track[id], m = L.marks[+g.dataset.m.slice(i + 1)];
@@ -85,4 +92,5 @@ export function render(el, run, nodes, tasks) {
             ${m.failed.length ? `<div class="tt-row">failed: ${esc(m.failed.join(', '))}</div>` : ''}
             <div class="tt-row">${m.k} of ${L.total} of its own criteria passing after it</div>`, e);
     }, untip);
+    bringSelected(el, id => tr.querySelector(`.pg-track[data-node="${CSS.escape(id)}"] .pg-band`));
 }

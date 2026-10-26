@@ -5,7 +5,7 @@ import {$, esc, data, section, rebuild, hint} from './dom.js';
 import {getJSON} from './api.js';
 import {S, hasKids, taskOf} from './state.js';
 import {bucketOf, statusLabel, vOf, V_SYMBOL, can, signals, CANCEL, closureNote, contested} from './vocab.js';
-import {roundsOf, at, waitsOf, waitWords} from './run.js';
+import {roundsOf, at, waitsOf, waitWords, conjunct} from './run.js';
 import {signedBy} from './work.js';
 import {glyph, mark} from './draw.js';
 import {FACETS, chip, signer, perCrit, pinned, showReader, closeReader} from './reader.js';
@@ -63,9 +63,11 @@ const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = (x, 
 // A criterion is one line at the current verdict; unfolded (one at a time) it reads what it asks, what the
 // verdict found, and its pinned check.
 function criteria({d, vr, rounds}) {
-    if (!d.criteria.length) return '';
-    const pc = perCrit(vr), k = d.criteria.filter(c => pc[c.name]?.verdict === 'pass').length;
-    return section(`Criteria${vr?.verdict ? ` · ${k}/${d.criteria.length} pass` : ''}`, d.criteria.map(c => {
+    // a Dep edge's bare declaration is the edge the head's «waits on» already names, not a criterion with a verdict
+    const cs = d.criteria.filter(conjunct);
+    if (!cs.length) return '';
+    const pc = perCrit(vr), k = cs.filter(c => pc[c.name]?.verdict === 'pass').length;
+    return section(`Criteria${vr?.verdict ? ` · ${k}/${cs.length} pass` : ''}`, cs.map(c => {
         const v = pc[c.name]?.verdict, ev = pc[c.name]?.evidence, key = `${d.id}|${c.name}`;
         return `<details class="cr-row" name="crit" data-key="${esc(key)}"><summary>`
             + `<span class="cr-g">${v === 'pass' ? glyph('PASS', 3.5) : v === 'fail' ? glyph('FAIL', 3.5) : '⊥'}</span>`

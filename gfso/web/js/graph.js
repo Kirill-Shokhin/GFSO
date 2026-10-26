@@ -6,7 +6,7 @@ import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
 import {point, watch, focus} from './store.js';
-import {roundsLine, waitWords, atWork} from './run.js';
+import {roundsLine, waitWords, atWork, conjunct} from './run.js';
 
 // Leaf tokens are hex literals; getComputedStyle returns the specified value of an unregistered property.
 const cs = getComputedStyle(document.documentElement), tok = n => cs.getPropertyValue(n).trim();
@@ -180,7 +180,7 @@ function nodeTip(t) {
         + (t.assignee ? `<div class="tt-row">executor (Del): ${esc(t.assignee)}</div>` : '')
         + (w && waitWords(w, d => taskOf(d).name || d) !== '—' ? `<div class="tt-row">waits on: ${esc(waitWords(w, d => taskOf(d).name || d))}</div>` : '')
         + (rs.length ? `<div class="tt-row">${roundsLine(rs)}</div>` : '')
-        + (t.criteria?.length ? `<div class="tt-row">${t.criteria.length} criteria</div>` : '')
+        + (t.criteria?.filter(conjunct).length ? `<div class="tt-row">${t.criteria.filter(conjunct).length} criteria</div>` : '')
         + '<div class="tt-row tt-hint">double-click: frame its subtree · on the background: the whole graph</div>';
 }
 

@@ -4,7 +4,7 @@
 import {esc} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {hm, glyph} from './draw.js';
-import {at, said, roundsLine} from './run.js';
+import {at, said, roundsLine, failedWords} from './run.js';
 
 const KINDS = {
     verdict: ['PASS', 'FAIL'], delivery: ['DELIVER'], assignment: ['ASSIGN', 'ACCEPT', 'REOPEN'],
@@ -45,7 +45,7 @@ function head(id, name, node, run, rs) {
     return `<summary><span class="ev-node">${esc(name)}</span>
         <span class="state-badge ev-state">${esc(node.state)}</span>
         <span class="ev-rounds">${rounds.length ? roundsLine(rounds) + (last?.verdict ? ` · last ${last.verdict}` : '') : 'no delivery yet'}</span>
-        ${lastFail ? `<span class="ev-why${last?.verdict === 'FAIL' ? '' : ' was'}">${last?.verdict === 'FAIL' ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${lastFail.failed.map(esc).join(' · ') || 'no criterion named'}</span>` : ''}
+        ${lastFail ? `<span class="ev-why${last?.verdict === 'FAIL' ? '' : ' was'}">${last?.verdict === 'FAIL' ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${esc(failedWords(run, id, lastFail.failed))}</span>` : ''}
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
 }
 

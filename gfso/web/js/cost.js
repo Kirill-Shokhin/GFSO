@@ -1,7 +1,7 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
 import {esc, hint} from './dom.js';
-import {bindFocus} from './store.js';
+import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {dur, trim} from './draw.js';
 import {KIND_NAME as KIND, levelName, concurrency} from './run.js';
@@ -63,4 +63,5 @@ export function render(el, run, nodes) {
             ${Object.entries(parts).map(([k, p]) => `<div class="tt-row">${KIND[k]}: ${usd(p.cost)} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tok</div>`).join('')}
             <div class="tt-row">${rounds(row.dataset.node)} delivery round${rounds(row.dataset.node) === 1 ? '' : 's'} · ${usd(all.reduce((s, p) => s + p.cost, 0))} in all</div>`, e);
     }, untip);
+    bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));
 }

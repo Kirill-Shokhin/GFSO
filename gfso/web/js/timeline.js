@@ -2,10 +2,10 @@
 // standing ABOVE the bar it answers — the carrier and the mark kept apart — and over the rows how many
 // executors ran at once. Del names who is accountable for a node; this names what ran, when, and beside what.
 import {esc} from './dom.js';
-import {bindFocus, watch, focus} from './store.js';
+import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, dur, mark, trim} from './draw.js';
-import {KIND_NAME, waitWords, atWork} from './run.js';
+import {KIND_NAME, waitWords, atWork, failedOf, failedWords, EDGE_NOTE} from './run.js';
 import {procs} from './state.js';
 
 const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
@@ -46,7 +46,7 @@ export function render(el, run, nodes) {
         y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(s.end) - f.X(s.start), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`;
     // a verdict: a hairline stem up from the bar line, the glyph on top — a mark, not a piece of the work
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
-        return `<line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}`; }).join('');
+        return `<g class="tl-v" data-v="${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
     const state = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const idle = id => run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${
         run.waits[id]?.deps.length ? `waits on ${esc(waitWords(run.waits[id], d => trim(name(d), 24)))}` : esc(state[id].toLowerCase())}</text>`;
@@ -77,6 +77,16 @@ export function render(el, run, nodes) {
         ${ids.map(row).join('')}
         <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW - 4}" y2="${TOP + ROW - 4}"/></svg>`;
     bindFocus(el, e => {
+        // a verdict: its round, what it failed, and how many of the node's own criteria pass after it
+        const v = e.target.closest('[data-v]');
+        if (v) {
+            const id = v.closest('[data-node]').dataset.node, r = run.rounds[id].find(r => String(r.n) === v.dataset.v);
+            const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), {own, edges} = failedOf(run, id, r.failed);
+            return tip(`<div class="tt-name">${esc(name(id))}</div><div class="tt-row">${r.verdict} · round ${r.n} · ${hm(r.at)}</div>
+                ${own.length ? `<div class="tt-row">failed: ${esc(own.join(', '))}</div>` : ''}
+                ${m ? `<div class="tt-row">${m.k} of ${T.total} of its own criteria passing after it</div>` : ''}
+                ${edges.length ? `<div class="tt-row">${esc(edges.join(', '))}: ${EDGE_NOTE}</div>` : ''}`, e);
+        }
         const s = e.target.closest('.tl-s');
         if (!s) return untip();
         // the round a stretch belongs to: the delivery an execution ended in, the verdict a validation gave
@@ -85,19 +95,8 @@ export function render(el, run, nodes) {
         tip(`<div class="tt-name">${esc(name(x.node))}</div><div class="tt-row">${KIND_NAME[x.kind]}${x.agents.length ? ' · ' + esc(x.agents.join(', ')) : ''}</div>
             <div class="tt-row">${hm(x.start)}–${x.open ? 'now' : hm(x.end)} · ${dur(x.end - x.start)}${x.cost ? ` · $${x.cost.toFixed(2)}` : ''}${x.tokens ? ` · ${Math.round(x.tokens / 1e3)}k tok` : ''}</div>
             ${x.parts > 1 ? `<div class="tt-row">${x.parts} sessions (${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried or continued'}) · ${dur(x.busy)} busy</div>` : ''}
-            ${r ? `<div class="tt-row">round ${r.n}${r.verdict ? ' → ' + r.verdict + (r.failed?.length ? ': ' + esc(r.failed.join(', ')) : '') : ''}</div>` : ''}
+            ${r ? `<div class="tt-row">round ${r.n}${r.verdict ? ' → ' + r.verdict + (r.failed?.length ? ': ' + esc(failedWords(run, x.node, r.failed)) : '') : ''}</div>` : ''}
             ${x.priced === false ? '<div class="tt-row">no cost recorded for this call</div>' : ''}`, e);
     }, untip);
-    // a node selected elsewhere is brought into view: among fifty rows its highlighted band sat below the fold.
-    // Only for a selection not yet brought — a redraw on every feed event must not pull the reader's scroll back,
-    // but a node selected while another tab was open is brought when the timeline opens.
-    const bring = id => {
-        const box = el.closest('.dk-body'), band = id && el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`);
-        if (!box || !band) return;
-        el._brought = focus().picks;
-        const b = band.getBoundingClientRect(), v = box.getBoundingClientRect();
-        if (b.top < v.top || b.bottom > v.bottom) box.scrollTop += b.top - v.top - (v.height - b.height) / 2;
-    };
-    if (focus().picks !== el._brought) bring(focus().select);
-    watch((st, key) => key === 'select' && bring(st.select), el);
+    bringSelected(el, id => el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`));
 }

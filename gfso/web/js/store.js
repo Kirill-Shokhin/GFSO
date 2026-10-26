@@ -15,6 +15,22 @@ export function point(key, id) {
     subs.forEach((_, fn) => fn(state, key));
 }
 
+// The selected node's row in a deck view is brought into the deck's sight: among fifty rows it sat below the fold.
+// Only a selection not yet brought on this drawing of the view — a redraw on a feed event must not pull the reader's
+// scroll back; the deck forgets what was brought when it opens a view, so a tab returned to brings it again.
+// `find(id)` is the row's element.
+export function bringSelected(el, find) {
+    const bring = () => {
+        const box = el.closest('.dk-body'), row = state.select && find(state.select);
+        if (!box || !row) return;
+        el._brought = state.picks;
+        const b = row.getBoundingClientRect(), v = box.getBoundingClientRect();
+        if (b.top < v.top || b.bottom > v.bottom) box.scrollTop += b.top - v.top - (v.height - b.height) / 2;
+    };
+    if (el._brought !== state.picks) bring();
+    watch((st, key) => key === 'select' && bring(), el);
+}
+
 // Any element carrying `data-node` inside `el` takes part: hovering it points, clicking selects, and
 // it wears `is-hover` / `is-select` while it is the one pointed at. `onMove(e)` adds the view's own tip.
 export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
@@ -30,4 +46,5 @@ export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     el.onclick = e => { const n = e.target.closest('[data-node]'); if (n) point('select', n.dataset.node); };
     watch(paint, el);
     paint(state);
+    return paint;
 }
