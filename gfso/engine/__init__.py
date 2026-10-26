@@ -578,6 +578,12 @@ class Engine:
         return self.pause("system", f"the account's usage limit refused {role}'s call — until "
                                     f"{datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
 
+    def limit_wait_s(self) -> Optional[float]:
+        """Seconds until the system's limit stop lifts (its `until`), or None where none stands — a round the limit
+        refused, parked on a wall timer past the lift, would spend project time with nobody moving."""
+        until = (self.paused() or {}).get("until")
+        return max(1.0, float(until) - time.time() + 1.0) if until else None
+
     def lift_the_limit(self, wall: float) -> None:
         """START what the account's limit stopped, once it has lifted — only that stop (`until`): a person's never. The
         monitor asks at every tick under a stop, so an engine started over a standing one re-arms it from its record."""

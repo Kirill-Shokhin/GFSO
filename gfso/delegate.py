@@ -1597,9 +1597,9 @@ class Dispatcher:
         spent — the round comes back when the limit can have lifted, probed every LIMIT_RETRY_S as the issuer's door
         does, and the node's own clock still bounds it (§12.2). Read as an unreadable report, two limit-ended sessions
         parked a node for the 2.5 h of the window and after it (GB_c_compiler_tncfs1160, 2026-10-23)."""
-        self._give_back(key, LIMIT_RETRY_S)
+        self._give_back(key, wait := self._engine.limit_wait_s() or LIMIT_RETRY_S)
         self._engine.emit_info("delegate", f"{task_id}: {whose} call was refused by the account's usage limit — "
-                                           f"asked again in {LIMIT_RETRY_S}s; nothing was answered, so this spends "
+                                           f"asked again in {wait:.0f}s; nothing was answered, so this spends "
                                            f"none of the node's retries")
 
     def _validate_queued(self, task_id: TaskId, expect_gen: tuple = (0, 0, 0), sign: bool = True) -> None:

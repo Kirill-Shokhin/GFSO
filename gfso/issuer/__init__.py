@@ -1831,7 +1831,7 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
                         n = n + counted if (t, q) in open_questions(engine) else 0
                         ledger[g] = (0, now_ + (backoff(n - FREE_ANSWERS - 1) if counted and n > FREE_ANSWERS else 0), n)
                     elif st in UNANSWERED:
-                        ledger[g] = (w + 1, now_ + (min(backoff(w), LIMIT_RETRY_S) if out.get("limit") else backoff(w)), n)
+                        ledger[g] = (w + 1, now_ + ((engine.limit_wait_s() or min(backoff(w), LIMIT_RETRY_S)) if out.get("limit") else backoff(w)), n)
                     elif st == "inflight":
                         ledger[g] = (w, now_ + PACE_S, n)
                     elif st != "gone":

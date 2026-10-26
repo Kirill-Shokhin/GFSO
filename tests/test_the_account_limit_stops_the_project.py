@@ -124,3 +124,12 @@ def test_a_date_shown_during_a_stop_comes_back_as_it_was(monkeypatch):
     assert abs((datetime.fromisoformat(shown) - due).total_seconds()) < 1, "a date read differently once stopped"
     e.resume("the-user")
     e.stop()
+
+
+def test_a_round_the_limit_refused_comes_back_at_the_lift_not_on_its_own_timer():
+    """A round given back on a fixed LIMIT_RETRY_S after a lift due sooner would spend project time with nobody moving
+    (critic, 2026-10-26: up to ~570 s); it waits exactly until the system's limit stop lifts."""
+    e = make_engine(llm=None)
+    assert e.limit_wait_s() is None                            # no limit stop: each door keeps its own pace
+    e.record_llm_usage("executor", _refused(time.time() + 120), TaskId("n"))
+    assert 120 < e.limit_wait_s() < 200 < LIMIT_RETRY_S

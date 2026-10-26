@@ -1818,7 +1818,9 @@ def run_state(engine: Engine) -> dict:
     if not (stop := engine.paused()):
         return {"state": "running"}
     working = [w for w in in_flight() if w.get("project") == (engine.project_name or DEFAULT_PROJECT)]
-    return {"state": "stopping" if working else "stopped", **stop, "working": working}
+    # `off_s` is the doors' own reading of the stop (`model.door_off_s`), nothing a client acts on
+    return {"state": "stopping" if working else "stopped", **{k: v for k, v in stop.items() if k != "off_s"},
+            "working": working}
 
 
 def stop_project(engine: Engine, why: str = "", by: Optional[str] = None) -> dict:
