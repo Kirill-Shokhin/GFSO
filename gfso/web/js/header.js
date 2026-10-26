@@ -167,8 +167,8 @@ export const refreshHeader = singleFlight(async () => {
         // …and a node a state chip already shows is not counted twice.
         // (dropped only where that chip IS shown: under AUTO a person's own move below the root has none — critic)
         const shown = t => CALLS.includes(t.state) && onAPerson(t);
-        // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute);
-        // what the mode refuses them, /actions leaves out (panel.js)
+        // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute) —
+        // and today also a system dispute there, which /actions does not narrow by the mode lock: engineering's to fix
         const own = (f.steps || []).filter(x => x.mine);
         const mine = own.filter(x => !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
         // the nodes where the move is this page's person's, with the move: their panel keeps that move under a mode (panel.js)
@@ -178,7 +178,11 @@ export const refreshHeader = singleFlight(async () => {
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;
         S.runState = f.run;
-        S.waiting = new Map((f.waiting || []).map(w => [w.task_id, [...(w.waits_on || [])]]));   // the engine's waits (run.js)
+        // the engine's Dep waits (run.js) — only from an answer that lists steps: with nothing actionable (a validator
+        // running, stuck, joining) `waiting` holds the other kinds alone and a Dep wait vanished (critic); and only the
+        // `dependency` kind, whose `waits_on` are node ids — the others' are sentences
+        S.waiting = (f.steps || []).length ? new Map((f.waiting || []).filter(w => w.kind === 'dependency')
+            .map(w => [w.task_id, [...(w.waits_on || [])]])) : null;
         heard = true;
     } catch (e) { /* the frontier is a read; the chips from the graph still stand */ }
     // the panel keeps its moves on these only (panel.js): what the ENGINE says is this person's move — a state chip is

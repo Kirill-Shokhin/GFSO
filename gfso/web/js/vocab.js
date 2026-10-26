@@ -30,7 +30,8 @@ const ROWS = {
     ESCALATED:  ['pathology', 'Escalated',   '',     'E'],
 };
 // WHICH signals a node admits is the engine's answer (`/api/tasks/{id}/actions`): a copy of the FSM here had drifted —
-// no Challenge after consent, no reopen of a DONE (ortho audit). What stays here is how each signal is offered.
+// no Challenge after consent (ortho audit). What stays here is how each signal is offered; ASSIGN is not offered as a
+// signal (Edit is the re-ASSIGN; a DONE's reopen has no control here yet).
 const LOOK = Object.fromEntries([
     A('ACCEPT', 'green', 'Accept'), A('CHALLENGE', 'orange', 'Challenge', 'reason'), A('DELIVER', 'blue', 'Deliver', 'result'),
     BLOCK, A('RESOLVE_BLOCK', 'blue', 'Resolve Block', 'action'), A('ACCEPT_CHALLENGE', 'green', 'Accept Challenge'),
