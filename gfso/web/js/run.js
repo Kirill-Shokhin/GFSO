@@ -315,6 +315,10 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
                           auto = false, now = Date.now()}) {
     // `pos`: a row's place in the project's whole log, which a verdict's `log_at` counts in
     audit = audit.map((a, pos) => ({...a, pos, t: at(a.timestamp)})).sort((a, b) => a.t - b.t || a.pos - b.pos);
+    // …each verdict row carries its own per-criterion record from the node's history, so every round read off the log
+    // has it — the panel's criterion histories too, not only Progress (critic: the panel drew ⊥ for a criterion kept as pass)
+    const per = joinHistory(audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL')), verdicts);
+    audit = audit.map(a => per.has(a) && !a.per_criterion ? {...a, per_criterion: per.get(a)} : a);
     const ss = sessions(calls, audit), open = openSessions(procs, pipeline, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
     return {

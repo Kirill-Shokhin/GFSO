@@ -153,7 +153,10 @@ export async function selectTask(id) {
         const base = `/api/tasks/${encodeURIComponent(id)}`, soft = p => p.catch(() => null);
         const [d, vr, cr, acts] = await Promise.all([getJSON(base), soft(getJSON(base + '/verdict')), soft(getJSON(base + '/critique')),
             soft(getJSON(`${base}/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
-        const ctx = {d, vr, cr, acts, rounds: roundsOf(d.audit, d.id)}, sb = $('sidebar');
+        // a round's per-criterion record is the node's verdict history, which the deck's run has joined to the log
+        const kept = S.run?.rounds[d.id] || [], rounds = roundsOf(d.audit, d.id).map(r => r.per || !r.verdict ? r
+            : {...r, per: kept.find(k => k.at === r.at && k.verdict === r.verdict)?.per});
+        const ctx = {d, vr, cr, acts, rounds}, sb = $('sidebar');
         // An open form outlives the re-read — any transition in the project re-reads the panel, and the text and ticks
         // being entered were wiped mid-entry on a live run — while nothing has happened to THIS node: a form opened on
         // one delivery must not be sent against the next (critic: a verdict form kept over VALIDATING → REWORKING).

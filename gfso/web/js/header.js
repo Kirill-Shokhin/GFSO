@@ -213,7 +213,7 @@ export async function refreshQuality() {
         const low = v => v != null && v < 0.5;
         const alarm = {q_V: low(m.q_V), q_D: low(m.q_D) && !(ffs >= 0.5)};
         $('hd-quality').innerHTML = `<button class="hd-q${alarm.q_V || alarm.q_D ? ' acc' : ''}" data-action="pop">quality</button>`
-            + H.quality(Object.entries(GRADE).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: `${k}, ${grade}`, means: means[k] || '',
+            + H.quality(Object.entries(GRADE).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: `${k}, ${grade}`, means: means[k] || '', none: m[k] == null,
                 val: m[k] == null ? '<span class="hq-val">—</span><span class="hq-nil">no observations yet</span>'
                     : `<span class="hq-val${alarm[k] ? ' acc' : ''}">${pct(m[k])}</span>`},
                 // §15.4: a low q_D is read TOGETHER with the false-FAIL share (an over-strict validator inflates it).

@@ -79,7 +79,7 @@ const KEY = [
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
     {glyph: '<b class="kt">V</b>', head: "The node's verdict", means: 'pass only when every criterion passes'},
-    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, or not kept for that round — runs before 2026-10-27 kept only the criteria a FAIL named; not a third value (§2.3)'},
+    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, or not kept for that round — older runs kept only the criteria a FAIL named; not a third value (§2.3)'},
     {group: 'The deck'},
     {glyph: '<b class="kt">· N</b>', head: 'Sessions', means: 'beside «at work» only when not one per node — one session may carry a whole part'},
     {glyph: `<span class="wk-cost kc">${TOKENS.map(([k]) => `<i class="${COST_CLS(k)}" style="width:25%"></i>`).join('')}</span>`,
@@ -165,8 +165,11 @@ export const H = {
             // …and a first sentence that only repeats the row's tag («high is bad») is no definition: the next one is
             const tagged = r.tag && rest && words(r.tag).every(w => words(first).includes(w));
             const [, next, after] = tagged && /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(rest) || [, rest, ''];
-            return tagged ? {...r, means: next.replace(/^It is (?:the )?/, 'The '), more: [first, after].filter(Boolean).join(' ')}
-                : {...r, means: said ? first.slice(named[0].length) : first, more: rest}; })),
+            const row = tagged ? {...r, means: next.replace(/^It is (?:the )?/, 'The '), more: [first, after].filter(Boolean).join(' ')}
+                : {...r, means: said ? first.slice(named[0].length) : first, more: rest};
+            // …a metric with no value yet: the sentence saying when it gets one is the key line, not a fold's (critic)
+            const when = r.none && /(?:^|\s)(⊥[^.]*\.)/.exec(row.more || '');
+            return when ? {...row, means: `${row.means} ${when[1]}`, more: row.more.replace(when[1], '').trim()} : row; })),
 };
 
 // what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server
