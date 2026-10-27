@@ -4,7 +4,7 @@
 import {$, esc, data} from './dom.js';
 import {H, QUALITY} from './hints.js';
 import {post, GOAL} from './api.js';
-import {S, taskOf, myRole, procs} from './state.js';
+import {S, taskOf, myRole, procs, begun} from './state.js';
 import {label, closureNote, contested, modeDoc, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow} from './run.js';
 import {dur, trim, cap, pct, stamp, plural} from './fmt.js';
@@ -84,7 +84,7 @@ const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id
 // the stop's `at` is an ISO stamp, a working session's `since` epoch seconds (the in-flight registry's)
 const ago = t => dur(Date.now() - (typeof t === 'number' ? t * 1e3 : at(t)));
 function runSwitch(r) {
-    if (!r || !S.tasks.length) return '';
+    if (!r || !begun()) return '';
     if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
     const who = `stopped by ${r.by} ${ago(r.at)} ago${r.why ? ` — ${r.why}` : ''}`;
     const text = r.state === 'stopping' ? `stopping · ${r.working.length} still at work` : 'stopped';

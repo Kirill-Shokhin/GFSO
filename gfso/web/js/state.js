@@ -17,6 +17,9 @@ export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missin
 
 // the processes this server runs in this project now — the in-flight registry, the one reading of it
 export const procs = () => S.inflight.filter(w => w.project === S.project);
+// the project's work has begun: a node exists, or a process runs here — the goal's own plan authored before its root
+// exists is work; read as «nothing yet», the page offered «Pose the goal» and no Stop over a planning run (a live row)
+export const begun = () => S.tasks.length > 0 || procs().length > 0;
 
 export const taskOf = id => S.tasks.find(t => t.id === id) || {};
 export const hasKids = id => childrenOf(S.tasks, id).some(t => !cancelled(t));

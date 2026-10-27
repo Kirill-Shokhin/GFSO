@@ -1,7 +1,7 @@
 // THE PAGE'S MODEL, READ: the graph and its tasks, the frontier the engine names, and the run built from the log and
 // the ledger. Each read writes S (state.js) and draws nothing; the views render what S holds, and main.js orders the
 // reads and the drawings.
-import {S, procs, myRole} from './state.js';
+import {S, procs, myRole, begun} from './state.js';
 import {api, getJSON, post, task, taskUrl} from './api.js';
 import {buildRun, busyNow} from './run.js';
 import {contested, isVerdict} from './vocab.js';
@@ -36,7 +36,7 @@ export async function loadMetrics() { try { S.metrics = await getJSON('/api/metr
 export async function loadFrontier() {
     const mySteps = new Map();       // node → the steps next_steps names as this person's, with their directives
     S.frontier = null;
-    if (S.tasks.length) try {
+    if (begun()) try {
         const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {});
         if (!r.ok) throw r.status;
         const f = await r.json();
