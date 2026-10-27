@@ -60,8 +60,7 @@ const on = new Set(Object.keys(KINDS).filter(k => k !== 'narration')), opened = 
 let query = '', shown = null;
 
 export function render(el, run, nodes, tasks, pipeline = []) {
-    const name = run.name, by = streams(run, nodes, pipeline);
-    const order = [...nodes.map(n => n.id), RUN].sort((a, b) => (by[b][0]?.t || 0) - (by[a][0]?.t || 0));
+    const name = run.name, by = streams(run, nodes, pipeline), ids = [...nodes.map(n => n.id), RUN];
     el.innerHTML = `<div class="ev-bar">${Object.keys(KINDS).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}</button>`).join('')}
         <input class="ev-find" type="search" placeholder="find in events…"><span class="ev-only"></span></div><div class="ev-groups"></div>`;
     const box = el.querySelector('.ev-groups'), find = el.querySelector('.ev-find');
@@ -71,10 +70,13 @@ export function render(el, run, nodes, tasks, pipeline = []) {
     const draw = () => {
         const q = find.value.trim().toLowerCase(), sel = focus().select;
         if (sel !== shown) { shown = sel; if (sel) opened.add(`g|${sel}`); }
-        box.innerHTML = order.filter(id => !sel || id === sel).map(id => {
-            const rs = by[id].filter(r => on.has(r.kind) && (!q || JSON.stringify(r.a || r.p).toLowerCase().includes(q)));
+        // a group's time and its place among the newest are its newest row the filter shows: hidden narration (a
+        // migration's batch) stamped every group one minute and put the goal's verdict last (critic)
+        const kept = Object.fromEntries(ids.map(id => [id, by[id].filter(r => on.has(r.kind) && (!q || JSON.stringify(r.a || r.p).toLowerCase().includes(q)))]));
+        box.innerHTML = ids.filter(id => !sel || id === sel).sort((a, b) => (kept[b][0]?.t || 0) - (kept[a][0]?.t || 0)).map(id => {
+            const rs = kept[id];
             if (!rs.length && (q || sel !== id)) return '';
-            return `<details class="ev-group" data-key="${esc(`g|${id}`)}"${id === RUN ? '' : ` data-node="${esc(id)}"`}${opened.has(`g|${id}`) ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, by[id])}
+            return `<details class="ev-group" data-key="${esc(`g|${id}`)}"${id === RUN ? '' : ` data-node="${esc(id)}"`}${opened.has(`g|${id}`) ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, rs)}
                 <ol><li class="ev ev-cols"><span>time</span><span>signal</span><span>state</span><span>by</span></li>${rs.map(row).join('')}</ol></details>`;
         }).join('') || '<p class="ev-none">nothing matches</p>';
         el.querySelector('.ev-only').innerHTML = sel ? `only <b>${esc(name(sel))}</b> <button data-clear>show all</button>` : '';
