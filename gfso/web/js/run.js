@@ -244,9 +244,6 @@ export const conjunct = c => !c?.depends_on || !!c.check?.length;
 export const failedOf = (run, id, failed = []) => ({own: failed.filter(c => run.criteria.names[id]?.includes(c)),
                                                      edges: failed.filter(c => !run.criteria.names[id]?.includes(c))});
 export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
-export const countWords = (m, total) => m.atMost
-    ? `at most ${m.k} of ${total} of its own criteria passing after it — this FAIL's record keeps only what it named`
-    : `${m.k} of ${total} of its own criteria passing after it`;
 export const failedWords = (run, id, failed) => { const {own, edges} = failedOf(run, id, failed);
     return [own.join(' · '), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`].filter(Boolean).join('; ') || 'no criterion named'; };
 const V = {pass: 'pass', fail: 'fail'};

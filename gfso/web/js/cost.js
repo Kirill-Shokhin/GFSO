@@ -62,7 +62,7 @@ export function render(el, run, nodes) {
         const row = e.target.closest('.cs-row[data-node]');
         if (!row) return untip();
         const parts = node[row.dataset.node], all = Object.values(parts);
-        tip(TIP.cost(name(row.dataset.node), Object.entries(parts).map(([k, p]) => `${KIND[k]}: ${money([p])} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tok`),
+        tip(TIP.cost(name(row.dataset.node), Object.entries(parts).map(([k, p]) => `${money([p])} ${KIND[k]} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tokens`),
                      rounds(row.dataset.node), money(all)), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));

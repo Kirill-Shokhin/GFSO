@@ -12,14 +12,14 @@
 // No other module writes a `title`, a tip card or a popover row: tests/test_hints_live_in_one_place.py is red on one.
 // WHAT ELSE THE PAGE SAYS, AND WHERE — so an analysis starting here misses nothing:
 //   run.js   — the words for a run's facts, shown as content in the panel and Events and reused by the tips here:
-//              roundsLine, countWords, failedWords, EDGE_NOTE, KIND_NAME, levelName.
+//              roundsLine, failedWords, EDGE_NOTE, KIND_NAME, levelName.
 //   vocab.js — the protocol's words: state labels, closureNote/byHand (how a node closed), PLAN_COST.
 //   dialogs  — askInPage questions and notices, the text of an act being confirmed (header.js stop/start,
 //              projects.js delete, acts.js, goal.js); forms' own field help (index.html goal panel, goal.js).
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
 import {dur, hm, usd, tok} from './draw.js';
-import {KIND_NAME, roundsLine, countWords, EDGE_NOTE} from './run.js';
+import {KIND_NAME, roundsLine, EDGE_NOTE} from './run.js';
 import {statesIn, label} from './vocab.js';
 
 // ── the renderers ──
@@ -149,14 +149,14 @@ export const STRIP = {
     live: (name, row) => hover(name, row),
     held: hover('Stopped', 'Nothing runs here until the run is started again', 'These nodes keep the state their work was in'),
     block: (n, of, users) => hover(`${n} wait on ${of}`, 'None starts until it passes:', users),
-    issuer: rows => hover('Waiting on the issuer', rows),
-    back: rows => hover('Sent back — their last round failed', rows),
+    issuer: rows => hover(`${rows.length} wait${rows.length > 1 ? '' : 's'} on the issuer`, rows),
+    back: rows => hover(`${rows.length} sent back`, rows, 'Their last round failed'),
     more: rows => hover(`${rows.length} more at work`, rows),
     running: verb => `${verb} — a session running on this server`,
     carried: (top, verb) => `Carried by the session on ${top} (${verb})`,
     idle: 'In a working state; no process of this server runs it',
-    spend: (byKind, running) => hover('Spend so far', byKind.map(([k, p]) => `${KIND_NAME[k]}: ${p.calls && p.unpriced === p.calls ? 'not reported' : usd(p.cost)} · ${p.calls} session${p.calls > 1 ? 's' : ''}`),
-                                      running && `${running} running now, not booked yet`),
+    spend: (byKind, running) => hover('Spend by role', byKind.map(([k, p]) => `${p.calls && p.unpriced === p.calls ? 'not reported' : usd(p.cost)} ${KIND_NAME[k]} · ${p.calls} session${p.calls > 1 ? 's' : ''}`),
+                                      running && `+ ${running} running, booked when ${running > 1 ? 'they end' : 'it ends'}`),
 };
 
 // ── the node's panel and reader ──
@@ -169,7 +169,7 @@ export const PANEL = {
     deadline: (due, now) => hover(due < now ? `Overdue by ${dur(now - due)}` : `Due in ${dur(due - now)}`, new Date(due).toLocaleString()),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
-    rounds: n => hover(`This criterion over its last ${Math.min(n, 12)} of ${n} rounds`, 'Oldest left'),
+    rounds: n => hover(`${n} rounds`, n > 12 ? 'The last 12 shown, oldest left' : 'Oldest left'),
     full: text => hover(text),
     directive: text => hover(text),
     model: id => hover(id),
@@ -180,27 +180,28 @@ export const PANEL = {
     probe: bhs => hover('What it checks', bhs),
 };
 
-// ── the views' own tips ──
+// ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
+// and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
+const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k} of ${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
     node: (t, badge, waits, rs, criteria, failing) => card(t.name || t.description || t.id,
-        [t.assignee && `Del: ${t.assignee}`, waits && `Waits on ${waits}`, rs.length && roundsLine(rs), failing && `Failing: ${failing}`,
-         criteria && `${criteria} criteria`], badge),
+        [rs.length && roundsLine(rs), failing && `Failing: ${failing}`, waits && `Waits on ${waits}`,
+         criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // a stretch of work on the timeline
-    bar: (name, x, r, failed) => card(name, [
-        `${KIND_NAME[x.kind]}${x.agents.length ? ' · ' + x.agents.join(', ') : ''}`,
-        `${hm(x.start)}–${x.open ? 'now' : hm(x.end)} · ${dur(x.end - x.start)}${x.cost ? ` · ${usd(x.cost)}` : ''}${x.tokens ? ` · ${tok(x.tokens)} tok` : ''}`,
-        x.parts > 1 && `${x.parts} sessions (${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried or continued'}) · ${dur(x.busy)} busy`,
+    bar: (name, x, r, failed) => card(`${cap(KIND_NAME[x.kind])} · ${dur(x.end - x.start)}${x.cost ? ` · ${usd(x.cost)}` : ''}`, [
+        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}${x.tokens ? ` · ${tok(x.tokens)} tokens` : ''}${x.agents.length ? ' · ' + x.agents.join(', ') : ''}`,
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict + (failed ? ': ' + failed : '') : ''}`,
+        x.parts > 1 && `${x.parts} sessions, ${dur(x.busy)} busy — ${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried or continued'}`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
-    verdict: (name, signal, r, t, own, m, total, edges) => card(name, [
-        `${signal}${r ? ` · round ${r.n}` : ''} · ${hm(t)}`, own.length && `Failed: ${own.join(', ')}`,
-        m && countWords(m, total), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`]),
+    verdict: (name, signal, r, t, own, m, total, edges) => card(`${signal}${m ? ' · ' + passing(m, total) : ''}`, [
+        name, `${r ? `Round ${r.n} · ` : ''}${hm(t)}`, own.length && `Failed: ${own.join(', ')}`,
+        edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`]),
     cell: (name, state) => hover(name, state),
     // a node's row in spend
-    cost: (name, rows, rounds, all) => card(name, [...rows, `${rounds} delivery round${rounds === 1 ? '' : 's'} · ${all} in all`]),
+    cost: (name, rows, rounds, all) => card(`${all} · ${rounds} delivery round${rounds === 1 ? '' : 's'}`, [name, ...rows]),
     prefix: p => hover(p + '…', 'The start every assignee id shares, cut from the bars'),
     project: (name, id) => hover(name, id),
     where: why => hover(why),
@@ -217,7 +218,7 @@ export const MODELS = {
     fill: hover('Context filled', "Each session's fullest turn against its model's window: the dark bar the median session, the light one the fullest"),
     contexts: hover('Contexts', "A call that continued its round's conversation (cut at its turn cap) is no context of its own"),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
-    turns: (turned, calls) => hover('Turns', `Recorded for ${turned} of the ${calls} sessions`),
+    turns: (turned, calls) => hover(`Turns of ${turned} of ${calls} sessions`, 'The rest were recorded before turns were kept'),
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The share is of what was priced'),
     unrecorded: hover('Not recorded', 'Kept only for sessions run on a build that records it'),
     // the cost split: what each kind of token cost, and how many; or why it cannot be split
@@ -229,6 +230,6 @@ export const MODELS = {
         s.resumedOut && `${s.resumedOut} resumed round${s.resumedOut > 1 ? 's' : ''} booked the whole conversation's cost (recorded before the fix): the round before counted twice`,
         s.out - s.resumedOut && `${s.out - s.resumedOut} session${s.out - s.resumedOut > 1 ? 's' : ''} not priced by ${s.out - s.resumedOut > 1 ? 'their' : 'its'} own tokens`,
         s.unweighed && `${s.unweighed} session${s.unweighed > 1 ? 's' : ''} not split: recorded without the cache kept apart, without tokens, or unpriced`],
-    fillOf: (med, max, w, n, calls) => hover('Context filled', `Median session ${med}${w ? ` of a ${w} window` : ''}`, `Fullest ${max}`,
+    fillOf: (med, max, w, n, calls) => hover(`Median ${med} · fullest ${max}`, `Each session's fullest turn${w ? ` against a ${w} window` : ''}`,
                                               n < calls && `${n} of ${calls} sessions recorded`),
 };
