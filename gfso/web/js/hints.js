@@ -49,8 +49,6 @@ const KEY = [
     {group: 'The marks'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'dot', means: 'a PASS — in a criterion\'s row and its history, on the timeline and on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'cross', means: 'a FAIL — the same mark in every view'},
-    {glyph: svg('<line class="pg-range" x1="0" x2="0" y1="0" y2="9.5"/><path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>', 15), head: 'dotted line under a cross',
-     means: 'on a progress track: a FAIL whose record names only what failed — the rest are unknown, so its height (and the count ≤ k) is only an upper bound'},
     {glyph: svg('<circle class="mk-open" cx="0" cy="0" r="2.5"/>'), head: 'ring', means: 'a criterion\'s round with no value: not checked, or not named by that round\'s FAIL'},
     {head: 'V', means: 'a node\'s verdict: pass only when every criterion passes, fail when one fails'},
     {head: '⊥', means: 'no verdict yet — not a third value: V is pass or fail once checked (§2.3)'},
