@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import logging
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ import socket
 import stat
 import tempfile
 import subprocess
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -21,6 +23,8 @@ from gfso.core.types import ExecutionPort, PlaceUnavailable
 from gfso.config import SECRET_ENV, claude_config_dir, host_env
 from gfso.adapters import egress
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
+
+log = logging.getLogger(__name__)
 
 INSIDE = "/gfso-place"
 #: the agent CLI's state inside the container — the image's `CLAUDE_CONFIG_DIR`
@@ -55,6 +59,8 @@ _SESSIONS: dict = {}
 #: life, so any object starting the container must start it under the switch as it stands now (critic 4: a second
 #: object of one container started it back under its own)
 _SWITCH: dict = {}
+#: each image's answer to `scrubs`
+_SCRUBS: dict = {}
 _START = threading.RLock()     # a turn stops what a start holds, under the same lock
 
 
@@ -65,6 +71,25 @@ def _env_names(env_file: str) -> list[str]:
                 if x.strip() and not x.lstrip().startswith("#")]
     except OSError:
         return []
+
+
+def scrubs(execution: ExecutionPort) -> bool:
+    """Can the agent CLI started by `execution` keep its tools' shells clean of its credential? On Linux its scrub needs
+    bubblewrap, and told to scrub without it the CLI exits before its first turn (probed: e3-linux-agent:2, CLI
+    2.1.310, every call of a row's planner cut); on Windows and macOS it needs nothing (probed on Windows). A container
+    is asked once per image, and a no said in the log."""
+    if not isinstance(execution, ContainerExecution):
+        return sys.platform != "linux" or bool(shutil.which("bwrap"))
+    if execution.image not in _SCRUBS:
+        try:
+            r = execution.run(["sh", "-c", "command -v bwrap"], cwd=str(execution.base), timeout=60)
+        except (PlaceUnavailable, OSError, subprocess.TimeoutExpired):
+            return False        # …a place that does not start is the call's to meet, where it is the project's stop
+        _SCRUBS[execution.image] = r.returncode == 0
+        if not _SCRUBS[execution.image]:
+            log.warning(f"{execution.image} has no bubblewrap: the agent CLI cannot scrub its tools' shells there, "
+                        "and its tools see its credential")
+    return _SCRUBS[execution.image]
 
 
 class LocalExecution(ExecutionPort):

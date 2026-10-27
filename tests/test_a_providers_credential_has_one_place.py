@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from gfso import cli
 from gfso.adapters.execution import ContainerExecution
 from gfso.adapters.llm import credentials, registry
+from gfso.adapters.llm.headless import client_env
 from gfso.adapters.llm.conformance import AGENT_ROLES, ONE_SHOT_ROLES, assess
 from gfso.adapters.llm.stub import StubLLM
 from gfso.api.server import create_app
@@ -171,3 +172,11 @@ def test_an_execution_whose_env_file_holds_a_credential_is_refused(tmp_path):
         ContainerExecution("e3-linux", "img", str(env), str(tmp_path / "state"), str(tmp_path / "ws"), "p")
     env.write_text("TZ=UTC\n", encoding="utf-8")
     ContainerExecution("e3-linux", "img", str(env), str(tmp_path / "state"), str(tmp_path / "ws"), "p")
+
+
+def test_a_cli_whose_execution_cannot_scrub_is_not_told_to():
+    """On Linux the CLI's scrub needs bubblewrap; told to scrub without it, the CLI exited before its first turn and
+    every call of a row's planner came back cut (probed: e3-linux-agent:2, CLI 2.1.310)."""
+    tok = credentials.Credential("token", "t")
+    assert client_env(tok, True)["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1"
+    assert client_env(tok, False) == {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "0", "CLAUDE_CODE_OAUTH_TOKEN": "t"}

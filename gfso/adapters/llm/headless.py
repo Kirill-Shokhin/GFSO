@@ -25,7 +25,7 @@ from .base import RecordingProvider
 from .stats import is_limit, is_unauthorized, refused_by_limit
 from .structured import holds_an_object
 from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
-from gfso.adapters.execution import LocalExecution
+from gfso.adapters.execution import LocalExecution, scrubs
 
 log = logging.getLogger(__name__)
 
@@ -149,10 +149,12 @@ def _is_the_answer(result: dict, live: bool) -> bool:
 AUTH = {"token": "CLAUDE_CODE_OAUTH_TOKEN", "api": "ANTHROPIC_API_KEY"}
 
 
-def client_env(credential) -> dict:
-    """A credential as the CLI's process takes it, and its tools' shells scrubbed of it (`CLAUDE_CODE_SUBPROCESS_ENV_
-    SCRUB`: the conformance battery's `env` through the tool path shows none)."""
-    return {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+def client_env(credential, scrubs: bool = True) -> dict:
+    """A credential as the CLI's process takes it, and its tools' shells scrubbed of it where the execution can
+    (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: the conformance battery's `env` through the tool path shows none; `scrubs`).
+    Where it cannot, the tools see it — said in the log once per image (`execution.scrubs`), and the
+    battery's "credential hidden" fails there."""
+    return {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1" if scrubs else "0",
             **({AUTH[credential.kind]: credential.value} if credential else {})}
 
 
@@ -499,7 +501,7 @@ class ClaudeCodeProvider(RecordingProvider):
         if not cwd:
             with self._exec.scratch("gfso-noplace-") as empty:
                 return self._call(system, user, tools_args, empty, timeout, session)
-        env = subprocess_env(credential=client_env(self._credential))
+        env = subprocess_env(credential=client_env(self._credential, scrubs(self._exec)))
         if self._max_thinking is not None:
             env["MAX_THINKING_TOKENS"] = str(self._max_thinking)
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
