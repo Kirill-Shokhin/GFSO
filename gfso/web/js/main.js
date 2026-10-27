@@ -5,7 +5,7 @@ import {TASK, GOAL, getJSON, singleFlight} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal} from './vocab.js';
-import {loadGraph, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
+import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {drawHeader, drawQuality, toggleReports, stopRun, startRun} from './header.js';
 import {refreshProjects, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject} from './projects.js';
@@ -102,6 +102,7 @@ const LIVE = {
     async transition(d) {
         const t = S.tasks.find(x => x.id === d.task_id);
         if (t) t.state = d.new_state;                  // the tooltip reads the cache
+        hear(d.task_id, d.new_state);                  // …and a graph read already out does not undo it
         rebuildRun();                                  // …and what runs now is read again over the new state
         // A node that SETTLES changes more than its colour — how it closed is drawn on it — so terminal
         // transitions take the long way round, which is one read.

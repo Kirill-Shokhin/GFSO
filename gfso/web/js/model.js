@@ -6,17 +6,28 @@ import {api, getJSON, post, task, taskUrl} from './api.js';
 import {buildRun, busyNow} from './run.js';
 import {contested, isVerdict} from './vocab.js';
 
+// A STATE THE FEED PUSHED WHILE A READ WAS OUT outlives that read: the read may have left before the transition and come
+// back after it — a node BLOCKED at 05:21:20 read EXECUTING for three minutes (a live row). The feed is the order of events.
+const heard = new Map();
+let reading = 0;
+export const hear = (id, state) => { if (reading) heard.set(id, state); };
+
 // The graph and its tasks. A REFUSAL HAS TO REACH THE PERSON: a mistyped `?project=` is a 404, not an empty canvas under
 // their project's name (the header says it) — false then, and the graph keeps its last read.
 export async function loadGraph() {
+    reading++;
+    try { return await readGraph(); } finally { if (!--reading) heard.clear(); }
+}
+async function readGraph() {
     const [gr, tr] = await Promise.all([api('/api/graph'), api('/api/tasks')]);
     if (gr.status === 404) {
         S.missing = (await gr.json().catch(() => ({}))).detail || 'no such project';
         S.tasks = [];
         return false;
     }
-    const g = await gr.json();
-    S.tasks = await tr.json();
+    const g = await gr.json(), tasks = await tr.json();
+    for (const [id, state] of heard) for (const x of [...tasks, ...g.nodes]) if (x.id === id) x.state = state;
+    S.tasks = tasks;
     S.graph = g;
     S.missing = '';
     // HOW THE DONES REST: an instrument's proof and a signature are not one kind of green (§15.7)
