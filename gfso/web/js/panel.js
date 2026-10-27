@@ -55,8 +55,9 @@ function verdict({vr}) {
 
 // One mark per round (run.js): this criterion named in a FAIL → the cross; a PASS (every criterion passing) → an ink
 // dot; a FAIL that did not name it, a delivery still unanswered, or a criterion the current verdict left undecided →
-// hollow: the log of past rounds keeps only what a FAIL named, so an unnamed one is ⊥, not pass. The last 12.
-const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = (x, i) => `<circle class="mk-open" cx="${x}" cy="0" r="2.5"/>`;
+// ⊥: the log of past rounds keeps only what a FAIL named, so an unnamed one is ⊥, not pass — drawn as the current line
+// beside it draws it; a hollow ring said «at work» on the graph (critic). The last 12.
+const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = x => `<path class="mk-none" d="M${x - 2.5},3h5M${x},3v-6"/>`;
     // a history of one round says what the mark beside the name says: drawn, it was a lone dot beside a dot (the author)
     // each mark says its own round on hover (a hover on the whole strip said the same line over every mark — critic)
     const one = (r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? null

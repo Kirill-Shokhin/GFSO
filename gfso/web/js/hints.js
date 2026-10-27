@@ -2,7 +2,7 @@
 // The rule (the author, 2026-10-27): what is easy to remember once read goes to the KEY under «?»; what a reader needs
 // almost every time stands as a LABEL beside the thing; a HOVER adds what the thing itself does not show and never
 // repeats it; a POPOVER a click opens carries its title and caption set apart from its items. So four kinds:
-//   KEY      — the «?» popover: the graph's arrows, the marks (dot, cross, ring, ⊥), the deck's counts.
+//   KEY      — the «?» popover: the graph's arrows, the marks (dot, cross, ⊥), the deck's counts.
 //   LABEL    — words drawn beside a thing because the reader needs them each time: the timeline's bar kinds (run.js
 //              KIND_NAME), the coverage cells' states (CELLS). The kinds of token (TOKENS) are the key's: the Models bar
 //              says each on its own segment's hover. PASS and
@@ -77,9 +77,8 @@ const KEY = [
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
-    {glyph: svg('<circle class="mk-open" cx="0" cy="0" r="2.5"/>'), head: 'No value that round', means: 'not checked, or not named by that round\'s FAIL'},
     {glyph: '<b class="kt">V</b>', head: "The node's verdict", means: 'pass only when every criterion passes'},
-    {glyph: '<b class="kt">⊥</b>', head: 'No verdict yet', means: 'not a third value: V is pass or fail once checked (§2.3)'},
+    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, or not named by that round\'s FAIL — not a third value: V is pass or fail once checked (§2.3)'},
     {group: 'The deck'},
     {glyph: '<b class="kt">· N</b>', head: 'Sessions', means: 'beside «at work» only when not one per node — one session may carry a whole part'},
     {glyph: `<span class="wk-cost kc">${TOKENS.map(([k]) => `<i class="${COST_CLS(k)}" style="width:25%"></i>`).join('')}</span>`,
