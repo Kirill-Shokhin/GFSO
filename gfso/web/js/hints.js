@@ -238,7 +238,8 @@ export const MODELS = {
         s.resumedOut && `${s.resumedOut} resumed round${s.resumedOut > 1 ? 's' : ''} booked the whole conversation's cost (recorded before the fix): the round before counted twice`,
         s.out - s.resumedOut && `${s.out - s.resumedOut} session${s.out - s.resumedOut > 1 ? 's' : ''} not priced by ${s.out - s.resumedOut > 1 ? 'their' : 'its'} own tokens`,
         s.unweighed && `${s.unweighed} session${s.unweighed > 1 ? 's' : ''} not split: recorded without the cache kept apart, without tokens, or unpriced`],
-    // the same form as a cost split: what was hovered and its figure, the shares as filled lines
-    fillOf: (med, max, w, n, calls) => hover(`Context filled${w ? `\t${w} window` : ''}`, meter(`median ${med[1]}`, med[0]),
-        meter(`fullest ${max[1]}`, max[0]), "Each session's fullest turn", n < calls && `${n} of ${calls} sessions recorded`),
+    // each part of the context bar says itself, in the cost split's form: what was hovered and its figure, its share as a
+    // filled line — the median session's peak (the dark part) or the fullest session's (the light one)
+    fillOf: (which, [share, at], w, n, calls) => hover(`${which === 'median' ? 'Median session' : 'Fullest session'}${at ? `\t${at}` : ''}`,
+        meter(w ? `of ${w} window` : 'of its window', share), n < calls && `${n} of ${calls} sessions recorded`),
 };

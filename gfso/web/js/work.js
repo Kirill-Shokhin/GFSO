@@ -19,8 +19,9 @@ const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.leng
 function fill(r) {
     if (!r.fills.length) return `<span class="wk-none"${MODELS.unrecorded}>not recorded</span>`;
     const max = Math.max(...r.fills), med = median(r.fills), w = r.window, of = x => [x, w ? fmtTok(Math.round(x * w)) : ''];
-    return `<span class="wk-fill${max > 0.8 ? ' high' : ''}"${MODELS.fillOf(of(med), of(max), w && fmtTok(w), r.fills.length, r.calls)}>`
-        + `<i class="max" style="width:${pct(max)}"></i><i style="width:${pct(med)}"></i></span>`;
+    const part = (which, x) => MODELS.fillOf(which, of(x), w && fmtTok(w), r.fills.length, r.calls);
+    return `<span class="wk-fill${max > 0.8 ? ' high' : ''}">`
+        + `<i class="max" style="width:${pct(max)}"${part('fullest', max)}></i><i style="width:${pct(med)}"${part('median', med)}></i></span>`;
 }
 
 // what the cost went to: one bar, a segment per kind of token; a segment's hover says that kind alone — its name, cost,
