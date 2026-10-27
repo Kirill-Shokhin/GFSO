@@ -30,6 +30,29 @@ agents' repositories run there too — save two that find a place by the path it
 the agents wrote. Without one, sessions run as you, on your
 machine, with nothing between them and the rest of it.
 
+How far a project's container reaches outside is a switch you set in its execution's declaration
+(`"network": {"mode": ..., "hosts": [...]}`):
+- `open` (the default) reaches everything but your host — other containers on Docker's bridge
+  included.
+- `off` reaches nothing: the container stands on an internal Docker network of its own with no
+  route out and no capability to make one. Each closed project takes one of Docker's address pools;
+  past their number a start fails.
+- `allowlist` adds one gateway container, the only way out. It opens a connection only to a host
+  you named, on 443, when the TLS handshake names that host; what the session then sends inside
+  the encrypted stream it does not see, so a host behind a shared front (a CDN) can carry requests
+  to other sites of that front. Every opening is logged to a file the sessions cannot reach;
+  refusals too, until the log reaches its cap. The gateway is code, not a kernel rule: it keeps
+  your host out by refusing every address that is not public, and a gateway taken over is the
+  whole way out.
+
+An allowed host carries whatever a session sends it, under any credentials the session presents —
+a model API that stores data is a way out to someone else's account. A session's own model client
+calls its model from inside the container, so under `allowlist` the provider's host must be on the
+list, and that host is such a way out; `off` suits only a provider that calls the model from
+outside. Nothing watches the declaration: a turned switch is read at the project's next lookup of
+its execution, which then ends the project's running container — until then a session already out
+stays out. A declaration that does not read shuts the way out.
+
 The SQLite database and the agent registry are plain local files with no encryption. They record
 every signal, including whatever text your specs, results and verdicts carry.
 
