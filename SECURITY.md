@@ -25,17 +25,27 @@ untrusted input: its criteria are instructions that will reach a model with a sh
 Run unattended work in a container. A role registered with an execution (`register_agent(execution=)`,
 declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut:
 - Each agent session runs in a container of its own place. It writes there alone, reads the project's
-  base read-only, and holds its node's own temp and its place's own model-client state. It sees no
-  other node's work, conversations or inputs, and none of the system's own checks.
-- The system's own commands — git on the agents' repositories, the plan's probes — run in the
-  project's container, which holds the project's directories and no session's state. Two git
+  base read-only, and holds its node's own temp and its place's own model-client state. It does not
+  see another node's place, conversations or inputs, nor the system's own checks; what it receives
+  of other nodes' work comes by the joins the system makes into its place and the base.
+- The checks the system runs over a delivery run what the agents wrote (the plan's probes, the
+  delivery's own scripts), so each runs in a container of its own copy of the delivery, with the
+  base read-only and nothing of another node.
+- The system's own commands — git on the agents' repositories, the copies it makes — run in the
+  project's container, which holds every place of the project and no session's state. Two git
   operations that find a place by the path it was registered under (locking it, removing it) fall
   back to the host for places registered there, and run nothing the agents wrote.
 
-What one session can still reach: the sessions working in one place share it and its model-client
-state — a root's executor, its validations and its issuer's contacts all work in the base, which
-they can write. Without an execution, sessions run as you, on your machine, with nothing between
-them and the rest of it.
+What one session can still reach:
+- The sessions working in one place share it and its model-client state. A root's executor, its
+  validations and its issuer's contacts all work in the base, which they can write, and in the
+  base's validation scratch, where the probes of its standing findings stand.
+- A project whose base is not a git repository works every node in the base: no node is held apart.
+- A parent's consent asked before its own place exists runs in the base and reads its inputs from
+  the base's temp.
+
+Without an execution, sessions run as you, on your machine, with nothing between them and the rest
+of it.
 
 How far a project's container reaches outside is a switch you set in its execution's declaration
 (`"network": {"mode": ..., "hosts": [...]}`):

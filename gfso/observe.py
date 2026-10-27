@@ -97,7 +97,10 @@ def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict
     """One check's observation: its exit code, its streams and the tail of all it printed, the copy's path named as the
     place throughout — an expect naming a path in the place reads it there — or why it gave no observation."""
     try:
-        r = ex.run([bash, "-c", cmd], cwd=tree, timeout=timeout)
+        # in the copy's own container (`ExecutionPort.session`): a check runs what the agents wrote — the plan's probe,
+        # the delivery's scripts — and in the project's container that would reach every node's place (critic over
+        # SECURITY.md); there it writes its copy alone
+        r = ex.session(tree).run([bash, "-c", cmd], cwd=tree, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"note": f"did not finish in {int(timeout)} s"}
     except OSError as e:

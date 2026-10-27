@@ -21,6 +21,7 @@ from gfso.adapters.llm import headless as H
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution, PlaceContainer
 from gfso.issuer import CONTACT_ROUND, _contact_place
+from gfso.observe import _run
 
 IMAGE = "e3-linux-agent:2"
 
@@ -341,3 +342,21 @@ def test_a_gone_directorys_cli_state_goes_with_its_container(project, monkeypatc
         Path(gone.state_dir()).mkdir(parents=True)
     project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
     assert not Path(gone.state_dir()).exists()
+
+
+@pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
+def test_live_a_check_the_system_runs_over_a_delivery_reaches_its_copy_alone(project):
+    """The system's checks run what the agents wrote — the plan's probes, the delivery's scripts: in the project's
+    container they would reach every node's place (critic over SECURITY.md); they run in the copy's own."""
+    work = project.parent
+    (work / ".gfso-nodes-ws/p/b/theirs.txt").write_text("b's work\n")
+    try:
+        with project.scratch("gfso-observe-", system=True) as d:
+            (Path(d) / "place").mkdir()
+            got = _run(project, "bash", "echo ok > mine.txt && echo WROTE-OWN; "
+                                        "cat /gfso-place/.gfso-nodes-ws/p/b/theirs.txt 2>/dev/null && echo SAW-B; "
+                                        "touch /gfso-place/.gfso-nodes-ws/p/b/x 2>/dev/null && echo WROTE-B; true",
+                       str(Path(d) / "place"), 120, str(work / ".gfso-nodes-ws/p/a"))
+            assert "WROTE-OWN" in str(got) and "SAW-B" not in str(got) and "WROTE-B" not in str(got), got
+    finally:
+        project.stop()

@@ -716,7 +716,7 @@ def _derived(command: str, criterion, probe, execution=None) -> tuple[Optional[s
             return None, f"could not lay down the probe's inputs ({e})"
         cmd = command.replace(INPUTS_TOKEN, laid.get(probe_id(criterion.name, probe), Path(tmp)).as_posix())
         try:
-            p = ex.run([bash, "-c", cmd], cwd=tmp, timeout=DERIVE_TIMEOUT_S)
+            p = ex.session(tmp).run([bash, "-c", cmd], cwd=tmp, timeout=DERIVE_TIMEOUT_S)   # a proposed command: its own container
         except (OSError, subprocess.TimeoutExpired) as e:
             return None, f"did not finish ({type(e).__name__})"
         if p.returncode:
