@@ -250,9 +250,9 @@ body {
 .tl .tl-hand { stroke: var(--bg); stroke-width: 2; pointer-events: none; }   /* a cut across a bar: the session handed over there */
 .tl-s { cursor: pointer; }
 .tl .tl-exec { fill: var(--ink); }
-.tl .tl-consent { fill: none; stroke: var(--ink); stroke-width: 1.2; }
+.tl .tl-consent { fill: var(--bg); stroke: var(--ink); stroke-width: 1.2; }
 .tl .tl-val { fill: var(--ink-faint); }
-.tl .tl-issuer { fill: none; stroke: var(--ink-soft); stroke-width: 1.2; }
+.tl .tl-issuer { fill: var(--bg); stroke: var(--ink-soft); stroke-width: 1.2; }   /* filled with the page: hollow, it vanished over an execution bar (the author) */
 /* an outlined bar is hovered over its whole face, not on its hairline edge (the author) */
 .tl .tl-s.tl-issuer, .tl .tl-s.tl-consent { pointer-events: all; }
 .tl .tl-plan { fill: var(--paper); stroke: var(--ink-faint); }
