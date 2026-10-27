@@ -7,9 +7,10 @@ six more — two of them fatal to the flow they were in (a decomposition modal t
 with no mapping at all, and criteria fields drawn cream-on-cream, i.e. invisible).
 
 So this is the instrument for that surface: it opens the page against a running server, walks every
-node's panel, opens every modal, and reports what the page SAYS — plus every console error, which is
-where a broken page confesses first. It is a reporter, not a validator: it prints what it saw and the
-reader decides. Run it with the server up:
+node's panel, opens every modal, and reports what the page SAYS — its header, its popovers, every hover it
+carries (`data-tip`, written by gfso/web/js/hints.js) — plus every console error, which is where a broken page
+confesses first. It is a reporter, not a validator: it prints what it saw and the reader decides. Run it with
+the server up:
 
     python scripts/look_at_the_page.py --project <name> [--out shots/]
 
@@ -27,20 +28,27 @@ BASE = "http://127.0.0.1:8000"
 
 
 def _look(page, project: str, out: Path, interact: bool) -> dict:
-    found: dict = {"console": [], "panels": {}, "modals": {}, "notes": []}
+    found: dict = {"console": [], "panels": {}, "modals": {}, "notes": [], "hovers": {}}
     page.on("console", lambda m: found["console"].append(f"{m.type}: {m.text}")
             if m.type in ("error", "warning") else None)
     page.on("pageerror", lambda e: found["console"].append(f"pageerror: {e}"))
 
     page.goto(f"{BASE}/?project={project}", wait_until="networkidle")
     page.wait_for_timeout(1200)
-    found["header"] = page.inner_text("#stats-bar")
-    found["metrics"] = page.inner_text("#metrics")
+    found["header"] = page.inner_text(".header")
+    # the popovers are in the page from the start, folded: their text is read without opening them
+    found["popovers"] = page.evaluate("[...document.querySelectorAll('.hd-pop')].map(p => p.innerText)")
     found["nodes"] = page.evaluate(
-        "cy.nodes().map(n => ({id: n.id(), label: n.data('label'), state: n.data('state'),"
-        " border: n.data('bs') + '/' + n.data('bw')}))")
-    if out:
-        page.screenshot(path=str(out / "page.png"))
+        f"fetch('/api/graph?project={project}').then(r => r.json()).then(g => g.nodes.map(n => "
+        "({id: n.id, name: n.name, state: n.state})))")
+    hovers = lambda: page.evaluate("[...document.querySelectorAll('[data-tip]')].map(e => e.dataset.tip)")
+    for view in ("timeline", "progress", "spend", "models", "events"):
+        if not page.is_visible(f'.dk-tab.on[data-view="{view}"]'):     # the open tab pressed again folds the deck
+            page.click(f'.dk-tab[data-view="{view}"]')
+        page.wait_for_timeout(400)
+        found["hovers"][view] = sorted(set(hovers()))
+        if out:
+            page.screenshot(path=str(out / f"page_{view}.png"))
 
     # EVERY node's panel, through the link the page itself accepts (`?task=`) — the detail surface
     # was unreachable to anything without a mouse until that existed.
@@ -51,19 +59,27 @@ def _look(page, project: str, out: Path, interact: bool) -> dict:
             found["notes"].append(f"{n['id']}: the panel did not open from its own link")
             continue
         found["panels"][n["id"]] = page.inner_text("#sidebar")[:1500]
+        found["hovers"][n["id"]] = sorted(set(page.evaluate(
+            "[...document.querySelectorAll('#sidebar [data-tip]')].map(e => e.dataset.tip)")))
 
     if interact:
         page.goto(f"{BASE}/?project={project}", wait_until="networkidle")
         page.wait_for_timeout(700)
         # …the modals, read rather than submitted: what a person can SEE is the half that broke.
-        for label, opener, sel in (("decompose", "openDecompose", "#decompose-modal"),
-                                   ("edit", "openEdit", "#edit-modal")):
+        # through the panel's own buttons, as a person opens them; the modules keep no globals to call
+        for label, action, sel in (("decompose", "decompose", "#decompose-modal"), ("edit", "edit", "#edit-modal")):
             target = next((n["id"] for n in found["nodes"] if n["state"] in ("OFFERED", "EXECUTING")),
                           None)
             if target is None:
                 found["notes"].append(f"{label}: no node in a state that offers it")
                 continue
-            page.evaluate(f"id => {opener}(id)", target)
+            page.goto(f"{BASE}/?project={project}&task={target}", wait_until="networkidle")
+            page.wait_for_timeout(700)
+            button = f'#sidebar [data-action="{action}"]'
+            if not page.is_visible(button):
+                found["notes"].append(f"{label}: the panel of {target} offers no {label} (a mode may hold it)")
+                continue
+            page.click(button)
             page.wait_for_timeout(600)
             if not page.is_visible(sel):
                 found["notes"].append(f"{label}: the modal did not open for {target}")
@@ -109,6 +125,7 @@ def main() -> int:
             found = _look(page, args.project, out, args.interact)
         finally:
             browser.close()
+    sys.stdout.reconfigure(encoding="utf-8")   # a Windows console's code page cannot print the page's ✓ × ⊥
     print(json.dumps(found, ensure_ascii=False, indent=1))
     # A console error is the page confessing; it is the one thing here that is not a discretionary call.
     return 1 if any(c.startswith(("error", "pageerror")) for c in found["console"]) else 0
