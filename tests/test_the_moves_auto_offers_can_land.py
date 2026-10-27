@@ -61,7 +61,12 @@ def test_a_refuted_split_of_the_users_plan_stops_the_run_instead_of_being_remade
     asked.clear()
     out = I.settle(e, AgentRegistry(), TaskId("root"), "repair", "exec-1", verbs=None)
     assert out["status"] == "users" and not asked
-    assert e.paused() and "the plan the user gave is refuted at root" in e.paused()["why"]
+    # …"refuted" only where contact refuted it on the log; this question was opened by hand (critic over f96e6f8, E)
+    assert e.paused() and "the plan the user gave cannot go on at root" in e.paused()["why"]
+    e.resume("test")
+    monkeypatch.setattr(e, "decomposition_refuted", lambda tid: "root FAILED g while root.part passed")
+    I.settle(e, AgentRegistry(), TaskId("root"), "repair", "exec-1", verbs=None)
+    assert "the plan the user gave is refuted at root" in e.paused()["why"]
 
 
 def test_a_reshape_replaces_a_child_under_its_own_name_in_one_act():

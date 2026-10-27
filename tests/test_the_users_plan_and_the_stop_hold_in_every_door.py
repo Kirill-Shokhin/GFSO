@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import gfso.delegate as D
 from gfso import issuer as I, tools as T, tools_llm as TL
-from gfso.core.types import Mode, TaskId
+from gfso.core.types import Mode, Signal, SignalData, State, TaskId
 from gfso.delegate import Dispatcher
 from gfso.engine.validation import users_criteria
 from gfso.inflight import in_flight
@@ -60,6 +60,32 @@ def test_promote_is_not_offered_into_the_users_plan():
     assert "promote" in I.moves_for(e, part, "external")
     e.give_users_plan("root")
     assert "promote" not in I.moves_for(e, part, "external")
+    e.stop()
+
+
+def test_the_system_never_cuts_the_users_plan_a_cancel_there_stops_the_run():
+    """The other half of `promote`'s rule: the system may add to the user's plan, never cut it. An issuer cancelled a
+    part whose offer lapsed while its producer worked (GB_c_compiler_tnj930660); with no `cancel` at all a part that
+    really cannot be carried churned to its deadlines (critic over f96e6f8, D). So `cancel` stays offered and STOPS the
+    run with the issuer's reason; no Dep is dropped and nothing is promoted."""
+    e, part = _users_part()
+    e.give_users_plan("root")
+    for question in I.QUESTIONS:
+        moves = I.moves_for(e, part, question)
+        assert "drop_dependency" not in moves and "promote" not in moves, (question, moves)
+    assert "cancel" in I.moves_for(e, part, "escalation")
+    assert "cancel" not in I.moves_for(e, e.graph.get_task(TaskId("root")), "escalation"), "the AUTO root: the user's"
+    state = part.state
+    ok, why = I._cancel(e, part, "exec-1", {}, "the parser cannot meet k on this input set", None)
+    assert ok and e.paused() and "cannot be carried" in e.paused()["why"] and "the parser cannot meet k" in why
+    assert e.graph.get_task(TaskId("root.part")).state == state, "no CANCEL was signalled: the plan is untouched"
+    e.stop()
+
+
+def test_the_issuer_is_told_a_cancel_on_the_users_plan_stops_the_run():
+    e, part = _users_part()
+    e.give_users_plan("root")
+    assert "STOPS the whole run" in I.issuer_context(e, part.id, "escalation")
     e.stop()
 
 
@@ -163,4 +189,39 @@ def test_an_accepted_dispute_does_not_re_pin_a_check_of_the_users_part():
     out = I.answer_the_challenge(e, TaskId("root.part"), str(e.graph.issuer_of(TaskId("root.part"))), _llm=llm)
     assert out["status"] != "accepted", out
     assert e.graph.get_task(TaskId("root.part")).spec.criteria[0].check[0].expect == p.expect
+    e.stop()
+
+
+def test_a_cancel_on_the_users_plan_takes_over_a_stop_the_system_would_lift():
+    """A stop by the account's limit lifts by itself; skipped behind it, the issuer's verdict that the plan cannot be
+    carried was lost with the lift (critic over bc5fca4)."""
+    e, part = _users_part()
+    e.give_users_plan("root")
+    e.pause("system", "the account's limit", until=time.time() + 3600)
+    I._cancel(e, part, "exec-1", {}, "k cannot be met", None)
+    assert "cannot be carried" in e.paused()["why"] and "until" not in e.paused()
+    e.stop()
+
+
+def test_a_part_whose_offer_lapsed_is_continued_never_cancelled():
+    """GB_c_compiler_tnj930660: parts' offers lapsed while their producer worked and the issuer cancelled one — on the
+    user's plan the run's stop. A lapse is an abstention recorded without its reason (§12.9) and shows nothing
+    infeasible: the engine reads the route off the log, offers no `cancel` there, and the packet says why."""
+    e = _engine(Mode.AUTO)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+    _admit(e, "root", _kid("root.a", ["g"], criterion("ka", "A holds")),
+           _kid("root.b", ["g"], criterion("kb", "B holds"), {"name": "dep__a", "description": "a's result",
+                                                               "depends_on": "root.a"}))
+    e.give_users_plan("root")
+    b = e.graph.get_task(TaskId("root.b"))
+    assert b.state == State.OFFERED
+    e.send_signal_sync(SignalData(signal=Signal.TIMEOUT, task_id=b.id, visit=(b.state, b.state_entered_at)))
+    b = e.graph.get_task(TaskId("root.b"))
+    assert b.state == State.ESCALATED
+    assert "cancel" not in I.moves_for(e, b, "escalation") and "reassign" in I.moves_for(e, b, "escalation")
+    assert "its contract never started" in I.issuer_context(e, b.id, "escalation")
+    # …read off how it ENTERED the decision: a producer passing while the issuer's turn waited changes nothing about the
+    # lapse (critic over 2d7a0e5)
+    e.graph.get_task(TaskId("root.a")).state = State.DONE
+    assert "cancel" not in I.moves_for(e, b, "escalation")
     e.stop()

@@ -434,9 +434,17 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
                       + "; ".join(f"«{i}»" for i in _flag) if _flag else ""))
     q, moves = QUESTIONS[question], moves_for(engine, task, question)
     out.append(f"# The question: {q['ask']}"
-               + ("\n\nThis is the user's goal under AUTO: closing it is theirs, not yours — continue it with a contract "
+               + ("\n\nIts offer lapsed: its contract never started, and a lapse shows nothing infeasible (an executor "
+                  "that finds a contract so challenges it) — continue it with a new contract whose deadline leaves what it "
+                  "waits on time; closing it is not a move here."
+                  if _offer_lapsed(engine, task) else
+                  "\n\nThis is the user's goal under AUTO: closing it is theirs, not yours — continue it with a contract "
                   "the standing findings can be met under; unanswered, it closes by its bound."
-                  if "cancel" in q["moves"] and "cancel" not in moves else "")
+                  if "cancel" in q["moves"] and "cancel" not in moves else
+                  "\n\nThis node is part of the plan the user handed in: `cancel` does not close it here — it STOPS the "
+                  "whole run and tells the user this plan cannot be carried. Choose it only for that; a part that ran "
+                  "out of time while it waited on its producer is continued by a new contract."
+                  if "cancel" in moves and engine.users_plan() and users_criteria(engine.graph, task) else "")
                + "\n\nAdmissible moves: " + ", ".join(f"`{m}`" for m in moves)
                + f"\n\nWrite every text you return in the same language as this sentence the user wrote: "
                  f"«{_users_sentence(engine, task)}» — even where other text in this packet is in another "
@@ -799,7 +807,35 @@ def _signalled(engine, task_id, sig, actor, **kw) -> tuple[bool, str]:
     return signal_ok(engine, task_id, sig, actor, why, **kw), "; ".join(why)
 
 
+def _offer_lapsed(engine, task) -> bool:
+    """Did this node of the user's plan reach the issuer's decision by its offer lapsing (§12.4: OFFERED's timeout)? A
+    lapse is the executor's abstention, recorded without its reason (§12.9): it shows nothing infeasible — an executor
+    that finds the contract so says it by CHALLENGE — so the honest move is a new contract, and `cancel`, the run's stop
+    on this plan, would stop it on a clock: parts' offers lapsed while their producer worked and one was cancelled
+    (GB_c_compiler_tnj930660). Read off how the node ENTERED its decision, not off its producers now: one that passed
+    while the issuer's turn waited turned the same lapse into "cannot be carried" (critic over 2d7a0e5)."""
+    if not (engine.users_plan() and task is not None and task.state == State.ESCALATED):
+        return False
+    entered = next((e for e in reversed(engine.audit_log(task.id)) if not e.rejected and e.new_state == State.ESCALATED),
+                   None)
+    return bool(entered and entered.signal == Signal.TIMEOUT and entered.old_state == State.OFFERED)
+
+
 def _cancel(engine, task, actor, answer, why, verbs):
+    """CANCEL — or, on a node of the plan the user handed in, the run's STOP with the issuer's reason: that plan is the
+    user's to cut (the author, 2026-10-25: «остановка с сигналом … что внутри системы считают что план нерабочий»). A
+    part cancelled while its offer lapsed behind a working producer read as a refuted plan (GB_c_compiler_tnj930660);
+    without the move at all, a part that really cannot be carried churned to its deadlines (critic over f96e6f8)."""
+    if engine.users_plan() and users_criteria(engine.graph, task):
+        reason = (f"the system's issuer finds {task.id} cannot be carried as the plan the user gave writes it: "
+                  f"{why or 'no reason given'} — only the user re-plans it: hand a corrected plan as a new goal "
+                  f"(`auto_decompose` with `spec` on a new project), or `set_mode` (with `user_said`) to hold the plan "
+                  f"yourself; `start_project` alone asks its issuer again")
+        # …ALWAYS asked: `pause` keeps a person's stop and takes over one the system lifts by itself (the account's
+        # limit, a place down), which would otherwise lift with this verdict lost (critic over bc5fca4)
+        engine.pause("system", reason)
+        engine.emit_info("issuer", f"{task.id}: {reason}")
+        return True, reason
     return _signalled(engine, task.id, Signal.CANCEL, actor, reason=why or "the issuer closes it")
 
 
@@ -1362,16 +1398,18 @@ def moves_for(engine, task, question: str) -> tuple:
 
     No `cancel` at an AUTO root: CANCEL is the refusal of the task (§11.2), and the goal is the user's — the system
     moving for them continues it by a re-ASSIGN, and silence closes it by its bound (§12.5). A machine issuer
-    cancelled one "all 22 criteria pass" over the standing FAIL that escalated it (GB_sql_database_tncfrm404)."""
+    cancelled one "all 22 criteria pass" over the standing FAIL that escalated it (GB_sql_database_tncfrm404). On any
+    other node of a plan the user handed in `cancel` is offered and STOPS the run (`_cancel`): the system never cuts
+    that plan, and an issuer that finds a part of it cannot be carried says so to the user, who re-plans."""
     moves = QUESTIONS[question]["moves"]
     if "drop_dependency" in moves and task is not None and not any(
             _cancelled_producers(engine, k) for k in engine.graph.get_active_children(task.id)):
         moves = tuple(m for m in moves if m != "drop_dependency")
-    if "cancel" in moves and is_auto_root(engine.graph, task):
+    if "cancel" in moves and (is_auto_root(engine.graph, task) or _offer_lapsed(engine, task)):
         moves = tuple(m for m in moves if m != "cancel")
-    # …nor `promote` into a plan the user handed in: a node it adds is a split the user did not make
-    if "promote" in moves and users_plan(engine.graph):
-        moves = tuple(m for m in moves if m != "promote")
+    # …nor `promote` into, nor a Dep dropped from, a plan the user handed in: either is a split the user did not make
+    if users_plan(engine.graph):
+        moves = tuple(m for m in moves if m not in ("promote", "drop_dependency"))
     return moves
 
 
@@ -1755,12 +1793,15 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
     # …A SPLIT OF THE USER'S PLAN IS NOT THE SYSTEM'S TO REMAKE: owed where contact refuted it or a leaf proved larger
     # than a session, and only its author re-plans it — the run stops, its sessions finishing, its record whole
     if question in SPLIT_QUESTIONS and engine.users_plan():
-        why = (f"the plan the user gave is refuted at {task_id} ({question}: "
+        # …"refuted" only where contact refuted it: a part closed without a verdict (its bound, a person) leaves the
+        # plan unable to go on, which is not the same news (critic over f96e6f8, E)
+        said = ("is refuted" if engine.decomposition_refuted(task_id) or engine.dep_order_refuted(task_id)
+                or question == "split" else "cannot go on")
+        why = (f"the plan the user gave {said} at {task_id} ({question}: "
                f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
                f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec` on a new project), or `set_mode` "
                f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
-        if not engine.paused():
-            engine.pause("system", why)
+        engine.pause("system", why)
         return {"status": "users", "why": why}
     if question == "split":
         # ONE admissible move, and it is not a judgement: the refine round authors the split (SEARCH + the
