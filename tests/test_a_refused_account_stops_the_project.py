@@ -81,3 +81,17 @@ def test_a_continued_round_books_its_own_cost(monkeypatch, tmp_path):
     llm.run_agent("sys", "go on", ("Read",), cwd=str(tmp_path), session="s1")
     assert llm.calls[-1]["resumed"] and abs(llm.calls[-1]["cost_usd"] - 0.04) < 1e-9, llm.calls[-1]
     assert not llm._spent_file("s1").exists(), "an answered conversation keeps nothing"
+
+
+def test_a_round_books_the_life_of_its_process_not_its_last_results(monkeypatch):
+    """A command that outlived its result kept the process alive past the CLI's own `duration_ms`: booked 3 s, lived
+    729 s, and a timeline could not place the round (ui stream, 2026-10-27)."""
+    def slow():
+        time.sleep(0.3)
+        yield json.dumps({**_result(0.01)[0], "duration_ms": 3}) + "\n"
+    _cli(monkeypatch, [])
+    monkeypatch.setattr(_Proc, "__init__", lambda self, lines: setattr(self, "stdout", slow()))
+    llm = H.ClaudeCodeProvider()
+    llm._cmd = "claude"
+    llm.run_agent("sys", "packet", ("Read",), cwd=".")
+    assert llm.calls[-1]["duration_ms"] >= 250, llm.calls[-1]       # the CLI said 3; the process lived ~300

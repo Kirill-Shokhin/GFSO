@@ -448,7 +448,9 @@ class ClaudeCodeProvider(RecordingProvider):
             usage = _obj(out.get("usage")) if envelope is not None else _summed(self.last_turns.values())
             self.calls.append({
                 "at": time.time(),
-                "duration_ms": out.get("duration_ms") or int((time.monotonic() - t0) * 1000),
+                # …the process's own life, measured here: the CLI's figure is its last result's, and a command that
+                # outlived it (a `make` past its Bash timeout) kept the process 12 minutes the ledger did not see (ui)
+                "duration_ms": int((time.monotonic() - t0) * 1000),
                 "input_tokens": usage.get("input_tokens"),
                 "output_tokens": usage.get("output_tokens") or out_tokens or None,
                 "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
