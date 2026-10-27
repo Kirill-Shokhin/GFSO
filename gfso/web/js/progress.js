@@ -49,7 +49,7 @@ function tracks(el, run, name, tasks) {
     }).join('');
     const H = y + 6, root = rs.find(r => !r.d);
     const miles = (root ? tr[root.id].marks : []).filter(m => m.signal === 'PASS').map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>
-        <text x="${f.X(m.t) - 4}" y="${TOP - 10}">goal delivered ${hm(m.t)}</text></g>`).join('');
+        <text x="${f.X(m.t) - 4}" y="${TOP - 10}">goal done ${hm(m.t)}</text></g>`).join('');
     return `<svg class="pg" width="${W}" height="${H}">${f.ticks(TOP - 6, H)}${f.folds(TOP - 6, H, H)}${miles}${body}</svg>`;
 }
 

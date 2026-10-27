@@ -19,7 +19,7 @@ function phrase(root) {
     const parts = S.tasks.filter(t => !isRoot(t) && !settled(t)), k = parts.filter(t => t.state === 'DONE').length;
     const done = parts.length ? `${k} of ${parts.length} parts done` : 'not split yet', said = s => label(s).toLowerCase();
     return {
-        DONE: {FAIL: 'goal closed — failed', CANCELLED: said('ABANDONED')}[root.done_reason] || 'goal delivered',
+        DONE: {FAIL: 'goal closed — failed', CANCELLED: said('ABANDONED')}[root.done_reason] || 'done',
         // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)
         OFFERED: parts.length ? `${done} · the goal itself ${said('OFFERED')}` : said('OFFERED'), IDLE: said('OFFERED'),
         EXECUTING: `${said('EXECUTING')} — ${done}`,
