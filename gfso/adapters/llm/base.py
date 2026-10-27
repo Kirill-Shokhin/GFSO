@@ -8,6 +8,7 @@ trusted to enforce a schema).
 from __future__ import annotations
 
 import logging
+import time
 
 from gfso.core.types import LLMProviderPort
 from . import budget
@@ -20,7 +21,7 @@ log = logging.getLogger(__name__)
 #: what its transport reports; what it does not report stays None, never 0.
 RECORD = ("duration_ms", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
           "cost_usd", "model", "context_window", "peak_context", "turns", "transport_torn", "ended", "limit_resets_at",
-          "resumed", "stop_reason", "error")
+          "resumed", "stop_reason", "error", "at")
 
 
 def record(**fields) -> dict:
@@ -28,7 +29,9 @@ def record(**fields) -> dict:
     unknown = set(fields) - set(RECORD) - {"stage", "parse_failed", "place"}
     if unknown:
         raise TypeError(f"not a call record field: {', '.join(sorted(unknown))}")
-    return {k: fields.get(k) for k in RECORD} | {k: v for k, v in fields.items() if k not in RECORD}
+    # …`at`: when the call ended, stamped as it is booked — the ledger read the drain's moment, one for every round of a
+    # run drained together, so a run's rounds and handovers lay on top of each other in time (ui stream, 2026-10-27)
+    return {k: fields.get(k) for k in RECORD} | {"at": fields.get("at") or time.time()}         | {k: v for k, v in fields.items() if k not in RECORD}
 
 
 class RecordingProvider(LLMProviderPort):

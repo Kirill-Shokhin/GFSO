@@ -155,3 +155,13 @@ def test_a_round_that_handed_over_says_which_note_it_wrote(tmp_path):
     assert [c["handover"] for c in e.usage_calls()] == [None, 2]
     with TestClient(create_app(e)) as c:
         assert [r["handover"] for r in c.get("/api/usage?detail=true").json()["calls_detail"]] == [None, 2]
+
+
+def test_each_call_is_booked_at_its_own_end_not_at_the_drain(tmp_path):
+    """A run's rounds are drained together after it; booked at the drain's moment they lay on top of each other, and a
+    timeline read them as parallel sessions (ui stream, 2026-10-27). A call says when it ended, and that is its time."""
+    e = _engine(SqliteStorage(str(tmp_path / "u.db")))
+    e.record_llm_usage("executor", _Provider([{"cost_usd": 0.1, "at": 1_800_000_000.0},
+                                              {"cost_usd": 0.1, "at": 1_800_000_300.0}]), TaskId("root"))
+    first, second = (c["ts"] for c in e.usage_calls())
+    assert first < second and first.endswith(":00") and second.endswith(":00"), (first, second)

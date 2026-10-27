@@ -214,7 +214,7 @@ class ClaudeCodeProvider(RecordingProvider):
         parked the node as an unreadable report (GB_sql_database_tnij0m952). Recorded as its own ending, so booking it
         stops the project (`Engine.record_llm_usage`); no answer."""
         self.calls.append({"duration_ms": 0, "model": self._model, "ended": "unavailable", "place": e.place,
-                           "error": str(e), "transport_torn": False, "resumed": resumed})
+                           "error": str(e), "transport_torn": False, "resumed": resumed, "at": time.time()})
         return ""
 
     def _after_the_round(self, sid: str | None, out: dict) -> None:
@@ -447,6 +447,7 @@ class ClaudeCodeProvider(RecordingProvider):
             # message carries them, output as its `message_delta` does — together they reproduce the envelope)
             usage = _obj(out.get("usage")) if envelope is not None else _summed(self.last_turns.values())
             self.calls.append({
+                "at": time.time(),
                 "duration_ms": out.get("duration_ms") or int((time.monotonic() - t0) * 1000),
                 "input_tokens": usage.get("input_tokens"),
                 "output_tokens": usage.get("output_tokens") or out_tokens or None,

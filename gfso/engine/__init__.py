@@ -815,7 +815,7 @@ class Engine:
             if c.get("_usage_recorded"):
                 continue
             self._storage.log_usage({
-                "ts": datetime.now().isoformat(sep=" ", timespec="seconds"),
+                "ts": (datetime.fromtimestamp(c["at"]) if c.get("at") else datetime.now()).isoformat(sep=" ", timespec="seconds"),
                 # THE CALL'S OWN LABEL WINS. `tag_last` exists so a caller can say which stage a
                 # particular call belonged to — and the ledger threw every one of them away, writing
                 # the argument this method was given instead. Two sides of one accounting said
