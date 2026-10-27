@@ -577,25 +577,25 @@ def _mount_pages(app) -> None:
     async def index():
         """The human door itself: the single page, which drives this same API and watches
         `/ws/events`."""
-        return FileResponse(WEB_DIR / "index.html")
+        return _page_file(WEB_DIR / "index.html")
 
     @app.get("/tokens.css")
     async def tokens_css():
         """The brand tokens — palette, type scale, fonts — that the UI's stylesheet is written
         against. The single source of truth for colour: `gfso.css` requires this loaded first."""
-        return FileResponse(WEB_DIR / "tokens.css", media_type="text/css")
+        return _page_file(WEB_DIR / "tokens.css", "text/css")
 
     @app.get("/gfso.css")
     async def gfso_css():
         """The UI's own styles, expressed entirely in the tokens above, so recolouring the product
         is an edit to `tokens.css` and never to this."""
-        return FileResponse(WEB_DIR / "gfso.css", media_type="text/css")
+        return _page_file(WEB_DIR / "gfso.css", "text/css")
 
     @app.get("/icon.svg")
     async def icon_svg():
         """The page's icon, served from this origin like every other asset — the door depends on no
         external host."""
-        return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml")
+        return _page_file(WEB_DIR / "icon.svg", "image/svg+xml")
 
     @app.get("/js/{name}")
     async def page_module(name: str):
@@ -604,7 +604,14 @@ def _mount_pages(app) -> None:
         path = WEB_DIR / "js" / name
         if not name.endswith(".js") or path.name != name or not path.is_file():
             raise HTTPException(404, f"no page module {name!r}")
-        return FileResponse(path, media_type="text/javascript")
+        return _page_file(path, "text/javascript")
+
+
+# EVERY PAGE FILE IS REVALIDATED: sent with no Cache-Control, a browser keeps a module by its own heuristic and reloads
+# showed an old view — the author saw two colours of FAIL cross in Progress a day after they were made one
+# (2026-10-27). `no-cache` makes every reload ask the server; the files are small and read from disk anyway.
+def _page_file(path, media_type=None):
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
 def _mount_events(app) -> None:

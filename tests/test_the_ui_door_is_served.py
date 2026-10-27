@@ -96,6 +96,14 @@ def test_the_stylesheets_the_page_names_are_served_as_css(client, path):
     assert r.text.strip(), f"{path} is empty"
 
 
+@pytest.mark.parametrize("path", ["/", "/gfso.css", "/tokens.css", "/icon.svg", "/js/main.js", "/js/hints.js"])
+def test_every_page_file_is_revalidated_on_reload(client, path):
+    """Sent with no Cache-Control, a browser kept an old module by its own heuristic: a day after the FAIL crosses were
+    made one colour the author still saw two (2026-10-27). Each reload asks the server again."""
+    r = client.get(path)
+    assert r.status_code == 200 and r.headers.get("cache-control") == "no-cache", (path, r.headers.get("cache-control"))
+
+
 def test_the_page_only_names_assets_the_server_serves(client):
     """Every local asset the page references must resolve — a 404 here is a broken page for a
     viewer and invisible to any test that only reads the file."""
