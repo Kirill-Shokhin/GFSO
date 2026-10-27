@@ -22,7 +22,9 @@ export const untip = () => box().classList.remove('visible');
 const own = e => {
     if (e.tipped) return;
     const t = e.target.closest?.('[data-tip]');
-    if (t) { const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); mine = true; }
+    // a hover that would only repeat the words it is on, shown whole, says nothing — a name is hovered for its full text
+    if (t && !(t.dataset.tip === t.textContent.trim() && t.scrollWidth <= t.clientWidth)) {
+        const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); mine = true; }
     else if (mine) { untip(); mine = false; }
 };
 const drop = () => { if (mine) { untip(); mine = false; } };

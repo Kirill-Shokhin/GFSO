@@ -131,7 +131,7 @@ export const TAB = {
 
 // ── the header ──
 export const H = {
-    root: full => hover(full, 'Click to open the goal'),
+    root: full => hover(full),
     // one chip per kind of call on a person: the hover says why it calls and on which nodes; the chip already says how many
     need: (kind, rows) => hover({
         escalated: 'The issuer decides on these', challenged: 'A challenge waits on its issuer', blocked: 'A block waits on its issuer',
