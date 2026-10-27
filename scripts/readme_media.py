@@ -30,8 +30,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 RUN = ROOT / "data" / "gb-sql-database-tnha1f292.db"
-SIZE = {"width": 1200, "height": 900}          # CSS px; at SCALE 1.5 the files are 1800 px wide, as the README's were
-SCALE = 1.5
+SIZE = {"width": 1440, "height": 900}          # CSS px: a usual monitor's 16:10, where the graph, the panel and the deck sit
+SCALE = 1.25                                    # as on the page; the files stay 1800 px wide, as the README's were
 TZ = os.environ.get("MEDIA_TZ", "Asia/Bangkok")  # the zone the default run's stamps were written in (UTC+7)
 
 # What the README shows. `film` = one frame per state change of the run, the last held; `still` = the run's last moment.
