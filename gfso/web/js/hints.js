@@ -170,7 +170,7 @@ export const H = {
             // …a metric with no value yet: the sentence saying when it gets one is the key line, not a fold's (critic)
             const when = r.none && /(?:^|\s)(⊥[^.]*\.)/.exec(row.more || '');
             // (said as words: the row's dash already marks the empty value)
-            return when ? {...row, means: `${row.means} ${cap(when[1].slice(1).trim())}`, more: row.more.replace(when[1], '').trim()} : row; })),
+            return when ? {...row, means: `${row.means} No value ${when[1].slice(1).trim()}`, more: row.more.replace(when[1], '').trim()} : row; })),
 };
 
 // what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server

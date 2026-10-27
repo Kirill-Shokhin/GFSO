@@ -61,7 +61,7 @@ const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = x =>
     // a history of one round says what the mark beside the name says: drawn, it was a lone dot beside a dot (the author)
     // each mark says its own round on hover (a hover on the whole strip said the same line over every mark — critic)
     // …a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)
-    const one = (r, i) => !r.verdict ? [null, 'not checked yet']
+    const one = (r, i) => !r.verdict ? [null, i === rs.length - 1 ? 'not checked yet' : 'no verdict on this delivery']
         : i === rs.length - 1 && now && now !== 'pass' && now !== 'fail' ? [null, 'not decided at this verdict']
         : r.per ? (v => v === 'pass' || v === 'fail' ? [v.toUpperCase()] : [null, v ? 'checked, could not be decided' : 'not in this verdict\'s record'])(
             r.per.find(c => c.criterion === name)?.verdict)
@@ -157,8 +157,11 @@ export async function selectTask(id) {
         const [d, vr, cr, acts] = await Promise.all([getJSON(base), soft(getJSON(base + '/verdict')), soft(getJSON(base + '/critique')),
             soft(getJSON(`${base}/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
         // a round's per-criterion record is the node's verdict history, which the deck's run has joined to the log
-        const kept = S.run?.rounds[d.id] || [], rounds = roundsOf(d.audit, d.id).map(r => r.per || !r.verdict ? r
-            : {...r, per: kept.find(k => k.at === r.at && k.verdict === r.verdict)?.per});
+        // …else, for the last verdict, the node's current record when it is that verdict's — even after a rework made it
+        // not current — as Progress reads it (critic: the strip said «not kept» beside the current line drawing it)
+        const kept = S.run?.rounds[d.id] || [], all = roundsOf(d.audit, d.id), lastV = all.findLast(r => r.verdict);
+        const rounds = all.map(r => r.per || !r.verdict ? r : {...r, per: kept.find(k => k.at === r.at && k.verdict === r.verdict)?.per
+            || (r === lastV && vr?.verdict === r.verdict && vr.per_criterion?.length ? vr.per_criterion : undefined)});
         const ctx = {d, vr, cr, acts, rounds}, sb = $('sidebar');
         // An open form outlives the re-read — any transition in the project re-reads the panel, and the text and ticks
         // being entered were wiped mid-entry on a live run — while nothing has happened to THIS node: a form opened on
