@@ -42,12 +42,12 @@ export function render(el, run) {
     if (!rows.length) return void (el.innerHTML = '<div class="pn-meta">no model call recorded yet</div>');
     const byModel = {};
     rows.forEach(r => { const m = byModel[r.model] ??= {cost: 0, calls: 0, priced: 0, roles: [], rows: [], window: null};
-        m.cost += r.cost; m.calls += r.calls; m.priced += r.calls - r.unpriced; m.roles.push(KIND[r.kind]); m.rows.push(r); m.window ??= r.window; });
+        m.cost += r.cost; m.calls += r.calls - r.resumed; m.priced += r.calls - r.unpriced; m.roles.push(KIND[r.kind]); m.rows.push(r); m.window ??= r.window; });
     const models = Object.entries(byModel).sort((a, b) => b[1].cost - a[1].cost);
     // a price no session of it reported is no $0.00 and no 0% of the run
     const price = (x, priced) => priced ? usd(x) : NOT, share = (x, priced) => priced && total ? pct(x / total) : '—';
     const row = (r, i, m) => `<tr${i ? '' : ' class="wk-first"'}>${i ? '<td></td>' : `<td${MODELS.id(r.model)}><b>${esc(modelName(r.model))}</b></td>`}`
-        + `<td>${KIND[r.kind]}</td><td>${r.calls}${r.resumed ? ` <span class="wk-none"${MODELS.contexts}>in ${r.calls - r.resumed} contexts</span>` : ''}${r.handed ? ` <span class="wk-none"${MODELS.handed(r.handed)}>, ${r.handed} handed over</span>` : ''}`
+        + `<td>${KIND[r.kind]}</td><td>${r.resumed ? `<span${MODELS.processes(r.calls)}>${r.calls - r.resumed}</span>` : r.calls}${r.handed ? ` <span class="wk-none"${MODELS.handed(r.handed)}>, ${r.handed} handed over</span>` : ''}`
         + `${Object.keys(r.ends).length ? ` <span class="wk-none"${MODELS.ends}>(${Object.entries(r.ends).map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')})</span>` : ''}</td>`
         + `<td>${!r.turned ? NOT : r.turned < r.calls ? `<span${MODELS.turns(r.turned, r.calls)}>${r.turns} in ${r.turned}</span>` : r.turns}</td>`
         + `<td>${price(r.cost, r.calls - r.unpriced)}${r.unpriced && r.unpriced < r.calls ? ` <span class="wk-none"${MODELS.unpriced}>+ ${r.unpriced} unpriced</span>` : ''}</td>`
@@ -55,7 +55,7 @@ export function render(el, run) {
     el.innerHTML = `<div class="wk">
         <div class="cs-tiles">${models.map(([m, x]) =>
             `<div class="cs-tile"><b>${esc(modelName(m))}${x.window ? ` <em${MODELS.window}>${fmtTok(x.window)}</em>` : ''}</b><span>${esc(x.roles.join(' · '))}</span>`
-            + `<i>${price(x.cost, x.priced)}${x.priced && total ? ` · ${pct(x.cost / total)} of the run` : ''} · ${x.calls} sessions</i></div>`).join('')}</div>
+            + `<i>${price(x.cost, x.priced)}${x.priced && total ? `, ${pct(x.cost / total)} of the run` : ''}</i><i>${x.calls} sessions</i></div>`).join('')}</div>
         <table class="wk-table"><thead><tr><th>model</th><th>role</th><th${MODELS.sessions}>sessions</th><th>turns</th><th>cost</th><th>share</th>
             <th${MODELS.cost}>cost split</th>
             <th${MODELS.fill}>context filled</th></tr></thead><tbody>

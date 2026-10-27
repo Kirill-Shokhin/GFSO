@@ -14,7 +14,8 @@ const commonPrefix = ids => { if (ids.length < 2) return 0;
     return ids[0].lastIndexOf('-', n - 1) + 1; };
 // money for sessions some of which reported no price: never a $0.00 for "not reported" (another provider's case)
 const money = ps => { const calls = ps.reduce((s, p) => s + p.calls, 0), un = ps.reduce((s, p) => s + (p.unpriced || 0), 0);
-    return calls && un === calls ? 'not reported' : usd(ps.reduce((s, p) => s + p.cost, 0)) + (un ? ` + ${un} not priced` : ''); };
+    const procs = ps.reduce((s, p) => s + (p.procs ?? p.calls), 0);
+    return calls && un === procs ? 'not reported' : usd(ps.reduce((s, p) => s + p.cost, 0)) + (un ? ` + ${un} not priced` : ''); };
 const tile = (v, label, note = '') => `<div class="cs-tile"><b>${v}</b><span>${label}</span>${note ? `<i>${note}</i>` : ''}</div>`;
 
 // One bar chart: rows of [key, label, parts{exec,val,…}], the bar split by role so the cost of

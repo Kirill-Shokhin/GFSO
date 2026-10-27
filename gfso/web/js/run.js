@@ -56,7 +56,7 @@ function sessions(calls, audit) {
         return {node: c.node_id, kind, stage: c.stage, start, end, cost: c.cost_usd || 0,
                 tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
                 out: c.output_tokens ?? null, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0,
-                handover: c.handover || 0};
+                handover: c.handover || 0, resumed: !!c.resumed};
     });
 }
 
@@ -168,8 +168,8 @@ export function concurrency(list) {
 function rollup(list, key) {
     const out = {};
     for (const s of list) {
-        const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, cost: 0, unpriced: 0, tokens: null, busy: 0};
-        o.calls++; o.cost += s.cost; o.unpriced += s.priced ? 0 : 1; o.tokens = add(o.tokens, s.tokens); o.busy += s.end - s.start;
+        const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, procs: 0, cost: 0, unpriced: 0, tokens: null, busy: 0};
+        o.calls += s.resumed ? 0 : 1; o.procs++; o.cost += s.cost; o.unpriced += s.priced ? 0 : 1; o.tokens = add(o.tokens, s.tokens); o.busy += s.end - s.start;
     }
     return out;
 }

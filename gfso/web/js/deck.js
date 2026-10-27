@@ -86,7 +86,7 @@ function strip() {
         + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${n} FAIL${n > 1 ? 's' : ''}`))}>${back.length} sent back${back.length === 1 ? `: ${esc(trim(run.name(back[0][0]), 20))}` : ''}</button>` : '')
         // a session's cost is booked when it ENDS (the CLI reports it then): a running one is said, not guessed
         + (run ? `<span class="dk-sum"${STRIP.spend(Object.entries(run.cost.byKind), mine.length)}>`
-                 + `${run.cost.unpriced && run.cost.unpriced === Object.values(run.cost.byKind).reduce((n, p) => n + p.calls, 0) ? 'spend not reported' : '$' + run.cost.total.toFixed(2)}`
+                 + `${run.cost.unpriced && run.cost.unpriced === Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0) ? 'spend not reported' : '$' + run.cost.total.toFixed(2)}`
                  + `${mine.length ? ` + ${mine.length} running` : ''} · ${dur(run.clock.span)} run</span>` : '');
 }
 

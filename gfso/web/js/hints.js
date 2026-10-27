@@ -170,7 +170,7 @@ export const STRIP = {
     // after each other with dots)
     spend: (byKind, running) => { const all = byKind.reduce((s, [, p]) => s + p.cost, 0) || 1;
         return hover('Spend by role', byKind.sort((a, b) => b[1].cost - a[1].cost).map(([k, p]) => meter(sessionsOf(k, p.calls), p.cost / all,
-            p.calls && p.unpriced === p.calls ? 'not reported' : usd(p.cost))),
+            p.procs && p.unpriced === p.procs ? 'not reported' : usd(p.cost))),
             running && `+ ${running} running, booked when ${running > 1 ? 'they end' : 'it ends'}`); },
 };
 
@@ -228,14 +228,16 @@ export const TIP = {
 
 // ── the models tab ──
 export const MODELS = {
-    sessions: hover('Sessions', 'Each model call is a session with a context of its own, unless it continued a conversation (marked)'),
+    sessions: hover('Sessions', 'Each with a context of its own; one resumed in its conversation counts once'),
     cost: hover('Cost split', `By kind of token: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right`,
         "Priced by Anthropic's structure: per input token 1, output 5, cache read 0.1, cache written 2", 'Another provider\'s rows are not split'),
     part: (kind, cost, share, tokens, note) => hover(`${cap(kind)}\t${cost}`, meter('of the row', share), `${tokens} tokens`, note),
     id: id => hover(id),
     window: hover('The model\'s context window'),
     fill: hover('Context filled', "Each session's fullest turn against its model's window: the dark bar the median session, the light one the fullest"),
-    contexts: hover('Contexts', "A call that continued its round's conversation (cut at its turn cap) is no context of its own"),
+    // a session resumed in its own conversation is ONE session, however many processes the CLI ran it in (engineering, the
+    // author 2026-10-27: «чем это не обычные сессии? почему отдельный счёт?») — the processes are a hover at most
+    processes: n => hover(`Run in ${n} processes`, 'A session resumed in its own conversation is one session'),
     handed: n => hover(`${n} handed over`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
     turns: (turned, calls) => hover(`Turns of ${turned} of ${calls} sessions`, 'The rest were recorded before turns were kept'),
