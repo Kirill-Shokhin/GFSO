@@ -30,6 +30,7 @@ from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.workspaces import execution_of
 from gfso.adapters.snapshots import snapshot, swap
+from gfso.adapters.worktrees import NODES as _NODES
 from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import canonical_citations, laid_down_dirs, with_part_observations
@@ -442,10 +443,21 @@ def _validation_cap(task, graph) -> Optional[int]:
     return int(state_bound("VALIDATING")) or None
 
 
+def _own_place(scratch: Optional[str], i: int) -> Optional[str]:
+    """The directory batch `i` copies the delivery into, under the validation's scratch — None without one."""
+    if not scratch:
+        return None
+    place = Path(scratch) / f"batch{i + 1}"
+    place.mkdir(parents=True, exist_ok=True)
+    return str(place)
+
+
 def _run_each(llm, spawn, scratch: Optional[str], batches: list, run) -> list:
     """One validator call per batch, `run(batch, client, place)`, the texts in batch order."""
     if spawn is None:
-        return [run(batch) for batch in batches]
+        # …ALONE, STILL IN A COPY: a validator judges the delivery and must not be able to change it (§10.3) — run in
+        # the place itself, an edit of its own went into the next commit as the executor's delivery
+        return [run(batch, None, _own_place(scratch, i)) for i, batch in enumerate(batches)]
     # THE BATCHES ARE INDEPENDENT, SO THEY RUN AT THE SAME TIME. Splitting the contract unblocked
     # acceptance on a rich node but left its LATENCY additive, and latency is what stalls a run:
     # measured over 170 recorded validations, the median validation takes 46 s at ≤5 criteria, 90 s
@@ -460,9 +472,7 @@ def _run_each(llm, spawn, scratch: Optional[str], batches: list, run) -> list:
         i, batch = i_batch
         client = spawn()
         client.on_tick, client.stage_hint = llm.on_tick, llm.stage_hint
-        place = str(Path(scratch) / f"batch{i + 1}") if scratch else None
-        if place:
-            Path(place).mkdir(parents=True, exist_ok=True)
+        place = _own_place(scratch, i)
         try:
             return i, run(batch, client, place)
         finally:
@@ -1162,7 +1172,8 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
             cap = lambda: _validation_cap(task, engine.graph)
         # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
         # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
-        # A run alone (`place` None) works in the place itself. Mapped back, the report reads as run in the place.
+        # A run alone gets its copy too (`_run_each`); without a scratch it works in the place. Mapped back, the report
+        # reads as run in the place.
         # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
         # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
         with snapshot(workdir, Path(place) / "delivery", execution_of(engine), edits) if place else nullcontext() as tree:
@@ -1185,7 +1196,10 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         if again:
             Path(again).mkdir(parents=True, exist_ok=True)
         return _run(batch, client, again)
-    return _run_each(llm, spawn if len(batches) > 1 else None, scratch, batches,
+    # a lone run copies a node's own place, never a shared directory with no git base: that is the user's whole tree
+    # (a copy per validation was refused on one of 77k files), and nothing there is isolated to begin with
+    lone = scratch if workdir and _NODES in str(workdir) else None
+    return _run_each(llm, spawn if len(batches) > 1 else None, scratch if len(batches) > 1 else lone, batches,
                      _run_again_if_unread if len(batches) > 1 else _run)
 
 

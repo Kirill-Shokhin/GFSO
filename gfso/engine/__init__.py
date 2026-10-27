@@ -2951,6 +2951,21 @@ class Engine:
                 judged.add(handed)
         return out
 
+    def accepted_delivery(self, task_id: TaskId) -> tuple:
+        """(tree, commit) of the delivery the node's standing PASS accepted (§11.3: the result as it stood at DELIVER) —
+        (None, None) where no PASS stands under this version; the commit None where the delivery predates its record."""
+        handed, accepted = (None, None), (None, None)
+        for e in on_current_version(self._audit.get_entries(task_id)):
+            if e.signal == Signal.DELIVER:
+                handed = (e.artifact, e.commit)
+            elif e.signal == Signal.PASS:
+                accepted = handed
+        return accepted
+
+    def accepted_artifact(self, task_id: TaskId):
+        """The tree of `accepted_delivery`."""
+        return self.accepted_delivery(task_id)[0]
+
     def rehanded(self, task_id: TaskId) -> bool:
         """Was the standing FAIL over files an earlier FAIL of this version had already judged (`fails_over_new_work`)?"""
         fails = self.fails_of(task_id)

@@ -163,7 +163,8 @@ def test_a_nodes_validator_reads_that_nodes_own_tree(tmp_path):
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {})}
     where: dict = {}
     _run(e, agents, sessions, _in(e, "a", "b", states=(State.DONE,)), validated=where)
-    assert where == {"a": sessions["a"].cwd, "b": sessions["b"].cwd}
+    # …each in a COPY of that node's own tree (§10.3: the validator must not be able to change what it judges)
+    assert all(where[k].endswith("delivery") and f".gfso-scratch-{k}" in where[k] for k in ("a", "b")), where
     assert node_workspace(e, agents, "a") == sessions["a"].cwd
 
 
@@ -280,7 +281,8 @@ def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path)
     executor, validator = _Session(S._delivered("root.a", "root.b", "root")), _Check(e)
     S._drive(e, S._dispatcher(e, agents, executor, validator, []), lambda: e.graph.get_state(TaskId("root")) == State.DONE)
     place = tmp_path.parent / f".gfso-nodes-{tmp_path.name}" / "p" / "root"
-    assert where == {"session": str(place), "validation": str(place)}
+    assert where["session"] == str(place)
+    assert where["validation"].endswith("delivery") and ".gfso-scratch-root" in where["validation"], where
     # one tree, a commit per node's delivery in build order; its parts join nothing (their whole works there), and
     # the top, at its PASS, joins the base
     _until(lambda: (tmp_path / "scope.c").exists() and not place.exists() and e.joins.joining_nodes() == [])

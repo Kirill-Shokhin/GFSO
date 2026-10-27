@@ -429,6 +429,9 @@ class SignalData:
     # DELIVER: the identity of the artifact handed over (§11.2) — its tree, the same for the same files however many
     # commits carry them; None where the work has no place of its own
     artifact: Optional[str] = None
+    # …and the commit that carried it when it was handed over: what joins once a PASS accepts it, wherever the branch
+    # has moved since (the branch is the agents' to write)
+    commit: Optional[str] = None
     self_validation: Optional[Verdict] = None      # DELIVER
     new_spec: Optional[Spec] = None                # ACCEPT_CHALLENGE
     # ACCEPT_CHALLENGE: the issuer's ruling — ids of the validator's findings the executor's CHALLENGE named that this

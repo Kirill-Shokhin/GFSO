@@ -73,6 +73,8 @@ def snapshot(place, at, execution, edits: Optional[list] = None):
     into `edits` (paths relative to the place) and the copy is removed."""
     place, at = Path(place), Path(at)
     try:
+        if at.resolve().is_relative_to(place.resolve()):   # a scratch inside the place (no git base): no copy of a tree into itself
+            raise OSError(f"{at} lies inside {place}")
         with _place(place).enter(alone=False):
             execution.copy_tree(str(place), str(at))
             _own_git(place, at, execution)

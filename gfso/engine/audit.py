@@ -39,6 +39,7 @@ class AuditEntry:
     retire_findings: tuple[str, ...] = ()
     # …AND WHAT A DELIVER HANDED OVER, by identity: re-handing the same files is no new attempt at the work
     artifact: Optional[str] = None
+    commit: Optional[str] = None                   # …and the commit that carried it
 
 
 class AuditLog:
@@ -108,7 +109,7 @@ class AuditLog:
             "justification": e.justification, "result": e.result,
             "failed_criteria": list(e.failed_criteria), "action": e.action,
             "in_flight": e.in_flight, "spec": e.spec, "revision_reason": e.revision_reason,
-            "retire_findings": list(e.retire_findings), "artifact": e.artifact,
+            "retire_findings": list(e.retire_findings), "artifact": e.artifact, "commit": e.commit,
         }
 
     @staticmethod
@@ -125,6 +126,7 @@ class AuditLog:
             failed_criteria=tuple(r.get("failed_criteria") or ()), action=r.get("action"),
             in_flight=r.get("in_flight"), spec=r.get("spec"), revision_reason=r.get("revision_reason"),
             retire_findings=tuple(r.get("retire_findings") or ()), artifact=r.get("artifact"),
+            commit=r.get("commit"),
         )
 
 

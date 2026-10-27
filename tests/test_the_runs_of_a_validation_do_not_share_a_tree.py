@@ -141,13 +141,14 @@ def test_each_run_validates_its_own_copy_of_the_place_and_the_report_names_the_p
     e.stop()
 
 
-def test_a_single_run_validates_the_place_itself(monkeypatch, place):
-    """Nothing runs beside it: the place as it stands, as before."""
+def test_a_single_run_validates_a_copy_too(monkeypatch, place):
+    """Nothing runs beside it, and still not in the place: the validator judges the delivery and must not be able to
+    change it (§10.3) — an edit of its own, made in the place, went into the next commit as the executor's (security,
+    2026-10-27). Its packet names the copy, as a batch's does."""
     _, at = place
     e, out, seen = _validate(monkeypatch, at, n=1)
-    assert [s["cwd"] for s in seen] == [str(at)]
-    assert "a copy of the delivery's directory" not in seen[0]["packet"]
-    assert "validator_edits" not in out
+    assert len(seen) == 1 and seen[0]["cwd"] != str(at) and seen[0]["cwd"].endswith("delivery")
+    assert "a copy of the delivery's directory" in seen[0]["packet"]
     e.stop()
 
 

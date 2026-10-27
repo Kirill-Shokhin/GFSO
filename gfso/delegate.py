@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso import tools_llm as T
+from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agents_path, max_sessions, provider, validator_retry_model
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask
@@ -1834,7 +1835,7 @@ class Dispatcher:
             # a ROOT whose result did not land stays named, with the branch that holds it, until a later try lands
             # it (`_rejoin`, backing off): the base is what a reader of `complete` reads. A part that did not land is
             # its whole's to integrate (`_enter_workspace`).
-            if why and (w := _place_of(self._engine, self._agents, t)) is not None:
+            if why and NOT_ON_ITS_BRANCH not in why and (w := _place_of(self._engine, self._agents, t)) is not None:
                 why = f"{why} (its result stands on branch `{w[2]}`)"
             if is_root:
                 delay = min(max(2 * self._retry_at.get(str(tid), (0, 0))[1], JOIN_RETRY_S), JOIN_RETRY_MAX_S)

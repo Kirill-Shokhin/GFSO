@@ -21,7 +21,7 @@ from gfso.adapters.execution import end_leftovers
 from gfso.adapters.llm import registry
 from gfso.adapters.llm.conformance import assess, report
 from gfso import __version__, serverctl
-from gfso.config import LOOPBACK, install_mcp_env, install_serve_env
+from gfso.config import LOOPBACK, admit_host, install_mcp_env, install_serve_env
 from gfso import serverctl
 from gfso.doctor import claude_cli, doctor, setup
 from gfso.examples import DEMOS, NEEDS_MODEL
@@ -432,6 +432,7 @@ def _serve(args):
         on_declaration_error=lambda ex: print(
             f"gfso: could not read the declared server config ({ex})"))
 
+    admit_host(args.host)            # the page this opens is served under that name
     if not args.no_browser:
         threading.Timer(1.5, lambda: open_outside(f"http://{args.host}:{args.port}")).start()
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import agent_id as _config_agent_id
 from gfso.core.graph.model import root_of
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, Task, TaskId, Verdict, Wait,
@@ -499,10 +500,14 @@ class NodeSteps:
             return (6, t, Action.REVISE,
                     f"REPAIR THE PLAN of '{t.id}' ({nm}) — do NOT re-deliver it: {wall}")
         left = self.engine.joins.unjoined_parts(t)
+        merge = [(k, why) for k, why in left if NOT_ON_ITS_BRANCH not in why]
+        lost = [(k, why) for k, why in left if NOT_ON_ITS_BRANCH in why]
         return (6, t, Action.DELIVER,
                 f"AGGREGATE '{t.id}' ({nm}): all its children PASSED — integrate them. "
                 + (f"These did NOT merge where it works — merge each and resolve, that is this whole's work: "
-                   + "; ".join(f"'{k}': {why}" for k, why in left) + ". " if left else "")
+                   + "; ".join(f"'{k}': {why}" for k, why in merge) + ". " if merge else "")
+                + ("These are NOT to be merged — what their PASS accepted is gone from their branch; reopen each: "
+                   + "; ".join(f"'{k}': {why}" for k, why in lost) + ". " if lost else "")
                 + f"Before you DELIVER, self-check the WHOLE by running: each parent criterion {crits} must hold "
                 f"over the REAL integrated result (not mocks, not the children's word for it). "
                 f"Signal from what the run actually shows.")
@@ -1152,7 +1157,11 @@ class Frontier:
     def _not_complete_while_joining(self, root) -> dict:
         """The root has passed and its result does not yet stand in the base: refused (the base must take it — the
         host retries the join, backing off, and a hand merge of the branch counts), or being joined (poll)."""
-        if (why := self.engine.joins.unjoined_roots().get(str(root.id))) is not None:
+        if (why := self.engine.joins.unjoined_roots().get(str(root.id))) is not None and NOT_ON_ITS_BRANCH in why:
+            return {"complete": False, "stuck": True, "steps": [],
+                    "directive": f"The root '{root.id}' has passed, but {why}. Do not merge its branch into the base: "
+                                 f"reopen the root and deliver its work again."}
+        if why is not None:
             return {"complete": False, "stuck": True, "steps": [],
                     "directive": f"The root '{root.id}' has passed, but its result did not land in the base: "
                                  f"{why}. Make the base take it — clear what blocks the merge (an untracked or "

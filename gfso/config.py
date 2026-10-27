@@ -113,6 +113,18 @@ def _flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default) not in ("", "0")
 
 
+def allowed_hosts() -> list[str]:
+    """Names the one server's door answers to beyond loopback and its own host — `GFSO_ALLOWED_HOSTS`, comma-separated:
+    a deliberate act, never a default."""
+    return [h.strip().lower() for h in os.environ.get("GFSO_ALLOWED_HOSTS", "").split(",") if h.strip()]
+
+
+def admit_host(host: str) -> None:
+    """The name a server was started on (`serve --host`) joins the names its door answers to — its own page included."""
+    if host and host.lower() not in (LOOPBACK, "localhost", "::1", *allowed_hosts()):
+        os.environ["GFSO_ALLOWED_HOSTS"] = ",".join([*allowed_hosts(), host.lower()])
+
+
 def shared_url() -> str:
     """Where the ONE server lives — the single knob the whole product turns on (`GFSO_SHARED_URL`)."""
     return os.environ.get("GFSO_SHARED_URL", f"http://{LOOPBACK}:8000/mcp")

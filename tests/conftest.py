@@ -28,6 +28,7 @@ def _own_state_home():
     """A home of the suite's own, for the whole session."""
     prior = os.environ.get("GFSO_HOME")
     os.environ["GFSO_HOME"] = tempfile.mkdtemp(prefix="gfso-suite-")
+    os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
     yield
     if prior is None:
         os.environ.pop("GFSO_HOME", None)

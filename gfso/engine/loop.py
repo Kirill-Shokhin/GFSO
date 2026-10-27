@@ -41,7 +41,7 @@ def _payload_fields(sd: SignalData) -> dict:
         result=sd.result, failed_criteria=sd.failed_criteria, action=sd.action,
         in_flight=sd.in_flight, spec=_spec_json(sd),
         revision_reason=sd.revision_reason.name if sd.revision_reason is not None else None,
-        retire_findings=tuple(sd.retire_findings), artifact=sd.artifact,
+        retire_findings=tuple(sd.retire_findings), artifact=sd.artifact, commit=sd.commit,
     )
 
 

@@ -35,6 +35,8 @@ from typing import Optional
 
 from gfso import tools as _tools
 from gfso.adapters.execution import LocalExecution
+from gfso.adapters.snapshots import snapshot, swap
+from gfso.adapters.worktrees import NODES as _NODES
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
@@ -1479,8 +1481,16 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
         packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
         with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
             if where:
-                text = llm.run_agent(PROMPT.read_text(encoding="utf-8"), CONTACT.format(where=where, checkout=checkout_note(where)) + packet,
-                                     allowed_tools=CONTACT_TOOLS, cwd=where, timeout=CONTACT_TIMEOUT_S)
+                # …IN A COPY OF THE PLACE, as a validator's run is: the issuer rules on that delivery and must not be able
+                # to change it (§10.3); its answer reads as run in the place
+                with (snapshot(where, Path(tmp) / "place", ex or LocalExecution()) if _NODES in str(where)
+                      else contextlib.nullcontext()) as copy:
+                    at = copy or where
+                    text = llm.run_agent(PROMPT.read_text(encoding="utf-8"),
+                                         CONTACT.format(where=at, checkout=checkout_note(at))
+                                         + (swap(packet, where, copy) if copy else packet),
+                                         allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
+                    text = swap(text, copy, where) if copy else text
             else:
                 # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
                 # directory refused every real call, so no machine issuer ever answered (hidden by fakes that

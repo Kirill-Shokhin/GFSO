@@ -87,8 +87,9 @@ def test_what_a_deliver_handed_over_is_on_its_row_after_a_restart(tmp_path, monk
     db = str(tmp_path / "p.db")
     AuditLog(SqliteStorage(db)).record(AuditEntry(timestamp=datetime.now(), task_id=TaskId("n"), signal=Signal.DELIVER,
                                                   old_state=State.EXECUTING, new_state=State.VALIDATING, effects=(),
-                                                  artifact="2c3e0b54"))
-    assert AuditLog(SqliteStorage(db)).get_entries()[0].artifact == "2c3e0b54"
+                                                  artifact="2c3e0b54", commit="c0ffee01"))
+    got = AuditLog(SqliteStorage(db)).get_entries()[0]
+    assert (got.artifact, got.commit) == ("2c3e0b54", "c0ffee01")
     # …and the report puts it there: the tree its delivery commit names
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
@@ -96,13 +97,14 @@ def test_what_a_deliver_handed_over_is_on_its_row_after_a_restart(tmp_path, monk
                   assignee="worker")
     T.signal(e, "n", "ACCEPT", "worker")
     monkeypatch.setattr(W, "commit_all", lambda *a, **k: "2c3e0b54")
+    monkeypatch.setattr(W, "head", lambda *a, **k: "c0ffee01")
     monkeypatch.setattr(W, "merging", lambda *a, **k: False)
     monkeypatch.setattr("gfso.reports.still_unjoined", lambda *a, **k: [])
     monkeypatch.setattr("gfso.reports._settle_internal", lambda *a, **k: None)
     _report_into_signals(e, TaskId("n"), "worker", e.graph.get_task("n"), {"status": "delivered", "summary": "s"},
                          "delivered", type("L", (), {"calls": []})(), lambda s: None, workspace=("b", "p"))
     e.wait_idle()
-    assert [x.artifact for x in e.audit_log(TaskId("n")) if x.signal == Signal.DELIVER] == ["2c3e0b54"]
+    assert [(x.artifact, x.commit) for x in e.audit_log(TaskId("n")) if x.signal == Signal.DELIVER] ==         [("2c3e0b54", "c0ffee01")]
     e.stop()
 
 

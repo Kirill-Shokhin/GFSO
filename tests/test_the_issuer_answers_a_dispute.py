@@ -384,3 +384,23 @@ def test_a_cut_contact_run_is_not_the_issuers_answer(tmp_path):
         assert e.graph.get_state(TaskId("leaf")) == State.CHALLENGED
     finally:
         e.stop()
+
+
+def test_in_a_nodes_own_place_the_issuer_runs_in_a_copy_of_it(tmp_path):
+    """The issuer rules on that delivery and must not be able to change it (§10.3): in a node's own place its contact
+    runs in a copy, told where the copy stands; the place keeps what it had (security, 2026-10-27)."""
+    place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
+    place.mkdir(parents=True)
+    (place / "delivered.c").write_text("x\n")
+    e = make_engine()
+    e.start()
+    try:
+        _disputed(e)
+        llm = _ContactLLM({"decision": "accept", "justification": "ran it: the check cannot pass"}, ran={"Bash": 1})
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        e.wait_idle()
+        (stood, _), = llm.where
+        assert stood != str(place) and stood.endswith("place") and stood in llm.packets[0]
+        assert [p.name for p in place.iterdir()] == ["delivered.c"]
+    finally:
+        e.stop()

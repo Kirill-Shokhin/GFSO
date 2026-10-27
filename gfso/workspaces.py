@@ -14,6 +14,7 @@ from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task
 from gfso.core.types import Signal, TaskId, State
+from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.roster import AgentRegistry
 
 
@@ -85,13 +86,40 @@ def _where_it_joins(engine, agents: "AgentRegistry", task, w: tuple) -> str | No
     return pw[1] if pw is not None and same_place(pw[0], w[0]) and Path(pw[1]).is_dir() else w[0]
 
 
+def _has_branch(w: tuple, execution) -> bool:
+    """Does the node's work exist to join? Its branch, not its directory: a place removed by hand once let a producer's
+    work drop out of every consumer without a word, its commits still in the refs."""
+    return W.git(w[0], "rev-parse", "--verify", "--quiet", f"refs/heads/{w[2]}", execution=execution).returncode == 0
+
+
+def _accepted_ref(engine, node, w: tuple, execution) -> tuple[str | None, str | None]:
+    """(what to merge of a DONE node's branch, why nothing) — the commit its PASS accepted, not whatever the branch
+    holds now: the branch is the agents' to write, and the verdict is about the result as it stood at DELIVER
+    (§11.3). A branch moved since is said once; a node whose delivery named no tree joins its branch as before."""
+    tree, carried = engine.accepted_delivery(node.id)
+    if tree is None:
+        return w[2], None
+    # the commit recorded at DELIVER, if it still carries that tree; else, for a delivery recorded before commits were,
+    # the newest commit of the branch that does
+    sha = (carried if carried and W.git(w[0], "rev-parse", "--verify", "--quiet", f"{carried}^{{tree}}",
+                                         execution=execution).stdout.strip() == tree
+           else None if carried else W.accepted_commit(w[0], w[2], tree, execution=execution))
+    if sha is None:
+        return None, f"its branch `{w[2]}` no longer carries the tree its PASS accepted ({tree[:12]})"
+    tip = W.git(w[0], "rev-parse", f"{w[2]}^{{tree}}", execution=execution).stdout.strip()
+    if tip != tree and engine.say_once(f"moved:{node.id}:{tree}"):
+        engine.emit_info("delegate", f"{node.id}: its branch `{w[2]}` moved after its PASS — the accepted commit "
+                                     f"{sha[:12]} joins, not the branch as it stands")
+    return sha, None
+
+
 def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
     """A part joins the whole when it PASSes: its delivery's branch merged `--no-ff` where its parent works. None
     when joined or nothing to join; else why not. A conflict is aborted and the branch left as it is: the whole's
     integration is the whole's work (§8.7, the glue), and the parent's packet names the branch (`_enter_workspace`)."""
     t = engine.graph.get_task(TaskId(task_id))
     w = _workspace(engine, agents, t) if t is not None and t.state == State.DONE else None
-    if w is None or not Path(w[1]).is_dir():
+    if w is None or not _has_branch(w, execution_of(engine, agents)):
         return None
     parent = engine.graph.get_parent(t.id)
     # …WHERE ITS WHOLE WILL WORK, made now if the whole's session has not started yet: joined straight into the base,
@@ -101,8 +129,14 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
         _ensure_place(engine, agents, parent, pw)
     if (into := _where_it_joins(engine, agents, t, w)) is None:
         return None
-    why = W.merge(w[0], into, w[2], f"gfso: {t.id} joins {parent.id if parent else 'the base'}",
-                  execution=execution_of(engine, agents))
+    ex = execution_of(engine, agents)
+    ref, why = _accepted_ref(engine, t, w, ex)
+    if ref is None:         # the accepted work is gone from its branch: nothing to merge, and nobody is told to
+        why = f"{why} - {NOT_ON_ITS_BRANCH}: DO NOT merge that branch; its work has to be delivered again (reopen it)"
+        if engine.say_once(f"lost:{t.id}:{generation_of_task(t)}"):
+            engine.emit_info("delegate", f"{t.id}: PASSED, and {why}")
+        return why
+    why = W.merge(w[0], into, ref, f"gfso: {t.id} joins {parent.id if parent else 'the base'}", execution=ex)
     if why and engine.say_once(f"unjoined:{t.id}:{generation_of_task(t)}"):
         engine.emit_info("delegate", f"{t.id}: PASSED, and its branch `{w[2]}` did not join {into} ({why}) - the "
                                      f"merge was aborted and the branch stands unmerged; integrating it is the work "
@@ -118,7 +152,7 @@ def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     if parent is not None and (pw := _workspace(engine, agents, parent)) is not None and pw[2] != w[2] \
             and same_place(pw[0], w[0]):
         _ensure_place(engine, agents, parent, pw)
-    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0])
+    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=execution_of(engine, agents))
 
 
 def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tuple:
@@ -142,10 +176,16 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
     for x in parts.values():
         xw = (_workspace(engine, agents, x) if x is not None and str(x.id) not in inside
               and (x.state == State.DONE or str(x.id) in kept) else None)
-        if xw is None or xw[2] == branch or not same_place(xw[0], base) or not Path(xw[1]).is_dir():
+        if xw is None or xw[2] == branch or not same_place(xw[0], base) or not _has_branch(xw, execution_of(engine, agents)):
             continue
-        if (why := W.merge(base, place, xw[2], f"gfso: {x.id} joins {top.id}", execution=execution_of(engine, agents))):
-            unjoined.append((str(x.id), xw[2], why))
+        ex = execution_of(engine, agents)
+        ref, why = _accepted_ref(engine, x, xw, ex) if x.state == State.DONE else (xw[2], None)
+        if ref is None:     # the accepted work is gone from its branch: no merge of what no PASS accepted is asked for
+            if engine.say_once(f"lost:{x.id}:{why}"):
+                engine.emit_info("delegate", f"{x.id}: {why} - it does not join {top.id}")
+            continue
+        if (why := W.merge(base, place, ref, f"gfso: {x.id} joins {top.id}", execution=ex)):
+            unjoined.append((str(x.id), xw[2], why, ref))   # …and the accepted commit: what it merges, held on
     return place, unjoined, w
 
 
@@ -169,8 +209,8 @@ def still_unjoined(engine, workspace: tuple | None, task_id, unjoined: list) -> 
         return []
     mine, kept = parts_of(engine, [engine.graph.get_task(TaskId(task_id))])
     # …the parts that PASSed: a replaced node's unfinished work is offered to the whole, not owed by it
-    return [x for x, b, _ in unjoined if x in mine and (x not in kept or mine[x].state == State.DONE)
-            and not W.contains(workspace[0], workspace[1], b)]
+    return [x for x, _, _, ref in unjoined if x in mine and (x not in kept or mine[x].state == State.DONE)
+            and not W.contains(workspace[0], workspace[1], ref, execution=execution_of(engine))]
 
 
 def _unjoined_text(unjoined: list) -> str:
@@ -180,10 +220,11 @@ def _unjoined_text(unjoined: list) -> str:
     return ("\n## Parts NOT joined into your workspace — integrating them is this whole's work\n"
             "Each stands on its own branch — a part that PASSed, or a node this one replaces, whose work it carries "
             "on — and did not merge here cleanly (the merge was aborted, your tree is as it was). Merge each "
-            "(`git merge <branch>`), resolve, and deliver the integrated result. A delivery whose tree does not "
+            "(`git merge <the commit named, else the branch>`), resolve, and deliver the integrated result. A delivery whose tree does not "
             "contain every branch below is not handed in: your result is the integration of its parts' work, and "
             "rewriting what a part already built in place of merging it loses what its seam passed.\n"
-            + "".join(f"- `{x}` on branch `{b}`: {why}\n" for x, b, why in unjoined))
+            + "".join(f"- `{x}` on branch `{b}`{'' if ref == b else f' — merge its accepted commit `{ref}`'}: {why}\n"
+                      for x, b, why, ref in unjoined))
 
 
 #: the roles whose sessions keep a conversation: one node's round and one scope's — two prompts, two conversations
@@ -247,7 +288,8 @@ def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
         if w is None or w[2] in seen or not Path(w[1]).is_dir():
             continue
         seen.add(w[2])
-        if not (W.contains(w[0], w[0], w[2]) and W.remove(*w)):
+        ex = execution_of(engine, agents)
+        if not (W.contains(w[0], w[0], w[2], execution=ex) and W.remove(*w, execution=ex)):
             left.append(f"{w[1]} (`{w[2]}`)")
     execution_of(engine, agents).stop()        # the goal is settled: its project's container goes too
     if left:

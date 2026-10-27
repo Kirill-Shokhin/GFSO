@@ -62,11 +62,12 @@ def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
                         errors="replace", env=env)
 
 
-def _relative_gitfile(place: Path) -> None:
+def _relative_gitfile(place: Path, execution=None) -> None:
     """A worktree's `.git` names its gitdir by a path relative to the place: written absolute (`C:/…`), the same tree
     is no repository inside a container that mounts it elsewhere (probe P2). Hidden on Windows, so rewritten in place."""
     with open(place / ".git", "r+", encoding="utf-8") as f:
         gitdir = f.read().split("gitdir:", 1)[1].strip()
+        gitdir = execution.to_outside(gitdir) if execution is not None else gitdir
         f.seek(0)
         f.write("gitdir: " + Path(os.path.relpath(gitdir, place)).as_posix() + "\n")
         f.truncate()
@@ -90,23 +91,28 @@ def is_repo_top(base) -> bool:
     return _TOPS[k]
 
 
-def ensure(base, place, branch: str, start_from) -> bool:
+def ensure(base, place, branch: str, start_from, execution=None) -> bool:
     """The worktree at `place` on `branch`, created from the HEAD of `start_from` when it is not there yet. True
-    when it was created now; a place that exists is reused as it stands (a rework round continues its own tree)."""
+    when it was created now; a place that exists is reused as it stands (a rework round continues its own tree).
+
+    Run where the project's work runs: the repository is the agents' to write, so the host does not act on it. LOCKED,
+    so no session's `worktree prune` takes every node's registration away, and with no prune of its own: `--force`
+    re-adds over the registration a place deleted by hand left behind, touching no other node's."""
     place = Path(place)
     with _lock(base):
         if (place / ".git").exists():
+            # …made before places were locked: locked now
+            _by_registration(base, ["worktree", "lock", str(place)], execution)
             return False
-        git(base, "worktree", "prune")          # a place deleted by hand leaves a registration behind
-        if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0:
-            args = ["worktree", "add", str(place), branch]
+        if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0:
+            args = ["worktree", "add", "--lock", "--force", "--force", str(place), branch]
         else:
-            start = git(start_from, "rev-parse", "HEAD").stdout.strip()
-            args = ["worktree", "add", "-b", branch, str(place), start]
-        r = git(base, *args)
+            start = git(start_from, "rev-parse", "HEAD", execution=execution).stdout.strip()
+            args = ["worktree", "add", "--lock", "--force", "--force", "-b", branch, str(place), start]
+        r = git(base, *args, execution=execution)
         if r.returncode != 0:
             raise OSError(f"git worktree add {place} failed: {r.stderr.strip()}")
-        _relative_gitfile(place)
+        _relative_gitfile(place, execution)
         return True
 
 
@@ -127,7 +133,12 @@ def commit_all(base, place, message: str, who: str, execution=None) -> str:
         r = git(place, "commit", "--allow-empty", "--no-verify", "-q", "-m", message, who=who, execution=execution)
         if r.returncode != 0:
             raise OSError(f"the delivery could not be committed in {place}: {r.stderr.strip()}")
-        return git(place, "rev-parse", "HEAD^{tree}").stdout.strip()
+        return git(place, "rev-parse", "HEAD^{tree}", execution=execution).stdout.strip()
+
+
+def head(place, execution=None) -> str | None:
+    """The commit the tree at `place` stands on, or None."""
+    return git(place, "rev-parse", "HEAD", execution=execution).stdout.strip() or None
 
 
 def merge(base, into, branch: str, message: str, execution=None) -> str | None:
@@ -142,22 +153,41 @@ def merge(base, into, branch: str, message: str, execution=None) -> str | None:
         return " ".join((r.stdout + " " + r.stderr).split())[:400] or f"git merge exited {r.returncode}"
 
 
-def merging(base, place) -> bool:
+def accepted_commit(base, branch: str, tree: str, execution=None) -> str | None:
+    """The newest commit of `branch` whose tree is `tree` — the delivery a verdict accepted, wherever the branch has
+    moved since — or None when the branch carries no such commit."""
+    with _lock(base):
+        r = git(base, "log", "--format=%H %T", branch, "--", execution=execution)
+    return next((c for c, t in (ln.split() for ln in r.stdout.splitlines() if ln.count(" ") == 1) if t == tree), None)
+
+
+def merging(base, place, execution=None) -> bool:
     """Is a merge left unfinished in the tree at `place` — begun and not concluded, or with paths still unmerged?"""
     with _lock(base):
-        return (git(place, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0
-                or bool(git(place, "ls-files", "-u").stdout.strip()))
+        return (git(place, "rev-parse", "-q", "--verify", "MERGE_HEAD", execution=execution).returncode == 0
+                or bool(git(place, "ls-files", "-u", execution=execution).stdout.strip()))
 
 
-def contains(base, into, branch: str) -> bool:
+def contains(base, into, branch: str, execution=None) -> bool:
     """Is every commit of `branch` already in the tree at `into`?"""
     with _lock(base):
-        return git(into, "merge-base", "--is-ancestor", branch, "HEAD").returncode == 0
+        return git(into, "merge-base", "--is-ancestor", branch, "HEAD", execution=execution).returncode == 0
 
 
-def remove(base, place, branch: str) -> bool:
-    """Take a joined node's worktree and branch away. False when git refused (a file held open, a branch not
-    joined — `branch -d` refuses to lose commits)."""
+def _by_registration(base, args: list, execution):
+    """A worktree command that finds the place by the path it was registered under: where the work runs, else — for
+    a place registered on the host before system git moved into the execution, which the execution cannot match
+    ("is not a working tree") — on the host, for these two commands only (`lock`, a forced `remove`), which
+    read no index and run nothing the agents wrote."""
+    r = git(base, *args, execution=execution)
+    if r.returncode and execution is not None and "is not a working tree" in (r.stderr or ""):
+        r = git(base, *args)
+    return r
+
+
+def remove(base, place, branch: str, execution=None) -> bool:
+    """Take a joined node's worktree and branch away (twice forced: the place is locked). False when git refused (a
+    file held open, a branch not joined — `branch -d` refuses to lose commits)."""
     with _lock(base):
-        ok = git(base, "worktree", "remove", "--force", str(place)).returncode == 0
-        return git(base, "branch", "-d", branch).returncode == 0 and ok
+        ok = _by_registration(base, ["worktree", "remove", "--force", "--force", str(place)], execution).returncode == 0
+        return git(base, "branch", "-d", branch, execution=execution).returncode == 0 and ok

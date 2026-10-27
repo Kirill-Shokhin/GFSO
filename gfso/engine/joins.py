@@ -12,6 +12,11 @@ from gfso.core.graph.model import Graph
 from gfso.core.types import TaskId, settled_positive
 
 
+#: The words a refused join carries when what its PASS accepted is no longer on its branch: nothing is merged, and no
+#: reader may tell anyone to merge that branch — the work is delivered again.
+NOT_ON_ITS_BRANCH = "what its PASS accepted is not on its branch"
+
+
 class Joins:
     """The joins of one engine's graph, as its host reports them (`mark_joining`)."""
 

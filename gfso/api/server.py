@@ -11,6 +11,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -983,6 +984,51 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     _mount_runtime(app, _e, _live_leases, _scope_name)
 
 
+#: The names this door answers to: loopback, the host the one server is configured on, and `config.allowed_hosts()`.
+def _door_hosts() -> frozenset:
+    configured = urlparse(_serverctl.BASE).hostname or _LOOPBACK
+    return frozenset({_LOOPBACK, "localhost", "::1", configured.lower(), *_config.allowed_hosts()})
+
+
+def _door_origins() -> tuple:
+    """The page's own origins: the one server's port, and 8080 for a UI served from a dev static host beside it.
+    The port comes from `serverctl` (whose single knob is GFSO_SHARED_URL) — a literal 8000 here allowed the page
+    and its API to disagree about which server they are."""
+    return tuple(f"http://{h if ':' not in h else f'[{h}]'}:{p}" for h in sorted(_door_hosts())
+                 for p in dict.fromkeys((_serverctl.PORT, 8080)))
+
+
+class _DoorGuard:
+    """Refuses, before any route runs, a request whose Host names someone else, and anything but a read that a browser
+    sent from a page not this server's — a socket, or a POST no preflight stops (an empty body stopped the server from
+    any page). A client that sends no Origin is not a browser page and passes. The page's own origin is the Host it
+    asked, on whatever port the server was started."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        headers = dict(scope["headers"])
+        host = urlparse("//" + headers.get(b"host", b"").decode("latin-1")).hostname or ""
+        origin = headers.get(b"origin", b"").decode("latin-1")
+        own = (not origin or origin in _door_origins()
+               or origin == "http://" + headers.get(b"host", b"").decode("latin-1"))
+        read = scope["type"] == "http" and scope.get("method") in ("GET", "HEAD", "OPTIONS")
+        # …and nothing at all a browser marks as sent from another site — an image tag sends no Origin, and a read with
+        # `?project=` wakes that project's engine and its clock (`Sec-Fetch-Site`: every current browser, every request)
+        foreign = headers.get(b"sec-fetch-site", b"").decode("latin-1") in ("cross-site", "same-site")
+        if host in _door_hosts() and not foreign and (read or own):
+            return await self.app(scope, receive, send)
+        if scope["type"] == "websocket":
+            return await send({"type": "websocket.close", "code": 4403})
+        await send({"type": "http.response.start", "status": 403,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
+        await send({"type": "http.response.body", "body": b"this door answers only to its own host names and page; "
+                                                          b"add a name in GFSO_ALLOWED_HOSTS (SECURITY.md)"})
+
+
 def _lifespan(mcp):
     """The app's lifespan: hold the MCP session manager open for as long as the sub-app is mounted
     (the streamable transport needs it running), and end the server's children when it stops.
@@ -1057,15 +1103,12 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     # exposes the whole tool registry, including a `signal` whose source the caller chooses and a
     # `validate_result` that spawns a model with shell access in a directory the caller names. With
     # `*`, any page the user happened to have open in a browser could drive that chain.
-    app.add_middleware(
-        CORSMiddleware,
-        # The one server's own port comes from `serverctl` (whose single knob is GFSO_SHARED_URL) —
-        # a literal 8000 here allowed the page and its API to disagree about which server they are.
-        # 8080 stays for a UI served from a dev static host beside it.
-        allow_origins=[f"http://{h}:{p}" for h in (_LOOPBACK, "localhost")
-                       for p in dict.fromkeys((_serverctl.PORT, 8080))],
-        allow_methods=["*"], allow_headers=["*"],
-    )
+    app.add_middleware(CORSMiddleware, allow_origins=list(_door_origins()), allow_methods=["*"], allow_headers=["*"])
+    # CORS only governs what a foreign page may READ back; it lets the request through. A page on a name
+    # its DNS re-points at 127.0.0.1 is same-origin to the browser and passes CORS untouched, and a
+    # socket is outside CORS altogether — so the door itself refuses a Host it does not own, and a browser
+    # Origin it does not own on anything but a read (the /mcp door has had this from its SDK).
+    app.add_middleware(_DoorGuard)
 
     # === Static UI ===
     _mount_pages(app)

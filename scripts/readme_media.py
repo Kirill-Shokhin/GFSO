@@ -123,7 +123,8 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
     from gfso.runtime import ProjectRegistry
 
     reg = ProjectRegistry(default_storage="sqlite", default_llm="stub", seed=False)
-    app = TestClient(create_app(reg.engine("default"), registry=reg))   # no `with`: its loops and clocks never start
+    app = TestClient(create_app(reg.engine("default"), registry=reg),   # no `with`: its loops and clocks never start
+                     base_url="http://127.0.0.1")   # a name the door answers to
     live = running(src, T, name)
 
     def fix(o):

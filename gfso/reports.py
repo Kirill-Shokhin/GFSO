@@ -211,13 +211,14 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         # its branch joins the whole at once, and a join ahead of this commit would carry the tree without it
         # …A MERGE LEFT HALF-DONE IS NO RESULT: committed, it concluded with the conflict markers in the files, and the
         # tree then contained the part's branch, so the hold below let it through (finder over 190f4db)
-        if workspace is not None and W.merging(workspace[0], workspace[1]):
+        if workspace is not None and W.merging(workspace[0], workspace[1], execution=execution_of(engine)):
             _cb(f"{task_id}: NOT delivered — a merge is left unfinished in its tree (conflicts unresolved): resolve "
                 f"each conflicted file and commit the merge · {_stat_line(llm)}")
             engine.emit_info("delegate", f"{task_id}: delivery held — a merge left unfinished in its tree")
             return
         artifact = (W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id,
                                  execution=execution_of(engine)) or None) if workspace is not None else None
+        carried = W.head(workspace[1], execution=execution_of(engine)) if artifact else None
         # …AND IT CARRIES ITS PARTS' WORK. Told in its packet to merge four parts that conflicted, a root's executor
         # rewrote their files instead, never merged, and delivered a tree without the JOINs a part had passed on; its
         # deliveries failed until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16). Merging is its own move.
@@ -228,7 +229,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             engine.emit_info("delegate", f"{task_id}: delivery held — part(s) {', '.join(left)} not merged into it")
             return
         _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
-                self_validation=_self, artifact=artifact)
+                self_validation=_self, artifact=artifact, commit=carried)
         _cb(f"{task_id}: executor DELIVERED · {_stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb, observed)
 
