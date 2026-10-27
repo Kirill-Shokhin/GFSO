@@ -220,3 +220,16 @@ def test_evidence_is_cut_to_its_tail_in_the_packet_and_kept_whole_on_the_record(
         assert e.get_exec_verdict(TaskId("n1"))["outside"][0]["evidence"] == long
     finally:
         e.stop()
+
+
+def test_an_answer_retires_only_what_its_packet_showed_inline():
+    """Past the inline cap the rest went to a file the zero-tool issuer cannot read; marking every one answered lost the
+    earliest — in the measured row, the hole itself (critic over d6c48ea). The rest stays asked."""
+    e, _ = _validated([{"what": SEEN, "evidence": "printed NULL"}]
+                      + [{"what": f"obs-{i:02}", "evidence": "x"} for i in range(SHOWN_FINDINGS + 4)])
+    try:
+        assert _declined(e)["status"] == "applied"
+        left = [o["what"] for o in e.outside_the_criteria(TaskId("goal"), own=False)]
+        assert len(left) == 5 and _asked(e).get("goal") == "outside", left
+    finally:
+        e.stop()

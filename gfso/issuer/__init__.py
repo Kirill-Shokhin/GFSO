@@ -53,7 +53,7 @@ from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
 from gfso.engine.validation import is_auto_root, party_kind, users_criteria, users_plan
-from gfso.packets import answered_challenges, answers_given, as_shown, capped, list_key, outside_text
+from gfso.packets import SHOWN_FINDINGS, answered_challenges, answers_given, as_shown, capped, list_key, outside_text
 from gfso.engine.events import emit_cb
 from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
 
@@ -1650,9 +1650,10 @@ def issuer_turn(engine, task_id: TaskId, question: str, actor: str, verbs: "Verb
         out = answer_the_challenge(engine, task_id, actor, _llm, refusal=refusal, verbs=verbs, where=where)
         return {**out, "status": "applied" if out["status"] in ("accepted", "rejected") else out["status"]}
     ep = episode(engine.graph.get_task(task_id))
-    # what an `outside` answer answers: the observations its packet shows, read as it is built — one recorded during
-    # the turn was not shown, and stays asked
-    shown = engine.outside_the_criteria(task_id, own=False) if question == "outside" else ()
+    # what an `outside` answer answers: the observations its packet shows INLINE, read as it is built — one recorded
+    # during the turn, or past the inline cap (the issuer of a split question has no tool to read the overflow file),
+    # was not shown and stays asked: marking all answered lost the earliest, the row's own hole (critic over d6c48ea)
+    shown = engine.outside_the_criteria(task_id, own=False)[:SHOWN_FINDINGS] if question == "outside" else ()
     answer, _ = _ask(engine, task_id, question, actor, MOVE_SCHEMA, refusal, verbs, _llm, where)
     if answer is None:
         return {"status": "unparsed", "why": "the answer was not one JSON object by the schema"}
