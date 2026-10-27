@@ -18,7 +18,7 @@ const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.leng
 // how full the sessions' contexts got: the median session's fullest turn dark, the fullest session's light behind it
 function fill(r) {
     if (!r.fills.length) return `<span class="wk-none"${MODELS.unrecorded}>not recorded</span>`;
-    const max = Math.max(...r.fills), med = median(r.fills), w = r.window, of = x => `${pct(x)}${w ? ` (${fmtTok(Math.round(x * w))})` : ''}`;
+    const max = Math.max(...r.fills), med = median(r.fills), w = r.window, of = x => [x, w ? fmtTok(Math.round(x * w)) : ''];
     return `<span class="wk-fill${max > 0.8 ? ' high' : ''}"${MODELS.fillOf(of(med), of(max), w && fmtTok(w), r.fills.length, r.calls)}>`
         + `<i class="max" style="width:${pct(max)}"></i><i style="width:${pct(med)}"></i></span>`;
 }
@@ -33,7 +33,7 @@ function where(r) {
     if (!s || !total) return `<span class="wk-none"${MODELS.split(counts.map(([n, c]) => [n, '—', fmtTok(c)]), r.unsplit ? MODELS.unsplit : MODELS.foreign)}>—</span>`;
     const note = s.covered < 0.99 && MODELS.covers(pct(s.covered), s);
     return `<span class="wk-cost">${s.parts.map(([k, v], i) => `<i class="${COST_CLS(k)}" style="width:${pct(v / total)}"`
-        + `${MODELS.part(counts[i][0], usd(v), pct(v / total), fmtTok(counts[i][1]), note)}></i>`).join('')}</span>`;
+        + `${MODELS.part(counts[i][0], usd(v), v / total, fmtTok(counts[i][1]), note)}></i>`).join('')}</span>`;
 }
 
 export function render(el, run) {

@@ -27,8 +27,16 @@ const lines = xs => xs.flat(Infinity).filter(Boolean).map(String);
 // a hover on any element: the page's one tip reads `data-tip` (tip.js); the browser's own `title` box is never drawn
 export const hover = (head, ...rows) => head ? ` data-tip="${esc(lines([head, rows]).join('\n'))}"` : '';
 // a tip's card: the heading, a state badge where one is given, then one row per line — plain text, escaped here
-export const card = (head, rows = [], badge = '') => `<div class="tt-name">${esc(head)}</div>${badge}`
-    + lines(rows).map(r => `<div class="tt-row">${esc(r)}</div>`).join('');
+// …a heading may carry its figure apart, at the right (`head\tfigure`), and a row may be a SHARE drawn as a filled line
+// with its percent at the end (`meter()`): a percent run on after a sum in one line read as mush (the author, 2026-10-27)
+const METER = '\u0007';
+export const meter = (label, share) => `${METER}${label}\t${share}`;
+const row = r => { if (!r.startsWith(METER)) return `<div class="tt-row">${esc(r)}</div>`;
+    const [label, share] = r.slice(1).split('\t'), p = `${Math.round(+share * 100)}%`;
+    return `<div class="tt-meter"><span>${esc(label)}</span><i><b style="width:${p}"></b></i><em>${p}</em></div>`; };
+export const card = (head, rows = [], badge = '') => { const [h, figure] = head.split('\t');
+    return `<div class="tt-name${figure ? ' tt-split' : ''}"><span>${esc(h)}</span>${figure ? `<b>${esc(figure)}</b>` : ''}</div>${badge}`
+        + lines(rows).map(row).join(''); };
 const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 // a popover: its title and the caption saying what it lists, set apart from the items; an item is a heading (a glyph
 // before it, a value and a tag after it, a link at its end) and what it means; `group` starts a new group of items
@@ -212,7 +220,7 @@ export const MODELS = {
     sessions: hover('Sessions', 'Each model call is a session with a context of its own, unless it continued a conversation (marked)'),
     cost: hover('Cost split', `By kind of token: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right`,
         "Priced by Anthropic's structure: per input token 1, output 5, cache read 0.1, cache written 2", 'Another provider\'s rows are not split'),
-    part: (kind, cost, share, tokens, note) => hover(`${cap(kind)}: ${cost} · ${share}`, `${tokens} tokens`, note),
+    part: (kind, cost, share, tokens, note) => hover(`${cap(kind)}\t${cost}`, meter('of the row', share), `${tokens} tokens`, note),
     id: id => hover(id),
     window: hover('The model\'s context window'),
     fill: hover('Context filled', "Each session's fullest turn against its model's window: the dark bar the median session, the light one the fullest"),
@@ -230,6 +238,7 @@ export const MODELS = {
         s.resumedOut && `${s.resumedOut} resumed round${s.resumedOut > 1 ? 's' : ''} booked the whole conversation's cost (recorded before the fix): the round before counted twice`,
         s.out - s.resumedOut && `${s.out - s.resumedOut} session${s.out - s.resumedOut > 1 ? 's' : ''} not priced by ${s.out - s.resumedOut > 1 ? 'their' : 'its'} own tokens`,
         s.unweighed && `${s.unweighed} session${s.unweighed > 1 ? 's' : ''} not split: recorded without the cache kept apart, without tokens, or unpriced`],
-    fillOf: (med, max, w, n, calls) => hover(`Median ${med} · fullest ${max}`, `Each session's fullest turn${w ? ` against a ${w} window` : ''}`,
-                                              n < calls && `${n} of ${calls} sessions recorded`),
+    // the same form as a cost split: what was hovered and its figure, the shares as filled lines
+    fillOf: (med, max, w, n, calls) => hover(`Context filled${w ? `\t${w} window` : ''}`, meter(`median ${med[1]}`, med[0]),
+        meter(`fullest ${max[1]}`, max[0]), "Each session's fullest turn", n < calls && `${n} of ${calls} sessions recorded`),
 };
