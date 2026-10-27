@@ -6,14 +6,15 @@ import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal} from './vocab.js';
 import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
-import {refreshHeader, refreshQuality, toggleQuality, toggleReports, stopRun, startRun} from './header.js';
-import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects} from './projects.js';
+import {refreshHeader, refreshQuality, toggleReports, stopRun, startRun} from './header.js';
+import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject} from './projects.js';
 import {selectTask, closeSidebar, resign, openReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
 import * as goal from './goal.js';
 import {mountDeck, refreshDeck, onPipeline, onInflight, suggestHeight} from './deck.js';
 import {connectWS} from './live.js';
+import {mountHints} from './hints.js';
 
 const refreshAll = async () => { await refreshGraph(); goal.labelGoalButton(); await refreshQuality(); await refreshHeader(); };
 S.reload = async () => { await refreshAll(); if (focus().select) await selectTask(focus().select); };
@@ -44,8 +45,8 @@ const ACT = {
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
-    mine: toggleMine, help: () => $('tb-help').classList.toggle('open'), quality: toggleQuality, reports: toggleReports, 'close-modal': author.closeModal,
-    projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects,
+    mine: toggleMine, pop: (d, b) => b.closest('.hd-quality').classList.toggle('open'), reports: toggleReports, 'close-modal': author.closeModal,
+    projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects, 'project-delete': deleteProject,
     'project-new': () => (closeProjects(), switchProject('__new__')),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
     'gp-scope': goal.addScope, 'gp-risk': goal.addRisk, 'gp-create': goal.createGoal, 'gp-plan': goal.planGoal,
@@ -97,6 +98,7 @@ const LIVE = {
 };
 
 async function init() {
+    mountHints();
     // THE PAGE MUST FAIL LOUDLY, NOT BLANKLY: the graph library is a remote script, and with the CDN
     // unreachable a first-time user saw a toolbar over an empty page and no error (2026-09-02).
     if (!window.cytoscape || !window.dagre) {

@@ -205,9 +205,32 @@ function work(calls) {
             r.window = c.context_window || window[model];         // a share says nothing without the window it is of
         }
         if (c.node_id) (((byNode[c.node_id] ??= {})[kind] ??= {})[model] = (byNode[c.node_id][kind][model] || 0) + 1);
+        // what the cost went to: a priced Claude call with its cache kept apart, weighed by the price structure
+        const w = /^claude-/.test(model) && c.cost_usd && c.input_tokens != null && c.cache_read_tokens != null
+            && TOKEN_PRICE.map(([k, x]) => [k, (c[k] || 0) * x]);
+        if (w) (r.weighed ??= []).push({w, cost: c.cost_usd, rate: c.cost_usd / sum(w, ([, v]) => v), resumed: !!c.resumed});
     }
+    for (const r of Object.values(rows)) r.split = split(r);
     return {rows: Object.values(rows).sort((a, b) => b.cost - a.cost), byNode, unanswered, unansweredOn,
             total: sum(calls, c => c.cost_usd || 0)};
+}
+
+// A session's cost is reported as one sum. Its split by kind of token is read off Anthropic's price structure — per
+// input token 1, output 5, cache read 0.1, cache written 2 (Claude Code writes the one-hour cache) — over the sessions
+// it prices: those whose implied input rate is within 2% of the row's median. Measured 2026-10-27 over every E3 row
+// with the cache kept apart: 807 of 820 fresh sessions price within 2%. The ones that do not are resumed rounds booked
+// before 7213607, which recorded the whole conversation's cost (the CLI's running total) — their predecessor's cost
+// counted twice; the split leaves them out and says which share of the row's cost it covers, and why.
+// Another provider's sessions are not split: its price structure is not known here.
+export const TOKEN_PRICE = [['input_tokens', 1], ['output_tokens', 5], ['cache_read_tokens', 0.1], ['cache_write_tokens', 2]];
+const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.length - 1) >> 1]; };
+function split(r) {
+    if (!r.weighed) return null;
+    const rate = median(r.weighed.map(x => x.rate)), held = r.weighed.filter(x => Math.abs(x.rate / rate - 1) <= 0.02);
+    const parts = TOKEN_PRICE.map(([k], i) => [k, rate * sum(held, x => x.w[i][1])]);
+    const out = r.weighed.filter(x => !held.includes(x));
+    return {parts, covered: sum(held, x => x.cost) / Math.max(r.cost, 1e-12), sessions: held.length,
+            out: out.length, resumedOut: out.filter(x => x.resumed).length, unweighed: r.calls - r.weighed.length};
 }
 
 // Criteria passing at their latest verdict, one track per tree level: a part's verdict is its

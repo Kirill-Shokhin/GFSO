@@ -4,8 +4,9 @@
 import {esc} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
-import {frame, hm, dur, mark, trim} from './draw.js';
-import {KIND_NAME, waitWords, atWork, failedOf, failedWords, EDGE_NOTE, countWords} from './run.js';
+import {frame, mark, trim} from './draw.js';
+import {KIND_NAME, waitWords, atWork, failedOf, failedWords} from './run.js';
+import {TIP} from './hints.js';
 import {procs} from './state.js';
 
 // an outlined bar (an issuer's turn, a consent) is drawn over the filled ones: it can run beside an execution or a
@@ -53,12 +54,11 @@ export function render(el, run, nodes) {
     const state = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const idle = id => run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${
         run.waits[id]?.deps.length ? `waits on ${esc(waitWords(run.waits[id], d => trim(name(d), 24)))}` : esc(state[id].toLowerCase())}</text>`;
+    // the bar kinds are a LABEL (hints.js): read each time, so drawn beside the bars; PASS and FAIL are the key's
     // consent shown only where a run has it: rows recorded before it was booked apart have none
-    const kinds = [['exec', 'execution'], ...(run.sessions.some(s => s.kind === 'consent') ? [['consent', 'consent']] : []),
-                   ['val', 'validation'], ['issuer', 'issuer']], end = kinds.length * 92 - 14, legendW = end + 100;
-    const legend = kinds.map(([k, t], i) =>
-        `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${t}</text>`).join('')
-        + `${mark('PASS', end, 4, 3.5)}<text x="${end + 7}" y="8">PASS</text>${mark('FAIL', end + 46, 4, 3.5)}<text x="${end + 53}" y="8">FAIL</text>`;
+    const kinds = ['exec', ...(run.sessions.some(s => s.kind === 'consent') ? ['consent'] : []), 'val', 'issuer'], legendW = kinds.length * 92;
+    const legend = kinds.map((k, i) =>
+        `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND_NAME[k]}</text>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 4}" width="${W}" height="${ROW}"/>
         <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" x="${LEFT - 10}" y="${Y(id) + 4}">${esc(trim(name(id)))}</text>
@@ -85,21 +85,14 @@ export function render(el, run, nodes) {
         if (v) {
             const id = v.closest('[data-node]').dataset.node, r = run.rounds[id].find(r => String(r.n) === v.dataset.v);
             const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), {own, edges} = failedOf(run, id, r.failed);
-            return tip(`<div class="tt-name">${esc(name(id))}</div><div class="tt-row">${r.verdict} · round ${r.n} · ${hm(r.at)}</div>
-                ${own.length ? `<div class="tt-row">failed: ${esc(own.join(', '))}</div>` : ''}
-                ${m ? `<div class="tt-row">${countWords(m, T.total)}</div>` : ''}
-                ${edges.length ? `<div class="tt-row">${esc(edges.join(', '))}: ${EDGE_NOTE}</div>` : ''}`, e);
+            return tip(TIP.verdict(name(id), r.verdict, r, r.at, own, m, T?.total, edges), e);
         }
         const s = e.target.closest('.tl-s');
         if (!s) return untip();
         // the round a stretch belongs to: the delivery an execution ended in, the verdict a validation gave
         const x = work[+s.dataset.i], key = x.kind === 'val' ? 'at' : 'delivered';
         const r = (run.rounds[x.node] || []).find(r => r[key] >= x.end - 1e3);
-        tip(`<div class="tt-name">${esc(name(x.node))}</div><div class="tt-row">${KIND_NAME[x.kind]}${x.agents.length ? ' · ' + esc(x.agents.join(', ')) : ''}</div>
-            <div class="tt-row">${hm(x.start)}–${x.open ? 'now' : hm(x.end)} · ${dur(x.end - x.start)}${x.cost ? ` · $${x.cost.toFixed(2)}` : ''}${x.tokens ? ` · ${Math.round(x.tokens / 1e3)}k tok` : ''}</div>
-            ${x.parts > 1 ? `<div class="tt-row">${x.parts} sessions (${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried or continued'}) · ${dur(x.busy)} busy</div>` : ''}
-            ${r ? `<div class="tt-row">round ${r.n}${r.verdict ? ' → ' + r.verdict + (r.failed?.length ? ': ' + esc(failedWords(run, x.node, r.failed)) : '') : ''}</div>` : ''}
-            ${x.priced === false ? '<div class="tt-row">no cost recorded for this call</div>' : ''}`, e);
+        tip(TIP.bar(name(x.node), x, r, r?.failed?.length && failedWords(run, x.node, r.failed)), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`));
 }

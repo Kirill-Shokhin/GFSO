@@ -6,7 +6,8 @@ import {bucketOf, statusLabel, contested} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';
-import {roundsLine, waitWords, atWork, conjunct, failingNow} from './run.js';
+import {waitWords, atWork, conjunct, failingNow, failedWords} from './run.js';
+import {TIP} from './hints.js';
 
 // Leaf tokens are hex literals; getComputedStyle returns the specified value of an unregistered property.
 const cs = getComputedStyle(document.documentElement), tok = n => cs.getPropertyValue(n).trim();
@@ -179,15 +180,12 @@ function inSight(eles) {
     if (dx || dy) cy.panBy({x: dx, y: dy});
 }
 
+// what the drawing does not say; how to frame a node is the key's, not every node's tip
 function nodeTip(t) {
-    const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id];
-    return `<div class="tt-name">${esc(t.name || t.description || t.id)}</div>`
-        + `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, t.done_reason)}</span>`
-        + (t.assignee ? `<div class="tt-row">executor (Del): ${esc(t.assignee)}</div>` : '')
-        + (w && waitWords(w, d => taskOf(d).name || d) !== '—' ? `<div class="tt-row">waits on: ${esc(waitWords(w, d => taskOf(d).name || d))}</div>` : '')
-        + (rs.length ? `<div class="tt-row">${roundsLine(rs)}</div>` : '')
-        + (t.criteria?.filter(conjunct).length ? `<div class="tt-row">${t.criteria.filter(conjunct).length} criteria</div>` : '')
-        + '<div class="tt-row tt-hint">double-click: frame its subtree · on the background: the whole graph</div>';
+    const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id], words = w && waitWords(w, d => taskOf(d).name || d), last = rs.at(-1);
+    return TIP.node(t, `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, t.done_reason)}</span>`,
+        words !== '—' && words, rs, t.criteria?.filter(conjunct).length,
+        last?.verdict === 'FAIL' && failingNow(rs, t.state) && failedWords(S.run, t.id, last.failed));
 }
 
 // Badges over the canvas: a pulse on a node being worked right now, and its rounds when it took more
@@ -206,7 +204,7 @@ function placeBadges() {
         return `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
             // the pulse keeps the page's one clock: a badge redrawn on every render restarted it mid-beat
             + (work.has(id) ? `<i class="cy-live${proc.has(id) ? ' on' : ''}" style="animation-delay:-${Date.now() % 1600}ms"></i>` : '')
-            + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''} title="${roundsLine(rs)}">${rs.length}</span>` : '') + '</div>';
+            + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''}${TIP.rounds(rs)}>${rs.length}</span>` : '') + '</div>';
     }).join('');
 }
 export const annotate = placeBadges;

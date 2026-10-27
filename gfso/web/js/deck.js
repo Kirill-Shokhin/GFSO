@@ -1,7 +1,8 @@
 // The run deck under the graph: a strip that always says what is running now and what it has cost,
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
-import {$, esc, hint} from './dom.js';
+import {$, esc} from './dom.js';
+import {frame, TAB, STRIP} from './hints.js';
 import {getJSON, singleFlight} from './api.js';
 import {S, procs} from './state.js';
 import {point, release, forgetBrought} from './store.js';
@@ -16,10 +17,6 @@ import * as events from './events.js';
 // Each tab is named by the question it answers, so two views that both show money are not read as one:
 // `spend` is where the money and time went (by node, level, role), `models` is who did the work.
 const VIEWS = {timeline, progress, spend: cost, models: work, events}, KEY = 'gfso.deck';
-const ASKS = {timeline: 'which nodes ran when, and at once', progress: "how the goal's criteria came to pass",
-    spend: 'where the money and session time went — by node, level and role',
-    models: 'who did the work — each model in each role: sessions, tokens, context filled, its share of the spend',
-    events: "the log, grouped by node and kind"};
 const isTick = m => / tokens · \d+s$/.test(m);         // live token ticks: shown in place, never persisted
 const pref = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } })();
 const keep = () => { try { localStorage.setItem(KEY, JSON.stringify(pref)); } catch (e) { /* per-viewer nicety */ } };
@@ -48,13 +45,13 @@ function strip() {
         const w = mine.find(w => w.task_id === t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : carrier(t, mine);
         const what = w ? DOING[w.verb] || w.verb.replace(/_/g, ' ')
             : t.state === 'VALIDATING' ? 'validating' : t.state === 'REWORKING' ? 'reworking' : 'executing';
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" title="${hint(t.name || t.id, tk?.msg || (w ? `${w.verb} — a session running on this server` : by ? `carried by the session on ${top.name || top.id} (${by.verb})` : 'in a working state; no process of this server runs it'))}"><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>${esc(name(t))}</em>`
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}"${STRIP.live(t.name || t.id, tk?.msg || (w ? STRIP.running(w.verb) : by ? STRIP.carried(top.name || top.id, by.verb) : STRIP.idle))}><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>${esc(name(t))}</em>`
             + `<span>${what}${w ? ' · ' + dur((now - w.since) * 1e3) : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
     for (const w of mine.filter(w => !w.task_id || !drawn.has(w.task_id)))
-        live.push(`<span class="dk-live on" title="${hint('The goal', `${w.verb} — a session running on this server`)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>the goal</em>`
+        live.push(`<span class="dk-live on"${STRIP.live('The goal', STRIP.running(w.verb))}><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>the goal</em>`
             + `<span>${DOING[w.verb] || w.verb.replace(/_/g, ' ')} · ${dur((now - w.since) * 1e3)}</span></span>`);
     // as many chips as the line holds, the rest counted (`drawStrip`): what waits and what it cost stay on the line
     const more = '<span class="dk-more"></span>';
@@ -63,11 +60,11 @@ function strip() {
     // …under AUTO only, where the system holds every node: a stop pauses the system, never a person's own work (critic)
     const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
-        ? `<span class="dk-now dk-idle" title="Stopped&#10;nothing runs here until the run is started again&#10;these nodes keep the state their work was in">stopped · ${live.length} held mid-work</span>`
-          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}" title="${hint(t.name || t.id)}"><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>${esc(name(t))}</em><span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
+        ? `<span class="dk-now dk-idle"${STRIP.held}>stopped · ${live.length} held mid-work</span>`
+          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}"${STRIP.live(t.name || t.id)}><i style="animation-delay:-${Date.now() % 1600}ms"></i><em>${esc(name(t))}</em><span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
         // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
         // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
-        : live.length ? `<span class="dk-now" title="At work&#10;a node a process of this server runs on, with a session open, or a leaf in a working state&#10;a parent in EXECUTING with no process of its own waits on its parts and is not counted&#10;sessions: the processes this server runs on them — one session may carry a whole part of the plan">${live.length} at work${mine.length && mine.length !== live.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
+        : live.length ? `<span class="dk-now">${live.length} at work${mine.length && mine.length !== live.length ? ` · ${mine.length} session${mine.length > 1 ? 's' : ''}` : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
         : '<span class="dk-now dk-idle">nothing at work</span>';
     // …and what waits on what is said whether the run runs or is held
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
@@ -78,14 +75,15 @@ function strip() {
     return now_
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
-            return `<button class="dk-block" data-node="${esc(id)}" title="${hint(`${n} wait on ${run.name(id)}`, 'queued behind it along Dep', 'none starts until what it waits on passes')}">${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`
+            const users = Object.entries(run.waits).filter(([, w]) => w.deps.includes(id)).map(([u]) => run.name(u));
+            return `<button class="dk-block" data-node="${esc(id)}"${STRIP.block(n, run.name(id), users)}>${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`
                 + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '')
-        + (issuer.length ? `<span class="dk-wait" title="${hint('Waiting on the issuer', issuer.map(t => `${name(t)} — ${t.state}`))}">${issuer.length} wait${issuer.length > 1 ? '' : 's'} on the issuer</span>` : '')
+        + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${issuer.length} wait${issuer.length > 1 ? '' : 's'} on the issuer</span>` : '')
         // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
         // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
-        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" title="${hint('Sent back', back.map(([id, n]) => `${run.name(id)} — ${n} FAIL${n > 1 ? 's' : ''}`))}">${back.length} sent back${back.length === 1 ? `: ${esc(trim(run.name(back[0][0]), 20))}` : ''}</button>` : '')
+        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${n} FAIL${n > 1 ? 's' : ''}`))}>${back.length} sent back${back.length === 1 ? `: ${esc(trim(run.name(back[0][0]), 20))}` : ''}</button>` : '')
         // a session's cost is booked when it ENDS (the CLI reports it then): a running one is said, not guessed
-        + (run ? `<span class="dk-sum" title="Spend&#10;booked when each session ends — the model reports its cost then${mine.length ? `&#10;${mine.length} running now, not booked yet` : ''}">`
+        + (run ? `<span class="dk-sum"${STRIP.spend(Object.entries(run.cost.byKind), mine.length)}>`
                  + `${run.cost.unpriced && run.cost.unpriced === Object.values(run.cost.byKind).reduce((n, p) => n + p.calls, 0) ? 'spend not reported' : '$' + run.cost.total.toFixed(2)}`
                  + `${mine.length ? ` + ${mine.length} running` : ''} · ${dur(run.clock.span)} run</span>` : '');
 }
@@ -99,7 +97,7 @@ function drawStrip() {
     if (!chips) return;
     const all = [...chips.querySelectorAll('.dk-live')], gone = [];
     while (all.length > 1 && chips.scrollWidth > chips.clientWidth + 1) gone.unshift(all.pop()), gone[0].remove(), more.textContent = `+${gone.length}`;
-    if (gone.length) more.title = [`${gone.length} more at work`, ...gone.map(c => c.title.split('\n')[0])].join('\n');
+    if (gone.length) more.outerHTML = `<span class="dk-more"${STRIP.more(gone.map(c => c.dataset.tip.split('\n')[0]))}>+${gone.length}</span>`;
 }
 
 function paint() {
@@ -162,9 +160,9 @@ export const onInflight = drawStrip;
 
 export function mountDeck() {
     const d = $('deck');
-    d.innerHTML = `<div class="dk-grip" title="Drag to resize"></div><div class="dk-head">
-        <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}" title="${hint(k, ASKS[k])}">${k}</button>`).join('')}</nav>
-        <div class="dk-strip"></div><button class="dk-fold" title="Fold / unfold">▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
+    d.innerHTML = `<div class="dk-grip"${frame('grip')}></div><div class="dk-head">
+        <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}"${TAB[k]}>${k}</button>`).join('')}</nav>
+        <div class="dk-strip"></div><button class="dk-fold"${frame('fold')}>▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
     if (pref.h) d.style.height = `${pref.h}px`;
     d.querySelector('nav').onclick = e => {
         const v = e.target.dataset.view;

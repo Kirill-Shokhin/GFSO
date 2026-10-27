@@ -3,52 +3,50 @@
 // facet per tab, in a slide-over left of the panel. One unit: the reader renders what the panel read and fetches
 // nothing (they were two modules with seven names across the cut). Buttons carry `data-action` (dispatched in main.js);
 // nothing here sends anything.
-import {$, el, esc, data, section, ul, rebuild, hint} from './dom.js';
+import {$, el, esc, data, section, ul, rebuild} from './dom.js';
+import {PANEL, frame} from './hints.js';
 import {getJSON} from './api.js';
 import {S, hasKids, taskOf, myRole} from './state.js';
-import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName,
+import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE} from './vocab.js';
 import {roundsOf, at, waitsOf, waitWords, conjunct, KIND_NAME as KIND} from './run.js';
 import {glyph, mark} from './draw.js';
 
 const when = iso => new Date(at(iso)).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
 const link = (facet, label) => `<button class="pn-link" data-action="read" data-facet="${facet}">${label} →</button>`;
-const ISSUER_MOVES = "the executor stopped and the decision is the issuer's: raise the rework bound (Revise → max_iterations) "
-    + 'if the forecast was short, change or narrow the criteria (Revise) if the plan is wrong, or close it (Cancel — it cascades '
-    + "the live subtree). Silence closes it too, by this state's own timeout; it never drifts to a pass.";
 
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
     const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], id => taskOf(id).name || id);
-    return words === '—' ? '' : `<span title="${hint('Waiting on', d.state === 'ESCALATED' ? ISSUER_MOVES : words)}">waiting on <b>${esc(words)}</b></span> · `;
+    return words === '—' ? '' : `<span>waiting on <b>${esc(words)}</b></span> · `;
 }
 
 function head({d, rounds}) {
     const v = vNow(d, d.audit), name = d.name || d.description || d.id, note = closureNote(d.closure), bad = contested(d.closure);
     const live = !terminal(d.state), mode = S.graph.mode?.mode;
-    return `<div class="sidebar-header"><h2 title="${esc(name)}">${esc(name)}</h2><button class="sidebar-close" data-action="close">&times;</button></div>`
-        + `<div class="pn-meta" title="${hint('Executor (Del)', d.assignee || 'none')}">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
-        + `<div class="pn-status"><span class="v-badge v-${v}" title="V(t) — the validation outcome&#10;pass only when every criterion passes; ⊥ while not yet checked (§2.3)"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`
-        + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, d.done_reason)}</span>`
-        + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}" title="Deadline&#10;when this node is due">⏱ ${when(d.deadline)}</span>` : '')
+    return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
+        + `<div class="pn-meta">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
+        + `<div class="pn-status"><span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`
+        + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
+        + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? PANEL.deadline(at(d.deadline), Date.now()) : ''}>⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
         + `</div><div class="pn-meta">${waiting(d)}${['EXECUTING', 'REWORKING'].includes(d.state) && (!rounds.length || rounds.at(-1).verdict)
             ? `round ${rounds.length + 1}, in work` : `round ${rounds.length}`}</div>`
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-meta pn-by" id="pn-by">${signedBy(S.run, d.id)}</div>`
-        + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip" title="${hint('The issuer decides', ISSUER_MOVES)}">issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
+        + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip"${PANEL.escalated}>issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
         // HOW IT CLOSED, on the node itself — the same `closure` the drawing reads, no copy of the rule.
-        + (note ? `<div class="pn-note ${bad ? 'check-fail' : 'check-skip'}"${bad ? ' title="Read the verdict&#10;legitimate (§10.3), and nothing can check it (§15.7)"' : ''}>`
+        + (note ? `<div class="pn-note ${bad ? 'check-fail' : 'check-skip'}"${bad ? PANEL.contested : ''}>`
                   + `${bad ? '⚠ ' : ''}${note}</div>` : '');
 }
 
 // THE EXECUTION VERDICT in one line — what, who, when, what failed; its evidence is the reader's.
 function verdict({vr}) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
-        + `<span class="pn-who" title="${hint('Validator', vr.validator)}">${signer(vr)}${vr.ts ? ' · ' + when(vr.ts) : ''}</span>`
-        + `${vr.current === false ? '<span class="check-fail" title="An earlier delivery&#10;this verdict is about a delivery the current one replaced">earlier</span>' : ''}`
+        + `<span class="pn-who">${signer(vr)}${vr.ts ? ' · ' + when(vr.ts) : ''}</span>`
+        + `${vr.current === false ? `<span class="check-fail"${PANEL.earlier}>earlier</span>` : ''}`
         // a refused report LATER than this verdict asks for a look; an earlier one is history this verdict answered
-        + `${vr.refused_report && at(vr.refused_report.ts) > at(vr.ts) ? `<span class="check-fail" title="${hint('A later report was refused', vr.refused_report.note || '')}">a later report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
+        + `${vr.refused_report && at(vr.refused_report.ts) > at(vr.ts) ? `<span class="check-fail"${PANEL.refused(vr.refused_report.note)}>a later report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
     // what failed is not repeated here: it is the ✗ rows of the criteria list just below
     // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
     return vr?.refused_report ? `<div class="pn-verdict check-fail"><span class="pn-who">a validator reported and the report was REFUSED as ⊥ — `
@@ -60,7 +58,7 @@ function verdict({vr}) {
 // hollow: the log of past rounds keeps only what a FAIL named, so an unnamed one is ⊥, not pass. The last 12.
 const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = (x, i) => `<circle class="mk-open" cx="${x}" cy="0" r="2.5"/>`;
     // a history of one round says what the mark beside the name says: drawn, it was a lone dot beside a dot (the author)
-    return rs.length < 2 ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10" title="${hint(`${rounds.length} rounds`, 'this criterion in each round: dot pass, cross fail, ring not checked or not recorded')}">`
+    return rs.length < 2 ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10"${PANEL.rounds(rounds.length)}>`
         + rs.map((r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? open(i * 8 + 4)
             : r.per ? (v => v === 'pass' || v === 'fail' ? mark(v.toUpperCase(), i * 8 + 4, 0, 2.5) : open(i * 8 + 4))(r.per.find(c => c.criterion === name)?.verdict)
             : r.verdict === 'FAIL' && !r.failed.includes(name) && !(i === rs.length - 1 && now === 'pass') ? open(i * 8 + 4)
@@ -80,7 +78,7 @@ function criteria({d, vr, rounds}) {
         const v = pc[c.name]?.verdict, ev = pc[c.name]?.evidence, key = `${d.id}|${c.name}`;
         return `<details class="cr-row" name="crit" data-key="${esc(key)}"><summary>`
             + `<span class="cr-g">${v === 'pass' ? glyph('PASS', 3.5) : v === 'fail' ? glyph('FAIL', 3.5) : '⊥'}</span>`
-            + `<span class="cr-name" title="${esc(c.name)}">${esc(c.name)}</span>${strip(rounds, c.name, vr?.current !== false && v)}</summary>`
+            + `<span class="cr-name"${PANEL.full(c.name)}>${esc(c.name)}</span>${strip(rounds, c.name, vr?.current !== false && v)}</summary>`
             + `<div class="cr-more"><div class="crit-desc">${esc(c.description)}</div>`
             + (ev ? `<div class="verdict-evidence">${esc(ev)}</div>${link('verdict', 'full in reader')}` : '')
             + pinned(c, key + '|check') + `</div></details>`;
@@ -123,7 +121,7 @@ function actions({d, acts}) {
     if (!m?.mode) { const btns = [...open, ...moves].join(''); return btns ? foot('', btns) : ''; }
     const steps = (S.mySteps?.get(d.id) || []).filter(x => !x.performed_by || x.performed_by === me);
     if (!steps.length) return '';
-    const said = steps.map(x => `<div class="pn-step" title="${esc(m.mode === 'auto' ? '' : x.directive || '')}">${esc(x.action)}`
+    const said = steps.map(x => `<div class="pn-step"${m.mode === 'auto' ? '' : PANEL.directive(x.directive)}>${esc(x.action)}`
         + `${m.mode === 'auto' ? '' : ` — ${esc(trimTo(x.directive || '', 220))}`}</div>`).join('');
     // outside AUTO the engine's performed_by names the holder even for work its hands do, so the mode's perform still
     // decides that work is the clean session's (critic: Deliver offered beside «PERFORMED BY … WAIT»)
@@ -141,7 +139,7 @@ const signedBy = (run, id) => [
     ...deliveredBy(run, id),
     ...Object.entries(run?.work.byNode[id] || {}).map(([kind, ms]) =>
         `${{exec: 'executed', consent: 'consented', val: 'validated', issuer: 'issued', plan: 'planned'}[kind]} by `
-        + Object.entries(ms).map(([m, n]) => `<b title="${esc(m)}">${esc(modelName(m))}</b>${n > 1 ? ` ×${n}` : ''}`).join(', ')),
+        + Object.entries(ms).map(([m, n]) => `<b${PANEL.model(m)}>${esc(modelName(m))}</b>${n > 1 ? ` ×${n}` : ''}`).join(', ')),
     ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => `<span class="wk-none">${n} session${n > 1 ? 's' : ''} of ${KIND[k]} unanswered</span>`),
 ].join(' · ');
 
@@ -205,7 +203,7 @@ function verdictFull({vr}) {
     if (vr?.verdict) return section('Verdict on the work',
         `<div class="${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${vr.verdict} — ${signer(vr)}`
         + `${vr.current === false ? ' <span class="check-fail">(validated an EARLIER delivery)</span>' : ''}</div>`
-        + (vr.independence ? `<div class="verdict-evidence" title="Who signed it (§10.3)">${esc(vr.independence)}</div>` : '')
+        + (vr.independence ? `<div class="verdict-evidence"${PANEL.signed}>${esc(vr.independence)}</div>` : '')
         + refusedOf(vr.refused_report)
         + ((vr.failed_criteria || []).length ? `<div class="check-fail">failed: ${esc(vr.failed_criteria.join(', '))}</div>` : '')
         + ((vr.undecidable || []).length ? `<div class="check-skip">undecidable (never observed): ${esc(vr.undecidable.join(', '))}</div>` : '')
@@ -221,7 +219,7 @@ function verdictFull({vr}) {
                 + (c.reused_from_refused ? `<div class="check-skip">reused from a refused report (${esc(c.reused_from_refused.validator || '')}${c.reused_from_refused.ts ? ', ' + esc(String(c.reused_from_refused.ts).slice(0, 16).replace('T', ' ')) : ''})</div>` : '')
                 + ((c.divergences || []).length ? `<div class="check-fail">divergences: ${esc(c.divergences.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('; '))}</div>` : '')
                 + (byCmd.size ? `<div class="verdict-probes">${[...byCmd].map(([cmd, bhs]) =>
-                    `<code title="${hint('What it checks', bhs)}">${esc(cmd)}</code>`).join('')}</div>` : '')
+                    `<code${PANEL.probe(bhs)}>${esc(cmd)}</code>`).join('')}</div>` : '')
                 + `</div></li>`;
         })));
     return vr?.refused_report ? section('Verdict on the work', refusedOf(vr.refused_report)) : '';
@@ -266,8 +264,7 @@ function review({cr}) {
         ...conflicts.map(c => `<li>⚡ [${esc((c.between || []).join(', '))}] ${esc(c.why || '')}</li>`),
         ...undecided.map(u => `<li class="check-fail">✗ this node's OWN criteria do not decide: ${esc(u.obligation || u.gap || '')}`
             + `${u.admits ? ` <div class="verdict-evidence">${esc(u.admits)}</div>` : ''}</li>`),
-        bad ? `<li style="color:var(--ui-text-faint)">Two ways out: EDIT the criteria this names (the fix retires this verdict — `
-            + `run the review again after it), or record why a finding is wrong (<code>dispute_finding</code>).</li>` : '']));
+        bad ? `<li style="color:var(--ui-text-faint)">${PANEL.twoWays}</li>` : '']));
 }
 
 // The parts' states are a FORECAST of the parent: Theorem 1 holds under a correct decomposition only, and
@@ -320,7 +317,7 @@ function render() {
     tab = f.id;
     box().hidden = false;
     rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2>${esc(d.name || d.id)}</h2>`
-        + `<button class="sidebar-close" data-action="read" title="Close&#10;Esc">&times;</button></div>`
+        + `<button class="sidebar-close" data-action="read"${frame('close')}>&times;</button></div>`
         + `<div class="pn-meta">${esc(d.id)} · rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN · reopens ${d.reopens || 0}</div>`
         + `<div class="rd-tabs">${FACETS.map(x => chip(x, cur, x === f)).join('')}</div></div>${f.body(cur)}`);
 }

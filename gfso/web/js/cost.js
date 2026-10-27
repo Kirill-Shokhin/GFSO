@@ -1,6 +1,7 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
-import {esc, hint} from './dom.js';
+import {esc} from './dom.js';
+import {TIP} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {dur, trim, usd, tok} from './draw.js';
@@ -22,7 +23,7 @@ function bars(title, rows, measure, fmt, attr) {
     const max = Math.max(...rows.map(r => Object.values(r.parts).reduce((s, p) => s + measure(p), 0)), 1e-9);
     return `<section class="cs-chart"><h4>${title}</h4>${rows.map(r => {
         const total = Object.values(r.parts).reduce((s, p) => s + measure(p), 0);
-        return `<div class="cs-row" ${attr(r)}><span class="cs-label" title="${esc(r.label)}">${esc(trim(r.label, 22))}</span>
+        return `<div class="cs-row" ${attr(r)}><span class="cs-label"${r.label.length > 22 ? TIP.cell(r.label) : ''}>${esc(trim(r.label, 22))}</span>
             <span class="cs-bar">${Object.entries(r.parts).map(([k, p]) => `<i class="cs-${k}" style="width:${(measure(p) / max) * 100}%"></i>`).join('')}</span>
             <span class="cs-num">${fmt(total, r)}</span></div>`; }).join('')}</section>`;
 }
@@ -54,16 +55,15 @@ export function render(el, run, nodes) {
             ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`)}
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`)}
             ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '')}
-            ${bars(`sessions by assignee${cut ? ` <span title="${hint(ids[0].slice(0, cut) + '…', 'the start every assignee id shares, cut from the bars')}">(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
+            ${bars(`sessions by assignee${cut ? ` <span${TIP.prefix(ids[0].slice(0, cut))}>(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
                    (n, r) => `${n} · ${r.peak} at once`, () => '')}
         </div></div>`;
     bindFocus(el, e => {
         const row = e.target.closest('.cs-row[data-node]');
         if (!row) return untip();
         const parts = node[row.dataset.node], all = Object.values(parts);
-        tip(`<div class="tt-name">${esc(name(row.dataset.node))}</div>
-            ${Object.entries(parts).map(([k, p]) => `<div class="tt-row">${KIND[k]}: ${money([p])} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tok</div>`).join('')}
-            <div class="tt-row">${rounds(row.dataset.node)} delivery round${rounds(row.dataset.node) === 1 ? '' : 's'} · ${money(all)} in all</div>`, e);
+        tip(TIP.cost(name(row.dataset.node), Object.entries(parts).map(([k, p]) => `${KIND[k]}: ${money([p])} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tok`),
+                     rounds(row.dataset.node), money(all)), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));
 }

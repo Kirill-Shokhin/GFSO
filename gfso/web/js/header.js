@@ -1,7 +1,8 @@
 // The header, by significance: the project's goal and where it stands, then ONLY what needs a person
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
-import {$, esc, data, hint} from './dom.js';
+import {$, esc, data} from './dom.js';
+import {H} from './hints.js';
 import {getJSON, post, refusal, singleFlight, GOAL} from './api.js';
 import {S, taskOf, myRole, procs} from './state.js';
 import {label, closureNote, contested, modeDoc, terminal, delivered, modelName} from './vocab.js';
@@ -13,13 +14,18 @@ const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 const isRoot = t => !t.parent_id;
 const settled = t => t.state === 'ABANDONED' || t.done_reason === 'CANCELLED';
 
-// The root in one phrase, in vocab's words where it has them. A cancelled part is not owed, so it leaves N:
+// A CLOSED GOAL IS A VERDICT, said as one word in the header's own voice — DONE, FAILED, CANCELLED — the one thing a
+// person opening a finished project looks for; an open goal is a sentence of where it stands, which caps would not carry
+// (the author, 2026-10-27: «это ключевой вердикт … разные статусы можно и отображать по-разному»).
+// …in the project list's words (projects.js `where`): done, failed, abandoned
+const VERDICT = {DONE: {PASS: 'done', AUTO_PASS: 'done', FAIL: 'failed', CANCELLED: 'abandoned'}, ABANDONED: {}};
+const verdict = root => VERDICT[root.state] && (VERDICT[root.state][root.done_reason] || (root.state === 'DONE' ? 'done' : 'abandoned'));
+// The open root in one phrase, in vocab's words where it has them. A cancelled part is not owed, so it leaves N:
 // counted, a finished goal read "11 of 12" forever.
 function phrase(root) {
     const parts = S.tasks.filter(t => !isRoot(t) && !settled(t)), k = parts.filter(t => t.state === 'DONE').length;
     const done = parts.length ? `${k} of ${parts.length} parts done` : 'not split yet', said = s => label(s).toLowerCase();
     return {
-        DONE: {FAIL: 'goal closed — failed', CANCELLED: said('ABANDONED')}[root.done_reason] || 'done',
         // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)
         OFFERED: parts.length ? `${done} · the goal itself ${said('OFFERED')}` : said('OFFERED'), IDLE: said('OFFERED'),
         EXECUTING: `${said('EXECUTING')} — ${done}`,
@@ -30,37 +36,38 @@ function phrase(root) {
         CANCELLING: 'being cancelled',
     }[root.state] || said(root.state);
 }
+const cap = s => s[0].toUpperCase() + s.slice(1);
 
 let status = '';                   // the root's standing, set by goal(), shown in the middle
 async function goal() {
     status = '';
     const root = S.tasks.find(isRoot), mode = S.graph.mode?.mode;
     // a project named to state its goal in does not exist until that goal is created — not an error
-    if (!root) return GOAL && S.missing ? '<span class="hd-phrase">a new project — it exists once its goal is created</span>'
+    if (!root) return GOAL && S.missing ? '<span class="hd-phrase">A new project — it exists once its goal is created</span>'
         : `<span class="hd-phrase${S.missing ? ' acc' : ''}">${esc(S.missing
-            || (procs().some(w => w.verb === 'auto_decompose') ? 'the goal is being planned' : 'no goal yet'))}</span>`;
+            || (procs().some(w => w.verb === 'auto_decompose') ? 'The goal is being planned' : 'No goal yet'))}</span>`;
     const doc = mode ? await modeDoc() : {};
-    const who = Object.entries(doc).map(([m, text]) => `${m === mode ? '▸ ' : ''}${m}: ${text}`);
     // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
     const m = S.graph.mode, st = m?.settings || {};
-    if (m?.by) who.push(`set by ${m.by}${m.at ? ' · ' + String(m.at).slice(0, 16).replace('T', ' ') : ''}${m.boundary ? ` · boundary ${m.boundary}` : ''}`
-        + `${m.perform ? ` · perform ${m.perform}` : ''}${m.hands ? ` · hands ${m.hands}` : ''}`);
-    if (st.system_model) who.push(`the system's roles run on ${modelName(st.system_model)}`);
-    const rest = Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => `${k} ${v}`);
-    if (rest.length) who.push(rest.join(' · '));
+    const set = [m?.by && ['set by', `${m.by}${m.at ? ' · ' + String(m.at).slice(0, 16).replace('T', ' ') : ''}`],
+        m?.boundary && ['boundary', `depths 0…${m.boundary - 1} held by the user's agent`], m?.perform && ['perform', m.perform],
+        m?.hands && ['hands', m.hands], st.system_model && ['system model', `the system's roles run on ${modelName(st.system_model)}`],
+        ...Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => [k.replace(/_/g, ' '), String(v)])].filter(Boolean);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = root.name || root.id, short = full.split(/\s[(:—]/)[0].slice(0, 40);
     const done = delivered(root);
     // left: WHICH goal and who holds its work; where it stands goes to the middle, beside what needs a person —
     // the brand's dot marking the one real done: the goal delivered
-    status = `<span class="hd-phrase">${phrase(root)}${done ? '<i class="brand-dot" title="Delivered&#10;the root passed — the goal is reached"></i>' : ''}</span>`;
-    return `<button class="hd-root"${data({action: 'select', id: root.id})} title="${hint(full, 'click to open the goal')}">${esc(short)}</button>`
-        + (mode ? `<span class="hd-mode" title="${hint(`${mode} — who holds the work`, who)}">${esc(mode)}</span>` : '');
+    const word = verdict(root);
+    status = word ? `<span class="hd-verdict${word === 'failed' ? ' bad' : ''}">${word}${done ? '<i class="brand-dot"></i>' : ''}</span>`
+        : `<span class="hd-phrase">${cap(phrase(root))}</span>`;
+    return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full)}>${esc(short)}</button>`
+        + (mode ? `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode)}</button>${H.mode(doc, mode, set)}</span>` : '');
 }
 
 // One chip per kind of call on a person; `ids` are the nodes it is about, the first one is selected.
-const need = (n, text, ids, why, cls = '') => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
-    + ` title="${hint(`${n} ${text}`, why)}"><b>${n}</b> ${esc(text)}</button>`;
+const need = (n, text, ids, rows, cls = '', kind = text) => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
+    + `${H.need(kind, rows)}><b>${n}</b> ${esc(text)}</button>`;
 const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // Under AUTO the system makes every issuer move below the root (set_mode), so a challenge or a block there is the
 // machine issuer's to answer — in the strip as its turn or its wait, never here as a call on a person (critic).
@@ -81,16 +88,12 @@ const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id
 const ago = t => dur(Date.now() - (typeof t === 'number' ? t * 1e3 : at(t)));
 function runSwitch(r) {
     if (!r || !S.tasks.length) return '';
-    if (r.state === 'running') return '<button class="hd-run" data-action="run-stop" title="Stop the run&#10;nothing new starts: no executor, validator or issuer session, no timeout&#10;'
-        + 'the sessions running now finish and their signals land">stop</button>';
+    if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
     const who = `stopped by ${r.by} ${ago(r.at)} ago${r.why ? ` — ${r.why}` : ''}`;
     const text = r.state === 'stopping' ? `stopping · ${r.working.length} still at work` : 'stopped';
-    const title = r.state === 'stopping'
-        ? [`Stopping — ${r.working.length} still at work`, who, 'each finishes and its signal lands:',
-           ...r.working.map(w => `${w.verb} · ${w.task_id || '—'} · ${ago(w.since)}`)]
-        : ['Stopped', who, 'nothing runs and no timeout fires until it is started again'];
-    return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}" title="${hint(title)}">${text}</span>`
-        + '<button class="hd-run" data-action="run-start" title="Start the run again&#10;a bound that passed meanwhile fires as any passed bound does">start</button>';
+    const tip = r.state === 'stopping' ? H.stopping(who, r.working.map(w => `${w.verb} · ${w.task_id || '—'} · ${ago(w.since)}`)) : H.stopped(who);
+    return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}"${tip}>${text}</span>`
+        + `<button class="hd-run" data-action="run-start"${H.start}>start</button>`;
 }
 async function switchRun(verb, body) {
     try {
@@ -124,12 +127,9 @@ async function techReports() {
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
     $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${reports.length} tech report${reports.length > 1 ? 's' : ''}</button>`
-        // headed as every popover is (the graph's key, quality): a bare line above the reports read as one of them (the author)
-        + `<div class="hd-pop"><div class="hq-row"><div class="hq-head"><b>Tech reports</b></div><div class="hq-means">What the system `
-        + `reported about ITSELF — a check contradicting its contract, a tool that cannot run. A report stops and moves nothing; `
-        + `newest first.</div></div>${[...reports].reverse().map(r => `<div class="hq-row">`
-        + `<div class="hq-head"><i><span data-at="${esc(r.at)}">${esc(ago(r.at))}</span> ago · ${esc(r.role || '')}</i>${r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : ''}</div>`
-        + `<div class="hq-means">${esc(r.text)}</div></div>`).join('')}</div>`;
+        + H.reports([...reports].reverse().map(r => ({head: r.role || 'the system',
+            val: `<span class="hq-when"><span data-at="${esc(r.at)}">${esc(ago(r.at))}</span> ago</span>`,
+            link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text})));
 }
 // the list is rebuilt only when a report arrives (it kept its scroll), so its ages are re-read when it is opened
 export const toggleReports = () => {
@@ -148,8 +148,7 @@ function stalled(calls) {
         || procs().length) return '';
     const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0), idle = Date.now() - last;
     return idle > GAP ? need(1, `stalled — nothing at work for ${dur(idle)}`, [root.id],
-        'the goal is open, nothing is at work, nobody owes a move the engine names, and nothing has happened since — '
-        + 'a run that stopped without an end; look at the deck (Events) for its last act') : '';
+        H.stalled, '', 'stalled') : '';
 }
 
 export const refreshHeader = singleFlight(async () => {
@@ -177,7 +176,7 @@ export const refreshHeader = singleFlight(async () => {
         // the nodes where the move is this page's person's, with the move: their panel keeps that move under a mode (panel.js)
         own.forEach(x => mySteps.set(x.task_id, [...(mySteps.get(x.task_id) || []), x]));
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
-                                f.directive || 'no actionable node and the root is not DONE') : '')
+                                f.directive || H.stuck, '', 'stuck') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;
         S.runState = f.run;
@@ -211,14 +210,10 @@ export async function refreshQuality() {
         // (§15.8): q_V low, or q_D low with no high false-FAIL share to say the validator, not the split, did it.
         const low = v => v != null && v < 0.5;
         const alarm = {q_V: low(m.q_V), q_D: low(m.q_D) && !(ffs >= 0.5)};
-        $('hd-quality').innerHTML = `<button class="hd-q${alarm.q_V || alarm.q_D ? ' acc' : ''}" data-action="quality">quality</button>`
-            + `<div class="hd-pop">${Object.entries(GRADE).map(([k, grade]) => `<div class="hq-row">`
-                + `<div class="hq-head"><b>${k}</b><span class="hq-val${alarm[k] ? ' acc' : ''}">`
-                + `${m[k] == null ? '—, no observations yet' : pct(m[k])}</span><i>${grade}</i></div>`
-                + `<div class="hq-means">${esc(means[k] || '')}</div>`
+        $('hd-quality').innerHTML = `<button class="hd-q${alarm.q_V || alarm.q_D ? ' acc' : ''}" data-action="pop">quality</button>`
+            + H.quality(Object.entries(GRADE).flatMap(([k, grade]) => [{head: k, tag: grade, means: means[k] || '',
+                val: `<span class="hq-val${alarm[k] ? ' acc' : ''}">${m[k] == null ? '—, no observations yet' : pct(m[k])}</span>`},
                 // §15.4: a low q_D is read TOGETHER with the false-FAIL share (an over-strict validator inflates it).
-                + (k === 'q_D' && ffs != null ? `<div class="hq-means">false-FAIL share: ${pct(ffs)} — ${esc(means.false_fail_share || '')}</div>` : '')
-                + `</div>`).join('')}</div>`;
+                ...k === 'q_D' && ffs != null ? [{head: 'false-FAIL share', val: `<span class="hq-val">${pct(ffs)}</span>`, means: means.false_fail_share || ''}] : []]));
     } catch (e) { /* metrics are a read; the chip keeps its last numbers */ }
 }
-export const toggleQuality = () => $('hd-quality').classList.toggle('open');

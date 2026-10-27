@@ -2,11 +2,11 @@
 // part unfolds into its parts. Each track counts one node's criteria passing at its own verdicts — a part's PASS is its
 // issuer's signature at that seam, the root's PASS the goal delivered — never a sum across a level, which added parts
 // of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
-import {esc, hint} from './dom.js';
+import {esc} from './dom.js';
+import {TIP, CELLS} from './hints.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, hm, mark, glyph, trim} from './draw.js';
-import {countWords} from './run.js';
 
 const LEFT = 220, GOAL = 54, PART = 30, GAP = 12, TOP = 22, INDENT = 12;
 const unfolded = new Set();                      // parts the reader opened; the goal is always open
@@ -61,14 +61,13 @@ function coverage(run, nodes, tasks) {
     const maps = root.criterion_mappings || [], st = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const kids = [...new Set(maps.map(m => m.child_id))], self = run.criteria.status[root.id] || {}, name = run.name;
     const cell = (c, k) => !maps.some(m => m.criterion_name === c && m.child_id === k) ? '<td></td>'
-        : `<td data-node="${esc(k)}" title="${hint(name(k), st[k])}"><i class="cv cv-${st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : 'open'}"></i></td>`;
-    const rows = run.criteria.names[root.id].map(c => `<tr><th title="${esc(c)}">${esc(trim(c, 30))}</th>
+        : `<td data-node="${esc(k)}"${TIP.cell(name(k), st[k])}><i class="cv cv-${st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : 'open'}"></i></td>`;
+    const rows = run.criteria.names[root.id].map(c => `<tr><th${c.length > 30 ? TIP.cell(c) : ''}>${esc(trim(c, 30))}</th>
         ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase()) : '⊥'}</td></tr>`).join('');
     return `<table class="pg-cov"><thead><tr><th class="sec">the goal's criteria</th>
         ${kids.map(k => `<th class="kid" data-node="${esc(k)}"><span>${esc(trim(name(k), 14))}</span></th>`).join('')}<th class="kid"><span>root</span></th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="pg-legend"><i class="cv cv-done"></i>part done <i class="cv cv-open"></i>part open <i class="cv cv-rework"></i>part in rework
-        — a cell is the STATE of a part responsible for the row (§2.4), not a verdict on it; the row's value is the root's own, right.</p>`;
+        <p class="pg-legend">${CELLS.map(([k, t]) => `<i class="cv cv-${k}"></i>${t}`).join(' ')}</p>`;
 }
 
 export function render(el, run, nodes, tasks) {
@@ -90,10 +89,7 @@ export function render(el, run, nodes, tasks) {
         if (!g) return untip();
         const i = g.dataset.m.lastIndexOf(':'), id = g.dataset.m.slice(0, i), L = run.criteria.track[id], m = L.marks[+g.dataset.m.slice(i + 1)];
         const r = (run.rounds[m.node] || []).find(r => r.at === m.t);
-        tip(`<div class="tt-name">${esc(name(m.node))}</div>
-            <div class="tt-row">${m.signal}${r ? ` · round ${r.n}` : ''} · ${hm(m.t)}</div>
-            ${m.failed.length ? `<div class="tt-row">failed: ${esc(m.failed.join(', '))}</div>` : ''}
-            <div class="tt-row">${countWords(m, L.total)}</div>`, e);
+        tip(TIP.verdict(name(m.node), m.signal, r, m.t, m.failed, m, L.total, []), e);
     }, untip);
     bringSelected(el, id => tr.querySelector(`.pg-track[data-node="${CSS.escape(id)}"] .pg-band`));
 }

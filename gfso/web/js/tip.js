@@ -1,8 +1,8 @@
 // The one floating tip every view uses — the graph's `#tooltip`, so a hover reads the same anywhere.
-import {esc} from './dom.js';
+import {card} from './hints.js';
 
 const box = () => document.getElementById('tooltip');
-let mine = false;          // the tip on screen is a `title`'s, not a view's own
+let mine = false;          // the tip on screen is a `data-tip`'s, not a view's own
 
 export function tip(html, e) {
     const el = box();
@@ -16,17 +16,13 @@ export function tip(html, e) {
 }
 export const untip = () => box().classList.remove('visible');
 
-// Every `title` on the page is read through the same tip: the browser's own box (square, system font, default
-// colours) is the one surface outside the brand. A title is moved to `data-tip` on first hover so the browser never
-// draws it; a view's own tip for the same event wins, since views listen below the document.
-// …laid out as the node's own tip is: the first line its heading, each further line a row (`dom.hint` writes them)
-const card = text => { const [head, ...rows] = text.split('\n').filter(s => s.trim());
-    return `<div class="tt-name">${esc(head)}</div>${rows.map(r => `<div class="tt-row">${esc(r)}</div>`).join('')}`; };
+// Every hover on the page is this one tip, read off `data-tip` (hints.js writes them): the browser's own `title` box
+// (square, system font, default colours) is the one surface outside the brand. A view's own tip for the same event
+// wins, since views listen below the document. The first line is the heading, each further line a row.
 const own = e => {
     if (e.tipped) return;
-    const t = e.target.closest?.('[title], [data-tip]');
-    if (t?.hasAttribute('title')) { t.dataset.tip = t.getAttribute('title'); t.removeAttribute('title'); }
-    if (t?.dataset.tip) { tip(card(t.dataset.tip), e); mine = true; }
+    const t = e.target.closest?.('[data-tip]');
+    if (t) { const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); mine = true; }
     else if (mine) { untip(); mine = false; }
 };
 const drop = () => { if (mine) { untip(); mine = false; } };

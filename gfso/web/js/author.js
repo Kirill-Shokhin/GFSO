@@ -3,6 +3,7 @@ import {$, el, esc} from './dom.js';
 import {getJSON, post, refusal} from './api.js';
 import {S, myRole} from './state.js';
 import {notice} from './overlays.js';
+import {frame} from './hints.js';
 import {critRow, listRow, readCrits, readList, iso, suggest} from './forms.js';
 
 const modal = (id, on) => $(id).classList.toggle('active', on);
@@ -70,7 +71,7 @@ export function addChildForm() {
     f.innerHTML = `
         <input placeholder="Subtask description" class="dc-desc">
         <input placeholder="Assignee" class="dc-assignee manual-only" style="width:120px">
-        <input type="datetime-local" class="dc-deadline" style="width:180px" title="Deadline&#10;when this part is due — before its parent is">
+        <input type="datetime-local" class="dc-deadline" style="width:180px"${frame('deadline')}>
         <button class="btn btn-sm btn-purple" data-action="child-suggest" style="margin-left:4px">AI</button>
         <div class="dc-criteria-rows" style="margin-top:4px"></div>
         <button class="btn btn-sm btn-muted" data-action="child-criterion" style="font-size:10px">+ criterion</button>

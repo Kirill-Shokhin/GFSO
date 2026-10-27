@@ -2,10 +2,11 @@
 // stands, what it cost — and how a new one comes into being: by name, in the URL, made by its first
 // creating verb. Everything here is read from the files on disk by the server: listing a project never
 // builds its engine, so a look sets nothing running.
-import {$, el, esc, hint} from './dom.js';
-import {PROJECT, getJSON} from './api.js';
-import {S} from './state.js';
-import {notice} from './overlays.js';
+import {$, el, esc} from './dom.js';
+import {TIP} from './hints.js';
+import {PROJECT, getJSON, api, refusal} from './api.js';
+import {S, procs} from './state.js';
+import {notice, askInPage} from './overlays.js';
 import {modelName, delivered} from './vocab.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
@@ -21,7 +22,29 @@ export async function refreshProjects() {
     S.project = PROJECT || d.active;
     all = d.projects.map(n => ({n, t: d.last_active?.[n], ...(d.about?.[n] || {})}));
     $('project-open').textContent = S.project;
+    $('project-delete').hidden = !neverRan(all.find(p => p.n === S.project), d.active);
     if (!panel().hidden) draw();
+}
+
+// A PROJECT THAT NEVER RAN — no model call, nothing spent — may be deleted, from its own page and never from the list
+// (the author, 2026-10-27, through the engineering stream). The server's door is irreversible: the project's database
+// goes with its whole history, so its name is typed to confirm; the door itself refuses `default` and the server's
+// active project, and says so.
+// …and nothing at work on it now: a ledger row is written when a session ENDS, so a goal being planned or a first session
+// still running has no cost yet and is not "never ran"; the server's active project is refused by the door, so not offered
+const neverRan = (p, active) => !!p && p.n !== 'default' && p.n !== active && !p.cost && !(p.models || []).length
+    && !procs().length;
+export async function deleteProject() {
+    const name = S.project;
+    const typed = await askInPage(`Delete the project <b>${esc(name)}</b>? It never ran — no model call, nothing spent. `
+        + 'Its database goes with its whole history; this cannot be undone.', {yes: 'Delete', field: `type ${esc(name)} to confirm`});
+    if (typed === false) return;
+    if (typed !== name) return notice('the name typed is not this project — nothing was deleted', 'bad');
+    let r;
+    try { r = await api(`/api/projects/${encodeURIComponent(name)}`, {method: 'DELETE'}); } catch (e) { return notice('delete: the server did not answer', 'bad'); }
+    const no = await refusal(r);
+    if (no) return notice(no, 'bad');
+    location.search = '';
 }
 
 // Where the goal stands, in words a person reads without the canon: the brand's dot is the one real done,
@@ -70,10 +93,10 @@ function row(p, busy, active) {
     const acted = active ? r?.started && `launched ${when(r.started)}`
         : (['DONE', 'ABANDONED'].includes(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t, r.started)}`;
     const t = active ? p.t : r?.started;
-    return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}" title="${hint(r?.name || p.n, r?.name && p.n)}">`
+    return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}"${TIP.project(r?.name || p.n, r?.name && p.n)}>`
         + `<span class="pl-time">${t ? clock(t) : ''}</span>`
         + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(x => `<span>${esc(x)}</span>`).join(' · ')}</i></span>`
-        + `<span class="pl-where ${cls}"${why ? ` title="${esc(why)}"` : ''}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
+        + `<span class="pl-where ${cls}"${TIP.where(why)}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
         + `<span class="pl-mode">${esc(p.mode || '')}</span>`
         + `<span class="pl-cost">${p.cost ? '$' + p.cost.toFixed(2) : ''}</span></a>`;
 }

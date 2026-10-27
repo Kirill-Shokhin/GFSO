@@ -92,6 +92,10 @@ body {
 }
 .hd-root:hover { text-decoration: underline; }
 .hd-phrase { font-size: 12px; white-space: nowrap; opacity: 0.75; }
+/* a closed goal's verdict: one word, the header's mono caps, brighter and larger than the chips; FAILED in the accent */
+.hd-verdict { font-family: var(--font-mono); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: var(--tr-mono);
+              color: var(--ui-on-chrome); white-space: nowrap; margin-right: 14px; }
+.hd-verdict.bad { background: var(--acc); color: var(--bg); padding: 2px 8px; border-radius: var(--radius); }
 .hd-phrase.acc { background: var(--acc); color: var(--bg); opacity: 1; padding: 2px 8px; border-radius: var(--radius); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .hd-mode, .hd-q, .need, .hd-run, .hd-run-state {
     font-family: var(--font-mono);
@@ -106,7 +110,8 @@ body {
     white-space: nowrap;
     flex: 0 0 auto;
 }
-.hd-mode { cursor: help; opacity: 0.75; }
+.hd-mode { cursor: pointer; opacity: 0.75; }
+.hd-mode:hover, .hd-quality.open .hd-mode { opacity: 1; border-color: var(--ui-on-chrome); }
 /* the run's switch: the button quiet until wanted, the stopped state plain, stopping alive while sessions finish */
 .hd-run { cursor: pointer; opacity: 0.6; }
 .hd-run:hover { opacity: 1; border-color: var(--ui-on-chrome); }
@@ -141,6 +146,19 @@ body {
 /* opened by a click, one at a time (main.js): on hover two popovers stacked over each other (critic) */
 .hd-quality.open .hd-pop { display: block; }
 .header .hd-pop { top: var(--below-toolbar, calc(100% + 8px)); }
+/* a popover's title and caption (hints.js `pop`): the caption says what is listed, so it reads as a caption — smaller,
+   fainter, set off by a rule — never as one more item */
+.header .hd-left .hd-pop { left: 0; right: auto; }
+.hp-top { padding: 12px 0 10px; border-bottom: 1px solid var(--hair); }
+.hp-top b { font-family: var(--font-display); font-size: 15px; font-weight: 650; letter-spacing: var(--tr-heading); }
+.hp-top p { margin: 4px 0 0; font-size: 11px; line-height: 1.45; font-style: italic; color: var(--ui-text-faint); }
+.hp-group { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: var(--tr-mono);
+            color: var(--ui-text-faint); padding: 14px 0 2px; }
+.hq-row.on .hq-head b { color: var(--acc); }
+.hq-row:has(.hq-kv) { padding: 5px 0; border-bottom: none; }
+.hq-kv { flex: 1; font-size: 11.5px; color: var(--ui-text-soft); }
+.hq-when { flex: 1; font-size: 11px; color: var(--ui-text-faint); }
+.hq-head .pn-link { margin-left: auto; }
 .hq-row { padding: 10px 0; border-bottom: 1px solid var(--hair-soft); }
 .hq-row:last-child { border-bottom: none; }
 .hq-head { display: flex; align-items: baseline; gap: 10px; }
@@ -183,6 +201,10 @@ body {
     text-transform: uppercase;
 }
 .role-select label { color: var(--ui-on-chrome); opacity: 0.6; }
+/* deleting a project that never ran: quiet, beside its name, never in the list */
+.pl-delete { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); color: var(--ui-on-chrome);
+             background: transparent; border: none; opacity: 0.45; cursor: pointer; padding: 3px 6px; }
+.pl-delete:hover { opacity: 1; color: var(--acc-on-chrome, var(--ui-on-chrome)); text-decoration: underline; }
 .role-select input {
     width: 130px;
     font-family: var(--font-body);
@@ -1127,10 +1149,24 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
                color: var(--ink-faint); text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
 .wk-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--hair-soft); font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; }
 .wk-table th:nth-child(-n+2), .wk-table td:nth-child(-n+2) { text-align: left; }
-.wk-table td:first-child { font-family: var(--font-body); font-size: 12px; font-weight: 600; }
-.wk-fill { display: inline-block; width: 48px; height: 6px; margin-right: 6px; background: var(--hair); vertical-align: 1px; }
-.wk-fill i { display: block; height: 100%; background: var(--ink-soft); }
-.wk-fill.high i { background: var(--acc); }
+
+.wk-table td:first-child b { font-weight: 600; }
+.wk-table tr.wk-first td { border-top: 1px solid var(--hair); }
+.cs-tile b em { font-family: var(--font-mono); font-style: normal; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--ink-faint); vertical-align: 6px; }
+/* context filled: the fullest session light, the median session dark over it; the numbers are on hover */
+.wk-fill { display: inline-block; position: relative; width: 96px; height: 7px; background: var(--hair); vertical-align: 0; }
+.wk-fill i { position: absolute; left: 0; top: 0; height: 100%; background: var(--ink-soft); }
+.wk-fill i.max { background: var(--ink-faint); opacity: 0.45; }
+.wk-fill.high i.max { background: var(--acc); opacity: 0.5; }
+/* what the cost went to: one bar, a segment per kind of token (hints.js TOKENS), the key in the column's head */
+.wk-cost { display: inline-flex; width: 140px; height: 7px; background: var(--hair); vertical-align: 0; }
+.wk-cost i, .wk-key i { display: block; height: 100%; }
+.wk-input { background: var(--ink-soft); }
+.wk-output { background: var(--ink); }
+.wk-cache { background: var(--paper); box-shadow: inset 0 0 0 1px var(--ink-faint); }
+.wk-cachew { background: var(--ink-faint); }
+.wk-key { display: block; margin-top: 3px; text-transform: none; letter-spacing: 0; }
+.wk-key i { display: inline-block; width: 8px; height: 7px; margin: 0 3px 0 8px; vertical-align: -1px; }
 .wk-none { color: var(--ink-faint); }
 .pn-by b { font-weight: 600; color: var(--ink); }
 .pn-by:empty { display: none; }

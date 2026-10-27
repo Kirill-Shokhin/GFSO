@@ -2,6 +2,7 @@
 // thing said most often is a refusal — so the most common message froze the page and no automated pass
 // got past its first refusal (wave 26, 2026-09-06). One floating box, styled in gfso.css (.overlay).
 import {$, el} from './dom.js';
+import {frameText} from './hints.js';
 
 const box = (id, kind = '', parent = document.body) => {
     $(id)?.remove();
@@ -12,7 +13,8 @@ const box = (id, kind = '', parent = document.body) => {
 // act it refused — a stale one sat over a whole cancel handshake — but the bad kind lasts longer.
 export function notice(text, kind) {
     const b = box('page-notice', kind === 'bad' ? 'bad' : '');
-    Object.assign(b, {textContent: text, title: 'Click to dismiss', onclick: () => b.remove()});
+    Object.assign(b, {textContent: text, onclick: () => b.remove()});
+    b.dataset.tip = frameText('dismiss');
     setTimeout(() => b.remove(), kind === 'bad' ? 45000 : 12000);
 }
 export const clearNotice = () => $('page-notice')?.remove();
