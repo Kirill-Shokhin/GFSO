@@ -23,12 +23,19 @@ them at a directory you are willing to lose, and treat a task graph from an untr
 untrusted input: its criteria are instructions that will reach a model with a shell.
 
 Run unattended work in a container. A role registered with an execution (`register_agent(execution=)`,
-declared in `data/executions.json`) runs its project's sessions in a Docker container that holds only
-that project's directories, with the host's network shut; the system's own git operations on the
-agents' repositories run there too — save two that find a place by the path it was registered under
-(locking it, removing it), which fall back to the host for places registered there, and run nothing
-the agents wrote. Without one, sessions run as you, on your
-machine, with nothing between them and the rest of it.
+declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut:
+- Each agent session runs in a container of its own place. It writes there alone, reads the project's
+  base read-only, and holds its node's own temp and its place's own model-client state. It sees no
+  other node's work, conversations or inputs, and none of the system's own checks.
+- The system's own commands — git on the agents' repositories, the plan's probes — run in the
+  project's container, which holds the project's directories and no session's state. Two git
+  operations that find a place by the path it was registered under (locking it, removing it) fall
+  back to the host for places registered there, and run nothing the agents wrote.
+
+What one session can still reach: the sessions working in one place share it and its model-client
+state — a root's executor, its validations and its issuer's contacts all work in the base, which
+they can write. Without an execution, sessions run as you, on your machine, with nothing between
+them and the rest of it.
 
 How far a project's container reaches outside is a switch you set in its execution's declaration
 (`"network": {"mode": ..., "hosts": [...]}`):
