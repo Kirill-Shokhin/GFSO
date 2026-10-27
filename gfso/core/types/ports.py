@@ -234,9 +234,16 @@ class ExecutionPort(ABC):
         lists named to an agent are read there, not here."""
         ...
 
-    def scratch(self, prefix: str):
-        """A context manager lending an empty directory of its own under `temp_root`, removed when the block leaves."""
+    def scratch(self, prefix: str, *, system: bool = False):
+        """A context manager lending an empty directory of its own under `temp_root`, removed when the block leaves.
+        `system`: for the system's own copies and checks — where an isolated place gives its sessions a temp, one none
+        of them reaches but a session handed a directory in it. This host has one temp."""
         return tempfile.TemporaryDirectory(prefix=prefix, dir=self.temp_root(), ignore_cleanup_errors=True)
+
+    def temp_of(self, place: Optional[str]) -> str:
+        """The temp a session working in `place` holds — where the system lays what it is to read (its inputs, its
+        long lists); an isolated place gives each node one of its own. This host has one temp."""
+        return self.temp_root()
 
     @abstractmethod
     def state_dir(self):
@@ -268,6 +275,11 @@ class ExecutionPort(ABC):
     def remove_tree(self, path: str) -> None:
         """`path` gone, whatever it holds — a read-only directory a test made in it included. Gone already is fine."""
         ...
+
+    def session(self, cwd: str) -> "ExecutionPort":
+        """Where an agent's session working in `cwd` runs, as opposed to the system's own commands: an isolated place
+        may give each session a boundary of its own. This host is one place for both."""
+        return self
 
     def stop(self) -> None:
         """Release what this execution holds for its project — its goal settled, or the project deleted. The host

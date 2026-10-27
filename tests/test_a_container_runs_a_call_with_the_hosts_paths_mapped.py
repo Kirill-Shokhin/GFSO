@@ -43,18 +43,18 @@ def test_a_path_is_mapped_both_ways_in_any_spelling(place, tmp_path):
 
 def test_a_place_outside_the_four_mounts_is_refused(place, tmp_path):
     x = _ex(place, tmp_path)
-    assert x.inside_cwd(str(place.parent / ".gfso-nodes-base" / "p" / "k")) == "/gfso-place/.gfso-nodes-base/p/k"
+    assert x._inside_cwd(str(place.parent / ".gfso-nodes-base" / "p" / "k")) == "/gfso-place/.gfso-nodes-base/p/k"
     for outside in (place.parent / "other", tmp_path, place.parent):
         with pytest.raises(ValueError):
-            x.inside_cwd(str(outside))
+            x._inside_cwd(str(outside))
 
 
-def test_the_container_holds_only_the_projects_four_directories_and_its_state(place, tmp_path):
+def test_the_container_holds_only_the_projects_own_directories_and_its_state(place, tmp_path):
     a = _ex(place, tmp_path).run_args()
     mounts = [a[i + 1] for i, v in enumerate(a) if v == "--mount"]
     assert [m.split("dst=")[1] for m in mounts] == ["/gfso-place/base", "/gfso-place/.gfso-nodes-base",
                                                      "/gfso-place/.gfso-scratch-base", "/gfso-place/.gfso-tmp-base",
-                                                     "/home/agent/.claude"]
+                                                     "/gfso-place/.gfso-sys-base", "/home/agent/.claude"]
     assert "-v" not in a and "--privileged" not in a and ["--cap-add", "NET_ADMIN"] == a[a.index("--cap-add"):][:2]
     assert a[a.index("--name") + 1] == "gfso-e3-linux-gb-proj"
 

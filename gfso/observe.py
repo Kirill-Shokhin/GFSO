@@ -48,7 +48,7 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
     if not ex.shell():
         return {}
     seen = {}
-    with ex.scratch("gfso-observe-") as tmp:
+    with ex.scratch("gfso-observe-", system=True) as tmp:
         with snapshot(place, Path(tmp) / "place", ex) as tree:
             for t, row in run_checks(ex, probes, place, tree, tmp, budget):
                 seen.setdefault(str(t.id), []).append(row)

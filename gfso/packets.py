@@ -16,17 +16,17 @@ from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
 from gfso.engine.verdicts import OUTSIDE_NOTE
 from gfso.engine.validation import is_auto_root
-from gfso.workspaces import _unjoined_text, base_of, execution_of
+from gfso.workspaces import _unjoined_text, base_of, execution_of, node_temp
 
 
-def _executor_inputs(engine, criteria) -> dict:
+def _executor_inputs(engine, task) -> dict:
     """{probe id: a copy of its pinned inputs} for the executor, laid down from the contract outside its place.
 
     The inputs are part of what will be RUN, so part of the contract the executor is held to (Inv-1); named without
     their contents, the root executor of c_compiler searched the file system for them and read the plan's own copies
     (EVIDENCE_LOG §13.34). The validator still lays its own from the contract, so nothing done to this copy reaches a verdict."""
-    return (materialize_inputs(criteria, tempfile.mkdtemp(prefix="gfso-check-inputs-",
-                                                          dir=execution_of(engine).temp_root()))
+    criteria = task.spec.criteria
+    return (materialize_inputs(criteria, tempfile.mkdtemp(prefix="gfso-check-inputs-", dir=node_temp(engine, task)))
             if any(p.inputs for c in criteria or () for p in (c.check or ())) else {})
 
 
@@ -169,7 +169,7 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), see
     inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any + what its pinned checks
     printed on its place before the session (`seen`, `observe.observe_place`)."""
     tid = str(task.id)
-    dirs = _executor_inputs(engine, task.spec.criteria)
+    dirs = _executor_inputs(engine, task)
     crits = "\n".join(_crit_line(c, dirs) for c in task.spec.criteria) or "- (none)"
     ups = _upstream_lines(engine, task)
     # THE OTHER NODES OF THIS PLAN, by id. The packet listed only DECLARED upstream deps, so an
@@ -313,12 +313,12 @@ def _why_it_failed(engine, task, failed: list) -> str:
 SHOWN_FINDINGS = 20
 
 
-def list_key(engine, *parts) -> str:
+def list_key(engine, task_id, *parts) -> str:
     """The file a capped list goes to: one per engine — two projects' roots are both `root`, and two runs of one task
-    would overwrite each other's lists — per node, criterion and kind; where the project's agents run, so the one it is
-    named to can read it."""
-    name = "-".join(map(str, (os.getpid(), id(engine), *parts)))
-    return str(Path(execution_of(engine).temp_root()) / "gfso-lists"
+    would overwrite each other's lists — per node, criterion and kind; in the temp of the node's place, so the session
+    it is named to reads it and no other node's does (`node_temp`)."""
+    name = "-".join(map(str, (os.getpid(), id(engine), task_id, *parts)))
+    return str(Path(node_temp(engine, engine.graph.get_task(task_id))) / "gfso-lists"
                / (re.sub(r"[^\w.-]+", "_", name)[:120] + ".md"))
 
 
@@ -367,7 +367,7 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset, seen: dict | No
         return head + f"Already {t.state.name}: delivered earlier — listed for context, not yours to redo.\n"
     ups = "\n".join(_upstream_lines(engine, t, inside)) or "- none"
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(t)) or "- none"
-    dirs = _executor_inputs(engine, t.spec.criteria)
+    dirs = _executor_inputs(engine, t)
     crits = "\n".join(_crit_line(c, dirs) for c in t.spec.criteria) or "- (none)"
     return (head + f"### Criteria of `{t.id}` — its ENTIRE obligation; the scope's validation runs each\n"
             f"{crits}\n\n"
@@ -473,7 +473,8 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     # A probe's INPUTS are laid down here, from the contract, by the system — never read from the
     # delivery, where the executor could have grown them (the corpus that moved under `c_compiler`).
     _dirs = (materialize_inputs(_all, Path(scratch) / "probe_inputs" if scratch
-                                else tempfile.mkdtemp(prefix="gfso-probe-inputs-", dir=execution_of(engine).temp_root()))
+                                else tempfile.mkdtemp(prefix="gfso-probe-inputs-",
+                                                      dir=execution_of(engine).temp_of(workdir)))
              if any(p.inputs for c in _all for p in (c.check or ())) else {})
     owed = owed_probes(engine, task, crits)
     if carry is None:

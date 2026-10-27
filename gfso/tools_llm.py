@@ -31,6 +31,7 @@ from gfso.llm import llm_factory
 from gfso.workspaces import execution_of
 from gfso.adapters.snapshots import snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
+from gfso.issuer import CONTACT_ROUND as _CONTACT
 from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
@@ -626,7 +627,8 @@ def _validation_place(task_id: str, workdir, named: tuple = ()):
         # accumulates for the life of the project — a rework loop alone makes several.
         # …but never a round a standing finding runs: gone, its probe would read as unrunnable and stop being
         # demanded with no ruling (a 16-round root, GB_c_compiler — critic 2026-10-11)
-        for old_dir in sorted(root.iterdir(), key=lambda d: d.name)[:-20]:
+        # …nor an issuer's contact running in this scratch beside them (`issuer._contact_place`): it removes itself
+        for old_dir in sorted((d for d in root.iterdir() if not d.name.startswith(_CONTACT)), key=lambda d: d.name)[:-20]:
             if old_dir.is_dir() and not any(f"{root.name}/{old_dir.name}" in str(n).replace("\\", "/") for n in named):
                 shutil.rmtree(old_dir, ignore_errors=True)
     # What the delivery held BEFORE the validator touched it. The instruction above is a prompt, and
@@ -1198,7 +1200,7 @@ def _observe_exact(engine: Engine, parts: list, workdir, scratch) -> dict:
     why = ("the delivery could not be copied" if shell else "no shell to run it in" if workdir else
            "the delivery has no place to copy")
     if shell:
-        with nullcontext(scratch) if scratch else ex.scratch("gfso-exact-") as tmp:
+        with nullcontext(scratch) if scratch else ex.scratch("gfso-exact-", system=True) as tmp:
             (at := Path(tmp) / "exact").mkdir(parents=True, exist_ok=True)
             with snapshot(workdir, at / "delivery", ex) as tree:
                 if tree:

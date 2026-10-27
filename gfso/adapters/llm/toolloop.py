@@ -103,9 +103,10 @@ class Place:
     gets the time the run has left."""
 
     def __init__(self, execution, cwd: str, deadline: float = float("inf")):
-        self.exec, self.cwd, self.deadline = execution, Path(cwd).resolve(), deadline
+        # its commands run in the session's own place (`ExecutionPort.session`), not the system's
+        self.exec, self.cwd, self.deadline = execution.session(str(cwd)), Path(cwd).resolve(), deadline
         base = base_of(str(self.cwd))
-        self.roots = [self.cwd, Path(execution.temp_root()).resolve(), *([Path(base).resolve()] if base else [])]
+        self.roots = [self.cwd, Path(self.exec.temp_root()).resolve(), *([Path(base).resolve()] if base else [])]
 
     def _inside(self, full: Path, write: bool = False) -> bool:
         return any(full == r or full.is_relative_to(r) for r in (self.roots[:1] if write else self.roots))

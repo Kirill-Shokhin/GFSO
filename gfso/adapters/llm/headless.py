@@ -523,8 +523,9 @@ class ClaudeCodeProvider(RecordingProvider):
         self._est_chars = 0  # per-call char-estimate (fallback token counter while usage is absent)
         proc, out, n0 = None, {}, len(self.calls)
         try:
-            proc = self._exec.popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+            # in the session's own place (`ExecutionPort.session`): it writes there alone and sees no other node's
+            proc = self._exec.session(cwd).popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
 
             def _feed():  # a writer thread — a large prompt would deadlock a same-thread pipe write
                 try:

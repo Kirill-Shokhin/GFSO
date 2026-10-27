@@ -259,6 +259,18 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
     return _EXECUTIONS[key]
 
 
+def node_temp(engine, task) -> str:
+    """The temp of the place `task`'s sessions work in (`ExecutionPort.temp_of`) — where the system lays what they
+    are to read, and no other node's session holds; the place as a session finds it NOW: its own once made, else the
+    roster's workdir (`node_workspace`) — a parent's consent runs before its own executor made its place (critic over
+    the node temps: its inputs went where its session could not reach)."""
+    if task is None:
+        return execution_of(engine).temp_of(None)
+    agents = AgentRegistry()
+    here = node_workspace(engine, agents, task.id) or (performer(engine, agents, task.assignee)[1] or {}).get("workdir")
+    return execution_of(engine, agents).temp_of(here)
+
+
 def drop_execution(engine) -> None:
     """The project is gone: its container goes, and so does the object that held it."""
     for key in [k for k in _EXECUTIONS if k[1] == engine.project_name]:

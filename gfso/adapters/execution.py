@@ -4,6 +4,7 @@ starting every call through `docker exec`, so a project's work is isolated witho
 paths: a container sees the base's parent as `/gfso-place`, and every path crossing the boundary is mapped both ways."""
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 import re
@@ -46,6 +47,10 @@ LABEL = "gfso.execution"
 #: the containers this server process started — one per (execution, project), whichever object asks for it — with
 #: what each was started holding: a project re-created on another base gets a container of its own again
 _STARTED: dict = {}
+#: what names a validation's scratch beside the place it validates (`tools_llm`)
+SCRATCH = ".gfso-scratch-"
+#: the session containers of each project's places, by (project container, writable root)
+_SESSIONS: dict = {}
 #: each container's switch as last declared — the container's, not an object's: a session keeps its object for its whole
 #: life, so any object starting the container must start it under the switch as it stands now (critic 4: a second
 #: object of one container started it back under its own)
@@ -255,7 +260,8 @@ class ContainerExecution(ExecutionPort):
         # and appended to another row's conversation (critic over d5c8f7a, measured on two containers)
         self.state = Path(state) / self.container
         b = self.base.name
-        self.mounts = [b, f".gfso-nodes-{b}", f".gfso-scratch-{b}", f".gfso-tmp-{b}"]
+        # the last is the system's own: its copies and checks, which no session but the one handed a copy reaches
+        self.mounts = [b, f".gfso-nodes-{b}", f".gfso-scratch-{b}", f".gfso-tmp-{b}", f".gfso-sys-{b}"]
         # the parent in any spelling a path may arrive in — C:\ or C:/, either drive case — and the rest of that path
         # (a doubled backslash too: a path inside JSON); Windows paths are caseless
         sep = r"[\\/]{1,2}"
@@ -282,24 +288,42 @@ class ContainerExecution(ExecutionPort):
         """`text` with every container path spelled as the host sees it (forward slashes: valid inside JSON too)."""
         return re.sub(re.escape(INSIDE) + r"(?![\w.-])", self.parent.as_posix(), text)
 
-    def inside_cwd(self, cwd: str) -> str:
-        """The container's path of a place the call runs in — one of the mounted four, else refused: the agent would
+    def _inside_cwd(self, cwd: str) -> str:
+        """The container's path of a place the call runs in — inside what it mounts, else refused: the agent would
         stand where nothing of the project is, or the call would reach outside what the container holds."""
-        rel = Path(cwd).resolve().relative_to(self.parent) if Path(cwd).resolve().is_relative_to(self.parent) else None
-        if rel is None or not rel.parts or rel.parts[0] not in self.mounts:
+        here = Path(cwd).resolve()
+        if not any(here.is_relative_to(src) for src, _ in self._mounts()):
             raise ValueError(f"{cwd} is not inside {self.container}'s mounts ({', '.join(self.mounts)} of {self.parent})")
-        return INSIDE + "/" + rel.as_posix()
+        return INSIDE + "/" + here.relative_to(self.parent).as_posix()
 
     def run_args(self) -> list[str]:
         """`docker run` for this project's container: sealed (`--init`, its own mounts only, no new privileges, its way
         out as switched), sleeping until the server calls into it."""
-        mounts = [a for m in self.mounts for a in ("--mount", f"type=bind,src={self.parent / m},dst={INSIDE}/{m}")]
+        mounts = [a for src, ro in self._mounts() for a in (
+            "--mount", f"type=bind,src={src},dst={self.to_inside(str(src))}" + (",readonly" if ro else ""))]
         return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
                 *self.way.run_args(),
                 "--security-opt", "no-new-privileges",
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,
                 "--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}",
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
+
+    def _mounts(self) -> list:
+        """(host directory, read-only?) for each directory the container holds: the project's four, all writable."""
+        return [(self.parent / m, False) for m in self.mounts]
+
+    def session(self, cwd: str) -> "ExecutionPort":
+        """The container of the place a session works in (`PlaceContainer`): it writes there alone, reads the base,
+        and never sees another node's place."""
+        try:
+            rw = _writable_root(Path(cwd).resolve(), self)
+        except ValueError:
+            return self        # refused where the call starts, after the place's own health — a dead place stops first
+        for gone in [k for k in list(_SESSIONS) if k[0] == self.container and not os.path.isdir(k[1])]:
+            if s := _SESSIONS.pop(gone, None):            # a round, a contact, a no-place call: its directory is gone
+                s.stop()
+        with _START:
+            return _SESSIONS.setdefault((self.container, os.path.normcase(rw)), PlaceContainer(self, rw))
 
     def start(self) -> None:
         """The project's container, running and sealed — started once per server process, whoever asks first."""
@@ -312,7 +336,7 @@ class ContainerExecution(ExecutionPort):
                 d.mkdir(parents=True, exist_ok=True)
             self.stop()                                                  # what a server that is gone left
             try:
-                self.way.open()
+                self._open_the_way()
                 run(self.run_args(), timeout=120).check_returncode()
             except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 self.stop()
@@ -325,8 +349,13 @@ class ContainerExecution(ExecutionPort):
                                    f"({(seal.stderr or b'').decode(errors='replace')[-300:]})")
             _STARTED[self.container] = (self.run_args(), self.way.network)
 
+    def _open_the_way(self) -> None:
+        self.way.open()
+
     def stop(self) -> None:
-        """The project's container and its way out."""
+        """The project's container, its sessions' and its way out."""
+        for key in [k for k in _SESSIONS if k[0] == self.container]:
+            _SESSIONS.pop(key).stop()
         run(["docker", "rm", "-f", self.container], timeout=60)
         self.way.close()
         _STARTED.pop(self.container, None)
@@ -364,7 +393,7 @@ class ContainerExecution(ExecutionPort):
         own = {k: v for k, v in (env or {}).items()
                if here.get(k) != v or k.startswith("ANTHROPIC_") or SECRET_ENV.search(k)}
         secret = {k: v for k, v in own.items() if SECRET_ENV.search(k)}
-        return (["docker", "exec", "-i", "-w", self.inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
+        return (["docker", "exec", "-i", "-w", self._inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
                  *[a for k, v in own.items() for a in ("-e", k if k in secret else f"{k}={self.to_inside(v)}")],
                  self.container, "sh", "-c", f'echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh",
                  *map(self.to_inside, args)], {**here, **secret})
@@ -398,6 +427,8 @@ class ContainerExecution(ExecutionPort):
     def remove_tree(self, path: str) -> None:
         if not os.path.lexists(path):
             return
+        for key in [k for k in _SESSIONS if k[0] == self.container and Path(k[1]).is_relative_to(Path(path).resolve())]:
+            _SESSIONS.pop(key).stop()                     # a place going takes its session's container with it
         r = self.run(["sh", "-c", 'chmod -R u+rwX -- "$1" 2>/dev/null; rm -rf -- "$1"', "sh", path],
                      cwd=str(Path(path).parent), timeout=600)
         if r.returncode != 0:
@@ -406,6 +437,8 @@ class ContainerExecution(ExecutionPort):
     def end(self, proc) -> None:
         """The call's group inside, and whatever it started that left the group (`setsid`), found by its mark — killing
         the `docker exec` client alone leaves them all running (probe P1)."""
+        if isinstance(proc, _Call) and proc.execution is not self:
+            return proc.execution.end(proc)               # in the container the call ran in, a session's own
         if isinstance(proc, _Call):
             self._end_inside(proc.call)
             proc = proc.client
@@ -421,6 +454,25 @@ class ContainerExecution(ExecutionPort):
         (d := self.parent / self.mounts[3]).mkdir(parents=True, exist_ok=True)
         return str(d)
 
+    def temp_of(self, place) -> str:
+        """The temp of the node `place` belongs to (`_owner`): its executor, its validations, its issuer's contacts
+        share it, and no other node's session holds it. A path outside the project's places: the temp itself."""
+        try:
+            owner = _owner(_writable_root(Path(place).resolve(), self)) if place else None
+        except ValueError:
+            owner = None
+        if owner is None:
+            return self.temp_root()
+        if owner.is_relative_to(self.parent / self.mounts[3]):
+            return str(owner)                            # a directory of the temp lent to one call is its own temp
+        d = self.parent / self.mounts[3] / f"node-{hashlib.sha1(os.path.normcase(owner).encode()).hexdigest()[:12]}"
+        d.mkdir(parents=True, exist_ok=True)
+        return str(d)
+
+    def scratch(self, prefix: str, *, system: bool = False):
+        (d := Path(self.temp_root()) if not system else self.parent / self.mounts[4]).mkdir(parents=True, exist_ok=True)
+        return tempfile.TemporaryDirectory(prefix=prefix, dir=str(d), ignore_cleanup_errors=True)
+
     def state_dir(self):
         return self.state
 
@@ -428,12 +480,93 @@ class ContainerExecution(ExecutionPort):
         return STATE_INSIDE
 
 
+def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
+    """What a session working in `cwd` may write: a validation's round of the scratch it stands in, whole (its copy
+    of the delivery and its own files) — `.gfso-scratch-<place>/<round>`, beside the base or beside a node's clone;
+    else the place itself — the base for a root, a node's clone (`.gfso-nodes-<base>/<project>/<key>`), a temp
+    directory of its own."""
+    rel = cwd.relative_to(project.parent) if cwd.is_relative_to(project.parent) else None
+    if rel is None or not rel.parts or rel.parts[0] not in project.mounts:
+        raise ValueError(f"{cwd} is not inside {project.container}'s mounts ({', '.join(project.mounts)})")
+    if (at := next((i for i, p in enumerate(rel.parts) if p.startswith(SCRATCH)), None)) is not None:
+        return project.parent.joinpath(*rel.parts[:at + 2])
+    depth = {project.mounts[0]: 1, project.mounts[1]: 3, project.mounts[3]: 2, project.mounts[4]: 2}[rel.parts[0]]
+    return project.parent.joinpath(*rel.parts[:depth])
+
+
+def _owner(rw: Path) -> Path:
+    """The place a writable root serves: a validation's round, the node it validates; else itself."""
+    return rw.parent.parent / rw.parent.name[len(SCRATCH):] if rw.parent.name.startswith(SCRATCH) else rw
+
+
+def _scratch_of(place: Path) -> Path:
+    """Where a validation of the delivery in `place` keeps its rounds — beside it (`tools_llm`'s scratch)."""
+    return place.parent / f"{SCRATCH}{place.name}"
+
+
+class PlaceContainer(ContainerExecution):
+    """One session's container: its place writable (`rw`), the base read-only — a node's clone borrows the base's
+    objects, and nothing it does reaches the base's refs — a validation's earlier rounds read-only, nothing of another
+    node's place nor of the system's own checks. Its way out is its project's; the system's own commands stay in the
+    project's container. Started on its session's first call, gone with its directory, its place or its project.
+    Its temp is its node's own (`temp_of`): what the system lays for the node's sessions, no other node's reads — save
+    that whatever works in the base shares the base's: every node with no git base, a root's sessions, a parent's
+    consent before its own place is made.
+    NOT HELD YET: the CLI's state is the project's, mounted in every session — the others' conversations are read and
+    written there; a root's sessions — its validation with no copy and its issuer's contact among them — write the
+    base and its scratch; a node's validation that could not copy the place cannot write its round; a tool-loop
+    provider's issuer reads a node's inputs by its shell only; a round's container stands until its round is pruned,
+    a done node's until its directories go or the project stops."""
+
+    def __init__(self, project: ContainerExecution, rw: Path):
+        self.__dict__.update(project.__dict__)
+        self.project, self.rw = project, rw
+        self.container = f"{project.container}-s-{hashlib.sha1(os.path.normcase(rw).encode()).hexdigest()[:12]}"
+
+    def _mounts(self) -> list:
+        """The base read-only unless the place is the base; a validation's round writable, its earlier rounds
+        read-only beneath it; a place writable with its validations' scratch — a validation that could not copy the
+        place runs in it, and a node's standing findings name probes there; the temp writable."""
+        tmp, system = self.parent / self.mounts[3], self.parent / self.mounts[4]
+        if self.rw.parent.name.startswith(SCRATCH):
+            own = [(self.rw.parent, True), (self.rw, False)]
+        elif self.rw.is_relative_to(tmp):
+            return [*([] if self.rw == self.base else [(self.base, True)]), (self.rw, False)]
+        elif self.rw.is_relative_to(system):
+            own = [(self.rw, False)]                     # the one directory of the system's a session is handed
+        else:
+            # its validations' scratch read-only beside a node's clone: its rounds hold the probes the node's standing
+            # findings re-run, which the node's own executor must not rewrite (critic 3 over the session slice); a root
+            # works in the base, where a validation with no copy also runs, and keeps it writable
+            (scratch := _scratch_of(self.rw)).mkdir(parents=True, exist_ok=True)
+            own = [(self.rw, False), (scratch, self.rw != self.base)]
+        return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
+
+    def temp_root(self):
+        """Its node's own temp (`ContainerExecution.temp_of`), not the project's."""
+        return self.project.temp_of(str(self.rw))
+
+
+    def session(self, cwd: str) -> "ExecutionPort":
+        return self if Path(cwd).resolve().is_relative_to(self.rw) else self.project.session(cwd)
+
+    def _open_the_way(self) -> None:
+        self.project.start()                              # the project's network and gateway stand before any session
+        # …and a project started here stopped its sessions first, this one among them: it is tracked again
+        _SESSIONS[(self.project.container, os.path.normcase(self.rw))] = self
+
+    def stop(self) -> None:
+        """This session's container only: the way out is its project's."""
+        run(["docker", "rm", "-f", self.container], timeout=60)
+        _STARTED.pop(self.container, None)
+
+
 class _Call:
     """A call inside, as the host's code reads a process: what it is fed goes in with container paths, what it prints
     comes out with host paths."""
 
     def __init__(self, client, execution: ContainerExecution, call: str):
-        self.client, self.call, self._ex = client, call, execution
+        self.client, self.call, self.execution = client, call, execution
         self.stdin = _Mapped(client.stdin, execution.to_inside) if client.stdin else None
         self.stdout = (execution.to_outside(line) for line in client.stdout) if client.stdout else None
         self.pid = client.pid
@@ -453,7 +586,7 @@ class _Call:
 
     def kill(self):
         """Ended inside, not only the client."""
-        self._ex.end(self)
+        self.execution.end(self)
 
 
 class _Mapped:

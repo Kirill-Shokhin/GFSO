@@ -26,6 +26,7 @@ import dataclasses
 import logging
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -137,6 +138,21 @@ class Verbs:
     place: object = None  # (engine, agents, node id) -> the directory the node's work is in, or None
     execution: object = None  # engine -> where its project's sessions and commands run (`ExecutionPort`), None = here
 
+
+
+#: what names an issuer's contact among a node's validation rounds — the rounds' rotation leaves it alone
+CONTACT_ROUND = "issuer_"
+
+
+def _contact_place(where: str, ex):
+    """Where an issuer's contact with a node lays its inputs and its copy of the place: a ROUND OF THAT NODE'S
+    VALIDATION SCRATCH, as a validator's run is (`tools_llm`) — so its session reads the probes the node's standing
+    findings name in the earlier rounds and writes only its own, and no other node's session reaches it. Where no copy is
+    made (the base, a root's place) the temp its session holds, as a validator's lone run there."""
+    if _NODES not in str(where):
+        return tempfile.TemporaryDirectory(prefix="gfso-issuer-inputs-", dir=ex.temp_of(where), ignore_cleanup_errors=True)
+    (beside := Path(where).parent / f".gfso-scratch-{Path(where).name}").mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix=CONTACT_ROUND, dir=str(beside), ignore_cleanup_errors=True)
 
 def _execution(engine, verbs: "Verbs | None"):
     return verbs.execution(engine) if verbs is not None and verbs.execution is not None else None
@@ -683,7 +699,7 @@ def _derived(command: str, criterion, probe, execution=None) -> tuple[Optional[s
     ex = execution or LocalExecution()
     if not (bash := ex.shell()):
         return None, "could not run: no `bash` here"
-    with ex.scratch("gfso-derive-") as tmp:
+    with ex.scratch("gfso-derive-", system=True) as tmp:
         try:
             laid = materialize_inputs((criterion,), Path(tmp) / "inputs")
         except ValueError as e:
@@ -1480,7 +1496,7 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
-    with ((ex or LocalExecution()).scratch("gfso-issuer-inputs-") if where else contextlib.nullcontext()) as tmp:
+    with (_contact_place(where, ex or LocalExecution()) if where else contextlib.nullcontext()) as tmp:
         laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp) if tmp else {}
         packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
         with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
