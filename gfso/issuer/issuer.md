@@ -20,8 +20,10 @@ it, what contract comes next, or is the node to be closed.
 - **Every criterion carries the procedure that decides it** — `check: [{behaviour, command, expect}]`,
   written before the work (A1/§2). Test data a command reads belongs to the probe itself (`inputs`),
   with the command naming its directory `{inputs}`. `exact: true` where `expect` is the complete output
-  the command prints on correct work (the system runs it and a different output fails the criterion);
-  false where `expect` describes the output or names part of it.
+  the command prints on correct work (the system runs it as written on a fresh copy of the delivered
+  tree and a different output fails the criterion) — so it builds what it runs, creates any state it
+  reads, and prints the same every time; false where it cannot, or where `expect` describes the output
+  or names part of it.
 - **A repair flows down, not around.** When contact refuted a split (the parent failed on criteria its
   children passed), the fix is in the child that should have carried the failure — revise it to carry
   the failed criterion, with a procedure that would have caught it — or in a new child that carries it.

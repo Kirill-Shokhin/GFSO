@@ -908,9 +908,15 @@ def shows(printed: str, expect: str) -> bool:
 
 #: What an author is told `exact` means — one text for every schema that pins a probe (`Probe.exact`).
 EXACT_TEXT = ("true when `expect` is the COMPLETE output the command prints on correct work (whitespace runs count as "
-              "one, `\\n` as a newline): the system then runs the command itself and a different output fails the "
-              "criterion whatever the validator says. false when `expect` describes the output in words or names only "
-              "part of it")
+              "one, `\\n` as a newline) — its standard output, or that followed by its errors; where the two streams "
+              "alternate, merge them in the command (`2>&1`). The system then runs the command itself, as written, on "
+              "the delivered tree in a fresh copy, and a different output fails the criterion whatever the validator "
+              "says. So an exact command builds what it runs (`make -s prog && ./prog …`), creates any state it reads "
+              "(starts from a fresh temp file, not one an earlier run may have left), and prints the same every time it "
+              "runs; a build that records its own directory (a CMake or autotools build tree) is built afresh in the "
+              "command, not reused from the tree; a probe that cannot is left false. false also when `expect` "
+              "describes the output in words or "
+              "names only part of it")
 
 
 def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> str | None:
@@ -1041,25 +1047,33 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
     out, note}}, `tools_llm._observe_exact`) put where every reader of `held` reads it: a probe it saw print other than
     its `expect` did NOT hold — each citation of it, by id or bare hash, says `held: false`, and every entry of a
     criterion resting on it or on a copy of it (`same_probe`), the node's own or through a part, is a `fail` citing it
-    with what it printed (Inv-2, §12.8: an observed divergence is that criterion's fail; Inv-3). Matched, or not run,
-    the report stands as it came: a run the system could not make decides nothing (A1 (i)), and a `held: false` is
-    never raised. Before it the PASS on such a probe was the validator's word alone, and FM-3 has no structural guard
-    (§9.10) — a false FAIL costs a round, a false PASS closes a node."""
+    with what it printed (Inv-2, §12.8: an observed divergence is that criterion's fail; Inv-3). Matched, the report
+    stands as it came; not run (a row with a `note` and no `matched`), the entries resting on it stand too, their
+    evidence saying the system did not observe it — a run the system could not make decides nothing (A1 (i)), and the
+    `held` there is visibly the validator's word. A `held: false` is never raised. Before it the PASS on such a probe
+    was the validator's word alone, and FM-3 has no structural guard (§9.10) — a false FAIL costs a round, a false PASS
+    closes a node."""
     pinned = {probe_id(c.name, p): p for cs in [criteria or ()] + list((parts or {}).values()) for c in cs
               for p in (c.check or ()) if _norm(p.command)}
-    off = {pid: o for pid, o in (observed or {}).items() if pid in pinned and pinned[pid].exact and o.get("matched") is False}
-    if not off:
+    exact = {pid: o for pid, o in (observed or {}).items() if pid in pinned and pinned[pid].exact}
+    if not exact:
         return list(per_criterion or ())
-    seen_as = {same_probe(pinned[pid]): o for pid, o in off.items()}
-    off = {pid: seen_as[same_probe(p)] for pid, p in pinned.items() if same_probe(p) in seen_as}
+
+    def _copies(seen: dict) -> dict:   # every id one observation is of (`same_probe`)
+        seen_as = {same_probe(pinned[pid]): o for pid, o in seen.items()}
+        return {pid: seen_as[same_probe(p)] for pid, p in pinned.items() if same_probe(p) in seen_as}
+    off = _copies({pid: o for pid, o in exact.items() if o.get("matched") is False})
+    unseen = {pid: o for pid, o in _copies({pid: o for pid, o in exact.items() if "matched" not in o}).items()
+              if pid not in off and "matched" not in exact.get(pid, {})}
     rests: dict[str, list[str]] = {}
     for k, cs in [*((c.name, (c,)) for c in criteria or ()), *(parts or {}).items()]:
-        rests.setdefault(_norm(k), []).extend(pid for c in cs for p in (c.check or ()) if (pid := probe_id(c.name, p)) in off)
+        rests.setdefault(_norm(k), []).extend(probe_id(c.name, p) for c in cs for p in (c.check or ()))
     named = lambda q: next((pid for pid in off if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])), None)
     out = []
     for e in per_criterion or ():
         probes = [{**q, "held": False} if named(q) else q for q in probes_of(e)]
-        if hit := list(dict.fromkeys(rests.get(_norm(e.get("criterion")), ()))):
+        on = list(dict.fromkeys(rests.get(_norm(e.get("criterion")), ())))
+        if hit := [pid for pid in on if pid in off]:
             why = [f"the system ran pinned check {pid} itself and it printed {off[pid].get('out', '')!r}, not the "
                    f"whole output it pins, {pinned[pid].expect!r}" for pid in hit]
             cited = {named(q) for q in probes}
@@ -1067,8 +1081,12 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
                  "divergences": [*why, *(e.get("divergences") or ())],
                  "probe": probes + [{"id": pid, "behaviour": pinned[pid].behaviour, "command": pinned[pid].command,
                                      "expect": pinned[pid].expect, "held": False} for pid in hit if pid not in cited]}
-        elif probes:
-            e = {**e, "probe": probes}
+        else:
+            if probes:
+                e = {**e, "probe": probes}
+            if blind := [f"the system did not run exact pinned check {pid} itself ({unseen[pid].get('note')}): its "
+                         f"holding is the validator's word" for pid in on if pid in unseen]:
+                e = {**e, "evidence": " | ".join([str(e["evidence"])] + blind if e.get("evidence") else blind)}
         out.append(e)
     return out
 

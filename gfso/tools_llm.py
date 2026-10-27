@@ -1147,28 +1147,40 @@ def _scope_cap(batch: list, graph) -> Optional[int]:
     return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
 
 
-def _observe_exact(engine: Engine, batch: list, workdir, tree) -> dict:
-    """{(node, probe id): {matched, out, note, …}} — every `exact` pinned probe a validator run just carried, own and
-    parts', run by the system in that run's copy of the place with the builds it left (`observe.run_checks`), before
-    the copy is gone. A pin presupposes a build it does not pin (`observe`), so the copy the validator built in is the
-    one place where the system's run observes what the validator's did; {} where the run had no copy — the place
-    itself is never run in. Laid over the report before it is recorded (`procedure.with_engine_observations`)."""
+def _observe_exact(engine: Engine, parts: list, workdir, scratch) -> dict:
+    """{(node, probe id): {matched, out, note, …}} — every `exact` pinned probe of the criteria left to validate, own and
+    parts', run by the system itself ON THE DELIVERY: a fresh copy of it with the inputs laid from the contract
+    (`observe.run_checks`), once per validation and before any validator run. The validator's copy was no such run —
+    a probe that leaves state printed "already exists" there, and the validator's edits changed what it printed
+    (critic over 38c16f9) — and a lone validator works in the place itself, so after it no copy is the delivery. An
+    exact probe builds what it runs and creates what it reads (`procedure.EXACT_TEXT`). A probe the system could not
+    run is a row with a `note` and no `matched`, said in the record as not observed. Laid over the report before it is
+    recorded (`procedure.with_engine_observations`); the place itself is never run in."""
     probes = []
-    for task, _, crits, *carry in batch:
-        parts = engine.parts_procedure(task.id)
-        owed = carry[0] if carry else None    # a batch carries its share of what the validation owes
-        probes += [((str(task.id), pid), c, p) for c in [*crits, *(pc for x in crits for pc in parts.get(x.name, ()))]
-                   for p in (c.check or ()) if p.exact and p.command.strip()
-                   and (pid := probe_id(c.name, p)) and (owed is None or pid in owed)]
-    if not (tree and probes):
+    for task, _, crits in parts:
+        own = engine.parts_procedure(task.id)
+        probes += [((str(task.id), pid), c, p) for c in [*crits, *(pc for x in crits for pc in own.get(x.name, ()))]
+                   for p in (c.check or ()) if p.exact and p.command.strip() and (pid := probe_id(c.name, p))]
+    if not probes:
         return {}
-    ex = execution_of(engine)
-    with ex.scratch("gfso-exact-") as tmp:
-        return dict(run_checks(ex, probes, workdir, tree, tmp, OBSERVE_S))
+    ex, rows = execution_of(engine), {}
+    shell = bool(workdir) and ex.shell()
+    why = ("the delivery could not be copied" if shell else "no shell to run it in" if workdir else
+           "the delivery has no place to copy")
+    if shell:
+        with nullcontext(scratch) if scratch else ex.scratch("gfso-exact-") as tmp:
+            (at := Path(tmp) / "exact").mkdir(parents=True, exist_ok=True)
+            with snapshot(workdir, at / "delivery", ex) as tree:
+                if tree:
+                    # …as it stands, whatever git ignores included: a `git clean` here emptied a shared place's copy
+                    # inside an enclosing repository and took a delivery's ignored `node_modules` (critic over the
+                    # fresh copy). State an executor's own run left is the pin's to start clean of (`EXACT_TEXT`)
+                    why, rows = "its inputs could not be laid", dict(run_checks(ex, probes, workdir, tree, at, OBSERVE_S))
+    return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
 
 
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
-                     edits: Optional[list] = None, observed: Optional[dict] = None) -> list:
+                     edits: Optional[list] = None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1203,12 +1215,6 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
                 body = swap(body, workdir, tree) + snapshot_note(tree)
             text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
                                              timeout=cap())
-            # …and what the system itself sees its exact checks print there, before the copy goes; of two runs over one
-            # probe (a re-run of an unread batch) a mismatch stands — a false FAIL costs a round, a false PASS a node
-            if observed is not None:
-                for k, row in _observe_exact(engine, batch, workdir, tree).items():
-                    if (observed.get(k) or {}).get("matched") is not False:
-                        observed[k] = row
             return swap(text, tree, workdir) if tree else text
 
     def _run_again_if_unread(batch, client=None, place=None) -> str:
@@ -1251,8 +1257,12 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
         for ps in engine.regression_probes(t.id).values() for p in ps))
     try:
         edits: list = []
-        observed: dict = {}
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, observed)
+        # the system's own run of the exact checks FIRST, on the delivery as delivered (`_observe_exact`)
+        if observed := _observe_exact(engine, parts, workdir, scratch):
+            _cb(f"{top_id}: the system ran {len(observed)} exact pinned check(s) on a fresh copy of the delivery — "
+                f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
+                f"{sum('matched' not in o for o in observed.values())} could not be run")
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
     text = "\n\n".join(x or "" for x in texts)

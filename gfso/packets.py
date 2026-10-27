@@ -108,7 +108,11 @@ _OBSERVED = ("Before this session the system ran each check pinned to your crite
              "built, or built from older sources, shows that and not your work. It is an observation, not a verdict — "
              "the validator builds as it needs and decides. It does not cover what the validator runs beyond these "
              "checks: the standing findings of an earlier round, the parts' own pinned checks, what it explores. Use it "
-             "to see where the work stands; confirm with your own run before you deliver.\n")
+             "to see where the work stands; confirm with your own run before you deliver. An EXACT check is the "
+             "exception: the system runs it again itself, the same way, on a fresh copy of your delivery, and an "
+             "output other than its pin fails its criterion whatever the validator says — one that cannot print its "
+             "pin on correct work (it does not build what it runs, reads state it does not create) is a pin to "
+             "CHALLENGE, not to work around.\n")
 
 
 def observed_lines(rows: list) -> str:
@@ -126,7 +130,8 @@ def observed_lines(rows: list) -> str:
         if r.get("note"):
             return head + r["note"]
         return head + ("printed exactly what it must show" if r.get("matched") else
-                       f"exit {r.get('rc')}, printed «{_flat(r.get('out'))}»")
+                       f"exit {r.get('rc')}, printed «{_flat(r.get('out'))}»"
+                       + (" — the system's own run of this EXACT check does not match its pin" if r.get("exact") else ""))
     return "".join(_one(r) + "\n" for r in rows)
 
 

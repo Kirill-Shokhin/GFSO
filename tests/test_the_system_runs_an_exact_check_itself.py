@@ -1,14 +1,20 @@
-"""A pinned probe whose `expect` is the whole printed output (`exact`) is run by the system itself in the copy the
-validator worked in, and where it printed otherwise the criterion fails whatever the validator said.
+"""A pinned probe whose `expect` is the whole printed output (`exact`) is run by the system itself on a fresh copy of
+the delivery, before and apart from the validator, and where it printed otherwise the criterion fails whatever the
+validator said.
 
 Before it a pinned probe "held" on the validator's word alone, and FM-3 has no structural guard (§9.10): the false
-PASS is the defect, a false FAIL costs a round. Inv-2 (§12.8): an observed divergence is that criterion's fail.
+PASS is the defect, a false FAIL costs a round. Inv-2 (§12.8): an observed divergence is that criterion's fail. The
+first cut ran it in the validator's copy after the validator, read stdout alone and skipped a node with no place of
+its own: correct work printing to stderr, or a probe that creates its state, failed (critic over 38c16f9).
 
-CONTROL: make `tools_llm._observe_exact` return {} — `test_a_held_exact_probe_that_prints_otherwise_fails` goes red
-and nothing else here does."""
+CONTROLS (each breaks exactly its test): drop the stderr arm of `observe.printed` — the stderr test; run
+`_observe_exact` after `_validator_texts` — the stateful test; require `_NODES in workdir` in `_observe_exact` — the
+no-place test; drop the `blind` note in `with_engine_observations` — the not-observed test; `_observe_exact` → {} —
+the mismatch tests."""
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
@@ -18,39 +24,53 @@ from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.protocol.procedure import part_credit, probe_id, procedure_digest, with_engine_observations
 from gfso.core.types import Criteria, Probe, Spec
 from gfso.engine.verdicts import criterion_version
+from gfso.observe import observe_place
+from gfso.packets import observed_lines
+from gfso.adapters.execution import LocalExecution
+from gfso.workspaces import execution_of
+from tests.test_the_executor_starts_from_what_its_checks_print import _node
 from tests.test_validate_result import _eng, _fenced
 
 CMD = "cat out.txt"
-PID = probe_id("c", {"command": CMD})
+#: creates the state it reads: a second run in the same tree prints otherwise
+STATEFUL = "if [ -e t.db ]; then echo 'Error: table t already exists'; else touch t.db; echo created; fi"
 
 
 class _Says:
-    """A validator that passes `c` and cites its pinned probe as held, whatever the place holds."""
-    def __init__(self):
+    """A validator that passes `c` and cites its pinned probe as held, whatever the place holds — having run it in its
+    working directory first where `runs`."""
+    def __init__(self, cmd, expect, runs=False):
+        self.cmd, self.expect, self.runs = cmd, expect, runs
         self.calls, self.last_tool_calls, self.on_tick, self.stage_hint = [], {"Bash": 1}, None, ""
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        if self.runs:
+            subprocess.run([LocalExecution().shell(), "-c", self.cmd], cwd=cwd, capture_output=True)
         self.calls.append({"duration_ms": 1, "input_tokens": 1, "output_tokens": 1})
         return _fenced({"verdict": "PASS", "failed_criteria": [], "per_criterion": [
-            {"criterion": "c", "verdict": "pass", "evidence": "ran it, it printed hello", "behaviours": ["it greets"],
-             "divergences": [],
-             "probe": [{"id": PID, "behaviour": "it greets", "command": CMD, "expect": "hello", "held": True}]}]})
+            {"criterion": "c", "verdict": "pass", "evidence": "ran it, it printed what it pins",
+             "behaviours": ["it greets"], "divergences": [],
+             "probe": [{"id": probe_id("c", {"command": self.cmd}), "behaviour": "it greets", "command": self.cmd,
+                        "expect": self.expect, "held": True}]}]})
 
     def tag_last(self, stage):
         self.calls[-1]["stage"] = stage
 
 
-def _validated(tmp_path, printed: str, exact: bool = True) -> dict:
-    place = tmp_path / ".gfso-nodes-p" / "n"      # a node's own place: its validation runs in a copy of it
+def _validated(tmp_path, printed: str, exact: bool = True, cmd: str = CMD, expect: str = "hello", runs=False,
+               node=True, before=lambda e: None) -> dict:
+    # a node's own place (its validation runs in a copy of it) — or a shared one, which the validator works in itself
+    place = tmp_path / ".gfso-nodes-p" / "n" if node else tmp_path / "work"
     place.mkdir(parents=True)
     (place / "out.txt").write_text(printed + "\n")
     e = _eng()
     T.create_task(e, "n", {"description": "greet", "criteria": [{"name": "c", "description": "prints hello", "check": [
-        {"behaviour": "it greets", "command": CMD, "expect": "hello", "exact": exact}]}]}, "alice")
+        {"behaviour": "it greets", "command": cmd, "expect": expect, "exact": exact}]}]}, "alice")
     T.signal(e, "n", "ACCEPT", "alice")
     T.signal(e, "n", "DELIVER", "alice", result="out.txt")
+    before(e)
     try:
-        return TL.validate_result(e, "n", _llm=_Says(), workdir=str(place))
+        return TL.validate_result(e, "n", _llm=_Says(cmd, expect, runs), workdir=str(place))
     finally:
         e.stop()
 
@@ -61,7 +81,7 @@ def test_a_held_exact_probe_that_prints_otherwise_fails(tmp_path, monkeypatch, b
     out = _validated(tmp_path, "goodbye")
     assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["c"], out
     why = json.dumps(out)
-    assert PID in why and "goodbye" in why and "hello" in why, why
+    assert probe_id("c", {"command": CMD}) in why and "goodbye" in why and "hello" in why, why
 
 
 def test_a_held_exact_probe_that_prints_it_passes(tmp_path):
@@ -70,6 +90,43 @@ def test_a_held_exact_probe_that_prints_it_passes(tmp_path):
 
 def test_a_probe_not_exact_stands_on_the_validator_s_word(tmp_path):
     assert _validated(tmp_path, "goodbye", exact=False)["verdict"] == "PASS"
+
+
+def test_correct_work_that_prints_its_error_to_stderr_passes(tmp_path):
+    assert _validated(tmp_path, "Error: no such table t", cmd="cat out.txt >&2",
+                      expect="Error: no such table t")["verdict"] == "PASS"
+
+
+def test_a_probe_that_creates_its_state_passes_though_the_validator_ran_it_first(tmp_path):
+    """The validator of a shared place works in the place itself and leaves `t.db` there: the system's run is the
+    delivery's, made before it."""
+    assert _validated(tmp_path, "", cmd=STATEFUL, expect="created", runs=True, node=False)["verdict"] == "PASS"
+
+
+def test_a_node_with_no_place_of_its_own_still_gets_the_system_s_run(tmp_path):
+    out = _validated(tmp_path, "goodbye", node=False)
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["c"], out
+
+
+def test_a_probe_the_system_could_not_run_is_recorded_as_the_validator_s_word(tmp_path, monkeypatch):
+    seen = {}
+
+    def _no_shell(e):
+        monkeypatch.setattr(type(execution_of(e)), "shell", lambda self: None)
+        seen["e"] = e
+    assert _validated(tmp_path, "goodbye", before=_no_shell)["verdict"] == "PASS"
+    evidence = json.dumps(T.get_verdict(seen["e"], "n", _trim=False))
+    assert f"did not run exact pinned check {probe_id('c', {'command': CMD})} itself (not run: no shell" in evidence
+    assert "the validator's word" in evidence, evidence
+
+
+def test_the_packet_matches_an_exact_check_by_the_same_rule_and_says_it_does_not(tmp_path):
+    (tmp_path / "out.txt").write_text("Error: no such table t\n")
+    e, t = _node({"behaviour": "errs", "command": "cat out.txt >&2", "expect": "Error: no such table t", "exact": True},
+                 {"behaviour": "greets", "command": "cat out.txt", "expect": "hello", "exact": True})
+    rows = observe_place(e, [t], str(tmp_path))["root"]
+    assert [r.get("matched") for r in rows] == [True, False]
+    assert observed_lines(rows).count("the system's own run of this EXACT check does not match") == 1
 
 
 _OLD = [Criteria("out", "prints hi", check=(Probe("greets", "echo hi", "hi"),

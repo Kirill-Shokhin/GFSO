@@ -114,8 +114,12 @@ Reduce everything to a canonical, non-redundant **BASIS**:
       closure; that residue is honest, and a procedure invented later by whoever happens to validate
       is not. A command that merely restates the criterion ("review the parser") is not a procedure.
       Set `exact: true` on a probe whose `expect` is the complete output the command prints on correct
-      work — the system then runs it itself and a different output fails the criterion — and leave it
-      false where `expect` describes the output in words or names only part of it.
+      work — the system then runs it itself, as written, on the delivered tree in a fresh copy, and a
+      different output fails the criterion. Such a command builds what it runs (`make -s prog &&
+      ./prog …`), creates any state it reads (a fresh temp file, not one an earlier run may have left),
+      merges its streams (`2>&1`) where its output alternates them, and prints the same every time.
+      Leave it false where it cannot, and where `expect` describes the output in words or names only
+      part of it.
       The test data a command reads — the programs, documents, request bodies — is part of the probe:
       put it in the probe's `inputs` and let the command name their directory `{inputs}`. A command
       over files the executor will write (`for f in tests/*.c`) observes an object that can grow or

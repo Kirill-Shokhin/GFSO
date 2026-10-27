@@ -56,11 +56,11 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
 
 
 def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) -> list:
-    """[(key, {criterion, behaviour, command, expect, rc, out, matched, note})] — each `(key, criterion, probe)` of
-    `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract under `tmp`: each distinct command
-    once, PROBE_S at most and `budget` in all. [] where nothing can run: no copy, no shell, inputs that cannot be laid
-    as pinned (refused at admission). The one runner of the system's own checks: before a session (`observe_place`)
-    and in the copy a validator just worked in (`tools_llm._observe_exact`)."""
+    """[(key, {criterion, behaviour, command, expect, exact, rc, out, matched, note})] — each `(key, criterion, probe)`
+    of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract under `tmp`: each distinct
+    command once, PROBE_S at most and `budget` in all, matched by `printed`. [] where nothing can run: no copy, no shell,
+    inputs that cannot be laid as pinned (refused at admission). The one runner of the system's own checks: before a
+    session (`observe_place`) and over a fresh copy of a delivery at its validation (`tools_llm._observe_exact`)."""
     if not (tree and probes and (bash := ex.shell())):
         return []
     try:
@@ -71,7 +71,8 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
     for key, c, p in probes:
         d = dirs.get(probe_id(c.name, p))
         cmd = swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, tree)
-        row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect}
+        row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect,
+               "exact": p.exact}
         if cmd not in ran:
             left = budget - (time.monotonic() - t0)
             ran[cmd] = (_run(ex, bash, cmd, tree, min(PROBE_S, left), place) if left >= 1 else
@@ -79,19 +80,28 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
         # …matched against THIS check's expectation: one command pinned twice with two expectations printed
         # once, and the second inherited the first's match (critic over 27de5f8)
         got = ran[cmd]
-        out.append((key, {**row, **{k: v for k, v in got.items() if k != "stdout"},
-                          **({"matched": shows(got["stdout"], p.expect)} if "stdout" in got else {})}))
+        out.append((key, {**row, **{k: v for k, v in got.items() if k not in ("stdout", "stderr")},
+                          **({"matched": printed(got, p.expect)} if "stdout" in got else {})}))
     return out
 
 
+def printed(got: dict, expect: str) -> bool:
+    """Does a run show `expect` as a reader of its terminal would: its standard output alone, or followed by its errors
+    — a program's `Error: …` goes to stderr, and a validator's shell shows both (a false FAIL on correct work, critic
+    over 38c16f9). Two separate pipes do not keep how the streams interleaved: an output that alternates them is
+    pinned with `2>&1` in its command."""
+    return shows(got["stdout"], expect) or shows(f"{got['stdout']}\n{got['stderr']}", expect)
+
+
 def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict:
-    """One check's observation: its exit code, its output and the tail of all it printed (the copy's path named as the
-    place) — or why it gave no observation."""
+    """One check's observation: its exit code, its streams and the tail of all it printed, the copy's path named as the
+    place throughout — an expect naming a path in the place reads it there — or why it gave no observation."""
     try:
         r = ex.run([bash, "-c", cmd], cwd=tree, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"note": f"did not finish in {int(timeout)} s"}
     except OSError as e:
         return {"note": f"could not run ({e})"}
-    out = swap("\n".join(x.strip() for x in (r.stdout, r.stderr) if x and x.strip()), tree, place)
-    return {"rc": r.returncode, "out": out[-TAIL:], "stdout": r.stdout or ""}
+    o, e = (swap(x or "", tree, place) for x in (r.stdout, r.stderr))
+    out = "\n".join(x.strip() for x in (o, e) if x.strip())
+    return {"rc": r.returncode, "out": out[-TAIL:], "stdout": o, "stderr": e}
