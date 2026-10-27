@@ -49,12 +49,14 @@ def test_a_place_outside_the_four_mounts_is_refused(place, tmp_path):
             x._inside_cwd(str(outside))
 
 
-def test_the_container_holds_only_the_projects_own_directories_and_its_state(place, tmp_path):
+def test_the_container_holds_only_the_projects_own_directories_and_no_cli_state(place, tmp_path):
+    """No session's CLI runs in the project's container — each runs in its place's — and the probes that do run there
+    are the agents' own: the CLI state, every place's under it, is not mounted."""
     a = _ex(place, tmp_path).run_args()
     mounts = [a[i + 1] for i, v in enumerate(a) if v == "--mount"]
     assert [m.split("dst=")[1] for m in mounts] == ["/gfso-place/base", "/gfso-place/.gfso-nodes-base",
                                                      "/gfso-place/.gfso-scratch-base", "/gfso-place/.gfso-tmp-base",
-                                                     "/gfso-place/.gfso-sys-base", "/home/agent/.claude"]
+                                                     "/gfso-place/.gfso-sys-base"]
     assert "-v" not in a and "--privileged" not in a and ["--cap-add", "NET_ADMIN"] == a[a.index("--cap-add"):][:2]
     assert a[a.index("--name") + 1] == "gfso-e3-linux-gb-proj"
 

@@ -90,8 +90,9 @@ class RecordingProvider(LLMProviderPort):
         """One round of an agent run, the transport's own."""
         return LLMProviderPort.run_agent(self, system, user, allowed_tools, cwd, timeout, max_turns, session)
 
-    def arm(self, sid: str, state: dict) -> None:
-        """The handover hook armed for the conversation `sid`, with the state it reads (`handover_hook`)."""
+    def arm(self, sid: str, state: dict, cwd: str | None = None) -> None:
+        """The handover hook armed for the conversation `sid` where its session will run (`cwd`), with the state it
+        reads (`handover_hook`)."""
         raise NotImplementedError
 
     def window(self) -> int | None:

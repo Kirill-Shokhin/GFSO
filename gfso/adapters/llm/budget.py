@@ -262,7 +262,7 @@ def hooked(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, se
             if (left is not None and left <= 0) or (max_turns and used >= max_turns and not reopened):
                 return ""
             p.arm(sid, {"budget": s.budget, "ceiling": ceiling(p.window()), "reopen": bool(handovers),
-                        "boundary": f"{SAYS} {BOUNDARY}{s.previous()}"})
+                        "boundary": f"{SAYS} {BOUNDARY}{s.previous()}"}, cwd)
             n = len(p.calls)
             text = p.agent_round(system, prompt, allowed_tools, cwd, left,
                                  max(1, max_turns - used) if max_turns else None, sid)

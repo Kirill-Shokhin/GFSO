@@ -87,7 +87,7 @@ class Hooked(RecordingProvider):
         self.ends, self.context_budget = list(ends), budget
         self.prompts, self.systems, self.armed, self.closed, self.forgot = [], [], [], [], []
 
-    def arm(self, sid, state):
+    def arm(self, sid, state, cwd=None):
         self.armed.append(state)
 
     def agent_round(self, system, user, allowed_tools, cwd, timeout, max_turns, session):

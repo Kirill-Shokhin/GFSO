@@ -170,13 +170,24 @@ class _Hooks:
     ARMS = ("budget", "ceiling", "reopen", "boundary")
 
     def __init__(self, execution: ExecutionPort):
-        self._exec, self.armed = execution, set()
+        self._exec, self._at, self.armed = execution, {}, set()
+
+    def where(self, sid: str | None) -> ExecutionPort:
+        """The execution the conversation `sid` runs in (`ExecutionPort.session`), once a call or an arming named its
+        place: a session in its own place keeps its CLI state there — the others' conversations and the system's notes
+        on them out of its reach."""
+        return self._at.get(sid, self._exec)
+
+    def place(self, sid: str | None, cwd: str | None) -> None:
+        """The conversation `sid` runs in the session of `cwd` from now on."""
+        if sid and cwd:
+            self._at[sid] = self._exec.session(cwd)
 
 
     def arm(self, sid: str, state: dict) -> None:
         """The hook armed for the conversation `sid`: the script where the CLI runs it, the session's line, ceiling and
         checked-point request where it reads them."""
-        f = kept(self._exec, sid, "hook")
+        f = kept(self.where(sid), sid, "hook")
         f.parent.mkdir(parents=True, exist_ok=True)
         if not (hook := f.with_name(_HOOK.name)).exists() or hook.read_bytes() != _HOOK.read_bytes():
             hook.write_bytes(_HOOK.read_bytes())
@@ -194,7 +205,7 @@ class _Hooks:
     def state(self, sid: str) -> dict:
         """What the hook left of the session `sid` — `{}` where it left nothing readable."""
         try:
-            return json.loads(kept(self._exec, sid, "hook").read_text(encoding="utf-8"))
+            return json.loads(kept(self.where(sid), sid, "hook").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
@@ -204,8 +215,8 @@ class _Hooks:
         if sid not in self.armed:
             return '{"disableAllHooks": true, "language": ""}'
         # …on this host the server's own interpreter: `python3` on a Windows PATH is the Store's stub, which runs nothing
-        py = Path(sys.executable if isinstance(self._exec, LocalExecution) else "python3").as_posix()
-        at = f"{Path(self._exec.state_seen()).as_posix()}/gfso-sessions/{_HOOK.name}"
+        py = Path(sys.executable if isinstance(self.where(sid), LocalExecution) else "python3").as_posix()
+        at = f"{Path(self.where(sid).state_seen()).as_posix()}/gfso-sessions/{_HOOK.name}"
         # …and no auto-memory: with no setting source loaded the CLI still read the operator's MEMORY.md (probed, CLI
         # 2.1.311: "# Memory index" quoted); in a container it would carry one session's notes to the next outside the log
         return json.dumps({"language": "", "autoMemoryEnabled": False, "hooks": {"PostToolUse": [
@@ -243,7 +254,7 @@ class ClaudeCodeProvider(RecordingProvider):
         self.last_turns: dict = {}    # each turn's own usage, by message id — what a cut session spent
         self._turn_id = ""            # the message whose closing `message_delta` is still to come
         self.last_lift = None         # when the account's limit that refused the call being read lifts (`_lifts_at`)
-        self.hooks = _Hooks(self._exec)  # the handover hook of this execution's CLI (`arm`)
+        self.hooks = _Hooks(self._exec)  # the handover hook of this execution's CLI (`arm`), and where each runs
         # Live ticks are REAL (stream-json + partial messages: actual output tokens so far), never an estimate.
         self._tick_every = 2.0
         if self._cmd is None:
@@ -256,16 +267,17 @@ class ClaudeCodeProvider(RecordingProvider):
 
     def _transcripts(self, sid: str) -> list[Path]:
         """Where the CLI keeps the conversation: `<its state dir>/projects/<its cwd, encoded>/<id>.jsonl`."""
-        return list((Path(self._exec.state_dir()) / "projects").glob(f"*/{sid}.jsonl"))
+        return list((Path(self.hooks.where(sid).state_dir()) / "projects").glob(f"*/{sid}.jsonl"))
 
     def forget(self, session: str) -> None:
         """Drop a conversation's transcript: the work it served is settled, or it would not resume — and what this
         execution keeps of it beside the CLI's state, whichever provider kept it (a chat run's transcript too: the
         workspaces forget a project's conversations through one provider)."""
-        for p in self._transcripts(session):
-            p.unlink(missing_ok=True)
-        for p in (Path(self._exec.state_dir()) / "gfso-sessions").glob(f"{session}.*"):
-            p.unlink(missing_ok=True)
+        # …wherever its session kept it: a place's state lies under its project's (`PlaceContainer`), and a server
+        # that restarted no longer knows which place a conversation ran in
+        for root in (top := Path(self._exec.state_dir()), *top.glob("places/*")):     # two levels: never the whole home
+            for p in [*root.glob(f"projects/*/{session}.jsonl"), *root.glob(f"gfso-sessions/{session}.*")]:
+                p.unlink(missing_ok=True)
         self.hooks.armed.discard(session)
 
     def _own_cost(self, sid: str | None, total, resumed: bool):
@@ -275,7 +287,7 @@ class ClaudeCodeProvider(RecordingProvider):
         if not (resumed and sid and isinstance(total, (int, float))):
             return total
         try:
-            before = float(kept(self._exec, sid, "spent").read_text(encoding="utf-8"))
+            before = float(kept(self.hooks.where(sid), sid, "spent").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return total                   # nothing kept (a conversation from before this was kept): as the CLI said
         return max(0.0, total - before)
@@ -295,8 +307,10 @@ class ClaudeCodeProvider(RecordingProvider):
         """The model's window as the CLI last reported it, or None before any call did."""
         return _WINDOWS.get(self._model)
 
-    def arm(self, sid: str, state: dict) -> None:
-        """The handover hook armed for `sid` (`_Hooks.arm`), told whether the conversation continues an earlier run."""
+    def arm(self, sid: str, state: dict, cwd: str | None = None) -> None:
+        """The handover hook armed for `sid` (`_Hooks.arm`) where its session will run (`cwd`), told whether the
+        conversation continues an earlier run."""
+        self.hooks.place(sid, cwd)
         self.hooks.arm(sid, {**state, "resumed": bool(self._transcripts(sid))})
 
     def _never_started(self, e: PlaceUnavailable, resumed: bool) -> str:
@@ -322,7 +336,7 @@ class ClaudeCodeProvider(RecordingProvider):
         if sid and out.get("subtype") != "error_max_turns" and not (hook or {}).get("stopped"):
             self.forget(sid)
         elif sid and isinstance(out.get("total_cost_usd"), (int, float)):
-            f = kept(self._exec, sid, "spent")
+            f = kept(self.hooks.where(sid), sid, "spent")
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(str(out["total_cost_usd"]), encoding="utf-8")
 
@@ -354,6 +368,8 @@ class ClaudeCodeProvider(RecordingProvider):
         # the schemas of all ~28 built-in tools, re-read on every call: 58% of a validator's cached input
         # (2026-09-27), and a read-only validator holding Write and Edit.
         loaded = ",".join(dict.fromkeys(t.split("(", 1)[0].strip() for t in allowed_tools))
+        if session:                                      # a named conversation's CLI state is its place's from here on
+            self.hooks.place(session, cwd)
         return self._call(system, user, cwd=cwd, timeout=timeout, session=session,
                           tools_args=["--tools", loaded,
                                       "--allowedTools", " ".join(allowed_tools),

@@ -4,8 +4,8 @@ node's place nor the system's own checks — so it cannot soil a neighbour's wor
 in the project's container. A validation's run — an issuer's contact with a node too — writes its own round of the
 node's scratch and reads the earlier ones, whose probes its standing findings name.
 
-Each node holds its own temp. Not held yet: see `PlaceContainer` — the CLI's state is shared, a root's judges write
-the base.
+Each node holds its own temp, each place its own CLI state. Not held yet: see `PlaceContainer` — a root's judges
+write the base.
 """
 import os
 import shutil
@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import gfso.adapters.execution as E
+from gfso.adapters.llm import headless as H
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution, PlaceContainer
 from gfso.issuer import CONTACT_ROUND, _contact_place
@@ -287,3 +288,56 @@ def test_the_rounds_rotation_leaves_a_running_contact_alone(project):
         assert Path(d).name.startswith(CONTACT_ROUND)
     rotation = (Path(__file__).resolve().parents[1] / "gfso/tools_llm.py").read_text(encoding="utf-8")
     assert "if not d.name.startswith(_CONTACT)" in rotation
+
+
+def test_a_sessions_cli_state_is_its_places_and_the_system_finds_it(project):
+    """Each place keeps its CLI's state — conversations, the system's notes on them, the CLI's memory — under its
+    project's: a session reaches its own alone, the system every one (critic over the session slice: the state was the
+    project's, read and written by every session)."""
+
+    work = project.parent
+    a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
+    assert a.state_dir() != b.state_dir() and Path(a.state_dir()).parent == Path(project.state_dir()) / "places"
+    assert [m for m in a.run_args() if "/home/agent/.claude" in m] == [
+        f"type=bind,src={a.state_dir()},dst=/home/agent/.claude"]
+    llm = H.ClaudeCodeProvider(execution=project)
+    llm.hooks.place("sid-a", str(work / ".gfso-nodes-ws/p/a"))
+    assert H.kept(llm.hooks.where("sid-a"), "sid-a", "hook").is_relative_to(a.state_dir())
+    t = Path(a.state_dir()) / "projects" / "-x" / "sid-a.jsonl"
+    t.parent.mkdir(parents=True)
+    t.write_text("{}\n")
+    deeper = Path(project.state_dir()) / "elsewhere" / "deep" / "projects" / "-x" / "sid-a.jsonl"
+    deeper.parent.mkdir(parents=True)
+    deeper.write_text("{}\n")
+    H.ClaudeCodeProvider(execution=project).forget("sid-a")      # a server restarted: it knows no place for it
+    assert not t.exists() and deeper.exists(), "two levels, never a walk of the whole CLI home (on a host: ~/.claude)"
+
+
+@pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
+def test_live_a_session_holds_its_places_cli_state_alone(project):
+    work = project.parent
+    a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
+    Path(b.state_dir()).mkdir(parents=True, exist_ok=True)
+    (Path(b.state_dir()) / "theirs.jsonl").write_text("b's conversation\n")
+    try:
+        got = a.run(["bash", "-c", "cat /home/agent/.claude/theirs.jsonl 2>/dev/null && echo SAW-B; "
+                                   "touch /home/agent/.claude/mine && echo OWN"], cwd=str(work / ".gfso-nodes-ws/p/a"),
+                    timeout=120).stdout.split()
+        assert got == ["OWN"] and (Path(a.state_dir()) / "mine").exists(), got
+        seen = project.run(["bash", "-c", "ls /home/agent/.claude/places 2>/dev/null && echo SAW-PLACES; true"],
+                           cwd=str(project.base), timeout=120).stdout
+        assert "SAW-PLACES" not in seen, "the project's container runs the agents' probes: no CLI state is mounted there"
+    finally:
+        project.stop()
+
+
+def test_a_gone_directorys_cli_state_goes_with_its_container(project, monkeypatch):
+    """A round's, a contact's, a no-place call's place is gone once it ends: its CLI state — a validator's
+    conversation among it — would otherwise outlive it unforgotten and pile up under the project's (critic over the
+    CLI state per place)."""
+    monkeypatch.setattr(E, "run", lambda args, **kw: subprocess.CompletedProcess(args, 0, "", ""))
+    with project.scratch("gfso-noplace-") as d:
+        gone = project.session(d)
+        Path(gone.state_dir()).mkdir(parents=True)
+    project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
+    assert not Path(gone.state_dir()).exists()

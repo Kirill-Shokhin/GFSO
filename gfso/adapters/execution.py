@@ -234,6 +234,11 @@ class WayOut:
 
 
 class ContainerExecution(ExecutionPort):
+    #: does a session's CLI run here, its state mounted? Not in the project's container: every session runs in its
+    #: place's (`session`), and the project's runs the plan's probes, written by agents — with the state mounted they
+    #: read every place's conversations under it (critic over the CLI state per place)
+    holds_sessions = False
+
     """`image` with an optional `env_file` (settings of the image, never a credential: the provider gives its own to its
     process, `_exec_argv`) and the CLI's `state` dir, holding `base`'s parent's four directories
     of this project — the base, its node places, its scratch, a temp of its own — at `/gfso-place/<name>`. Nothing else
@@ -305,7 +310,7 @@ class ContainerExecution(ExecutionPort):
                 *self.way.run_args(),
                 "--security-opt", "no-new-privileges",
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,
-                "--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}",
+                *(["--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}"] if self.holds_sessions else []),
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
 
     def _mounts(self) -> list:
@@ -322,6 +327,7 @@ class ContainerExecution(ExecutionPort):
         for gone in [k for k in list(_SESSIONS) if k[0] == self.container and not os.path.isdir(k[1])]:
             if s := _SESSIONS.pop(gone, None):            # a round, a contact, a no-place call: its directory is gone
                 s.stop()
+                shutil.rmtree(s.state, ignore_errors=True)   # …and its CLI's state with it: nothing will resume there
         with _START:
             return _SESSIONS.setdefault((self.container, os.path.normcase(rw)), PlaceContainer(self, rw))
 
@@ -508,20 +514,25 @@ class PlaceContainer(ContainerExecution):
     """One session's container: its place writable (`rw`), the base read-only — a node's clone borrows the base's
     objects, and nothing it does reaches the base's refs — a validation's earlier rounds read-only, nothing of another
     node's place nor of the system's own checks. Its way out is its project's; the system's own commands stay in the
-    project's container. Started on its session's first call, gone with its directory, its place or its project.
-    Its temp is its node's own (`temp_of`): what the system lays for the node's sessions, no other node's reads — save
-    that whatever works in the base shares the base's: every node with no git base, a root's sessions, a parent's
-    consent before its own place is made.
-    NOT HELD YET: the CLI's state is the project's, mounted in every session — the others' conversations are read and
-    written there; a root's sessions — its validation with no copy and its issuer's contact among them — write the
-    base and its scratch; a node's validation that could not copy the place cannot write its round; a tool-loop
-    provider's issuer reads a node's inputs by its shell only; a round's container stands until its round is pruned,
-    a done node's until its directories go or the project stops."""
+    project's container. Started on its session's first call, gone with its directory, its place or its project. Its
+    temp is its node's own (`temp_of`): what the system lays for the node's sessions, no other node's reads — save that
+    whatever works in the base shares the base's: every node with no git base, a root's sessions, a parent's consent
+    before its own place is made. Its CLI's state is its place's own, under its project's. NOT HELD YET: the sessions of
+    ONE place share its CLI state — a root's executor, judges and consents in the base, a node's validation that could
+    not copy the place in the node's clone — so one may read a conversation another kept there; a root's sessions — its
+    validation with no copy and its issuer's contact among them — write the base and its scratch; a node's validation
+    that could not copy the place cannot write its round; a tool-loop provider's issuer reads a node's inputs by its
+    shell only; a round's container stands until its round is pruned, a done node's until its directories go or the
+    project stops."""
 
     def __init__(self, project: ContainerExecution, rw: Path):
         self.__dict__.update(project.__dict__)
         self.project, self.rw = project, rw
-        self.container = f"{project.container}-s-{hashlib.sha1(os.path.normcase(rw).encode()).hexdigest()[:12]}"
+        key = hashlib.sha1(os.path.normcase(rw).encode()).hexdigest()[:12]
+        self.container = f"{project.container}-s-{key}"
+        # the CLI's state of THIS place, under its project's — mounted here alone: the others' conversations, the
+        # system's notes on them and the CLI's own memory of another place are not in reach of any container
+        self.state, self.holds_sessions = project.state / "places" / key, True
 
     def _mounts(self) -> list:
         """The base read-only unless the place is the base; a validation's round writable, its earlier rounds
