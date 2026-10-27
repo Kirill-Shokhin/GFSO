@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 from gfso.core.types import ExecutionPort, PlaceUnavailable
-from gfso.config import claude_config_dir, host_env
+from gfso.config import SECRET_ENV, claude_config_dir, host_env
 from gfso.adapters import egress
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
@@ -51,6 +51,15 @@ _STARTED: dict = {}
 #: object of one container started it back under its own)
 _SWITCH: dict = {}
 _START = threading.RLock()     # a turn stops what a start holds, under the same lock
+
+
+def _env_names(env_file: str) -> list[str]:
+    """The variables a Docker env-file sets, by name — none where it does not read."""
+    try:
+        return [x.split("=", 1)[0].strip() for x in Path(env_file).read_text(encoding="utf-8").splitlines()
+                if x.strip() and not x.lstrip().startswith("#")]
+    except OSError:
+        return []
 
 
 class LocalExecution(ExecutionPort):
@@ -220,16 +229,23 @@ class WayOut:
 
 
 class ContainerExecution(ExecutionPort):
-    """`image` with `env_file` (the agent's auth) and the CLI's `state` dir, holding `base`'s parent's four directories
+    """`image` with an optional `env_file` (settings of the image, never a credential: the provider gives its own to its
+    process, `_exec_argv`) and the CLI's `state` dir, holding `base`'s parent's four directories
     of this project — the base, its node places, its scratch, a temp of its own — at `/gfso-place/<name>`. Nothing else
     of the host is mounted, the host's network is shut at start, and the rest of the way out is as `network` switches it
     (`{"mode": one of NETWORK, "hosts": [...]}`: the container's switch, kept by its name; open where none was
     given)."""
 
-    def __init__(self, name: str, image: str, env_file: str, state: str, base: str, project: str, network=None):
+    def __init__(self, name: str, image: str, env_file: str | None, state: str, base: str, project: str,
+                 network=None):
         self.base, self.parent = Path(base).resolve(), Path(base).resolve().parent
         if not self.parent.drive or self.parent.drive.startswith("\\\\"):
             raise ValueError(f"execution {name!r}: {base} is not on a local drive — a container cannot mount it")
+        if env_file and (held := sorted(k for k in _env_names(env_file) if SECRET_ENV.search(k))):
+            # …a second place for a credential, live in every call the system itself makes inside — its probes, git, a
+            # pinned `make test` running the executor's scripts: the token reached them all (critic over S4)
+            raise ValueError(f"execution {name!r}: its env_file holds {', '.join(held)} — a credential is its "
+                             f"provider's, set by `gfso credential <provider>`, never the container's")
         self.name, self.image, self.env_file = name, image, env_file
         self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{name}-{project}").lower()
         self.way = WayOut(self.container, name, image, Path(state))
@@ -281,7 +297,8 @@ class ContainerExecution(ExecutionPort):
         return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
                 *self.way.run_args(),
                 "--security-opt", "no-new-privileges",
-                "--env-file", self.env_file, *mounts, "--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}",
+                *(["--env-file", self.env_file] if self.env_file else []), *mounts,
+                "--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}",
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
 
     def start(self) -> None:
@@ -336,24 +353,32 @@ class ContainerExecution(ExecutionPort):
     def which(self, program: str):
         return program                         # resolved on the container's PATH when the call starts
 
-    def _exec_argv(self, args, env, cwd, call: str) -> list[str]:
+    def _exec_argv(self, args, env, cwd, call: str) -> tuple[list[str], dict]:
+        """`docker exec` of one call, and the environment of the `docker` client that runs it. What the call itself sets
+        goes in, not the host's environment — its PATH is the container's own; a credential by its NAME alone, its value
+        in the client's environment, so no process list on the host shows it (`docker exec -e NAME`) — given to this
+        call's process only, never to the container (S4: the provider's credential, one process)."""
         self.start()
-        # what the call itself sets, not the host's environment: auth came with the container, its PATH is its own
         here = host_env()
-        own = {k: v for k, v in (env or {}).items() if here.get(k) != v or k.startswith("ANTHROPIC_")}
-        return ["docker", "exec", "-i", "-w", self.inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
-                *[a for k, v in own.items() for a in ("-e", f"{k}={self.to_inside(v)}")], self.container,
-                "sh", "-c", f'echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh", *map(self.to_inside, args)]
+        # …a credential even when the host holds the same value: the container has no other way to it
+        own = {k: v for k, v in (env or {}).items()
+               if here.get(k) != v or k.startswith("ANTHROPIC_") or SECRET_ENV.search(k)}
+        secret = {k: v for k, v in own.items() if SECRET_ENV.search(k)}
+        return (["docker", "exec", "-i", "-w", self.inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
+                 *[a for k, v in own.items() for a in ("-e", k if k in secret else f"{k}={self.to_inside(v)}")],
+                 self.container, "sh", "-c", f'echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh",
+                 *map(self.to_inside, args)], {**here, **secret})
 
     def popen(self, args, *, env, cwd, **pipes):
         call = uuid.uuid4().hex
-        return _Call(LocalExecution().popen(self._exec_argv(args, env, cwd, call), env=host_env(),
-                                            cwd=str(self.parent), **pipes), self, call)
+        argv, client = self._exec_argv(args, env, cwd, call)
+        return _Call(LocalExecution().popen(argv, env=client, cwd=str(self.parent), **pipes), self, call)
 
     def run(self, args, *, cwd, timeout, env=None):
         call = uuid.uuid4().hex
+        argv, client = self._exec_argv(args, env, cwd, call)
         try:
-            done = run(self._exec_argv(args, env, cwd, call), timeout=timeout, cwd=str(self.parent), text=True,
+            done = run(argv, timeout=timeout, cwd=str(self.parent), env=client, text=True,
                        encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             self._end_inside(call)
@@ -398,6 +423,9 @@ class ContainerExecution(ExecutionPort):
 
     def state_dir(self):
         return self.state
+
+    def state_seen(self) -> str:
+        return STATE_INSIDE
 
 
 class _Call:

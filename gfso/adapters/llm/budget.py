@@ -124,13 +124,14 @@ class _Session:
         peak, top = rec["peak_context"], ceiling(rec.get("context_window"))
         grow = max(1.0, (peak - (self.peak if self.peak is not None and not self.fresh else 0)) / max(turns, 1))
         opening = peak if self.fresh and not rec.get("resumed") else self.opening
-        soft = max(self.budget, 2 * opening) if self.budget and opening else self.budget
+        soft = max(self.budget, 2 * (opening or 0)) if self.budget else None
         # …a REOPENED session at its ceiling on its first reading is past what a handover can help: the next reopen would
         # open as large, and closing it again looped until the clock (critic over 9f36023). It works, or fails, as it
         # would without one.
         beyond = self.beyond or (self.fresh and bool(self.note) and peak >= top)
         over = bool(soft and peak >= soft) and not beyond
-        word = "continue" if beyond else "close" if peak >= top or (over and self.asked) else "boundary" if over             else "continue"
+        word = ("continue" if beyond else "close" if peak >= top or (over and self.asked)
+                else "boundary" if over else "continue")
         line = top if over or not soft or soft >= top else soft
         return word, replace(self, fresh=False, asked=over, peak=peak, grow=grow, line=line, opening=opening,
                              beyond=beyond)
@@ -165,7 +166,13 @@ def _ended(p, sid: str, session, text: str) -> str:
 
 def _reopen(p, user: str, s: _Session, written, handovers: int, sid: str) -> tuple[str, _Session]:
     """The fresh session's opening — the packet, the note just written and the place's machine state — and the fresh
-    session; the round that wrote the note says it handed over, and which."""
+    session; the round that wrote the note says it handed over, and which.
+
+    A NAMED LIMIT: under a budget below the task's working set a reopen re-reads what the last one carried and reaches
+    the line again — a 20k budget on four 14k reads handed over nine times in a row (probed live, haiku 5.5), each
+    handover counted on the ledger. Three rules made against it each broke a budget that pays (a line raised after the
+    predecessor's peak compounded; "no lower than the predecessor" fired on steady work — three critics' simulations):
+    the budget is the resource's setting, chosen by measurement on the task."""
     p.calls[-1]["handover"] = handovers
     p.forget(sid)
     state = (p.machine_state() or "") if p.machine_state else ""
@@ -224,6 +231,62 @@ def run(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, sessi
                     return ""                               # the project stops; the conversation waits for the lift
             handovers += 1
             prompt, s = _reopen(p, user, s, written, handovers, sid)
+            p.resume_fallback = prompt
+    finally:
+        p.resume_fallback = None
+
+
+#: what a hooked session's system prompt says before the hook speaks: a note arriving with a tool's result reads as the
+#: tool's output, and a model told nothing of it ignored one as foreign («isn't in the file or from you», probed)
+SAYS = "GFSO SYSTEM:"
+NOTICE = (f"\n\nWhile you work, the system running this task may add a note after one of your tool calls, beginning "
+          f"`{SAYS}`. It is the system's, not the tool's output: follow it.")
+
+
+def hooked(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, session) -> str:
+    """A work session's `run_agent` where the provider reads its context after each tool call (`handover_hook`): ONE
+    process a session, its hook asking for a checked point past the budget's line and stopping the session at the
+    ceiling (`handover_hook.decide`), the note then asked for by its conversation as `run`'s close is. Every reading
+    `run` makes between rounds is made after a tool call instead — no process per round, no blind first step, no large
+    read overshooting the line unseen."""
+    sid = session or f"budget-{uuid.uuid4().hex}"
+    t0, used, handovers, s = time.monotonic(), 0, 0, _Session(p.context_budget)
+    prompt, reopened = user, False
+    p.resume_fallback = user
+    system += NOTICE if s.budget else ""
+    try:
+        while True:
+            left = _left(timeout, t0)
+            # …past the role's cap no round starts — save a reopened session's first: its note is the system's, and that
+            # conversation, the note in it, is what the next run continues (`run`'s same rule)
+            if (left is not None and left <= 0) or (max_turns and used >= max_turns and not reopened):
+                return ""
+            p.arm(sid, {"budget": s.budget, "ceiling": ceiling(p.window()), "reopen": bool(handovers),
+                        "boundary": f"{SAYS} {BOUNDARY}{s.previous()}"})
+            n = len(p.calls)
+            text = p.agent_round(system, prompt, allowed_tools, cwd, left,
+                                 max(1, max_turns - used) if max_turns else None, sid)
+            rec, reopened = (p.calls[-1] if len(p.calls) > n else {}), False
+            used += rec.get("turns") or 0
+            hook = rec.get("hook") or {}
+            if p.last_tool_calls and not hook.get("read"):
+                # …a session that called tools and the hook never read: no ceiling held it (an image without python3,
+                # a CLI that runs no hooks) — the provider's next sessions read their context between rounds
+                log.warning("the handover hook did not run in a session that called tools: back to rounds")
+                p.handover_hook = False
+            written = _as_note(p, text) if hook.get("asked") and not hook.get("stopped") else None
+            if hook.get("stopped"):
+                left = _left(timeout, t0)
+                if left is not None and left < CLOSE_MIN_S:
+                    return ""
+                p.resume_fallback = None
+                written = p.close_session(system, CLOSE + s.previous(), allowed_tools, cwd, left, sid)
+                if (p.calls[-1].get("ended") if p.calls else None) in STOPS:
+                    return ""
+            elif written is None:
+                return _ended(p, sid, session, text)
+            handovers, reopened = handovers + 1, True
+            prompt, s = _reopen(p, user, replace(s, peak=hook.get("peak")), written, handovers, sid)
             p.resume_fallback = prompt
     finally:
         p.resume_fallback = None

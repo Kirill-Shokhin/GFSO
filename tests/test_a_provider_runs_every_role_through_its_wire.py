@@ -116,14 +116,14 @@ def test_a_local_preset_needs_no_key_and_bills_nothing(wire_server, monkeypatch)
     assert llm.calls[-1]["cost_usd"] == 0.0                     # local: no bill, said as 0 by the preset
 
 
-def test_a_remote_preset_reads_its_key_and_refuses_without_one(wire_server, monkeypatch):
+def test_a_remote_preset_reads_its_key_and_refuses_without_one(wire_server, monkeypatch, tmp_path):
     url, script, seen = wire_server
     monkeypatch.setenv("GFSO_PROVIDER_DEEPSEEK_BASE_URL", url)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     keyless = llm_factory("deepseek/deepseek-chat")            # built: every call is the account's refusal, a stop
     assert keyless.complete("hi") == "" and keyless.calls[-1]["ended"] == "unauthorized"
-    assert "DEEPSEEK_API_KEY" in keyless.calls[-1]["error"] and not seen   # nothing was sent anywhere
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "k1")
+    assert "gfso credential deepseek" in keyless.calls[-1]["error"] and not seen   # nothing was sent anywhere
+    registry.set_credential("deepseek", "api", "k1")
     script.append({"content": "ok"})
     llm = llm_factory("deepseek/deepseek-chat")
     llm.complete("hi")
@@ -293,12 +293,14 @@ def test_the_battery_names_the_roles_a_provider_can_hold(wire_server, tmp_path):
         if "probe.txt" in body["messages"][1]["content"]:
             return [{"tools": [("Write", {"file_path": "probe.txt", "content": "41"})]},
                     {"tools": [("Bash", {"command": "expr $(cat probe.txt) + 1"})]}, {"content": "42"}][n]
+        if "env.txt" in body["messages"][1]["content"]:
+            return [{"tools": [("Bash", {"command": "env > env.txt"})]}, {"content": "done"}][n]
         assert "executor" in body["messages"][0]["content"].lower()       # the real executor prompt
         return [{"tools": [("Write", {"file_path": "sum.py", "content": "print(sum(range(1, 101)))\n"})]},
                 {"tools": [("Bash", {"command": "python sum.py"})]},
                 {"content": '```json\n{"status": "delivered", "printed": "5050"}\n```'}][n]
 
-    script += [{"content": "pong"}, {"content": '```json\n{"answer": 5}\n```'}] + [agent] * 6
+    script += [{"content": "pong"}, {"content": '```json\n{"answer": 5}\n```'}] + [agent] * 8
     found = assess(provider(url), "You are the EXECUTOR of a node.")
     assert all(c["pass"] for c in found["checks"].values()), found
     assert found["roles"] == ["decompose", "review", "issuer", "executor", "validator", "contact"]
@@ -421,7 +423,7 @@ def test_a_model_server_down_is_lifted_only_when_it_answers(wire_server):
 
 def test_an_agents_shell_holds_no_key_and_no_server_mark(monkeypatch, wire_server, tmp_path):
     url, script, seen = wire_server
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "k-secret")
+    monkeypatch.setenv("SOME_API_KEY", "k-secret")
     monkeypatch.setenv("GFSO_SERVING", "1")
     script += [{"tools": [("Bash", {"command": "env"})]}, {"content": "ok"}]
     provider(url).run_agent("s", "u", ("Bash",), cwd=str(tmp_path))

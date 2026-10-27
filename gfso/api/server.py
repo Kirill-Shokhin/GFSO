@@ -41,6 +41,7 @@ from gfso.engine.verdicts import observations
 from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_staffing
 from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso import config as _config
+from gfso.adapters.llm import credentials as _credentials, registry as _providers
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
 from gfso.engine import Engine
 from gfso import tools_llm as _tools
@@ -826,6 +827,26 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
     # reads a slow answer as "something else is on this port" and a new session gets no tools.
     # Neither handler blocks — one reads process-scoped switches, the other stamps a dict — so they
     # belong on the event loop, where a busy threadpool cannot delay them.
+    # === THE ONE DOOR for every provider's credential (`registry.set_credential`) — HTTP and the CLI's `gfso
+    # credential`, never MCP: a secret passed through the agent stays in its transcript. Nothing answers with a value.
+    @app.get("/api/credentials")
+    def get_credentials():
+        """{provider: kind} of every credential set — never a value."""
+        return _credentials.listing()
+
+    @app.put("/api/credentials/{provider}")
+    def put_credential(provider: str, body: dict = Body(...)):
+        """Set `provider`'s credential ({kind?, value}; the kind it takes first by default) or remove it ({remove:
+        true}); an empty value, an unknown provider or a kind it does not take is a 422."""
+        value = None if body.get("remove") else str(body.get("value") or "").strip()
+        if value == "":
+            raise HTTPException(422, "no credential: give `value`, or `remove: true`")
+        try:
+            return _providers.set_credential(provider, body.get("kind") or (_providers.takes(provider) or ("api",))[0],
+                                             value)
+        except ValueError as ex:
+            raise HTTPException(422, str(ex))
+
     @app.get("/api/runtime")
     async def get_runtime():
         """The switches that are PROCESS-scoped, so a client can see what this server actually does.

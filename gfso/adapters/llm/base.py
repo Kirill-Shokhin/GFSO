@@ -43,6 +43,9 @@ class RecordingProvider(LLMProviderPort):
     budgeted = False
     #: turns per round between two readings of the budget — as finely as the provider can stop a run and continue it
     budget_step = 8
+    #: can the provider read its session's context after each tool call from inside the run (`budget.hooked`, `arm`)?
+    #: Else the budget reads it between rounds
+    handover_hook = False
 
     def __init__(self, model: str):
         self._model = model
@@ -80,11 +83,20 @@ class RecordingProvider(LLMProviderPort):
         """The port's agent run — a work session's under its ceiling and the resource's budget (`budget.run`)."""
         if not self.budgeted:
             return self.agent_round(system, user, allowed_tools, cwd, timeout, max_turns, session)
-        return budget.run(self, system, user, allowed_tools, cwd, timeout, max_turns, session)
+        return (budget.hooked if self.handover_hook else budget.run)(self, system, user, allowed_tools, cwd, timeout,
+                                                                     max_turns, session)
 
     def agent_round(self, system, user, allowed_tools, cwd, timeout, max_turns, session) -> str:
         """One round of an agent run, the transport's own."""
         return LLMProviderPort.run_agent(self, system, user, allowed_tools, cwd, timeout, max_turns, session)
+
+    def arm(self, sid: str, state: dict) -> None:
+        """The handover hook armed for the conversation `sid`, with the state it reads (`handover_hook`)."""
+        raise NotImplementedError
+
+    def window(self) -> int | None:
+        """The model's context window as last reported, None before any call reported one."""
+        return None
 
     def close_session(self, system: str, prompt: str, allowed_tools, cwd, timeout, session) -> str:
         """The session's last answer — what it hands the next one (`budget.CLOSE`), its conversation continued under

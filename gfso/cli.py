@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ctypes
+import getpass
 import json
 import logging
 import os
@@ -18,7 +19,7 @@ from importlib.resources import files
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
 from gfso.adapters.execution import end_leftovers
-from gfso.adapters.llm import registry
+from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.conformance import assess, report
 from gfso import __version__, serverctl
 from gfso.config import LOOPBACK, admit_host, install_mcp_env, install_serve_env
@@ -216,6 +217,12 @@ def _add_provider_parser(sub) -> None:
                                                   "providers a model spec may start with.")
     provp.add_argument("spec", nargs="?", default=None, help="a model spec, e.g. ollama/qwen3:32b or deepseek/deepseek-chat")
     provp.add_argument("--list", action="store_true")
+    credp = sub.add_parser("credential", help="Set a model provider's credential in its one place — read from stdin, never "
+                                              "an argument, never printed back. No provider: what is set, by kind.")
+    credp.add_argument("provider", nargs="?", default=None, help="claude, deepseek, openai, … (`provider-check --list`)")
+    credp.add_argument("--kind", choices=("token", "api"), default=None,
+                       help="token = a subscription's (`claude setup-token`); api = an API key. Default: what it takes")
+    credp.add_argument("--remove", action="store_true")
 
 def _dispatch(args) -> None:
     if args.command == "serve":
@@ -270,6 +277,8 @@ def _dispatch(args) -> None:
         sys.exit(_demo(args.name))
     elif args.command == "provider-check":
         sys.exit(_provider_check(args))
+    elif args.command == "credential":
+        sys.exit(_credential(args))
 
 
 def _provider_check(args) -> int:
@@ -278,13 +287,30 @@ def _provider_check(args) -> int:
         for n in registry.names():
             p = registry.preset(n)
             print(f"{n:12} {p.base_url if p else ('Claude Code CLI' if n == 'claude' else 'plugin')}"
-                  + (f"  key: {p.key_env}" if p and p.key_env else "") + (f"  ({p.note})" if p and p.note else ""))
+                  + (f"  key: gfso credential {n}" if p and p.keyed else "") + (f"  ({p.note})" if p and p.note else ""))
         return 0
     # the report case under the executor's own system prompt, as a real executor reads it
     found = assess(registry.provider_for(args.spec),
                    files("gfso.mcp").joinpath("prompts", "executor.md").read_text(encoding="utf-8"))
     print(report(args.spec, found))
     return 0 if found["roles"] else 1
+
+
+def _credential(args) -> int:
+    """`gfso credential PROVIDER` — the door every provider's credential is set by (`registry.set_credential`)."""
+    if not args.provider:
+        print(json.dumps(credentials.listing()))
+        return 0
+    try:
+        kind = args.kind or (registry.takes(args.provider) or ("api",))[0]
+        value = None if args.remove else (getpass.getpass(f"{args.provider} {kind}: ") if sys.stdin.isatty()
+                                          else sys.stdin.read()).strip()
+        if value == "":
+            sys.exit("gfso: no credential on stdin")
+        print(json.dumps(registry.set_credential(args.provider, kind, value)))
+    except ValueError as ex:                   # no such provider, or a kind it does not take
+        sys.exit(f"gfso: {ex}")
+    return 0
 
 
 def _demo(name: str | None) -> int:

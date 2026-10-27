@@ -80,7 +80,7 @@ def test_a_continued_round_books_its_own_cost(monkeypatch, tmp_path):
     _cli(monkeypatch, _result(1.64))
     llm.run_agent("sys", "go on", ("Read",), cwd=str(tmp_path), session="s1")
     assert llm.calls[-1]["resumed"] and abs(llm.calls[-1]["cost_usd"] - 0.04) < 1e-9, llm.calls[-1]
-    assert not llm._spent_file("s1").exists(), "an answered conversation keeps nothing"
+    assert not H.kept(llm.execution, "s1", "spent").exists(), "an answered conversation keeps nothing"
 
 
 def test_a_round_books_the_life_of_its_process_not_its_last_results(monkeypatch):

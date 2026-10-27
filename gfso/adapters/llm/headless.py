@@ -2,10 +2,10 @@
 
 THE Anthropic transport (the only one): each call is a fresh process and a single-request generation —
 exactly the call shape the decompose loop was calibrated on; an agent run may continue a named conversation
-(`workspaces.session_key`). BOTH billing modes ride the same
-transport: by default ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are STRIPPED from the child env
-(subscription via the claude.ai login — the key would silently outrank it, measured live);
-`keep_api_key=True` keeps them ⟹ the same CLI bills the API per token. Structured output = the shared
+(`workspaces.session_key`). Its credential is the provider's (`credentials`, provider `claude`): a subscription's
+token or an API key, given to the CLI's own process alone, its tools' shells scrubbed of it; with none set, the host's
+own login. Nothing inherited reaches the child — an inherited key silently outranked the login (measured live).
+Structured output = the shared
 provider-agnostic machinery (`structured.py`): appended fenced-json instruction + parse + one repair
 retry — the schema is enforced by validation here, never trusted to the transport.
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -27,6 +28,11 @@ from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
 from gfso.adapters.execution import LocalExecution
 
 log = logging.getLogger(__name__)
+
+#: each model's window as the CLI last reported it — a hooked session's ceiling is set before its first turn reports one
+_WINDOWS: dict[str, int] = {}
+#: the handover hook as this package ships it, copied beside the CLI's state where the CLI can run it (`arm`)
+_HOOK = Path(__file__).with_name("handover_hook.py")
 
 
 def _obj(v) -> dict:
@@ -139,16 +145,92 @@ def _is_the_answer(result: dict, live: bool) -> bool:
     return not live or (isinstance(said, str) and holds_an_object(said))
 
 
+#: the variable the CLI authenticates by, per kind of credential
+AUTH = {"token": "CLAUDE_CODE_OAUTH_TOKEN", "api": "ANTHROPIC_API_KEY"}
+
+
+def client_env(credential) -> dict:
+    """A credential as the CLI's process takes it, and its tools' shells scrubbed of it (`CLAUDE_CODE_SUBPROCESS_ENV_
+    SCRUB`: the conformance battery's `env` through the tool path shows none)."""
+    return {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+            **({AUTH[credential.kind]: credential.value} if credential else {})}
+
+
+def kept(execution: ExecutionPort, sid: str, what: str) -> Path:
+    """What the system keeps of a conversation beside the CLI's own state — its spend so far (`spent`), its handover
+    hook's state (`hook`); `forget` drops them with it."""
+    return Path(execution.state_dir()) / "gfso-sessions" / f"{sid}.{what}"
+
+
+class _Hooks:
+    """THE HANDOVER HOOK of one execution's CLI (`budget.hooked`): the script copied beside the CLI's state, a session's
+    state written there before it runs and read back after, and the flags that let the CLI run it."""
+
+    #: what the system arms a session with (`budget.hooked`) — the rest of its state is the hook's readings
+    ARMS = ("budget", "ceiling", "reopen", "boundary")
+
+    def __init__(self, execution: ExecutionPort):
+        self._exec, self.armed = execution, set()
+
+
+    def arm(self, sid: str, state: dict) -> None:
+        """The hook armed for the conversation `sid`: the script where the CLI runs it, the session's line, ceiling and
+        checked-point request where it reads them."""
+        f = kept(self._exec, sid, "hook")
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if not (hook := f.with_name(_HOOK.name)).exists() or hook.read_bytes() != _HOOK.read_bytes():
+            hook.write_bytes(_HOOK.read_bytes())
+        f.write_text(json.dumps(state), encoding="utf-8")
+        self.armed.add(sid)
+
+    def across(self, sid: str, forget) -> None:
+        """`forget` the conversation `sid` and arm the hook again for the cold run that replaces it: as armed, its
+        readings gone."""
+        armed = self.state(sid) if sid in self.armed else None
+        forget(sid)
+        if armed is not None:
+            self.arm(sid, {**{k: armed[k] for k in self.ARMS if k in armed}, "resumed": False})
+
+    def state(self, sid: str) -> dict:
+        """What the hook left of the session `sid` — `{}` where it left nothing readable."""
+        try:
+            return json.loads(kept(self._exec, sid, "hook").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def settings(self, sid: str | None) -> str:
+        """The settings a call carries over the operator's: no language, and no hook but the system's own handover hook
+        on a conversation it armed one for."""
+        if sid not in self.armed:
+            return '{"disableAllHooks": true, "language": ""}'
+        # …on this host the server's own interpreter: `python3` on a Windows PATH is the Store's stub, which runs nothing
+        py = Path(sys.executable if isinstance(self._exec, LocalExecution) else "python3").as_posix()
+        at = f"{Path(self._exec.state_seen()).as_posix()}/gfso-sessions/{_HOOK.name}"
+        # …and no auto-memory: with no setting source loaded the CLI still read the operator's MEMORY.md (probed, CLI
+        # 2.1.311: "# Memory index" quoted); in a container it would carry one session's notes to the next outside the log
+        return json.dumps({"language": "", "autoMemoryEnabled": False, "hooks": {"PostToolUse": [
+            {"matcher": "*", "hooks": [{"type": "command", "command": f'"{py}" "{at}"'}]}]}})
+
+    def clean(self, sid: str | None) -> list[str]:
+        """What keeps the operator out of the call. `--safe-mode` also drops the hooks `--settings` brings, so a session
+        armed with the handover hook loads no setting source instead — the person's and the project's CLAUDE.md, skills
+        and hooks stay out as under it (probed on CLI 2.1.311, haiku 5.5: neither CLAUDE.md read, no skill listed, the
+        hook's word reached the model)."""
+        return ["--setting-sources", ""] if sid in self.armed else ["--safe-mode"]
+
+
 class ClaudeCodeProvider(RecordingProvider):
     """Anthropic's models through the Claude Code CLI: this class builds every `claude -p` invocation and reads its
     stream; WHERE the process runs is its execution's (`ExecutionPort`, this host by default)."""
     #: each call is its own `claude -p` process, so independent readings may run at once (`stats.readings`)
     parallel_safe = True
     runs_agents = True
+    #: the CLI runs a hook after each tool call, so a session's context is read and handed over inside its one process
+    handover_hook = True
 
     def __init__(self, model: str = MODEL_DEFAULT, timeout: int = 900, claude_cmd: str = "claude",
-                 max_thinking_tokens: int | None = None, keep_api_key: bool = False,
-                 execution: ExecutionPort | None = None):
+                 max_thinking_tokens: int | None = None, execution: ExecutionPort | None = None,
+                 credential=None):
         super().__init__(model)
         self._timeout = timeout
         self._exec = execution or LocalExecution()
@@ -156,11 +238,12 @@ class ClaudeCodeProvider(RecordingProvider):
         # Latency lever: per-call wall time is dominated by OUTPUT tokens, and thinking tokens bill into
         # output. Caps the child CLI's thinking budget (MAX_THINKING_TOKENS env); None = CLI default.
         self._max_thinking = max_thinking_tokens
-        self._keep_key = keep_api_key  # True = api billing (key kept in child env); False = subscription
+        self._credential = credential   # `credentials.Credential`: a token or an API key, or None = the host's login
         self.last_model = ""          # the model its turns name — what a cut session ran on
         self.last_turns: dict = {}    # each turn's own usage, by message id — what a cut session spent
         self._turn_id = ""            # the message whose closing `message_delta` is still to come
         self.last_lift = None         # when the account's limit that refused the call being read lifts (`_lifts_at`)
+        self.hooks = _Hooks(self._exec)  # the handover hook of this execution's CLI (`arm`)
         # Live ticks are REAL (stream-json + partial messages: actual output tokens so far), never an estimate.
         self._tick_every = 2.0
         if self._cmd is None:
@@ -183,10 +266,7 @@ class ClaudeCodeProvider(RecordingProvider):
             p.unlink(missing_ok=True)
         for p in (Path(self._exec.state_dir()) / "gfso-sessions").glob(f"{session}.*"):
             p.unlink(missing_ok=True)
-
-    def _spent_file(self, sid: str) -> Path:
-        """What a conversation cost up to the round its next one continues — beside the CLI's own state."""
-        return Path(self._exec.state_dir()) / "gfso-sessions" / f"{sid}.spent"
+        self.hooks.armed.discard(session)
 
     def _own_cost(self, sid: str | None, total, resumed: bool):
         """THE ROUND'S OWN COST: on `--resume` the CLI's `total_cost_usd` is the whole conversation's, so a continued
@@ -195,7 +275,7 @@ class ClaudeCodeProvider(RecordingProvider):
         if not (resumed and sid and isinstance(total, (int, float))):
             return total
         try:
-            before = float(self._spent_file(sid).read_text(encoding="utf-8"))
+            before = float(kept(self._exec, sid, "spent").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return total                   # nothing kept (a conversation from before this was kept): as the CLI said
         return max(0.0, total - before)
@@ -209,6 +289,16 @@ class ClaudeCodeProvider(RecordingProvider):
             return ["--no-session-persistence"]
         return ["--resume", sid] if self._transcripts(sid) else ["--session-id", sid]
 
+    credential_kinds = tuple(AUTH)
+
+    def window(self) -> int | None:
+        """The model's window as the CLI last reported it, or None before any call did."""
+        return _WINDOWS.get(self._model)
+
+    def arm(self, sid: str, state: dict) -> None:
+        """The handover hook armed for `sid` (`_Hooks.arm`), told whether the conversation continues an earlier run."""
+        self.hooks.arm(sid, {**state, "resumed": bool(self._transcripts(sid))})
+
     def _never_started(self, e: PlaceUnavailable, resumed: bool) -> str:
         """NOTHING STARTED: read as an empty answer, a dead Docker daemon was redialled as a cut call four times, then
         parked the node as an unreadable report (GB_sql_database_tnij0m952). Recorded as its own ending, so booking it
@@ -217,15 +307,22 @@ class ClaudeCodeProvider(RecordingProvider):
                            "error": str(e), "transport_torn": False, "resumed": resumed, "at": time.time()})
         return ""
 
-    def _after_the_round(self, sid: str | None, out: dict) -> None:
+    def _after_the_round(self, sid: str | None, out: dict, mine: list) -> None:
         """ONLY A ROUND CUT AT ITS TURN CAP IS CONTINUED: the next round of any other starts with a clean context, each
         agent's own (the author, 2026-09-27: «агенты … с чистым контекстом дешево»). Measured continuing every round
         (GB_sql_database_tn9nii608): a disputing executor repeated its challenge out of the conversation every 24 s, 40
         calls, each one's input 16k tokens longer."""
-        if sid and out.get("subtype") != "error_max_turns":
+        if mine and mine[-1].get("context_window"):
+            _WINDOWS[self._model] = mine[-1]["context_window"]
+        # …and one its handover hook stopped at the ceiling: its note is asked for by that conversation (`budget.hooked`);
+        # the hook's word is the round's, on its record
+        hook = self.hooks.state(sid) if sid in self.hooks.armed else None
+        if hook is not None and mine:
+            mine[-1]["hook"] = hook
+        if sid and out.get("subtype") != "error_max_turns" and not (hook or {}).get("stopped"):
             self.forget(sid)
         elif sid and isinstance(out.get("total_cost_usd"), (int, float)):
-            f = self._spent_file(sid)
+            f = kept(self._exec, sid, "spent")
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(str(out["total_cost_usd"]), encoding="utf-8")
 
@@ -386,7 +483,7 @@ class ClaudeCodeProvider(RecordingProvider):
         if not cwd:
             with self._exec.scratch("gfso-noplace-") as empty:
                 return self._call(system, user, tools_args, empty, timeout, session)
-        env = subprocess_env(keep_key=self._keep_key)
+        env = subprocess_env(credential=client_env(self._credential))
         if self._max_thinking is not None:
             env["MAX_THINKING_TOKENS"] = str(self._max_thinking)
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
@@ -410,14 +507,14 @@ class ClaudeCodeProvider(RecordingProvider):
                 # English goal wrote its justifications into the graph in Russian and in German.
                 # The empty value removes the instruction (probed 2026-09-25: the child reports
                 # none); the call's own prompt then decides, as it does for every other rule.
-                "--settings", '{"disableAllHooks": true, "language": ""}',
+                "--settings", self.hooks.settings(session),
                 # …AND THE OPERATOR'S OWN INSTRUCTIONS. Hooks and MCP were shut, and the call still
                 # loaded the person's CLAUDE.md: probed 2026-09-24, an internal call listed the
                 # operator's working-mode and coding rules among its instructions — so an executor or
                 # a validator of this product ran under whatever its user had written for themselves.
                 # `--safe-mode` drops CLAUDE.md, skills, plugins, hooks and MCP and keeps auth (probed:
                 # none of those instructions reached the call; tools and the system prompt work).
-                "--safe-mode",
+                *self.hooks.clean(session),
                 *self._session_args(session),
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 *(tools_args if tools_args is not None else ["--disallowedTools", "*"])]
@@ -510,9 +607,12 @@ class ClaudeCodeProvider(RecordingProvider):
                 self._exec.end(proc)
             # …a round what stops the project refused never ran: the conversation it would continue is kept
             if not refused_by_limit(self.calls[n0:]):
-                self._after_the_round(session, out)
+                self._after_the_round(session, out, self.calls[n0:])
         # Reached only by a conversation the CLI could not take up (gone, outgrown its window): that is not the round's
         # failure, so the round runs cold — after the first process is gone, which otherwise rewrote the transcript
         # just forgotten and sent the "cold" retry back to `--resume` (critic, live on CLI 2.1.306)
-        # …on what the run reopens on (`resume_fallback`): a budget's "continue the task" means nothing without its history
-        return self.forget(session) or self._call(system, self.resume_fallback or user, tools_args, cwd, timeout, session)
+        # …on what the run reopens on (`resume_fallback`): a budget's "continue the task" means nothing without its history;
+        # and still armed: forgotten with the conversation, the hook left the cold run without a ceiling and the provider
+        # was sent back to rounds for good (critic over the hook path)
+        return self.hooks.across(session, self.forget) or self._call(system, self.resume_fallback or user, tools_args,
+                                                                     cwd, timeout, session)

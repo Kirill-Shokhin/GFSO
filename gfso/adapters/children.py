@@ -141,7 +141,7 @@ def run(args, *, timeout: float, **kw) -> subprocess.CompletedProcess:
     """`subprocess.run` for a child of this process: adopted, in a group of its own, without the
     server's mark in its environment, and ended with its whole tree however the call ends — a
     `TimeoutExpired` still reaches the caller."""
-    kw.setdefault("env", subprocess_env(keep_key=True))
+    kw.setdefault("env", subprocess_env())
     kw.setdefault("stdin", subprocess.DEVNULL)       # under `gfso mcp` stdin is the protocol pipe
     if os.name == "nt":
         kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)

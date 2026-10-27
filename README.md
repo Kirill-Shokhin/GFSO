@@ -103,7 +103,7 @@ gfso setup               # registers the agent door, brings the one server up, o
 
 `gfso setup` is idempotent. It registers the door with Claude Code for your user — by the console script's absolute path, so it resolves from every directory and survives your leaving a virtualenv — and `--desktop` also writes the entry into Claude Desktop's configuration, keeping a backup. When something is wrong later, `gfso doctor` says what — and its output is what a bug report should carry.
 
-The engine, the UI and the gate cost nothing to run: no API key, no model. The four verbs that do call one — `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, so they need no key of their own and spend the usage of whatever account that CLI is signed in to. Without it on your `PATH` they report that the provider answered nothing, and everything else still works.
+The engine, the UI and the gate cost nothing to run: no API key, no model. The four verbs that do call one — `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, so they need no key of their own and spend the usage of whatever account that CLI is signed in to — or of the token or API key set by `gfso credential claude`. Without it on your `PATH` they report that the provider answered nothing, and everything else still works.
 
 The gate, in one second and with no AI involved:
 

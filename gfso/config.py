@@ -330,19 +330,19 @@ def provider() -> str:
 
 
 def generic_provider() -> dict:
-    """Where the OpenAI-compatible transport points (`GFSO_GENERIC_BASE_URL` / `_MODEL` / `_API_KEY`).
+    """Where the OpenAI-compatible transport points (`GFSO_GENERIC_BASE_URL` / `_MODEL`; its key is the provider
+    `generic`'s, `adapters/llm/credentials`).
 
     `base_url` is REQUIRED when `provider() == "generic"` — reading it here rather than at the
     adapter keeps the whole provider switch in one place, which is what "flip the system to another
     vendor and seamlessly back" means operationally."""
     return {"base_url": os.environ.get("GFSO_GENERIC_BASE_URL"),
-            "model": os.environ.get("GFSO_GENERIC_MODEL"),
-            "api_key": os.environ.get("GFSO_GENERIC_API_KEY")}
+            "model": os.environ.get("GFSO_GENERIC_MODEL")}
 
 
 def provider_env(name: str, field: str) -> str | None:
-    """`GFSO_PROVIDER_<NAME>_<FIELD>` — a model provider's own setting (`BASE_URL`, `API_KEY`, `CONTEXT`,
-    `MAX_TOKENS`, `PRICE`), or None (`adapters/llm/registry.py`)."""
+    """`GFSO_PROVIDER_<NAME>_<FIELD>` — a model provider's own setting (`BASE_URL`, `CONTEXT`, `MAX_TOKENS`, `PRICE`;
+    never its key, `adapters/llm/credentials`), or None (`adapters/llm/registry.py`)."""
     return os.environ.get(f"GFSO_PROVIDER_{name.upper().replace('-', '_')}_{field}") or None
 
 
@@ -350,11 +350,6 @@ def providers_in_env() -> set[str]:
     """The provider names the environment defines by a `GFSO_PROVIDER_<NAME>_BASE_URL`."""
     return {k[len("GFSO_PROVIDER_"):-len("_BASE_URL")].lower() for k in os.environ
             if k.startswith("GFSO_PROVIDER_") and k.endswith("_BASE_URL")}
-
-
-def env_var(name: str) -> str | None:
-    """One variable a provider's preset names for its API key, or None."""
-    return os.environ.get(name) or None
 
 
 #: what a model's own shell never inherits: the keys this process holds for its providers
@@ -365,12 +360,6 @@ def env_without_secrets() -> dict:
     """This process's environment less every key and token (`SECRET_ENV`) and the server's mark (`subprocess_env`) —
     what an agent run's commands start with."""
     return {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and k != "GFSO_SERVING"}
-
-
-def api_billing() -> bool:
-    """`GFSO_BILLING=api` keeps ANTHROPIC_API_KEY in the child env (per-token billing); the default
-    `subscription` strips it (claude.ai login)."""
-    return os.environ.get("GFSO_BILLING", "subscription") == "api"
 
 
 def storage_kind(default: str = "sqlite") -> str:
@@ -584,20 +573,19 @@ def host_env() -> dict:
     return dict(os.environ)
 
 
-def subprocess_env(*, keep_key: bool, extra: dict | None = None) -> dict:
-    """The environment a MODEL subprocess inherits — a fresh dict, nothing installed here.
+def subprocess_env(*, credential: dict | None = None, extra: dict | None = None) -> dict:
+    """The environment a subprocess inherits — a fresh dict, nothing installed here: this process's, less every key and
+    token it holds, plus the one credential a MODEL call is given (`credential`, its provider's: `adapters/llm/
+    credentials`).
 
-    The API key is stripped unless the caller asks to keep it, because with it present the runner
-    bills the paid API while the operator believes they are on the subscription. That is a money
-    fact, not a style one, and it is the reason the measurement layer patches the same thing at its
-    own boundary (P1) — one question, and until now two places answering it.
+    A key inherited from the server went to whatever the server started — a validator's probe commands, a build — and
+    an inherited ANTHROPIC_API_KEY outranked the CLI's login, billing the paid API while the operator believed they
+    were on the subscription. The credential is the provider's to set, in one place, and to give to its own client
+    alone (the author, 2026-10-28: «единственное место провайдера должно быть в классе провайдера»).
     """
-    env = (dict(os.environ) if keep_key else
-           {k: v for k, v in os.environ.items()
-            if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")})
-    # …and the server's mark: a model child is not the server, and a gfso it runs (a probe running
-    # this product's own suite) must not treat itself as one and end its own children.
-    env.pop("GFSO_SERVING", None)
+    # …and never the server's mark (`env_without_secrets`): a gfso a model child runs (a probe running this product's own
+    # suite) must not treat itself as the server and end its own children
+    env = {**env_without_secrets(), **(credential or {})}
     # …and room to answer: the CLI's default 32k output cap cut a plan of 14 parts, and the model's re-emission after
     # the cut is what was kept (AUTO haiku 4.5 sql_database, GB_sql_database_tmu9cb784)
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000")

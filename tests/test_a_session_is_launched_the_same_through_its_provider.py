@@ -4,7 +4,7 @@ The provider factory's first step (docs/notes/PROVIDER_FACTORY.md) moves the `cl
 provider class handing its process to an execution — the author: «текущее просто вынесется из хардкода в общий класс с
 прокидкой всего того же что есть сейчас без изменений». So what every call starts with is pinned here byte for byte:
 the program, the argv, the environment it inherits, the place it runs in and the prompt it is fed — for a one-shot, an
-agent run opening a conversation, one continuing it, and the per-token billing that keeps the key. How a call is ENDED
+agent run opening a conversation, one continuing it, and the API key set in the provider's one place. How a call is ENDED
 (the cap's timer, the mid-stream cap, `finally`, the cold retry) is not pinned here: the silent-child, conversation and
 cut-call tests hold those (critic over ad639bc, by mutation).
 """
@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from gfso.adapters.llm import credentials
+from gfso.config import SECRET_ENV
 from gfso.llm import llm_factory
 
 SETTINGS = '{"disableAllHooks": true, "language": ""}'
@@ -71,9 +73,18 @@ def seen(monkeypatch, tmp_path):
     monkeypatch.setenv("GFSO_SERVING", "1")
     monkeypatch.delenv("CLAUDE_CODE_MAX_OUTPUT_TOKENS", raising=False)
     monkeypatch.delenv("GFSO_PROVIDER", raising=False)
-    monkeypatch.delenv("GFSO_BILLING", raising=False)
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "data"))
     seen.Proc = _Proc
     return seen
+
+
+#: what every call's environment drops and adds: no inherited key or token, no server mark; room to answer, and its
+#: tools' shells scrubbed of the credential the CLI itself is given
+def DROPPED() -> set:
+    return {k for k in os.environ if SECRET_ENV.search(k)} | {"GFSO_SERVING"}
+
+
+ADDED ={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"}
 
 
 def _env_change(env: dict) -> tuple[set, dict]:
@@ -99,7 +110,7 @@ def test_a_one_shot_starts_in_an_empty_place_of_its_own_with_no_tools(seen):
     assert call["argv"] == HEAD + ["--no-session-persistence"] + STREAM + ["--disallowedTools", "*"]
     assert Path(call["cwd"]).name.startswith("gfso-noplace-") and call["place_existed"]
     assert not Path(call["cwd"]).exists(), "the empty place is removed once the call ends"
-    assert _env_change(call["env"]) == ({"ANTHROPIC_API_KEY", "GFSO_SERVING"}, {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"})
+    assert "ANTHROPIC_API_KEY" in DROPPED() and _env_change(call["env"]) == (DROPPED(), ADDED)
     assert _spawn_keywords(call) == SPAWN
     assert call["proc"].stdin.fed == "hello"
 
@@ -129,10 +140,10 @@ def test_an_agent_run_opens_its_conversation_then_continues_it_only_after_its_tu
     assert not kept.exists(), "an answered round forgets its conversation"
 
 
-def test_per_token_billing_keeps_the_key(seen, monkeypatch):
-    monkeypatch.setenv("GFSO_BILLING", "api")
+def test_per_token_billing_runs_on_the_stored_key_not_the_inherited_one(seen):
+    credentials.put("claude", "api", "k-stored")
     llm_factory("m").complete("x", "SYS")
-    assert _env_change(seen[0]["env"]) == ({"GFSO_SERVING"}, {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"})
+    assert _env_change(seen[0]["env"]) == (DROPPED() - {"ANTHROPIC_API_KEY"}, {**ADDED, "ANTHROPIC_API_KEY": "k-stored"})
 
 
 def test_an_agent_run_without_a_place_is_refused_before_anything_starts(seen):

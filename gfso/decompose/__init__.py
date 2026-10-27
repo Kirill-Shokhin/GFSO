@@ -7,7 +7,7 @@ REVISION (same ids, subtree retained, Del of existing children preserved). `refi
 is also public: "+1 iteration" applies to whatever decomposition already exists. The graph only ever
 holds VERIFIED states (each round closes on dropped-item + `list_holes` with a bounded repair cycle).
 The transport comes from `llm_factory(model spec)` — headless `claude -p` one-shots for Anthropic
-(billing per GFSO_BILLING), or a chat API's wire for any other provider (`adapters/llm/registry.py`).
+(on the credential `gfso credential claude` set, or the CLI's own login), or a chat API's wire for any other provider (`adapters/llm/registry.py`).
 
 Termination & validity guarantees (all bounds hard):
   ≤ depth search calls + ≤ depth fold calls (ALREADY-COVERED / empty-fold exits can only shorten)

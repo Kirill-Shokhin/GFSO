@@ -80,7 +80,7 @@ def run_code(code: str, stdin_input: str, timeout: float = 10.0) -> ExecutionRes
              open(err_file, "w", encoding="utf-8") as ferr:
             proc = adopt(subprocess.Popen(
                 [sys.executable, tmp],
-                stdin=fin, stdout=fout, stderr=ferr, env=subprocess_env(keep_key=True),
+                stdin=fin, stdout=fout, stderr=ferr, env=subprocess_env(),
                 # Windows: don't pop a console window (same class as the headless adapter)
                 **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
                 **spawn_kw(),

@@ -53,7 +53,7 @@ def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
     """One git call in `cwd`, as `who` — a delivery is its executor's commit, and no identity needs configuring —
     where `execution` runs the project's work (this host when None)."""
     mail = f"{who}@gfso.local"
-    env = subprocess_env(keep_key=False, extra={"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail,
+    env = subprocess_env(extra={"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail,
                                                 "GIT_COMMITTER_NAME": who, "GIT_COMMITTER_EMAIL": mail,
                                                 "GIT_TERMINAL_PROMPT": "0", **(env or {})})
     if execution is not None:

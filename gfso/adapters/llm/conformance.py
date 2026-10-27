@@ -6,6 +6,8 @@ The criteria a provider meets to work on gfso no worse, as a battery of small re
 - REQUIRED for the agent roles (executor, validator, contact): in a place of its own the model writes a file, runs a
   command over it and reports what the command printed — the round trip every agent role is — and, under the
   executor's real system prompt, ends its run with a report that parses against a schema, as every agent role must;
+  and the shell its tools run in holds no credential — no value set in the one place (`credentials`), no variable
+  named as a key or a token (`SECRET_ENV`): an agent that can print its provider's key can hand it to anyone;
 - OPTIONAL, reported: the cached part of the input split out, the cost, the window (asked of the server where it says:
   a local server that truncates past its window silently would pass a small battery and fail real work), the peak, and
   whether a context budget can run on it (a round cut at its cap says so and reports its peak).
@@ -16,6 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from gfso.adapters.execution import LocalExecution
+from gfso.config import SECRET_ENV
+from . import credentials
 from .stats import calls_of
 from .structured import parse_structured, schema_instruction
 
@@ -27,6 +31,8 @@ TOOLS = ("Read", "Write", "Edit", "Bash", "Glob", "Grep")
 AGENT_TASK = ("Create a file named probe.txt in the working directory whose whole content is the number 41. Then run a "
               "shell command that prints that number plus one, computed from the file (for example "
               "`expr $(cat probe.txt) + 1`). Reply with only the number the command printed.")
+CREDENTIAL_TASK = ("Run the shell command `env > env.txt` in the working directory, exactly as written. Reply with only "
+                   "the word done.")
 REPORT_TASK = ("# The task\nIn the working directory, write `sum.py` that prints the sum of the integers 1 to 100, run it, "
                "and deliver.\n")
 REPORT_SCHEMA = {"type": "object", "properties": {"status": {"type": "string", "enum": ["delivered", "blocked"]},
@@ -55,7 +61,23 @@ def _agent_checks(provider, out: dict, agent_prompt: str) -> bool:
         report = parse_structured(said, REPORT_SCHEMA) or {}
         out["checks"]["agent report"] = {"pass": report.get("status") == "delivered" and "5050" in
                                          str(report.get("printed")), "saw": report or said.strip()[-120:]}
-    return out["checks"]["agent run"]["pass"] and out["checks"]["agent report"]["pass"]
+    out["checks"]["credential hidden"] = _credential_hidden(provider)
+    return all(out["checks"][k]["pass"] for k in ("agent run", "agent report", "credential hidden"))
+
+
+def _credential_hidden(provider) -> dict:
+    """The tools' shell as it is, read from the file it wrote — not from the model's account of it, which may leave out
+    the very line that matters. Unread is not hidden: a run that wrote no file fails."""
+    with (provider.execution or LocalExecution()).scratch("gfso-conformance-") as place:
+        provider.run_agent("You are a careful agent working with tools.", CREDENTIAL_TASK, TOOLS, cwd=place,
+                           timeout=300, max_turns=10)
+        f = Path(place) / "env.txt"
+        if not f.is_file():
+            return {"pass": False, "saw": "no env.txt: the tools' environment was not shown"}
+        shown = f.read_text(encoding="utf-8", errors="replace")
+    names = sorted({n for n, _, _ in (ln.partition("=") for ln in shown.splitlines()) if SECRET_ENV.search(n)})
+    values = sum(v in shown for v in credentials.held())
+    return {"pass": not names and not values, "names": names, "values": values}
 
 
 def _holds_a_budget(provider) -> bool:

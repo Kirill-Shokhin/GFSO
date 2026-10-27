@@ -7,13 +7,15 @@ as it always was (`claude-haiku-4-5`, `sonnet`).
 Three sources of providers, looked up in this order:
 1. A third party's class, by the entry-point group `gfso.providers`: `name = "package.module:factory"`, where
    `factory(model, execution) -> LLMProviderPort`. A developer installs a package; nothing here changes.
-2. A preset — DATA, not a class: the OpenAI-compatible wire at a known address with the variable its key is read
-   from. The built-in ones are `PRESETS`; a user's own is the environment's `GFSO_PROVIDER_<NAME>_BASE_URL` (with
-   `_API_KEY`, `_CONTEXT`, `_MAX_TOKENS`, `_PRICE` = "input,output[,cached]" dollars per million tokens), which also
-   overrides any field of a built-in one (a vLLM on another port).
-3. `claude` — the Claude Code CLI.
-`GFSO_PROVIDER=generic` (with `GFSO_GENERIC_BASE_URL/_MODEL/_API_KEY`) keeps meaning what it meant: every unprefixed id
-goes to that endpoint.
+2. A preset — DATA, not a class: the OpenAI-compatible wire at a known address, and whether it takes a key. The
+   built-in ones are `PRESETS`; a user's own is the environment's `GFSO_PROVIDER_<NAME>_BASE_URL` (with `_CONTEXT`,
+   `_MAX_TOKENS`, `_PRICE` = "input,output[,cached]" dollars per million tokens), which also overrides any field of a
+   built-in one (a vLLM on another port).
+3. `claude` — the Claude Code CLI, a subscription's token or an API key.
+`GFSO_PROVIDER=generic` (with `GFSO_GENERIC_BASE_URL/_MODEL`) keeps meaning what it meant: every unprefixed id goes to
+that endpoint.
+Every provider's credential is set in ONE place and read from it by the provider alone (`credentials`: the door
+`gfso credential <provider>`); a third party's factory reads its own the same way, by its name.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from importlib.metadata import entry_points
 from typing import Optional
 
 from gfso import config as _config
+from . import credentials
 from .chat import ChatProvider, OpenAIWire
 from .headless import ClaudeCodeProvider
 
@@ -29,7 +32,7 @@ from .headless import ClaudeCodeProvider
 @dataclass(frozen=True)
 class Preset:
     base_url: str
-    key_env: Optional[str] = None       # the variable its API key is read from; None = it takes none
+    keyed: bool = False                 # takes an API key (`credentials`, kind `api`)
     local: bool = False                 # runs on the user's machine: no bill, cost 0
     context: Optional[int] = None       # the model's window where the preset knows it
     max_tokens: Optional[int] = None
@@ -46,14 +49,14 @@ PRESETS: dict[str, Preset] = {
     "vllm": Preset("http://localhost:8001/v1", local=True,
                    note="vLLM's default port is gfso's 8000: serve it on another and say so in GFSO_PROVIDER_VLLM_BASE_URL"),
     # by API
-    "deepseek": Preset("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
-    "qwen": Preset("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
-    "openrouter": Preset("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
-    "groq": Preset("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-    "together": Preset("https://api.together.xyz/v1", "TOGETHER_API_KEY"),
-    "mistral": Preset("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
-    "gemini": Preset("https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"),
-    "openai": Preset("https://api.openai.com/v1", "OPENAI_API_KEY"),
+    "deepseek": Preset("https://api.deepseek.com/v1", keyed=True),
+    "qwen": Preset("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", keyed=True),
+    "openrouter": Preset("https://openrouter.ai/api/v1", keyed=True),
+    "groq": Preset("https://api.groq.com/openai/v1", keyed=True),
+    "together": Preset("https://api.together.xyz/v1", keyed=True),
+    "mistral": Preset("https://api.mistral.ai/v1", keyed=True),
+    "gemini": Preset("https://generativelanguage.googleapis.com/v1beta/openai", keyed=True),
+    "openai": Preset("https://api.openai.com/v1", keyed=True),
 }
 
 
@@ -105,13 +108,38 @@ def provider_for(spec: str, execution=None):
         g = _config.generic_provider()
         if not g["base_url"]:
             raise ValueError("GFSO_PROVIDER=generic needs GFSO_GENERIC_BASE_URL — the OpenAI-compatible endpoint")
-        return chat_provider(Preset(g["base_url"]), g["model"] or model, execution, g["api_key"])
+        return chat_provider(Preset(g["base_url"]), g["model"] or model, execution, _key("generic"))
     if (plugin := _plugins().get(name)) is not None:
         return plugin.load()(model, execution)
     if (p := preset(name)) is not None:
-        key = _config.provider_env(name, "API_KEY") or (_config.env_var(p.key_env) if p.key_env else None)
-        made = chat_provider(p, model, execution, key)
-        if p.key_env and not key:              # every call answers "unauthorized": the project stops, no node is parked
-            made.wire.missing_key = f"set {p.key_env} (or GFSO_PROVIDER_{name.upper()}_API_KEY) for {name!r}"
+        made = chat_provider(p, model, execution, key := _key(name))
+        if p.keyed and not key:                # every call answers "unauthorized": the project stops, no node is parked
+            made.wire.missing_key = f"set it: gfso credential {name} --kind api"
         return made
-    return ClaudeCodeProvider(model=model, keep_api_key=_config.api_billing(), execution=execution)
+    return ClaudeCodeProvider(model=model, execution=execution, credential=credentials.get("claude"))
+
+
+def _key(name: str) -> Optional[str]:
+    """`name`'s API key, where its one place holds one."""
+    c = credentials.get(name)
+    return c.value if c and c.kind == "api" else None
+
+
+def takes(name: str) -> tuple[str, ...]:
+    """The kinds of credential the provider `name` takes (`credentials`) — the door refuses any other."""
+    if name == "claude":                       # the one name its credential is read by (`provider_for`)
+        return ClaudeCodeProvider.credential_kinds
+    if name == "generic":
+        return ("api",)
+    if name in _plugins():                     # a third party's factory reads its own by its name, of either kind
+        return credentials.KINDS
+    if (p := preset(name)) is not None:
+        # …a user's own endpoint may want one or not (a vLLM behind a gateway): it takes one and needs none
+        return ("api",) if p.keyed or name not in PRESETS else ()
+    raise ValueError(f"no provider {name!r}: one of {', '.join(names())}")
+
+
+def set_credential(name: str, kind: str, value: str | None) -> dict:
+    """THE door's one act, for every provider: set (or, with None, remove) `name`'s credential of `kind` in its one
+    place. Answers what is set now, never a value."""
+    return credentials.put(name, kind, value, takes(name))

@@ -17,8 +17,15 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   OpenAI-compatible presets, a user's own by `GFSO_PROVIDER_<NAME>_*`, a third party's class by the entry-point group
   `gfso.providers`); agent roles over a chat API run in the system's own tool loop; `gfso provider-check <spec>` names
   the roles a provider can hold. `GFSO_PROVIDER=generic` keeps its meaning.
+- One place for every provider's credential: `gfso credential <provider> [--kind token|api] [--remove]` (the value
+  on stdin) and `GET`/`PUT /api/credentials[/{provider}]`, never answering with a value. The Claude Code provider takes
+  a subscription's token or an API key there; `gfso provider-check` fails the agent roles when a tool's shell can see
+  a credential.
 
 ### Changed
+- No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,
+  `GFSO_GENERIC_API_KEY`), and `GFSO_BILLING` is gone: per-token billing is an `api` credential of `claude`. No child
+  process inherits a key or a token; a container's `env_file` is optional and holds no credential.
 - A refused authentication (the account signed out, a key refused or missing) and an execution place down stop the
   project as the account's limit does, and every door names which of them stopped it.
 - A continued round of the Claude Code provider books its own cost, not the whole conversation's.

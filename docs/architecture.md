@@ -443,16 +443,23 @@ Both use LLMProviderPort (in core/types/ports.py). Different roles, different lo
 
 Every role takes its provider from `llm_factory(model, execution)`, and the model is a spec `provider/model` resolved in
 one place (`adapters/llm/registry.py`): an unprefixed id is Anthropic's, through the Claude Code CLI
-(`ClaudeCodeProvider`); a prefix names a preset — data, an OpenAI-compatible address and the variable its key is read
-from (`ollama`, `lmstudio`, `vllm`, `llamacpp`, `deepseek`, `qwen`, `openrouter`, `groq`, `together`, `mistral`,
-`gemini`, `openai`) — a user's own (`GFSO_PROVIDER_<NAME>_BASE_URL`, `_API_KEY`, `_CONTEXT`, `_MAX_TOKENS`, `_PRICE`), or
-a third party's class (entry-point group `gfso.providers`). The spec rides wherever a model id rides, so each role may
+(`ClaudeCodeProvider`); a prefix names a preset — data, an OpenAI-compatible address and whether it takes a key
+(`ollama`, `lmstudio`, `vllm`, `llamacpp`, `deepseek`, `qwen`, `openrouter`, `groq`, `together`, `mistral`,
+`gemini`, `openai`) — a user's own (`GFSO_PROVIDER_<NAME>_BASE_URL`, `_CONTEXT`, `_MAX_TOKENS`, `_PRICE`), or
+a third party's class (entry-point group `gfso.providers`). Every provider's credential — an API key, or for Claude a
+subscription's token — has one place, `credentials.json` in the data directory, readable by its owner alone, and one
+door, `gfso credential <provider>` (value on stdin) or `PUT /api/credentials/{provider}`; neither ever answers with a
+value and MCP has no such verb. No key is read from the environment, and no child process inherits one: the provider
+gives its credential to its own client's process alone, and the Claude Code CLI's tool shells are scrubbed of it. That
+keeps it from a session's tools where the session runs in a container execution, which holds neither the data
+directory nor a way to the server; on this host a tool runs as the same user and can read the store, as it can read the
+CLI's own login. The spec rides wherever a model id rides, so each role may
 run on its own provider. Every provider records its calls in one neutral shape (`adapters/llm/base.py`); a chat API is a
 `ChatWire` with one required method, `turn` (`adapters/llm/chat.py`), and its agent roles run in the system's own tool
 loop (`adapters/llm/toolloop.py`: the six work tools the roles and prompts already name, confined to the run's place,
 commands through its execution). `gfso provider-check <spec>` measures which roles a provider can hold — a completion, a
-structured answer and their tokens for the one-shot roles, a tool round trip and a schema-valid report for the agent
-roles, the optional fields (cache split, cost, window) reported. A rate limit, out of credit, a refused key and a model
+structured answer and their tokens for the one-shot roles, a tool round trip, a schema-valid report and a tool shell
+that holds no credential for the agent roles, the optional fields (cache split, cost, window) reported. A rate limit, out of credit, a refused key and a model
 server that does not answer stop the project as the account's limit does. An executor's session is handed over by the
 system before its context outgrows the resource (`adapters/llm/budget.py`): at its ceiling, the model's window less a
 margin, always; at the role's budget where one is set (`register_agent(context_budget=…)`), there at a point the session

@@ -261,7 +261,8 @@ def cli(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "kill_tree", lambda p: None)
     monkeypatch.setattr(E, "release", lambda p: None)
     llm = H.ClaudeCodeProvider()
-    llm._cmd, llm.budgeted, llm.context_budget = "claude", True, 50_000
+    # the rounds: the reading of a CLI that runs no hooks (the hooked path: test_a_hook_hands_a_session_over.py)
+    llm._cmd, llm.budgeted, llm.context_budget, llm.handover_hook = "claude", True, 50_000, False
     return llm, seen, script, tmp_path
 
 

@@ -243,6 +243,10 @@ class ExecutionPort(ABC):
         """Where the agent CLI started here keeps its state — the conversations a session continues live under it."""
         ...
 
+    def state_seen(self) -> str:
+        """`state_dir` as a process started here names it — the CLI reads its hooks' paths there, not the host's."""
+        return str(self.state_dir())
+
     @abstractmethod
     def run(self, args: list[str], *, cwd: str, timeout: float, env: Optional[dict] = None):
         """A command to its end in `cwd`: a `CompletedProcess` with text output; past `timeout` it is ended whole and

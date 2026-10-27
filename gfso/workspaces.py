@@ -252,7 +252,7 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
             _EXECUTIONS[key].switch({"mode": "off"})
         raise
     if key not in _EXECUTIONS:
-        _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d["env_file"], d["state"],
+        _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d.get("env_file"), d["state"],
                                               role["workdir"], engine.project_name)
     # the switch as declared NOW, kept by the container: every holder of any object of it starts it under this one
     _EXECUTIONS[key].switch(d.get("network"))
