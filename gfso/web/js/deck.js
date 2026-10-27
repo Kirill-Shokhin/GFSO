@@ -30,7 +30,9 @@ const ticks = new Map();                               // `source|node` → {nod
 // offered root read "nothing at work" while the system worked (a live run, 2026-10-25). The process names the work.
 const DOING = {auto_decompose: 'planning', review_decomposition: 'reviewing the plan', delegated_execution: 'executing',
     delegated_consent: 'reading the contract', validate_result: 'validating', validate_scope: 'validating',
-    join_whole: 'joining the parts', issuer_turn: "the issuer's turn"};
+    join_whole: 'joining the parts', issuer_turn: "the issuer's turn",
+    // the system runs the node's pinned checks once before its executor session: no model, no bar on the timeline
+    observation: 'observing its place'};
 // the session on this node, or on the nearest ancestor that carries it (one session may run a whole part of the plan)
 const carrier = (t, mine) => { for (let n = t; n?.id; n = S.tasks.find(x => x.id === n.parent_id)) {
     const w = mine.find(w => w.task_id === n.id); if (w) return [n, w]; } return []; };
