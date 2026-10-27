@@ -51,7 +51,7 @@ from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
 from gfso.engine.validation import is_auto_root, party_kind, users_criteria, users_plan
-from gfso.packets import answered_challenges, answers_given, as_shown, capped, list_key
+from gfso.packets import answered_challenges, answers_given, as_shown, capped, list_key, outside_text
 from gfso.engine.events import emit_cb
 from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
 
@@ -394,6 +394,9 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         out.append(f"## Its own split\n{_own_split(engine, task) if split else _split_lines(engine, task)}")
     if not plan:   # a repair needs what was observed failing: the verdict and the delivery ride here
         out += _what_happened(engine, task)
+    # …and what its validators and its children's saw beyond the criteria: FM-1.f met at contact (§8.3), for the moves
+    # this question already has
+    out += [s for s in [outside_text(engine, task)] if s]
     if question == "plan":
         out.append(f"## What the plan gate holds open\n{_gate_findings(engine, task_id)}")
         # …and the issuer's answers to this node's challenges on the version in force: unseen, a rejected challenge was

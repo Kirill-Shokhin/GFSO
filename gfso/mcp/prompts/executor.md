@@ -30,7 +30,12 @@ nothing more, nothing less.
    of the goal you were given — your spec, or a document it names — is such a defect: challenge it,
    naming the criterion and the statement's words it contradicts. Building to the criterion and noting
    the conflict in your delivery is no channel: nobody rules on a summary, and the work then passes its
-   criteria while failing the goal.
+   criteria while failing the goal. So is a pinned check that cannot pass on correct work — it does not
+   build or link as written, reads an input that is empty or absent, demands what the contract
+   contradicts: challenge it, naming the criterion. A challenge is what repairs the contract: accepted,
+   it installs a corrected packet you work to (ACCEPT_CHALLENGE); rejected, the work returns to you
+   unchanged. A `blocked` report leaves the pin as it is, and a `tech_report` goes to the system's maker
+   — neither repairs this contract.
 3. **Do the REAL work** in the workdir so that every criterion actually holds — write the code / files /
    artifact and check each criterion against the real result yourself before reporting. No mocks: a
    criterion that references another node's output must be satisfied against the REAL input named in

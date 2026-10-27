@@ -366,6 +366,17 @@ _VALIDATOR_SCHEMA = {
             "required": ["criterion", "verdict", "evidence", "behaviours", "probe",
                          "divergences"]}},
         "seams": {"type": "string"},
+        # WHAT WAS SEEN BEYOND THE CRITERIA, as data for the issuer and never a verdict input (Inv-2): written in prose
+        # ("observed but outside the stated criteria … NOT IN (SELECT …) give NULL"), the row's held-out miss was seen
+        # at contact and no channel carried it to the one who could write the criterion (§8.3 FM-1.f at contact)
+        "outside": {"type": "array", "description":
+                    "what you OBSERVED that no criterion here states — a behaviour the goal or the spec plainly needs "
+                    "that the delivery lacks. Not a divergence and no verdict: it fails nothing; it goes to the issuer, "
+                    "who judges it against the goal. Leave it empty when there was none",
+                    "items": {"type": "object", "properties": {
+                        "what": {"type": "string", "description": "the behaviour, one line"},
+                        "evidence": {"type": "string", "description": "the command you ran and what it printed"}},
+                        "required": ["what"]}},
         "failed_criteria": {"type": "array", "items": {"type": "string"}},
         "tech_report": TECH_REPORT,
     },
@@ -696,6 +707,7 @@ def _the_validators_answer(engine, task_id, out, parsed, recorded, _cb, llm) -> 
     failed = list(recorded.get("failed_criteria") or parsed.get("failed_criteria") or ())
     out.update({"verdict": verdict, "per_criterion": parsed["per_criterion"],
                 "failed_criteria": failed, "seams": parsed.get("seams", ""),
+                **({"outside": parsed["outside"]} if parsed.get("outside") else {}),
                 # WHO IT WAS RECORDED UNDER, read off the record. The reply echoed the `validator`
                 # PARAMETER, so a run that named none answered `"validator": null` beside twelve
                 # per-criterion verdicts and twenty Bash calls — while the docstring says
@@ -878,10 +890,11 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
 def _naming_the_node(schema: dict) -> dict:
     """The node validator's report schema, each per-criterion entry naming the node it is about."""
     out = copy.deepcopy(schema)
-    item = out["properties"]["per_criterion"]["items"]
-    item["properties"]["task_id"] = {"type": "string", "description":
-                                     "the node this criterion belongs to — its id exactly as its heading gives it"}
-    item["required"] = list(item["required"]) + ["task_id"]
+    for key, what in (("per_criterion", "criterion"), ("outside", "observation")):
+        item = out["properties"][key]["items"]
+        item["properties"]["task_id"] = {"type": "string", "description":
+                                         f"the node this {what} belongs to — its id exactly as its heading gives it"}
+        item["required"] = list(item["required"]) + ["task_id"]
     return out
 
 
@@ -972,7 +985,7 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
         for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.criteria]):   # (critic r5)
             owners.setdefault(name, []).append(str(task.id))
     out: dict = {str(t.id): [] for t, _, _ in parts}
-    said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "",
+    said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "", "outside": [],
                         "contradiction": None} for tid in out}
     failed_said, unplaced = set(), set()
     for text in texts:
@@ -985,9 +998,10 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
             e["criterion"] = criterion_meant(e.get("criterion"), list(owners))
         if parsed.get("failed_criteria"):
             parsed["failed_criteria"] = [criterion_meant(n, list(owners)) for n in parsed["failed_criteria"]]
+        _place_outside(parsed, said, own)
         named = set()
         for e in parsed.get("per_criterion") or ():
-            tid = next(iter(out)) if own else str(e.get("task_id") or "").strip().strip("`'\"").strip()
+            tid = next(iter(out)) if own else _named_node(e)
             # …by its criterion's name only where it names no node: naming one outside this validation, a consumer's
             # seam entry was credited to its sibling's like-named seam (critic over the round, 2026-10-19)
             if not tid and len(owners.get(str(e.get("criterion")), ())) == 1:
@@ -1020,6 +1034,21 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
         for tid, why in _unanswered_fails(out, owners, failed_said, unplaced).items():
             said[tid]["contradiction"] = said[tid]["contradiction"] or why
     return out, said
+
+
+def _named_node(x: dict) -> str:
+    """The node a scope report's item names in `task_id`, as its heading gives it, the validator's quoting taken off."""
+    return str(x.get("task_id") or "").strip().strip("`'\"").strip()
+
+
+def _place_outside(parsed: dict, said: dict, own: bool) -> None:
+    """What the report observed outside the criteria, onto the node each observation names (one node's report: that
+    node) — data beside the verdict for its issuer, read by nothing that decides it (Inv-2). One naming no node of
+    this validation is dropped, as an unplaced entry is."""
+    for o in (o for o in parsed.get("outside") or () if isinstance(o, dict)):
+        tid = next(iter(said)) if own else _named_node(o)
+        if tid in said and str(o.get("what") or "").strip():
+            said[tid]["outside"].append({"what": str(o["what"]).strip(), "evidence": str(o.get("evidence") or "").strip()})
 
 
 def _shaped(parsed: Optional[dict]) -> Optional[dict]:
@@ -1123,6 +1152,7 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
                                          validator or "validate_result", per_criterion=entries,
                                          tools_used=tools, require_probe=True, generation=claim.key[1:],
                                          log_at=claim.log_at, model=_model, workdir=workdir,
+                                         outside=said.get("outside") or (),
                                          inputs_dirs=laid_down_dirs(
                                              engine.validation_procedure(task.id), scratch)) or {}
     except ValueError as e:

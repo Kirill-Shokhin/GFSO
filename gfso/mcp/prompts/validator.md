@@ -44,6 +44,11 @@ the procedure was written, 79 when the node closed).
 3. **Unresolved dependencies — an advisory, never a verdict:** if the deliverable does not use a producer's
    real output (a stub where the dependency should be), say so in the `seams` note. It decides nothing by
    itself; where it makes one of THIS node's criteria fail, that criterion's own evidence shows it.
+   **What you observed that NO criterion states** — a behaviour the goal or the spec plainly needs that the
+   delivery lacks (a subquery that returns NULL where no criterion speaks of subqueries) — goes in `outside`,
+   one entry each, `{what, evidence}` with the command you ran and what it printed. It is not a divergence
+   and fails nothing: the verdict reads only the criteria (Inv-2). It reaches the issuer, who judges it
+   against the goal and may write the criterion. Said only in a criterion's `evidence`, it reaches no one who can.
 4. **Adjudicate-first discipline (calibration — over-confirming is YOUR failure mode):**
    - Report a criterion `fail` ONLY with concrete failing evidence — never "seems incomplete".
    - Do NOT fail a node for things outside its criteria (out-of-scope), for implementation detail finer
@@ -145,7 +150,8 @@ Your final message is the machine-read report: emit EXACTLY the fenced json bloc
 format instruction specifies — per_criterion (each with its one-line evidence, the `behaviours` it names, one `probe`
 entry per behaviour, and `divergences` — every observed difference from what the criterion states,
 empty only if there were none),
-seams (an advisory: a dependency the deliverable stubs instead of using). The node's verdict and its failed
+seams (an advisory: a dependency the deliverable stubs instead of using), outside (what you observed that no
+criterion states — for the issuer, never a verdict). The node's verdict and its failed
 list are computed by the system from your entries — PASS iff every entry passes. No prose outside the fence.
 
 You are READ-ONLY on the world: never fix the work, never write files — even if the fix is obvious,

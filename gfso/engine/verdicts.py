@@ -47,7 +47,7 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
                   tools_used: Optional[dict] = None,
                   model: Optional[str] = None, workdir: Optional[str] = None,
                   by_hand: bool = False, validated: Optional[dict] = None,
-                  parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = ()) -> None:
+                  parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = (), outside=()) -> None:
     """Write the record for THIS delivery — `storage` is the port, handed in by the caller that owns it. `generation` = (iteration, reopens, revisions) as it stood
     when the verdict was earned — a rework, a reopen or a revision under it makes the record stale,
     which is what every reader checks before trusting it. `log_at` = the length of the signal log when it was
@@ -64,7 +64,7 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
     # …with what each criterion read: the current record is overwritten by the next round, so a past FAIL's passing
     # criteria could not be told from unchecked ones (the ui stream's verdict history, 2026-10-27)
     _ledger.append({"verdict": str(verdict), "failed_criteria": list(failed_criteria or ()),
-                    "per_criterion": list(per_criterion or ()), "validator": str(validator_id),
+                    "per_criterion": list(per_criterion or ()), **_outside(outside), "validator": str(validator_id),
                     "validator_model": model, "by_hand": bool(by_hand), "ts": ts, "log_at": int(log_at),
                     **stamp(generation)})
     ledger_write(storage, task_id, OBSERVATIONS, _ledger)
@@ -86,6 +86,9 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         "by_hand": bool(by_hand),
         **stamp(generation),
         "per_criterion": list(per_criterion or ()),
+        # …and what the run observed that no criterion states: for the issuer, decided by nothing (Inv-2)
+        **_outside(outside),
+
         # The criteria AS THEY STOOD when contact refuted them. Without this snapshot a later
         # revision is unreadable: "the criterion was covered" and "the criterion was lowered to what
         # the children already deliver" have the same shape at the re-delivery, and the second is a
@@ -122,6 +125,29 @@ def observations(storage, task_id: TaskId) -> list:
     reads empty, so a corrupt record never stops the node taking its next verdict (critic O2)."""
     rec = ledger_read(storage, task_id, OBSERVATIONS, [])
     return list(rec) if isinstance(rec, list) else []
+
+
+#: How an issuer is to read what validators saw beyond the criteria (§8.3: FM-1.f is read at contact, by whoever meets it)
+OUTSIDE_NOTE = ("observations outside the written criteria: judge each against the goal statement; a requirement the "
+                "goal names that no criterion writes is FM-1.f — add the criterion (a revision or promotion you already "
+                "can make) or say why not. None of them is a verdict: no criterion failed on it.")
+
+
+def _outside(outside) -> dict:
+    """The record's `outside` key, written only where the report observed something: a report without one is stored
+    as it always was."""
+    return {"outside": list(outside)} if outside else {}
+
+
+def outside_observations(storage, task_id: TaskId) -> list:
+    """[{what, evidence}] — every observation outside the criteria a recorded verdict on this node kept, once each by
+    `what`, oldest first: the next round's record replaces the current one, and a run that saw it once may not again."""
+    seen: dict = {}
+    for r in observations(storage, task_id):
+        for o in r.get("outside") or () if isinstance(r, dict) else ():
+            if isinstance(o, dict) and (k := " ".join(str(o.get("what") or "").split())):
+                seen.setdefault(k, {"what": k, "evidence": str(o.get("evidence") or "")})
+    return list(seen.values())
 
 
 def criterion_version(description, probes) -> list:

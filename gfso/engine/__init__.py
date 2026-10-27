@@ -43,7 +43,7 @@ from gfso.config import (
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
-                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS)
+                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations)
 from .findings import disputed_findings, ever_pinned, released, regression as standing_regression, standing_rulings
 from .frontier import Frontier
 from .claims import Claims
@@ -909,7 +909,7 @@ class Engine:
                             model: Optional[str] = None,
                             workdir: Optional[str] = None,
                             by_hand: bool = False, inputs_dirs: tuple = (),
-                            log_at: Optional[int] = None) -> dict:
+                            log_at: Optional[int] = None, outside=()) -> dict:
         """Store the independent validator's verdict for the node's CURRENT delivery (stamped with the
         node's GENERATION (iteration, reopens, revisions) — a rework, a reopen OR a revision
         invalidates it: the next
@@ -928,7 +928,10 @@ class Engine:
         holding the claimed verdict signs the claim rather than the record. Measured live: a report
         claiming PASS over two criteria whose behaviours were never observed was stored as FAIL,
         logged as PASS, and signed PASS — the node closed DONE on evidence the engine had already
-        refused to let carry a pass. The demotion is only a guarantee if it reaches the signal."""
+        refused to let carry a pass. The demotion is only a guarantee if it reaches the signal.
+
+        `outside`: what the report observed that no criterion states ([{what, evidence}]) — kept with the record for the
+        node's issuer (`outside_the_criteria`); nothing here reads it (Inv-2: the verdict reads only the criteria)."""
         # THE WORD IS COERCED TO THE ENUM HERE, or refused — never stored as the text that arrived.
         # Typed `str` and compared with `== Verdict.PASS`, a value in any other casing matched
         # NEITHER branch: every check below fell through as a no-op, the string went in verbatim, and
@@ -1145,7 +1148,7 @@ class Engine:
                       generation or self._graph.generation_of(task_id), len(self._audit) if log_at is None else log_at,
                       per_criterion=per_criterion, tools_used=tools_used, model=model,
                       workdir=workdir, by_hand=by_hand, validated=self._validated_versions(task_id),
-                      inputs_dirs=inputs_dirs,
+                      inputs_dirs=inputs_dirs, outside=outside,
                       # …which parts this FAIL did not show holding on the delivered result, read now, while this
                       # round's inputs directories still name what the report ran (`_refuted_coverage_refusal`)
                       parts_not_shown_holding=parts_not_shown_holding(self.parts_procedure(task_id), per_criterion or (),
@@ -1625,6 +1628,14 @@ class Engine:
     def register_versions(self, task_id: TaskId) -> list[dict]:
         """Every version of the node's split register as admitted — {at, by, log_at, items, components} (Thm 11)."""
         return json.loads(self._storage.get_critique(register_log_key(task_id)) or "[]")
+
+    def outside_the_criteria(self, task_id: TaskId) -> list:
+        """[{node, what, evidence}] — what validators of this node and of each child of its split observed that none of
+        their criteria states, kept with their verdicts (`verdicts.outside_observations`): candidates for its issuer's
+        judgement (`verdicts.OUTSIDE_NOTE`), never a verdict's input. One read for the machine issuer's context and
+        the holder's (`tools.get_task`)."""
+        return [{"node": str(t), **o} for t in [task_id, *(k.id for k in self._graph.get_active_children(task_id))]
+                for o in outside_observations(self._storage, t)]
 
     def regression_probes(self, task_id: TaskId) -> dict:
         """{criterion: [probes that have REFUTED it on this node]} — the set every later PASS must re-run. Grows at

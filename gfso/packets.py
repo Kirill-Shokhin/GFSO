@@ -14,6 +14,7 @@ from gfso.core.protocol.procedure import INPUTS_TOKEN, laid, materialize_inputs,
 from gfso.core.types import Signal, TaskId, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
+from gfso.engine.verdicts import OUTSIDE_NOTE
 from gfso.engine.validation import is_auto_root
 from gfso.workspaces import _unjoined_text, base_of, execution_of
 
@@ -115,6 +116,19 @@ _OBSERVED = ("Before this session the system ran each check pinned to your crite
              "CHALLENGE, not to work around.\n")
 
 
+#: Said in every executor packet, the first round included: offered only in rework sections, the move was never made —
+#: a pin missing `-lm` travelled 24 min as BLOCK + 4 tech reports, 0 CHALLENGE in the row (GB_sql_database_tnkid4876,
+#: docs/notes/OWN_PLAN_REPLANNING_MOVES.md; §11.3)
+CHALLENGE_WHEN = ("\n## When the contract itself is wrong — CHALLENGE\n"
+                  "Report `status: \"challenge\"`, naming the criterion and the defect, the moment contact shows THIS "
+                  "contract cannot be met as written: a pinned check that cannot pass on correct work (it does not "
+                  "build or link as written, reads an input that is empty or absent, demands what the contract "
+                  "contradicts), a criterion no procedure can decide, a scope one session cannot carry. An accepted "
+                  "challenge installs a corrected contract and you work to that; a rejected one returns the work "
+                  "unchanged. `blocked` leaves the pin as it is, and a tech report goes to the system's maker, not to "
+                  "your issuer: neither repairs this contract.\n")
+
+
 def observed_lines(rows: list) -> str:
     """One line per observed check, by its criterion and command (the criteria above carry the rest): printed exactly
     what it must show, or how it ended and the tail of what it printed, or why it gave nothing — and ONE line where none
@@ -182,7 +196,7 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), see
             f"They are here for one reason: if you cannot proceed because something one of them owns "
             f"does not exist yet, report `status: \"blocked\"` and NAME it in `blocker_task_ids`. That "
             f"is a real dependency the plan did not declare, and naming it is what records it.\n"
-            f"{chr(10).join(sibs) or '- none'}\n{rework}{answered_challenges(engine, task)}"
+            f"{chr(10).join(sibs) or '- none'}\n{CHALLENGE_WHEN}{rework}{answered_challenges(engine, task)}"
             f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}\n"
             + _working_directory(workdir))
 
@@ -379,7 +393,7 @@ def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list 
             + "\n".join(_scope_node_block(engine, i, t, top, inside, seen) for i, t in enumerate(order, 1))
             + f"\n## The other nodes of this plan — NOT your work, and you must not do it\n"
             f"If you cannot proceed because something one of them owns does not exist yet, report that node "
-            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{_unjoined_text(unjoined)}\n"
+            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{CHALLENGE_WHEN}{_unjoined_text(unjoined)}\n"
             + _working_directory(workdir))
 
 
@@ -402,7 +416,9 @@ TECH_REPORT = {"type": "string", "description":
                "is no report. One line, when the SYSTEM, not the task, left you no honest move — you re-deliver an "
                "unchanged result because the fix lies in another node's file; a finding you are held to shows no id "
                "to dispute it by; a ruling contradicts itself (calls a finding out of scope while it keeps binding); a "
-               "pinned check contradicts the contract; a tool cannot run; an answer ignored what you showed."}
+               "tool cannot run; an answer ignored what you showed. A defect of THIS task's contract — a pinned check "
+               "that cannot pass on correct work, a criterion that cannot be decided — is no tech report: it is the "
+               "executor's CHALLENGE, which the task's issuer answers."}
 
 
 def file_tech_reports(engine: Engine, report, role: str, actor: str, task_id) -> None:
@@ -640,6 +656,15 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
             "conjunction of its own criteria (§2): a part that fails is that part's FAIL.\n\n"
             + "\n".join(blocks)
             + "\n" + _working_directory(workdir, validating=True) + _scratch_note(scratch))
+
+
+def outside_text(engine: Engine, task) -> str:
+    """The issuer's section of `Engine.outside_the_criteria`, bounded as a packet's lists are (`capped`); empty where
+    there are none."""
+    rows = engine.outside_the_criteria(task.id)
+    return ("## What validators observed outside the written criteria\nThese are " + OUTSIDE_NOTE
+            + capped([f"`{r['node']}`: {r['what']}" + (f" — seen: {_flat(r['evidence'])}" if r["evidence"] else "")
+                      for r in rows], "observations", list_key(engine, task.id, "outside"))) if rows else ""
 
 
 #: distinct rejected challenges a packet shows, newest last — each WHOLE: a ruling binds, and one cut at 1500 characters

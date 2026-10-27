@@ -33,6 +33,7 @@ from gfso.config import (data_dir as _data_dir, WAIT_MAX_SECONDS, WAIT_POLL_SECO
 from gfso.engine import Engine
 from gfso.engine.frontier import step_role
 from gfso.engine.moves import Move, door_holder, signal_role
+from gfso.engine.verdicts import OUTSIDE_NOTE
 
 
 # The verbs that may bring a PROJECT into existence — everything else answers "no such project"
@@ -257,6 +258,9 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
     # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id
     if (found := engine.regression_probes(TaskId(task_id))):
         out["regression_probes"] = found
+    # …and what its validators, and its children's, observed outside the written criteria — the holder is its issuer
+    if (seen := engine.outside_the_criteria(t.id)):
+        out["outside_the_criteria"] = {"observations": seen, "judge": OUTSIDE_NOTE}
     return out
 
 
