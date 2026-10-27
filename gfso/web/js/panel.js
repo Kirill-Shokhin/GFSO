@@ -60,12 +60,15 @@ function verdict({vr}) {
 const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = x => `<path class="mk-none" d="M${x - 2.5},3h5M${x},3v-6"/>`;
     // a history of one round says what the mark beside the name says: drawn, it was a lone dot beside a dot (the author)
     // each mark says its own round on hover (a hover on the whole strip said the same line over every mark — critic)
-    const one = (r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? null
-        : r.per ? (v => v === 'pass' || v === 'fail' ? v.toUpperCase() : null)(r.per.find(c => c.criterion === name)?.verdict)
-        : r.verdict === 'FAIL' && !r.failed.includes(name) && !(i === rs.length - 1 && now === 'pass') ? null
-        : r.verdict === 'FAIL' && !r.failed.includes(name) ? 'PASS' : r.verdict;
-    return rs.length < 2 ? '' : `<span class="cr-strip">` + rs.map((r, i) => { const v = one(r, i);
-        return `<svg width="8" height="10" viewBox="${i * 8} -5 8 10"${PANEL.round(r.n, v)}>${v ? mark(v, i * 8 + 4, 0, 2.5) : open(i * 8 + 4)}</svg>`; }).join('') + '</span>'; };
+    // …a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)
+    const one = (r, i) => !r.verdict ? [null, 'not checked yet']
+        : i === rs.length - 1 && now && now !== 'pass' && now !== 'fail' ? [null, 'not decided at this verdict']
+        : r.per ? (v => v === 'pass' || v === 'fail' ? [v.toUpperCase()] : [null, v ? 'checked, could not be decided' : 'not in this verdict\'s record'])(
+            r.per.find(c => c.criterion === name)?.verdict)
+        : r.verdict === 'FAIL' && !r.failed.includes(name) && !(i === rs.length - 1 && now === 'pass') ? [null, 'not kept: this round\'s record names only what failed']
+        : r.verdict === 'FAIL' && !r.failed.includes(name) ? ['PASS'] : [r.verdict];
+    return rs.length < 2 ? '' : `<span class="cr-strip">` + rs.map((r, i) => { const [v, why] = one(r, i);
+        return `<svg width="8" height="10" viewBox="${i * 8} -5 8 10"${PANEL.round(r.n, v, why)}>${v ? mark(v, i * 8 + 4, 0, 2.5) : open(i * 8 + 4)}</svg>`; }).join('') + '</span>'; };
 
 // A criterion is one line at the current verdict; unfolded (one at a time) it reads what it asks, what the
 // verdict found, and its pinned check.
@@ -166,14 +169,16 @@ export async function selectTask(id) {
         const sig = form?.querySelector('[data-action="send-signal"]')?.dataset.sig;
         sb.classList.remove('hidden');
         rebuild(sb, d.id, PARTS.map(f => f(ctx)).join(''));
-        sb.dataset.last = last;
+        sb.dataset.last = last; sb.dataset.per = rounds.some(r => r.per) ? '1' : '';
         if (form && (!sig || acts?.actions?.includes(sig))) $('inline-form')?.replaceWith(form);
         showReader(ctx);
     } catch (e) { console.error('selectTask:', e); }
 }
 
-// …and again once the run is read: the panel can open before the deck has built it
-export const resign = id => { const by = $('pn-by'); if (by) by.innerHTML = signedBy(S.run, id); };
+// …and again once the run is read: the panel can open before the deck has built it — its signer, and the per-criterion
+// records of its rounds, which only the run joins from the verdict history (critic: a ?task= link drew ⊥ for a kept pass)
+export const resign = id => { const by = $('pn-by'); if (by) by.innerHTML = signedBy(S.run, id);
+    if ($('sidebar').dataset.key === id && (S.run?.rounds[id] || []).some(r => r.per) && !$('sidebar').dataset.per) selectTask(id); };
 
 export function closeSidebar() {
     closeReader();

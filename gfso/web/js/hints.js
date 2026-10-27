@@ -79,7 +79,7 @@ const KEY = [
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
     {glyph: '<b class="kt">V</b>', head: "The node's verdict", means: 'pass only when every criterion passes'},
-    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, or not kept for that round — older runs kept only the criteria a FAIL named; not a third value (§2.3)'},
+    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, checked and undecided, or not kept for that round — a mark\'s hover says which; not a third value (§2.3)'},
     {group: 'The deck'},
     {glyph: '<b class="kt">· N</b>', head: 'Sessions', means: 'beside «at work» only when not one per node — one session may carry a whole part'},
     {glyph: `<span class="wk-cost kc">${TOKENS.map(([k]) => `<i class="${COST_CLS(k)}" style="width:25%"></i>`).join('')}</span>`,
@@ -169,7 +169,8 @@ export const H = {
                 : {...r, means: said ? first.slice(named[0].length) : first, more: rest};
             // …a metric with no value yet: the sentence saying when it gets one is the key line, not a fold's (critic)
             const when = r.none && /(?:^|\s)(⊥[^.]*\.)/.exec(row.more || '');
-            return when ? {...row, means: `${row.means} ${when[1]}`, more: row.more.replace(when[1], '').trim()} : row; })),
+            // (said as words: the row's dash already marks the empty value)
+            return when ? {...row, means: `${row.means} ${cap(when[1].slice(1).trim())}`, more: row.more.replace(when[1], '').trim()} : row; })),
 };
 
 // what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server
@@ -206,7 +207,7 @@ export const PANEL = {
     deadline: (due, now) => hover(due < now ? `Overdue by ${dur(now - due)}` : `Due in ${dur(due - now)}`, new Date(due).toLocaleString()),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
-    round: (n, v) => hover(`${v || 'No value'}\tRound ${n}`, !v && 'Not checked, or not kept for this round'),
+    round: (n, v, why) => hover(`${v || 'No value'}\tRound ${n}`, !v && cap(why)),
     full: text => hover(text),
     directive: text => hover(text),
     model: id => hover(id),
