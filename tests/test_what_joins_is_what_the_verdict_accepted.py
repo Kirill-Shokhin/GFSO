@@ -46,14 +46,14 @@ def _delivered(tmp_path):
     base, place = _repo(tmp_path / "ws"), tmp_path / "place"
     W.ensure(base, place, "gfso/p/a", base)
     (place / "a.txt").write_text("accepted\n")
-    tree = W.commit_all(base, place, "gfso: root.a delivery", "exec-1")
+    tree = W.commit_all(base, place, "gfso: root.a delivery", "exec-1", branch="gfso/p/a")
     return base, place, tree, (base, place, "gfso/p/a")
 
 
 def test_a_branch_moved_after_its_pass_joins_the_accepted_commit(tmp_path):
     base, place, tree, w = _delivered(tmp_path)
     (place / "a.txt").write_text("written after the verdict\n")
-    W.commit_all(base, place, "later", "someone")
+    W.commit_all(base, place, "later", "someone", branch="gfso/p/a")
     e = _Engine(tree)
     ref, why = WS._accepted_ref(e, _Node(), w, LocalExecution())
     assert why is None and _git(base, "rev-parse", f"{ref}^{{tree}}").strip() == tree
@@ -65,14 +65,14 @@ def test_a_branch_that_no_longer_carries_the_accepted_tree_does_not_join(tmp_pat
     base, place, tree, w = _delivered(tmp_path)
     _git(place, "reset", "-q", "--hard", "HEAD~1")
     (place / "a.txt").write_text("another history\n")
-    W.commit_all(base, place, "rewritten", "someone")
+    W.commit_all(base, place, "rewritten", "someone", branch="gfso/p/a")
     ref, why = WS._accepted_ref(_Engine(tree), _Node(), w, LocalExecution())
     assert ref is None and "no longer carries the tree its PASS accepted" in why
 
 
 def test_a_place_removed_by_hand_still_has_its_work_to_join(tmp_path):
     base, place, tree, w = _delivered(tmp_path)
-    shutil.rmtree(place)
+    W.remove_tree(place)
     assert WS._has_branch(w, LocalExecution())
     assert not WS._has_branch((base, place, "gfso/p/nothing"), LocalExecution())
 
@@ -108,9 +108,9 @@ def test_the_commit_recorded_at_deliver_joins_even_beside_another_carrying_its_t
     base, place, tree, w = _delivered(tmp_path)
     delivered = W.head(place)
     (place / "b.txt").write_text("later\n")
-    W.commit_all(base, place, "later", "someone")
+    W.commit_all(base, place, "later", "someone", branch="gfso/p/a")
     (place / "b.txt").unlink()
-    W.commit_all(base, place, "back to the same files", "someone")     # a newer commit carrying the accepted tree
+    W.commit_all(base, place, "back to the same files", "someone", branch="gfso/p/a")     # a newer commit carrying the accepted tree
     assert W.accepted_commit(base, "gfso/p/a", tree) != delivered
     ref, why = WS._accepted_ref(_Engine(tree, delivered), _Node(), w, LocalExecution())
     assert (ref, why) == (delivered, None)
@@ -119,7 +119,7 @@ def test_the_commit_recorded_at_deliver_joins_even_beside_another_carrying_its_t
 def test_a_recorded_commit_that_does_not_carry_the_accepted_tree_joins_nothing(tmp_path):
     base, place, tree, w = _delivered(tmp_path)
     (place / "a.txt").write_text("other\n")
-    W.commit_all(base, place, "other", "someone")
+    W.commit_all(base, place, "other", "someone", branch="gfso/p/a")
     ref, why = WS._accepted_ref(_Engine(tree, W.head(place)), _Node(), w, LocalExecution())
     assert ref is None and why
 

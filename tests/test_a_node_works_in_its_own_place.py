@@ -301,7 +301,7 @@ def test_a_delivery_commits_no_cache_a_sibling_would_collide_on(tmp_path):
     (place / "__pycache__").mkdir()
     (place / "__pycache__" / "common.cpython-311.pyc").write_bytes(b"\0")
     (place / "lib.o").write_bytes(b"\0")
-    W.commit_all(base, place, "gfso: a delivery", "exec-1")
+    W.commit_all(base, place, "gfso: a delivery", "exec-1", branch="gfso/p/a")
     assert _git(base, "ls-tree", "-r", "--name-only", "gfso/p/a").splitlines() == ["README", "a.py"]
 
 

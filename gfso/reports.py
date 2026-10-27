@@ -149,7 +149,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             f"node waits under its new version · {_stat_line(llm)}")
         if workspace is not None:   # what it wrote is the old version's, on the record as such — never in a later delivery
             W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} work under a superseded version", executor_id,
-                         execution=execution_of(engine))
+                         execution=execution_of(engine), branch=workspace[2])
         return
     if status == "challenge":
         # The dispute travels as the signal wherever the state admits it — OFFERED, and, since
@@ -217,7 +217,8 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             engine.emit_info("delegate", f"{task_id}: delivery held — a merge left unfinished in its tree")
             return
         artifact = (W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id,
-                                 execution=execution_of(engine)) or None) if workspace is not None else None
+                                 execution=execution_of(engine), branch=workspace[2]) or None) \
+            if workspace is not None else None
         carried = W.head(workspace[1], execution=execution_of(engine)) if artifact else None
         # …AND IT CARRIES ITS PARTS' WORK. Told in its packet to merge four parts that conflicted, a root's executor
         # rewrote their files instead, never merged, and delivered a tree without the JOINs a part had passed on; its

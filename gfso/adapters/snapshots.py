@@ -111,6 +111,12 @@ def _own_git(place: Path, at: Path, execution) -> None:
     the delivery's branch). The copy gets a gitdir of its own: the worktree's files, HEAD detached at the place's
     commit, the repository's objects shared through a relative `commondir` that reads the same in a container."""
     dot = at / ".git"
+    if dot.is_dir():                 # a node's own repository: its copy is one too — only where it borrows from moves
+        alt = place / ".git" / "objects" / "info" / "alternates"
+        if alt.is_file():
+            borrowed = (alt.parent.parent / alt.read_text(encoding="utf-8").strip()).resolve()
+            W.relative_alternates(dot / "objects", borrowed)
+        return
     if not dot.is_file():
         return
     gitdir = (place / dot.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip()).resolve()
@@ -129,18 +135,23 @@ def changed(place, at, execution) -> list[str]:
     change. Each side is written as a git tree where the work runs: on the host, a link a container made is no file
     to read (WinError 1920). Empty where either side could not be read: unknown is not "changed"."""
     head = W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()
-    a, b = (_tree(p, head, Path(at).parent / f".gfso-index-{n}-{Path(at).name}", execution) if head else None
+    # …both trees written into ONE repository, the copy's: a node's own repository and its copy keep their objects
+    # apart, and a tree written in one is no object in the other
+    repo = Path(at) if W.is_clone(place) else Path(place)
+    own = {"GIT_DIR": str(repo / ".git")} if W.is_clone(place) else {}
+    a, b = (_tree(p, head, Path(at).parent / f".gfso-index-{n}-{Path(at).name}", execution,
+                  {**own, "GIT_WORK_TREE": str(p)} if own else None) if head else None
             for n, p in (("place", place), ("copy", at)))
     if not (a and b):
         return []
-    r = W.git(place, "diff-tree", "-r", "-z", "--name-only", "--no-renames", a, b, execution=execution)
+    r = W.git(repo, "diff-tree", "-r", "-z", "--name-only", "--no-renames", a, b, execution=execution)
     return sorted(filter(None, r.stdout.split("\0")))
 
 
-def _tree(where, head: str, index: Path, execution) -> Optional[str]:
+def _tree(where, head: str, index: Path, execution, env: Optional[dict] = None) -> Optional[str]:
     """The tree of `head`'s files as they stand on disk in `where`, built in an index of its own (`index`): the place's
     commit on both sides, whatever a run committed in its copy."""
-    env = {"GIT_INDEX_FILE": str(index)}
+    env = {"GIT_INDEX_FILE": str(index), **(env or {})}
     try:
         for args in (("read-tree", head), ("add", "-u")):
             if W.git(where, *args, execution=execution, env=env).returncode != 0:

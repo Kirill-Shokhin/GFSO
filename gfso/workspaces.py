@@ -186,6 +186,7 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
             continue
         if (why := W.merge(base, place, ref, f"gfso: {x.id} joins {top.id}", execution=ex)):
             unjoined.append((str(x.id), xw[2], why, ref))   # …and the accepted commit: what it merges, held on
+            W.bring(base, place, xw[2], execution=ex)        # …named in its own repository, as its packet says
     return place, unjoined, w
 
 
@@ -289,7 +290,7 @@ def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
             continue
         seen.add(w[2])
         ex = execution_of(engine, agents)
-        if not (W.contains(w[0], w[0], w[2], execution=ex) and W.remove(*w, execution=ex)):
+        if not (W.settled(*w, execution=ex) and W.remove(*w, execution=ex)):
             left.append(f"{w[1]} (`{w[2]}`)")
     execution_of(engine, agents).stop()        # the goal is settled: its project's container goes too
     if left:

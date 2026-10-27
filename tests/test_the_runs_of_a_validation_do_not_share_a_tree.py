@@ -137,7 +137,7 @@ def test_each_run_validates_its_own_copy_of_the_place_and_the_report_names_the_p
     cmds = _commands(e)
     assert cmds and all(c.startswith(f"cd {at.as_posix()} && ") for c in cmds), cmds   # …read as run in the place
     assert all(not Path(c).exists() for c in cwds)                       # …the copies gone, read-only dirs and all
-    assert _git(base, "worktree", "list", "--porcelain").count("worktree ") == 2       # …and nothing registered
+    assert _git(base, "worktree", "list", "--porcelain").count("worktree ") == 1       # …and nothing registered (the place is a repository of its own)
     e.stop()
 
 
@@ -274,7 +274,7 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
         assert edits == ["a.sh", "out.bin"] and not at.exists()
         assert sh("git rev-parse HEAD", place).stdout.strip() == head                 # …the delivery's branch stays
         assert sh("test -L run.sh && echo LINK", place).stdout.strip() == "LINK"
-        assert _git(base, "worktree", "list", "--porcelain").count("worktree ") == 2
+        assert _git(base, "worktree", "list", "--porcelain").count("worktree ") == 1
     finally:
         sh("rm -f run.sh", place)                           # a container's link is no file the host can remove
         ex.stop()

@@ -102,7 +102,7 @@ def test_what_a_deliver_handed_over_is_on_its_row_after_a_restart(tmp_path, monk
     monkeypatch.setattr("gfso.reports.still_unjoined", lambda *a, **k: [])
     monkeypatch.setattr("gfso.reports._settle_internal", lambda *a, **k: None)
     _report_into_signals(e, TaskId("n"), "worker", e.graph.get_task("n"), {"status": "delivered", "summary": "s"},
-                         "delivered", type("L", (), {"calls": []})(), lambda s: None, workspace=("b", "p"))
+                         "delivered", type("L", (), {"calls": []})(), lambda s: None, workspace=("b", "p", "gfso/x/n"))
     e.wait_idle()
     assert [(x.artifact, x.commit) for x in e.audit_log(TaskId("n")) if x.signal == Signal.DELIVER] ==         [("2c3e0b54", "c0ffee01")]
     e.stop()

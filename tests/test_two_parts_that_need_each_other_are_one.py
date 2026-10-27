@@ -122,7 +122,7 @@ def test_the_merged_child_starts_from_its_members_work_and_their_passed_parts(tm
         w = _workspace(e, agents, t)
         _ensure_place(e, agents, t, w)
         (Path(w[1]) / name).write_text(f"/* {tid} */\n")
-        W.commit_all(w[0], w[1], f"{tid} works", "t")
+        W.commit_all(w[0], w[1], f"{tid} works", "t", branch=w[2])
     lex.state = State.DONE                      # a part that PASSed and never joined its whole
     e.graph.save_task(lex)
     root = e.graph.get_task(TaskId("root"))
