@@ -60,7 +60,7 @@ def executions_path() -> Path:
     `{name: {"image", "env_file", "state"?, "network"?}}` (`state` defaults to `<data_dir>/executions/<name>/claude`;
     `network` is the switch on the way out, `{"mode": "open"|"allowlist"|"off", "hosts": [...]}`, open when absent, off
     when it does not read). Nothing watches this file: a turned switch is read at the project's next lookup of its
-    execution and holds from the call after it, which restarts the container — no kill switch for a session already out."""
+    execution, which ends the project's running container at once — a session already out stays out until that lookup."""
     return Path(os.environ.get("GFSO_EXECUTIONS_PATH") or (data_dir() / "executions.json"))
 
 

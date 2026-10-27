@@ -56,11 +56,11 @@ def test_a_turned_network_switch_holds_for_every_holder(declared, tmp_path, monk
     held.start()
     (tmp_path / "executions.json").write_text(json.dumps({"e3-linux": {"image": "e3-linux-agent:2", "env_file": "e.env",
                                                                        "network": {"mode": "off"}}}))
-    assert WS.execution_of(SimpleNamespace(project_name="p"), agents) is held and held.network == ("off", ())
+    assert WS.execution_of(SimpleNamespace(project_name="p"), agents) is held and held.way.network == ("off", ())
     held.start()
     held.start()
     seals = [a[-1] for a in ran if a[:4] == ["docker", "exec", "-u", "0"]]
-    assert sum(1 for a in ran if a[:2] == ["docker", "run"]) == 2 and seals[-1].startswith(held.seal())
+    assert sum(1 for a in ran if a[:2] == ["docker", "run"]) == 2 and seals[-1].startswith(held.way.seal())
 
 
 @pytest.mark.parametrize("broken", ["{not json", '{"renamed": {"image": "x", "env_file": "e.env"}}'])
@@ -72,7 +72,7 @@ def test_a_declaration_that_does_not_read_shuts_a_running_project(declared, tmp_
     (tmp_path / "executions.json").write_text(broken)
     with pytest.raises((ValueError, KeyError)):
         WS.execution_of(SimpleNamespace(project_name="p"), agents)
-    assert held.network == ("off", ())
+    assert held.way.network == ("off", ())
 
 def test_an_undeclared_execution_is_refused(declared):
     agents, base = declared

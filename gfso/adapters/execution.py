@@ -18,6 +18,7 @@ from pathlib import Path
 
 from gfso.core.types import ExecutionPort, PlaceUnavailable
 from gfso.config import claude_config_dir, host_env
+from gfso.adapters import egress
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
 INSIDE = "/gfso-place"
@@ -27,17 +28,19 @@ STATE_INSIDE = "/home/agent/.claude"
 #: otherwise sign the graph it works under (§10.3)
 HOST_NET = "192.168.65.0/24"
 #: the switch on a container's way out — set OUTSIDE the system (the execution's declaration, or whoever builds it), never
-#: a policy of its own: `open` — everything but the host (other containers on Docker's bridge
-#: included); `allowlist` — TCP 443 to the addresses the named hosts had at
-#: start; `off` — nothing. A session's own CLI calls its model from inside, so `off` suits only a provider that calls it
-#: from outside. What the allowlist does NOT hold: it reads addresses, not names, so a host behind a shared front (a CDN,
-#: most registries) opens every tenant of that address; an allowed host carries whatever the session sends it under
-#: any credentials it presents (a model API that stores data is a way out to another tenant's account); and the rule
-#: lives in the session's own container, holding while root there is out of reach
+#: a policy of its own. `open` — everything but the host (other containers on Docker's bridge included), the rule set in
+#: the container by root. `allowlist` and `off` — the container stands on an internal network with no route out, so the
+#: fence is the network's, out of reach of anything inside, root included; under `allowlist` one gateway container
+#: (`egress.py`) joins it and lets a session reach the named hosts on 443, the TLS handshake naming the host asked for.
+#: A session's own CLI calls its model from inside, so `off` suits only a provider that calls it from outside. What the
+#: allowlist does NOT hold: an allowed host carries whatever the session sends it under any credentials it presents (a
+#: model API that stores data is a way out to another tenant's account); inside the encrypted stream the request may
+#: still name another site the same front serves — reading it needs the gateway to end TLS itself; the gateway stands on
+#: Docker's bridge, so a gateway taken over is the whole way out; and each closed project takes one of Docker's address
+#: pools, past which a start fails closed
 NETWORK = ("open", "allowlist", "off")
-#: Docker's resolver on a user-defined network answers on the container's loopback (the default bridge names outside
-#: resolvers, which the closing rule already refuses): under a closed switch DNS would carry anything out, name by name
-DNS_INSIDE = "127.0.0.11"
+#: the gateway's address and port as a session inside an allowlisted project reaches it
+GATEWAY = "gateway"
 #: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes
 LABEL = "gfso.execution"
 #: the containers this server process started — one per (execution, project), whichever object asks for it — with
@@ -47,7 +50,7 @@ _STARTED: dict = {}
 #: life, so any object starting the container must start it under the switch as it stands now (critic 4: a second
 #: object of one container started it back under its own)
 _SWITCH: dict = {}
-_START = threading.Lock()
+_START = threading.RLock()     # a turn stops what a start holds, under the same lock
 
 
 class LocalExecution(ExecutionPort):
@@ -114,7 +117,8 @@ def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
     if ids := list(_STARTED):
-        run(["docker", "rm", "-f", *ids], timeout=120)
+        run(["docker", "rm", "-f", *ids, *[f"{i}-gw" for i in ids]], timeout=120)
+        run(["docker", "network", "rm", *[f"{i}-net" for i in ids]], timeout=120)
         _STARTED.clear()
 
 
@@ -128,6 +132,91 @@ def end_leftovers() -> None:
         got = run(["docker", "ps", "-aq", "--filter", f"label={LABEL}"], timeout=60, text=True)
         if ids := (got.stdout or "").split():
             run(["docker", "rm", "-f", *ids], timeout=120)
+        run(["docker", "network", "prune", "-f", "--filter", f"label={LABEL}"], timeout=120)
+
+
+class WayOut:
+    """A container's way out, as its switch sets it: open on Docker's bridge with the host shut by root inside; closed on
+    an internal network of its own, out of reach of anything inside, with the allowlist's gateway the one member of both
+    networks, writing its log under `home`, beside the CLI's state and not in it."""
+
+    def __init__(self, container: str, name: str, image: str, home: Path):
+        self.container, self.name, self.image, self.home = container, name, image, home
+        self.net, self.gateway = f"{container}-net", f"{container}-gw"
+
+    def switch(self, network) -> None:
+        """Turn the way out to `network`. The container holds it, so every holder's next call starts the container
+        under it — the calls running in it end, as they must: they were let out under the old switch. Taken
+        under the start's lock, so a start seals and records ONE switch; a switch that does not read shuts the way out,
+        since a holder that keeps the old one would stay out under a switch someone meant to close."""
+        with _START:
+            try:
+                mode, hosts = (network or {}).get("mode", "open"), tuple((network or {}).get("hosts") or ())
+                ok = mode in NETWORK and all(re.fullmatch(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", h) for h in hosts)
+            except (AttributeError, TypeError):
+                ok = False
+            _SWITCH[self.container] = (mode, hosts) if ok else ("off", ())
+        if not ok:
+            raise ValueError(f"{self.container}: network {network!r} — a mode of {NETWORK} and host names only")
+
+    @property
+    def network(self) -> tuple:
+        """This container's switch as last declared; open where none was."""
+        return _SWITCH.get(self.container, ("open", ()))
+
+    def gateway_args(self) -> list[str]:
+        """`docker run` for the allowlist's gateway: on the project's network first, so it listens there alone (it
+        joins Docker's bridge after, to reach out), the execution's own image running `egress.py` read-only,
+        unprivileged and bounded, nothing of the project mounted."""
+        return ["docker", "run", "-d", "--init", "--name", self.gateway, "--label", f"{LABEL}={self.name}",
+                "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+                "--sysctl", "net.ipv4.ip_forward=0", "--memory", "256m", "--pids-limit", "256",
+                "--network", self.net, "--network-alias", GATEWAY,
+                "--mount", f"type=bind,src={Path(egress.__file__).resolve()},dst=/gfso-egress.py,readonly",
+                "--mount", f"type=bind,src={self.log().parent},dst=/log",
+                self.image, "python3", "/gfso-egress.py", ",".join(self.network[1]), "/log/" + self.log().name,
+                GATEWAY]
+
+    def run_args(self) -> list[str]:
+        """What `docker run` of the container takes for this way out: NET_ADMIN for the host rule when open; else its
+        internal network, no capability at all, no IPv6, and under an allowlist the gateway named its proxy."""
+        mode = self.network[0]
+        if mode == "open":
+            return ["--cap-add", "NET_ADMIN"]
+        return ["--network", self.net, "--cap-drop", "ALL", "--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
+                *[a for k in ("HTTPS_PROXY", "https_proxy") for a in ("-e", f"{k}=http://{GATEWAY}:{egress.PORT}")
+                  if mode == "allowlist"]]
+
+    def seal(self) -> str:
+        """What root runs in the container before any call: the host shut when the switch is open; a closed switch's
+        container has no route to shut and no capability to set one."""
+        return f"iptables -A OUTPUT -d {HOST_NET} -j REJECT" if self.network[0] == "open" else "true"
+
+    def open(self) -> None:
+        """A closed switch's internal network, and the allowlist's gateway on it — refused when an allowed host has no
+        public address, so a list that would silently differ from the declared one starts nothing (`OSError`)."""
+        mode, hosts = self.network
+        if mode == "open":
+            return
+        if missing := [h for h in hosts if not _public_v4(h)]:
+            raise OSError(f"no public address for {', '.join(missing)}")
+        # isolated: the network's bridge gets no address of the Docker VM's own, which every member would reach on-link
+        run(["docker", "network", "create", "--internal", "-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated",
+             "--label", f"{LABEL}={self.name}", self.net], timeout=60).check_returncode()
+        if mode == "allowlist":
+            self.log().parent.mkdir(parents=True, exist_ok=True)
+            run(self.gateway_args(), timeout=120).check_returncode()
+            run(["docker", "network", "connect", "bridge", self.gateway], timeout=60).check_returncode()
+
+    def log(self) -> Path:
+        """Every connection the allowlist's gateway opened or refused, written by the gateway as it happens — in a
+        directory of its own, not the CLI's state: the session's container mounts that, and the log is out of its reach."""
+        return self.home / "egress" / self.container / "egress.log"
+
+    def close(self) -> None:
+        """The gateway and the network."""
+        run(["docker", "rm", "-f", self.gateway], timeout=60)
+        run(["docker", "network", "rm", self.net], timeout=60)
 
 
 class ContainerExecution(ExecutionPort):
@@ -143,6 +232,7 @@ class ContainerExecution(ExecutionPort):
             raise ValueError(f"execution {name!r}: {base} is not on a local drive — a container cannot mount it")
         self.name, self.image, self.env_file = name, image, env_file
         self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{name}-{project}").lower()
+        self.way = WayOut(self.container, name, image, Path(state))
         if network is not None:
             self.switch(network)
         # THE CLI'S STATE IS THE PROJECT'S: shared by an execution's projects, every E3 row (all at /gfso-place/ws) read
@@ -158,24 +248,15 @@ class ContainerExecution(ExecutionPort):
                                 + r"(?P<rest>(?:" + sep + r"[^\s\"'`<>|*?]*)?)(?![^\s\"'`<>|*?\\/])", re.IGNORECASE)
 
     def switch(self, network) -> None:
-        """Turn the way out to `network`. The container holds it, so every holder's next call starts the container
-        under it — the calls running in it end, as they must: they were let out under the old switch. Taken
-        under the start's lock, so a start seals and records ONE switch; a switch that does not read shuts the way out,
-        since a holder that keeps the old one would stay out under a switch someone meant to close."""
+        """Turn the container's way out (`WayOut.switch`); a turn ends the running container at once, every call in it
+        with it. Whoever turns it decides when: the declaration is turned at the project's next lookup."""
         with _START:
+            before = self.way.network
             try:
-                mode, hosts = (network or {}).get("mode", "open"), tuple((network or {}).get("hosts") or ())
-                ok = mode in NETWORK and all(re.fullmatch(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", h) for h in hosts)
-            except (AttributeError, TypeError):
-                ok = False
-            _SWITCH[self.container] = (mode, hosts) if ok else ("off", ())
-        if not ok:
-            raise ValueError(f"execution {self.name!r}: network {network!r} — a mode of {NETWORK} and host names only")
-
-    @property
-    def network(self) -> tuple:
-        """This container's switch as last declared; open where none was."""
-        return _SWITCH.get(self.container, ("open", ()))
+                self.way.switch(network)
+            finally:
+                if self.way.network != before and self.container in _STARTED:
+                    self.stop()
 
     def to_inside(self, text: str) -> str:
         """`text` with every host path under the parent spelled as the container sees it."""
@@ -194,62 +275,54 @@ class ContainerExecution(ExecutionPort):
         return INSIDE + "/" + rel.as_posix()
 
     def run_args(self) -> list[str]:
-        """`docker run` for this project's container: sealed (`--init`, its own mounts only, NET_ADMIN for the rule
-        `start` adds as root), sleeping until the server calls into it."""
+        """`docker run` for this project's container: sealed (`--init`, its own mounts only, no new privileges, its way
+        out as switched), sleeping until the server calls into it."""
         mounts = [a for m in self.mounts for a in ("--mount", f"type=bind,src={self.parent / m},dst={INSIDE}/{m}")]
-        # a closed switch has no IPv6 to leave by: the rules below are IPv4's
-        v6 = [] if self.network[0] == "open" else ["--sysctl", "net.ipv6.conf.all.disable_ipv6=1"]
         return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
-                "--cap-add", "NET_ADMIN", "--security-opt", "no-new-privileges", *v6,
+                *self.way.run_args(),
+                "--security-opt", "no-new-privileges",
                 "--env-file", self.env_file, *mounts, "--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}",
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
 
     def start(self) -> None:
         """The project's container, running and sealed — started once per server process, whoever asks first."""
         with _START:
-            if _STARTED.get(self.container) == (self.run_args(), self.network) and self._running():
+            if _STARTED.get(self.container) == (self.run_args(), self.way.network) and self._running():
                 return
             if why := self.unavailable():
                 raise PlaceUnavailable(self.name, why)
             for d in [self.parent / m for m in self.mounts] + [self.state]:
                 d.mkdir(parents=True, exist_ok=True)
-            run(["docker", "rm", "-f", self.container], timeout=60)      # a container of a server that is gone
-            run(self.run_args(), timeout=120).check_returncode()
+            self.stop()                                                  # what a server that is gone left
             try:
-                rules = self.seal()
-            except OSError as e:
+                self.way.open()
+                run(self.run_args(), timeout=120).check_returncode()
+            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 self.stop()
                 raise RuntimeError(f"{self.container}: {e} — no call runs unsealed") from e
             seal = run(["docker", "exec", "-u", "0", self.container, "sh", "-c",       # uid 0: the rule is root's
-                        f"{rules} && mkdir -p /tmp/gfso-calls && chmod 1777 /tmp/gfso-calls"], timeout=60)
+                        f"{self.way.seal()} && mkdir -p /tmp/gfso-calls && chmod 1777 /tmp/gfso-calls"], timeout=60)
             if seal.returncode != 0:
                 self.stop()
                 raise RuntimeError(f"{self.container}: the network could not be switched — no call runs unsealed "
                                    f"({(seal.stderr or b'').decode(errors='replace')[-300:]})")
-            _STARTED[self.container] = (self.run_args(), self.network)
+            _STARTED[self.container] = (self.run_args(), self.way.network)
 
-    def seal(self) -> str:
-        """The container's way out as root sets it, in the kernel — a tool that ignores a proxy is fenced as well. A
-        closed switch takes DNS away too, so an allowed host is resolved HERE, once, and pinned in `/etc/hosts`: an
-        address that is no public one (the host, a cloud's metadata) is refused, and an address that moves later is
-        simply not reached. What an allowed host passes on is its own (`OSError` when a host has no address to pin)."""
-        rules = [f"iptables -A OUTPUT -d {HOST_NET} -j REJECT"]
-        mode, hosts = self.network
-        if mode == "open":
-            return rules[0]
-        pinned = sorted({(ip, h) for h in hosts for ip in _public_v4(h)})
-        if missing := set(hosts) - {h for _, h in pinned}:
-            raise OSError(f"no public address to pin for {', '.join(sorted(missing))}")
-        rules += [f"iptables -A OUTPUT -d {DNS_INSIDE} -j REJECT", "iptables -A OUTPUT -o lo -j ACCEPT",
-                  *(f"iptables -A OUTPUT -d {ip} -p tcp --dport 443 -j ACCEPT && echo '{ip} {h}' >>/etc/hosts" for ip, h in pinned),
-                  "iptables -A OUTPUT -j REJECT"]
-        return " && ".join(rules)
+    def stop(self) -> None:
+        """The project's container and its way out."""
+        run(["docker", "rm", "-f", self.container], timeout=60)
+        self.way.close()
+        _STARTED.pop(self.container, None)
 
     def _running(self) -> bool:
-        """Is the container still up? A Docker restart (the host slept, an update) removes it under a live server, and
-        every later call of the project then failed `No such container` (critic over d5c8f7a)."""
-        got = run(["docker", "inspect", "-f", "{{.State.Running}}", self.container], timeout=30, text=True)
-        return got.returncode == 0 and (got.stdout or "").strip() == "true"
+        """Is the container still up — and its allowlist's gateway, whose death would leave the project hanging on
+        proxy errors with no cause said? A Docker restart (the host slept, an update) removes them under a live server,
+        and every later call of the project then failed `No such container` (critic over d5c8f7a)."""
+        for c in [self.container] + ([self.way.gateway] if self.way.network[0] == "allowlist" else []):
+            got = run(["docker", "inspect", "-f", "{{.State.Running}}", c], timeout=30, text=True)
+            if got.returncode != 0 or (got.stdout or "").strip() != "true":
+                return False
+        return True
 
     def unavailable(self):
         """The daemon's own words where it does not answer — Docker Desktop not running reads "failed to connect to the
@@ -259,10 +332,6 @@ class ContainerExecution(ExecutionPort):
         except (OSError, subprocess.TimeoutExpired) as e:
             return str(e)
         return None if got.returncode == 0 else ((got.stderr or "").strip() or f"docker info exited {got.returncode}")
-
-    def stop(self) -> None:
-        run(["docker", "rm", "-f", self.container], timeout=60)
-        _STARTED.pop(self.container, None)
 
     def which(self, program: str):
         return program                         # resolved on the container's PATH when the call starts
