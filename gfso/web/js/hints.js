@@ -3,8 +3,7 @@
 // almost every time stands as a LABEL beside the thing; a HOVER adds what the thing itself does not show and never
 // repeats it; a POPOVER a click opens carries its title and caption set apart from its items. So four kinds:
 //   KEY      — the «?» popover: the graph's arrows, the marks (dot, cross, ⊥), the deck's counts.
-//   LABEL    — words drawn beside a thing because the reader needs them each time: the timeline's bar kinds (run.js
-//              KIND_NAME), the coverage cells' states (CELLS). The kinds of token (TOKENS) are the key's: the Models bar
+//   LABEL    — words drawn beside a thing because the reader needs them each time: the timeline's bar kinds (KIND), the coverage cells' states (CELLS). The kinds of token (TOKENS) are the key's: the Models bar
 //              says each on its own segment's hover. PASS and
 //              FAIL are no label: the key says them once.
 //   HOVER    — `hover(head, …rows)`: one thing's detail, the first line its heading; `card()` lays it out for a view
@@ -12,16 +11,15 @@
 //   POPOVER  — `pop(title, caption, items)`: the header's mode, tech reports and quality, and the key itself.
 // No other module writes a `title`, a tip card or a popover row: tests/test_hints_live_in_one_place.py is red on one.
 // WHAT ELSE THE PAGE SAYS, AND WHERE — so an analysis starting here misses nothing:
-//   run.js   — the words for a run's facts, shown as content in the panel and Events and reused by the tips here:
-//              roundsLine, failedWords, EDGE_NOTE, KIND_NAME, levelName.
+//   here too — the words for a run's facts, shown as content in the panel, the deck and Events and reused by the tips:
+//              KIND, levelName, roundsLine, waitWords, failedWords, EDGE_NOTE.
 //   vocab.js — the protocol's words: state labels, closureNote/byHand (how a node closed), PLAN_COST.
 //   dialogs  — askInPage questions and notices, the text of an act being confirmed (header.js stop/start,
 //              projects.js delete, acts.js, goal.js); forms' own field help (index.html goal panel, goal.js).
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
-import {dur, hm, usd, tok} from './draw.js';
-import {KIND_NAME, roundsLine, EDGE_NOTE} from './run.js';
-import {statesIn, label} from './vocab.js';
+import {dur, hm, usd, money, NOT_REPORTED, tok, pct, cap, plural, moment} from './fmt.js';
+import {statesIn, label, TOKENS, nameOf} from './vocab.js';
 
 // ── the renderers ──
 const lines = xs => xs.flat(Infinity).filter(Boolean).map(String);
@@ -34,12 +32,11 @@ const METER = '\u0007';
 // …its figure at the end is the percent, or the sum the share is of (a role's cost)
 export const meter = (label, share, figure = '') => `${METER}${label}\t${share}\t${figure}`;
 const row = r => { if (!r.startsWith(METER)) return `<div class="tt-row">${esc(r)}</div>`;
-    const [label, share, figure] = r.slice(1).split('\t'), p = `${Math.round(+share * 100)}%`;
+    const [label, share, figure] = r.slice(1).split('\t'), p = pct(+share);
     return `<div class="tt-meter"><span>${esc(label)}</span><i><b style="width:${p}"></b></i><em>${esc(figure || p)}</em></div>`; };
 export const card = (head, rows = [], badge = '') => { const [h, figure] = head.split('\t');
     return `<div class="tt-name${figure ? ' tt-split' : ''}"><span>${esc(h)}</span>${figure ? `<b>${esc(figure)}</b>` : ''}</div>${badge}`
         + lines(rows).map(row).join(''); };
-const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 // a popover: its title and the caption saying what it lists, set apart from the items; an item is a heading (a glyph
 // before it, a value and a tag after it, a link at its end) and what it means; `group` starts a new group of items
 const item = it => it.group ? `<div class="hp-group">${esc(it.group)}</div>`
@@ -52,8 +49,7 @@ export const pop = (title, caption, items) => `<div class="hd-pop"><div class="h
 
 // ── the key under «?» ──
 const svg = (body, h = 11) => `<svg class="glyph" width="11" height="${h}" viewBox="-5.5 -5.5 11 ${h}">${body}</svg>`;
-// the kinds of token a cost went to, in the order the Models bar draws them (a LABEL's words, and the key's)
-export const TOKENS = [['input_tokens', 'input'], ['output_tokens', 'output'], ['cache_read_tokens', 'cache read'], ['cache_write_tokens', 'cache written']];
+// the kinds of token a cost went to (vocab.js TOKENS), each drawn in its own class
 export const COST_CLS = k => `wk-${k.split('_')[0] + (k.includes('write') ? 'w' : '')}`;
 
 // THE KEY reads by meaning: each row is one glyph, drawn as the page draws it, and in bold WHAT IT MEANS — the reader
@@ -154,23 +150,7 @@ export const H = {
          ...set.length ? [{group: 'How it was set'}, ...set.map(([head, v]) => ({head, val: `<span class="hq-kv">${esc(v)}</span>`}))] : []]),
     reports: rs => pop('Tech reports', 'What the system reported about itself — a check contradicting its contract, a tool that cannot run. '
         + 'A report stops and moves nothing. Newest first.', rs),
-    // the server's `means` is a paragraph: its first sentence says what the metric counts and stands under the heading,
-    // the rest — how to read it, what it is not — one click away (a popover of five paragraphs read as prose, not a list);
-    // the server's own short name before a colon goes where it says what the heading already says
-    quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each metric with its grade (§15.8).',
-        rows.map(r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(r.means || '') || [, r.means];
-            // …only when the heading says every word of it: «delegation correctness» gone left a ratio read the wrong way
-            const words = s => s.toLowerCase().match(/[a-z]{4,}/g)?.map(w => w.slice(0, 5)) || [], head = words(r.head);
-            const named = /^([a-z][^:()]{0,40}):\s+/i.exec(first || ''), said = named && words(named[1]).every(w => head.includes(w));
-            // …and a first sentence that only repeats the row's tag («high is bad») is no definition: the next one is
-            const tw = words(r.tag || ''), tagged = tw.length && rest && tw.every(w => words(first).includes(w));
-            const [, next, after] = tagged && /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(rest) || [, rest, ''];
-            const row = tagged ? {...r, means: next.replace(/^It is (?:the )?/, 'The '), more: [first, after].filter(Boolean).join(' ')}
-                : {...r, means: said ? first.slice(named[0].length) : first, more: rest};
-            // …a metric with no value yet: the sentence saying when it gets one is the key line, not a fold's (critic)
-            const when = r.none && /(?:^|\s)(⊥[^.]*\.)/.exec(row.more || '');
-            // (said as words: the row's dash already marks the empty value)
-            return when ? {...row, means: `${row.means} No value ${when[1].slice(1).trim()}`, more: row.more.replace(when[1], '').trim()} : row; })),
+    quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each metric with its grade (§15.8).', rows),
 };
 
 // what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server
@@ -178,36 +158,77 @@ export const H = {
 export const QUALITY = {q_D: 'Splits that held', q_V: 'Verdicts that held', q_T: 'Criteria that held as issued',
     q_Dep: 'Dependencies foreseen', q_Del: 'Delegations that fit', false_fail_share: 'Over-strict FAILs'};
 
+// ── a run's facts in words ──
+// THE KINDS OF SESSION (run.js), one row a kind, in the order the deck lists them: the bar's label, a count of them, who
+// ran a node in that kind, what one running now is doing
+const K = (name, count, by, doing) => ({name, count, by, doing});
+export const KIND = {
+    exec:    K('execution',  'execution',   'executed',  'executing'),
+    consent: K('consent',    'consent',     'consented', 'reading the contract'),
+    val:     K('validation', 'validation',  'validated', 'validating'),
+    issuer:  K('issuer',     'issuer turn', 'issued',    "the issuer's turn"),
+    plan:    K('planning',   'planning',    'planned',   'planning'),
+};
+// a role's sessions counted in words — «46 executions», «9 issuer turns» — so a count needs no line explaining it
+export const sessionsOf = (kind, n) => plural(n, KIND[kind]?.count || kind);
+// the tree's levels by what they are: the goal (the root), its parts, then parts of parts, one level down each time
+export const levelName = d => +d === 0 ? 'the goal' : +d === 1 ? 'its parts' : `parts, level ${d}`;
+export const roundsLine = rs => !rs.length ? '' : plural(rs.length, 'round')
+    + (rs.some(r => r.verdict === 'FAIL') ? `, ${rs.filter(r => r.verdict === 'FAIL').length} failed` : '');
+// What a node waits on (run.js waits), for every view that says it: "Floor compiler", "its 2 parts", "the executor".
+export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
+    : w.parts.length ? `its ${plural(w.parts.length, 'part')}` : w.owes ? `the ${w.owes}` : '—';
+// What a FAIL named (run.js failedOf): the node's own criteria, and the bare Dep edges an older engine judged — in one
+// line, or one criterion a row for a tip (names carry commas of their own, and joined they read as more)
+export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
+export const failedWords = ({own, edges}) =>
+    [own.join(' · '), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`].filter(Boolean).join('; ') || 'no criterion named';
+const failedRows = ({own, edges}) => own.length || edges.length ? [`Failed (${own.length + edges.length}):`, ...own.map(c => `– ${c}`),
+    ...edges.map(c => `– ${c}: ${EDGE_NOTE}`)] : [];
+
 // ── the deck's strip ──
+// what a node at work is doing: its process's verb, else that verb's kind of session (run.js PROC_KIND), else — no process
+// of this server on it — its working state
+const DOING = {review_decomposition: 'reviewing the plan', join_whole: 'joining the parts',
+    // the system runs the node's pinned checks once before its executor session: no model, no bar on the timeline
+    observation: 'observing its place',
+    EXECUTING: 'executing', REWORKING: 'reworking', VALIDATING: 'validating'};
+export const doing = (verb, kind) => DOING[verb] || KIND[kind]?.doing || verb.replace(/_/g, ' ');
 export const STRIP = {
     live: (name, row) => hover(name, row),
     held: hover('Stopped', 'Nothing runs here until the run is started again', 'These nodes keep the state their work was in'),
     block: (n, of, users) => hover(`${n} wait on ${of}`, 'None starts until it passes:', users),
-    issuer: rows => hover(`${rows.length} wait${rows.length > 1 ? '' : 's'} on the issuer`, rows),
-    back: rows => hover(`${rows.length} sent back`, rows, 'Their last round failed'),
+    onIssuer: n => `${n} wait${n > 1 ? '' : 's'} on the issuer`, sentBack: n => `${n} sent back`,
+    issuer: rows => hover(STRIP.onIssuer(rows.length), rows),
+    back: rows => hover(STRIP.sentBack(rows.length), rows, 'Their last round failed'),
     more: rows => hover(`${rows.length} more at work`, rows),
     running: verb => `${verb} — a session running on this server`,
     carried: (top, verb) => `Carried by the session on ${top} (${verb})`,
     idle: 'In a working state; no process of this server runs it',
     // a role a line: its share of the spend drawn, its sum at the end; sessions in the label (the author: no figures run on
     // after each other with dots)
-    spend: (byKind, running) => { const all = byKind.reduce((s, [, p]) => s + p.cost, 0) || 1;
-        return hover('Spend by role', byKind.sort((a, b) => b[1].cost - a[1].cost).map(([k, p]) => meter(sessionsOf(k, p.calls), p.cost / all,
-            p.procs && p.unpriced === p.procs ? 'not reported' : usd(p.cost))),
-            running && `+ ${running} running, booked when ${running > 1 ? 'they end' : 'it ends'}`); },
+    spend: (roles, running) => hover('Spend by role', roles.map(([k, p, share]) => meter(sessionsOf(k, p.calls), share,
+            money(p.cost, p.procs, p.unpriced))),
+        running && `+ ${running} running, booked when ${running > 1 ? 'they end' : 'it ends'}`),
 };
 
 // ── the node's panel and reader ──
 export const ISSUER_MOVES = "The executor stopped and the decision is the issuer's: raise the rework bound (Revise → max_iterations) "
     + 'if the forecast was short, change or narrow the criteria (Revise) if the plan is wrong, or close it (Cancel — it cascades '
     + "the live subtree). Silence closes it too, by this state's own timeout; it never drifts to a pass.";
+// why a criterion has no value at a round (run.js `critAt`, and the panel's reading of the current verdict)
+const NO_VALUE = {unchecked: 'not checked yet', unanswered: 'no verdict on this delivery', current: 'not decided at this verdict',
+    undecided: 'checked, could not be decided', unrecorded: "not in this verdict's record",
+    unkept: "not kept: this round's record names only what failed"};
 export const PANEL = {
+    refusedSaid: 'a validator reported and the report was REFUSED as ⊥ — ',
     escalated: hover('The issuer decides', ISSUER_MOVES),
     contested: hover('Read the verdict', 'Legitimate (§10.3), and nothing can check it (§15.7)'),
-    deadline: (due, now) => hover(due < now ? `Overdue by ${dur(now - due)}` : `Due in ${dur(due - now)}`, new Date(due).toLocaleString()),
+    deadline: (due, now) => hover(due < now ? `Overdue by ${dur(now - due)}` : `Due in ${dur(due - now)}`, moment(due)),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
-    round: (n, v, why) => hover(`${v || 'No value'}\tRound ${n}`, !v && cap(why)),
+    // a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)
+    round: (n, v, why) => hover(`${v || 'No value'}\tRound ${n}`, !v && cap(NO_VALUE[why])),
     full: text => hover(text),
     directive: text => hover(text),
     model: id => hover(id),
@@ -218,35 +239,29 @@ export const PANEL = {
     probe: bhs => hover('What it checks', bhs),
 };
 
-// a role's sessions counted in words — «46 executions», «9 issuer turns» — so a count needs no line explaining it
-const SESSION = {exec: 'execution', val: 'validation', issuer: 'issuer turn', consent: 'consent', plan: 'planning'};
-export const sessionsOf = (kind, n) => `${n} ${SESSION[kind] || KIND_NAME[kind] || kind}${n === 1 ? '' : 's'}`;
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
-// what a FAIL named: its count, then one criterion a row — names carry commas of their own, and joined they read as more
-const failedRows = (own, edges) => own.length || edges.length ? [`Failed (${own.length + edges.length}):`, ...own.map(c => `– ${c}`),
-    ...edges.map(c => `– ${c}: ${EDGE_NOTE}`)] : [];
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k} of ${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
-    node: (t, badge, waits, rs, criteria, failing) => card(t.name || t.description || t.id,
+    node: (t, badge, waits, rs, criteria, failing) => card(nameOf(t),
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`, waits && `Waits on ${waits}`,
          criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // a stretch of work on the timeline
-    bar: (name, x, r, f) => card(`${cap(KIND_NAME[x.kind])}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
+    bar: (name, x, r, f) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
         name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
-        r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f.own, f.edges),
+        r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f),
         x.parts > 1 && `${x.parts} processes, ${dur(x.busy)} busy: ${x.kind === 'val' ? 'the validator works in batches of probes'
             : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.handed?.length && `${x.handed.length} handed over`,
-               x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0) > 0 && `${x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0)} retried`].filter(Boolean).join(', ')}`,
+               x.retried > 0 && `${x.retried} retried`].filter(Boolean).join(', ')}`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
-    verdict: (name, signal, r, t, own, m, total, edges) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
-        name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(own, edges)]),
+    verdict: (name, signal, r, t, f, m, total) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
+        name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
     cell: (name, also) => hover(name, also),
     // a node's row in spend
-    cost: (name, rows, rounds, all) => card(`${rounds} delivery round${rounds === 1 ? '' : 's'}\t${all}`, [name, ...rows]),
+    cost: (name, rows, rounds, all) => card(`${plural(rounds, 'delivery round')}\t${all}`, [name, ...rows]),
     prefix: p => hover(p + '…', 'The start every assignee id shares, cut from the bars'),
     project: (name, id) => hover(name, id),
     where: why => hover(why),
@@ -256,7 +271,7 @@ export const TIP = {
 export const MODELS = {
     sessions: hover('Sessions', 'Each with a context of its own; one resumed in its conversation counts once'),
     cost: hover('Cost split', `By kind of token: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right`,
-        "Priced by Anthropic's structure: per input token 1, output 5, cache read 0.1, cache written 2", 'Another provider\'s rows are not split'),
+        `Priced by Anthropic's structure: per ${TOKENS.map(([, n, p], i) => `${n}${i ? '' : ' token'} ${p}`).join(', ')}`, 'Another provider\'s rows are not split'),
     part: (kind, cost, share, tokens, note) => hover(`${cap(kind)}\t${cost}`, meter('of the row', share), `${tokens} tokens`, note),
     id: id => hover(id),
     window: hover('The model\'s context window'),
@@ -275,9 +290,9 @@ export const MODELS = {
     foreign: "Not split: its provider's prices are not known here",
     // why a split does not cover its row, each cause counted apart — none is said that the row does not have
     covers: (share, s) => [`The split covers ${share} of the row's cost — the ${s.sessions} sessions its tokens price`,
-        s.resumedOut && `${s.resumedOut} resumed round${s.resumedOut > 1 ? 's' : ''} booked the whole conversation's cost (recorded before the fix): the round before counted twice`,
-        s.out - s.resumedOut && `${s.out - s.resumedOut} session${s.out - s.resumedOut > 1 ? 's' : ''} not priced by ${s.out - s.resumedOut > 1 ? 'their' : 'its'} own tokens`,
-        s.unweighed && `${s.unweighed} session${s.unweighed > 1 ? 's' : ''} not split: recorded without the cache kept apart, without tokens, or unpriced`],
+        s.resumedOut && `${plural(s.resumedOut, 'resumed round')} booked the whole conversation's cost (recorded before the fix): the round before counted twice`,
+        s.out - s.resumedOut && `${plural(s.out - s.resumedOut, 'session')} not priced by ${s.out - s.resumedOut > 1 ? 'their' : 'its'} own tokens`,
+        s.unweighed && `${plural(s.unweighed, 'session')} not split: recorded without the cache kept apart, without tokens, or unpriced`],
     // each part of the context bar says itself, in the cost split's form: what was hovered and its figure, its share as a
     // filled line — the median session's peak (the dark part) or the fullest session's (the light one)
     fillOf: (which, [share, at], w, n, calls) => hover(`${which === 'median' ? 'Median session' : 'Fullest session'}${at ? `\t${at}` : ''}`,

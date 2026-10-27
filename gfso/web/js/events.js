@@ -3,8 +3,11 @@
 // without opening anything; one click opens the node's own trail, its narration nested in.
 import {esc} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
-import {hm, glyph} from './draw.js';
-import {at, said, roundsLine, failedWords} from './run.js';
+import {glyph} from './draw.js';
+import {hm, day} from './fmt.js';
+import {at, said, failedOf} from './run.js';
+import {roundsLine, failedWords} from './hints.js';
+import {CARRIED} from './vocab.js';
 
 const KINDS = {
     verdict: ['PASS', 'FAIL'], delivery: ['DELIVER'], assignment: ['ASSIGN', 'ACCEPT', 'REOPEN'],
@@ -15,7 +18,6 @@ const KINDS = {
 const RUN = '';
 // a move the engine refused changed nothing: its own kind, so the column of state moves holds only moves
 const signalKind = a => a.rejected ? 'refused' : Object.keys(KINDS).find(k => KINDS[k].includes(a.signal)) || 'assignment';
-const day = t => new Date(t).toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
 
 // One stream of rows per node: signals from the audit, narration from the pipeline ("<node>: …").
 function streams(run, nodes, pipeline) {
@@ -32,7 +34,8 @@ function streams(run, nodes, pipeline) {
 
 function row(r) {
     if (r.p) return `<li class="ev ev-narration${r.kind === 'run' ? ' ev-run' : ''}"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text">${esc(r.p.text)}</span></li>`;
-    const a = r.a, prose = [a.rejected && a.error && ['why refused', a.error], a.reason && ['reason', a.reason], a.justification && ['justification', a.justification], a.action && ['resolution', a.action], a.result && ['report', a.result]].filter(Boolean);
+    // what it carried, folded — but its failed criteria, drawn as chips, and an error the move line already says
+    const a = r.a, prose = CARRIED.filter(([k]) => a[k] && k !== 'failed_criteria' && (k !== 'error' || a.rejected)).map(([k, l]) => [l, a[k]]);
     const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
@@ -50,7 +53,7 @@ function head(id, name, node, run, rs) {
     return `<summary><span class="ev-node">${esc(name)}</span>
         <span class="state-badge ev-state">${esc(node.state)}</span>
         <span class="ev-rounds">${rounds.length ? roundsLine(rounds) + (last?.verdict ? ` · last ${last.verdict}` : '') : 'no delivery yet'}</span>
-        ${lastFail ? `<span class="ev-why${last?.verdict === 'FAIL' ? '' : ' was'}">${last?.verdict === 'FAIL' ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${esc(failedWords(run, id, lastFail.failed))}</span>` : ''}
+        ${lastFail ? `<span class="ev-why${last?.verdict === 'FAIL' ? '' : ' was'}">${last?.verdict === 'FAIL' ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${esc(failedWords(failedOf(run, id, lastFail.failed)))}</span>` : ''}
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
 }
 

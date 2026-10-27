@@ -1,8 +1,8 @@
 // Authoring contracts: a revision of a node (Edit) and a split into children (Decompose); their rows are forms.js.
 import {$, el, esc} from './dom.js';
-import {getJSON, post, refusal} from './api.js';
+import {task, post} from './api.js';
 import {S, myRole} from './state.js';
-import {notice} from './overlays.js';
+import {notice, act} from './overlays.js';
 import {frame} from './hints.js';
 import {critRow, listRow, readCrits, readList, iso, suggest} from './forms.js';
 
@@ -15,7 +15,7 @@ export const addEditCriterion = c => critRow($('edit-criteria-rows'), c, {cls: '
 export const addEditAcceptedRisk = value => listRow($('edit-accepted_risks-list'), 'excluded factor…', value);
 
 export async function openEdit({id}) {
-    const d = await getJSON(`/api/tasks/${encodeURIComponent(id)}`);
+    const d = await task(id);
     // WHOSE list this form edits is whose word it writes (§9.2, §10.1): the executor over its own split edits
     // the split's register; anyone else — its issuer — the packet's pre-fill. The server routes the same way.
     const own = myRole() === (d.assignee || '') && (d.children || []).length > 0;
@@ -42,14 +42,13 @@ export async function submitEdit() {
     // node back to OFFERED twice for one edit (wave 26). Only what CHANGED is sent.
     const critsMoved = JSON.stringify(criteria) !== JSON.stringify(edit.crits);
     const risksMoved = JSON.stringify(riskItems) !== JSON.stringify(edit.risks);
-    try {
-        let no = '';
-        if (critsMoved) no = await refusal(await send('edit_criteria', {criteria, agent}));
-        if (!no && risksMoved) no = await refusal(await send('edit_accepted_risks', {accepted_risks: riskItems.map(i => edit.recorded[i] || i), agent}));
-        if (!no && assignee && assignee !== edit.assignee) no = await refusal(await send('reassign', {assignee}));
-        if (!no && !critsMoved && !risksMoved && assignee === edit.assignee) notice('Nothing changed — no revision sent.', 'ok');
-        if (no) notice('Edit rejected: ' + no + '\n(a delegated/committed node → cancel + re-assign)', 'bad');
-    } catch (e) { console.error('edit:', e); }
+    const sends = [critsMoved && ['edit_criteria', {criteria, agent}],
+        risksMoved && ['edit_accepted_risks', {accepted_risks: riskItems.map(i => edit.recorded[i] || i), agent}],
+        assignee && assignee !== edit.assignee && ['reassign', {assignee}]].filter(Boolean);
+    if (!critsMoved && !risksMoved && assignee === edit.assignee) notice('Nothing changed — no revision sent.', 'ok');
+    // the first refusal stops the rest
+    for (const [tool, body] of sends)
+        if (await act(send(tool, body), {what: 'Edit rejected', note: '\n(a delegated/committed node → cancel + re-assign)', ok: null})) break;
     modal('edit-modal', false);
     await S.reload();
 }
@@ -60,7 +59,7 @@ const childForms = () => [...document.querySelectorAll('.child-form')];
 
 export async function openDecompose({id}) {
     dec.id = id;
-    try { dec.crits = (await getJSON(`/api/tasks/${encodeURIComponent(id)}`)).criteria || []; } catch (e) { dec.crits = []; }
+    try { dec.crits = (await task(id)).criteria || []; } catch (e) { dec.crits = []; }
     $('decompose-children').innerHTML = '';
     addChildForm();
     modal('decompose-modal', true);
@@ -70,13 +69,13 @@ export function addChildForm() {
     const f = el('div', {className: 'child-form'});
     f.innerHTML = `
         <input placeholder="Subtask description" class="dc-desc">
-        <input placeholder="Assignee" class="dc-assignee manual-only" style="width:120px">
-        <input type="datetime-local" class="dc-deadline" style="width:180px"${frame('deadline')}>
-        <button class="btn btn-sm btn-purple" data-action="child-suggest" style="margin-left:4px">AI</button>
-        <div class="dc-criteria-rows" style="margin-top:4px"></div>
-        <button class="btn btn-sm btn-muted" data-action="child-criterion" style="font-size:10px">+ criterion</button>
-        <div class="dc-accepted_risks-rows" style="margin-top:6px"></div>
-        <button class="btn btn-sm btn-muted" data-action="child-risk" style="font-size:10px">+ accepted_risks</button>`;
+        <input placeholder="Assignee" class="dc-assignee manual-only">
+        <input type="datetime-local" class="dc-deadline"${frame('deadline')}>
+        <button class="btn btn-sm btn-purple dc-ai" data-action="child-suggest">AI</button>
+        <div class="dc-criteria-rows"></div>
+        <button class="btn btn-sm btn-muted dc-add" data-action="child-criterion">+ criterion</button>
+        <div class="dc-accepted_risks-rows"></div>
+        <button class="btn btn-sm btn-muted dc-add" data-action="child-risk">+ accepted_risks</button>`;
     f.querySelector('.dc-desc').oninput = renderMappings;
     $('decompose-children').appendChild(f);
     renderMappings();
@@ -94,7 +93,7 @@ function renderMappings() {
     if (!dec.crits.length) { box.innerHTML = ''; return; }
     const kept = Object.fromEntries([...box.querySelectorAll('select')].map(s => [s.dataset.crit, s.value]));
     const kids = childForms().map((f, i) => (f.querySelector('.dc-desc').value || `Child ${i + 1}`).slice(0, 30));
-    box.innerHTML = `<div class="section-title" style="border-color:var(--hair);padding-bottom:4px;margin:14px 0 8px">Criterion mappings (CHECK-1, joint sufficiency)</div>`
+    box.innerHTML = `<div class="section-title map-title">Criterion mappings (CHECK-1, joint sufficiency)</div>`
         + dec.crits.map(c => `<div class="crit-mapping"><span class="crit-name">${esc(c.name)}</span><select data-crit="${esc(c.name)}">`
             + `<option value="">— unmapped —</option>` + kids.map((k, i) =>
                 `<option value="${i}"${kept[c.name] === String(i) ? ' selected' : ''}>${esc(k)}</option>`).join('')
@@ -124,10 +123,8 @@ export async function submitDecompose() {
         return notice('a decomposition needs its ACCEPTED_RISKS register (CHECK-4, §9.2: a decomposition '
                       + 'without one is incomplete by definition). Add at least one factor — `+ accepted_risks` '
                       + 'on a subtask — or say in it that none is known.', 'bad');
-    const no = await refusal(await post('/api/run/decompose', {parent_id: dec.id, children,
-        mappings: sels.map(s => ({criterion_name: s.dataset.crit, child_id: children[+s.value].task_id}))}));
     // …AND THE ENGINE'S OWN REFUSAL REACHES THE USER — a rejected plan closed the modal like an accepted one.
-    if (no) return notice(no, 'bad');
-    modal('decompose-modal', false);
-    await S.reload();
+    await act(post('/api/run/decompose', {parent_id: dec.id, children,
+        mappings: sels.map(s => ({criterion_name: s.dataset.crit, child_id: children[+s.value].task_id}))}),
+        {ok: async () => { modal('decompose-modal', false); await S.reload(); }});
 }

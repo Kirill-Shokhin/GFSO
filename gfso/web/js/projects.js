@@ -2,12 +2,13 @@
 // stands, what it cost — and how a new one comes into being: by name, in the URL, made by its first
 // creating verb. Everything here is read from the files on disk by the server: listing a project never
 // builds its engine, so a look sets nothing running.
-import {$, el, esc} from './dom.js';
+import {$, esc} from './dom.js';
 import {TIP} from './hints.js';
-import {PROJECT, getJSON, api, refusal} from './api.js';
+import {PROJECT, getJSON, api, leave} from './api.js';
 import {S, procs} from './state.js';
-import {notice, askInPage} from './overlays.js';
-import {modelName, delivered} from './vocab.js';
+import {notice, askInPage, act} from './overlays.js';
+import {modelName, goalWord, terminal} from './vocab.js';
+import {LOCALE, hm, day as date, usd} from './fmt.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
 export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (m[w.project] || 0) + 1, m), {});
@@ -40,11 +41,7 @@ export async function deleteProject() {
         + 'Its database goes with its whole history; this cannot be undone.', {yes: 'Delete', field: `type ${esc(name)} to confirm`});
     if (typed === false) return;
     if (typed !== name) return notice('the name typed is not this project — nothing was deleted', 'bad');
-    let r;
-    try { r = await api(`/api/projects/${encodeURIComponent(name)}`, {method: 'DELETE'}); } catch (e) { return notice('delete: the server did not answer', 'bad'); }
-    const no = await refusal(r);
-    if (no) return notice(no, 'bad');
-    location.search = '';
+    await act(api(`/api/projects/${encodeURIComponent(name)}`, {method: 'DELETE'}), {ok: leave});
 }
 
 // Where the goal stands, in words a person reads without the canon: the brand's dot is the one real done,
@@ -52,9 +49,10 @@ export async function deleteProject() {
 function where(p, busy) {
     const r = p.goal;
     if (!r) return ['empty', 'no goal yet'];
-    if (delivered(r)) return ['done', 'done'];
-    if (r.done_reason === 'FAIL') return ['bad', 'failed'];
-    if (r.state === 'DONE' || r.state === 'ABANDONED') return ['bad', 'abandoned · not delivered'];
+    // a closed goal in the header's word; the list's row says what an abandoned one lacks
+    // …and an open goal a FAIL left on the issuer's decision is marked failed too: the run looked for did not make it
+    const word = goalWord(r) || (r.done_reason === 'FAIL' ? 'failed' : '');
+    if (word) return [word === 'done' ? 'done' : 'bad', word === 'abandoned' ? 'abandoned · not delivered' : word];
     // a stop is the person's act on the run, not a failure: said as theirs, with why — and while sessions it let
     // finish still run, as stopping (the engine's three states, `run_state`)
     const stop = p.stopped;
@@ -71,18 +69,17 @@ function where(p, busy) {
     return ['bad', `unfinished${since}`];
 }
 
-const DAY = 86400e3, LOCALE = 'en-GB';   // the page's language, not the browser's
+const DAY = 86400e3;
 const day = t => { const d = new Date(t * 1e3); d.setHours(0, 0, 0, 0); return d.getTime(); };
 function dayName(ms) {
     const today = day(Date.now() / 1e3);
     return ms === today ? 'Today' : ms === today - DAY ? 'Yesterday'
         : new Date(ms).toLocaleDateString(LOCALE, {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
 }
-const clock = t => new Date(t * 1e3).toLocaleTimeString(LOCALE, {hour: '2-digit', minute: '2-digit'});
-const date = t => new Date(t * 1e3).toLocaleDateString(LOCALE, {day: 'numeric', month: 'short'});
+const clock = t => hm(t * 1e3);
 const recent = p => p.t && Date.now() / 1e3 - p.t < DAY / 1e3;
 // a time said against a day the reader already has (today, the launch's): the clock alone on that day
-const when = (t, ref = Date.now() / 1e3) => day(t) === day(ref) ? clock(t) : `${date(t)} ${clock(t)}`;
+const when = (t, ref = Date.now() / 1e3) => day(t) === day(ref) ? clock(t) : `${date(t * 1e3)} ${clock(t)}`;
 
 // A row is timed by what its group is about, one rule a group: the last day's band by the last act, the launch beside
 // it (an old run woken today reads as woken); a launch group by the launch, a finished or stopped run's last act beside
@@ -91,14 +88,14 @@ const when = (t, ref = Date.now() / 1e3) => day(t) === day(ref) ? clock(t) : `${
 function row(p, busy, active) {
     const [cls, text, why] = where(p, busy), r = p.goal, cur = p.n === S.project;
     const acted = active ? r?.started && `launched ${when(r.started)}`
-        : (['DONE', 'ABANDONED'].includes(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t, r.started)}`;
+        : (terminal(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t, r.started)}`;
     const t = active ? p.t : r?.started;
     return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}"${TIP.project(r?.name || p.n, r?.name && p.n)}>`
         + `<span class="pl-time">${t ? clock(t) : ''}</span>`
         + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(x => `<span>${esc(x)}</span>`).join(' · ')}</i></span>`
         + `<span class="pl-where ${cls}"${TIP.where(why)}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
         + `<span class="pl-mode">${esc(p.mode || '')}</span>`
-        + `<span class="pl-cost">${p.cost ? '$' + p.cost.toFixed(2) : ''}</span></a>`;
+        + `<span class="pl-cost">${p.cost ? usd(p.cost) : ''}</span></a>`;
 }
 
 function draw() {
@@ -137,25 +134,3 @@ export async function toggleProjects() {
 export const closeProjects = () => { panel().hidden = true; };
 export const moreProjects = () => { shown += SHOWN; draw(); };
 export const searchProjects = () => { shown = SHOWN; draw(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !panel().hidden) closeProjects(); });
-
-const NAME = /^[A-Za-z0-9_-]+$/;
-// TAB-local switch; `goal` opens the goal constructor there — a new project's first act is stating its goal
-const openProject = (name, {goal} = {}) => { location.search = '?project=' + encodeURIComponent(name) + (goal ? '&goal=1' : ''); };
-
-export async function switchProject(name, then = {}) {
-    // A NAME IS REQUIRED: an empty one landed silently in `default` (reached programmatically, wave 26).
-    if (name && name !== '__new__') return openProject(name);
-    if (!name || $('new-project-name')) return;
-    // In the page, beside the picker: a native `prompt()` blocks every other event.
-    const input = el('input', {id: 'new-project-name', placeholder: 'new project name', pattern: '[A-Za-z0-9_-]+'});
-    input.style.width = '150px';
-    const go = () => NAME.test(input.value.trim()) ? openProject(input.value.trim(), then)
-                                                                   : notice('a project name is [A-Za-z0-9_-]', 'bad');
-    const box = el('span', {id: 'new-project-box'}, input, el('button', {className: 'btn btn-sm', id: 'new-project-go',
-                                                                         textContent: 'Open', onclick: go}));
-    box.style.cssText = 'display:inline-flex;gap:4px;margin-left:6px';
-    input.onkeydown = ev => { if (ev.key === 'Enter') go(); };
-    $('project-open').after(box);
-    input.focus();
-}

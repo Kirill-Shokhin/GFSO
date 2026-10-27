@@ -1,9 +1,11 @@
 // The run as one model: who worked on which node when, what each delivery was answered with, and
 // how the clock reads once the idle stretches are folded. Every view of the run (timeline,
 // progress, cost, events, the graph's badges) reads this and nothing else, so two views can never
-// disagree on a fact. Pure: payloads in, model out — no fetch, no DOM, no imports.
+// disagree on a fact. Pure: payloads in, model out — no fetch, no DOM, no words (hints.js says
+// them); it imports the protocol's vocabulary only.
 
-import {terminal, delivered, working} from './vocab.js';
+import {terminal, delivered, working, consented, nameOf, criteriaOf, isVerdict, TOKENS} from './vocab.js';
+import {childrenOf, ancestorsIn, depths} from './tree.js';
 
 // Sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one)
 // or being cancelled — one rule for the strip's «sent back» and the graph's red rounds badge.
@@ -16,32 +18,23 @@ export const failingNow = (rounds, state) => rounds?.at(-1)?.verdict === 'FAIL' 
 const owes = (n, step) => ({executor: 'executor', issuer: 'issuer'})[step?.role] || OWES[n.state] || null;
 const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
               CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
+// …and where the move owed is work in course, not a wait on the owner's decision: a verdict being validated (`decides`)
+const OWES_IN_COURSE = new Set(['VALIDATING']);
 
 const KIND = {executor: 'exec', consent: 'consent', validate_result: 'val', validator: 'val', issuer: 'issuer'};
 const kindOf = stage => KIND[stage] || 'plan';
-export const KIND_NAME = {exec: 'execution', consent: 'consent', val: 'validation', issuer: 'issuer', plan: 'planning'};
-// the tree's levels by what they are: the goal (the root), its parts, then parts of parts, one level down each time
-export const levelName = d => +d === 0 ? 'the goal' : +d === 1 ? 'its parts' : `parts, level ${d}`;
 // An idle stretch longer than this is folded to FOLD on the axis: a run's clock is its work, and a
-// host asleep overnight is not part of the run (mode_cost.py measures wall time by the same cut).
+// host asleep overnight is not part of the run. The cut is the page's own display parameter.
 export const GAP = 20 * 60e3, FOLD = 2 * 60e3;
 
 export const at = s => Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
 // The narration names its node first ("root.sort: …"); the rest is what was said.
 export const said = msg => { const m = /^([\w.\-]+):\s*(.*)$/s.exec(msg); return m ? {node: m[1], text: m[2]} : {node: null, text: msg}; };
-export const roundsLine = rs => !rs.length ? '' : `${rs.length} round${rs.length > 1 ? 's' : ''}`
-    + (rs.some(r => r.verdict === 'FAIL') ? `, ${rs.filter(r => r.verdict === 'FAIL').length} failed` : '');
 
 const sum = (xs, f) => xs.reduce((s, x) => s + f(x), 0);
+export const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.length - 1) >> 1]; };
 // a figure a provider may not report: null stays null ("not reported") until something reported adds to it
 const add = (a, b) => b == null ? a : (a ?? 0) + b, total = (xs, f) => xs.reduce((s, x) => add(s, f(x)), null);
-
-function depths(nodes) {
-    const by = Object.fromEntries(nodes.map(n => [n.id, n])), d = {};
-    const of = id => d[id] ??= by[id]?.parent_id ? of(by[id].parent_id) + 1 : 0;
-    nodes.forEach(n => of(n.id));
-    return d;
-}
 
 // The acts that close each kind of session — whoever signed the first of them after it is who ran it.
 const SIGNS = {exec: ['DELIVER', 'BLOCK', 'CHALLENGE'], consent: ['ACCEPT', 'CHALLENGE'], val: ['PASS', 'FAIL'],
@@ -104,7 +97,7 @@ function sessions(calls, audit, pipeline) {
 // leaves it), never a start line read off the log — a call cut before it answered booked nothing and left its "spawned"
 // line standing, and a node parked for its issuer drew an open execution for 40 min (a void row, 2026-10-26). The log
 // gives only who was spawned, for the bar's label.
-const PROC_KIND = {delegated_execution: 'exec', delegated_consent: 'consent', validate_result: 'val', validate_scope: 'val',
+export const PROC_KIND = {delegated_execution: 'exec', delegated_consent: 'consent', validate_result: 'val', validate_scope: 'val',
                    issuer_turn: 'issuer', auto_decompose: 'plan', review_decomposition: 'plan'};
 function openSessions(procs, pipeline, now) {
     const who = {};
@@ -140,30 +133,37 @@ export const roundsOf = (audit, id) => rounds(audit.map(a => ({...a, t: at(a.tim
 export function waitsOf(nodes, edges, engine = null, steps = null) {
     const by = Object.fromEntries(nodes.map(n => [n.id, n]));
     return Object.fromEntries(nodes.map(n => {
-        if (terminal(n.state)) return [n.id, {owes: null, deps: [], parts: []}];
+        if (terminal(n.state)) return [n.id, {owes: null, decides: null, deps: [], parts: []}];
         const deps = n.state === 'ESCALATED' ? [] : engine ? engine.get(n.id) || []
             : edges.filter(e => e.type !== 'parent-child' && e.target === n.id && !delivered(by[e.source])).map(e => e.source);
-        const parts = ['EXECUTING', 'REWORKING'].includes(n.state) ? nodes.filter(k => k.parent_id === n.id && !terminal(k.state)).map(k => k.id) : [];
-        return [n.id, {owes: deps.length || parts.length ? null : owes(n, steps?.get(n.id)), deps, parts}];
+        const parts = consented(n.state) ? childrenOf(nodes, n.id).filter(k => !terminal(k.state)).map(k => k.id) : [];
+        const o = deps.length || parts.length ? null : owes(n, steps?.get(n.id));
+        return [n.id, {owes: o, decides: o === 'issuer' && !OWES_IN_COURSE.has(n.state) ? o : null, deps, parts}];
     }));
 }
-// What is AT WORK now, one rule for the strip and the graph: a node with a session open, or a leaf in a
-// working state (its executor may be a person or a process elsewhere). A parent EXECUTING waits on its parts.
-// `procs`: the processes this server has in flight here — a node one runs on is at work whatever its state (a plan
+// WHAT RUNS NOW, one reading for the strip, the graph and the timeline: the processes this server has in flight here, the
+// nodes at work, and for a node the process on it or on the nearest ancestor that carries it (one session may run a whole
+// part of the plan). At work: a node with a session open, or a leaf in a working state (its executor may be a person or a
+// process elsewhere). A parent EXECUTING waits on its parts. A node a process runs on is at work whatever its state (a plan
 // authored over an offered root, one session carrying a part of the plan on its top node).
 // Under AUTO every executor is this server's, so a working state with no session of it open is not work but a stall —
 // read as "at work" it stood beside the header's "stalled — nothing at work for 3.3h" (critic, a rewound night).
-export function atWork(run, tasks, procs = []) {
-    const parent = new Set(tasks.map(t => t.parent_id)), open = new Set((run?.sessions || []).filter(s => s.open).map(s => s.node));
-    const on = new Set(procs.map(w => w.task_id)), elsewhere = !run?.auto, up = Object.fromEntries(tasks.map(t => [t.id, t.parent_id]));
+// a set of roles' totals, the costliest first, each with its share of their sum
+export const byRole = parts => { const all = Object.values(parts).reduce((s, p) => s + p.cost, 0) || 1;
+    return Object.entries(parts).sort((a, b) => b[1].cost - a[1].cost).map(([k, p]) => [k, p, p.cost / all]); };
+// Something runs here now: a process in flight or a session open — the stall's test and the clock's, one rule
+export const busyNow = (procs, sessions = []) => procs.length > 0 || sessions.some(s => s.open);
+export function runNow(tasks, procs = [], sessions = [], auto = false) {
+    const parent = new Set(tasks.map(t => t.parent_id)), open = new Set(sessions.filter(s => s.open).map(s => s.node));
+    const on = new Map(), up = ancestorsIn(tasks);
+    for (const w of procs) if (!on.has(w.task_id)) on.set(w.task_id, w);
     // …but a leaf one scope session carries is at work: a process or an open session on an ancestor is its session
-    const carried = id => { for (let x = up[id]; x; x = up[x]) if (on.has(x) || open.has(x)) return true; return false; };
-    return new Set(tasks.filter(t => on.has(t.id) || open.has(t.id)
-        || (working(t.state) && !parent.has(t.id) && (elsewhere || carried(t.id)))).map(t => t.id));
+    const carried = id => up(id).some(x => on.has(x) || open.has(x));
+    const work = new Set(tasks.filter(t => on.has(t.id) || open.has(t.id)
+        || (working(t.state) && !parent.has(t.id) && (!auto || carried(t.id)))).map(t => t.id));
+    const carrier = id => { const x = [id, ...up(id)].find(x => on.has(x)); return x ? [x, on.get(x)] : []; };
+    return {procs, work, on: id => on.get(id), carrier};
 }
-// The same fact in words, for every view that says it: "Floor compiler", "its 2 parts", "the executor".
-export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
-    : w.parts.length ? `its ${w.parts.length} part${w.parts.length > 1 ? 's' : ''}` : w.owes ? `the ${w.owes}` : '—';
 // What holds the most back: following each waiting node's Dep producers up to the ones that wait on
 // nothing themselves — those are the work everything behind them is queued on — and counting, per such
 // producer, the nodes it holds (directly or through others).
@@ -252,27 +252,25 @@ function work(calls) {
         if (c.node_id && !c.resumed) (((byNode[c.node_id] ??= {})[kind] ??= {})[model] = (byNode[c.node_id][kind][model] || 0) + 1);
         // what the cost went to: a priced Claude call with its cache kept apart, weighed by the price structure
         const w = /^claude-/.test(model) && c.cost_usd && c.input_tokens != null && c.cache_read_tokens != null
-            && TOKEN_PRICE.map(([k, x]) => [k, (c[k] || 0) * x]);
-        if (w) (r.weighed ??= []).push({w, cost: c.cost_usd, rate: c.cost_usd / sum(w, ([, v]) => v), resumed: !!c.resumed});
+            && Object.fromEntries(TOKENS.map(([k, , x]) => [k, (c[k] || 0) * x]));
+        if (w) (r.weighed ??= []).push({w, cost: c.cost_usd, rate: c.cost_usd / sum(Object.values(w), v => v), resumed: !!c.resumed});
     }
     for (const r of Object.values(rows)) r.split = split(r);
     return {rows: Object.values(rows).sort((a, b) => b.cost - a.cost), byNode, unanswered, unansweredOn,
             total: sum(calls, c => c.cost_usd || 0)};
 }
 
-// A session's cost is reported as one sum. Its split by kind of token is read off Anthropic's price structure — per
-// input token 1, output 5, cache read 0.1, cache written 2 (Claude Code writes the one-hour cache) — over the sessions
+// A session's cost is reported as one sum. Its split by kind of token is read off Anthropic's price structure (vocab.js
+// TOKENS) over the sessions
 // it prices: those whose implied input rate is within 2% of the row's median. Measured 2026-10-27 over every E3 row
 // with the cache kept apart: 807 of 820 fresh sessions price within 2%. The ones that do not are resumed rounds booked
 // before 7213607, which recorded the whole conversation's cost (the CLI's running total) — their predecessor's cost
 // counted twice; the split leaves them out and says which share of the row's cost it covers, and why.
 // Another provider's sessions are not split: its price structure is not known here.
-export const TOKEN_PRICE = [['input_tokens', 1], ['output_tokens', 5], ['cache_read_tokens', 0.1], ['cache_write_tokens', 2]];
-const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.length - 1) >> 1]; };
 function split(r) {
     if (!r.weighed) return null;
     const rate = median(r.weighed.map(x => x.rate)), held = r.weighed.filter(x => Math.abs(x.rate / rate - 1) <= 0.02);
-    const parts = TOKEN_PRICE.map(([k], i) => [k, rate * sum(held, x => x.w[i][1])]);
+    const parts = TOKENS.map(([k]) => [k, rate * sum(held, x => x.w[k])]);
     const out = r.weighed.filter(x => !held.includes(x));
     return {parts, covered: sum(held, x => x.cost) / Math.max(r.cost, 1e-12), sessions: held.length,
             out: out.length, resumedOut: out.filter(x => x.resumed).length, unweighed: r.calls - r.weighed.length};
@@ -282,35 +280,36 @@ function split(r) {
 // issuer's signature at that seam, the root's is the goal delivered — never summed into one curve.
 // The log keeps only what a FAIL named (Inv-3), so an unnamed criterion of a past verdict is read as
 // standing; a node's CURRENT verdict is read per criterion (`/verdict`), where an undecidable one is
-// ⊥, not pass. A Dep edge's bare declaration (`dep__…` with no check) is no criterion of its consumer — V leaves it
-// out (Spec.conjuncts); a `dep__` that pins a check on this result is one, like any other.
-export const conjunct = c => !c?.depends_on || !!c.check?.length;
+// ⊥, not pass. A Dep edge's bare declaration is no criterion (vocab.js `conjunct`).
 // What a FAIL named, read by that rule: the node's criteria it failed, and the bare Dep edges an older engine judged.
 export const failedOf = (run, id, failed = []) => ({own: failed.filter(c => run.criteria.names[id]?.includes(c)),
                                                      edges: failed.filter(c => !run.criteria.names[id]?.includes(c))});
-export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
-export const failedWords = (run, id, failed) => { const {own, edges} = failedOf(run, id, failed);
-    return [own.join(' · '), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`].filter(Boolean).join('; ') || 'no criterion named'; };
 const V = {pass: 'pass', fail: 'fail'};
+// A CRITERION'S VALUE AT ONE VERDICT, one rule for Progress, the coverage and the panel's rounds: [value, why ⊥]. The
+// verdict's own per-criterion record where it has one; else a PASS is every criterion passing (V, §2.3), and a FAIL's
+// record keeps only what it named (Inv-3), so the rest of a past FAIL is ⊥, not pass — read as pass, a root's curve rose
+// to 14/16 over rounds whose own record was 0/16. A delivery not answered yet has no value.
+export const critAt = (r, c) => !r.verdict ? ['⊥', 'unanswered']
+    : r.per ? (v => V[v] ? [v] : ['⊥', v ? 'undecided' : 'unrecorded'])(r.per.find(x => x.criterion === c)?.verdict)
+    : r.verdict === 'PASS' ? ['pass'] : r.failed.includes(c) ? ['fail'] : ['⊥', 'unkept'];
+// A verdict's per-criterion record: its own (the node's verdict history joined to its signal); else, for the node's last
+// verdict, its current record when that is the same verdict — rounds recorded before the history was kept have neither
+export const recordOf = (own, last, current, signal) =>
+    own?.length ? own : last && current?.verdict === signal && current.per_criterion?.length ? current.per_criterion : undefined;
 function criteria(audit, tasks, verdicts) {
-    const names = Object.fromEntries(tasks.map(t => [t.id, (t.criteria || []).filter(conjunct).map(c => c.name || c)]));
+    const names = Object.fromEntries(tasks.map(t => [t.id, criteriaOf(t)]));
     // one track per NODE, its own criteria at its own verdicts: a count across a level summed parts of unrelated
     // parents, one closed beside one not begun (author, 2026-10-25: «два внука от разного родителя … что отобразится»)
-    const status = {}, verdictRows = audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL') && names[a.task_id]);
+    const status = {}, verdictRows = audit.filter(a => isVerdict(a) && names[a.task_id]);
     const last = Object.fromEntries(verdictRows.map(a => [a.task_id, a])), joined = joinHistory(verdictRows, verdicts);
     const track = Object.fromEntries(tasks.map(t => [t.id, {total: names[t.id].length, steps: [], marks: []}]));
     for (const a of verdictRows) {
         const failed = new Set((a.failed_criteria || []).filter(c => names[a.task_id].includes(c))), T = track[a.task_id];
-        // each verdict's own per-criterion record: the node's verdict history joined to its signal (`joinHistory`); else, for
-        // the last, the node's current verdict — rounds recorded before the history was kept have neither, and read as a bound
-        const rec = a.per_criterion || joined.get(a)
-            || (last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal && verdicts[a.task_id].per_criterion);
-        const per = rec && Object.fromEntries(rec.map(c => [c.criterion, V[c.verdict] || '⊥']));
-        // a PASS is every criterion passing (V, §2.3); a FAIL's record keeps only what it named (Inv-3), so the rest of a
-        // past FAIL is ⊥, not pass — read as pass, a root's curve rose to 14/16 over rounds whose own record was 0/16
-        status[a.task_id] = Object.fromEntries(names[a.task_id].map(c => [c, per ? per[c] || '⊥'
-            : a.signal === 'PASS' ? 'pass' : failed.has(c) ? 'fail' : '⊥']));
-        const known = !!per || a.signal === 'PASS' || failed.size === T.total,
+        // a round without a record of its own reads as a bound
+        const r = {verdict: a.signal, failed: [...failed],
+                   per: recordOf(a.per_criterion || joined.get(a), last[a.task_id] === a, verdicts[a.task_id], a.signal)};
+        status[a.task_id] = Object.fromEntries(names[a.task_id].map(c => [c, critAt(r, c)[0]]));
+        const known = !!r.per || a.signal === 'PASS' || failed.size === T.total,
               k = known ? Object.values(status[a.task_id]).filter(v => v === 'pass').length
                         : T.total - failed.size;                      // unknown: at most the criteria it did not name
         // an unrecorded FAIL still caps the curve, never above its bound — after a PASS it may not stand at the PASS's level;
@@ -339,12 +338,12 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
     audit = audit.map((a, pos) => ({...a, pos, t: at(a.timestamp)})).sort((a, b) => a.t - b.t || a.pos - b.pos);
     // …each verdict row carries its own per-criterion record from the node's history, so every round read off the log
     // has it — the panel's criterion histories too, not only Progress (critic: the panel drew ⊥ for a criterion kept as pass)
-    const per = joinHistory(audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL')), verdicts);
+    const per = joinHistory(audit.filter(isVerdict), verdicts);
     audit = audit.map(a => per.has(a) && !a.per_criterion ? {...a, per_criterion: per.get(a)} : a);
     const ss = sessions(calls, audit, pipeline), open = openSessions(procs, pipeline, now);
-    const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
+    const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, nameOf(n)]));
     return {
-        name: id => names[id] || id, auto,
+        name: id => names[id] || id, auto, now: runNow(tasks, procs, all, auto),
         sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting, steps),
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),

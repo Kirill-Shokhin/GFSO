@@ -1,24 +1,36 @@
 // Wiring: the page's start, its refresh policy, and the one dispatch from `data-action` controls and
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
 import {$} from './dom.js';
-import {TASK, GOAL, getJSON} from './api.js';
+import {TASK, GOAL, getJSON, singleFlight} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal} from './vocab.js';
-import {initGraph, refreshGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
-import {refreshHeader, refreshQuality, toggleReports, stopRun, startRun} from './header.js';
-import {refreshProjects, switchProject, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject} from './projects.js';
-import {selectTask, closeSidebar, resign, openReader} from './panel.js';
+import {loadGraph, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
+import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
+import {drawHeader, drawQuality, toggleReports, stopRun, startRun} from './header.js';
+import {refreshProjects, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject} from './projects.js';
+import {selectTask, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
 import * as goal from './goal.js';
-import {mountDeck, refreshDeck, onPipeline, onInflight, suggestHeight} from './deck.js';
+import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight} from './deck.js';
 import {connectWS} from './live.js';
+import {askProjectName} from './overlays.js';
 import {mountHints} from './hints.js';
 
+// THE REFRESHES, each a read of the page's model (model.js) and then the drawing of what it read. SERIALISED (api.js
+// singleFlight): a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each other.
+const refreshGraph = singleFlight(async () => {
+    try { const ok = await loadGraph(); rebuildRun(); await drawGraph(ok); } catch (e) { console.error('refreshGraph:', e); } });
+const refreshHeader = singleFlight(async () => { await loadFrontier(); await loadReports(); await drawHeader(); });
+const refreshQuality = async () => { await loadMetrics(); drawQuality(); };
+const refreshDeck = singleFlight(async () => { await loadRun(); paintDeck(); });
 const refreshAll = async () => { await refreshGraph(); goal.labelGoalButton(); await refreshQuality(); await refreshHeader(); };
 S.reload = async () => { await refreshAll(); if (focus().select) await selectTask(focus().select); };
 const projects = () => refreshProjects().then(onInflight);
+// news on the narration re-reads the run, once a burst of it has settled
+let soon = null;
+const later = () => (clearTimeout(soon), soon = setTimeout(refreshDeck, 1500));
 // what reads the run once the deck has rebuilt it
 const afterDeck = () => { annotate(); refreshHeader(); if (focus().select) resign(focus().select); };
 
@@ -30,7 +42,7 @@ async function applyInFlight(list) {
     const was = here();
     S.inflight = list || [];
     if (JSON.stringify(busyByProject()) !== before) projects();
-    onInflight(); annotate();
+    rebuildRun(); onInflight(); annotate();      // what runs now, read again from the run's last read
     // a process starting or ending here re-reads the graph and the header: a plan authored, or a session ending,
     // moves no transition this page hears, and the header said "no goal yet" through a whole planning (live run)
     if (here() !== was) { await refreshAll(); refreshDeck().then(afterDeck); }
@@ -40,22 +52,25 @@ const readInFlight = () => getJSON('/api/runtime').then(r => applyInFlight(r.in_
     .catch(() => { /* the strip keeps its last count; the socket banner says when the server is gone */ });
 
 const ACT = {
-    'run-stop': stopRun, 'run-start': startRun,
+    'run-stop': async () => { if (await stopRun() === '') await refreshHeader(); },
+    'run-start': async () => { if (await startRun() === '') await refreshHeader(); },
     close: () => point('select', null), select: d => point('select', d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip')),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
     mine: toggleMine, pop: (d, b) => b.closest('.hd-quality').classList.toggle('open'), reports: toggleReports, 'close-modal': author.closeModal,
     projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects, 'project-delete': deleteProject,
-    'project-new': () => (closeProjects(), switchProject('__new__')),
+    'project-new': () => (closeProjects(), askProjectName()),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
     'gp-scope': goal.addScope, 'gp-risk': goal.addRisk, 'gp-create': goal.createGoal, 'gp-plan': goal.planGoal,
     'edit-add-criterion': () => author.addEditCriterion(), 'edit-add-risk': () => author.addEditAcceptedRisk(),
     'submit-edit': author.submitEdit, 'add-child': author.addChildForm, 'submit-decompose': author.submitDecompose,
     'child-suggest': author.suggestChildCriteria, 'child-criterion': author.addChildCriterion, 'child-risk': author.addChildAcceptedRisk,
 };
-// Esc closes an open popover too, as it closes the panels
-document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.hd-quality.open').forEach(p => p.classList.remove('open')); });
+// Esc closes whatever is open over the page: a popover, the reader, the goal form, the projects list
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return;
+    document.querySelectorAll('.hd-quality.open').forEach(p => p.classList.remove('open'));
+    closeReader(); goal.closeGoal(); closeProjects(); });
 document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]'), mine = e.target.closest('.hd-quality');
     // one popover at a time: a click anywhere else, or on a link inside one, closes the open ones
@@ -76,7 +91,7 @@ watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : c
 
 const LIVE = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
-    pipeline: d => { onPipeline(d); if (d.source === 'pause') { refreshHeader(); projects(); } },
+    pipeline: d => { if (onPipeline(d)) later(); if (d.source === 'pause') { refreshHeader(); projects(); } },
     projects,                                          // a project appeared
     // this tab's own project came to exist while the feed was refused: nothing of it was pushed here, so read it all
     async reopened() { await S.reload(); await readInFlight(); refreshDeck().then(afterDeck); },
@@ -87,6 +102,7 @@ const LIVE = {
     async transition(d) {
         const t = S.tasks.find(x => x.id === d.task_id);
         if (t) t.state = d.new_state;                  // the tooltip reads the cache
+        rebuildRun();                                  // …and what runs now is read again over the new state
         // A node that SETTLES changes more than its colour — how it closed is drawn on it — so terminal
         // transitions take the long way round, which is one read.
         if (!restyle(d.task_id, d.new_state) || terminal(d.new_state) || d.new_state === 'ESCALATED') await refreshGraph();
@@ -102,7 +118,7 @@ async function init() {
     // THE PAGE MUST FAIL LOUDLY, NOT BLANKLY: the graph library is a remote script, and with the CDN
     // unreachable a first-time user saw a toolbar over an empty page and no error (2026-09-02).
     if (!window.cytoscape || !window.dagre) {
-        $('cy').innerHTML = '<div style="padding:24px;max-width:60ch">'
+        $('cy').innerHTML = '<div class="cy-failed">'
             + '<b>The graph library did not load.</b><br><br>This page fetches cytoscape and dagre from '
             + 'unpkg.com, so it needs the network the first time. Everything else works: the API is '
             + 'local (<code>/api/tasks</code>, <code>/api/graph</code>), and <code>gfso status</code> '
@@ -118,6 +134,11 @@ async function init() {
     } catch (e) { /* the box keeps what it had; the engine still refuses a stranger */ }
     await loadCheckMap();
     mountDeck();
+    // A DISPLAY CLOCK, not a poll: while something runs, the ages it shows ("validating · 2m") and the open bars grow
+    // with time and with nothing pushed — a session busy with tools streams no tokens. Minutes are the coarsest unit
+    // shown, so 30 s keeps every figure within half its own step; no server read. A call booked in the ledger arrives
+    // as the engine's `usage` line, which re-reads the run.
+    setInterval(() => { if (runIsOpen()) { rebuildRun(); paintDeck(); } }, 30e3);
     await initGraph();
     await refreshAll();
     suggestHeight(graphNeeds());

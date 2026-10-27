@@ -4,10 +4,10 @@
 import {esc} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
-import {frame, mark, trim} from './draw.js';
-import {KIND_NAME, waitWords, atWork, failedOf, failedWords} from './run.js';
-import {TIP} from './hints.js';
-import {procs} from './state.js';
+import {frame, mark} from './draw.js';
+import {trim} from './fmt.js';
+import {failedOf} from './run.js';
+import {TIP, KIND, waitWords} from './hints.js';
 
 // an outlined bar (an issuer's turn, a consent) is drawn over the filled ones: it can run beside an execution or a
 // validation (a challenge answered while the work goes on), and beneath them it hid; its outline shows what lies under it
@@ -19,7 +19,7 @@ const STEM = 9, JOIN = 3 * 60e3;                                   // a verdict'
 // first started; the nodes that never ran last, saying what they wait on.
 function rows(run, nodes) {
     const first = id => Math.min(...run.sessions.filter(s => s.node === id).map(s => s.start), Infinity);
-    const now = atWork(run, nodes, procs()), rank = id => run.depth[id] === 0 ? 0 : now.has(id) ? 1 : first(id) < Infinity ? 2 : 3;
+    const now = run.now.work, rank = id => run.depth[id] === 0 ? 0 : now.has(id) ? 1 : first(id) < Infinity ? 2 : 3;
     return nodes.map(n => n.id).sort((a, b) => rank(a) - rank(b) || first(a) - first(b) || run.depth[a] - run.depth[b]);
 }
 
@@ -41,6 +41,8 @@ function stretches(run) {
             if (s.handover) last.handed.push(s.end);
         } else out.push({...s, parts: 1, busy: s.ms ?? s.end - s.start, agents: s.agent ? [s.agent] : [], handed: s.handover ? [s.end] : []});
     }
+    // what is left of its processes once those that continued or were handed over are counted: retries
+    for (const x of out) x.retried = x.parts - 1 - (x.continued || 0) - x.handed.length;
     return out;
 }
 
@@ -63,7 +65,7 @@ export function render(el, run, nodes) {
     // consent shown only where a run has it: rows recorded before it was booked apart have none
     const kinds = ['exec', ...(run.sessions.some(s => s.kind === 'consent') ? ['consent'] : []), 'val', 'issuer'], legendW = kinds.length * 92;
     const legend = kinds.map((k, i) =>
-        `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND_NAME[k]}</text>`).join('');
+        `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 4}" width="${W}" height="${ROW}"/>
         <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" x="${LEFT - 10}" y="${Y(id) + 4}">${esc(trim(name(id)))}</text>
@@ -89,8 +91,8 @@ export function render(el, run, nodes) {
         const v = e.target.closest('[data-v]');
         if (v) {
             const id = v.closest('[data-node]').dataset.node, r = run.rounds[id].find(r => String(r.n) === v.dataset.v);
-            const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), {own, edges} = failedOf(run, id, r.failed);
-            return tip(TIP.verdict(name(id), r.verdict, r, r.at, own, m, T?.total, edges), e);
+            const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), f = failedOf(run, id, r.failed);
+            return tip(TIP.verdict(name(id), r.verdict, r, r.at, f, m, T?.total), e);
         }
         const s = e.target.closest('.tl-s');
         if (!s) return untip();

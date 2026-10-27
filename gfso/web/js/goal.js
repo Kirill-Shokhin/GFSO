@@ -4,12 +4,12 @@
 import {$, esc} from './dom.js';
 import {getJSON, post, refusal} from './api.js';
 import {S, myRole} from './state.js';
-import {notice, askInPage} from './overlays.js';
+import {notice, askInPage, act, askProjectName, NO_ANSWER} from './overlays.js';
 import {PLAN_COST, modeDoc} from './vocab.js';
 import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest} from './forms.js';
-import {switchProject} from './projects.js';
+import {rootOf} from './tree.js';
 
-const root = () => S.tasks.find(t => !t.parent_id);
+const root = () => rootOf(S.tasks);
 const panel = () => $('goal-panel');
 const say = text => { $('gp-out').innerHTML = text ? `<div class="gp-say">${esc(text)}</div>` : ''; };
 const mode = () => S.graph.mode?.mode || '';
@@ -23,7 +23,7 @@ export const labelGoalButton = () => { $('btn-goal').hidden = !!root(); };
 export async function openGoal() {
     if (root()) {
         notice('This project holds its goal, and a project holds one: name a new project — its goal is stated there.');
-        return switchProject('__new__', {goal: 1});
+        return askProjectName({goal: 1});
     }
     $('gp-project').innerHTML = `<p class="gp-note">The goal of <b>${esc(S.project || 'the active project')}</b>.</p>`;
     $('gp-assignee').value ||= myRole();
@@ -33,7 +33,6 @@ export async function openGoal() {
     check();
 }
 export const closeGoal = () => { panel().hidden = true; };
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !panel().hidden) closeGoal(); });
 
 // ── who holds the work: shown, not chosen here — a mode is the user's choice made once before the plan, and
 // set by their agent (`set_mode`) once its executors and validator are registered; the page reads what each
@@ -107,13 +106,12 @@ async function submit(plan) {
     say('');
     const who = v.assignee ? {assignee: v.assignee} : {}, done = () => { closeGoal(); S.reload(); };
     if (!plan) {
-        const no = await refusal(await post('/api/run/create_task', {spec: {name: v.name, description: v.description,
-            criteria: v.criteria, scope: v.scope, accepted_risks: v.accepted_risks}, deadline: v.deadline, ...who}));
-        return no ? say(no) : done();
+        return act(post('/api/run/create_task', {spec: {name: v.name, description: v.description,
+            criteria: v.criteria, scope: v.scope, accepted_risks: v.accepted_risks}, deadline: v.deadline, ...who}), {to: say, ok: done});
     }
     // A plan runs for minutes and the server keeps running it whoever waits: a quick answer is a refusal and is
     // shown here; a slow one is a run, followed in the deck.
-    const run = post('/api/run/auto_decompose', {request: asText(v), ...who}).then(refusal);
+    const run = post('/api/run/auto_decompose', {request: asText(v), ...who}).then(refusal, () => NO_ANSWER);
     const quick = await Promise.race([run, new Promise(ok => setTimeout(() => ok(null), 5000))]);
     if (quick) return say(quick);
     if (quick === null) run.then(n => n ? notice(`The plan was refused: ${n}`, 'bad') : S.reload());

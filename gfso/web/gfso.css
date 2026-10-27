@@ -19,6 +19,12 @@
     --hair-soft:      color-mix(in srgb, var(--ink)  5%, transparent);
     --hair-on-chrome: color-mix(in srgb, var(--bg)  12%, transparent);
 
+    /* A cancelled node's tombstone — the canvas (graph.js) and the key read these */
+    --ui-tomb:        #8a8a8a;
+    --ui-tomb-line:   #6a6a6a;
+    /* One beat for everything that pulses; JS reads it to keep a redrawn mark in phase (draw.js beat) */
+    --pulse:          1.6s;
+
     /* Five visual buckets (the rows live in js/vocab.js):
          done      — DONE
          quiet     — IDLE, ABANDONED
@@ -116,7 +122,7 @@ body {
 .hd-run { cursor: pointer; opacity: 0.6; }
 .hd-run:hover { opacity: 1; border-color: var(--ui-on-chrome); }
 .hd-run-state { border-color: var(--ui-on-chrome); }
-.hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse 1.6s ease-in-out infinite; }
+.hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .hd-needs { display: flex; gap: 8px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
 .need b { font-weight: 600; }
@@ -260,7 +266,7 @@ body {
 .tl .tl-plan { fill: var(--paper); stroke: var(--ink-faint); }
 /* a running bar breathes, but never pales into the validation colour: at the dots' .45 a black execution bar read as a
    grey validation one in a screenshot (2026-10-26) */
-.tl .tl-open { animation: tl-breathe 1.6s ease-in-out infinite; }
+.tl .tl-open { animation: tl-breathe var(--pulse) ease-in-out infinite; }
 @keyframes tl-breathe { 50% { opacity: .75; } }
 @keyframes tl-pulse { 50% { opacity: .45; } }
 /* The brand's bordeaux marks the real done — a PASS; a FAIL speaks by its shape, in ink. */
@@ -344,7 +350,7 @@ body {
 .cs-exec { background: var(--ink); }
 .cs-consent { background: var(--bg); box-shadow: inset 0 0 0 1px var(--ink); }
 .cs-val { background: var(--ink-faint); }
-.cs-issuer { background: var(--ink-soft); }
+.cs-issuer { background: var(--bg); box-shadow: inset 0 0 0 1px var(--ink-soft); }
 .cs-plan { background: var(--paper); box-shadow: inset 0 0 0 1px var(--ink-faint); }
 /* Events — a node's trail, its state and its last FAIL in the head. */
 .ev-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
@@ -400,7 +406,7 @@ body {
 .dk-idle { color: var(--ink-faint); }
 .dk-live { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 11.5px; background: var(--hair-soft); border: 1px solid var(--hair); border-radius: 2px; padding: 1px 8px; cursor: pointer; color: var(--ink); }
 .dk-live i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--ink-soft); }
-.dk-live.on i { background: var(--acc); border-color: var(--acc); animation: tl-pulse 1.6s ease-in-out infinite; }
+.dk-live.on i { background: var(--acc); border-color: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .dk-live span { font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft); }
 /* a chip shortens its name to a readable floor, never its state; below that floor it goes into the count (deck.js drawStrip) */
 .dk-live { flex: 0 1 auto; min-width: 10.5em; overflow: hidden; }
@@ -418,7 +424,7 @@ body {
 .cy-badge span { font-family: var(--font-mono); font-size: 9.5px; line-height: 1; padding: 3px 5px; border-radius: 8px; background: var(--bg); color: var(--ink); border: 1px solid var(--ink-soft); }
 .cy-badge span.cy-fails { border-color: var(--acc); color: var(--acc); }
 .cy-live { width: 9px; height: 9px; border-radius: 50%; background: var(--bg); border: 2px solid var(--ink-soft); }
-.cy-live.on { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); animation: tl-pulse 1.6s ease-in-out infinite; }
+.cy-live.on { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .tl .tl-wait { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-faint); font-style: italic; }
 
 /* ============ Overlays (js/overlays.js) — the page's own notice, question and banners ============ */
@@ -437,6 +443,12 @@ body {
                max-height: 40vh; overflow: auto; white-space: pre-wrap; cursor: pointer; }
 #ask-box { top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 60; max-width: 520px;
            padding: 14px 16px; font-size: 13px; box-shadow: 0 6px 28px rgba(0,0,0,.5); }
+#ask-box .ask-q { margin-bottom: 10px; }
+#ask-box .ask-text { width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+#new-project-box { display: inline-flex; gap: 4px; margin-left: 6px; }
+#new-project-name { width: 150px; }
+.cy-failed { padding: 24px; max-width: 60ch; }
+.item-list li.faint { color: var(--ui-text-faint); }
 #undrawable { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 20; max-width: 70%;
               padding: 6px 12px; border-radius: 6px; line-height: 1.4; box-shadow: 0 1px 6px rgba(0,0,0,.35); }
 #gfso-conn { left: 0; right: 0; bottom: 0; z-index: 9999; padding: 6px 12px; border-radius: 0; font-family: var(--font-body); line-height: 1.4;
@@ -756,6 +768,26 @@ body {
 }
 .modal .btn-muted { color: var(--ui-text-soft); border-color: var(--hair); opacity: 1; }
 .modal .btn-muted:hover { color: var(--ui-text); border-color: var(--ui-text-soft); }
+
+/* the panel's inline forms (acts.js) */
+.section.act-form { border-top: 1px solid var(--hair); padding-top: 8px; }
+.actions.act-buttons { margin-top: 8px; }
+.act-faint { font-size: 12px; color: var(--ui-text-faint); }
+.act-faint.block { display: block; }
+.act-faint.above { margin-top: 6px; }
+.act-faint.below { margin-bottom: 6px; }
+.act-check { display: block; font-size: 13px; }
+.act-field { width: 100%; box-sizing: border-box; }
+.act-crit { margin: 6px 0; }
+.act-small { font-size: 12px; }
+/* the Decompose modal's subtask rows (author.js) */
+.child-form .dc-assignee { width: 120px; }
+.child-form .dc-deadline { width: 180px; }
+.child-form .dc-ai { margin-left: 4px; }
+.child-form .dc-criteria-rows { margin-top: 4px; }
+.child-form .dc-accepted_risks-rows { margin-top: 6px; }
+.child-form .dc-add { font-size: 10px; }
+.section-title.map-title { border-color: var(--hair); padding-bottom: 4px; margin: 14px 0 8px; }
 
 .criterion-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
 .criterion-row input {
@@ -1083,6 +1115,9 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .dk-block span { color: var(--ink-faint); }
 .cs-chart h4 span { text-transform: none; letter-spacing: 0; }
 .dk-chips { display: flex; gap: 6px; min-width: min(13.5em, 30%); overflow: hidden; flex: 0 1 auto; }   /* one chip and its +N, within a third of the line: below 1280 px the waits pushed off */
+.dk-strip.fit > :not(.dk-chips) { flex-shrink: 0; }
+.dk-strip.fit .dk-live { overflow: visible; }
+.dk-strip.fit .dk-live em { min-width: 12ch; }
 .dk-more { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); align-self: center; }
 /* what is at work keeps its chips; the wait lines give way first, shortened, their whole text on hover */
 .dk-block, .dk-wait { flex: 0 3 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; }
@@ -1203,7 +1238,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .kn-attend { background: var(--ink-soft); }
 .kn-pathology { background: var(--ink-soft); border: 1.5px dashed var(--ink); }
 .kn-quiet { border: 1px solid var(--ink-faint); }
-.kn-cancelled { background: #8a8a8a; border: 1px dashed #6a6a6a; opacity: 0.4; }
+.kn-cancelled { background: var(--ui-tomb); border: 1px dashed var(--ui-tomb-line); opacity: 0.4; }
 .kn-contested { background: var(--ink); border: 3px solid var(--acc); }
 .kn-byhand { background: var(--ink); border: 2px dotted var(--paper); }
 .kb { font-family: var(--font-mono); font-size: 9.5px; line-height: 1; padding: 2px 5px; border-radius: 8px; color: var(--ink); border: 1px solid var(--ink-soft); }

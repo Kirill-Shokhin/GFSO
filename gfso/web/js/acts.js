@@ -2,20 +2,23 @@
 // EVERY SIGNAL THAT CARRIES TEXT ASKS FOR IT IN THE PANEL: a native `prompt()` is one line, unstylable,
 // and BLOCKS the page — a tester's tab froze on `Deliver` and the delivery was lost (wave 26).
 import {$, esc, data} from './dom.js';
-import {getJSON, post, refusal} from './api.js';
-import {S, taskOf, critNames, hasKids, myRole} from './state.js';
-import {mark, PLAN_COST} from './vocab.js';
-import {notice, clearNotice, askInPage} from './overlays.js';
+import {task, post} from './api.js';
+import {S, taskOf, hasKids, myRole} from './state.js';
+import {mark, PLAN_COST, criteriaOf} from './vocab.js';
+import {notice, clearNotice, askInPage, act} from './overlays.js';
+
+// the criteria a verdict is over — a Dep edge's bare declaration is none, and a FAIL may not name it
+const critNames = id => criteriaOf(taskOf(id));
 
 const form = html => {
     const f = $('inline-form');
-    if (f) f.innerHTML = `<div class="section" style="border-top:1px solid var(--ui-line,#3334);padding-top:8px">${html}</div>`;
+    if (f) f.innerHTML = `<div class="section act-form">${html}</div>`;
 };
 export const closeForm = () => { const f = $('inline-form'); if (f) f.innerHTML = ''; };
-const buttons = (attrs, label) => `<div class="actions" style="margin-top:8px">`
+const buttons = (attrs, label) => `<div class="actions act-buttons">`
     + `<button class="btn btn-sm"${data(attrs)}>${label}</button>`
     + `<button class="btn btn-sm btn-muted" data-action="form-cancel">Cancel</button></div>`;
-const faint = (text, style = '', tag = 'div') => `<${tag} style="${style}font-size:12px;color:var(--ui-text-faint)">${text}</${tag}>`;
+const faint = (text, cls = '', tag = 'div') => `<${tag} class="act-faint${cls}">${text}</${tag}>`;
 
 // `Fail` asked for failed criteria as free text, and a name outside the contract is refused (Inv-3) —
 // so they are the node's own criteria, as checkboxes.
@@ -24,18 +27,18 @@ const faint = (text, style = '', tag = 'div') => `<${tag} style="${style}font-si
 // finding demanded (critic). The candidates are only the ids the standing CHALLENGE named; the door refuses others.
 let ruling = [];
 async function acceptChallenge(a) {
-    const d = await getJSON(`/api/tasks/${encodeURIComponent(a.id)}`).catch(() => null);
+    const d = await task(a.id).catch(() => null);
     const said = [...(d?.audit || [])].reverse().find(x => x.signal === 'CHALLENGE' && !x.rejected)?.reason || '';
     // the engine keeps them as {criterion: [probes]} (engine/__init__.py); a finding is named by its id or its bare hash
     const rp = d?.regression_probes || [], all = Array.isArray(rp) ? rp : Object.values(rp).flat();
     ruling = all.filter(p => p?.id && (said.includes(p.id) || said.includes(String(p.id).split('#').pop())));
     if (!ruling.length) return submitAction(a.id, a.sig, {});
     form(`<div class="section-title">${a.sig}</div>`
-        + faint('Findings the challenge names — tick those this ruling retires (they stop being demanded):', 'display:block;', 'label')
-        + ruling.map((p, i) => `<label style="display:block;font-size:13px"><input type="checkbox" id="sa-ret-${i}"> ${esc(p.id)}`
+        + faint('Findings the challenge names — tick those this ruling retires (they stop being demanded):', ' block', 'label')
+        + ruling.map((p, i) => `<label class="act-check"><input type="checkbox" id="sa-ret-${i}"> ${esc(p.id)}`
             + `${p.criterion ? ` · ${esc(p.criterion)}` : ''}${p.command ? ` — <code>${esc(p.command)}</code>` : ''}</label>`).join('')
-        + faint('Why (recorded with the ruling; needed when a finding is retired)', 'display:block;margin-top:6px;', 'label')
-        + `<textarea id="sa-text" rows="3" style="width:100%;box-sizing:border-box"></textarea>`
+        + faint('Why (recorded with the ruling; needed when a finding is retired)', ' block above', 'label')
+        + `<textarea id="sa-text" rows="3" class="act-field"></textarea>`
         + buttons({...a, retire: 1, action: 'send-signal'}, `Send ${a.sig}`));
 }
 
@@ -43,11 +46,11 @@ export function sendAction(a) {
     if (a.sig === 'ACCEPT_CHALLENGE') return acceptChallenge(a);
     if (!a.prompt && !a.fail) return submitAction(a.id, a.sig, {});
     form(`<div class="section-title">${a.sig}</div>`
-        + (a.prompt ? faint(a.prompt, 'display:block;', 'label')
-            + `<textarea id="sa-text" rows="4" style="width:100%;box-sizing:border-box" placeholder="${
+        + (a.prompt ? faint(a.prompt, ' block', 'label')
+            + `<textarea id="sa-text" rows="4" class="act-field" placeholder="${
                 a.prompt === 'result' ? 'what you delivered, and what you checked about it' : a.prompt}"></textarea>` : '')
-        + (a.fail ? faint("Which criteria failed — a FAIL must name at least one, and only this node's own (Inv-3).", 'margin-top:6px;')
-            + critNames(a.id).map((c, i) => `<label style="display:block;font-size:13px"><input type="checkbox" id="sa-fail-${i}"> ${esc(c)}</label>`).join('') : '')
+        + (a.fail ? faint("Which criteria failed — a FAIL must name at least one, and only this node's own (Inv-3).", ' above')
+            + critNames(a.id).map((c, i) => `<label class="act-check"><input type="checkbox" id="sa-fail-${i}"> ${esc(c)}</label>`).join('') : '')
         + buttons({...a, action: 'send-signal'}, `Send ${a.sig}`));
 }
 
@@ -70,16 +73,9 @@ export function submitActionForm(a) {
     return submitAction(a.id, a.sig, body);
 }
 
-// A REFUSAL IS THE ENGINE TALKING TO YOU: it arrives as a 200 whose body says no, and the page used to
-// drop it and refresh — the node did not move and nothing said why.
 async function send(url, body, what) {
     clearNotice();
-    try {
-        const no = await refusal(await post(url, body));
-        if (no) return notice(`${what}: ${no}`, 'bad');
-        closeForm();
-        await S.reload();
-    } catch (e) { console.error(url, e); }
+    await act(post(url, body), {what, ok: async () => { closeForm(); await S.reload(); }});
 }
 const submitAction = (id, signal, extra) =>
     send('/api/run/signal', {task_id: id, signal, source: myRole(), ...extra}, 'the engine refused that signal');
@@ -88,14 +84,14 @@ const submitAction = (id, signal, extra) =>
 // the verdict ("ok") — neither of which a one-line prompt could avoid.
 export function recordVerdict({id}) {
     const d = taskOf(id), me = myRole();
-    const rows = critNames(id).map((c, i) => `<div style="margin:6px 0">${faint(esc(c), 'display:block;', 'label')}`
-        + `<input id="obs-${i}" style="width:100%;box-sizing:border-box" placeholder="what you ran and what it printed">`
-        + `<label style="font-size:12px"><input type="checkbox" id="fail-${i}"> this criterion FAILED</label></div>`).join('');
+    const rows = critNames(id).map((c, i) => `<div class="act-crit">${faint(esc(c), ' block', 'label')}`
+        + `<input id="obs-${i}" class="act-field" placeholder="what you ran and what it printed">`
+        + `<label class="act-small"><input type="checkbox" id="fail-${i}"> this criterion FAILED</label></div>`).join('');
     form(`<div class="section-title">Record a verdict</div>`
-        + faint('One line per criterion, naming what you ran and what it showed. "ok" is refused: it restates the verdict instead of recording a check.', 'margin-bottom:6px;')
-        + `<input id="rv-reviewer" style="width:100%;box-sizing:border-box" value="${esc(d.assignee && me === d.assignee ? '' : me)}"`
+        + faint('One line per criterion, naming what you ran and what it showed. "ok" is refused: it restates the verdict instead of recording a check.', ' below')
+        + `<input id="rv-reviewer" class="act-field" value="${esc(d.assignee && me === d.assignee ? '' : me)}"`
         + ` placeholder="reviewer — must NOT be this node's executor (${esc(d.assignee || '?')})">`
-        + (rows || '<div style="font-size:12px">This node has no criteria, so there is nothing a verdict could be about.</div>')
+        + (rows || '<div class="act-small">This node has no criteria, so there is nothing a verdict could be about.</div>')
         + buttons({action: 'send-verdict', id}, 'Record'));
 }
 
@@ -116,22 +112,21 @@ export async function aiDecompose({id}) {
     // WHAT IT DID TO YOUR CONTRACT, SAID: authoring a subtree REWRITES the node's own criteria, and a tester's
     // four hand-written ones were replaced with no warning (wave 27). The old set is in the log (Inv-7).
     const before = critNames(id);
-    try {
-        const r = await post('/api/run/auto_decompose', {request: taskOf(id).description || '', root_id: id, depth: 1});
-        const no = await refusal(r);
-        if (no) notice('Decomposition refused: ' + no, 'bad');
-        await S.reload();
-        const after = critNames(id), gone = before.filter(n => !after.includes(n));
-        if (gone.length)
-            notice(`This rewrote ${id}'s own criteria: ${gone.join(', ')} ${gone.length > 1 ? 'are' : 'is'} no longer in the set `
-                   + `(the previous contract is in the node's history). Edit restores anything you meant to keep.`, 'bad');
-    } catch (e) { console.error('aiDecompose:', e); }
+    await act(post('/api/run/auto_decompose', {request: taskOf(id).description || '', root_id: id, depth: 1}),
+              {what: 'Decomposition refused', ok: null});
+    await S.reload();
+    const after = critNames(id), gone = before.filter(n => !after.includes(n));
+    if (gone.length)
+        notice(`This rewrote ${id}'s own criteria: ${gone.join(', ')} ${gone.length > 1 ? 'are' : 'is'} no longer in the set `
+               + `(the previous contract is in the node's history). Edit restores anything you meant to keep.`, 'bad');
 }
 
 export async function aiReview({id}) {
     if (!(await askInPage('Run the L2 checker over this decomposition (L0/L1 gate + one causal-entailment call)? It spends one model call.'))) return;
-    try {
-        const d = await (await post('/api/run/review_decomposition', {task_id: id})).json();
+    // a refusal is said like any act's: read as a review, it fell through to «structurally clean»
+    const r = post('/api/run/review_decomposition', {task_id: id});
+    if (!(await act(r.then(x => x.clone()), {what: 'Review refused', ok: null}))) try {
+        const d = await (await r).json();
         if (!d.gate_passed) notice('Gate FAILED — fix L0/L1 first:\n' + (d.l0l1_failures || []).join('\n'), 'bad');
         else if ((d.criteria_verdicts || []).length) {
             const lines = [...d.criteria_verdicts.map(v => `${mark(v.verdict)} ${v.criterion} — ${v.why}`),
@@ -143,6 +138,6 @@ export async function aiReview({id}) {
                 + lines.join('\n').slice(0, 1800));
         } else if (d.semantic_findings) notice('L2 (advisory):\n\n' + d.semantic_findings.slice(0, 1500));
         else notice('Structurally clean; checker not run (no LLM on this server).');
-        await S.reload();     // the panel's stored L2-review section shows the fresh verdict
     } catch (e) { console.error('aiReview:', e); }
+    await S.reload();     // the panel's stored L2-review section shows the fresh verdict
 }

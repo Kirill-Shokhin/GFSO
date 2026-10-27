@@ -4,25 +4,26 @@
 // nothing (they were two modules with seven names across the cut). Buttons carry `data-action` (dispatched in main.js);
 // nothing here sends anything.
 import {$, el, esc, data, section, ul, rebuild} from './dom.js';
-import {PANEL, frame} from './hints.js';
-import {getJSON} from './api.js';
+import {PANEL, frame, waitWords, KIND} from './hints.js';
+import {task} from './api.js';
 import {S, hasKids, taskOf, myRole} from './state.js';
 import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
-        byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE} from './vocab.js';
-import {roundsOf, at, waitsOf, waitWords, conjunct, KIND_NAME as KIND} from './run.js';
+        byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED} from './vocab.js';
+import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
+import {when as at_, stamp, trim, plural} from './fmt.js';
 
-const when = iso => new Date(at(iso)).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+const when = iso => at_(at(iso));
 const link = (facet, label) => `<button class="pn-link" data-action="read" data-facet="${facet}">${label} →</button>`;
 
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
-    const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], id => taskOf(id).name || id);
+    const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], id => nameOf(taskOf(id)) || id);
     return words === '—' ? '' : `<span>waiting on <b>${esc(words)}</b></span> · `;
 }
 
 function head({d, rounds}) {
-    const v = vNow(d, d.audit), name = d.name || d.description || d.id, note = closureNote(d.closure), bad = contested(d.closure);
+    const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure);
     const live = !terminal(d.state), mode = S.graph.mode?.mode;
     return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
         + `<div class="pn-meta">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
@@ -30,7 +31,7 @@ function head({d, rounds}) {
         + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
         + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? PANEL.deadline(at(d.deadline), Date.now()) : ''}>⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
-        + `</div><div class="pn-meta">${waiting(d)}${['EXECUTING', 'REWORKING'].includes(d.state) && (!rounds.length || rounds.at(-1).verdict)
+        + `</div><div class="pn-meta">${waiting(d)}${consented(d.state) && (!rounds.length || rounds.at(-1).verdict)
             ? `round ${rounds.length + 1}, in work` : `round ${rounds.length}`}</div>`
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-meta pn-by" id="pn-by">${signedBy(S.run, d.id)}</div>`
@@ -49,7 +50,7 @@ function verdict({vr}) {
         + `${vr.refused_report && at(vr.refused_report.ts) > at(vr.ts) ? `<span class="check-fail"${PANEL.refused(vr.refused_report.note)}>a later report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
     // what failed is not repeated here: it is the ✗ rows of the criteria list just below
     // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
-    return vr?.refused_report ? `<div class="pn-verdict check-fail"><span class="pn-who">a validator reported and the report was REFUSED as ⊥ — `
+    return vr?.refused_report ? `<div class="pn-verdict check-fail"><span class="pn-who">${PANEL.refusedSaid}`
         + `${esc(vr.refused_report.note || 'the issuer decides')}</span>${link('verdict', 'why')}</div>` : '';
 }
 
@@ -60,13 +61,11 @@ function verdict({vr}) {
 const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = x => `<path class="mk-none" d="M${x - 2.5},3h5M${x},3v-6"/>`;
     // a history of one round says what the mark beside the name says: drawn, it was a lone dot beside a dot (the author)
     // each mark says its own round on hover (a hover on the whole strip said the same line over every mark — critic)
-    // …a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)
-    const one = (r, i) => !r.verdict ? [null, i === rs.length - 1 ? 'not checked yet' : 'no verdict on this delivery']
-        : i === rs.length - 1 && now && now !== 'pass' && now !== 'fail' ? [null, 'not decided at this verdict']
-        : r.per ? (v => v === 'pass' || v === 'fail' ? [v.toUpperCase()] : [null, v ? 'checked, could not be decided' : 'not in this verdict\'s record'])(
-            r.per.find(c => c.criterion === name)?.verdict)
-        : r.verdict === 'FAIL' && !r.failed.includes(name) && !(i === rs.length - 1 && now === 'pass') ? [null, 'not kept: this round\'s record names only what failed']
-        : r.verdict === 'FAIL' && !r.failed.includes(name) ? ['PASS'] : [r.verdict];
+    // the round's value by the run's one rule (`critAt`); the last round reads the current verdict beside it, which may
+    // leave the criterion undecided or keep as passing what an old FAIL's record did not name
+    const one = (r, i) => { const last = i === rs.length - 1, [v, why] = critAt(r, name);
+        return r.verdict && last && now && now !== 'pass' && now !== 'fail' ? [null, 'current']
+            : why === 'unkept' && last && now === 'pass' ? ['PASS'] : v === '⊥' ? [null, last && why === 'unanswered' ? 'unchecked' : why] : [v.toUpperCase()]; };
     return rs.length < 2 ? '' : `<span class="cr-strip">` + rs.map((r, i) => { const [v, why] = one(r, i);
         return `<svg width="8" height="10" viewBox="${i * 8} -5 8 10"${PANEL.round(r.n, v, why)}>${v ? mark(v, i * 8 + 4, 0, 2.5) : open(i * 8 + 4)}</svg>`; }).join('') + '</span>'; };
 
@@ -128,13 +127,12 @@ function actions({d, acts}) {
     const steps = (S.mySteps?.get(d.id) || []).filter(x => !x.performed_by || x.performed_by === me);
     if (!steps.length) return '';
     const said = steps.map(x => `<div class="pn-step"${m.mode === 'auto' ? '' : PANEL.directive(x.directive)}>${esc(x.action)}`
-        + `${m.mode === 'auto' ? '' : ` — ${esc(trimTo(x.directive || '', 220))}`}</div>`).join('');
+        + `${m.mode === 'auto' ? '' : ` — ${esc(trim(x.directive || '', 220))}`}</div>`).join('');
     // outside AUTO the engine's performed_by names the holder even for work its hands do, so the mode's perform still
     // decides that work is the clean session's (critic: Deliver offered beside «PERFORMED BY … WAIT»)
     const waits = m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
     return foot(said, waits ? '' : [...open, ...moves].join(''));
 }
-const trimTo = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
 
 // Who ran a node, in one line for its panel: by role, each model with its sessions on it.
 // A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
@@ -144,24 +142,24 @@ const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r
 const signedBy = (run, id) => [
     ...deliveredBy(run, id),
     ...Object.entries(run?.work.byNode[id] || {}).map(([kind, ms]) =>
-        `${{exec: 'executed', consent: 'consented', val: 'validated', issuer: 'issued', plan: 'planned'}[kind]} by `
+        `${KIND[kind]?.by} by `
         + Object.entries(ms).map(([m, n]) => `<b${PANEL.model(m)}>${esc(modelName(m))}</b>${n > 1 ? ` ×${n}` : ''}`).join(', ')),
-    ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => `<span class="wk-none">${n} session${n > 1 ? 's' : ''} of ${KIND[k]} unanswered</span>`),
+    ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => `<span class="wk-none">${plural(n, 'session')} of ${KIND[k].name} unanswered</span>`),
 ].join(' · ');
 
 const PARTS = [head, verdict, facets, criteria, actions];   // the prose chips above the list, always on screen
 
 export async function selectTask(id) {
     try {
-        const base = `/api/tasks/${encodeURIComponent(id)}`, soft = p => p.catch(() => null);
-        const [d, vr, cr, acts] = await Promise.all([getJSON(base), soft(getJSON(base + '/verdict')), soft(getJSON(base + '/critique')),
-            soft(getJSON(`${base}/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
+        const soft = p => p.catch(() => null);
+        const [d, vr, cr, acts] = await Promise.all([task(id), soft(task(id, '/verdict')), soft(task(id, '/critique')),
+            soft(task(id, `/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
         // a round's per-criterion record is the node's verdict history, which the deck's run has joined to the log
         // …else, for the last verdict, the node's current record when it is that verdict's — even after a rework made it
         // not current — as Progress reads it (critic: the strip said «not kept» beside the current line drawing it)
         const kept = S.run?.rounds[d.id] || [], all = roundsOf(d.audit, d.id), lastV = all.findLast(r => r.verdict);
-        const rounds = all.map(r => r.per || !r.verdict ? r : {...r, per: kept.find(k => k.at === r.at && k.verdict === r.verdict)?.per
-            || (r === lastV && vr?.verdict === r.verdict && vr.per_criterion?.length ? vr.per_criterion : undefined)});
+        const rounds = all.map(r => r.per || !r.verdict ? r : {...r, per: recordOf(kept.find(k => k.at === r.at && k.verdict === r.verdict)?.per,
+            r === lastV, vr, r.verdict)});
         const ctx = {d, vr, cr, acts, rounds}, sb = $('sidebar');
         // An open form outlives the re-read — any transition in the project re-reads the panel, and the text and ticks
         // being entered were wiped mid-entry on a live run — while nothing has happened to THIS node: a form opened on
@@ -200,7 +198,7 @@ export const perCrit = vr => Object.fromEntries((vr?.per_criterion || []).map(c 
 
 // A criterion's pinned check is what makes it a contract (A1, §2) — folded, the longest part of it.
 export const pinned = (c, key) => (c.check || []).length
-    ? `<details class="crit-check" data-key="${esc(key)}"><summary>check (${c.check.length} probe${c.check.length === 1 ? '' : 's'})</summary><pre>`
+    ? `<details class="crit-check" data-key="${esc(key)}"><summary>check (${plural(c.check.length, 'probe')})</summary><pre>`
       + c.check.map(p => [p.behaviour && `# ${p.behaviour}`, `$ ${p.command}`, `→ ${p.expect}`,
                           Object.keys(p.inputs || {}).length && `inputs: ${Object.keys(p.inputs).join(', ')}`]
                          .filter(Boolean).map(esc).join('\n')).join('\n\n') + `</pre></details>`
@@ -211,7 +209,7 @@ export const pinned = (c, key) => (c.check || []).length
 // behaviours is shown once, the behaviours as its tooltip; evidence is shown whole.
 // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision. A refused
 // report stands beside a verdict too (a later report refused), and is shown there as well (critic: hidden beside a PASS).
-const refusedOf = rr => !rr ? '' : `<div class="check-fail">a validator reported and the report was REFUSED as ⊥ — ${esc(rr.note || 'the issuer decides')}</div>`
+const refusedOf = rr => !rr ? '' : `<div class="check-fail">${PANEL.refusedSaid}${esc(rr.note || 'the issuer decides')}</div>`
     + (rr.why_it_is_not_a_verdict ? `<div class="verdict-evidence">${esc(rr.why_it_is_not_a_verdict)}</div>` : '');
 function verdictFull({vr}) {
     if (vr?.verdict) return section('Verdict on the work',
@@ -230,7 +228,7 @@ function verdictFull({vr}) {
             const [cls, icon] = c.verdict === 'pass' ? ['check-pass', '✓'] : c.verdict === 'fail' ? ['check-fail', '✗'] : ['check-skip', '⊥'];
             return `<li class="${cls}"><span class="check-icon">${icon}</span><div class="verdict-body"><strong>${esc(c.criterion)}</strong>`
                 + (c.evidence ? `<div class="verdict-evidence">${esc(c.evidence)}</div>` : '')
-                + (c.reused_from_refused ? `<div class="check-skip">reused from a refused report (${esc(c.reused_from_refused.validator || '')}${c.reused_from_refused.ts ? ', ' + esc(String(c.reused_from_refused.ts).slice(0, 16).replace('T', ' ')) : ''})</div>` : '')
+                + (c.reused_from_refused ? `<div class="check-skip">reused from a refused report (${esc(c.reused_from_refused.validator || '')}${c.reused_from_refused.ts ? ', ' + esc(stamp(c.reused_from_refused.ts)) : ''})</div>` : '')
                 + ((c.divergences || []).length ? `<div class="check-fail">divergences: ${esc(c.divergences.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('; '))}</div>` : '')
                 + (byCmd.size ? `<div class="verdict-probes">${[...byCmd].map(([cmd, bhs]) =>
                     `<code${PANEL.probe(bhs)}>${esc(cmd)}</code>`).join('')}</div>` : '')
@@ -278,7 +276,7 @@ function review({cr}) {
         ...conflicts.map(c => `<li>⚡ [${esc((c.between || []).join(', '))}] ${esc(c.why || '')}</li>`),
         ...undecided.map(u => `<li class="check-fail">✗ this node's OWN criteria do not decide: ${esc(u.obligation || u.gap || '')}`
             + `${u.admits ? ` <div class="verdict-evidence">${esc(u.admits)}</div>` : ''}</li>`),
-        bad ? `<li style="color:var(--ui-text-faint)">${PANEL.twoWays}</li>` : '']));
+        bad ? `<li class="faint">${PANEL.twoWays}</li>` : '']));
 }
 
 // The parts' states are a FORECAST of the parent: Theorem 1 holds under a correct decomposition only, and
@@ -291,14 +289,13 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
     + `under a correct decomposition (Th. 1), and the parent's V is its own verdict over the result (§12.8)</div>`
     + kids(d).map(c => { const v = vPart(c);
         return `<div class="composition-row v-${v}"><span class="v-sym">${V_SYMBOL[v]}</span>`
-            + `<span class="child-name" data-action="select" data-id="${esc(c.id)}">${esc(c.name || c.description || c.id)}</span></div>`; }).join('')
+            + `<span class="child-name" data-action="select" data-id="${esc(c.id)}">${esc(nameOf(c))}</span></div>`; }).join('')
     + `</div>`);
 
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
-    const line = `${a.timestamp.slice(5, 19).replace('T', ' ')} ${a.signal} ${a.old_state || ''}→${a.new_state || 'rej'}${a.source ? ' · ' + esc(a.source) : ''}`;
-    const more = ['reason', 'justification', 'action', 'result', 'error', 'failed_criteria', 'in_flight'].filter(k => a[k] && a[k].length !== 0)
-        .map(k => `<div class="rd-field"><b>${k}</b>${txt(a[k])}</div>`).join('');
+    const line = `${stamp(a.timestamp, 5, 19)} ${a.signal} ${a.old_state || ''}→${a.new_state || 'rej'}${a.source ? ' · ' + esc(a.source) : ''}`;
+    const more = CARRIED.filter(([k]) => a[k] && a[k].length !== 0).map(([k, l]) => `<div class="rd-field"><b>${l}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;
 })));
@@ -330,7 +327,7 @@ function render() {
     const f = FACETS.find(x => x.id === tab && x.n(cur)) || FACETS.find(x => x.n(cur)), {d} = cur;
     tab = f.id;
     box().hidden = false;
-    rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2>${esc(d.name || d.id)}</h2>`
+    rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2>${esc(nameOf(d))}</h2>`
         + `<button class="sidebar-close" data-action="read"${frame('close')}>&times;</button></div>`
         + `<div class="pn-meta">${esc(d.id)} · rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN · reopens ${d.reopens || 0}</div>`
         + `<div class="rd-tabs">${FACETS.map(x => chip(x, cur, x === f)).join('')}</div></div>${f.body(cur)}`);
@@ -352,4 +349,3 @@ export function closeReader() {
     tab = null;
     if ($('reader')) $('reader').hidden = true;
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && tab) closeReader(); });

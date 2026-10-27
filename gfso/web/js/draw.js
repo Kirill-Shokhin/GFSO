@@ -1,21 +1,20 @@
 // The drawing vocabulary of the views laid on the run's time: the folded clock as one x-scale (so a
 // moment sits at the same x in all of them), its ticks and idle folds, and the verdict glyphs.
-export const hm = t => new Date(t).toTimeString().slice(0, 5);
-const hms = t => new Date(t).toTimeString().slice(0, 8);
+import {hm, hms, dur, day} from './fmt.js';
+
+// a brand or UI token as gfso.css defines it (a leaf token is its literal; an unregistered property reads as specified)
+export const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+// a pulse redrawn mid-beat keeps the page's one clock: its animation set back by where the beat stands now (--pulse)
+export const beat = () => ` style="animation-delay:-${Date.now() % Math.round(parseFloat(css('--pulse')) * 1e3)}ms"`;
+
 // round steps for the time axis: seconds on a short run, then minutes, hours, a day
 const STEPS = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400].map(s => s * 1e3);
-export const dur = ms => ms < 90e3 ? `${Math.round(ms / 1e3)}s` : ms < 90 * 60e3 ? `${Math.round(ms / 60e3)}m` : `${(ms / 3600e3).toFixed(1)}h`;
 
 // A verdict as a glyph: PASS a dot, FAIL a cross — two shapes that never blend, whatever lies under them.
 export const mark = (v, x, y, r = 4) => v === 'PASS' ? `<circle class="mk-pass" cx="${x}" cy="${y}" r="${r}"/>`
     : `<path class="mk-fail" d="M${x - r},${y - r}l${2 * r},${2 * r}m0,-${2 * r}l-${2 * r},${2 * r}"/>`;
 // the same glyph standing alone in text or a table cell
 export const glyph = (v, r = 4) => `<svg class="glyph" width="${2 * r + 4}" height="${2 * r + 4}" viewBox="${-r - 2} ${-r - 2} ${2 * r + 4} ${2 * r + 4}">${mark(v, 0, 0, r)}</svg>`;
-// money and token counts, one spelling for every view; a count a provider did not report says so (`none`)
-export const usd = x => `$${x < 10 ? x.toFixed(2) : x.toFixed(1)}`;
-export const tok = (x, none = 'not reported') => x == null ? none : !x ? '0' : x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : `${x}`;
-export const trim = (s, n = 20) => s.length > n ? s.slice(0, n - 1) + '…' : s;
-
 
 export function frame(run, W, left, right = 16) {
     const span = Math.max(run.clock.span, 60e3), k = (W - left - right) / span;
@@ -31,7 +30,7 @@ export function frame(run, W, left, right = 16) {
             const step = STEPS.find(s => span / s <= n) || STEPS.at(-1), tz = new Date(lo).getTimezoneOffset() * 60e3;
             // a run over days names the day on its first tick of each new day — at midnight, or after an overnight fold that
             // swallowed midnight: 12:00 … 12:00 were two different noons (critic, 2026-10-26)
-            const day = t => new Date(t).toLocaleDateString('en', {month: 'short', day: 'numeric'}), ts = [];
+            const ts = [];
             for (let t = Math.ceil((lo - tz) / step) * step + tz; t <= end; t += step) ts.push(t);
             const shown = ts.filter(t => !run.clock.folds.some(f => t > f.from && t < f.to));
             const days = new Set(shown.map(t => new Date(t).toDateString())).size > 1;

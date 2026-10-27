@@ -1,11 +1,11 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
 import {esc} from './dom.js';
-import {TIP, meter, sessionsOf} from './hints.js';
+import {TIP, meter, sessionsOf, KIND, levelName} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
-import {dur, trim, usd, tok} from './draw.js';
-import {KIND_NAME as KIND, levelName, concurrency} from './run.js';
+import {dur, trim, money as reported, NOT_REPORTED, tok, plural} from './fmt.js';
+import {concurrency, byRole} from './run.js';
 
 
 // the shared head of the assignee ids (the project's name), cut at a '-' so the distinct tail stays
@@ -15,7 +15,8 @@ const commonPrefix = ids => { if (ids.length < 2) return 0;
 // money for sessions some of which reported no price: never a $0.00 for "not reported" (another provider's case)
 const money = ps => { const calls = ps.reduce((s, p) => s + p.calls, 0), un = ps.reduce((s, p) => s + (p.unpriced || 0), 0);
     const procs = ps.reduce((s, p) => s + (p.procs ?? p.calls), 0);
-    return calls && un === procs ? 'not reported' : usd(ps.reduce((s, p) => s + p.cost, 0)) + (un ? ` + ${un} not priced` : ''); };
+    const m = reported(ps.reduce((s, p) => s + p.cost, 0), calls && procs, un);
+    return m === NOT_REPORTED || !un ? m : `${m} + ${un} not priced`; };
 const tile = (v, label, note = '') => `<div class="cs-tile"><b>${v}</b><span>${label}</span>${note ? `<i>${note}</i>` : ''}</div>`;
 
 // One bar chart: rows of [key, label, parts{exec,val,…}], the bar split by role so the cost of
@@ -45,13 +46,13 @@ export function render(el, run, nodes) {
     const kinds = Object.keys(KIND).filter(k => c.byKind[k]);
     el.innerHTML = `<div class="cs">
         <div class="cs-tiles">
-            ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced ? `${c.unpriced} call${c.unpriced > 1 ? 's' : ''} with no cost recorded` : '')}
-            ${tile(tok(c.tokens), 'tokens', c.untold && c.tokens != null ? `cache included · ${c.untold} session${c.untold > 1 ? 's' : ''} reported none` : 'cache included')}
+            ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced ? `${plural(c.unpriced, 'call')} with no cost recorded` : '')}
+            ${tile(tok(c.tokens), 'tokens', c.untold && c.tokens != null ? `cache included · ${plural(c.untold, 'session')} reported none` : 'cache included')}
             ${tile(dur(run.clock.span), 'run time', run.clock.folds.length ? `idle ${dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0))} folded` : '')}
             ${tile(dur(c.busy), 'session time', `${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}× the run`)}
             ${tile(run.exec.peak, 'executors at once', `validators ${run.val.peak}`)}
         </div>
-        <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k]} <b>${money([c.byKind[k]])}</b>`
+        <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k].name} <b>${money([c.byKind[k]])}</b>`
             + `<em>${sessionsOf(k, c.byKind[k].calls)} in ${dur(c.byKind[k].busy)}</em></span>`).join('')}</div>
         <div class="cs-grid">
             ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`)}
@@ -64,8 +65,7 @@ export function render(el, run, nodes) {
         const row = e.target.closest('.cs-row[data-node]');
         if (!row) return untip();
         const parts = node[row.dataset.node], all = Object.values(parts);
-        const sum = all.reduce((s, p) => s + p.cost, 0) || 1;
-        tip(TIP.cost(name(row.dataset.node), [...Object.entries(parts).sort((a, b) => b[1].cost - a[1].cost).map(([k, p]) => meter(sessionsOf(k, p.calls), p.cost / sum, money([p]))),
+        tip(TIP.cost(name(row.dataset.node), [...byRole(parts).map(([k, p, share]) => meter(sessionsOf(k, p.calls), share, money([p]))),
                      `${dur(all.reduce((s, p) => s + p.busy, 0))} of sessions, ${tok(all.reduce((s, p) => s + (p.tokens || 0), 0))} tokens`],
                      rounds(row.dataset.node), money(all)), e);
     }, untip);

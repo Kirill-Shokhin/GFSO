@@ -7,24 +7,26 @@ import {TIP, CELLS} from './hints.js';
 import {label} from './vocab.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip} from './tip.js';
-import {frame, hm, mark, glyph, trim} from './draw.js';
+import {frame, mark, glyph} from './draw.js';
+import {hm, trim} from './fmt.js';
+import {rootOf, isRoot, childrenOf, ancestorsIn} from './tree.js';
 
 const LEFT = 220, GOAL = 54, PART = 30, GAP = 12, TOP = 22, INDENT = 12;
 const unfolded = new Set();                      // parts the reader opened; the goal is always open
 
 // the rows in tree order: the goal, its parts, and the parts of every part the reader unfolded
 function rows(tasks, track) {
-    const kids = {}, out = [];
-    for (const t of tasks) if (t.parent_id) (kids[t.parent_id] ??= []).push(t.id);
+    const out = [];
     // siblings that have a verdict first, by their first one, then the rest in plan order — as the timeline orders its
     // rows; in plan order the one part at work sat under nine empty tracks, below the fold of a short deck (critic)
     const first = id => track[id]?.marks[0]?.t ?? Infinity;
-    for (const ks of Object.values(kids)) ks.sort((a, b) => first(a) - first(b));
+    const kids = id => childrenOf(tasks, id).map(t => t.id).sort((a, b) => first(a) - first(b));
     const walk = (id, d) => {
-        if (track[id]?.total) out.push({id, d, kids: (kids[id] || []).length});
-        if (d === 0 || unfolded.has(id)) for (const k of kids[id] || []) walk(k, d + 1);
+        const ks = kids(id);
+        if (track[id]?.total) out.push({id, d, kids: ks.length});
+        if (d === 0 || unfolded.has(id)) for (const k of ks) walk(k, d + 1);
     };
-    for (const t of tasks) if (!t.parent_id) walk(t.id, 0);
+    for (const t of tasks) if (isRoot(t)) walk(t.id, 0);
     return out;
 }
 
@@ -59,7 +61,7 @@ function tracks(el, run, name, tasks) {
 // The goal's coverage: each root criterion, the parts the split made responsible for it (§2.4), the
 // state each of them stands in, and the root's own value for it at its latest verdict.
 function coverage(run, nodes, tasks) {
-    const root = tasks.find(t => !t.parent_id);
+    const root = rootOf(tasks);
     if (!root) return '';
     const maps = root.criterion_mappings || [], st = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const kids = [...new Set(maps.map(m => m.child_id))], self = run.criteria.status[root.id] || {}, name = run.name;
@@ -79,8 +81,8 @@ export function render(el, run, nodes, tasks) {
     let lit;   // the shared selection's paint, re-applied to tracks drawn anew
     const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks); lit?.(focus()); };
     // a node selected under a folded part unfolds the path to it, so its track is there to light
-    const parent = Object.fromEntries(tasks.map(t => [t.id, t.parent_id]));
-    const open = id => { let shut = false; for (let x = parent[id]; x && parent[x]; x = parent[x]) if (!unfolded.has(x)) unfolded.add(x), shut = true; return shut; };
+    const up = ancestorsIn(tasks);
+    const open = id => { let shut = false; for (const x of up(id).slice(0, -1)) if (!unfolded.has(x)) unfolded.add(x), shut = true; return shut; };
     if (focus().select) open(focus().select);
     paint();
     watch((st, key) => (key === 'select' || key === 'bring') && st.select && open(st.select) && paint(), el);
@@ -92,7 +94,7 @@ export function render(el, run, nodes, tasks) {
         if (!g) return untip();
         const i = g.dataset.m.lastIndexOf(':'), id = g.dataset.m.slice(0, i), L = run.criteria.track[id], m = L.marks[+g.dataset.m.slice(i + 1)];
         const r = (run.rounds[m.node] || []).find(r => r.at === m.t);
-        tip(TIP.verdict(name(m.node), m.signal, r, m.t, m.failed, m, L.total, []), e);
+        tip(TIP.verdict(name(m.node), m.signal, r, m.t, {own: m.failed, edges: []}, m, L.total), e);
     }, untip);
     bringSelected(el, id => tr.querySelector(`.pg-track[data-node="${CSS.escape(id)}"] .pg-band`));
 }

@@ -1,19 +1,19 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc} from './dom.js';
-import {api, singleFlight} from './api.js';
 import {S, taskOf, myRole, procs} from './state.js';
-import {bucketOf, statusLabel, contested} from './vocab.js';
+import {bucketOf, statusLabel, contested, cancelled, nameOf, criteriaOf} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';
-import {waitWords, atWork, conjunct, failingNow, failedWords} from './run.js';
-import {TIP} from './hints.js';
+import {runNow, failingNow, failedOf} from './run.js';
+import {TIP, waitWords, failedWords} from './hints.js';
+import {css, beat} from './draw.js';
+import {childrenOf} from './tree.js';
 
-// Leaf tokens are hex literals; getComputedStyle returns the specified value of an unregistered property.
-const cs = getComputedStyle(document.documentElement), tok = n => cs.getPropertyValue(n).trim();
-const [INK, SOFT, FAINT, PAPER, BG, ACC] = ['--ink', '--ink-soft', '--ink-faint', '--paper', '--bg', '--acc'].map(tok);
+// Leaf tokens are hex literals (draw.js css).
+const [INK, SOFT, FAINT, PAPER, BG, ACC, TOMB, TOMB_LINE] = ['--ink', '--ink-soft', '--ink-faint', '--paper', '--bg', '--acc', '--ui-tomb', '--ui-tomb-line'].map(css);
 // cytoscape refuses the stack with the quotes CSS requires and takes it unquoted (probed, 2026-09-06).
-const FONT = tok('--font-body').replace(/['"]/g, '').replace(/\s+/g, ' ').trim();
+const FONT = css('--font-body').replace(/['"]/g, '').replace(/\s+/g, ' ').trim();
 const inkAlpha = a => `rgba(${[0, 2, 4].map(i => parseInt(INK.slice(1 + i, 3 + i), 16))},${a})`;   // cy needs rgba, not color-mix
 
 const S_ = (bg, fg, bw, bc, bs = 'solid', bo = 1) => ({bg, fg, bw, bc, bs, bo});
@@ -76,7 +76,7 @@ export async function initGraph() {
             {selector: 'node:active', style: {'overlay-opacity': 0}},
             {selector: 'core', style: {'active-bg-opacity': 0}},
             // ABANDONED tombstone: kept for provenance but visibly NOT an active node.
-            {selector: 'node.cancelled', style: {'opacity': 0.4, 'background-color': '#8a8a8a', 'border-color': '#6a6a6a',
+            {selector: 'node.cancelled', style: {'opacity': 0.4, 'background-color': TOMB, 'border-color': TOMB_LINE,
                                                   'border-style': 'dashed', 'text-opacity': 0.6}},
             {selector: 'node.dimmed', style: {'opacity': 0.22}},
             {selector: 'edge.dimmed', style: {'opacity': 0.15}},
@@ -160,7 +160,7 @@ export async function initGraph() {
 // A node and everything under it along D, read off the tasks' parents — never Dep (a leaf framed half the graph by its
 // chains), and not off the drawn edges either: a part whose split edge was not drawn framed only itself (author).
 function subtree(n) {
-    const kids = id => S.tasks.filter(t => t.parent_id === id).map(t => t.id), ids = [n.id()];
+    const kids = id => childrenOf(S.tasks, id).map(t => t.id), ids = [n.id()];
     for (let i = 0; i < ids.length; i++) ids.push(...kids(ids[i]));
     return cy.collection(ids.map(id => cy.getElementById(id)).filter(e => e.length));
 }
@@ -183,10 +183,10 @@ function inSight(eles) {
 
 // what the drawing does not say; how to frame a node is the key's, not every node's tip
 function nodeTip(t) {
-    const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id], words = w && waitWords(w, d => taskOf(d).name || d), last = rs.at(-1);
+    const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id], words = w && waitWords(w, d => nameOf(taskOf(d)) || d), last = rs.at(-1);
     return TIP.node(t, `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, t.done_reason)}</span>`,
-        words !== '—' && words, rs, t.criteria?.filter(conjunct).length,
-        last?.verdict === 'FAIL' && failingNow(rs, t.state) && failedWords(S.run, t.id, last.failed));
+        words !== '—' && words, rs, criteriaOf(t).length,
+        last?.verdict === 'FAIL' && failingNow(rs, t.state) && failedWords(failedOf(S.run, t.id, last.failed)));
 }
 
 // Badges over the canvas: a pulse on a node being worked right now, and its rounds when it took more
@@ -196,7 +196,8 @@ function placeBadges() {
     if (!cy) return;
     layer ??= $('cy').appendChild(Object.assign(document.createElement('div'), {className: 'cy-badges'}));
     // at work by the run's one rule; the pulse in the accent when this server has a process on it
-    const work = atWork(S.run, S.tasks, procs()), proc = new Set(procs().map(w => w.task_id));
+    // (the graph may draw before the run is read: the same rule over the registry then)
+    const now = S.run?.now ?? runNow(S.tasks, procs()), work = now.work;
     layer.innerHTML = cy.nodes().map(n => {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
         const id = n.id(), rs = S.run?.rounds[id] || [], failing = failingNow(rs, n.data('state') ?? taskOf(id).state);
@@ -204,7 +205,7 @@ function placeBadges() {
         const b = n.renderedBoundingBox(BODY);
         return `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
             // the pulse keeps the page's one clock: a badge redrawn on every render restarted it mid-beat
-            + (work.has(id) ? `<i class="cy-live${proc.has(id) ? ' on' : ''}" style="animation-delay:-${Date.now() % 1600}ms"></i>` : '')
+            + (work.has(id) ? `<i class="cy-live${now.on(id) ? ' on' : ''}"${beat()}></i>` : '')
             + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''}${TIP.rounds(rs)}>${rs.length}</span>` : '') + '</div>';
     }).join('');
 }
@@ -212,44 +213,34 @@ export const annotate = placeBadges;
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;
 
-export const refreshGraph = singleFlight(async () => {
-    try {
-        const [gr, tr] = await Promise.all([api('/api/graph'), api('/api/tasks')]);
-        // A REFUSAL HAS TO REACH THE PERSON: a mistyped `?project=` is a 404, not an empty canvas under
-        // their project's name (the stats bar says it — header.js).
-        if (gr.status === 404) {
-            S.missing = (await gr.json().catch(() => ({}))).detail || 'no such project';
+// The graph as last read (model.js loadGraph); `found` false: the project does not exist (yet), and nothing is drawn.
+export async function drawGraph(found) {
+        if (!found) {
             // a project not on disk yet has no mode: a mode set first would have created it (a goal stated here)
             document.body.classList.add('manual');
             cy.elements().remove();
-            S.tasks = [];
             return;
         }
-        const g = await gr.json();
-        S.tasks = await tr.json();
-        S.graph = g;
+        const g = S.graph;
         // a project with a mode is moved by agents and the system; the person's own moves, and the name they sign
         // them with, belong to a project without one, where a node is held by whoever it names (author, 2026-10-26)
         document.body.classList.toggle('manual', !g.mode?.mode);
-        S.missing = '';
         // the same nodes drawn again keep the reader's view; a new set (another project, parts added) is framed whole
         const key = g.nodes.map(n => n.id).sort().join('|'), kept = key === drawn && {zoom: cy.zoom(), pan: {...cy.pan()}};
         drawn = key;
         cy.elements().remove();
-        // the state (+ the legacy DoneReason of pre-v3.7 rows)
-        const cancelled = new Set(g.nodes.filter(n => n.state === 'ABANDONED' || n.done_reason === 'CANCELLED').map(n => n.id));
-        S.closures = g.nodes.filter(n => n.closure && (n.closure.by_hand || contested(n.closure))).map(n => ({id: n.id, ...n.closure}));
+        const tomb = new Set(g.nodes.filter(cancelled).map(n => n.id));
         for (const n of g.nodes)
-            cy.add({data: {id: n.id, label: readableLabel(n.name || n.id),   // a node the plan left unnamed is drawn by its id, never as nothing
+            cy.add({data: {id: n.id, label: readableLabel(nameOf(n)),
  state: n.state, ...closureStyle(styleOf(n.state), n.closure)},
-                    classes: cancelled.has(n.id) ? 'cancelled' : undefined});
+                    classes: tomb.has(n.id) ? 'cancelled' : undefined});
         // ONE BAD EDGE MUST NOT COST THE WHOLE PICTURE: a dangling edge threw before the layout ran and
         // left fifteen nodes stacked at the origin (2026-09-06). Draw what can be drawn, SAY what cannot.
         const ids = new Set(g.nodes.map(n => n.id)), undrawable = [];
         for (const e of g.edges) {
             if (!ids.has(e.source) || !ids.has(e.target)) { undrawable.push(e); continue; }
             cy.add({data: {source: e.source, target: e.target, type: e.type},
-                    classes: cancelled.has(e.source) ? 'fromCancelled' : undefined});
+                    classes: tomb.has(e.source) ? 'fromCancelled' : undefined});
         }
         if (cy.nodes().length) {
             const lay = cy.layout({...LAYOUT, animate: !kept, animationDuration: 200});
@@ -263,8 +254,7 @@ export const refreshGraph = singleFlight(async () => {
         const one = undrawable[0];
         banner('undrawable', one && `${undrawable.length} edge(s) not drawn — they name a node this graph does not `
             + `contain (e.g. ${one.source} → ${one.target}). The rest of the graph is shown.`, $('cy'));
-    } catch (e) { console.error('refreshGraph:', e); }
-});
+}
 
 // "Mine only": the nodes the name in "acting as" holds — a person's view in a project without a mode
 export function applyMineDim() {

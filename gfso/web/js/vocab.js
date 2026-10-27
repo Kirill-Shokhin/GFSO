@@ -44,6 +44,20 @@ export const look = sig => LOOK[sig];
 export const terminal = s => s === 'DONE' || s === 'ABANDONED';
 export const delivered = t => t?.state === 'DONE' && (t.done_reason === 'PASS' || t.done_reason === 'AUTO_PASS');
 export const working = s => s === 'EXECUTING' || s === 'REWORKING' || s === 'VALIDATING';
+// consented work in course (§12.1): a parent in it waits on its parts
+export const consented = s => s === 'EXECUTING' || s === 'REWORKING';
+// cancelled: ABANDONED, or the legacy DoneReason of pre-v3.7 rows
+export const cancelled = t => t?.state === 'ABANDONED' || t?.done_reason === 'CANCELLED';
+// a closed goal in one word: done only when delivered, failed by a FAIL, else abandoned; '' while it is open
+export const goalWord = root => !terminal(root?.state) ? '' : delivered(root) ? 'done' : root.done_reason === 'FAIL' ? 'failed' : 'abandoned';
+// a node the plan left unnamed is said by its id, never as nothing
+export const nameOf = t => t?.name || t?.id;
+// A Dep edge's bare declaration (`dep__…` with no check) is no criterion of its consumer — V leaves it out (Spec.conjuncts);
+// a `dep__` that pins a check on this result is one, like any other. The criteria a verdict is over, by name.
+export const conjunct = c => !c?.depends_on || !!c.check?.length;
+export const criteriaOf = t => (t?.criteria || []).filter(conjunct).map(c => c.name || c);
+// the verdicts in a log: a PASS or a FAIL the engine took
+export const isVerdict = a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL');
 const row = s => ROWS[s] || ['quiet', s, ''];
 export const bucketOf = s => row(s)[0];
 // the states one look of a node stands for — the key under «?» names them from here, never from a copy
@@ -105,6 +119,15 @@ export const fmOf = name => {
     const fm = FM.route[name];
     return !fm ? FM_NONE : !Array.isArray(fm) ? fm : fm.length ? fm.join(' · ') : FM_NO_MODE;
 };
+
+// THE KINDS OF TOKEN a cost goes to, one table, in the order the Models bar draws them: the ledger's field, the kind's name,
+// its weight in Anthropic's price structure (Claude Code writes the one-hour cache), and the Models row's field.
+export const TOKENS = [['input_tokens', 'input', 1, 'input'], ['output_tokens', 'output', 5, 'output'],
+    ['cache_read_tokens', 'cache read', 0.1, 'read'], ['cache_write_tokens', 'cache written', 2, 'write']];
+
+// What a signal carries beyond its move, in the log's words: the field, and what it is called where it is shown.
+export const CARRIED = [['error', 'why refused'], ['reason', 'reason'], ['justification', 'justification'], ['action', 'resolution'],
+    ['result', 'report'], ['failed_criteria', 'failed criteria'], ['in_flight', 'in flight']];
 
 // What a planning verb costs, said before it runs — the same words wherever one is offered.
 export const PLAN_COST = 'Runs ~2–6 min and spends model calls; its progress shows in the deck (Events, with narration on).';

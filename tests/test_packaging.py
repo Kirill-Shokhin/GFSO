@@ -55,7 +55,7 @@ def test_every_runtime_asset_is_declared_package_data():
 # The page's script modules (gfso/web/js): index.html loads main.js, which imports the rest.
 WEB_MODULES = ("main", "api", "dom", "state", "store", "tip", "vocab", "overlays", "graph", "header",
                "projects", "panel", "acts", "author", "forms", "live",
-               "goal", "deck", "run", "draw", "timeline", "progress", "cost", "work", "events", "hints")
+               "goal", "deck", "run", "draw", "fmt", "tree", "model", "timeline", "progress", "cost", "work", "events", "hints")
 
 
 def test_the_assets_the_product_cannot_run_without_are_present():

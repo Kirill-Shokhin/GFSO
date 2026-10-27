@@ -2,25 +2,33 @@
 // store.js's — one source for every view.
 import {$} from './dom.js';
 import {PROJECT} from './api.js';
-import {conjunct} from './run.js';
+import {childrenOf} from './tree.js';
+import {cancelled} from './vocab.js';
 
-// `reload` is the page's refresh policy, set by main.js — units that change the graph call it.
-export const S = {tasks: [], graph: {nodes: [], edges: []}, run: null, closures: [], missing: '', mineOnly: false,
-                  inflight: [], project: PROJECT, reload: async () => {}};
+// THE WHOLE SURFACE, written by its owners and read by the views:
+//   model.js — tasks, graph, closures, missing (the graph read); frontier, runState, waiting, steps, mySteps (the
+//              engine's next_steps); run, pipeline (the run read and built); reports, metrics (the system's own reads)
+//   main.js  — inflight (the server's processes), agentId, reload (the page's refresh policy: units that change the
+//              graph call it); projects.js — project; graph.js — mineOnly
+export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missing: '',
+                  frontier: null, runState: null, waiting: null, steps: null, mySteps: new Map(),
+                  run: null, pipeline: [], reports: [], metrics: null,
+                  inflight: [], agentId: '', project: PROJECT, mineOnly: false, reload: async () => {}};
 
 // the processes this server runs in this project now — the in-flight registry, the one reading of it
 export const procs = () => S.inflight.filter(w => w.project === S.project);
 
 export const taskOf = id => S.tasks.find(t => t.id === id) || {};
-// the criteria a verdict is over — a Dep edge's bare declaration is none, and a FAIL may not name it
-export const critNames = id => (taskOf(id).criteria || []).filter(conjunct).map(c => c.name || c);
-export const hasKids = id => S.tasks.some(t => t.parent_id === id && t.state !== 'ABANDONED');
+export const hasKids = id => childrenOf(S.tasks, id).some(t => !cancelled(t));
 
-// The box SIGNS every signal the page sends, so what was typed survives a reload (wave 26) — kept per
-// browser, and wrapped because a browser with site data blocked THROWS on the accessor.
+// What this browser keeps for its viewer — wrapped, because a browser with site data blocked THROWS on the accessor.
+export const kept = (k, read = x => x) => { try { return read(localStorage.getItem(k)); } catch (e) { return null; } };
+export const keep = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* a per-viewer nicety */ } };
+
+// The box SIGNS every signal the page sends, so what was typed survives a reload (wave 26) — kept per browser.
 // an emptied box is the server's own agent again, as on load — never a move signed by nobody
 // …and under a mode the page acts as that agent only: the box is hidden there, and a name remembered from another
 // project would sign unseen and ask the engine for someone else's steps (critic)
 export const myRole = () => (S.graph.mode?.mode ? '' : $('current-role').value.trim()) || S.agentId || '';
-export function rememberedRole() { try { return localStorage.getItem('gfso.role') || ''; } catch (e) { return ''; } }
-export function rememberRole(v) { try { localStorage.setItem('gfso.role', v); } catch (e) { /* nameless is fine */ } }
+export const rememberedRole = () => kept('gfso.role') || '';
+export const rememberRole = v => keep('gfso.role', v);

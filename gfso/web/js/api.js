@@ -4,10 +4,17 @@ const q = new URLSearchParams(location.search);
 export const PROJECT = q.get('project') || '';
 export const TASK = q.get('task') || '';
 export const GOAL = q.has('goal');                    // arrived to state this project's goal
+// …and the tab goes to another project by its URL alone; `goal` opens the goal constructor there — a new project's first
+// act is stating its goal. Leaving names none: the server's active project.
+export const openProject = (name, {goal} = {}) => { location.search = '?project=' + encodeURIComponent(name) + (goal ? '&goal=1' : ''); };
+export const leave = () => { location.search = ''; };
 
 export const api = (url, opts) => fetch(PROJECT && !url.includes('project=')
     ? url + (url.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(PROJECT) : url, opts);
 export const getJSON = async url => (await api(url)).json();
+// one node's record, or a facet of it (`/verdict`, `/critique`, `/actions?…`)
+export const taskUrl = (id, sub = '') => `/api/tasks/${encodeURIComponent(id)}${sub}`;
+export const task = (id, sub) => getJSON(taskUrl(id, sub));
 export const post = (url, body) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                              body: JSON.stringify(body)});
 
