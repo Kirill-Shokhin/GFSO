@@ -3,7 +3,7 @@
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
 import {$, esc} from './dom.js';
 import {frame, TAB, STRIP} from './hints.js';
-import {getJSON, singleFlight} from './api.js';
+import {getJSON, api, singleFlight} from './api.js';
 import {S, procs} from './state.js';
 import {point, release, forgetBrought} from './store.js';
 import {buildRun, said, blockers, atWork, failingNow} from './run.js';
@@ -137,7 +137,10 @@ async function currentVerdicts(audit) {
     const seen = {};
     for (const a of audit) if (!a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL')) seen[a.task_id] = (seen[a.task_id] || 0) + 1;
     await Promise.all(Object.entries(seen).filter(([id, n]) => verdicts[id]?.n !== n).map(async ([id, n]) => {
-        try { verdicts[id] = {n, ...(await getJSON(`/api/tasks/${encodeURIComponent(id)}/verdict`))}; } catch (e) { /* the log's reading stands */ }
+        const base = `/api/tasks/${encodeURIComponent(id)}`;
+        try { verdicts[id] = {n, ...(await getJSON(`${base}/verdict`))}; } catch (e) { /* the log's reading stands */ }
+        // every verdict the node got, each with its own per-criterion record (a server before it answers 404: none)
+        try { const h = await api(`${base}/verdicts`); if (h.ok && verdicts[id]) verdicts[id].history = await h.json(); } catch (e) { /* none */ }
     }));
 }
 

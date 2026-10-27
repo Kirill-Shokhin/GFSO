@@ -55,7 +55,8 @@ function sessions(calls, audit) {
             && SIGNS[kind]?.includes(a.signal));
         return {node: c.node_id, kind, stage: c.stage, start, end, cost: c.cost_usd || 0,
                 tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
-                out: c.output_tokens ?? null, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0};
+                out: c.output_tokens ?? null, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0,
+                handover: c.handover || 0};
     });
 }
 
@@ -196,7 +197,7 @@ function work(calls) {
             continue;
         }
         const r = rows[`${model}|${kind}`] ??= {model, kind, calls: 0, resumed: 0, cost: 0, unpriced: 0, ends: {}, input: null, output: null, read: 0, write: 0, unsplit: 0, turns: 0, turned: 0, fills: []};
-        r.calls++; r.resumed += c.resumed ? 1 : 0; r.cost += c.cost_usd || 0; r.unpriced += c.cost_usd ? 0 : 1; if (c.ended && c.ended !== 'answered') r.ends[c.ended] = (r.ends[c.ended] || 0) + 1;
+        r.calls++; r.resumed += c.resumed ? 1 : 0; r.handed = (r.handed || 0) + (c.handover ? 1 : 0); r.cost += c.cost_usd || 0; r.unpriced += c.cost_usd ? 0 : 1; if (c.ended && c.ended !== 'answered') r.ends[c.ended] = (r.ends[c.ended] || 0) + 1;
         r.input = add(r.input, c.input_tokens); r.output = add(r.output, c.output_tokens); r.turns += c.turns || 0; r.turned += c.turns ? 1 : 0;
         if (c.cache_read_tokens == null) r.unsplit += c.cache_input_tokens || 0;
         else { r.read += c.cache_read_tokens; r.write += c.cache_write_tokens || 0; }
@@ -252,12 +253,14 @@ function criteria(audit, tasks, verdicts) {
     // one track per NODE, its own criteria at its own verdicts: a count across a level summed parts of unrelated
     // parents, one closed beside one not begun (author, 2026-10-25: «два внука от разного родителя … что отобразится»)
     const status = {}, verdictRows = audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL') && names[a.task_id]);
-    const last = Object.fromEntries(verdictRows.map(a => [a.task_id, a]));
+    const last = Object.fromEntries(verdictRows.map(a => [a.task_id, a])), joined = joinHistory(verdictRows, verdicts);
     const track = Object.fromEntries(tasks.map(t => [t.id, {total: names[t.id].length, steps: [], marks: []}]));
     for (const a of verdictRows) {
         const failed = new Set((a.failed_criteria || []).filter(c => names[a.task_id].includes(c))), T = track[a.task_id];
-        // each verdict's own per-criterion record where its audit row carries one; else the node's current verdict for its last
-        const rec = a.per_criterion || (last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal && verdicts[a.task_id].per_criterion);
+        // each verdict's own per-criterion record: the node's verdict history joined to its signal (`joinHistory`); else, for
+        // the last, the node's current verdict — rounds recorded before the history was kept have neither, and read as a bound
+        const rec = a.per_criterion || joined.get(a)
+            || (last[a.task_id] === a && verdicts[a.task_id]?.verdict === a.signal && verdicts[a.task_id].per_criterion);
         const per = rec && Object.fromEntries(rec.map(c => [c.criterion, V[c.verdict] || '⊥']));
         // a PASS is every criterion passing (V, §2.3); a FAIL's record keeps only what it named (Inv-3), so the rest of a
         // past FAIL is ⊥, not pass — read as pass, a root's curve rose to 14/16 over rounds whose own record was 0/16
@@ -274,9 +277,22 @@ function criteria(audit, tasks, verdicts) {
     return {track, status, names};
 }
 
+// A verdict of the node's history (`/api/tasks/{id}/verdicts`) answers the first PASS/FAIL row of that node at or after
+// its `log_at` — the length of the project's log when the validator read the node (engineering, 2026-10-27); a verdict
+// that never became a signal (a refused report) has no row, and none is forced on it.
+function joinHistory(rows, verdicts) {
+    const out = new Map(), used = new Set();
+    for (const [id, v] of Object.entries(verdicts)) for (const h of v?.history || []) {
+        const a = rows.find(a => a.task_id === id && a.pos >= h.log_at && !used.has(a));
+        if (a && a.signal === h.verdict) { used.add(a); if (h.per_criterion?.length) out.set(a, h.per_criterion); }
+    }
+    return out;
+}
+
 export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, steps = null, procs = [],
                           auto = false, now = Date.now()}) {
-    audit = audit.map(a => ({...a, t: at(a.timestamp)})).sort((a, b) => a.t - b.t);
+    // `pos`: a row's place in the project's whole log, which a verdict's `log_at` counts in
+    audit = audit.map((a, pos) => ({...a, pos, t: at(a.timestamp)})).sort((a, b) => a.t - b.t || a.pos - b.pos);
     const ss = sessions(calls, audit), open = openSessions(procs, pipeline, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
     return {

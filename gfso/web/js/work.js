@@ -47,7 +47,7 @@ export function render(el, run) {
     // a price no session of it reported is no $0.00 and no 0% of the run
     const price = (x, priced) => priced ? usd(x) : NOT, share = (x, priced) => priced && total ? pct(x / total) : '—';
     const row = (r, i, m) => `<tr${i ? '' : ' class="wk-first"'}>${i ? '<td></td>' : `<td${MODELS.id(r.model)}><b>${esc(modelName(r.model))}</b></td>`}`
-        + `<td>${KIND[r.kind]}</td><td>${r.calls}${r.resumed ? ` <span class="wk-none"${MODELS.contexts}>· ${r.calls - r.resumed} contexts</span>` : ''}`
+        + `<td>${KIND[r.kind]}</td><td>${r.calls}${r.resumed ? ` <span class="wk-none"${MODELS.contexts}>· ${r.calls - r.resumed} contexts</span>` : ''}${r.handed ? ` <span class="wk-none"${MODELS.handed(r.handed)}>· ${r.handed} handed over</span>` : ''}`
         + `${Object.keys(r.ends).length ? ` <span class="wk-none"${MODELS.ends}>(${Object.entries(r.ends).map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')})</span>` : ''}</td>`
         + `<td>${!r.turned ? NOT : r.turned < r.calls ? `<span${MODELS.turns(r.turned, r.calls)}>${r.turns} in ${r.turned}</span>` : r.turns}</td>`
         + `<td>${price(r.cost, r.calls - r.unpriced)}${r.unpriced && r.unpriced < r.calls ? ` <span class="wk-none"${MODELS.unpriced}>+ ${r.unpriced} unpriced</span>` : ''}</td>`

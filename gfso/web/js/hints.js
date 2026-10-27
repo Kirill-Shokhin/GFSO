@@ -67,6 +67,8 @@ const KEY = [
     {glyph: '<i class="cy-live"></i>', head: 'At work', means: 'counted in the deck as «N at work»; a parent only waiting on its parts is not'},
     {glyph: '<i class="cy-live on"></i>', head: 'Running on this server now', means: 'a process of this server works on it'},
     {glyph: '<span class="kb">3</span>/<span class="kb fails">3</span>', head: 'Delivery rounds / the last one failed', means: 'shown from the second on'},
+    {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
+     head: 'Session handed over', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
     {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it with its parts · the background shows the whole graph'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
@@ -201,7 +203,8 @@ export const TIP = {
     bar: (name, x, r, failed) => card(`${cap(KIND_NAME[x.kind])} · ${dur(x.end - x.start)}${x.cost ? ` · ${usd(x.cost)}` : ''}`, [
         name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}${x.tokens ? ` · ${tok(x.tokens)} tokens` : ''}${x.agents.length ? ' · ' + x.agents.join(', ') : ''}`,
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict + (failed ? ': ' + failed : '') : ''}`,
-        x.parts > 1 && `${x.parts} sessions, ${dur(x.busy)} busy — ${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried or continued'}`,
+        x.parts > 1 && `${x.parts} sessions, ${dur(x.busy)} busy — ${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried, continued or handed over'}`,
+        x.handed?.length && `Handed over ${x.handed.length}× — its context reached the budget; a fresh session went on from its note`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
     verdict: (name, signal, r, t, own, m, total, edges) => card(`${signal}${m ? ' · ' + passing(m, total) : ''}`, [
@@ -225,6 +228,7 @@ export const MODELS = {
     window: hover('The model\'s context window'),
     fill: hover('Context filled', "Each session's fullest turn against its model's window: the dark bar the median session, the light one the fullest"),
     contexts: hover('Contexts', "A call that continued its round's conversation (cut at its turn cap) is no context of its own"),
+    handed: n => hover(`${n} handed over`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
     turns: (turned, calls) => hover(`Turns of ${turned} of ${calls} sessions`, 'The rest were recorded before turns were kept'),
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The share is of what was priced'),
