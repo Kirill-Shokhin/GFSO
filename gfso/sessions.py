@@ -16,6 +16,7 @@ from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import _enter_workspace, conversation_of, node_workspace, performer, project_llm
+from gfso.observe import observe_place
 from gfso.packets import TECH_REPORT, _EXECUTOR_STATES, _executor_packet, _scope_order, _scope_packet, file_tech_reports
 from gfso.reports import _decided_status, _report_into_signals, _scope_report_into_signals
 
@@ -67,6 +68,19 @@ def _too_late(engine, node_id, cap) -> dict | None:
     engine.emit_info("delegate", f"{node_id}: no session spawned — {max(cap, 0)} s left before its deadline; the clock "
                                  f"hands it to its issuer (§12.2)")
     return {"task_id": str(node_id), "status": "too_late"}
+
+
+def _observed(engine, node_id, tasks, cwd, cap, _cb) -> tuple[dict, int | None]:
+    """What the nodes' pinned checks print on the place before the session (`observe_place`), said in one line — in
+    flight while it runs (a server read as idle was restarted under a spawn, see `run_executor`) — and the session's
+    cap less the time it took: the session must still end inside its deadline (`_session_cap`)."""
+    t0 = datetime.now()
+    with _inflight("observation", engine, node_id):
+        seen = observe_place(engine, tasks, cwd, cap)
+    if rows := [r for rs in seen.values() for r in rs]:
+        _cb(f"{node_id}: observed its place before the session — {sum(bool(r.get('matched')) for r in rows)} of "
+            f"{len(rows)} pinned check(s) print exactly what they must")
+    return seen, None if cap is None else cap - int((datetime.now() - t0).total_seconds())
 
 
 def _unread(llm, unparsed: str) -> str:
@@ -147,13 +161,16 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     if late := _too_late(engine, task_id, cap):
         return late
     cwd, unjoined, ws = _enter_workspace(engine, agents, task, [task])
+    seen, cap = _observed(engine, task_id, [task], cwd, cap, _cb)
+    if late := _too_late(engine, task_id, cap):
+        return late
     _cb(f"{task_id}: executor {executor_id} spawned (workdir={cwd or 'cwd'}"
         + (f", cap {cap}s" if cap else "") + ")…")
     # The dispatcher's own spawn is the LONGEST thing this server does — up to a fifteen-minute
     # `claude -p` — and it was the one path that never appeared in `busy`, so a reconcile arriving
     # from another session read the server as idle and restarted it mid-run.
     report, text, stats, llm, _cb = _spawn(engine, task_id, executor_id, cfg, _llm, "executor", "executor.md",
-                                           _executor_packet(engine, task, cwd, unjoined), EXECUTOR_SCHEMA,
+                                           _executor_packet(engine, task, cwd, unjoined, seen), EXECUTOR_SCHEMA,
                                            "delegated_execution", cwd, cap)
     if report is None:
         # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
@@ -257,10 +274,13 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
         return late
     top = engine.graph.get_task(top_id)
     cwd, unjoined, ws = _enter_workspace(engine, agents, top, order)
+    seen, cap = _observed(engine, top_id, todo, cwd, cap, _cb)
+    if late := _too_late(engine, top_id, cap):
+        return late
     _cb(f"{top_id}: one executor session ({executor_id}) for the scope's open node(s) "
         f"{', '.join(str(t.id) for t in todo)}" + (f", cap {cap}s" if cap else "") + "…")
     report, text, stats, llm, _cb = _spawn(engine, top_id, executor_id, cfg, _llm, "scope-executor",
-                                           "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined),
+                                           "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined, seen),
                                            SCOPE_SCHEMA, "delegated_execution", cwd, cap)
     if report is None:
         _cb(f"{top_id}: " + _unread(llm, "the scope session's report DID NOT PARSE — no signals sent")

@@ -102,9 +102,46 @@ def checkout_note(here: Optional[str]) -> str:
             f"commits — read in `{base}` if you need it; nothing is ever written there.\n" if base else "")
 
 
-def _executor_packet(engine, task, workdir: str | None, unjoined: list = ()) -> str:
+#: Said once over what the system observed of a place before the session (`observe.observe_place`).
+_OBSERVED = ("Before this session the system ran each check pinned to your criteria once, in a copy of your place exactly "
+             "as it stands, in the criteria's order, with no build step first: a check over a program the tree has not "
+             "built, or built from older sources, shows that and not your work. It is an observation, not a verdict — "
+             "the validator builds as it needs and decides. It does not cover what the validator runs beyond these "
+             "checks: the standing findings of an earlier round, the parts' own pinned checks, what it explores. Use it "
+             "to see where the work stands; confirm with your own run before you deliver.\n")
+
+
+def observed_lines(rows: list) -> str:
+    """One line per observed check, by its criterion and command (the criteria above carry the rest): printed exactly
+    what it must show, or how it ended and the tail of what it printed, or why it gave nothing — and ONE line where none
+    passed and every one ended the same way, the shape of a place with nothing built yet (every turn re-reads them)."""
+    if len(rows) > 1 and not any(r.get("matched") for r in rows) and len(
+            {(r.get("note"), r.get("rc"), r.get("out")) for r in rows}) == 1:
+        r = rows[0]
+        return (f"- none of the {len(rows)} checks shows what it must; each "
+                + (r["note"] if r.get("note") else f"ended exit {r.get('rc')}, printing «{_flat(r.get('out'))}»") + "\n")
+
+    def _one(r) -> str:
+        head = f"- **{r['criterion']}** `{r['command']}` → "
+        if r.get("note"):
+            return head + r["note"]
+        return head + ("printed exactly what it must show" if r.get("matched") else
+                       f"exit {r.get('rc')}, printed «{_flat(r.get('out'))}»")
+    return "".join(_one(r) + "\n" for r in rows)
+
+
+def _flat(out) -> str:
+    return " ⏎ ".join((out or "").splitlines()) or "(nothing)"
+
+
+def _observed_section(rows: list, heading: str = "##") -> str:
+    return f"\n{heading} Your place as the system found it\n{_OBSERVED}{observed_lines(rows)}" if rows else ""
+
+
+def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), seen: dict | None = None) -> str:
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
-    inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any."""
+    inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any + what its pinned checks
+    printed on its place before the session (`seen`, `observe.observe_place`)."""
     tid = str(task.id)
     dirs = _executor_inputs(engine, task.spec.criteria)
     crits = "\n".join(_crit_line(c, dirs) for c in task.spec.criteria) or "- (none)"
@@ -133,7 +170,8 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = ()) -> 
             f"They are here for one reason: if you cannot proceed because something one of them owns "
             f"does not exist yet, report `status: \"blocked\"` and NAME it in `blocker_task_ids`. That "
             f"is a real dependency the plan did not declare, and naming it is what records it.\n"
-            f"{chr(10).join(sibs) or '- none'}\n{rework}{answered_challenges(engine, task)}{_unjoined_text(unjoined)}\n"
+            f"{chr(10).join(sibs) or '- none'}\n{rework}{answered_challenges(engine, task)}"
+            f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}\n"
             + _working_directory(workdir))
 
 
@@ -293,8 +331,9 @@ def _scope_order(engine, members: list) -> list:
     return order
 
 
-def _scope_node_block(engine, i: int, t, top, inside: frozenset) -> str:
-    """One node of a scope session's packet: its contract, its inputs from outside the scope, its rework."""
+def _scope_node_block(engine, i: int, t, top, inside: frozenset, seen: dict | None = None) -> str:
+    """One node of a scope session's packet: its contract, its inputs from outside the scope, its rework, what its
+    checks printed on the scope's place before the session."""
     parent = engine.graph.get_parent(t.id)
     role = "the scope's top — the whole" if str(t.id) == str(top.id) else f"a part of `{parent.id}`"
     head = f"## {i}. `{t.id}` — {t.spec.name} ({role})\n\n{t.spec.description}\n\n"
@@ -308,10 +347,11 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset) -> str:
             f"{crits}\n\n"
             f"### Inputs from outside your scope (the REAL outputs, no stubs)\n{ups}\n\n"
             f"### ACCEPTED_RISKS (declared plan assumptions — do not gold-plate against these)\n{negl}\n"
-            f"{_rework_section(engine, t)}{answered_challenges(engine, t)}")
+            f"{_rework_section(engine, t)}{answered_challenges(engine, t)}"
+            f"{_observed_section((seen or {}).get(str(t.id), []), '###')}")
 
 
-def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = ()) -> str:
+def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = (), seen: dict | None = None) -> str:
     """The scope session's contract: every node of the scope in build order, each with its criteria as the
     checklist its validation runs, its inputs from outside the scope and its rework feedback — and the plan's
     nodes outside the scope, to name when blocked on one."""
@@ -324,7 +364,7 @@ def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list 
             f"You hold the {len(order)} nodes below as ONE piece of work. Build them in the order listed — "
             f"the parts before the whole they compose into, a producer before its consumer — and report on "
             f"each node that is yours to do, one entry per node, `task_id` naming it.\n\n"
-            + "\n".join(_scope_node_block(engine, i, t, top, inside) for i, t in enumerate(order, 1))
+            + "\n".join(_scope_node_block(engine, i, t, top, inside, seen) for i, t in enumerate(order, 1))
             + f"\n## The other nodes of this plan — NOT your work, and you must not do it\n"
             f"If you cannot proceed because something one of them owns does not exist yet, report that node "
             f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{_unjoined_text(unjoined)}\n"

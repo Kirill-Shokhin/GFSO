@@ -897,6 +897,13 @@ def laid(command: str, dirs: Mapping[str, object]) -> str:
     return command
 
 
+def shows(printed: str, expect: str) -> bool:
+    """Does `printed` show exactly what a check must, as a check reads a printed output: written `\\t`/`\\n` escapes as
+    the characters, whitespace runs as one."""
+    u = lambda s: " ".join(s.replace("\\t", "\t").replace("\\n", "\n").split())
+    return u(printed) == u(expect)
+
+
 def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> str | None:
     """The id of the pinned probe `p` is a run of — its id, or its command with the probe's own directory named
     `{inputs}` — else None. Only a probe of the same criterion: another criterion's pinned probe with the same

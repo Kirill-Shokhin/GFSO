@@ -41,7 +41,7 @@ from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, pinned_files, probe_id,
+from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, shows, pinned_files, probe_id,
                                           probes_from as _checks_of, unrerunnable, with_named_files)
 from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, Register, RevisionReason, Signal,
                              SignalData, Spec, Stage, State, TaskId, register_of, set_aside_of)
@@ -662,12 +662,6 @@ def narrowing_at_the_root(engine, task, new_spec: Spec) -> Optional[str]:
 DERIVE_TIMEOUT_S = 60
 
 
-def _same(a: str, b: str) -> bool:
-    """Equal as a check reads a printed output: written `\\t`/`\\n` escapes as the characters, whitespace runs as one."""
-    u = lambda s: " ".join(s.replace("\\t", "\t").replace("\\n", "\n").split())
-    return u(a) == u(b)
-
-
 def _derived(command: str, criterion, probe, execution=None) -> tuple[Optional[str], str]:
     """(what the command printed, '') run in an EMPTY place holding only the probe's pinned inputs — where the project's
     work runs, so a value is derived on the platform its check is decided on — or (None, why it could not run — with
@@ -749,14 +743,14 @@ def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Opt
             continue
         now, was = {pair(p) for p in c.check or ()}, old[c.name].check or ()
         for p in (p for p in c.check or () if pair(p) not in {pair(q) for q in was}):
-            if (out := derive(c, p, "the expectation it pins")) is not None and not _same(out, p.expect):
+            if (out := derive(c, p, "the expectation it pins")) is not None and not shows(out, p.expect):
                 wrong.append(f"«{c.name}» `{p.command[:80]}`: its derivation prints {out.strip()[:200]!r}, not the "
                              f"expectation {p.expect[:200]!r}")
         # …AND THE PROBE IT REPLACES WAS WRONG: a new command can be honestly derived and still check a narrower thing
         # (critic's live replay: `WHERE salary > 55000.0` after a raise, Bob only, the Alice row out of the check)
         for q in (q for q in was if pair(q) not in now):
             if (out := derive(c, q, "the user's probe it replaces must be shown wrong")) is not None \
-                    and _same(out, q.expect):
+                    and shows(out, q.expect):
                 wrong.append(f"«{c.name}» `{q.command[:80]}`: the probe it replaces was right — its derivation "
                              f"prints its expectation {q.expect[:200]!r}")
     return ("under AUTO a re-pinned expectation of the user's goal is shown by a derivation that does not run the "

@@ -1,0 +1,86 @@
+"""What a node's pinned checks print on its place as it stands, observed by the system before an executor session works
+it (`observe_place`) — an implementation's own check (§10.2), handed to the session as machine state: no verdict, no
+signal, nothing written to the graph or to the place.
+
+On the v17 continuation of sql × haiku 4.5 (GB_sql_database_tnjw8j716) six parts whose work was already there spent
+15–49 turns each discovering that, building and running checks the system holds and could have run once. What a session
+cannot learn from the packet it buys turn by turn, every turn re-reading its whole context.
+
+Nothing is built for the observation: a pin presupposes a build its procedure does not pin (docs/notes/
+VALIDATION_BY_CANON.md, "Where three rounds converged"), so a check over a program the tree has not built — or built
+from older sources — shows that, not the work. Hence an observation and never a verdict: the validator builds as the
+checks say and decides; the packet says so."""
+from __future__ import annotations
+
+import subprocess
+import time
+from pathlib import Path
+from typing import Optional
+
+from gfso.adapters.snapshots import snapshot, swap
+from gfso.core.protocol.procedure import INPUTS_TOKEN, materialize_inputs, probe_id, shows
+from gfso.workspaces import execution_of
+
+#: Seconds one check may run, and the whole observation of one session's nodes — a quarter of the session's own
+#: cap at most (`observe_place`).
+PROBE_S, OBSERVE_S = 60, 300
+#: Characters of a check's output the packet shows — its tail, where a build or a test reports how it ended: every
+#: turn of the session re-reads them.
+TAIL = 200
+
+
+def observing(graph) -> bool:
+    """Does this project observe a node's place before a session (`set_mode(observe=)`)? On unless it says no — a
+    paired row needs the other arm on the same server."""
+    return graph.setting("observe") != "0"
+
+
+def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None) -> dict:
+    """{task id: [{criterion, behaviour, command, expect, rc, out, matched, note}]} — every check pinned to `tasks`'
+    criteria run once, in contract order, in one copy of `place` (`adapters.snapshots`) with its inputs laid from the
+    contract, where the project's work runs. A check run already for an earlier node is not run again. {} where there is
+    nothing to observe: no place, the project said no, the copy could not be made — the place itself is never run in,
+    the session starts on it."""
+    probes = [(t, c, p) for t in tasks for c in t.spec.criteria for p in (c.check or ()) if p.command]
+    if not (place and probes and observing(engine.graph)):
+        return {}
+    ex, budget, t0 = execution_of(engine), min(OBSERVE_S, (cap or OBSERVE_S) // 4), time.monotonic()
+    if not (bash := ex.shell()):
+        return {}
+    seen, ran = {}, {}
+    with ex.scratch("gfso-observe-") as tmp:
+        try:     # refused at admission; reaching here, nothing pinned can be laid as pinned
+            dirs = materialize_inputs([c for t in tasks for c in t.spec.criteria], Path(tmp) / "inputs")
+        except ValueError:
+            return {}
+        with snapshot(place, Path(tmp) / "place", ex) as tree:
+            if not tree:
+                return {}
+            for t, c, p in probes:
+                d = dirs.get(probe_id(c.name, p))
+                cmd = swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, tree)
+                row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect}
+                if cmd not in ran:
+                    left = budget - (time.monotonic() - t0)
+                    ran[cmd] = (_run(ex, bash, cmd, tree, min(PROBE_S, left), place) if left >= 1 else
+                                {"note": "not run: the observation's time ran out"})
+                # …matched against THIS check's expectation: one command pinned twice with two expectations printed
+                # once, and the second inherited the first's match (critic over 27de5f8)
+                got = ran[cmd]
+                seen.setdefault(str(t.id), []).append({**row, **{k: v for k, v in got.items() if k != "stdout"},
+                                                       **({"matched": shows(got["stdout"], p.expect)}
+                                                          if "stdout" in got else {})})
+    return seen
+
+
+def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict:
+    """One check's observation: its exit code, its output and the tail of all it printed (the copy's path named as the
+    place) — or why it gave no observation."""
+    try:
+        r = ex.run([bash, "-c", cmd], cwd=tree, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"note": f"did not finish in {int(timeout)} s"}
+    except OSError as e:
+        return {"note": f"could not run ({e})"}
+    out = swap("\n".join(x.strip() for x in (r.stdout, r.stderr) if x and x.strip()), tree, place)
+    return {"rc": r.returncode, "out": out[-TAIL:], "stdout": r.stdout or ""}

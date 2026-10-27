@@ -1856,7 +1856,7 @@ next_steps.__doc__ += "\n\n    " + (_tools.next_steps.__doc__ or "").strip()
 def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
              agent: Optional[str] = None, user_said: str = "", perform: str = "dispatch",
              system_model: Optional[str] = None, l2_gate: Optional[bool] = None,
-             deadline_s: Optional[float] = None) -> dict:
+             deadline_s: Optional[float] = None, observe: Optional[bool] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
     - `solo` — you (the user-agent) hold and execute every node; the one seam is the root.
@@ -1885,7 +1885,8 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
     What the project sets for itself, recorded with the mode (unset = the server's): `system_model` — the model the
     system's own roles run on here (its issuer, its plan's author and reviewer); `l2_gate` — whether the plan's
     Level-2 review gates execution (off: the plan was verified where it was authored); `deadline_s` — how far ahead a
-    deadline nobody typed is written (0 = none)."""
+    deadline nobody typed is written (0 = none); `observe` — whether the system runs a node's pinned checks once on its
+    place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`)."""
     try:
         m = Mode(str(mode).strip().lower())
     except ValueError:
@@ -1901,7 +1902,8 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
         return {"refused": True, "error": f"deadline_s is seconds ahead, 0 or more, got {deadline_s!r}"}
     settings = {k: v for k, v in (("system_model", str(system_model).strip() or None if system_model else None),
                                   ("l2_gate", None if l2_gate is None else "1" if l2_gate else "0"),
-                                  ("deadline_s", None if deadline_s is None else float(deadline_s))) if v is not None}
+                                  ("deadline_s", None if deadline_s is None else float(deadline_s)),
+                                  ("observe", None if observe is None else "1" if observe else "0")) if v is not None}
     staff = mode_staffing(engine, m.value, perform)
     pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
     if not staff["ready"]:
