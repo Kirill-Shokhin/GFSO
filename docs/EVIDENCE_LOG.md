@@ -3638,7 +3638,7 @@ WHERE col = expr` runs the WHERE as one more assignment, so every row is rewritt
 1, 2, 3 leaves 2, 2, 2). The plan names the behaviour — `dml`'s and the root's criteria cover UPDATE with WHERE — and every
 pinned probe of it uses a predicate other than `=` (`<`, `<>`, `>`, `IS NULL`): FM-3 of the plan's checks, a criterion
 whose procedure cannot see the case. The first row's tree encodes the SET items apart from the WHERE and passes the same
-tests through the same blind checks. Cost on the ledger: $62.51, of it executors $47.1, validation $12.7, the issuer
+tests through the same blind checks. Cost on the ledger: $68.36, of it $5.86 a continued round booked twice (fixed since), so $62.5 — executors $47.1, validation $12.7, the issuer
 $2.5.
 
 **What it does not show.** The plan's checks were verified against the oracle beforehand and polished on
@@ -3649,3 +3649,26 @@ never pooled. The harness flagged each haiku 4.5 row invalid on the repository's
 the server that ran it was one process on the recorded build throughout, and the second also on a false leak (its
 pattern read an executor's own place, `/gfso-nodes-ws/…`, as gfso's source; the pattern now matches whole path
 segments) — each adjudicated valid in its record.
+
+**The second row's gap was the plan's, and closing it took one probe.** Every UPDATE probe of v16 used `<`, `<>`, `>`,
+`>=`, `IS NULL` or a bare column (its DELETE probes do use `=`); a probe of `UPDATE … WHERE col = value`, derived from
+the contract's UPDATE with WHERE, fails on the second row's signed tree and passes on the first's (offline, no model).
+v17 = v16 + that one criterion (root, `dml`, `integrate`). Run on the second row's signed tree as its starting tree
+(GB_sql_database_tnjw8j716, pre-registered as Amendment 7): DONE, held-out 1.000 (11/11), public 1.000, 52 min, $11.25 —
+execution $3.24, validation $8.02; `dml` fixed the defect in one round. Six parts that changed nothing spent 15–49 turns
+each finding their work done; three others edited code on the way. **What it does not show:** it is a continuation, not
+an independent sample; the held-out score is not blind to this defect — the probe was written from the contract but
+chosen after the hidden tests had shown the failure; it does not show haiku 4.5 closing v17 from the start; and $11.25 is
+the increment, the outcome's cost being the second row's plus this.
+
+**c_compiler on haiku 4.5, plan v4 given (GB_c_compiler_tnj930660, Amendment 6): NOT DONE.** In 8 h the first part,
+`base` — eight criteria, judged by the plan's author to fit one session — never passed: 38 deliveries, 37 FAILs; the
+failing set fell from seven criteria to four by the second hour, rose back to five or six in the third, and stood at
+three in the last ninety minutes; five sampled
+deliveries through hour five read 0.07 → 0.22 on the oracle while the other ten parts waited; the tree the row scored
+reads 0.204. Cost $67.26 — execution $57.21, validation $7.24, issuer $2.66. With twelve minutes left on the engine's
+deadline the waiting parts' offers lapsed and the issuer cancelled one of the given plan — a move the plan-given rule
+does not allow, open — and the system stopped the run as refuted. The record is flagged invalid only for the source
+moving during the row (two commits under gfso/web, the server one process on the recorded build), not yet adjudicated.
+At its grade: one row did not pass `base` in 8 h. The plan is v3's plus `integrate` (v3's one haiku 5.5 row,
+GB_c_compiler_tn9fq5668, DONE, is itself flagged and not adjudicated); nothing in the engine lets an executor split a node in performance (§3.7, §11.5).
