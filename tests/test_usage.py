@@ -143,3 +143,15 @@ def test_what_a_provider_does_not_report_is_stored_as_not_reported(tmp_path):
     told, said = e.usage_calls()[-2:] if e.usage_calls()[0]["model"] == "other" else e.usage_calls()[:2][::-1]
     assert [told[k] for k in ("input_tokens", "output_tokens", "cache_input_tokens", "cost_usd")] == [None] * 4
     assert [said[k] for k in ("input_tokens", "output_tokens", "cost_usd")] == [0, 0, 0.0]
+
+
+def test_a_round_that_handed_over_says_which_note_it_wrote(tmp_path):
+    """A session handed over before its context outgrew the resource is the cost measurement's own column: the round
+    that wrote the n-th note carries n, every other round nothing — dropped, the reopen was indistinguishable from a
+    fresh session and the handover's saving could not be read off the ledger."""
+    e = _engine(SqliteStorage(str(tmp_path / "u.db")))
+    e.record_llm_usage("executor", _Provider([{"cost_usd": 0.1, "ended": "answered"},
+                                              {"cost_usd": 0.1, "ended": "answered", "handover": 2}]), TaskId("root"))
+    assert [c["handover"] for c in e.usage_calls()] == [None, 2]
+    with TestClient(create_app(e)) as c:
+        assert [r["handover"] for r in c.get("/api/usage?detail=true").json()["calls_detail"]] == [None, 2]

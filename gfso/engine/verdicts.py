@@ -61,8 +61,11 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
     # ledger row with no place stood for a signature after a part below it was delivered again
     ts = datetime.now().isoformat(sep=" ", timespec="microseconds")
     _ledger = observations(storage, task_id)
+    # …with what each criterion read: the current record is overwritten by the next round, so a past FAIL's passing
+    # criteria could not be told from unchecked ones (the ui stream's verdict history, 2026-10-27)
     _ledger.append({"verdict": str(verdict), "failed_criteria": list(failed_criteria or ()),
-                    "validator": str(validator_id), "by_hand": bool(by_hand), "ts": ts, "log_at": int(log_at),
+                    "per_criterion": list(per_criterion or ()), "validator": str(validator_id),
+                    "validator_model": model, "by_hand": bool(by_hand), "ts": ts, "log_at": int(log_at),
                     **stamp(generation)})
     ledger_write(storage, task_id, OBSERVATIONS, _ledger)
     storage.store_exec_verdict(task_id, json.dumps({

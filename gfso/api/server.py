@@ -36,6 +36,7 @@ try:
 except Exception:                                    # never let a diagnostic field break the server
     _CODE_VERSION = "unknown"
 from gfso.engine.validation import l2_gate_on as _l2_gate_on
+from gfso.engine.verdicts import observations
 from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_staffing
 from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso import config as _config
@@ -527,6 +528,16 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
                 "recommendation": {"suggestions": list(rec.suggestions)} if rec else None,
                 "audit": [audit_to_out(a).model_dump() for a in audit],
                 "children": [task_out(c, e, plan=False) for c in children]}
+
+    @app.get("/api/tasks/{task_id}/verdicts")
+    def get_verdicts(task_id: str):
+        """Every verdict ever recorded on this node, oldest first — each with its per-criterion values and the delivery it
+        answers (its generation stamp and its place in the log). The node's own record holds only the latest, so a past
+        FAIL could not say which criteria had passed under it."""
+        e: Engine = _e()
+        if e.graph.get_task(TaskId(task_id)) is None:
+            raise HTTPException(404, f"task {task_id} not found")
+        return observations(e.graph._storage, TaskId(task_id))
 
     # === Unified authoring surface: every gfso tool over HTTP (the SAME gfso.tools.TOOLS that MCP + CLI bind) ===
     # Adding an authoring verb = ONE Engine method + ONE gfso.tools entry → it appears HERE, on MCP, and on the
