@@ -164,12 +164,24 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
         pg.route("**/*", route)
         pg.route_web_socket("**/ws/**", lambda ws: None)              # the live feed: held open, silent — a frame is still
         pg.add_init_script(f"localStorage.setItem('gfso.deck', JSON.stringify({{h: {shot['deck']}}}))")
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
         pg.goto(f"http://gfso.media/?project={name}" +(f"&task={shot['task']}" if shot.get("task") else ""))
-        pg.clock.run_for(5000)
+        # the page's reads answer on their own time: a frame is shot once the deck's strip is drawn, not after a fixed
+        # wait (one frame of the run came out with an empty strip)
+        for i in range(40):
+            pg.clock.run_for(500)
+            pg.wait_for_timeout(50)
+            if i >= 9 and pg.locator(".dk-strip > *").count():
+                break
+        else:
+            raise SystemExit(f"{png.name}: the deck was never drawn {errors}")
         if shot["tab"] != "timeline":                                 # the deck opens on it; pressing it folds the deck
             pg.locator(f'.dk-tab[data-view="{shot["tab"]}"]').click()
             pg.clock.run_for(1500)
         pg.wait_for_timeout(300)
+        if errors:
+            raise SystemExit(f"{png.name}: the page failed {errors}")
         pg.screenshot(path=str(png))
         b.close()
     shutil.rmtree(home, ignore_errors=True)
