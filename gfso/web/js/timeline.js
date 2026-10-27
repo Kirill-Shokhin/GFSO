@@ -95,7 +95,7 @@ export function render(el, run, nodes) {
         // the round a stretch belongs to: the delivery an execution ended in, the verdict a validation gave
         const x = work[+s.dataset.i], key = x.kind === 'val' ? 'at' : 'delivered';
         const r = (run.rounds[x.node] || []).find(r => r[key] >= x.end - 1e3);
-        tip(TIP.bar(name(x.node), x, r, r?.failed?.length && failedWords(run, x.node, r.failed)), e);
+        tip(TIP.bar(name(x.node), x, r, r?.failed?.length ? failedOf(run, x.node, r.failed) : null), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`));
 }

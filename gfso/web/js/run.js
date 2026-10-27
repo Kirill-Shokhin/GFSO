@@ -211,7 +211,8 @@ function work(calls) {
             r.fills.push(c.peak_context / (c.context_window || window[model]));
             r.window = c.context_window || window[model];         // a share says nothing without the window it is of
         }
-        if (c.node_id) (((byNode[c.node_id] ??= {})[kind] ??= {})[model] = (byNode[c.node_id][kind][model] || 0) + 1);
+        // a resumed process continues its session: counted once, as everywhere else
+        if (c.node_id && !c.resumed) (((byNode[c.node_id] ??= {})[kind] ??= {})[model] = (byNode[c.node_id][kind][model] || 0) + 1);
         // what the cost went to: a priced Claude call with its cache kept apart, weighed by the price structure
         const w = /^claude-/.test(model) && c.cost_usd && c.input_tokens != null && c.cache_read_tokens != null
             && TOKEN_PRICE.map(([k, x]) => [k, (c[k] || 0) * x]);

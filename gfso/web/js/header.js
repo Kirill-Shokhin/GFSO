@@ -52,7 +52,9 @@ async function goal() {
     const set = [m?.by && ['set by', `${m.by}${m.at ? ' · ' + String(m.at).slice(0, 16).replace('T', ' ') : ''}`],
         m?.boundary && ['boundary', `depths 0…${m.boundary - 1} held by the user's agent`], m?.perform && ['perform', m.perform],
         m?.hands && ['hands', m.hands], st.system_model && ['system model', `the system's roles run on ${modelName(st.system_model)}`],
-        ...Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => [k.replace(/_/g, ' '), String(v)])].filter(Boolean);
+        // a setting in seconds is said as a time (deadline_s 29160 → deadline 8.1h)
+        ...Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => /_s$/.test(k) && typeof v === 'number'
+            ? [k.slice(0, -2).replace(/_/g, ' '), dur(v * 1e3)] : [k.replace(/_/g, ' '), String(v)])].filter(Boolean);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = root.name || root.id, short = full.split(/\s[(:—]/)[0].slice(0, 40);
     const done = delivered(root);

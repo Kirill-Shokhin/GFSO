@@ -58,11 +58,13 @@ function verdict({vr}) {
 // hollow: the log of past rounds keeps only what a FAIL named, so an unnamed one is ⊥, not pass. The last 12.
 const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = (x, i) => `<circle class="mk-open" cx="${x}" cy="0" r="2.5"/>`;
     // a history of one round says what the mark beside the name says: drawn, it was a lone dot beside a dot (the author)
-    return rs.length < 2 ? '' : `<svg class="cr-strip" width="${rs.length * 8}" height="10" viewBox="0 -5 ${rs.length * 8} 10"${PANEL.rounds(rounds.length)}>`
-        + rs.map((r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? open(i * 8 + 4)
-            : r.per ? (v => v === 'pass' || v === 'fail' ? mark(v.toUpperCase(), i * 8 + 4, 0, 2.5) : open(i * 8 + 4))(r.per.find(c => c.criterion === name)?.verdict)
-            : r.verdict === 'FAIL' && !r.failed.includes(name) && !(i === rs.length - 1 && now === 'pass') ? open(i * 8 + 4)
-            : mark(r.verdict === 'FAIL' && !r.failed.includes(name) ? 'PASS' : r.verdict, i * 8 + 4, 0, 2.5)).join('') + '</svg>'; };
+    // each mark says its own round on hover (a hover on the whole strip said the same line over every mark — critic)
+    const one = (r, i) => !r.verdict || (i === rs.length - 1 && now && now !== 'pass' && now !== 'fail') ? null
+        : r.per ? (v => v === 'pass' || v === 'fail' ? v.toUpperCase() : null)(r.per.find(c => c.criterion === name)?.verdict)
+        : r.verdict === 'FAIL' && !r.failed.includes(name) && !(i === rs.length - 1 && now === 'pass') ? null
+        : r.verdict === 'FAIL' && !r.failed.includes(name) ? 'PASS' : r.verdict;
+    return rs.length < 2 ? '' : `<span class="cr-strip">` + rs.map((r, i) => { const v = one(r, i);
+        return `<svg width="8" height="10" viewBox="${i * 8} -5 8 10"${PANEL.round(r.n, v)}>${v ? mark(v, i * 8 + 4, 0, 2.5) : open(i * 8 + 4)}</svg>`; }).join('') + '</span>'; };
 
 // A criterion is one line at the current verdict; unfolded (one at a time) it reads what it asks, what the
 // verdict found, and its pinned check.

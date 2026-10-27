@@ -4,7 +4,8 @@
 // repeats it; a POPOVER a click opens carries its title and caption set apart from its items. So four kinds:
 //   KEY      — the «?» popover: the graph's arrows, the marks (dot, cross, ring, ⊥), the deck's counts.
 //   LABEL    — words drawn beside a thing because the reader needs them each time: the timeline's bar kinds (run.js
-//              KIND_NAME), the coverage cells' states (CELLS), the kinds of token a cost went to (TOKENS). PASS and
+//              KIND_NAME), the coverage cells' states (CELLS). The kinds of token (TOKENS) are the key's: the Models bar
+//              says each on its own segment's hover. PASS and
 //              FAIL are no label: the key says them once.
 //   HOVER    — `hover(head, …rows)`: one thing's detail, the first line its heading; `card()` lays it out for a view
 //              that draws its own tip (the graph, the timeline, progress, spend, models).
@@ -184,7 +185,7 @@ export const PANEL = {
     deadline: (due, now) => hover(due < now ? `Overdue by ${dur(now - due)}` : `Due in ${dur(due - now)}`, new Date(due).toLocaleString()),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
-    rounds: n => hover(`${n} rounds`, n > 12 ? 'The last 12 shown, oldest left' : 'Oldest left'),
+    round: (n, v) => hover(`${v || 'No value'}\tRound ${n}`, !v && 'Not checked, or not named by its FAIL'),
     full: text => hover(text),
     directive: text => hover(text),
     model: id => hover(id),
@@ -200,6 +201,9 @@ const SESSION = {exec: 'execution', val: 'validation', issuer: 'issuer turn', co
 export const sessionsOf = (kind, n) => `${n} ${SESSION[kind] || KIND_NAME[kind] || kind}${n === 1 ? '' : 's'}`;
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
+// what a FAIL named: its count, then one criterion a row — names carry commas of their own, and joined they read as more
+const failedRows = (own, edges) => own.length || edges.length ? [`Failed (${own.length + edges.length}):`, ...own.map(c => `– ${c}`),
+    ...edges.map(c => `– ${c}: ${EDGE_NOTE}`)] : [];
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k} of ${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
@@ -208,17 +212,16 @@ export const TIP = {
          criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // a stretch of work on the timeline
-    bar: (name, x, r, failed) => card(`${cap(KIND_NAME[x.kind])}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
+    bar: (name, x, r, f) => card(`${cap(KIND_NAME[x.kind])}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
         name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
-        r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict + (failed ? ': ' + failed : '') : ''}`,
+        r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f.own, f.edges),
         x.parts > 1 && `${x.parts} sessions, ${dur(x.busy)} busy — ${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried, continued or handed over'}`,
         x.handed?.length && `Handed over ${x.handed.length}× — its context reached the budget; a fresh session went on from its note`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
     verdict: (name, signal, r, t, own, m, total, edges) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
-        name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, own.length && `Failed: ${own.join(', ')}`,
-        edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`]),
-    cell: (name, state) => hover(name, state),
+        name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(own, edges)]),
+    cell: (name, also) => hover(name, also),
     // a node's row in spend
     cost: (name, rows, rounds, all) => card(`${rounds} delivery round${rounds === 1 ? '' : 's'}\t${all}`, [name, ...rows]),
     prefix: p => hover(p + '…', 'The start every assignee id shares, cut from the bars'),
