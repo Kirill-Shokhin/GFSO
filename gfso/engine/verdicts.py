@@ -22,9 +22,9 @@ from gfso.core.protocol.procedure import coverage as procedure_coverage
 #: The records kept BESIDE a node's verdict, each under its own key in the critique store — one table of their names and
 #: one reader and writer, where seven hand-built keys were each read and written in their own spelling, three readers
 #: guarding a corrupt record and three not (ortho audit, D-F11).
-OBSERVATIONS, REFUTED_VERSIONS, CLOSING, OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS = (
+OBSERVATIONS, REFUTED_VERSIONS, CLOSING, OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, OUTSIDE_ANSWERED = (
     "observations", "refuted-versions", "closing-verdict", "overruled-verdict", "rejected-report",
-    "regression-probes", "failed-through-parts")
+    "regression-probes", "failed-through-parts", "outside-answered")
 
 
 def ledger_read(storage, task_id, kind: str, default=None):
@@ -128,9 +128,10 @@ def observations(storage, task_id: TaskId) -> list:
 
 
 #: How an issuer is to read what validators saw beyond the criteria (§8.3: FM-1.f is read at contact, by whoever meets it)
-OUTSIDE_NOTE = ("observations outside the written criteria: judge each against the goal statement; a requirement the "
-                "goal names that no criterion writes is FM-1.f — add the criterion (a revision or promotion you already "
-                "can make) or say why not. None of them is a verdict: no criterion failed on it.")
+OUTSIDE_NOTE = ("observations outside the written criteria, newest first and none yet answered: judge each against the "
+                "goal statement; a requirement the goal names that no criterion writes is FM-1.f, which the split's own "
+                "moves close (a child's criteria revised, a child added, the split reshaped). None of them is a "
+                "verdict: no criterion failed on it.")
 
 
 def _outside(outside) -> dict:
@@ -140,14 +141,26 @@ def _outside(outside) -> dict:
 
 
 def outside_observations(storage, task_id: TaskId) -> list:
-    """[{what, evidence}] — every observation outside the criteria a recorded verdict on this node kept, once each by
-    `what`, oldest first: the next round's record replaces the current one, and a run that saw it once may not again."""
+    """[{what, evidence, log_at}] — the observations outside the criteria the recorded verdicts on this node kept and its
+    issuer has not answered (`answer_outside`), once each by `what`, newest first: the next round's record replaces the
+    current one, and a run that saw it once may not again. Oldest first and never retired, the newest fell past the
+    packet's cap and an answered one kept asking for its criterion (critic over 5cad9c4)."""
+    answered = {str(a.get("what")) for a in ledger_read(storage, task_id, OUTSIDE_ANSWERED, []) if isinstance(a, dict)}
     seen: dict = {}
-    for r in observations(storage, task_id):
+    for r in reversed(observations(storage, task_id)):
         for o in r.get("outside") or () if isinstance(r, dict) else ():
-            if isinstance(o, dict) and (k := " ".join(str(o.get("what") or "").split())):
-                seen.setdefault(k, {"what": k, "evidence": str(o.get("evidence") or "")})
+            if isinstance(o, dict) and (k := " ".join(str(o.get("what") or "").split())) and k not in answered:
+                seen.setdefault(k, {"what": k, "evidence": str(o.get("evidence") or ""), "log_at": int(r.get("log_at") or 0)})
     return list(seen.values())
+
+
+def answer_outside(storage, task_id: TaskId, whats, by: str, move: str, why: str) -> None:
+    """Keep that the node's issuer answered these observations — by `move`, or by declining it with `why` — appended,
+    never rewritten: the record of what was seen stays whole, and only the read retires it."""
+    rec = ledger_read(storage, task_id, OUTSIDE_ANSWERED, [])
+    ts = datetime.now().isoformat(sep=" ", timespec="microseconds")
+    ledger_write(storage, task_id, OUTSIDE_ANSWERED, (rec if isinstance(rec, list) else []) + [
+        {"what": w, "by": str(by), "move": str(move), "why": str(why), "ts": ts} for w in whats])
 
 
 def criterion_version(description, probes) -> list:

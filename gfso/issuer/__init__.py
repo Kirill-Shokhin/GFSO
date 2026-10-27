@@ -14,8 +14,9 @@ and only the canon's moves as answers, each checked by code before anything is s
 - split      a childless node judged larger than one session of its executor: its split is owed (§3.7)
 - parked     an executor round left the node in its hands twice: re-ASSIGN or CANCEL
 - external   BLOCKED on nothing the graph holds: resolve with an action, re-ASSIGN, or CANCEL
+- outside    a child's validator saw what no criterion writes: a split move that writes it, or a logged reason not to
 
-`plan`, `repair` and `split` are the moves of the node's own executor (the author of its split and the issuer of
+`plan`, `repair`, `split` and `outside` are the moves of the node's own executor (the author of its split and the issuer of
 its children); the other four are the node's issuer's. Under AUTO the root's criteria are append-only:
 the user's contract is changed only by the user — their text; a pinned check is re-pinned by an accepted dispute.
 """
@@ -81,7 +82,7 @@ DELIVERY_TAIL = 4000
 TRAIL = 30
 
 #: The questions whose mover is the node's EXECUTOR (the author of its split); the rest are its issuer's.
-SPLIT_QUESTIONS = ("plan", "repair", "split")
+SPLIT_QUESTIONS = ("plan", "repair", "split", "outside")
 
 #: What the issuer answering a dispute may use in the node's workspace: the validator's envelope, read and run.
 #: A dispute says what the contract's checks do in the world — a fact about S, which only contact reads
@@ -410,9 +411,12 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         out.append(f"## Its own split\n{_own_split(engine, task) if split else _split_lines(engine, task)}")
     if not plan:   # a repair needs what was observed failing: the verdict and the delivery ride here
         out += _what_happened(engine, task)
-    # …and what its validators and its children's saw beyond the criteria: FM-1.f met at contact (§8.3), for the moves
-    # this question already has
-    out += [s for s in [outside_text(engine, task)] if s]
+    # …and what validators saw beyond the criteria in the WHOLE split this question's moves lie in: FM-1.f met at contact
+    # (§8.3). Shown only the asking node's subtree, a split re-planned by promotions answering a sibling's block never
+    # saw the hole another child's validator wrote (critic over 5cad9c4)
+    holder = task.id if split or task.parent_id is None else task.parent_id
+    rows = engine.outside_the_criteria(holder, own=not split and task.parent_id is None)
+    out += [s for s in [outside_text(engine, holder, rows)] if s]
     if question == "plan":
         out.append(f"## What the plan gate holds open\n{_gate_findings(engine, task_id)}")
         # …and the issuer's answers to this node's challenges on the version in force: unseen, a rejected challenge was
@@ -510,6 +514,12 @@ QUESTIONS = {
                         "(what it names is not what it needs: the record is refuted and it resumes), re-issue it "
                         "(a contract it can meet without that), or close it.",
                  "moves": ("promote", "resolve_block", "reassign", "cancel")},
+    "outside": {"ask": "a validator of a child of this split observed what none of the criteria writes (listed above "
+                       "under «What validators observed outside the written criteria»); no verdict rests on it. Judge "
+                       "each against the goal: where the goal needs it, write it into the split — revise the child that "
+                       "should carry it, or, where that child is SETTLED, add a child (or reshape) that does; where it "
+                       "does not, `decline` with why. Either answers every observation listed, once.",
+                "moves": ("revise_child", "add_child", "reshape", "decline")},
 }
 
 _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
@@ -1463,7 +1473,13 @@ def _resplit(engine, task, actor, answer, why, verbs):
     return True, ""
 
 
-MOVES = {"cancel": _cancel, "drop_dependency": _drop_dependency, "drop_child": _drop_child, "resplit": _resplit, "resolve_block": _resolve_block, "reassign": _reassign, "promote": _promote,
+def _decline(engine, task, actor, answer, why, verbs):
+    """The issuer's reason not to write what a validator saw outside the criteria into the split: no signal — the
+    answer itself, logged and kept with the observations it retires (`issuer_turn`)."""
+    return (True, "") if why else (False, "a decline says why the goal does not need what was observed")
+
+
+MOVES = {"cancel": _cancel, "decline": _decline, "drop_dependency": _drop_dependency, "drop_child": _drop_child, "resplit": _resplit, "resolve_block": _resolve_block, "reassign": _reassign, "promote": _promote,
          "add_criterion": _add_criterion, "drop_risk": _drop_risk,
          "revise_child": _revise_child, "add_child": _add_child, "reshape": _reshape, "dispute": _dispute,
          "refine": _refine, "challenge": _challenge}
@@ -1634,12 +1650,17 @@ def issuer_turn(engine, task_id: TaskId, question: str, actor: str, verbs: "Verb
         out = answer_the_challenge(engine, task_id, actor, _llm, refusal=refusal, verbs=verbs, where=where)
         return {**out, "status": "applied" if out["status"] in ("accepted", "rejected") else out["status"]}
     ep = episode(engine.graph.get_task(task_id))
+    # what an `outside` answer answers: the observations its packet shows, read as it is built — one recorded during
+    # the turn was not shown, and stays asked
+    shown = engine.outside_the_criteria(task_id, own=False) if question == "outside" else ()
     answer, _ = _ask(engine, task_id, question, actor, MOVE_SCHEMA, refusal, verbs, _llm, where)
     if answer is None:
         return {"status": "unparsed", "why": "the answer was not one JSON object by the schema"}
     if not _still_open(engine, task_id, question, ep):
         return {"status": "gone"}
     done, why = apply_move(engine, task_id, question, actor, answer, verbs)
+    if done and shown:
+        engine.answer_outside(shown, actor, str(answer.get("move")), str(answer.get("justification") or ""))
     engine.emit_info("issuer", f"{task_id}: {actor}, on {question} — {answer.get('move')}"
                      + (f": {str(answer.get('justification'))[:200]}" if done else f" REFUSED: {why}"))
     return {"status": "applied" if done else "refused", "move": answer.get("move"), "why": why}
@@ -1649,7 +1670,7 @@ def issuer_turn(engine, task_id: TaskId, question: str, actor: str, verbs: "Verb
 
 #: The order in which one node's questions are asked — ONE at a time per node, so an escalation's
 #: CANCEL and a plan repair never race on the same subtree.
-PRIORITY = ("dispute", "escalation", "external", "parked", "repair", "split", "plan")
+PRIORITY = ("dispute", "escalation", "external", "parked", "repair", "split", "plan", "outside")
 
 #: Seconds a node's question waits after a settle no model answered (unavailable, a failed turn) before it is asked
 #: again, per such settle already spent — a transport failure gets time to pass, and nothing spins.
@@ -1705,6 +1726,12 @@ def open_questions(engine) -> list[tuple[TaskId, str]]:
             elif refuted or engine.split_holes(t.id) or any(
                     k.state == State.OFFERED and engine.execution_blocked_by(k.id) for k in kids):
                 qs.append("plan")
+            # …and what a child's validator saw that no criterion writes, asked of the split's holder — the child's
+            # issuer — once, holding nothing: shown only in a context, it was readable and never delivered: a validator
+            # wrote the very hole the held-out suite then failed, the node passed and the root closed DONE (5cad9c4).
+            # Not in a plan the user handed in: only its author writes into it
+            if not engine.users_plan() and engine.outside_the_criteria(t.id, own=False):
+                qs.append("outside")
         if qs:
             found[t.id] = min(qs, key=PRIORITY.index)
     return list(found.items())

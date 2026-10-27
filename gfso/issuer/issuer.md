@@ -81,6 +81,10 @@ it, what contract comes next, or is the node to be closed.
   it — a producer beside the blocked node, which then waits for it (§11.3: promotion is mandatory for a
   producible blocker). Only what nobody here can produce — a vendor, the world — is answered by `resolve_block`
   with what was done about it, `reassign`, or `cancel`.
+- **outside** — a child's validator observed what none of the criteria writes; nothing failed on it. Judge it
+  against the goal: a requirement the goal names is written into the split (`revise_child` the child that should
+  carry it, or `add_child` / `reshape` where that child is settled); otherwise `decline`, the justification saying
+  why the goal does not need it. Either answer retires every observation the packet listed.
 
 - **Say why the contract or its executor changes** (`cause`, on `reassign`, `revise_child`, `add_criterion`):
   `spec_defect` — the criteria were wrong or missing what the goal needs; `scope_expansion` — the goal itself

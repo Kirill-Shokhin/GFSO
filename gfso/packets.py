@@ -16,6 +16,7 @@ from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
 from gfso.engine.verdicts import OUTSIDE_NOTE
 from gfso.engine.validation import is_auto_root
+from gfso.observe import TAIL
 from gfso.workspaces import _unjoined_text, base_of, execution_of, node_temp
 
 
@@ -659,13 +660,17 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
             + "\n" + _working_directory(workdir, validating=True) + _scratch_note(scratch))
 
 
-def outside_text(engine: Engine, task) -> str:
-    """The issuer's section of `Engine.outside_the_criteria`, bounded as a packet's lists are (`capped`); empty where
-    there are none."""
-    rows = engine.outside_the_criteria(task.id)
+def outside_text(engine: Engine, task_id, rows: list) -> str:
+    """The issuer's section of rows of `Engine.outside_the_criteria`, bounded as a packet's lists are (`capped`), each
+    evidence by its tail as an observed check's is (`observe.TAIL`; the whole stays on the record): one evidence of 5000
+    characters took an issuer packet from 1.4k to 7k. Empty where there are none."""
     return ("## What validators observed outside the written criteria\nThese are " + OUTSIDE_NOTE
-            + capped([f"`{r['node']}`: {r['what']}" + (f" — seen: {_flat(r['evidence'])}" if r["evidence"] else "")
-                      for r in rows], "observations", list_key(engine, task.id, "outside"))) if rows else ""
+            + capped([f"`{r['node']}`: {r['what']}" + (f" — seen: {_flat(_tail(r['evidence']))}" if r["evidence"] else "")
+                      for r in rows], "observations", list_key(engine, task_id, "outside"))) if rows else ""
+
+
+def _tail(text: str) -> str:
+    return text if len(text) <= TAIL else "…" + text[-TAIL:]
 
 
 #: distinct rejected challenges a packet shows, newest last — each WHOLE: a ruling binds, and one cut at 1500 characters

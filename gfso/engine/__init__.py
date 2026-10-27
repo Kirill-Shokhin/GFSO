@@ -43,7 +43,7 @@ from gfso.config import (
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
-                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations)
+                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside)
 from .findings import disputed_findings, ever_pinned, released, regression as standing_regression, standing_rulings
 from .frontier import Frontier
 from .claims import Claims
@@ -1629,13 +1629,21 @@ class Engine:
         """Every version of the node's split register as admitted — {at, by, log_at, items, components} (Thm 11)."""
         return json.loads(self._storage.get_critique(register_log_key(task_id)) or "[]")
 
-    def outside_the_criteria(self, task_id: TaskId) -> list:
-        """[{node, what, evidence}] — what validators of this node and of each child of its split observed that none of
-        their criteria states, kept with their verdicts (`verdicts.outside_observations`): candidates for its issuer's
-        judgement (`verdicts.OUTSIDE_NOTE`), never a verdict's input. One read for the machine issuer's context and
-        the holder's (`tools.get_task`)."""
-        return [{"node": str(t), **o} for t in [task_id, *(k.id for k in self._graph.get_active_children(task_id))]
-                for o in outside_observations(self._storage, t)]
+    def outside_the_criteria(self, task_id: TaskId, own: bool = True) -> list:
+        """[{node, what, evidence}], newest first — what validators of each active child of this node's split (and, with
+        `own`, of the node itself) observed that none of their criteria states and their issuer — this node's executor —
+        has not yet answered (`verdicts.outside_observations`): candidates for that issuer's judgement
+        (`verdicts.OUTSIDE_NOTE`), never a verdict's input. One read for the issuer's question (`own=False`), its
+        context and the holder's (`tools.get_task`)."""
+        nodes = [*([task_id] if own else []), *(k.id for k in self._graph.get_active_children(task_id))]
+        rows = [(o.pop("log_at"), {"node": str(t), **o}) for t in nodes for o in outside_observations(self._storage, t)]
+        return [r for _, r in sorted(rows, key=lambda x: -x[0])]
+
+    def answer_outside(self, rows, by: str, move: str, why: str) -> None:
+        """The issuer answered these rows of `outside_the_criteria` — by `move`, or declining with `why`: retired from
+        every later read, kept in the record (`verdicts.answer_outside`)."""
+        for node in dict.fromkeys(r["node"] for r in rows):
+            answer_outside(self._storage, TaskId(node), [r["what"] for r in rows if r["node"] == node], by, move, why)
 
     def regression_probes(self, task_id: TaskId) -> dict:
         """{criterion: [probes that have REFUTED it on this node]} — the set every later PASS must re-run. Grows at
