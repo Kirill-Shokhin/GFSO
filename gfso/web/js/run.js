@@ -46,10 +46,25 @@ function depths(nodes) {
 // The acts that close each kind of session — whoever signed the first of them after it is who ran it.
 const SIGNS = {exec: ['DELIVER', 'BLOCK', 'CHALLENGE'], consent: ['ACCEPT', 'CHALLENGE'], val: ['PASS', 'FAIL'],
                issuer: ['ASSIGN', 'CANCEL', 'RESOLVE_BLOCK', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE']};
-// Sessions from the usage ledger: a row is written when its call ends, so it starts `duration` before.
+// Sessions from the usage ledger: a row is stamped when it is booked, so it starts `duration` before. FALLBACK until
+// the ledger stamps each call's own end: an executor's rounds are booked together when its run ends, one ts for all —
+// they ran one after another, so each ends where the next began, counted back from the booking.
+function ends(calls) {
+    const end = new Map();
+    let after = 0;
+    for (let i = calls.length - 1; i >= 0; i--) {
+        const c = calls[i], n = calls[i + 1];
+        after = n && kindOf(c.stage) === 'exec' && n.ts === c.ts && n.node_id === c.node_id && n.stage === c.stage
+            ? after + n.duration_ms : 0;
+        end.set(c, at(c.ts) - after);
+    }
+    return end;
+}
 function sessions(calls, audit) {
-    return calls.filter(c => c.duration_ms > 0 && c.node_id).map(c => {
-        const end = at(c.ts), start = end - c.duration_ms, kind = kindOf(c.stage);
+    calls = calls.filter(c => c.duration_ms > 0 && c.node_id);
+    const endOf = ends(calls);
+    return calls.map(c => {
+        const end = endOf.get(c), start = end - c.duration_ms, kind = kindOf(c.stage);
         // the ledger names no agent: the one who signed the node's next act after the call is it
         const signer = audit.find(a => a.task_id === c.node_id && !a.rejected && a.t >= end - 1e3
             && SIGNS[kind]?.includes(a.signal));

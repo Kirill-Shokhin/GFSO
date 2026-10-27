@@ -222,9 +222,8 @@ export const TIP = {
         name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f.own, f.edges),
         x.parts > 1 && `${x.parts} processes, ${dur(x.busy)} busy: ${x.kind === 'val' ? 'the validator works in batches of probes'
-            : [x.continued && `${x.continued} continued its session`, x.handed?.length && `${x.handed.length} handed over`,
+            : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.handed?.length && `${x.handed.length} handed over`,
                x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0) > 0 && `${x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0)} retried`].filter(Boolean).join(', ')}`,
-        x.handed?.length && `Handed over ${x.handed.length}× — its context reached the budget; a fresh session went on from its note`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
     verdict: (name, signal, r, t, own, m, total, edges) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
