@@ -505,7 +505,7 @@ body {
 /* a heading with its figure apart, and a share drawn as a filled line with its percent at the end (hints.js card) */
 .tooltip .tt-split { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; }
 .tooltip .tt-split b { font-weight: 650; font-variant-numeric: tabular-nums; }
-.tooltip .tt-meter { display: grid; grid-template-columns: 82px 1fr 34px; align-items: center; gap: 8px; margin: 4px 0; font-size: 11px; color: var(--ui-text-soft); }
+.tooltip .tt-meter { display: grid; grid-template-columns: 96px 1fr 50px; align-items: center; gap: 8px; margin: 4px 0; font-size: 11px; color: var(--ui-text-soft); }
 .tooltip .tt-meter i { display: block; height: 4px; background: var(--hair); min-width: 80px; }
 .tooltip .tt-meter b { display: block; height: 100%; background: var(--ink-soft); }
 .tooltip .tt-meter em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; color: var(--ui-text); }

@@ -30,7 +30,7 @@ export const at = s => Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
 // The narration names its node first ("root.sort: …"); the rest is what was said.
 export const said = msg => { const m = /^([\w.\-]+):\s*(.*)$/s.exec(msg); return m ? {node: m[1], text: m[2]} : {node: null, text: msg}; };
 export const roundsLine = rs => !rs.length ? '' : `${rs.length} round${rs.length > 1 ? 's' : ''}`
-    + (rs.some(r => r.verdict === 'FAIL') ? ` · ${rs.filter(r => r.verdict === 'FAIL').length} FAIL` : '');
+    + (rs.some(r => r.verdict === 'FAIL') ? `, ${rs.filter(r => r.verdict === 'FAIL').length} failed` : '');
 
 const sum = (xs, f) => xs.reduce((s, x) => s + f(x), 0);
 // a figure a provider may not report: null stays null ("not reported") until something reported adds to it
@@ -186,6 +186,12 @@ function work(calls) {
     const rows = {}, byNode = {}, unanswered = {}, unansweredOn = {};
     // a model's window, from any of its sessions that reported one — a cut session reports none
     const window = Object.fromEntries(calls.filter(c => c.context_window).map(c => [c.model, c.context_window]));
+    // A ROUND THE SYSTEM CUT TO READ ITS CONTEXT AND CONTINUED is no ending: the handover cuts every executor session into
+    // rounds, and a cut round continued in the same conversation (the next row on its node and stage `resumed`) carried the
+    // CLI's `max_turns` until the record said `continued` (engineering, 2026-10-27) — read «out of turns», it named a cause
+    // that was none. The role's real cap keeps `max_turns`.
+    const continued = new Set(calls.filter((c, i) => c.ended === 'continued' || (/max_turns$/.test(c.ended || '')
+        && calls.slice(i + 1).find(n => n.node_id === c.node_id && n.stage === c.stage)?.resumed)));
     for (const c of calls) {
         const kind = kindOf(c.stage), model = c.model || '';
         // spent nothing = SAID zero; a call that reported none of these spent an unknown amount and is still work
@@ -197,7 +203,7 @@ function work(calls) {
             continue;
         }
         const r = rows[`${model}|${kind}`] ??= {model, kind, calls: 0, resumed: 0, cost: 0, unpriced: 0, ends: {}, input: null, output: null, read: 0, write: 0, unsplit: 0, turns: 0, turned: 0, fills: []};
-        r.calls++; r.resumed += c.resumed ? 1 : 0; r.handed = (r.handed || 0) + (c.handover ? 1 : 0); r.cost += c.cost_usd || 0; r.unpriced += c.cost_usd ? 0 : 1; if (c.ended && c.ended !== 'answered') r.ends[c.ended] = (r.ends[c.ended] || 0) + 1;
+        r.calls++; r.resumed += c.resumed ? 1 : 0; r.handed = (r.handed || 0) + (c.handover ? 1 : 0); r.cost += c.cost_usd || 0; r.unpriced += c.cost_usd ? 0 : 1; if (c.ended && c.ended !== 'answered' && !continued.has(c)) r.ends[c.ended] = (r.ends[c.ended] || 0) + 1;
         r.input = add(r.input, c.input_tokens); r.output = add(r.output, c.output_tokens); r.turns += c.turns || 0; r.turned += c.turns ? 1 : 0;
         if (c.cache_read_tokens == null) r.unsplit += c.cache_input_tokens || 0;
         else { r.read += c.cache_read_tokens; r.write += c.cache_write_tokens || 0; }

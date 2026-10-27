@@ -1,7 +1,7 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
 import {esc} from './dom.js';
-import {TIP} from './hints.js';
+import {TIP, meter, sessionsOf} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {dur, trim, usd, tok} from './draw.js';
@@ -62,7 +62,9 @@ export function render(el, run, nodes) {
         const row = e.target.closest('.cs-row[data-node]');
         if (!row) return untip();
         const parts = node[row.dataset.node], all = Object.values(parts);
-        tip(TIP.cost(name(row.dataset.node), Object.entries(parts).map(([k, p]) => `${money([p])} ${KIND[k]} · ${p.calls} sessions · ${dur(p.busy)} · ${tok(p.tokens)} tokens`),
+        const sum = all.reduce((s, p) => s + p.cost, 0) || 1;
+        tip(TIP.cost(name(row.dataset.node), [...Object.entries(parts).sort((a, b) => b[1].cost - a[1].cost).map(([k, p]) => meter(sessionsOf(k, p.calls), p.cost / sum, money([p]))),
+                     `${dur(all.reduce((s, p) => s + p.busy, 0))} of sessions, ${tok(all.reduce((s, p) => s + (p.tokens || 0), 0))} tokens`],
                      rounds(row.dataset.node), money(all)), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));

@@ -30,10 +30,11 @@ export const hover = (head, ...rows) => head ? ` data-tip="${esc(lines([head, ro
 // …a heading may carry its figure apart, at the right (`head\tfigure`), and a row may be a SHARE drawn as a filled line
 // with its percent at the end (`meter()`): a percent run on after a sum in one line read as mush (the author, 2026-10-27)
 const METER = '\u0007';
-export const meter = (label, share) => `${METER}${label}\t${share}`;
+// …its figure at the end is the percent, or the sum the share is of (a role's cost)
+export const meter = (label, share, figure = '') => `${METER}${label}\t${share}\t${figure}`;
 const row = r => { if (!r.startsWith(METER)) return `<div class="tt-row">${esc(r)}</div>`;
-    const [label, share] = r.slice(1).split('\t'), p = `${Math.round(+share * 100)}%`;
-    return `<div class="tt-meter"><span>${esc(label)}</span><i><b style="width:${p}"></b></i><em>${p}</em></div>`; };
+    const [label, share, figure] = r.slice(1).split('\t'), p = `${Math.round(+share * 100)}%`;
+    return `<div class="tt-meter"><span>${esc(label)}</span><i><b style="width:${p}"></b></i><em>${esc(figure || p)}</em></div>`; };
 export const card = (head, rows = [], badge = '') => { const [h, figure] = head.split('\t');
     return `<div class="tt-name${figure ? ' tt-split' : ''}"><span>${esc(h)}</span>${figure ? `<b>${esc(figure)}</b>` : ''}</div>${badge}`
         + lines(rows).map(row).join(''); };
@@ -165,8 +166,12 @@ export const STRIP = {
     running: verb => `${verb} — a session running on this server`,
     carried: (top, verb) => `Carried by the session on ${top} (${verb})`,
     idle: 'In a working state; no process of this server runs it',
-    spend: (byKind, running) => hover('Spend by role', byKind.map(([k, p]) => `${p.calls && p.unpriced === p.calls ? 'not reported' : usd(p.cost)} ${KIND_NAME[k]} · ${p.calls} session${p.calls > 1 ? 's' : ''}`),
-                                      running && `+ ${running} running, booked when ${running > 1 ? 'they end' : 'it ends'}`),
+    // a role a line: its share of the spend drawn, its sum at the end; sessions in the label (the author: no figures run on
+    // after each other with dots)
+    spend: (byKind, running) => { const all = byKind.reduce((s, [, p]) => s + p.cost, 0) || 1;
+        return hover('Spend by role', byKind.sort((a, b) => b[1].cost - a[1].cost).map(([k, p]) => meter(sessionsOf(k, p.calls), p.cost / all,
+            p.calls && p.unpriced === p.calls ? 'not reported' : usd(p.cost))),
+            running && `+ ${running} running, booked when ${running > 1 ? 'they end' : 'it ends'}`); },
 };
 
 // ── the node's panel and reader ──
@@ -190,6 +195,9 @@ export const PANEL = {
     probe: bhs => hover('What it checks', bhs),
 };
 
+// a role's sessions counted in words — «46 executions», «9 issuer turns» — so a count needs no line explaining it
+const SESSION = {exec: 'execution', val: 'validation', issuer: 'issuer turn', consent: 'consent', plan: 'planning'};
+export const sessionsOf = (kind, n) => `${n} ${SESSION[kind] || KIND_NAME[kind] || kind}${n === 1 ? '' : 's'}`;
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k} of ${total} pass`;
@@ -200,19 +208,19 @@ export const TIP = {
          criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // a stretch of work on the timeline
-    bar: (name, x, r, failed) => card(`${cap(KIND_NAME[x.kind])} · ${dur(x.end - x.start)}${x.cost ? ` · ${usd(x.cost)}` : ''}`, [
-        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}${x.tokens ? ` · ${tok(x.tokens)} tokens` : ''}${x.agents.length ? ' · ' + x.agents.join(', ') : ''}`,
+    bar: (name, x, r, failed) => card(`${cap(KIND_NAME[x.kind])}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
+        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict + (failed ? ': ' + failed : '') : ''}`,
         x.parts > 1 && `${x.parts} sessions, ${dur(x.busy)} busy — ${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried, continued or handed over'}`,
         x.handed?.length && `Handed over ${x.handed.length}× — its context reached the budget; a fresh session went on from its note`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
-    verdict: (name, signal, r, t, own, m, total, edges) => card(`${signal}${m ? ' · ' + passing(m, total) : ''}`, [
-        name, `${r ? `Round ${r.n} · ` : ''}${hm(t)}`, own.length && `Failed: ${own.join(', ')}`,
+    verdict: (name, signal, r, t, own, m, total, edges) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
+        name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, own.length && `Failed: ${own.join(', ')}`,
         edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`]),
     cell: (name, state) => hover(name, state),
     // a node's row in spend
-    cost: (name, rows, rounds, all) => card(`${all} · ${rounds} delivery round${rounds === 1 ? '' : 's'}`, [name, ...rows]),
+    cost: (name, rows, rounds, all) => card(`${rounds} delivery round${rounds === 1 ? '' : 's'}\t${all}`, [name, ...rows]),
     prefix: p => hover(p + '…', 'The start every assignee id shares, cut from the bars'),
     project: (name, id) => hover(name, id),
     where: why => hover(why),
