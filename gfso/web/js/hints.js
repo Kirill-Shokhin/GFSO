@@ -45,7 +45,8 @@ const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 const item = it => it.group ? `<div class="hp-group">${esc(it.group)}</div>`
     : it.key ? `<div class="hk-row"><span class="kg">${it.glyph || ''}</span><b>${esc(it.head)}</b>${it.means ? `<span>${esc(it.means)}</span>` : ''}</div>`
     : `<div class="hq-row${it.on ? ' on' : ''}"><div class="hq-head">${it.glyph || ''}<b>${esc(it.head)}</b>${it.val || ''}`
-      + `${it.tag ? `<i>${esc(it.tag)}</i>` : ''}${it.link || ''}</div>${it.means ? `<div class="hq-means">${esc(cap(it.means))}</div>` : ''}</div>`;
+      + `${it.tag ? `<i>${esc(it.tag)}</i>` : ''}${it.link || ''}</div>${it.means ? `<div class="hq-means">${esc(cap(it.means))}</div>` : ''}`
+      + `${it.more ? `<details class="hq-more"><summary>how it is read</summary>${esc(it.more)}</details>` : ''}</div>`;
 export const pop = (title, caption, items) => `<div class="hd-pop"><div class="hp-top"><b>${esc(title)}</b>`
     + `${caption ? `<p>${esc(caption)}</p>` : ''}</div>${items.map(item).join('')}</div>`;
 
@@ -153,13 +154,20 @@ export const H = {
          ...set.length ? [{group: 'How it was set'}, ...set.map(([head, v]) => ({head, val: `<span class="hq-kv">${esc(v)}</span>`}))] : []]),
     reports: rs => pop('Tech reports', 'What the system reported about itself — a check contradicting its contract, a tool that cannot run. '
         + 'A report stops and moves nothing. Newest first.', rs),
-    quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each metric with its grade (§15.8).', rows),
+    // the server's `means` is a paragraph: its first sentence says what the metric counts and stands under the heading,
+    // the rest — how to read it, what it is not — one click away (a popover of five paragraphs read as prose, not a list);
+    // the server's own short name before a colon goes where it says what the heading already says
+    quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each metric with its grade (§15.8).',
+        rows.map(r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(r.means || '') || [, r.means];
+            const words = s => s.toLowerCase().match(/[a-z]{4,}/g)?.map(w => w.slice(0, 5)) || [], head = words(r.head);
+            const named = /^([a-z][^:()]{0,40}):\s+/i.exec(first || ''), said = named && words(named[1]).some(w => head.includes(w));
+            return {...r, means: said ? first.slice(named[0].length) : first, more: rest}; })),
 };
 
 // what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server
 // says the rest (`means`)
 export const QUALITY = {q_D: 'Splits that held', q_V: 'Verdicts that held', q_T: 'Criteria that held as issued',
-    q_Dep: 'Dependencies declared up front', q_Del: 'Delegations that fit', false_fail_share: 'Over-strict FAILs'};
+    q_Dep: 'Dependencies foreseen', q_Del: 'Delegations that fit', false_fail_share: 'Over-strict FAILs'};
 
 // ── the deck's strip ──
 export const STRIP = {

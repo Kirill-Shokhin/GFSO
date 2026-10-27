@@ -214,7 +214,8 @@ export async function refreshQuality() {
         const alarm = {q_V: low(m.q_V), q_D: low(m.q_D) && !(ffs >= 0.5)};
         $('hd-quality').innerHTML = `<button class="hd-q${alarm.q_V || alarm.q_D ? ' acc' : ''}" data-action="pop">quality</button>`
             + H.quality(Object.entries(GRADE).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: `${k}, ${grade}`, means: means[k] || '',
-                val: `<span class="hq-val${alarm[k] ? ' acc' : ''}">${m[k] == null ? '—, no observations yet' : pct(m[k])}</span>`},
+                val: m[k] == null ? '<span class="hq-val">—</span><span class="hq-nil">no observations yet</span>'
+                    : `<span class="hq-val${alarm[k] ? ' acc' : ''}">${pct(m[k])}</span>`},
                 // §15.4: a low q_D is read TOGETHER with the false-FAIL share (an over-strict validator inflates it).
                 ...k === 'q_D' && ffs != null ? [{head: QUALITY.false_fail_share, tag: 'high is bad', val: `<span class="hq-val">${pct(ffs)}</span>`, means: means.false_fail_share || ''}] : []]));
     } catch (e) { /* metrics are a read; the chip keeps its last numbers */ }
