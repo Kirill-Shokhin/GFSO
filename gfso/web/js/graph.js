@@ -96,8 +96,9 @@ export async function initGraph() {
     cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
-    cy.on('mouseover', 'node', evt => { own = true; point('hover', evt.target.id()); });
-    cy.on('mouseout', 'node', () => { own = false; point('hover', null); untip(); });
+    // a node is clicked to select it: the pointer says so, as on every row the deck lets one pick a node by
+    cy.on('mouseover', 'node', evt => { own = true; point('hover', evt.target.id()); $('cy').style.cursor = 'pointer'; });
+    cy.on('mouseout', 'node', () => { own = false; point('hover', null); untip(); $('cy').style.cursor = ''; });
     cy.on('mouseover mousemove', 'node', evt => {
         const t = taskOf(evt.target.id());
         if (t.id) tip(nodeTip(t), evt.originalEvent);

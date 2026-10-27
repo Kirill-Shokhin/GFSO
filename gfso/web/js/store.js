@@ -43,6 +43,7 @@ export function bringSelected(el, find) {
 // Any element carrying `data-node` inside `el` takes part: hovering it points, clicking selects, and
 // it wears `is-hover` / `is-select` while it is the one pointed at. `onMove(e)` adds the view's own tip.
 export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
+    el.classList.add('pickable');           // every [data-node] in it selects its node on a click: gfso.css gives it the pointer
     const paint = st => {
         el.querySelectorAll('[data-node]').forEach(g => {
             g.classList.toggle('is-hover', g.dataset.node === st.hover);

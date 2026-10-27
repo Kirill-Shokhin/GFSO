@@ -115,7 +115,7 @@ body {
 /* the run's switch: the button quiet until wanted, the stopped state plain, stopping alive while sessions finish */
 .hd-run { cursor: pointer; opacity: 0.6; }
 .hd-run:hover { opacity: 1; border-color: var(--ui-on-chrome); }
-.hd-run-state { border-color: var(--ui-on-chrome); cursor: help; }
+.hd-run-state { border-color: var(--ui-on-chrome); }
 .hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse 1.6s ease-in-out infinite; }
 .hd-needs { display: flex; gap: 8px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
@@ -247,8 +247,10 @@ body {
 .tl .tl-band { fill: transparent; }
 .tl .tl-row.is-hover .tl-band { fill: var(--hair-soft); }
 .tl .tl-row.is-select .tl-band { fill: var(--hair); }
+/* THE POINTER means a click acts — here, anywhere on a row that picks a node (store.js bindFocus); a thing that only
+   explains itself on hover keeps the arrow */
+.pickable [data-node] { cursor: pointer; }
 .tl .tl-hand { stroke: var(--bg); stroke-width: 2; pointer-events: none; }   /* a cut across a bar: the session handed over there */
-.tl-s { cursor: pointer; }
 .tl .tl-exec { fill: var(--ink); }
 .tl .tl-consent { fill: var(--bg); stroke: var(--ink); stroke-width: 1.2; }
 .tl .tl-val { fill: var(--ink-faint); }
@@ -302,7 +304,6 @@ body {
 .pg .pg-area { fill: var(--ink); opacity: .12; stroke: var(--ink); stroke-width: 1.5; stroke-opacity: 1; }
 .pg .pg-mile line { stroke: var(--ink); stroke-width: 1; }
 .pg .pg-mile text { text-anchor: end; font-size: 9px; text-transform: uppercase; letter-spacing: var(--tr-mono); fill: var(--ink); }
-.pg [data-m] { cursor: pointer; }
 .pg-cov { border-collapse: collapse; font-size: 11.5px; }
 .pg-cov th, .pg-cov td { padding: 3px 5px; text-align: center; }
 .pg-cov tbody th { text-align: right; font-weight: 400; color: var(--ink); white-space: nowrap; max-width: 220px; }
@@ -319,7 +320,6 @@ body {
 .pg-legend .cv { width: 8px; height: 8px; margin: 0 3px 0 8px; }
 .dk-block { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; font-size: 11.5px; background: none; border: none; border-left: 1px solid var(--hair); padding: 0 0 0 10px; color: var(--ink-soft); cursor: pointer; white-space: nowrap; }
 .dk-block b { color: var(--ink); font-weight: 600; }
-.pg-cov [data-node] { cursor: pointer; }
 .pg-cov .is-hover .cv, .pg-cov .is-select .cv { outline: 2px solid var(--ink-faint); outline-offset: 1px; }
 .glyph { vertical-align: middle; overflow: visible; }
 /* Cost — figures first, then where they went. */
@@ -335,7 +335,6 @@ body {
 .cs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 32px; }
 .cs-chart h4 { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-faint); font-weight: 400; margin-bottom: 6px; }
 .cs-row { display: grid; grid-template-columns: 130px 1fr minmax(56px, auto); align-items: center; gap: 8px; height: 20px; font-size: 11.5px; }
-.cs-row[data-node] { cursor: pointer; }
 .cs-row.is-hover, .cs-row.is-select { background: var(--hair-soft); }
 .cs-label { text-align: right; color: var(--ink); white-space: nowrap; overflow: hidden; }
 .cs-bar { display: flex; gap: 2px; height: 10px; }
