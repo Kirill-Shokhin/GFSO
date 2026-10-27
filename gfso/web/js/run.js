@@ -50,25 +50,41 @@ const SIGNS = {exec: ['DELIVER', 'BLOCK', 'CHALLENGE'], consent: ['ACCEPT', 'CHA
 // the ledger stamps each call's own end: an executor's rounds are booked together when its run ends, one ts for all —
 // they ran one after another, so each ends where the next began, counted back from the booking. A booking stamps each
 // row as it writes it, so one drain may cross a second, and another node's drain may interleave (critic): the next round
-// is the node's next row of that stage booked within a second.
-function ends(calls) {
-    const end = new Map(), next = {};
+// is the node's next row of that stage booked within a second. The rounds' durations do not fill the run: each round
+// starts a process and a handover reads the place — 14 of a run's 36 min (tnkkww064 select, 65 rounds) — so a chain
+// counted back by durations alone began 14 min after its process did (the author: «пустоты»). The run began when its
+// executor was spawned (the narration says when); its rounds are drawn end to end from there, the time between their
+// model calls shared out among them — one process at work throughout, as the server's in-flight record has it.
+function spans(calls, spawns) {
+    const span = new Map(), next = {}, chain = new Map();
     for (let i = calls.length - 1; i >= 0; i--) {
-        const c = calls[i], k = `${c.node_id}\n${c.stage}`, n = next[k];
-        end.set(c, n && kindOf(c.stage) === 'exec' && at(n.ts) - at(c.ts) <= 1e3 ? end.get(n) - n.duration_ms : at(c.ts));
+        const c = calls[i], k = `${c.node_id}
+${c.stage}`, n = next[k];
+        const linked = n && kindOf(c.stage) === 'exec' && at(n.ts) - at(c.ts) <= 1e3;
+        chain.set(c, linked ? [c, ...chain.get(n)] : [c]);
+        if (linked) for (const x of chain.get(n)) chain.set(x, chain.get(c));
         next[k] = c;
     }
-    return end;
+    for (const rs of new Set(chain.values())) {
+        let e = at(rs.at(-1).ts);
+        const work = rs.reduce((s, c) => s + c.duration_ms, 0), from = e - work;
+        const spawn = rs.length > 1 ? Math.max(-Infinity, ...(spawns[rs[0].node_id] || []).filter(t => t <= from)) : -Infinity;
+        const gap = spawn > -Infinity ? (from - spawn) / rs.length : 0;
+        for (let i = rs.length - 1; i >= 0; i--) { const d = rs[i].duration_ms + gap; span.set(rs[i], [e - d, e]); e -= d; }
+    }
+    return span;
 }
-function sessions(calls, audit) {
+function sessions(calls, audit, pipeline) {
     calls = calls.filter(c => c.duration_ms > 0 && c.node_id);
-    const endOf = ends(calls);
+    const spawns = {};
+    for (const p of pipeline) { const {node, text} = said(p.message); if (node && /^executor \S+ spawned/.test(text)) (spawns[node] ??= []).push(at(p.ts)); }
+    const spanOf = spans(calls, spawns);
     return calls.map(c => {
-        const end = endOf.get(c), start = end - c.duration_ms, kind = kindOf(c.stage);
+        const [start, end] = spanOf.get(c), kind = kindOf(c.stage);
         // the ledger names no agent: the one who signed the node's next act after the call is it
         const signer = audit.find(a => a.task_id === c.node_id && !a.rejected && a.t >= end - 1e3
             && SIGNS[kind]?.includes(a.signal));
-        return {node: c.node_id, kind, stage: c.stage, start, end, cost: c.cost_usd || 0,
+        return {node: c.node_id, kind, stage: c.stage, start, end, ms: c.duration_ms, cost: c.cost_usd || 0,
                 tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
                 out: c.output_tokens ?? null, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0,
                 handover: c.handover || 0, resumed: !!c.resumed};
@@ -174,7 +190,8 @@ function clock(spans, points, now) {
 export function concurrency(list) {
     const ev = list.flatMap(s => [[s.start, 1], [s.end, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     let cur = 0, peak = 0;
-    const steps = ev.map(([t, d]) => (cur += d, peak = Math.max(peak, cur), [t, cur]));
+    // one step per moment: a round ending where the next begins (a run's rounds drawn end to end) is no drop to idle
+    const steps = ev.map(([t, d]) => (cur += d, peak = Math.max(peak, cur), [t, cur])).filter((x, i, xs) => xs[i + 1]?.[0] !== x[0]);
     return {steps, peak};
 }
 
@@ -184,7 +201,7 @@ function rollup(list, key) {
     const out = {};
     for (const s of list) {
         const o = (out[key(s)] ??= {})[s.kind] ??= {calls: 0, procs: 0, cost: 0, unpriced: 0, tokens: null, busy: 0};
-        o.calls += s.resumed ? 0 : 1; o.procs++; o.cost += s.cost; o.unpriced += s.priced ? 0 : 1; o.tokens = add(o.tokens, s.tokens); o.busy += s.end - s.start;
+        o.calls += s.resumed ? 0 : 1; o.procs++; o.cost += s.cost; o.unpriced += s.priced ? 0 : 1; o.tokens = add(o.tokens, s.tokens); o.busy += s.ms ?? s.end - s.start;
     }
     return out;
 }
@@ -319,7 +336,7 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
     // has it — the panel's criterion histories too, not only Progress (critic: the panel drew ⊥ for a criterion kept as pass)
     const per = joinHistory(audit.filter(a => !a.rejected && (a.signal === 'PASS' || a.signal === 'FAIL')), verdicts);
     audit = audit.map(a => per.has(a) && !a.per_criterion ? {...a, per_criterion: per.get(a)} : a);
-    const ss = sessions(calls, audit), open = openSessions(procs, pipeline, now);
+    const ss = sessions(calls, audit, pipeline), open = openSessions(procs, pipeline, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, n.name || n.id]));
     return {
         name: id => names[id] || id, auto,
