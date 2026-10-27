@@ -48,15 +48,15 @@ const SIGNS = {exec: ['DELIVER', 'BLOCK', 'CHALLENGE'], consent: ['ACCEPT', 'CHA
                issuer: ['ASSIGN', 'CANCEL', 'RESOLVE_BLOCK', 'ACCEPT_CHALLENGE', 'REJECT_CHALLENGE']};
 // Sessions from the usage ledger: a row is stamped when it is booked, so it starts `duration` before. FALLBACK until
 // the ledger stamps each call's own end: an executor's rounds are booked together when its run ends, one ts for all —
-// they ran one after another, so each ends where the next began, counted back from the booking.
+// they ran one after another, so each ends where the next began, counted back from the booking. A booking stamps each
+// row as it writes it, so one drain may cross a second, and another node's drain may interleave (critic): the next round
+// is the node's next row of that stage booked within a second.
 function ends(calls) {
-    const end = new Map();
-    let after = 0;
+    const end = new Map(), next = {};
     for (let i = calls.length - 1; i >= 0; i--) {
-        const c = calls[i], n = calls[i + 1];
-        after = n && kindOf(c.stage) === 'exec' && n.ts === c.ts && n.node_id === c.node_id && n.stage === c.stage
-            ? after + n.duration_ms : 0;
-        end.set(c, at(c.ts) - after);
+        const c = calls[i], k = `${c.node_id}\n${c.stage}`, n = next[k];
+        end.set(c, n && kindOf(c.stage) === 'exec' && at(n.ts) - at(c.ts) <= 1e3 ? end.get(n) - n.duration_ms : at(c.ts));
+        next[k] = c;
     }
     return end;
 }

@@ -79,7 +79,7 @@ const KEY = [
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
     {glyph: '<b class="kt">V</b>', head: "The node's verdict", means: 'pass only when every criterion passes'},
-    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, or not named by that round\'s FAIL — not a third value: V is pass or fail once checked (§2.3)'},
+    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, or not kept for that round — runs before 2026-10-27 kept only the criteria a FAIL named; not a third value (§2.3)'},
     {group: 'The deck'},
     {glyph: '<b class="kt">· N</b>', head: 'Sessions', means: 'beside «at work» only when not one per node — one session may carry a whole part'},
     {glyph: `<span class="wk-cost kc">${TOKENS.map(([k]) => `<i class="${COST_CLS(k)}" style="width:25%"></i>`).join('')}</span>`,
@@ -159,9 +159,14 @@ export const H = {
     // the server's own short name before a colon goes where it says what the heading already says
     quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each metric with its grade (§15.8).',
         rows.map(r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(r.means || '') || [, r.means];
+            // …only when the heading says every word of it: «delegation correctness» gone left a ratio read the wrong way
             const words = s => s.toLowerCase().match(/[a-z]{4,}/g)?.map(w => w.slice(0, 5)) || [], head = words(r.head);
-            const named = /^([a-z][^:()]{0,40}):\s+/i.exec(first || ''), said = named && words(named[1]).some(w => head.includes(w));
-            return {...r, means: said ? first.slice(named[0].length) : first, more: rest}; })),
+            const named = /^([a-z][^:()]{0,40}):\s+/i.exec(first || ''), said = named && words(named[1]).every(w => head.includes(w));
+            // …and a first sentence that only repeats the row's tag («high is bad») is no definition: the next one is
+            const tagged = r.tag && rest && words(r.tag).every(w => words(first).includes(w));
+            const [, next, after] = tagged && /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(rest) || [, rest, ''];
+            return tagged ? {...r, means: next.replace(/^It is (?:the )?/, 'The '), more: [first, after].filter(Boolean).join(' ')}
+                : {...r, means: said ? first.slice(named[0].length) : first, more: rest}; })),
 };
 
 // what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server
@@ -198,7 +203,7 @@ export const PANEL = {
     deadline: (due, now) => hover(due < now ? `Overdue by ${dur(now - due)}` : `Due in ${dur(due - now)}`, new Date(due).toLocaleString()),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
-    round: (n, v) => hover(`${v || 'No value'}\tRound ${n}`, !v && 'Not checked, or not named by its FAIL'),
+    round: (n, v) => hover(`${v || 'No value'}\tRound ${n}`, !v && 'Not checked, or not kept for this round'),
     full: text => hover(text),
     directive: text => hover(text),
     model: id => hover(id),
