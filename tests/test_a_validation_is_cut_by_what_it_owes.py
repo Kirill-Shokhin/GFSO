@@ -216,3 +216,16 @@ def test_a_probe_already_owed_is_not_owed_again_under_another_id():
     commands = [x[1].command for _, x in items]
     assert sorted(commands) == sorted(set(commands)), commands
     assert ("F", "own F") in [(n, x[1].command) for n, x in items if not x[2]]       # the whole's own stays its own
+
+
+def test_an_expectation_of_two_lines_reads_as_one_on_the_packets_line():
+    """Written raw, "ERR\n(+ " split the packet's line: "must show: ERR" and a stray "(+ " under it, which executor,
+    validator and issuer read as ERR alone — a dispute round and six tech reports on correct work (2026-10-27)."""
+    eng, task, _ = _measured()
+    eng.crits = [Criteria("deep", "deep input", check=(Probe("deep parens", "gen | x | cut -c1-3", "ERR\n(+ "),))]
+    task.spec = FakeSpec(criteria=eng.crits)
+    eng.parts_procedure = lambda _: {}
+    eng.regression_probes = lambda _: {}
+    text = _criteria_text(eng, task, eng.crits, None)
+    line = next(l for l in text.splitlines() if "must show:" in l)
+    assert line.rstrip().endswith("must show: ERR ⏎ (+"), line

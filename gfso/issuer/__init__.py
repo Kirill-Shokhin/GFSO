@@ -51,7 +51,7 @@ from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
 from gfso.engine.validation import is_auto_root, party_kind, users_criteria, users_plan
-from gfso.packets import answered_challenges, answers_given, capped, list_key
+from gfso.packets import answered_challenges, answers_given, as_shown, capped, list_key
 from gfso.engine.events import emit_cb
 from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
 
@@ -162,7 +162,7 @@ def crit_block(c, laid: "dict | None" = None) -> str:
     def _line(p):
         d = (laid or {}).get(probe_id(c.name, p))
         return (f"    - decided by — {p.behaviour}: `{p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command}`"
-                f" → must show: {p.expect}"
+                f" → must show: {as_shown(p.expect)}"
                 + (f" (its {len(p.inputs)} pinned input file(s) are laid down in {d.as_posix()}; in an answer write "
                    f"`{INPUTS_TOKEN}` for that directory)" if d else
                    f" (+{len(p.inputs)} pinned input file(s))" if p.inputs else ""))

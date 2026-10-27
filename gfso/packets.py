@@ -38,7 +38,7 @@ def _crit_line(c, dirs: dict) -> str:
     def _probe(p) -> str:
         d = dirs.get(probe_id(c.name, p))
         cmd = p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command
-        return (f"    - will be checked by — {p.behaviour}: `{cmd}` → must show: {p.expect}"
+        return (f"    - will be checked by — {p.behaviour}: `{cmd}` → must show: {as_shown(p.expect)}"
                 + (f" (`{{inputs}}` = {d.as_posix()}: the {len(p.inputs)} file(s) pinned with the check — read them, "
                    f"never write there; the validator lays its own copy from the contract)" if d else ""))
     return "\n".join([f"- **{c.name}**: {c.description}"] + [_probe(p) for p in (c.check or ())])
@@ -128,6 +128,13 @@ def observed_lines(rows: list) -> str:
         return head + ("printed exactly what it must show" if r.get("matched") else
                        f"exit {r.get('rc')}, printed «{_flat(r.get('out'))}»")
     return "".join(_one(r) + "\n" for r in rows)
+
+
+def as_shown(expect) -> str:
+    """A pinned expectation on one line, its lines joined by ⏎ — written raw, an expectation of two lines split the
+    packet's line: "must show: ERR" and a stray "(+ " under it, read by executor, validator and issuer as ERR alone
+    (sql rows, 2026-10-27: an issuer's dispute round, six tech reports, citations of "ERR" as the expectation)."""
+    return " ⏎ ".join(str(expect or "").splitlines())
 
 
 def _flat(out) -> str:
@@ -462,7 +469,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
         pid = probe_id(c.name, p)
         d = _dirs.get(pid)
         return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: run `{_cmd(c, p)}` → must show: "
-                f"{p.expect}"
+                f"{as_shown(p.expect)}"
                 + ("\n      (the part it belongs to passed its own validation on an earlier delivery; its result "
                    "now stands inside THIS delivery, and this criterion rests on it — run it here and report it ONCE, "
                    "under this id, in the probe list of any one criterion that rests on it, with `held`: true if it "
@@ -499,7 +506,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
             lines.append("    - rests also on the PART’S PINNED CHECKS below, each observed by ANOTHER run of this "
                          "validation — shown as the contract pins them so you know what they run and must show; not "
                          "yours to run or report, and one observation of each serves this criterion:")
-            lines += [f"      · [{pid}] — {p.behaviour}: `{_cmd(pc, p)}` → must show: {p.expect}"
+            lines += [f"      · [{pid}] — {p.behaviour}: `{_cmd(pc, p)}` → must show: {as_shown(p.expect)}"
                       for pid in again[None] for pc, p in [_part_probes[pid]]]
         # …AND WHAT IT OWES THAT ANOTHER RUN CARRIES: its verdict is the conjunction of the runs' verdicts on it
         if any(carry.get(pid) != c.name for pid, _ in items):
