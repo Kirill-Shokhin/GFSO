@@ -68,7 +68,8 @@ const KEY = [
     {glyph: '<i class="lg-dep"></i>', head: 'Uses the result of', means: 'the user waits until its producer passes (Dep)'},
     {glyph: '<i class="cy-live"></i>', head: 'At work', means: 'counted in the deck as «N at work»; a parent only waiting on its parts is not'},
     {glyph: '<i class="cy-live on"></i>', head: 'Running on this server now', means: 'a process of this server works on it'},
-    {glyph: '<span class="kb">3</span>/<span class="kb fails">3</span>', head: 'Delivery rounds / the last one failed', means: 'shown from the second on'},
+    // one mark, the round count; its accent is a state of it, not a second mark (the author: «почему это две разные и одинаковой иконкой»)
+    {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
      head: 'Session handed over', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
     {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it with its parts · the background shows the whole graph'},
