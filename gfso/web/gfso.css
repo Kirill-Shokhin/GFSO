@@ -224,6 +224,8 @@ body {
 .tl .tl-consent { fill: none; stroke: var(--ink); stroke-width: 1.2; }
 .tl .tl-val { fill: var(--ink-faint); }
 .tl .tl-issuer { fill: none; stroke: var(--ink-soft); stroke-width: 1.2; }
+/* an outlined bar is hovered over its whole face, not on its hairline edge (the author) */
+.tl .tl-s.tl-issuer, .tl .tl-s.tl-consent { pointer-events: all; }
 .tl .tl-plan { fill: var(--paper); stroke: var(--ink-faint); }
 /* a running bar breathes, but never pales into the validation colour: at the dots' .45 a black execution bar read as a
    grey validation one in a screenshot (2026-10-26) */

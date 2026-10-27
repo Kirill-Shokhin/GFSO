@@ -8,6 +8,9 @@ import {frame, hm, dur, mark, trim} from './draw.js';
 import {KIND_NAME, waitWords, atWork, failedOf, failedWords, EDGE_NOTE, countWords} from './run.js';
 import {procs} from './state.js';
 
+// an outlined bar (an issuer's turn, a consent) is drawn over the filled ones: it can run beside an execution or a
+// validation (a challenge answered while the work goes on), and beneath them it hid; its outline shows what lies under it
+const HOLLOW = new Set(['consent', 'issuer']);
 const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
 const STEM = 9, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
 
@@ -59,7 +62,7 @@ export function render(el, run, nodes) {
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 4}" width="${W}" height="${ROW}"/>
         <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" x="${LEFT - 10}" y="${Y(id) + 4}">${esc(trim(name(id)))}</text>
-        ${work.map((s, i) => s.node === id ? bar(s, i) : '').join('')}${marks(id)}${idle(id)}</g>`;
+        ${work.map((s, i) => s.node === id && !HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${work.map((s, i) => s.node === id && HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${marks(id)}${idle(id)}</g>`;
     // how many executors ran at once: its own band with its own scale, a line — not one more row of bars
     const c0 = 30 + CONC, peak = Math.max(run.exec.peak, 1), cy = k => c0 - (k / peak) * (CONC - 6);
     let line = `M${LEFT},${c0}`;
