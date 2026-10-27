@@ -72,6 +72,8 @@ const KEY = [
     {glyph: '<i class="cy-live on"></i>', head: 'Running on this server now', means: 'a process of this server works on it'},
     // one mark, the round count; its accent is a state of it, not a second mark (the author: «почему это две разные и одинаковой иконкой»)
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
+    {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
+     head: 'Session handed over', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
     {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it with its parts · the background shows the whole graph'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
@@ -236,7 +238,7 @@ export const TIP = {
         name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f.own, f.edges),
         x.parts > 1 && `${x.parts} processes, ${dur(x.busy)} busy: ${x.kind === 'val' ? 'the validator works in batches of probes'
-            : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.handed?.length && `${x.handed.length} handed over to a fresh session at the context budget`,
+            : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.handed?.length && `${x.handed.length} handed over`,
                x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0) > 0 && `${x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0)} retried`].filter(Boolean).join(', ')}`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track

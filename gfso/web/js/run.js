@@ -65,12 +65,17 @@ ${c.stage}`, n = next[k];
         if (linked) for (const x of chain.get(n)) chain.set(x, chain.get(c));
         next[k] = c;
     }
-    for (const rs of new Set(chain.values())) {
+    // …a spawn is this run's only when it follows the node's previous run of that stage: one missing from the page, or
+    // a resumed run with none, would else reach back over the earlier run (critic)
+    const prev = {};
+    for (const rs of [...new Set(chain.values())].sort((a, b) => at(a.at(-1).ts) - at(b.at(-1).ts))) {
         let e = at(rs.at(-1).ts);
-        const work = rs.reduce((s, c) => s + c.duration_ms, 0), from = e - work;
-        const spawn = rs.length > 1 ? Math.max(-Infinity, ...(spawns[rs[0].node_id] || []).filter(t => t <= from)) : -Infinity;
+        const work = rs.reduce((s, c) => s + c.duration_ms, 0), from = e - work, k = `${rs[0].node_id}
+${rs[0].stage}`;
+        const spawn = rs.length > 1 ? Math.max(-Infinity, ...(spawns[rs[0].node_id] || []).filter(t => t <= from && t >= (prev[k] ?? -Infinity))) : -Infinity;
         const gap = spawn > -Infinity ? (from - spawn) / rs.length : 0;
         for (let i = rs.length - 1; i >= 0; i--) { const d = rs[i].duration_ms + gap; span.set(rs[i], [e - d, e]); e -= d; }
+        prev[k] = at(rs.at(-1).ts);
     }
     return span;
 }
@@ -344,7 +349,7 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
         criteria: criteria(audit, tasks, verdicts), work: work(calls),
-        cost: {total: sum(ss, s => s.cost), tokens: total(ss, s => s.tokens), untold: ss.filter(s => s.tokens == null).length, busy: sum(ss, s => s.end - s.start),
+        cost: {total: sum(ss, s => s.cost), tokens: total(ss, s => s.tokens), untold: ss.filter(s => s.tokens == null).length, busy: sum(ss, s => s.ms ?? s.end - s.start),
                unpriced: ss.filter(s => !s.priced).length,
                byKind: rollup(ss, () => 'all').all || {}, byNode: rollup(ss, s => s.node), byDepth: rollup(ss, s => depth[s.node] ?? 0), byAgent: rollup(ss, s => s.agent || '—')},
     };
