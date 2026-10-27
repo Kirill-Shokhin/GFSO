@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from gfso.core.protocol.procedure import INPUTS_TOKEN, laid, materialize_inputs, probe_id, unrerunnable
+from gfso.core.protocol.procedure import INPUTS_TOKEN, laid, materialize_inputs, probe_id, same_probe, unrerunnable
 from gfso.core.types import Signal, TaskId, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
@@ -406,16 +406,20 @@ def owed_probes(engine: Engine, task, crits) -> list:
     pinned probes, the pinned probes of the DONE parts it rests on, and the probes that once refuted it.
 
     A part's probe is owed ONCE, under the first criterion resting on it: one observation serves every criterion on
-    it (`procedure.part_credit`). What to show is a (criterion, probe, is a part's) triple for a pinned probe and the
-    stored probe for a regression line. THE one enumeration: the packet writes it out and the batching counts it."""
+    it (`procedure.part_credit`) — and not at all where the same probe is already owed, the whole's own or another
+    part's (`procedure.same_probe`): a copy owed again was the same command run two or three times under ids a weak
+    validator mixed, and a whole's functional checks copied into a part landed under its first criterion, "build and
+    hygiene", where the validator read them as out of scope (the sql root, 2026-10-27: six ⊥ validations of one sound
+    delivery). What to show is a (criterion, probe, is a part's) triple for a pinned probe and the stored probe for a
+    regression line. THE one enumeration: the packet writes it out and the batching counts it."""
     tid = TaskId(str(task.id))
     reg, parts = engine.regression_probes(tid), engine.parts_procedure(tid)
-    shown: set = set()
+    shown = {same_probe(p) for c in crits for p in (c.check or ())}
     out = []
     for c in crits:
         own = [(probe_id(c.name, p), (c, p, False)) for p in (c.check or ())]
-        mine = [(pid, (pc, p, True)) for pc in parts.get(c.name, ()) for p in (pc.check or ())
-                if p.command.strip() and (pid := probe_id(pc.name, p)) not in shown and not shown.add(pid)]
+        mine = [(probe_id(pc.name, p), (pc, p, True)) for pc in parts.get(c.name, ()) for p in (pc.check or ())
+                if p.command.strip() and same_probe(p) not in shown and not shown.add(same_probe(p))]
         pinned = {pid for pid, _ in own}
         out.append((c, own + mine + [(p.get("id"), p) for p in reg.get(c.name, ()) if p.get("id") not in pinned]))
     return out

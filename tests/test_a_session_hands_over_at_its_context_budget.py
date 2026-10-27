@@ -365,3 +365,16 @@ def test_a_reopen_that_opens_at_its_ceiling_is_never_closed_there():
     w = Worker(work=2_000, start=185_000, window=200_000, step=4)
     w.run_agent("s", "packet", ("Read",), cwd=".", session="sid", max_turns=150)
     assert len(w.closed) == 1, len(w.closed)               # the first session's own close; its reopen then works on
+
+
+def test_a_round_the_system_stopped_to_read_and_went_on_with_is_not_out_of_turns():
+    """The system cuts a session into rounds to read its context; such a round, continued, ended "max_turns" in the
+    CLI's word and the page said "out of turns" — 4 of 15 executor rounds of a run (the author, 2026-10-27). The role's
+    own cap, reached, is still out of turns."""
+    w = Worker(work=12, step=4)
+    assert w.run_agent("s", "packet", ("Read",), cwd=".", session="sid") == "REPORT"
+    cut = [c.get("ended") for c in w.calls if c.get("stop_reason") == "max_turns"]
+    assert cut and set(cut) == {B.CONTINUED}, w.calls
+    capped = Worker(work=40, step=4)
+    capped.run_agent("s", "packet", ("Read",), cwd=".", session="sid", max_turns=8)
+    assert capped.calls[-1].get("ended") != B.CONTINUED

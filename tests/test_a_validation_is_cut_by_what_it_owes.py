@@ -202,3 +202,17 @@ def test_a_part_probe_another_run_carries_is_shown_as_pinned_not_by_id_alone():
                     assert f"[{pid}] — {p.behaviour}: `{p.command}` → must show: {p.expect}" in block
                     assert f"PINNED CHECK [{pid}]" not in block            # …shown, not demanded a second time
     assert shown
+
+
+def test_a_probe_already_owed_is_not_owed_again_under_another_id():
+    """A whole's check copied into a part, and a part's copied into another: the same command owed two or three times
+    under ids a weak validator mixed, landing under the first criterion ("build and hygiene") where it was read as out
+    of scope — six ⊥ validations of one sound sql root (2026-10-27). Owed once: the whole's own first, then each part's."""
+    eng, task, _ = _measured()
+    twin = part_criteria("root.integrate", [Criteria("F", check=(Probe("F own", "own F", "ok"),)),
+                                            Criteria("p0", check=(Probe("part 0", "run part 0", "ok"),))])
+    eng.parts_procedure = lambda _: {"B": twin, "F": [_POOL[0]]}
+    items = [(c.name, x) for c, it in owed_probes(eng, task, eng.crits) for _, x in it if isinstance(x, tuple)]
+    commands = [x[1].command for _, x in items]
+    assert sorted(commands) == sorted(set(commands)), commands
+    assert ("F", "own F") in [(n, x[1].command) for n, x in items if not x[2]]       # the whole's own stays its own

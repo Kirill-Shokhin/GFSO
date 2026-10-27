@@ -1010,6 +1010,7 @@ def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterio
     # …never one the report says, anywhere and however cited, did not hold (one observation: `part_credit`)
     failed = {pid for e in out for q in probes_of(e) if probe_held(q.get("held")) is False
               for pid in pinned if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])}
+    failed |= {pid for pid in pinned if same_probe(pinned[pid]) in {same_probe(pinned[x]) for x in failed}}
     seen = {str(q.get("id")): q for e in out for q in probes_of(e) if str(q.get("id", "")) in pinned
             and str(q.get("id")) not in failed and _norm(q.get("command", "")) and probe_held(q.get("held")) is True}
     lent = []
@@ -1025,12 +1026,33 @@ def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterio
     return lent
 
 
-def _copies_of_one(named: set, demanded: Mapping) -> bool:
-    """Are these demanded probes byte copies of one PART's check — same command, expectation and inputs, as `integrate`
-    copying `scaffold`'s? A hash they share then names each: nothing tells them apart, one observation of all (the haiku
-    4.5 sql root, 2026-10-26: 15 of 16 criteria ⊥ over such a hash). The whole's own probes are never among them."""
-    return named <= set(demanded) and len({(demanded[x][1].command.strip(), (demanded[x][1].expect or "").strip(),
-                                             tuple(demanded[x][1].inputs or ())) for x in named}) == 1
+def same_probe(p: Probe) -> tuple:
+    """What makes two pinned probes ONE observation over a delivery — the same command, expectation and inputs, as
+    `integrate` copying `scaffold`'s check or the root's: whatever ids they are pinned under, running one is running
+    each. THE one identity: the packet owes such a probe once (`packets.owed_probes`) and a citation of any of its ids
+    credits all of them (`part_credit`)."""
+    return p.command.strip(), (p.expect or "").strip(), tuple(p.inputs or ())
+
+
+def _citable(known: Mapping) -> tuple[dict, dict, dict]:
+    """The ways a citation names a pinned probe — by bare hash, by command over its own inputs directory — and each
+    probe's copies (`same_probe`), over every probe a report may cite."""
+    by_hash: dict[str, set[str]] = {}
+    by_cmd: dict[str, set[str]] = {}
+    copies: dict[tuple, set[str]] = {}
+    for pid, (c, p) in known.items():
+        copies.setdefault(same_probe(p), set()).add(pid)
+        by_hash.setdefault(pid.split("#")[-1], set()).add(pid)
+        by_cmd.setdefault(_cmd_key(p.command.replace(INPUTS_TOKEN, inputs_token(pid))), set()).add(pid)
+    return by_hash, by_cmd, copies
+
+
+def _named_by(p: Mapping, known: Mapping, by_hash: Mapping, by_cmd: Mapping, dirs: tuple) -> tuple[set, set]:
+    """(every probe a citation could mean, the ones it names): its full id names one; else hash and command together."""
+    i, cmd = str(p.get("id", "")).strip(), str(p.get("command", ""))
+    h = set() if "#" in i else by_hash.get(i, set())
+    m = {x for k in {_cmd_key(cmd), _cmd_key(tokenized(cmd, dirs))} for x in by_cmd.get(k, ())} if _norm(cmd) else set()
+    return h | m, {i} if i in known else (h & m) or (h | m)
 
 
 def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
@@ -1050,11 +1072,7 @@ def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
     demanded = {probe_id(c.name, p): (c, p) for cs in (parts or {}).values() for c in cs for p in (c.check or ())
                 if _norm(p.command)}
     known = {**{probe_id(c.name, p): (c, p) for c in own or () for p in (c.check or ()) if _norm(p.command)}, **demanded}
-    by_hash: dict[str, set[str]] = {}
-    by_cmd: dict[str, set[str]] = {}
-    for pid, (c, p) in known.items():
-        by_hash.setdefault(pid.split("#")[-1], set()).add(pid)
-        by_cmd.setdefault(_cmd_key(p.command.replace(INPUTS_TOKEN, inputs_token(pid))), set()).add(pid)
+    by_hash, by_cmd, copies = _citable(known)
     dirs = tuple(dirs or ())
     # which part probes each criterion of the whole RESTS on: a passed criterion vouches, without `held`, only for those —
     # a command met under an unrelated criterion that passes (its own exploration, "3 failed") is no observation of it
@@ -1066,26 +1084,29 @@ def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
     for e in per_criterion or ():
         name, verdict = _norm(e.get("criterion")), spoken_verdict(e.get("verdict"))
         for p in probes_of(e):
-            i, cmd = str(p.get("id", "")).strip(), str(p.get("command", ""))
-            h = set() if "#" in i else by_hash.get(i, set())
-            m = {x for k in {_cmd_key(cmd), _cmd_key(tokenized(cmd, dirs))} for x in by_cmd.get(k, ())} if _norm(cmd) else set()
-            cand = h | m
-            named = {i} if i in known else (h & m) or cand
-            if len(named) > 1 and not _copies_of_one(named, demanded):
+            cand, named = _named_by(p, known, by_hash, by_cmd, dirs)
+            if len({same_probe(known[x][1]) for x in named}) > 1:
                 for pid in named & set(demanded):
                     why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which names {len(named)} "
                                                    f"demanded probes ({', '.join(sorted(named))}) — cite it by its full id")
                 continue
-            for pid in (cand - named) & set(demanded):
+            # …one observation, cited by any of its ids, is each copy's: SHOWN HOLDING it holds for each (the sql root,
+            # 2026-10-27: six of seven validations ⊥ on one sound delivery, a twin cited by its copy's full id read as
+            # "not run"), reported NOT holding it voids each (a contradiction errs to a false FAIL — replay mutation,
+            # 2026-10-27); cited short of either it speaks only of the id it names (critic r3, 2026-10-26)
+            each = set().union(*(copies[same_probe(known[x][1])] for x in named))
+            for pid in (cand - each) & set(demanded):
                 why.setdefault(pid, []).append(f"its hash or command, cited under '{name}', was read as {', '.join(named)} "
                                                "— cite this one by its own full id")
-            if not named & set(demanded):
+            if not each & set(demanded):
                 continue
             held = probe_held(p.get("held"))
+            if held is True or (held is None and verdict == "pass" and each & rests.get(name, set())):
+                good |= each & set(demanded)
+                continue
+            if held is False:                                # one observation said failing: no copy of it holds
+                named = each
             for pid in named & set(demanded):
-                if held is True or (held is None and verdict == "pass" and named & rests.get(name, set())):
-                    good.add(pid)
-                    continue
                 if held is None and verdict == "pass":
                     why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which does not rest on it, "
                                                    "without `held: true` — say whether it held")

@@ -95,14 +95,16 @@ def test_a_hash_two_parts_copies_of_one_check_share_names_both(held):
 
 
 def test_a_copy_cited_by_its_own_id_touches_only_itself():
-    """A full id names one probe: a copy cited without `held` under a failing criterion voids no original reported holding,
-    and a copy reported not holding is never credited through the original (critic r3, 2026-10-26)."""
+    """A full id names one probe: a copy cited without `held` under a failing criterion voids no original reported holding
+    (critic r3, 2026-10-26); a copy reported not holding voids every copy, the original said holding included — one
+    observation, a contradiction read as a FAIL (replay mutation, 2026-10-27)."""
     report = [{"criterion": "A", "verdict": "pass", "probe": [{"id": _S_ID, "held": True}]},
               {"criterion": "B", "verdict": "fail", "probe": [{"id": _I_ID}]}]
     assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID}
     report[1]["probe"] = [{"id": _I_ID, "held": False}]
-    assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID}
-    assert unrun_parts({"A": _S, "B": _I}, report) == {}       # B fails: a failing criterion is not asked for credit
+    # …but a copy reported NOT holding is the same observation as the original said holding: neither is credited
+    assert part_credit({"A": _S, "B": _I}, report)[0] == set()
+    assert unrun_parts({"A": _S, "B": _I}, report) == {"A": [_S_ID]}   # A's pass stands on a check reported failing
 
 
 def test_a_shared_hash_reported_not_holding_voids_every_copy():
@@ -126,3 +128,19 @@ def test_a_shared_hash_cited_once_without_held_under_a_criterion_on_one_copy_obs
               {"criterion": "B", "verdict": "pass", "probe": [{"id": _hash(_S_ID)}]}]
     assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID, _I_ID}
     assert unrun_parts({"A": _S, "B": _I}, report) == {}
+
+
+def test_a_copy_shown_holding_by_its_own_full_id_holds_for_every_copy():
+    """One observation, however many ids it is pinned under: a twin shown holding by its copy's full id was read as
+    "not run" for the other, and six of seven validations of one sound sql root were refused (2026-10-27)."""
+    report = [{"criterion": "A", "verdict": "pass", "probe": [{"id": _I_ID, "held": True}]},
+              {"criterion": "B", "verdict": "pass", "probe": []}]
+    assert part_credit({"A": _S, "B": _I}, report)[0] == {_S_ID, _I_ID}
+    assert unrun_parts({"A": _S, "B": _I}, report) == {}
+
+
+def test_the_wholes_own_probe_shown_holding_holds_for_a_parts_copy_of_it():
+    own = [Criteria("build", check=(Probe("clean build", "make build", "0"),))]
+    report = [{"criterion": "build", "verdict": "pass", "probe": [{"id": probe_id("build", own[0].check[0]),
+                                                                    "held": True}]}]
+    assert part_credit({"build": _I}, report, own=own)[0] == {_I_ID}

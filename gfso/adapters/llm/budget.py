@@ -47,6 +47,8 @@ CLOSE_TURNS = 2
 #: seconds a close needs to be worth starting: with less, no fresh session would have time to continue from its note
 CLOSE_MIN_S = 120
 CONTINUE = "Continue the task."
+#: how a round the system stopped at its context reading, and went on with, ended — not the role's cap
+CONTINUED = "continued"
 #: the first line of a note written at a checked point — what tells it from the task's own report
 NOTE_MARK = "HANDOVER NOTE"
 #: ONE round reaches the point and writes the note: a round that ends in an answer is not continued by some providers
@@ -204,6 +206,9 @@ def run(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, sessi
                 return _ended(p, sid, session, p.agent_round(system, CONTINUE, allowed_tools, cwd, _left(timeout, t0),
                                                              max_turns - used if max_turns else None, sid))
             if written is None:
+                # …a round the SYSTEM stopped at its reading and continues is no session out of turns: the CLI's word
+                # read as one on the page — 4 of 15 executor rounds of a run marked "out of turns" (the author, 2026-10-27)
+                rec["ended"] = CONTINUED
                 word, s = s.read(rec, turns)
                 if word == "boundary" and max_turns and max_turns - used < 2:
                     return ""                               # no turns to reach a point: kept as a capped round is
