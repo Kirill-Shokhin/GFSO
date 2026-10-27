@@ -3679,3 +3679,34 @@ does not allow, open — and the system stopped the run as refuted. The record i
 moving during the row (two commits under gfso/web, the server one process on the recorded build), not yet adjudicated.
 At its grade: one row did not pass `base` in 8 h. The plan is v3's plus `integrate` (v3's one haiku 5.5 row,
 GB_c_compiler_tn9fq5668, DONE, is itself flagged and not adjudicated); nothing in the engine lets an executor split a node in performance (§3.7, §11.5).
+
+### 13.48 What a session costs: the context handover does not pay on `sql_database`, the place observation does; one sound delivery refused six times, and why (2026-10-27)
+
+Pre-registered (`experiments/e3_specbench/PREREGISTERED_context_budget.md`, its corrections written before the rows they
+govern, one after the first budget row and disclosed): `sql_database`, the given plan its haiku-5.5 reference closed,
+every role `claude-haiku-5-5`, AUTO, one server build for the series. Every row: root DONE, signed tree held-out 1.000.
+
+| cell | executors $ | executor turns | handovers |
+|---|---|---|---|
+| no budget (×2) | 0.423 · 0.457 | 107 · 106 | 0 |
+| budget 25k / 38k / 50k / 76k | 0.395 / 0.480 / 0.350 / 0.398 | 258 / 255 / 189 / 159 | 16 / 13 / 3 / 0 |
+| no observation of the place | 0.571 | 121 | 0 |
+
+- **The handover is not shown to pay here.** Only the 50k cell is cheaper than the two unbudgeted rows by more than their
+  spread (8 %), n = 1, and the 76k cell — no handover at all — is 10 % cheaper, so run-to-run variance alone reaches that.
+  Cache reads are flat across cells (3.8–4.3 M tokens): sessions on this task peak at 40–50k, the handover has little to
+  cut, and each one adds a fresh session's re-reading (executor turns ×1.5–2.4); of the reopened sessions most only
+  verified and answered. What a budget buys is a question for a task whose sessions grow long.
+- **The place observation pays:** without it the executors spend 13 % more turns and 30 % more money at an equal result.
+- **The system's own plan on haiku 5.5** (the arm the value claim rests on; one row on this build): DONE, every pinned
+  check run, held-out 0.818 (ordering and a mixed-stress suite not probed); $1.58 in columns (executors 0.45, validation
+  0.26, issuer 0.38, planning 0.50); 119 min against the bare agent's 16–21. Contact showed the plan wrong five times,
+  each carried by a BLOCK naming a missing producer or a defect in a pinned check; the issuer answered by promoting
+  producers and once by re-splitting two parts that needed each other. No CHALLENGE was used.
+- **One sound root refused six times.** On a first unbudgeted row the root delivered once and good (oracle 1.000) and was
+  validated seven times, ~$3.9 of the row's $5.2: a part carrying copies of the root's checks had them owed again under
+  other ids, placed under the root's first criterion where the validator read them as out of scope, and a copy shown
+  holding by its own id was read as not run. A pinned probe is now one observation whatever ids it carries (owed once,
+  credited for every copy, voided for every copy when reported failing); replayed on the 19 archived refused reports,
+  13 lift and none newly refused. Separately, a pinned expectation of two lines was printed raw in every packet, read as
+  its first line alone, and a correct check was disputed; packets now write it on one line.
