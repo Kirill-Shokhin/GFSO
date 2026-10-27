@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import gfso.adapters.execution as E
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution, LocalExecution
 from gfso.roster import AgentRegistry
@@ -23,6 +24,7 @@ def declared(tmp_path, monkeypatch):
                              "other": {"image": "x", "env_file": "e.env"}}))
     monkeypatch.setenv("GFSO_EXECUTIONS_PATH", str(p))
     monkeypatch.setattr(WS, "_EXECUTIONS", {})
+    monkeypatch.setattr(E, "_SWITCH", {})
     base = tmp_path / "w" / "base"
     base.mkdir(parents=True)
     return AgentRegistry(path=str(tmp_path / "agents.json")), base
@@ -38,6 +40,39 @@ def test_a_role_names_a_declared_execution_and_the_project_runs_there(declared):
     assert WS.execution_of(SimpleNamespace(project_name="p"), agents) is x, "one object per (execution, project)"
     assert isinstance(WS.execution_of(SimpleNamespace(project_name="q"), agents), LocalExecution)
 
+
+
+def test_a_turned_network_switch_holds_for_every_holder(declared, tmp_path, monkeypatch):
+    """The switch is set outside, in the declaration. A session keeps the execution it started with, so a second object
+    under the new switch would lose the container to the first one's next call (critic over the switch): the ONE object
+    turns, and whoever holds it starts the container under the switch as declared now."""
+    agents, base = declared
+    agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
+    held = WS.execution_of(SimpleNamespace(project_name="p"), agents)
+    ran = []
+    monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
+        args, 0, "true" if args[:2] == ["docker", "inspect"] else "", ""))
+    monkeypatch.setattr(E, "_STARTED", {})
+    held.start()
+    (tmp_path / "executions.json").write_text(json.dumps({"e3-linux": {"image": "e3-linux-agent:2", "env_file": "e.env",
+                                                                       "network": {"mode": "off"}}}))
+    assert WS.execution_of(SimpleNamespace(project_name="p"), agents) is held and held.network == ("off", ())
+    held.start()
+    held.start()
+    seals = [a[-1] for a in ran if a[:4] == ["docker", "exec", "-u", "0"]]
+    assert sum(1 for a in ran if a[:2] == ["docker", "run"]) == 2 and seals[-1].startswith(held.seal())
+
+
+@pytest.mark.parametrize("broken", ["{not json", '{"renamed": {"image": "x", "env_file": "e.env"}}'])
+def test_a_declaration_that_does_not_read_shuts_a_running_project(declared, tmp_path, broken):
+    """A session keeps its execution object; a typo while closing the switch must not leave it out (critic 5)."""
+    agents, base = declared
+    agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
+    held = WS.execution_of(SimpleNamespace(project_name="p"), agents)
+    (tmp_path / "executions.json").write_text(broken)
+    with pytest.raises((ValueError, KeyError)):
+        WS.execution_of(SimpleNamespace(project_name="p"), agents)
+    assert held.network == ("off", ())
 
 def test_an_undeclared_execution_is_refused(declared):
     agents, base = declared

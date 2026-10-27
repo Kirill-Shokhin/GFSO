@@ -4,9 +4,11 @@ starting every call through `docker exec`, so a project's work is isolated witho
 paths: a container sees the base's parent as `/gfso-place`, and every path crossing the boundary is mapped both ways."""
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import shutil
+import socket
 import stat
 import tempfile
 import subprocess
@@ -24,11 +26,27 @@ STATE_INSIDE = "/home/agent/.claude"
 #: Docker Desktop forwards this network to the HOST'S LOOPBACK, :8000 included (probe P8): a session inside could
 #: otherwise sign the graph it works under (§10.3)
 HOST_NET = "192.168.65.0/24"
+#: the switch on a container's way out — set OUTSIDE the system (the execution's declaration, or whoever builds it), never
+#: a policy of its own: `open` — everything but the host (other containers on Docker's bridge
+#: included); `allowlist` — TCP 443 to the addresses the named hosts had at
+#: start; `off` — nothing. A session's own CLI calls its model from inside, so `off` suits only a provider that calls it
+#: from outside. What the allowlist does NOT hold: it reads addresses, not names, so a host behind a shared front (a CDN,
+#: most registries) opens every tenant of that address; an allowed host carries whatever the session sends it under
+#: any credentials it presents (a model API that stores data is a way out to another tenant's account); and the rule
+#: lives in the session's own container, holding while root there is out of reach
+NETWORK = ("open", "allowlist", "off")
+#: Docker's resolver on a user-defined network answers on the container's loopback (the default bridge names outside
+#: resolvers, which the closing rule already refuses): under a closed switch DNS would carry anything out, name by name
+DNS_INSIDE = "127.0.0.11"
 #: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes
 LABEL = "gfso.execution"
 #: the containers this server process started — one per (execution, project), whichever object asks for it — with
 #: what each was started holding: a project re-created on another base gets a container of its own again
 _STARTED: dict = {}
+#: each container's switch as last declared — the container's, not an object's: a session keeps its object for its whole
+#: life, so any object starting the container must start it under the switch as it stands now (critic 4: a second
+#: object of one container started it back under its own)
+_SWITCH: dict = {}
 _START = threading.Lock()
 
 
@@ -83,6 +101,15 @@ def _own(path: str) -> None:
     os.chmod(path, os.lstat(path).st_mode | stat.S_IRWXU)
 
 
+def _public_v4(host: str) -> set:
+    """`host`'s public IPv4 addresses as this host resolves them; none where it does not resolve."""
+    try:
+        got = socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return set()
+    return {a[4][0] for a in got if ipaddress.ip_address(a[4][0]).is_global}
+
+
 def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
@@ -106,14 +133,18 @@ def end_leftovers() -> None:
 class ContainerExecution(ExecutionPort):
     """`image` with `env_file` (the agent's auth) and the CLI's `state` dir, holding `base`'s parent's four directories
     of this project — the base, its node places, its scratch, a temp of its own — at `/gfso-place/<name>`. Nothing else
-    of the host is mounted, and the host's network is shut at start."""
+    of the host is mounted, the host's network is shut at start, and the rest of the way out is as `network` switches it
+    (`{"mode": one of NETWORK, "hosts": [...]}`: the container's switch, kept by its name; open where none was
+    given)."""
 
-    def __init__(self, name: str, image: str, env_file: str, state: str, base: str, project: str):
+    def __init__(self, name: str, image: str, env_file: str, state: str, base: str, project: str, network=None):
         self.base, self.parent = Path(base).resolve(), Path(base).resolve().parent
         if not self.parent.drive or self.parent.drive.startswith("\\\\"):
             raise ValueError(f"execution {name!r}: {base} is not on a local drive — a container cannot mount it")
         self.name, self.image, self.env_file = name, image, env_file
         self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{name}-{project}").lower()
+        if network is not None:
+            self.switch(network)
         # THE CLI'S STATE IS THE PROJECT'S: shared by an execution's projects, every E3 row (all at /gfso-place/ws) read
         # and appended to another row's conversation (critic over d5c8f7a, measured on two containers)
         self.state = Path(state) / self.container
@@ -125,6 +156,26 @@ class ContainerExecution(ExecutionPort):
         self._host = re.compile(re.escape(self.parent.drive[0]) + r":" + sep
                                 + sep.join(re.escape(p) for p in self.parent.parts[1:])
                                 + r"(?P<rest>(?:" + sep + r"[^\s\"'`<>|*?]*)?)(?![^\s\"'`<>|*?\\/])", re.IGNORECASE)
+
+    def switch(self, network) -> None:
+        """Turn the way out to `network`. The container holds it, so every holder's next call starts the container
+        under it — the calls running in it end, as they must: they were let out under the old switch. Taken
+        under the start's lock, so a start seals and records ONE switch; a switch that does not read shuts the way out,
+        since a holder that keeps the old one would stay out under a switch someone meant to close."""
+        with _START:
+            try:
+                mode, hosts = (network or {}).get("mode", "open"), tuple((network or {}).get("hosts") or ())
+                ok = mode in NETWORK and all(re.fullmatch(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", h) for h in hosts)
+            except (AttributeError, TypeError):
+                ok = False
+            _SWITCH[self.container] = (mode, hosts) if ok else ("off", ())
+        if not ok:
+            raise ValueError(f"execution {self.name!r}: network {network!r} — a mode of {NETWORK} and host names only")
+
+    @property
+    def network(self) -> tuple:
+        """This container's switch as last declared; open where none was."""
+        return _SWITCH.get(self.container, ("open", ()))
 
     def to_inside(self, text: str) -> str:
         """`text` with every host path under the parent spelled as the container sees it."""
@@ -146,15 +197,17 @@ class ContainerExecution(ExecutionPort):
         """`docker run` for this project's container: sealed (`--init`, its own mounts only, NET_ADMIN for the rule
         `start` adds as root), sleeping until the server calls into it."""
         mounts = [a for m in self.mounts for a in ("--mount", f"type=bind,src={self.parent / m},dst={INSIDE}/{m}")]
+        # a closed switch has no IPv6 to leave by: the rules below are IPv4's
+        v6 = [] if self.network[0] == "open" else ["--sysctl", "net.ipv6.conf.all.disable_ipv6=1"]
         return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
-                "--cap-add", "NET_ADMIN",
+                "--cap-add", "NET_ADMIN", "--security-opt", "no-new-privileges", *v6,
                 "--env-file", self.env_file, *mounts, "--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}",
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
 
     def start(self) -> None:
         """The project's container, running and sealed — started once per server process, whoever asks first."""
         with _START:
-            if _STARTED.get(self.container) == self.run_args() and self._running():
+            if _STARTED.get(self.container) == (self.run_args(), self.network) and self._running():
                 return
             if why := self.unavailable():
                 raise PlaceUnavailable(self.name, why)
@@ -162,14 +215,35 @@ class ContainerExecution(ExecutionPort):
                 d.mkdir(parents=True, exist_ok=True)
             run(["docker", "rm", "-f", self.container], timeout=60)      # a container of a server that is gone
             run(self.run_args(), timeout=120).check_returncode()
+            try:
+                rules = self.seal()
+            except OSError as e:
+                self.stop()
+                raise RuntimeError(f"{self.container}: {e} — no call runs unsealed") from e
             seal = run(["docker", "exec", "-u", "0", self.container, "sh", "-c",       # uid 0: the rule is root's
-                        f"iptables -A OUTPUT -d {HOST_NET} -j REJECT && mkdir -p /tmp/gfso-calls && "
-                        f"chmod 1777 /tmp/gfso-calls"], timeout=60)
+                        f"{rules} && mkdir -p /tmp/gfso-calls && chmod 1777 /tmp/gfso-calls"], timeout=60)
             if seal.returncode != 0:
                 self.stop()
-                raise RuntimeError(f"{self.container}: the host's network could not be shut — no call runs unsealed "
+                raise RuntimeError(f"{self.container}: the network could not be switched — no call runs unsealed "
                                    f"({(seal.stderr or b'').decode(errors='replace')[-300:]})")
-            _STARTED[self.container] = self.run_args()
+            _STARTED[self.container] = (self.run_args(), self.network)
+
+    def seal(self) -> str:
+        """The container's way out as root sets it, in the kernel — a tool that ignores a proxy is fenced as well. A
+        closed switch takes DNS away too, so an allowed host is resolved HERE, once, and pinned in `/etc/hosts`: an
+        address that is no public one (the host, a cloud's metadata) is refused, and an address that moves later is
+        simply not reached. What an allowed host passes on is its own (`OSError` when a host has no address to pin)."""
+        rules = [f"iptables -A OUTPUT -d {HOST_NET} -j REJECT"]
+        mode, hosts = self.network
+        if mode == "open":
+            return rules[0]
+        pinned = sorted({(ip, h) for h in hosts for ip in _public_v4(h)})
+        if missing := set(hosts) - {h for _, h in pinned}:
+            raise OSError(f"no public address to pin for {', '.join(sorted(missing))}")
+        rules += [f"iptables -A OUTPUT -d {DNS_INSIDE} -j REJECT", "iptables -A OUTPUT -o lo -j ACCEPT",
+                  *(f"iptables -A OUTPUT -d {ip} -p tcp --dport 443 -j ACCEPT && echo '{ip} {h}' >>/etc/hosts" for ip, h in pinned),
+                  "iptables -A OUTPUT -j REJECT"]
+        return " && ".join(rules)
 
     def _running(self) -> bool:
         """Is the container still up? A Docker restart (the host slept, an update) removes it under a live server, and

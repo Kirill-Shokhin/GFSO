@@ -244,18 +244,25 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
     if role is None:
         return LocalExecution()
     key = (role["execution"], engine.project_name, role["workdir"])
-    if key not in _EXECUTIONS:
+    try:
         d = executions()[role["execution"]]
+    except (ValueError, KeyError):
+        # a declaration that does not read shuts the way out it switched: an operator closing it in a hurry made a typo
+        if key in _EXECUTIONS:
+            _EXECUTIONS[key].switch({"mode": "off"})
+        raise
+    if key not in _EXECUTIONS:
         _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d["env_file"], d["state"],
                                               role["workdir"], engine.project_name)
+    # the switch as declared NOW, kept by the container: every holder of any object of it starts it under this one
+    _EXECUTIONS[key].switch(d.get("network"))
     return _EXECUTIONS[key]
 
 
 def drop_execution(engine) -> None:
     """The project is gone: its container goes, and so does the object that held it."""
-    execution_of(engine).stop()
     for key in [k for k in _EXECUTIONS if k[1] == engine.project_name]:
-        del _EXECUTIONS[key]
+        _EXECUTIONS.pop(key).stop()
 
 
 def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):

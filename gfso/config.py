@@ -57,7 +57,10 @@ def agents_path() -> Path:
 
 def executions_path() -> Path:
     """Where a project's sessions may run besides this host — a DECLARATION, read, never written by a door:
-    `{name: {"image", "env_file", "state"?}}` (`state` defaults to `<data_dir>/executions/<name>/claude`)."""
+    `{name: {"image", "env_file", "state"?, "network"?}}` (`state` defaults to `<data_dir>/executions/<name>/claude`;
+    `network` is the switch on the way out, `{"mode": "open"|"allowlist"|"off", "hosts": [...]}`, open when absent, off
+    when it does not read). Nothing watches this file: a turned switch is read at the project's next lookup of its
+    execution and holds from the call after it, which restarts the container — no kill switch for a session already out."""
     return Path(os.environ.get("GFSO_EXECUTIONS_PATH") or (data_dir() / "executions.json"))
 
 
