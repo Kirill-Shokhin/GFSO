@@ -14,6 +14,7 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import re
 import socket
 import time
 import urllib.error
@@ -42,7 +43,11 @@ RETRY_DELAYS_S = (2, 8, 30)
 RETRY_AFTER_MAX_S = 60
 #: how a 400's body names an overflowed window — a bad parameter's own "maximum" must not read as one
 CONTEXT_OVERFLOW = ("context length", "context_length", "context window", "maximum context", "prompt is too long",
-                    "too many tokens", "reduce the length")
+                    "too many tokens", "reduce the length", "context size", "exceed_context_size")   # llama.cpp's
+
+
+#: a reasoning model's inline thinking — closed, or left open to the end of a cut reply
+THINKING = re.compile(r"<think>.*?(</think>|$)", re.S)
 
 
 def is_address(place: str) -> bool:
@@ -118,6 +123,10 @@ class ChatWire:
         the reply out. Never raises for what the API answered: a refusal, a limit or a dead address is the Turn's
         `finish`."""
         raise NotImplementedError
+
+    def discover_window(self) -> Optional[int]:
+        """The window the server gives this model where it says (kept as `context_window`); a wire that cannot ask: None."""
+        return None
 
 
 #: a tariff in dollars per million tokens: (input, output, cached input)
@@ -255,12 +264,15 @@ class OpenAIWire(ChatWire):
         if cached is None:
             cached = usage.get("prompt_cache_hit_tokens")          # DeepSeek
         calls = [_tool_call(c, i) for i, c in enumerate(msg.get("tool_calls") or [])]
+        # a reasoning model's thinking, where the server leaves it inline: a draft verdict inside it won the parse over
+        # the final one (critic over the chat path — a path to a false PASS on the validator)
+        content = THINKING.sub("", msg.get("content") or "").strip()
         finish = {"length": "length", "tool_calls": "tools", "function_call": "tools"}.get(
             choice.get("finish_reason"), "tools" if calls else "stop")
-        t = Turn(text=msg.get("content") or "", tool_calls=calls, finish=finish, model=out.get("model") or self._model,
+        t = Turn(text=content, tool_calls=calls, finish=finish, model=out.get("model") or self._model,
                  input_tokens=None if prompt is None else prompt - (cached or 0),
                  output_tokens=usage.get("completion_tokens"), cache_read=cached, prompt_tokens=prompt,
-                 raw_assistant={"role": "assistant", "content": msg.get("content") or "",
+                 raw_assistant={"role": "assistant", "content": content,
                                 **({"tool_calls": msg["tool_calls"]} if msg.get("tool_calls") else {})})
         t.cost_usd = usage.get("cost") if isinstance(usage.get("cost"), (int, float)) else _priced(t, self._tariff)
         return t
@@ -339,7 +351,7 @@ class ChatProvider(RecordingProvider):
         if not cwd:
             raise ValueError("an agent run needs a working directory: without one it would run where the server "
                              "stands (the gfso state home), which holds none of the work. Pass `workdir`.")
-        if not (self._window_asked or self.wire.context_window) and isinstance(self.wire, OpenAIWire):
+        if not (self._window_asked or self.wire.context_window):
             self._window_asked = True
             self.wire.discover_window()
         return ToolLoop(self).run(system, user, allowed_tools, cwd, timeout or self._timeout, max_turns, session)

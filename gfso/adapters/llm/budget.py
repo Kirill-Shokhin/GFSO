@@ -98,6 +98,7 @@ class _Session:
     grow: float | None = None
     line: int | None = None
     opening: int | None = None
+    beyond: bool = False
 
     def step(self, p, used, max_turns) -> int:
         """Turns to the next reading: as many as half the distance to the line allows at the growth seen — a turn that
@@ -122,10 +123,15 @@ class _Session:
         grow = max(1.0, (peak - (self.peak if self.peak is not None and not self.fresh else 0)) / max(turns, 1))
         opening = peak if self.fresh and not rec.get("resumed") else self.opening
         soft = max(self.budget, 2 * opening) if self.budget and opening else self.budget
-        over = bool(soft and peak >= soft)
-        word = "close" if peak >= top or (over and self.asked) else "boundary" if over else "continue"
+        # …a REOPENED session at its ceiling on its first reading is past what a handover can help: the next reopen would
+        # open as large, and closing it again looped until the clock (critic over 9f36023). It works, or fails, as it
+        # would without one.
+        beyond = self.beyond or (self.fresh and bool(self.note) and peak >= top)
+        over = bool(soft and peak >= soft) and not beyond
+        word = "continue" if beyond else "close" if peak >= top or (over and self.asked) else "boundary" if over             else "continue"
         line = top if over or not soft or soft >= top else soft
-        return word, replace(self, fresh=False, asked=over, peak=peak, grow=grow, line=line, opening=opening)
+        return word, replace(self, fresh=False, asked=over, peak=peak, grow=grow, line=line, opening=opening,
+                             beyond=beyond)
 
     def previous(self) -> str:
         """The note this session started from, for the one it writes to update (anchored, not rewritten)."""

@@ -3663,6 +3663,10 @@ the increment, the outcome's cost being the second row's plus this. From the sta
 probe on `dml` prints the rows a SELECT returns, which `select` — ordered after `dml` — produces; on an empty tree (a
 haiku-5.5 smoke, GB_sql_database_tnk9dq308, not a row) every `dml` session BLOCKed naming `select`, and the system
 stopped the run on the order its contact refuted. The continuation passed because `select`'s work stood in its seed.
+The plan for later rows is v17.1: the criterion off `dml`, kept on `integrate` — which consumes every part — and the
+root, so a `col = value` defect in `dml`'s work is caught one level later. Checked offline, no model: the probe PASSes on
+the first row's tree (held-out 1.0) and FAILs on the second's (0.818); no part's pins need a part ordered after it. Not
+yet run.
 
 **c_compiler on haiku 4.5, plan v4 given (GB_c_compiler_tnj930660, Amendment 6): NOT DONE.** In 8 h the first part,
 `base` — eight criteria, judged by the plan's author to fit one session — never passed: 38 deliveries, 37 FAILs; the

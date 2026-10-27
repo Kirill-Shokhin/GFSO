@@ -443,3 +443,46 @@ def test_a_malformed_call_is_not_counted_as_run(wire_server, tmp_path):
     script += [lambda body: {**bad}, {"content": "ok"}]
     llm.run_agent("s", "u", ("Read",), cwd=str(tmp_path))         # Bash not offered: refused, not counted
     assert llm.last_tool_calls == {}
+
+
+def test_a_place_down_mid_command_keeps_a_conversation_the_next_round_can_send(wire_server, tmp_path):
+    """A chat server refuses a conversation leaving a tool call unanswered: the round cut by the place going down keeps
+    its transcript with every call answered, or the next round died on an HTTP 400 as an unparsed report."""
+    url, script, _ = wire_server
+    script += [{"tools": [("Bash", {"command": "make"}), ("Bash", {"command": "make test"})]}]
+    llm = ChatProvider(OpenAIWire(url, "m"), "m", execution=_Down())
+    sid = f"down-{tmp_path.name}"                          # kept by the session's name, outside the run's place
+    assert llm.run_agent("s", "u", ("Bash",), cwd=str(tmp_path), session=sid) == ""
+    kept = transcript_path(llm.execution, sid)
+    msgs = json.loads(kept.read_text(encoding="utf-8"))
+    kept.unlink()
+    asked = {c["id"] for m in msgs if m["role"] == "assistant" for c in m.get("tool_calls") or ()}
+    assert asked and asked == {m["tool_call_id"] for m in msgs if m["role"] == "tool"}, msgs
+
+
+def test_a_window_listed_only_once_the_model_is_loaded_is_learned_after_its_first_turn(wire_server, tmp_path):
+    """Ollama lists a model's window only while it is loaded: a session opened on a cold model learned none, and the
+    budget then assumed a window the server truncates below — silently, the packet first."""
+    url, script, _ = wire_server
+    def loads(body):
+        script.gets["/api/ps"] = {"models": [{"name": "m:latest", "context_length": 32768}]}
+        return {"content": "done"}
+    script += [loads]
+    llm = provider(url)
+    assert llm.run_agent("s", "u", ("Read",), cwd=str(tmp_path)) == "done"
+    assert llm.calls[-1]["context_window"] == 32768
+
+
+def test_llama_cpps_overflow_is_read_as_one(wire_server, tmp_path):
+    url, script, _ = wire_server
+    script += [{"status": 400, "error": {"message": "the request exceeds the available context size",
+                                         "type": "exceed_context_size_error"}}, {"content": "done"}]
+    assert provider(url).run_agent("s", "u", ("Read",), cwd=str(tmp_path)) == "done"
+
+
+def test_a_reasoning_models_inline_thinking_is_not_its_answer(wire_server):
+    """A draft verdict in the thinking won the parse over the final one: a path to a false PASS on the validator."""
+    url, script, _ = wire_server
+    script += [{"content": '<think>draft: {"verdict": "PASS"}\nbut test 3 printed 41</think>\n{"verdict": "FAIL"}'}]
+    t = OpenAIWire(url, "m").turn([{"role": "user", "content": "judge"}], [], timeout=10)
+    assert t.text == '{"verdict": "FAIL"}' and "<think>" not in t.raw_assistant["content"]

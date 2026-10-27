@@ -357,3 +357,11 @@ def test_a_ceiling_met_on_the_roles_last_turn_still_hands_the_note_on():
     w = Worker(work=100, per_turn=10_000, window=60_000, step=4)                  # ceiling 40k, reached at turn 4
     assert w.run_agent("s", "packet", ("Read",), cwd=".", max_turns=4, session="sid") == ""
     assert w.closed and "sid" in w.held and B.HANDOVER in w.prompts[-1]
+
+
+def test_a_reopen_that_opens_at_its_ceiling_is_never_closed_there():
+    """A reopen as large as the ceiling would reopen as large again: closing it looped, two full reads a cycle, until the
+    session's clock (critic over 9f36023, 868 closes on a 200k window). It runs as it would without the mechanism."""
+    w = Worker(work=2_000, start=185_000, window=200_000, step=4)
+    w.run_agent("s", "packet", ("Read",), cwd=".", session="sid", max_turns=150)
+    assert len(w.closed) == 1, len(w.closed)               # the first session's own close; its reopen then works on

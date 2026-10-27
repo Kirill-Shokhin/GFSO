@@ -73,6 +73,17 @@ TOOLS = {
 }
 
 
+def _answer_pending(msgs: list, why: str) -> None:
+    """Answer every tool call of the last reply no tool message answered: a chat server refuses a conversation that
+    leaves one open, so a round cut mid-call kept a transcript no next round could resume (critic over the chat path)."""
+    last = next((i for i in range(len(msgs) - 1, -1, -1) if msgs[i].get("role") == "assistant"), None)
+    if last is None:
+        return
+    done = {m.get("tool_call_id") for m in msgs[last + 1:] if m.get("role") == "tool"}
+    msgs += [{"role": "tool", "tool_call_id": c["id"], "content": why}
+             for c in msgs[last].get("tool_calls") or () if c.get("id") not in done]
+
+
 def transcript_path(execution, session: str) -> Path:
     """Where a session's conversation is kept between rounds — beside the agent state of its execution."""
     return Path(execution.state_dir()) / "gfso-sessions" / f"{session}.json"
@@ -251,6 +262,7 @@ class ToolLoop:
                                                      timeout, max_turns, trace)
         except PlaceUnavailable as e:
             answer, ended, stop, error, place = "", "unavailable", None, str(e), e.place
+            _answer_pending(msgs, f"Error: the place went down before this ran ({e}) — run it again")
         finally:
             if trace is not None:
                 trace.close()
@@ -280,6 +292,8 @@ class ToolLoop:
                 self._elide(msgs, None, force=True)
                 continue
             turns.append(t)
+            if not n and self.p.wire.context_window is None:
+                self.p.wire.discover_window()       # a local server lists its window only once the model is loaded
             self.p.note_peak(t.prompt_tokens)
             self._tick(n, t, t0)
             if t.failed:
