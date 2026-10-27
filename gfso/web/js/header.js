@@ -2,7 +2,7 @@
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
 import {$, esc, data} from './dom.js';
-import {H} from './hints.js';
+import {H, QUALITY} from './hints.js';
 import {getJSON, post, refusal, singleFlight, GOAL} from './api.js';
 import {S, taskOf, myRole, procs} from './state.js';
 import {label, closureNote, contested, modeDoc, terminal, delivered, modelName} from './vocab.js';
@@ -213,9 +213,9 @@ export async function refreshQuality() {
         const low = v => v != null && v < 0.5;
         const alarm = {q_V: low(m.q_V), q_D: low(m.q_D) && !(ffs >= 0.5)};
         $('hd-quality').innerHTML = `<button class="hd-q${alarm.q_V || alarm.q_D ? ' acc' : ''}" data-action="pop">quality</button>`
-            + H.quality(Object.entries(GRADE).flatMap(([k, grade]) => [{head: k, tag: grade, means: means[k] || '',
+            + H.quality(Object.entries(GRADE).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: `${k}, ${grade}`, means: means[k] || '',
                 val: `<span class="hq-val${alarm[k] ? ' acc' : ''}">${m[k] == null ? '—, no observations yet' : pct(m[k])}</span>`},
                 // §15.4: a low q_D is read TOGETHER with the false-FAIL share (an over-strict validator inflates it).
-                ...k === 'q_D' && ffs != null ? [{head: 'false-FAIL share', val: `<span class="hq-val">${pct(ffs)}</span>`, means: means.false_fail_share || ''}] : []]));
+                ...k === 'q_D' && ffs != null ? [{head: QUALITY.false_fail_share, tag: 'high is bad', val: `<span class="hq-val">${pct(ffs)}</span>`, means: means.false_fail_share || ''}] : []]));
     } catch (e) { /* metrics are a read; the chip keeps its last numbers */ }
 }

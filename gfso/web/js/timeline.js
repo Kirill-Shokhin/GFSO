@@ -35,7 +35,8 @@ function stretches(run) {
         if (last && last.node === s.node && last.kind === s.kind && s.start - last.end < JOIN
             && !cuts(s.node).some(t => t > last.end + 1e3 && t < s.start - 1e3)) {
             Object.assign(last, {end: Math.max(last.end, s.end), cost: last.cost + s.cost, tokens: last.tokens + s.tokens,
-                                 open: last.open || s.open, parts: last.parts + 1, busy: last.busy + (s.end - s.start)});
+                                 open: last.open || s.open, parts: last.parts + 1, busy: last.busy + (s.end - s.start),
+                                 continued: (last.continued || 0) + (s.resumed ? 1 : 0)});
             if (s.agent && !last.agents.includes(s.agent)) last.agents.push(s.agent);
             if (s.handover) last.handed.push(s.end);
         } else out.push({...s, parts: 1, busy: s.end - s.start, agents: s.agent ? [s.agent] : [], handed: s.handover ? [s.end] : []});

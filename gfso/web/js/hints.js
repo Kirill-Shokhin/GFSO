@@ -157,6 +157,11 @@ export const H = {
     quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each metric with its grade (§15.8).', rows),
 };
 
+// what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server
+// says the rest (`means`)
+export const QUALITY = {q_D: 'Splits that held', q_V: 'Verdicts that held', q_T: 'Criteria that held as issued',
+    q_Dep: 'Dependencies declared up front', q_Del: 'Delegations that fit', false_fail_share: 'Over-strict FAILs'};
+
 // ── the deck's strip ──
 export const STRIP = {
     live: (name, row) => hover(name, row),
@@ -216,7 +221,9 @@ export const TIP = {
     bar: (name, x, r, f) => card(`${cap(KIND_NAME[x.kind])}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
         name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f.own, f.edges),
-        x.parts > 1 && `${x.parts} sessions, ${dur(x.busy)} busy — ${x.kind === 'val' ? 'the validator works in batches of probes' : 'retried, continued or handed over'}`,
+        x.parts > 1 && `${x.parts} processes, ${dur(x.busy)} busy: ${x.kind === 'val' ? 'the validator works in batches of probes'
+            : [x.continued && `${x.continued} continued its session`, x.handed?.length && `${x.handed.length} handed over`,
+               x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0) > 0 && `${x.parts - 1 - (x.continued || 0) - (x.handed?.length || 0)} retried`].filter(Boolean).join(', ')}`,
         x.handed?.length && `Handed over ${x.handed.length}× — its context reached the budget; a fresh session went on from its note`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track

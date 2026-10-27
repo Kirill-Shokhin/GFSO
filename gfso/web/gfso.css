@@ -323,6 +323,8 @@ body {
 .cs-tile span { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); }
 .cs-tile i { font-style: normal; font-size: 11px; color: var(--ink-faint); }
 .cs-legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 12px; }
+.cs-legend em { display: block; margin-left: 16px; font-style: normal; font-size: 10.5px; color: var(--ink-faint); }
+.cs-legend b { font-weight: 600; color: var(--ink); }
 .cs-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 .cs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 32px; }
 .cs-chart h4 { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-faint); font-weight: 400; margin-bottom: 6px; }

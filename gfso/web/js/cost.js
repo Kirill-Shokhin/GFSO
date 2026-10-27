@@ -51,7 +51,8 @@ export function render(el, run, nodes) {
             ${tile(dur(c.busy), 'session time', `${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}× the run`)}
             ${tile(run.exec.peak, 'executors at once', `validators ${run.val.peak}`)}
         </div>
-        <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k]} ${money([c.byKind[k]])} · ${c.byKind[k].calls} sessions · ${dur(c.byKind[k].busy)}</span>`).join('')}</div>
+        <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k]} <b>${money([c.byKind[k]])}</b>`
+            + `<em>${sessionsOf(k, c.byKind[k].calls)} in ${dur(c.byKind[k].busy)}</em></span>`).join('')}</div>
         <div class="cs-grid">
             ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`)}
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`)}
