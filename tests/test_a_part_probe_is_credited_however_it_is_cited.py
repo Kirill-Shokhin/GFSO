@@ -144,3 +144,17 @@ def test_the_wholes_own_probe_shown_holding_holds_for_a_parts_copy_of_it():
     report = [{"criterion": "build", "verdict": "pass", "probe": [{"id": probe_id("build", own[0].check[0]),
                                                                     "held": True}]}]
     assert part_credit({"build": _I}, report, own=own)[0] == {_I_ID}
+
+
+def test_a_copy_the_packet_no_longer_lists_is_shown_by_the_wholes_own_probe_under_its_own_criterion():
+    """The packet owes a probe once: a part mapped only to criterion X carrying a copy of the whole's own probe under Y
+    is not listed again, so the validator cites the own probe under Y, without `held` as the schema asks for own
+    probes. That citation is the own probe's run (`unrun_pinned`), so it is the copy's too (critic over the identity)."""
+    q, p = Probe("builds", "make && echo OK", "OK"), Probe("query works", "./db < t1.sql", "3")
+    own = (Criteria("build", check=(q,)), Criteria("queries", check=(p,)))
+    parts = {"build": part_criteria("root.scaffold", (Criteria("smoke", check=(p,)),))}
+    report = [{"criterion": "build", "verdict": "pass", "probe": [{"id": probe_id("build", q)}]},
+              {"criterion": "queries", "verdict": "pass", "probe": [{"id": probe_id("queries", p)}]}]
+    assert unrun_parts(parts, report, own=own) == {}
+    report[1]["verdict"] = "fail"                         # under a criterion it does not pass, it vouches for nothing
+    assert unrun_parts(parts, report, own=own) == {"build": [probe_id("root.scaffold/smoke", p)]}

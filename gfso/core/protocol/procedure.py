@@ -1076,8 +1076,11 @@ def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
     dirs = tuple(dirs or ())
     # which part probes each criterion of the whole RESTS on: a passed criterion vouches, without `held`, only for those —
     # a command met under an unrelated criterion that passes (its own exploration, "3 failed") is no observation of it
-    rests = {_norm(k): {probe_id(c.name, p) for c in cs for p in (c.check or ()) if _norm(p.command)}
-             for k, cs in (parts or {}).items()}
+    # …and on its OWN pinned probes: cited there it is their run (`unrun_pinned`), so of every copy of them a part carries
+    # — which the packet no longer lists again (critic over the probe identity, 2026-10-27)
+    rests: dict[str, set[str]] = {}
+    for k, cs in [*(parts or {}).items(), *((c.name, (c,)) for c in own or ())]:
+        rests.setdefault(_norm(k), set()).update(probe_id(c.name, p) for c in cs for p in (c.check or ()) if _norm(p.command))
     good: set[str] = set()
     bad: set[str] = set()
     why: dict[str, list[str]] = {}
