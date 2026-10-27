@@ -12,13 +12,15 @@ const tok = x => fmtTok(x, NOT);
 const pct = x => `${Math.round(x * 100)}%`;
 const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[(s.length - 1) >> 1]; };
 
-// how full the sessions' contexts got: the fullest turn of each, against the window of the model that ran it
+// how full the sessions' contexts got: the fullest turn of each, against the window of the model that ran it — the window
+// said beside the share: 55% is 110k of a 200k window and 550k of a 1M one, and read without it the cell contradicted itself
+// (the author, 2026-10-27); the middle figure is the MEDIAN session's fullest turn, and is named so
 function fill(r) {
     if (!r.fills.length) return '<span class="wk-none" title="Not recorded&#10;kept only for sessions run on a build that records it">not recorded</span>';
-    const max = Math.max(...r.fills);
-    return `<span class="wk-fill${max > 0.8 ? ' high' : ''}" title="${hint('Context filled', "each session's fullest turn against its window", `median ${pct(median(r.fills))} · fullest ${pct(max)}`,
-        `${r.fills.length} of ${r.calls} sessions recorded`)}"><i style="width:${pct(max)}"></i></span>`
-        + `${pct(median(r.fills))} · max ${pct(max)}`;
+    const max = Math.max(...r.fills), med = median(r.fills), w = r.window, of = x => w ? ` (${fmtTok(Math.round(x * w))})` : '';
+    return `<span class="wk-fill${max > 0.8 ? ' high' : ''}" title="${hint('Context filled', `each session's fullest turn against its model's window${w ? ` of ${fmtTok(w)} tokens` : ''}`,
+        `median session ${pct(med)}${of(med)} · fullest ${pct(max)}${of(max)}`, `${r.fills.length} of ${r.calls} sessions recorded`)}"><i style="width:${pct(max)}"></i></span>`
+        + `median ${pct(med)}${w ? ` of ${fmtTok(w)}` : ''} · max ${pct(max)}${of(max)}`;
 }
 
 // cache read / written, apart where the session kept them apart — summed in the calls before that was kept

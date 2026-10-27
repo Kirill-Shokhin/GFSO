@@ -200,7 +200,10 @@ function work(calls) {
         r.input = add(r.input, c.input_tokens); r.output = add(r.output, c.output_tokens); r.turns += c.turns || 0; r.turned += c.turns ? 1 : 0;
         if (c.cache_read_tokens == null) r.unsplit += c.cache_input_tokens || 0;
         else { r.read += c.cache_read_tokens; r.write += c.cache_write_tokens || 0; }
-        if (c.peak_context && (c.context_window || window[model])) r.fills.push(c.peak_context / (c.context_window || window[model]));
+        if (c.peak_context && (c.context_window || window[model])) {
+            r.fills.push(c.peak_context / (c.context_window || window[model]));
+            r.window = c.context_window || window[model];         // a share says nothing without the window it is of
+        }
         if (c.node_id) (((byNode[c.node_id] ??= {})[kind] ??= {})[model] = (byNode[c.node_id][kind][model] || 0) + 1);
     }
     return {rows: Object.values(rows).sort((a, b) => b.cost - a.cost), byNode, unanswered, unansweredOn,
