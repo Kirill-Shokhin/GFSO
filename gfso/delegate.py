@@ -116,9 +116,11 @@ ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=_in_flight_as("revi
 
 
 def publish_the_workforce(engine, roster: dict) -> None:
-    """Hand the engine the roster's executors and whose each is — what a mode issues nodes to. Called
-    by every round of the dispatcher and by the verbs that change the roster or read the pool before a
-    round has run (registering, setting a mode)."""
+    """Hand the engine the roster's executors and whose each is — what a mode issues nodes to — and what KIND every
+    registered id is. Called by every round of the dispatcher and by the verbs that change the roster or read the pool
+    before a round has run (registering, setting a mode): published only by the round, a root created right after its
+    executor was registered kept or lost its creator as issuer by which thread ran first."""
+    engine.workforce.publish_roster({aid: cfg.get("kind") for aid, cfg in roster.items()})
     engine.workforce.publish_executor_pool({aid: cfg.get("project") for aid, cfg in roster.items()
                                   if cfg.get("kind") == "llm-executor"},
                                  {aid: (cfg.get("model") or MODEL_DEFAULT)
@@ -1328,13 +1330,12 @@ class Dispatcher:
         self._engine.workforce.publish_validator_projects({
             aid: cfg.get("project") for aid, cfg in _roster.items()
             if cfg.get("kind") in ("llm-validator", "unittest-checker")})
-        publish_the_workforce(self._engine, _roster)
         # …and WHO ELSE is registered, published downward for the read surfaces. `gfso.tools` is the
         # layer below this one (core+engine only, held by `test_layering`) and must not import the
         # dispatcher to find out that a node's Del is a machine — but it is the difference between
         # "the graph waits for a person" and "the dispatcher has it in hand", and a driving agent
         # reported itself blocked on a human over exactly that (2026-08-20).
-        self._engine.workforce.publish_roster({aid: cfg.get("kind") for aid, cfg in _roster.items()})
+        publish_the_workforce(self._engine, _roster)
         self._resolve_ready_blocks()
         answer_open_questions(self._engine, self._agents, self._claim, self._release_after_answer,
                               self._cap.closing, ISSUER_VERBS, self._issuer_attempts)
