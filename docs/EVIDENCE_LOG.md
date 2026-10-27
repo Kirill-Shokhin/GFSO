@@ -3659,7 +3659,10 @@ execution $3.24, validation $8.02; `dml` fixed the defect in one round. Six part
 each finding their work done; three others edited code on the way. **What it does not show:** it is a continuation, not
 an independent sample; the held-out score is not blind to this defect — the probe was written from the contract but
 chosen after the hidden tests had shown the failure; it does not show haiku 4.5 closing v17 from the start; and $11.25 is
-the increment, the outcome's cost being the second row's plus this.
+the increment, the outcome's cost being the second row's plus this. From the start v17 does not hold as a plan: its
+probe on `dml` prints the rows a SELECT returns, which `select` — ordered after `dml` — produces; on an empty tree (a
+haiku-5.5 smoke, GB_sql_database_tnk9dq308, not a row) every `dml` session BLOCKed naming `select`, and the system
+stopped the run on the order its contact refuted. The continuation passed because `select`'s work stood in its seed.
 
 **c_compiler on haiku 4.5, plan v4 given (GB_c_compiler_tnj930660, Amendment 6): NOT DONE.** In 8 h the first part,
 `base` — eight criteria, judged by the plan's author to fit one session — never passed: 38 deliveries, 37 FAILs; the
