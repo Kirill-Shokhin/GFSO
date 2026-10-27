@@ -20,7 +20,7 @@ WRITES = [
     (re.compile(r"""\.title\s*=[^=]"""), "a title set on an element"),
     (re.compile(r"""data-tip\s*="""), "a data-tip written as markup"),
     (re.compile(r"""dataset\.tip\s*=\s*["'`]"""), "a data-tip set from a literal"),
-    (re.compile(r"""class=["'][^"']*\b(tt-name|tt-row|hq-row|hq-head|hq-means|hd-pop|hp-top|hp-group)\b"""), "a tip card or popover's markup"),
+    (re.compile(r"""class=["'][^"']*\b(tt-name|tt-row|hq-row|hq-head|hq-means|hd-pop|hp-top|hp-group|hk-row)\b"""), "a tip card or popover's markup"),
 ]
 
 
