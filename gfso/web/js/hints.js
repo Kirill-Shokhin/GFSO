@@ -41,6 +41,10 @@ export const pop = (title, caption, items) => `<div class="hd-pop"><div class="h
 
 // ── the key under «?» ──
 const svg = (body, h = 11) => `<svg class="glyph" width="11" height="${h}" viewBox="-5.5 -5.5 11 ${h}">${body}</svg>`;
+// the kinds of token a cost went to, in the order the Models bar draws them (a LABEL's words, and the key's)
+export const TOKENS = [['input_tokens', 'input'], ['output_tokens', 'output'], ['cache_read_tokens', 'cache read'], ['cache_write_tokens', 'cache written']];
+export const COST_CLS = k => `wk-${k.split('_')[0] + (k.includes('write') ? 'w' : '')}`;
+
 // THE KEY reads by meaning: each row is one glyph, drawn as the page draws it, and in bold WHAT IT MEANS — the reader
 // scans for the meaning beside the shape, not for a description of the shape; the small line under it only where the
 // meaning alone does not settle it (the author, 2026-10-27: «на ключевое место ты ставишь воду»). One glyph per row.
@@ -54,8 +58,7 @@ const KEY = [
     {glyph: '<i class="lg-dep"></i>', head: 'Uses the result of', means: 'the user waits until its producer passes (Dep)'},
     {glyph: '<i class="cy-live"></i>', head: 'At work', means: 'counted in the deck as «N at work»; a parent only waiting on its parts is not'},
     {glyph: '<i class="cy-live on"></i>', head: 'Running on this server now', means: 'a process of this server works on it'},
-    {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'shown from the second on'},
-    {glyph: '<span class="kb fails">3</span>', head: 'Its last round failed'},
+    {glyph: '<span class="kb">3</span>/<span class="kb fails">3</span>', head: 'Delivery rounds / the last one failed', means: 'shown from the second on'},
     {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it with its parts · the background shows the whole graph'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
@@ -66,6 +69,8 @@ const KEY = [
     {glyph: '<i class="brand-dot"></i>', head: 'Goal delivered', means: 'its root passed'},
     {group: 'The deck'},
     {glyph: '<b class="kt">· N</b>', head: 'Sessions', means: 'beside «at work» only when not one per node — one session may carry a whole part'},
+    {glyph: `<span class="wk-cost kc">${TOKENS.map(([k]) => `<i class="${COST_CLS(k)}" style="width:25%"></i>`).join('')}</span>`,
+     head: 'Cost split', means: `Models: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right; a segment's hover gives its figures`},
     {glyph: '<b class="kt">$</b>', head: 'Spend', means: 'booked when a session ends; a running one is counted, not priced'},
     {glyph: '<i class="cv cv-done"></i>', head: "A part's state, not a verdict", means: 'a coverage cell: the part responsible for that criterion (§2.4); the row\'s mark is the root\'s own'},
     {group: 'Nodes'},
@@ -83,7 +88,6 @@ export const keyPop = () => pop('How to read the page', 'Each mark means one thi
 
 // ── LABELS drawn beside a thing ──
 export const CELLS = [['done', 'part done'], ['open', 'part open'], ['rework', 'part in rework']];
-export const TOKENS = [['input_tokens', 'input'], ['output_tokens', 'output'], ['cache_read_tokens', 'cache read'], ['cache_write_tokens', 'cache written']];
 
 // ── the page's frame: index.html names these by `data-hint`, `mountHints()` writes them; the views use `frame()` ──
 const FRAME = {
@@ -205,8 +209,9 @@ export const TIP = {
 // ── the models tab ──
 export const MODELS = {
     sessions: hover('Sessions', 'Each model call is a session with a context of its own, unless it continued a conversation (marked)'),
-    cost: hover('What the cost went to', "The row's cost split by kind of token, priced by Anthropic's structure: per input token 1, "
-        + 'output 5, cache read 0.1, cache written 2', 'Another provider\'s rows are not split'),
+    cost: hover('Cost split', `By kind of token: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right`,
+        "Priced by Anthropic's structure: per input token 1, output 5, cache read 0.1, cache written 2", 'Another provider\'s rows are not split'),
+    part: (kind, cost, share, tokens, note) => hover(`${cap(kind)}: ${cost} · ${share}`, `${tokens} tokens`, note),
     id: id => hover(id),
     window: hover('The model\'s context window'),
     fill: hover('Context filled', "Each session's fullest turn against its model's window: the dark bar the median session, the light one the fullest"),

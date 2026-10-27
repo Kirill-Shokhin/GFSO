@@ -7,7 +7,7 @@ import {esc} from './dom.js';
 import {KIND_NAME as KIND} from './run.js';
 import {modelName} from './vocab.js';
 import {usd, tok as fmtTok} from './draw.js';
-import {MODELS, TOKENS} from './hints.js';
+import {MODELS, TOKENS, COST_CLS} from './hints.js';
 
 // what a provider did not report is said so; a reported 0 is a 0
 const NOT = '<span class="wk-none">not reported</span>';
@@ -23,16 +23,17 @@ function fill(r) {
         + `<i class="max" style="width:${pct(max)}"></i><i style="width:${pct(med)}"></i></span>`;
 }
 
-// what the cost went to: one bar, a segment per kind of token, its figures on hover; a row the price structure does not
-// cover is said so, with its tokens
+// what the cost went to: one bar, a segment per kind of token; a segment's hover says that kind alone — its name, cost,
+// share and tokens — so the figure looked for is the one under the cursor (the author, 2026-10-27); a row the price
+// structure does not cover is said so, with its tokens
 function where(r) {
     const s = r.split, total = s ? s.parts.reduce((x, [, v]) => x + v, 0) : 0;
     const counts = TOKENS.map(([k, name]) => [name, k === 'cache_read_tokens' ? r.read : k === 'cache_write_tokens' ? r.write
         : k === 'input_tokens' ? r.input : r.output]);
     if (!s || !total) return `<span class="wk-none"${MODELS.split(counts.map(([n, c]) => [n, '—', fmtTok(c)]), r.unsplit ? MODELS.unsplit : MODELS.foreign)}>—</span>`;
-    const tip = MODELS.split(s.parts.map(([, v], i) => [counts[i][0], `${usd(v)} (${pct(v / total)})`, fmtTok(counts[i][1])]),
-        s.covered < 0.99 && MODELS.covers(pct(s.covered), s));
-    return `<span class="wk-cost"${tip}>${s.parts.map(([k, v]) => `<i class="wk-${k.split('_')[0] + (k.includes('write') ? 'w' : '')}" style="width:${pct(v / total)}"></i>`).join('')}</span>`;
+    const note = s.covered < 0.99 && MODELS.covers(pct(s.covered), s);
+    return `<span class="wk-cost">${s.parts.map(([k, v], i) => `<i class="${COST_CLS(k)}" style="width:${pct(v / total)}"`
+        + `${MODELS.part(counts[i][0], usd(v), pct(v / total), fmtTok(counts[i][1]), note)}></i>`).join('')}</span>`;
 }
 
 export function render(el, run) {
@@ -55,7 +56,7 @@ export function render(el, run) {
             `<div class="cs-tile"><b>${esc(modelName(m))}${x.window ? ` <em${MODELS.window}>${fmtTok(x.window)}</em>` : ''}</b><span>${esc(x.roles.join(' · '))}</span>`
             + `<i>${price(x.cost, x.priced)}${x.priced && total ? ` · ${pct(x.cost / total)} of the run` : ''} · ${x.calls} sessions</i></div>`).join('')}</div>
         <table class="wk-table"><thead><tr><th>model</th><th>role</th><th${MODELS.sessions}>sessions</th><th>turns</th><th>cost</th><th>share</th>
-            <th${MODELS.cost}>what the cost went to<span class="wk-key">${TOKENS.map(([k, n]) => `<i class="wk-${k.split('_')[0] + (k.includes('write') ? 'w' : '')}"></i>${n}`).join('')}</span></th>
+            <th${MODELS.cost}>cost split</th>
             <th${MODELS.fill}>context filled</th></tr></thead><tbody>
         ${models.map(([m, x]) => x.rows.map((r, i) => row(r, i, m)).join('')).join('')}
         </tbody></table>${unansweredLine(unanswered)}</div>`;

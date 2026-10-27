@@ -1165,8 +1165,8 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .wk-output { background: var(--ink); }
 .wk-cache { background: var(--paper); box-shadow: inset 0 0 0 1px var(--ink-faint); }
 .wk-cachew { background: var(--ink-faint); }
-.wk-key { display: block; margin-top: 3px; text-transform: none; letter-spacing: 0; }
-.wk-key i { display: inline-block; width: 8px; height: 7px; margin: 0 3px 0 8px; vertical-align: -1px; }
+.wk-cost.kc { width: 36px; height: 6px; }
+
 .wk-none { color: var(--ink-faint); }
 .pn-by b { font-weight: 600; color: var(--ink); }
 .pn-by:empty { display: none; }
