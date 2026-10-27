@@ -46,6 +46,8 @@ export const delivered = t => t?.state === 'DONE' && (t.done_reason === 'PASS' |
 export const working = s => s === 'EXECUTING' || s === 'REWORKING' || s === 'VALIDATING';
 const row = s => ROWS[s] || ['quiet', s, ''];
 export const bucketOf = s => row(s)[0];
+// the states one look of a node stands for — the key under «?» names them from here, never from a copy
+export const statesIn = bucket => Object.keys(ROWS).filter(s => ROWS[s][0] === bucket);
 export const label = s => row(s)[1];
 export const can = (s, move) => row(s)[2].includes(move);
 // V(t), never a table of state → V — the state is orthogonal to V (§12.1): a CHALLENGE before any delivery read V = fail.

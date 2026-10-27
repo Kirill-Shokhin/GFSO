@@ -1173,5 +1173,21 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 
 /* the graph's key, one click away in the toolbar (index.html #tb-help) */
 .tb-help .hd-q { padding: 3px 9px; }
+/* the key's glyphs: one column, each drawn as the thing it explains is drawn */
+.hq-head .kg { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 40px; flex: 0 0 auto; }
+.kn { display: inline-block; width: 18px; height: 11px; border-radius: 2px; box-sizing: border-box; }
+.kn-done { background: var(--ink); }
+.kn-busy { background: var(--bg); border: 2px solid var(--ink); }
+.kn-attend { background: var(--ink-soft); }
+.kn-pathology { background: var(--ink-soft); border: 1.5px dashed var(--ink); }
+.kn-quiet { border: 1px solid var(--ink-faint); }
+.kn-cancelled { background: #8a8a8a; border: 1px dashed #6a6a6a; opacity: 0.4; }
+.kn-contested { background: var(--ink); border: 3px solid var(--acc); }
+.kn-byhand { background: var(--ink); border: 2px dotted var(--paper); }
+.hq-head .kg .cy-live { display: inline-block; box-sizing: border-box; }
+.kb { font-family: var(--font-mono); font-size: 9.5px; line-height: 1; padding: 2px 5px; border-radius: 8px; color: var(--ink); border: 1px solid var(--ink-soft); }
+.kb.fails { border-color: var(--acc); color: var(--acc); }
+.kt { font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+.kd { display: inline-block; width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--ink-soft); }
 .tb-help i.lg-split, .tb-help i.lg-dep { display: inline-block; width: 26px; border-top: 1px solid var(--ui-text-soft); align-self: center; }
 .tb-help i.lg-dep { border-top: 1px dashed var(--acc); }

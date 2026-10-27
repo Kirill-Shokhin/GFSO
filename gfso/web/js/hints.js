@@ -20,6 +20,7 @@
 import {esc} from './dom.js';
 import {dur, hm, usd, tok} from './draw.js';
 import {KIND_NAME, roundsLine, countWords, EDGE_NOTE} from './run.js';
+import {statesIn, label} from './vocab.js';
 
 // ── the renderers ──
 const lines = xs => xs.flat(Infinity).filter(Boolean).map(String);
@@ -32,33 +33,47 @@ const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 // a popover: its title and the caption saying what it lists, set apart from the items; an item is a heading (a glyph
 // before it, a value and a tag after it, a link at its end) and what it means; `group` starts a new group of items
 const item = it => it.group ? `<div class="hp-group">${esc(it.group)}</div>`
-    : `<div class="hq-row${it.on ? ' on' : ''}"><div class="hq-head">${it.glyph || ''}<b>${esc(it.head)}</b>${it.val || ''}`
+    : `<div class="hq-row${it.on ? ' on' : ''}"><div class="hq-head">${it.glyph ? `<span class="kg">${it.glyph}</span>` : ''}<b>${esc(it.head)}</b>${it.val || ''}`
       + `${it.tag ? `<i>${esc(it.tag)}</i>` : ''}${it.link || ''}</div>${it.means ? `<div class="hq-means">${esc(cap(it.means))}</div>` : ''}</div>`;
 export const pop = (title, caption, items) => `<div class="hd-pop"><div class="hp-top"><b>${esc(title)}</b>`
     + `${caption ? `<p>${esc(caption)}</p>` : ''}</div>${items.map(item).join('')}</div>`;
 
 // ── the key under «?» ──
 const svg = (body, h = 11) => `<svg class="glyph" width="11" height="${h}" viewBox="-5.5 -5.5 11 ${h}">${body}</svg>`;
+// a node's look in the key: a swatch drawn by the graph's own rule (gfso.css .kn-*, after graph.js NODE_STYLE), its
+// states named by vocab — a cancelled node keeps the quiet bucket's state but is drawn as a tombstone
+const node = (look, head, states, means) => ({glyph: `<i class="kn kn-${look}"></i>`, head,
+    means: [states.filter(s => s !== 'ABANDONED').map(label).join(' · '), means].filter(Boolean).join(' — ')});
 const KEY = [
     {group: 'The graph'},
+    node('done', 'filled', statesIn('done'), 'closed; how it closed is its own badge in the panel'),
+    node('busy', 'outlined in ink', statesIn('busy'), 'in work: consented, or its delivery being validated'),
+    node('attend', 'grey', statesIn('attend'), 'handed over, not yet taken'),
+    node('pathology', 'grey, dashed outline', statesIn('pathology'), 'stopped on a decision someone owes'),
+    node('quiet', 'faint outline', statesIn('quiet'), 'not handed over yet'),
+    node('cancelled', 'faded, dashed', [], 'cancelled — kept for its history, no longer part of the plan'),
+    node('contested', 'accent outline', [], "a PASS its own record contradicts, or a hand that overruled an instrument"),
+    node('byhand', 'dotted outline', [], "closed by a person's word, not by an instrument's check"),
     {glyph: '<i class="lg-split"></i>', head: 'node → its part', means: 'a solid arrow runs from a node to one of its parts — the split'},
     {glyph: '<i class="lg-dep"></i>', head: 'producer → its user', means: 'a dashed arrow runs from a part to the one that uses its result; that one waits for it to pass (Dep)'},
-    {head: 'pulse', means: 'a node at work; filled in the accent when a process of this server runs it'},
-    {head: 'number', means: 'how many delivery rounds a node took; in the accent while its last one failed'},
+    {glyph: '<i class="cy-live"></i><i class="cy-live on"></i>', head: 'pulse',
+     means: 'a ring on a node at work; filled in the accent, and pulsing, while a process of this server runs it'},
+    {glyph: '<span class="kb">3</span><span class="kb fails">3</span>', head: 'number',
+     means: 'how many delivery rounds a node took, shown from two on; in the accent while its last one failed'},
     {head: 'double-click', means: 'a node: frame it with all its parts · the background: the whole graph'},
     {group: 'The marks'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'dot', means: 'a PASS — in a criterion\'s row and its history, on the timeline and on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'cross', means: 'a FAIL — the same mark in every view'},
     {glyph: svg('<circle class="mk-open" cx="0" cy="0" r="2.5"/>'), head: 'ring', means: 'a criterion\'s round with no value: not checked, or not named by that round\'s FAIL'},
-    {head: 'V', means: 'a node\'s verdict: pass only when every criterion passes, fail when one fails'},
-    {head: '⊥', means: 'no verdict yet — not a third value: V is pass or fail once checked (§2.3)'},
+    {glyph: '<b class="kt">✓ ✗</b>', head: 'V', means: "a node's verdict in its panel: pass only when every criterion passes, fail when one fails"},
+    {glyph: '<b class="kt">⊥</b>', head: 'no verdict', means: 'not checked yet — not a third value: V is pass or fail once checked (§2.3)'},
     {glyph: '<i class="brand-dot"></i>', head: 'brand dot', means: 'the goal delivered: its root passed'},
-    {head: 'Del', means: 'the one party accountable for a node — its executor (§2.6); one assignee may run many sessions at once'},
+    {glyph: '<b class="kt">Del</b>', head: 'executor', means: 'the one party accountable for a node — its executor (§2.6); one assignee may run many sessions at once'},
     {group: 'The deck'},
-    {head: 'at work', means: 'a node a process of this server runs, a session open on it, or a leaf in a working state; a parent waiting on its parts is not counted'},
+    {glyph: '<i class="kd"></i>', head: 'at work', means: 'a node a process of this server runs, a session open on it, or a leaf in a working state; a parent waiting on its parts is not counted'},
     {head: 'sessions', means: 'the processes this server runs — said beside «at work» only when they are not one per node (one may carry a whole part)'},
     {head: 'spend', means: 'booked when each session ends — the model reports its cost then; a running one is counted, not priced'},
-    {head: 'coverage cell', means: 'the STATE of a part responsible for the goal\'s criterion in its row (§2.4), not a verdict; the row\'s mark is the root\'s own'},
+    {glyph: '<i class="cv cv-done"></i><i class="cv cv-open"></i><i class="cv cv-rework"></i>', head: 'coverage cell', means: 'the STATE of a part responsible for the goal\'s criterion in its row (§2.4), not a verdict; the row\'s mark is the root\'s own'},
 ];
 export const keyPop = () => pop('How to read the page', 'Each mark means one thing in every view.', KEY);
 
