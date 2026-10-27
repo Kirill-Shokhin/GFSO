@@ -58,6 +58,7 @@ export const COST_CLS = k => `wk-${k.split('_')[0] + (k.includes('write') ? 'w' 
 // THE KEY reads by meaning: each row is one glyph, drawn as the page draws it, and in bold WHAT IT MEANS — the reader
 // scans for the meaning beside the shape, not for a description of the shape; the small line under it only where the
 // meaning alone does not settle it (the author, 2026-10-27: «на ключевое место ты ставишь воду»). One glyph per row.
+// The brand dot is no row: it only ever stands beside the word DONE, which says it, and keyed it read as a second PASS.
 // A node's look: a swatch drawn by the graph's own rule (gfso.css .kn-*, after graph.js NODE_STYLE), its states named by
 // vocab — a cancelled node keeps the quiet bucket's state but is drawn as a tombstone, so it is left out there.
 const node = (look, head, bucket, means) => ({glyph: `<i class="kn kn-${look}"></i>`, head,
@@ -79,7 +80,6 @@ const KEY = [
     {glyph: svg('<circle class="mk-open" cx="0" cy="0" r="2.5"/>'), head: 'No value that round', means: 'not checked, or not named by that round\'s FAIL'},
     {glyph: '<b class="kt">V</b>', head: "The node's verdict", means: 'pass only when every criterion passes'},
     {glyph: '<b class="kt">⊥</b>', head: 'No verdict yet', means: 'not a third value: V is pass or fail once checked (§2.3)'},
-    {glyph: '<i class="brand-dot"></i>', head: 'Goal delivered', means: 'its root passed'},
     {group: 'The deck'},
     {glyph: '<b class="kt">· N</b>', head: 'Sessions', means: 'beside «at work» only when not one per node — one session may carry a whole part'},
     {glyph: `<span class="wk-cost kc">${TOKENS.map(([k]) => `<i class="${COST_CLS(k)}" style="width:25%"></i>`).join('')}</span>`,
