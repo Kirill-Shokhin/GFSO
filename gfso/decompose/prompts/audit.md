@@ -113,6 +113,9 @@ Reduce everything to a canonical, non-redundant **BASIS**:
       description of whatever was built. What the set does not reach stays unchecked and is SAID so at
       closure; that residue is honest, and a procedure invented later by whoever happens to validate
       is not. A command that merely restates the criterion ("review the parser") is not a procedure.
+      Set `exact: true` on a probe whose `expect` is the complete output the command prints on correct
+      work — the system then runs it itself and a different output fails the criterion — and leave it
+      false where `expect` describes the output in words or names only part of it.
       The test data a command reads — the programs, documents, request bodies — is part of the probe:
       put it in the probe's `inputs` and let the command name their directory `{inputs}`. A command
       over files the executor will write (`for f in tests/*.c`) observes an object that can grow or

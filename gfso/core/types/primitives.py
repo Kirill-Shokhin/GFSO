@@ -47,6 +47,11 @@ class Probe:
     # node that closed with `procedure_moved_since_authoring: false`. Carried here, the corpus is
     # part of the pinned procedure — its digest moves when it does, and nobody but the issuer moves it.
     inputs: tuple[tuple[str, str], ...] = ()
+    # `expect` is the WHOLE output the command prints on correct work, as `procedure.shows` reads it (escapes as the
+    # characters, whitespace runs as one) — so the system decides it by running the command itself, and a validator's
+    # `held: true` over an output that differs is the false PASS the engine overrules (`tools_llm._observe_exact`).
+    # False: `expect` describes the output in words or names a part of it, which only a reader can judge.
+    exact: bool = False
 
     def __post_init__(self):
         raw = self.inputs
@@ -63,14 +68,17 @@ class Probe:
         if isinstance(p, Probe):
             return p
         return cls(str(p.get("behaviour", "") or ""), str(p.get("command", "") or ""),
-                   str(p.get("expect", "") or ""), p.get("inputs") or ())
+                   str(p.get("expect", "") or ""), p.get("inputs") or (), p.get("exact") is True)
 
     def to_dict(self) -> dict:
         """The probe as a door serializes it — one writer, so a field cannot travel through one
-        door and be dropped by the next (the `check` field itself was lost that way once)."""
+        door and be dropped by the next (the `check` field itself was lost that way once). `exact` only when set:
+        every probe stored before it existed reads back, and digests, unchanged."""
         d = {"behaviour": self.behaviour, "command": self.command, "expect": self.expect}
         if self.inputs:
             d["inputs"] = dict(self.inputs)
+        if self.exact:
+            d["exact"] = True
         return d
 
 

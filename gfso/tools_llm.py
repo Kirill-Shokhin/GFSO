@@ -33,7 +33,9 @@ from gfso.adapters.snapshots import snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
-from gfso.core.protocol.procedure import canonical_citations, laid_down_dirs, with_part_observations
+from gfso.core.protocol.procedure import (canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
+                                          with_part_observations)
+from gfso.observe import OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
@@ -1145,8 +1147,28 @@ def _scope_cap(batch: list, graph) -> Optional[int]:
     return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
 
 
+def _observe_exact(engine: Engine, batch: list, workdir, tree) -> dict:
+    """{(node, probe id): {matched, out, note, …}} — every `exact` pinned probe a validator run just carried, own and
+    parts', run by the system in that run's copy of the place with the builds it left (`observe.run_checks`), before
+    the copy is gone. A pin presupposes a build it does not pin (`observe`), so the copy the validator built in is the
+    one place where the system's run observes what the validator's did; {} where the run had no copy — the place
+    itself is never run in. Laid over the report before it is recorded (`procedure.with_engine_observations`)."""
+    probes = []
+    for task, _, crits, *carry in batch:
+        parts = engine.parts_procedure(task.id)
+        owed = carry[0] if carry else None    # a batch carries its share of what the validation owes
+        probes += [((str(task.id), pid), c, p) for c in [*crits, *(pc for x in crits for pc in parts.get(x.name, ()))]
+                   for p in (c.check or ()) if p.exact and p.command.strip()
+                   and (pid := probe_id(c.name, p)) and (owed is None or pid in owed)]
+    if not (tree and probes):
+        return {}
+    ex = execution_of(engine)
+    with ex.scratch("gfso-exact-") as tmp:
+        return dict(run_checks(ex, probes, workdir, tree, tmp, OBSERVE_S))
+
+
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
-                     edits: Optional[list] = None) -> list:
+                     edits: Optional[list] = None, observed: Optional[dict] = None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1181,6 +1203,12 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
                 body = swap(body, workdir, tree) + snapshot_note(tree)
             text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
                                              timeout=cap())
+            # …and what the system itself sees its exact checks print there, before the copy goes; of two runs over one
+            # probe (a re-run of an unread batch) a mismatch stands — a false FAIL costs a round, a false PASS a node
+            if observed is not None:
+                for k, row in _observe_exact(engine, batch, workdir, tree).items():
+                    if (observed.get(k) or {}).get("matched") is not False:
+                        observed[k] = row
             return swap(text, tree, workdir) if tree else text
 
     def _run_again_if_unread(batch, client=None, place=None) -> str:
@@ -1223,7 +1251,8 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
         for ps in engine.regression_probes(t.id).values() for p in ps))
     try:
         edits: list = []
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits)
+        observed: dict = {}
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, observed)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
     text = "\n\n".join(x or "" for x in texts)
@@ -1269,7 +1298,11 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     # on the same delivery, and the record reads the last word on it — kept last, a kept `pass` hid a fresh `fail`
     # and a PASS over its own red entry closed a node DONE (critic V5; main's order). The runs of THIS validation are
     # read otherwise: a criterion split between them is their conjunction, never the word of whichever came last
-    whole = {tid: left[tid][1] + _conjoined(entries[tid]) for tid in entries}
+    # …and over them what the system itself saw its exact checks print (`_observe_exact`), so the record and the answer
+    # both read the same report
+    whole = {str(t.id): with_engine_observations(
+        left[str(t.id)][1] + _conjoined(entries[str(t.id)]), t.spec.criteria, engine.parts_procedure(t.id),
+        {pid: o for (tid, pid), o in observed.items() if tid == str(t.id)}) for t, _ in nodes}
     out["reports"] = {tid: {**said[tid], "per_criterion": whole[tid]} for tid in entries}
     out["verdicts"] = {str(t.id): _record_node(engine, t, whole[str(t.id)], said[str(t.id)], validator, llm,
                                                claims[str(t.id)], model, workdir, scratch, text)

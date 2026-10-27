@@ -44,33 +44,44 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
     probes = [(t, c, p) for t in tasks for c in t.spec.criteria for p in (c.check or ()) if p.command]
     if not (place and probes and observing(engine.graph)):
         return {}
-    ex, budget, t0 = execution_of(engine), min(OBSERVE_S, (cap or OBSERVE_S) // 4), time.monotonic()
-    if not (bash := ex.shell()):
+    ex, budget = execution_of(engine), min(OBSERVE_S, (cap or OBSERVE_S) // 4)
+    if not ex.shell():
         return {}
-    seen, ran = {}, {}
+    seen = {}
     with ex.scratch("gfso-observe-") as tmp:
-        try:     # refused at admission; reaching here, nothing pinned can be laid as pinned
-            dirs = materialize_inputs([c for t in tasks for c in t.spec.criteria], Path(tmp) / "inputs")
-        except ValueError:
-            return {}
         with snapshot(place, Path(tmp) / "place", ex) as tree:
-            if not tree:
-                return {}
-            for t, c, p in probes:
-                d = dirs.get(probe_id(c.name, p))
-                cmd = swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, tree)
-                row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect}
-                if cmd not in ran:
-                    left = budget - (time.monotonic() - t0)
-                    ran[cmd] = (_run(ex, bash, cmd, tree, min(PROBE_S, left), place) if left >= 1 else
-                                {"note": "not run: the observation's time ran out"})
-                # …matched against THIS check's expectation: one command pinned twice with two expectations printed
-                # once, and the second inherited the first's match (critic over 27de5f8)
-                got = ran[cmd]
-                seen.setdefault(str(t.id), []).append({**row, **{k: v for k, v in got.items() if k != "stdout"},
-                                                       **({"matched": shows(got["stdout"], p.expect)}
-                                                          if "stdout" in got else {})})
+            for t, row in run_checks(ex, probes, place, tree, tmp, budget):
+                seen.setdefault(str(t.id), []).append(row)
     return seen
+
+
+def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) -> list:
+    """[(key, {criterion, behaviour, command, expect, rc, out, matched, note})] — each `(key, criterion, probe)` of
+    `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract under `tmp`: each distinct command
+    once, PROBE_S at most and `budget` in all. [] where nothing can run: no copy, no shell, inputs that cannot be laid
+    as pinned (refused at admission). The one runner of the system's own checks: before a session (`observe_place`)
+    and in the copy a validator just worked in (`tools_llm._observe_exact`)."""
+    if not (tree and probes and (bash := ex.shell())):
+        return []
+    try:
+        dirs = materialize_inputs({id(c): c for _, c, _ in probes}.values(), Path(tmp) / "inputs")
+    except ValueError:
+        return []
+    out, ran, t0 = [], {}, time.monotonic()
+    for key, c, p in probes:
+        d = dirs.get(probe_id(c.name, p))
+        cmd = swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, tree)
+        row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect}
+        if cmd not in ran:
+            left = budget - (time.monotonic() - t0)
+            ran[cmd] = (_run(ex, bash, cmd, tree, min(PROBE_S, left), place) if left >= 1 else
+                        {"note": "not run: the observation's time ran out"})
+        # …matched against THIS check's expectation: one command pinned twice with two expectations printed
+        # once, and the second inherited the first's match (critic over 27de5f8)
+        got = ran[cmd]
+        out.append((key, {**row, **{k: v for k, v in got.items() if k != "stdout"},
+                          **({"matched": shows(got["stdout"], p.expect)} if "stdout" in got else {})}))
+    return out
 
 
 def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict:

@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from gfso.adapters.llm.stats import _hint, _stat_line, tag_stage
-from gfso.core.protocol.procedure import pinned_files, with_named_files
+from gfso.core.protocol.procedure import EXACT_TEXT, pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
 from gfso.config import MODEL_DEFAULT
 from gfso.llm import llm_factory
@@ -80,7 +80,8 @@ _NAME_DESC = {"type": "object", "properties": {
         "THE DECISION PROCEDURE for this criterion — what will actually be run to decide it, written "
         "NOW, before the work exists. Each item: {behaviour: the conjunct it observes, command: how "
         "to observe it, runnable as written by someone who was not the executor, expect: what the "
-        "output must show}. A criterion quantified over an infinite domain ('for ANY input …') is "
+        "output must show, exact: true when `expect` is the whole output the command prints on correct work, "
+        "false when it describes the output or names a part of it}. A criterion quantified over an infinite domain ('for ANY input …') is "
         "not decidable as text: pin the finite, representative set that decides it — including the "
         "edge cases the requirement implies — and let the residue be visible rather than pretended "
         "away. Refer to the promised interface (the binary, the endpoint, the file) even though it "
@@ -101,6 +102,7 @@ _NAME_DESC = {"type": "object", "properties": {
         "items": {"type": "object", "properties": {
             "behaviour": {"type": "string"}, "command": {"type": "string"},
             "expect": {"type": "string"},
+            "exact": {"type": "boolean", "description": EXACT_TEXT},
             "inputs": {"type": "array", "description":
                        "files the command reads, pinned with it: relative paths under `{inputs}`",
                        "items": {"type": "object", "properties": {

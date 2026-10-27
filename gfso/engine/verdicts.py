@@ -144,7 +144,10 @@ def criterion_version(description, probes) -> list:
         pairs = sorted(raw.items()) if isinstance(raw, dict) else raw
         return [[str(a), str(b)] for a, b in (tuple(x) for x in pairs)]
 
-    return [description or "", [[p.get("behaviour"), p.get("command"), p.get("expect"), _inputs(p)]
+    # …and `exact` where set, never otherwise: dropping it un-checks the output the system itself decides, a loosening
+    # like any other, and a version stored before the field existed still equals itself
+    return [description or "", [[p.get("behaviour"), p.get("command"), p.get("expect"), _inputs(p),
+                                 *(["exact"] if p.get("exact") is True else [])]
                                 for p in (probes or ())]]
 
 

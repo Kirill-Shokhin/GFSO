@@ -43,7 +43,7 @@ from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, shows, pinned_files, probe_id,
+from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, materialize_inputs, shows, pinned_files, probe_id,
                                           probes_from as _checks_of, unrerunnable, with_named_files)
 from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, Register, RevisionReason, Signal,
                              SignalData, Spec, Stage, State, TaskId, register_of, set_aside_of)
@@ -497,6 +497,7 @@ _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"},
     "check": {"type": "array", "items": {"type": "object", "properties": {
         "behaviour": {"type": "string"}, "command": {"type": "string"}, "expect": {"type": "string"},
+        "exact": {"type": "boolean", "description": EXACT_TEXT},
         "inputs": {"type": "array", "items": {"type": "object", "properties": {
             "path": {"type": "string"}, "content": {"type": "string"}},
             "required": ["path", "content"]}}},

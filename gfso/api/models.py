@@ -20,6 +20,7 @@ class ProbeIn(BaseModel):
     # drops them unpins the corpus on the next write-back: the agent door and storage carry the
     # field, and a door that rebuilds a probe field by field is exactly where it goes missing.
     inputs: dict[str, str] = {}
+    exact: bool = False      # `expect` is the whole printed output (`Probe.exact`)
 
 
 class CriteriaIn(BaseModel):

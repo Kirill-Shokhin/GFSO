@@ -142,6 +142,8 @@ def procedure_digest(criteria: Iterable[Criteria]) -> str:
             h.update(b"\x03" + _norm(p.expect).encode("utf-8"))
             if p.inputs:
                 h.update(b"\x06" + inputs_digest(p).encode("utf-8"))
+            if p.exact:       # only where set: every digest pinned before the field stays
+                h.update(b"\x07")
     return h.hexdigest()[:16]
 
 
@@ -904,6 +906,13 @@ def shows(printed: str, expect: str) -> bool:
     return u(printed) == u(expect)
 
 
+#: What an author is told `exact` means — one text for every schema that pins a probe (`Probe.exact`).
+EXACT_TEXT = ("true when `expect` is the COMPLETE output the command prints on correct work (whitespace runs count as "
+              "one, `\\n` as a newline): the system then runs the command itself and a different output fails the "
+              "criterion whatever the validator says. false when `expect` describes the output in words or names only "
+              "part of it")
+
+
 def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> str | None:
     """The id of the pinned probe `p` is a run of — its id, or its command with the probe's own directory named
     `{inputs}` — else None. Only a probe of the same criterion: another criterion's pinned probe with the same
@@ -1026,11 +1035,51 @@ def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterio
     return lent
 
 
+def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
+                             parts: Mapping[str, Sequence[Criteria]] | None, observed: Mapping | None) -> list:
+    """The report with what the system itself observed of its `exact` pinned probes (`observed`: {probe id: {matched,
+    out, note}}, `tools_llm._observe_exact`) put where every reader of `held` reads it: a probe it saw print other than
+    its `expect` did NOT hold — each citation of it, by id or bare hash, says `held: false`, and every entry of a
+    criterion resting on it or on a copy of it (`same_probe`), the node's own or through a part, is a `fail` citing it
+    with what it printed (Inv-2, §12.8: an observed divergence is that criterion's fail; Inv-3). Matched, or not run,
+    the report stands as it came: a run the system could not make decides nothing (A1 (i)), and a `held: false` is
+    never raised. Before it the PASS on such a probe was the validator's word alone, and FM-3 has no structural guard
+    (§9.10) — a false FAIL costs a round, a false PASS closes a node."""
+    pinned = {probe_id(c.name, p): p for cs in [criteria or ()] + list((parts or {}).values()) for c in cs
+              for p in (c.check or ()) if _norm(p.command)}
+    off = {pid: o for pid, o in (observed or {}).items() if pid in pinned and pinned[pid].exact and o.get("matched") is False}
+    if not off:
+        return list(per_criterion or ())
+    seen_as = {same_probe(pinned[pid]): o for pid, o in off.items()}
+    off = {pid: seen_as[same_probe(p)] for pid, p in pinned.items() if same_probe(p) in seen_as}
+    rests: dict[str, list[str]] = {}
+    for k, cs in [*((c.name, (c,)) for c in criteria or ()), *(parts or {}).items()]:
+        rests.setdefault(_norm(k), []).extend(pid for c in cs for p in (c.check or ()) if (pid := probe_id(c.name, p)) in off)
+    named = lambda q: next((pid for pid in off if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])), None)
+    out = []
+    for e in per_criterion or ():
+        probes = [{**q, "held": False} if named(q) else q for q in probes_of(e)]
+        if hit := list(dict.fromkeys(rests.get(_norm(e.get("criterion")), ()))):
+            why = [f"the system ran pinned check {pid} itself and it printed {off[pid].get('out', '')!r}, not the "
+                   f"whole output it pins, {pinned[pid].expect!r}" for pid in hit]
+            cited = {named(q) for q in probes}
+            e = {**e, "verdict": "fail", "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why),
+                 "divergences": [*why, *(e.get("divergences") or ())],
+                 "probe": probes + [{"id": pid, "behaviour": pinned[pid].behaviour, "command": pinned[pid].command,
+                                     "expect": pinned[pid].expect, "held": False} for pid in hit if pid not in cited]}
+        elif probes:
+            e = {**e, "probe": probes}
+        out.append(e)
+    return out
+
+
 def same_probe(p: Probe) -> tuple:
     """What makes two pinned probes ONE observation over a delivery — the same command, expectation and inputs, as
     `integrate` copying `scaffold`'s check or the root's: whatever ids they are pinned under, running one is running
     each. THE one identity: the packet owes such a probe once (`packets.owed_probes`) and a citation of any of its ids
     credits all of them (`part_credit`)."""
+    # …NOT `exact`: it says who can decide the output, not what running the command observes — told apart by it, one
+    # run of a command pinned twice would be owed twice and credit only the copy it was cited by
     return p.command.strip(), (p.expect or "").strip(), tuple(p.inputs or ())
 
 
