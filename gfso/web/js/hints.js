@@ -163,7 +163,7 @@ export const H = {
             const words = s => s.toLowerCase().match(/[a-z]{4,}/g)?.map(w => w.slice(0, 5)) || [], head = words(r.head);
             const named = /^([a-z][^:()]{0,40}):\s+/i.exec(first || ''), said = named && words(named[1]).every(w => head.includes(w));
             // …and a first sentence that only repeats the row's tag («high is bad») is no definition: the next one is
-            const tagged = r.tag && rest && words(r.tag).every(w => words(first).includes(w));
+            const tw = words(r.tag || ''), tagged = tw.length && rest && tw.every(w => words(first).includes(w));
             const [, next, after] = tagged && /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(rest) || [, rest, ''];
             const row = tagged ? {...r, means: next.replace(/^It is (?:the )?/, 'The '), more: [first, after].filter(Boolean).join(' ')}
                 : {...r, means: said ? first.slice(named[0].length) : first, more: rest};

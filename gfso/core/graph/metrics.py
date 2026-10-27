@@ -57,8 +57,9 @@ Q_MEANS = {
            "findings drives it DOWN, and 0.0 after obeying the gate is the expected reading, not a "
            "verdict on the person obeying: it measures what the DECOMPOSER issued, and the gate's "
            "whole job is to find that the issued contract was thin.",
-    "q_D": "composition claims refuted at contact: parents that failed while every child passed (the q_D "
-           "event, §15.4). A refutation, whatever refuted it — a split that missed something, a declared "
+    "q_D": "splits that held: 1 − (parents that failed while every child passed) / (parents that got their "
+           "own verdict while every child passed) (§15.4). A failure there is a composition claim refuted at "
+           "contact: a refutation, whatever refuted it — a split that missed something, a declared "
            "risk that bit, a false verdict on either side; charging the split needs the cause, read from "
            "the log (§16.9). ⊥ until some parent reaches its own verdict with all children passed.",
     "q_V": "verdicts that held: 1 − (passes later REFUTED) / (passes recorded) (§15.4). A pass is "
@@ -69,8 +70,8 @@ Q_MEANS = {
            "FAIL though the node is no longer DONE; a fresh run on another result refutes nothing of "
            "the old pass. 1.0 therefore means nothing that passed has been contradicted as delivered — "
            "NOT that everything was independently verified, and NOT that no verdict was ever withdrawn.",
-    "q_Dep": "dependencies declared up front vs discovered at runtime through BLOCK.",
-    "q_Del": "delegation correctness: nodes reassigned for capability mismatch.",
+    "q_Dep": "dependencies foreseen: declared / (declared + discovered at runtime through BLOCK).",
+    "q_Del": "delegations that fit: 1 − (nodes reassigned for capability mismatch) / (contracts issued).",
 }
 
 def q_T(graph: Graph) -> Optional[float]:
