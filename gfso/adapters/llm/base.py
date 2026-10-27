@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from gfso.core.types import LLMProviderPort
+from . import budget
 from .stats import refused_by_limit
 from .structured import parse_structured, retry_suffix, schema_instruction, RETRY_SHORTER
 
@@ -31,7 +32,14 @@ def record(**fields) -> dict:
 
 
 class RecordingProvider(LLMProviderPort):
-    """A provider that records its calls. Subclasses implement `_call` and, to hold agent roles, `run_agent`."""
+    """A provider that records its calls. Subclasses implement `_call` and, to hold agent roles, `agent_round`."""
+    #: the resource's context budget in tokens (`budget.run`), None = its sessions hand over at the ceiling alone
+    context_budget: int | None = None
+    #: is the run a WORK session — one whose context the system hands over (`budget.run`)? An executor's, set by the
+    #: frame that spawns it; a validator's or a consent's run is one round, as before
+    budgeted = False
+    #: turns per round between two readings of the budget — as finely as the provider can stop a run and continue it
+    budget_step = 8
 
     def __init__(self, model: str):
         self._model = model
@@ -40,6 +48,9 @@ class RecordingProvider(LLMProviderPort):
         self.last_peak_context = 0
         self.on_tick = None               # optional: live progress lines (`on_tick(msg)`)
         self.stage_hint = ""
+        self.resume_fallback = None       # what a lost conversation reopens on, set while a budget runs (`budget.run`)
+        self.machine_state = None         # optional: the place's state as the system reads it, for a reopen (`budget.run`)
+        self.reads_as_report = None       # optional: does an answer parse as the role's report (`budget._as_note`)
 
     def begin_run(self) -> None:
         """A new call starts: what the last one reached for and how full it got are its own, not this one's."""
@@ -60,6 +71,22 @@ class RecordingProvider(LLMProviderPort):
 
     def _call(self, system: str, user: str) -> str:
         raise NotImplementedError
+
+    def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: str | None = None,
+                  timeout: int | None = None, max_turns: int | None = None, session: str | None = None) -> str:
+        """The port's agent run — a work session's under its ceiling and the resource's budget (`budget.run`)."""
+        if not self.budgeted:
+            return self.agent_round(system, user, allowed_tools, cwd, timeout, max_turns, session)
+        return budget.run(self, system, user, allowed_tools, cwd, timeout, max_turns, session)
+
+    def agent_round(self, system, user, allowed_tools, cwd, timeout, max_turns, session) -> str:
+        """One round of an agent run, the transport's own."""
+        return LLMProviderPort.run_agent(self, system, user, allowed_tools, cwd, timeout, max_turns, session)
+
+    def close_session(self, system: str, prompt: str, allowed_tools, cwd, timeout, session) -> str:
+        """The session's last answer — what it hands the next one (`budget.CLOSE`), its conversation continued under
+        the same tools so its cached prefix holds."""
+        return self.agent_round(system, prompt, allowed_tools, cwd, timeout, budget.CLOSE_TURNS, session)
 
     def complete(self, prompt: str, context: str = "") -> str:
         return self._call(context or "You are a GFSO System LLM analyzing task decompositions.", prompt)

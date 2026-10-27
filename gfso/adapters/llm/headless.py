@@ -229,9 +229,9 @@ class ClaudeCodeProvider(RecordingProvider):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(str(out["total_cost_usd"]), encoding="utf-8")
 
-    def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...],
-                  cwd: str | None = None, timeout: int | None = None,
-                  max_turns: int | None = None, session: str | None = None) -> str:
+    def agent_round(self, system: str, user: str, allowed_tools: tuple[str, ...],
+                     cwd: str | None = None, timeout: int | None = None,
+                     max_turns: int | None = None, session: str | None = None) -> str:
         """Port B — the AGENT-RUNNER: one headless run WITH work tools (multi-step inside one
         process), returning its final report text. Headless-by-necessity: an agent run needs a harness
         (tools/permissions/cwd); a chat API gets one from the system's own loop (`toolloop.ToolLoop`).
@@ -477,7 +477,8 @@ class ClaudeCodeProvider(RecordingProvider):
                 # whether it CONTINUED a conversation (`--resume`, a round cut at its turn cap) rather than opening
                 # a context of its own: real contexts are the calls that did not
                 "resumed": "--resume" in args,
-                "stop_reason": out.get("stop_reason"),
+                # a round cut at its turn cap, in the record's one word for it (`budget.cut_at_turn_cap`)
+                "stop_reason": "max_turns" if out.get("subtype") == "error_max_turns" else out.get("stop_reason"),
                 # …and WHY a call that errored ended: read as "did not parse", 38 re-issues of a root whose packet no
                 # longer fit the model's window answered a bug no executor could fix (GB_sql_database_tmxu0n436)
                 # …with the envelope's own `api_error`: an account's limit came back as "api_error: You've hit your
@@ -510,4 +511,5 @@ class ClaudeCodeProvider(RecordingProvider):
         # Reached only by a conversation the CLI could not take up (gone, outgrown its window): that is not the round's
         # failure, so the round runs cold — after the first process is gone, which otherwise rewrote the transcript
         # just forgotten and sent the "cold" retry back to `--resume` (critic, live on CLI 2.1.306)
-        return self.forget(session) or self._call(system, user, tools_args, cwd, timeout, session)
+        # …on what the run reopens on (`resume_fallback`): a budget's "continue the task" means nothing without its history
+        return self.forget(session) or self._call(system, self.resume_fallback or user, tools_args, cwd, timeout, session)

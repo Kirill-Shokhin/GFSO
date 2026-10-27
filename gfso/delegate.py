@@ -123,6 +123,8 @@ def publish_the_workforce(engine, roster: dict) -> None:
                                   if cfg.get("kind") == "llm-executor"},
                                  {aid: (cfg.get("model") or MODEL_DEFAULT)
                                        + (f", up to {cfg['max_turns']} turns" if cfg.get("max_turns") else "")
+                                       + (f", context budget {cfg['context_budget']} tokens"
+                                          if cfg.get("context_budget") else "")
                                   for aid, cfg in roster.items() if cfg.get("kind") == "llm-executor"})
 
 

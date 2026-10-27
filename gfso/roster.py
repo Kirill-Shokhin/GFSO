@@ -132,7 +132,8 @@ class AgentRegistry:
     def register(self, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                  workdir: str | None = None, validator: str | None = None,
                  oracle_map: str | None = None, max_turns: int | None = None,
-                 client: str | None = None, project: str | None = None, execution: str | None = None) -> dict:
+                 client: str | None = None, project: str | None = None, execution: str | None = None,
+                 context_budget: int | None = None) -> dict:
         """Put a role on the server-wide roster: its kind, model tier, workdir and bindings.
 
         Registration is what makes a role addressable by Del — the dispatcher picks a node up
@@ -226,6 +227,9 @@ class AgentRegistry:
                 # whatever the transport defaults to: two runs of "the same agent" under different
                 # caps are different agents, and a comparison across them measures the cap.
                 self._agents[agent_id]["max_turns"] = int(max_turns)
+            if context_budget:
+                # …and its context budget, the same way: the tokens past which a session hands over to a fresh one
+                self._agents[agent_id]["context_budget"] = int(context_budget)
             if execution:
                 self._agents[agent_id]["execution"] = execution
             if client:

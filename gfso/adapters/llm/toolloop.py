@@ -241,7 +241,8 @@ class ToolLoop:
         kept = transcript_path(p.execution, session) if session else None
         resumed = bool(kept and kept.is_file())
         msgs = json.loads(kept.read_text(encoding="utf-8")) if resumed else [{"role": "system", "content": system}]
-        msgs.append({"role": "user", "content": user})
+        # a conversation not found opens on what the run reopens on (`resume_fallback`), as the CLI's cold retry does
+        msgs.append({"role": "user", "content": user if resumed else (p.resume_fallback or user)})
         p.begin_run()
         turns, (answer, ended, stop, error) = [], ("", "answered", None, None)
         trace, place = _open_trace(p.stage_hint), None

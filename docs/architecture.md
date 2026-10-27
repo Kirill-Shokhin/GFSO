@@ -453,7 +453,14 @@ loop (`adapters/llm/toolloop.py`: the six work tools the roles and prompts alrea
 commands through its execution). `gfso provider-check <spec>` measures which roles a provider can hold — a completion, a
 structured answer and their tokens for the one-shot roles, a tool round trip and a schema-valid report for the agent
 roles, the optional fields (cache split, cost, window) reported. A rate limit, out of credit, a refused key and a model
-server that does not answer stop the project as the account's limit does.
+server that does not answer stop the project as the account's limit does. An executor's session is handed over by the
+system before its context outgrows the resource (`adapters/llm/budget.py`): at its ceiling, the model's window less a
+margin, always; at the role's budget where one is set (`register_agent(context_budget=…)`), there at a point the session
+has checked. The session writes its own note under fixed sections and a fresh one continues on the packet, the note and
+the place's machine state — what the node's checks print now, what changed (`sessions._machine_state`). It runs on any
+provider whose round cut at its cap reports its stop and its context — a mechanism not yet measured on live rows.
+Before every executor session the system also runs the node's pinned checks once in a copy of its place and hands it
+what they printed (`observe.py`) — an observation, never a verdict; `set_mode(observe=False)` switches it off.
 
 ## Where a project's work runs — one server, execution isolated
 

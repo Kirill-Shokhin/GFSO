@@ -15,9 +15,11 @@ from gfso.core.types import TaskId, Signal, Stage, State, Verdict
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
-from gfso.workspaces import _enter_workspace, conversation_of, node_workspace, performer, project_llm
+from gfso.workspaces import _enter_workspace, conversation_of, execution_of, node_workspace, performer, project_llm
 from gfso.observe import observe_place
-from gfso.packets import TECH_REPORT, _EXECUTOR_STATES, _executor_packet, _scope_order, _scope_packet, file_tech_reports
+from gfso.adapters import worktrees as W
+from gfso.packets import (TECH_REPORT, _EXECUTOR_STATES, _executor_packet, observed_lines, _scope_order, _scope_packet,
+                          file_tech_reports)
 from gfso.reports import _decided_status, _report_into_signals, _scope_report_into_signals
 
 
@@ -100,16 +102,37 @@ def _run_session(llm, system: str, user: str, cfg: dict, cap, cwd: str | None, s
         return llm.run_agent(system, user, allowed_tools=EXECUTOR_TOOLS, cwd=cwd)
 
 
+#: Lines of `git status` a reopen is shown (`_machine_state`).
+SHOWN_STATUS = 40
+
+
+def _machine_state(engine, tasks, cwd) -> str:
+    """The place as the system reads it for a session reopened on a handover (`budget.run`): what the nodes' checks
+    print on it now and what the work changed in it — the state itself, where the note is only the closing session's
+    word about it."""
+    rows = [r for rs in observe_place(engine, tasks, cwd).values() for r in rs]
+    st = W.git(cwd, "status", "--short", execution=execution_of(engine)).stdout.splitlines() if cwd else []
+    diff = W.git(cwd, "diff", "--stat", "HEAD", execution=execution_of(engine)).stdout.strip() if cwd else ""
+    return ((observed_lines(rows) if rows else "")
+            + (f"\n`git status --short` ({len(st)} path(s)):\n" + "\n".join(st[:SHOWN_STATUS])
+               + (f"\n… and {len(st) - SHOWN_STATUS} more" if len(st) > SHOWN_STATUS else "") if st else "")
+            + (f"\n\n`git diff --stat HEAD`:\n{diff}" if diff else ""))
+
+
 def _spawn(engine, node_id, executor_id: str, cfg: dict, _llm, role: str, prompt: str, packet: str, schema: dict,
-           verb: str, cwd, cap=None, work: bool = True):
+           verb: str, cwd, cap=None, work: bool = True, tasks: tuple = ()):
     """THE ONE FRAME every role session runs in — spawn · parse: the role's model, its prompt and packet with the
     report schema, under the in-flight registry (`busy`), its spend booked to the node; `work` = the work tools
-    under the session cap, else read-only (a consent reads, it does not build). Returns (report or None, text,
-    stats, llm, the observation callback) — what the report MEANS is the caller's, never the frame's."""
+    under the session cap, its context handed over at its ceiling and the role's budget (`budget.run`) with `tasks`'
+    machine state, else read-only (a consent reads, it does not build). Returns (report or None, text, stats, llm, the
+    observation callback) — what the report MEANS is the caller's, never the frame's."""
     _cb = emit_cb(engine, "delegate")
     llm = _llm or project_llm(engine, cfg.get("model", MODEL_DEFAULT))
     if work:
         llm.on_tick = _cb
+        llm.budgeted, llm.context_budget = True, cfg.get("context_budget")   # the resource's, declared with its role
+        llm.machine_state = lambda: _machine_state(engine, tasks, cwd)
+        llm.reads_as_report = lambda text: parse_structured(text, schema) is not None
     llm.stage_hint = f"{node_id} {role}({executor_id})"
     system, user = (_PROMPTS / prompt).read_text(encoding="utf-8"), packet + schema_instruction(schema)
     with _inflight(verb, engine, node_id):
@@ -171,7 +194,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     # from another session read the server as idle and restarted it mid-run.
     report, text, stats, llm, _cb = _spawn(engine, task_id, executor_id, cfg, _llm, "executor", "executor.md",
                                            _executor_packet(engine, task, cwd, unjoined, seen), EXECUTOR_SCHEMA,
-                                           "delegated_execution", cwd, cap)
+                                           "delegated_execution", cwd, cap, tasks=(task,))
     if report is None:
         # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
         # monitor escalates a stuck node (no second clock). Visible in the observation field.
@@ -281,7 +304,7 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
         f"{', '.join(str(t.id) for t in todo)}" + (f", cap {cap}s" if cap else "") + "…")
     report, text, stats, llm, _cb = _spawn(engine, top_id, executor_id, cfg, _llm, "scope-executor",
                                            "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined, seen),
-                                           SCOPE_SCHEMA, "delegated_execution", cwd, cap)
+                                           SCOPE_SCHEMA, "delegated_execution", cwd, cap, tasks=tuple(todo))
     if report is None:
         _cb(f"{top_id}: " + _unread(llm, "the scope session's report DID NOT PARSE — no signals sent")
             + f" · {_stat_line(llm)}")

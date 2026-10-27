@@ -7,7 +7,8 @@ The criteria a provider meets to work on gfso no worse, as a battery of small re
   command over it and reports what the command printed — the round trip every agent role is — and, under the
   executor's real system prompt, ends its run with a report that parses against a schema, as every agent role must;
 - OPTIONAL, reported: the cached part of the input split out, the cost, the window (asked of the server where it says:
-  a local server that truncates past its window silently would pass a small battery and fail real work), the peak.
+  a local server that truncates past its window silently would pass a small battery and fail real work), the peak, and
+  whether a context budget can run on it (a round cut at its cap says so and reports its peak).
 What is optional and absent stays absent: "not reported", never zero.
 """
 from __future__ import annotations
@@ -57,6 +58,16 @@ def _agent_checks(provider, out: dict, agent_prompt: str) -> bool:
     return out["checks"]["agent run"]["pass"] and out["checks"]["agent report"]["pass"]
 
 
+def _holds_a_budget(provider) -> bool:
+    """Can a context budget run on it (`budget.run`)? A round cut at a cap of one turn must say so — `stop_reason`
+    "max_turns" — and how full its context got; without either a budget would stop or never fire, silently."""
+    with (provider.execution or LocalExecution()).scratch("gfso-conformance-") as place:
+        provider.run_agent("You are a careful agent working with tools.", AGENT_TASK, TOOLS, cwd=place, timeout=300,
+                           max_turns=1)
+    rec = (calls_of(provider) or [{}])[-1]
+    return isinstance(rec, dict) and rec.get("stop_reason") == "max_turns" and bool(rec.get("peak_context"))
+
+
 def assess(provider, agent_prompt: str = "You are the executor of a task: do it with your tools, then deliver.") -> dict:
     """The battery's findings: each check pass/fail with what it saw, the optional fields reported, the roles held —
     the report case asked under `agent_prompt`, a real executor's system prompt where the caller has it."""
@@ -81,6 +92,8 @@ def assess(provider, agent_prompt: str = "You are the executor of a task: do it 
     calls = calls_of(provider)
     out["optional"] = {"cache split": _filled(calls, "cache_read_input_tokens"), "cost": _filled(calls, "cost_usd"),
                        "window": _filled(calls, "context_window"), "peak context": _filled(calls, "peak_context")}
+    if provider.runs_agents:
+        out["optional"]["context budget"] = _holds_a_budget(provider)
     window = max((c.get("context_window") or 0 for c in calls if isinstance(c, dict)), default=0)
     if provider.runs_agents and window and window < MIN_WINDOW:
         out["warnings"].append(f"the model's window is {window} tokens: a role's prompt and packet need about "

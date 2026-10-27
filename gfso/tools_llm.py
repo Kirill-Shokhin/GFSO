@@ -1645,7 +1645,8 @@ def _delegation():
 def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                    workdir: Optional[str] = None, validator: Optional[str] = None,
                    oracle_map: Optional[str] = None, max_turns: Optional[int] = None,
-                   client: Optional[str] = None, execution: Optional[str] = None) -> dict:
+                   client: Optional[str] = None, execution: Optional[str] = None,
+                   context_budget: Optional[int] = None) -> dict:
     """Register a NON-human participant (humans need no registration — an unregistered Del = human,
     the system stays passive). kind: `llm-executor` (nodes assigned to this id AUTOSTART: headless
     executor with work tools in `workdir`, its report wrapped into ACCEPT/DELIVER/BLOCK/CHALLENGE) ·
@@ -1670,6 +1671,9 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
 
     `execution` (optional) names where this project's sessions and commands run — an execution the server
     DECLARES (its executions.json: a Linux container per project, say); one per project, and none = this host.
+
+    `context_budget` (optional, tokens) is the executor's: a session whose context reaches it writes a handover note
+    and a fresh session continues the task from it — whatever the model's provider offers (none = no budget).
 
     THIS VERB LIVED ON THE AGENT DOOR ALONE. A person driving from the CLI or the HTTP API was told
     by the log to `reassign` a node to a registered role and had no verb anywhere to make one —
@@ -1697,7 +1701,7 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
                 f"nodes to THAT id — which is also what makes the delegation visible in the graph."}
     agents = _roster(engine)
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
-                          oracle_map=oracle_map, max_turns=max_turns, client=client,
+                          oracle_map=oracle_map, max_turns=max_turns, client=client, context_budget=context_budget,
                           project=engine.project_name, execution=execution)
     _delegation().publish_the_workforce(engine, agents.list())
     # THE SPELLING THAT BINDS, not the one that was typed. The roster stores the workdir RESOLVED,

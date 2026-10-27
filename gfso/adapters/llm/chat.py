@@ -296,6 +296,7 @@ def _total(turns: list, k: str):
 class ChatProvider(RecordingProvider):
     """A provider of every role over one chat wire: one-shots by a turn without tools, agent runs by the tool loop."""
     parallel_safe = True       # each call is its own HTTP request
+    budget_step = 4            # the loop is ours: a round is stopped and continued at no cost but its turns
 
     def __init__(self, wire: ChatWire, model: str, execution: ExecutionPort | None = None, timeout: int = 900):
         super().__init__(model)
@@ -329,12 +330,12 @@ class ChatProvider(RecordingProvider):
             return ""
         return t.text
 
-    def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,
-                  timeout: Optional[int] = None, max_turns: Optional[int] = None,
-                  session: Optional[str] = None) -> str:
-        """`LLMProviderPort.run_agent` through the system's own tool loop."""
+    def agent_round(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,
+                     timeout: Optional[int] = None, max_turns: Optional[int] = None,
+                     session: Optional[str] = None) -> str:
+        """One round of an agent run through the system's own tool loop."""
         if not self.runs_agents:
-            return super().run_agent(system, user, allowed_tools, cwd, timeout, max_turns, session)
+            return super().agent_round(system, user, allowed_tools, cwd, timeout, max_turns, session)
         if not cwd:
             raise ValueError("an agent run needs a working directory: without one it would run where the server "
                              "stands (the gfso state home), which holds none of the work. Pass `workdir`.")
