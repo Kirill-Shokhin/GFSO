@@ -46,7 +46,8 @@ function tracks(el, run, name, tasks) {
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>
             <path class="pg-area" d="${f.area(T.steps, y0, h(r), T.total)}"/>
-            ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}">${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
+            ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}">${m.signal === 'FAIL'   // a FAIL above the area stands on a stem, so its height reads
+                ? `<line class="pg-stem" x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${y0}" y2="${at(m.k)}"/>` : ''}${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
     }).join('');
     const H = y + 6, root = rs.find(r => !r.d);
     const miles = (root ? tr[root.id].marks : []).filter(m => m.signal === 'PASS').map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>

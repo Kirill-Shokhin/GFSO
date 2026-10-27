@@ -290,6 +290,7 @@ body {
 .pg .pg-base { stroke: var(--hair); }
 /* a FAIL whose count is only a bound: the cross is the verdict, certain, as everywhere; the doubt is its HEIGHT, said by
    the dotted range under it (a faded cross here and a black one in the timeline read as two marks — the author) */
+.pg .pg-stem { stroke: var(--ink-faint); stroke-width: 1; }
 .pg .pg-full { stroke: var(--hair); stroke-dasharray: 2 3; }
 .pg .pg-area { fill: var(--ink); opacity: .12; stroke: var(--ink); stroke-width: 1.5; stroke-opacity: 1; }
 .pg .pg-mile line { stroke: var(--ink); stroke-width: 1; }
