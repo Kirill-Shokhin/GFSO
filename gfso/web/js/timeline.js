@@ -48,10 +48,8 @@ export function render(el, run, nodes) {
     const ids = rows(run, nodes), name = run.name, work = stretches(run);
     const W = Math.max(el.clientWidth, 480), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
     const Y = id => TOP + ids.indexOf(id) * ROW + ROW / 2 + 4;
-    // a session handed over to a fresh one is a cut across its bar at the moment it wrote its note
     const bar = (s, i) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}" x="${f.X(s.start)}"
-        y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(s.end) - f.X(s.start), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`
-        + (s.handed || []).map(t => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${Y(s.node) - BAR[s.kind] / 2 - 2}" y2="${Y(s.node) + BAR[s.kind] / 2 + 2}"/>`).join('');
+        y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(s.end) - f.X(s.start), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`;
     // a verdict: a hairline stem up from the bar line, the glyph on top — a mark, not a piece of the work
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
         return `<g class="tl-v" data-v="${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');

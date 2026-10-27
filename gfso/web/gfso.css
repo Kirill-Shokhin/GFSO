@@ -272,7 +272,6 @@ body {
 .tl .tl-peakdot { fill: var(--ink); }
 .tl .tl-sub { fill: var(--ink-faint); font-size: 8.5px; }
 .tl .tl-stem { stroke: var(--ink-faint); stroke-width: 1; }
-.tl-hand { stroke: var(--bg); stroke-width: 2; }   /* a cut across a bar: the session handed over there */
 .tl .tl-peak { text-anchor: end; letter-spacing: var(--tr-mono); text-transform: uppercase; font-size: 9px; }
 .tl .tl-split { stroke: var(--hair); }
 .ax-tick line { stroke: var(--hair-soft); }
