@@ -21,6 +21,17 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   on stdin) and `GET`/`PUT /api/credentials[/{provider}]`, never answering with a value. The Claude Code provider takes
   a subscription's token or an API key there; `gfso provider-check` fails the agent roles when a tool's shell can see
   a credential.
+- A project's container network can be narrowed by its user, `set_mode(network="off" | "open" | {"mode": "allowlist",
+  "hosts": [...]} | "declared")`: the more closed of it and the operator's declaration is in force at once, never wider;
+  `set_mode` without a mode changes only the project's settings. `/api/metrics` serves each metric's grade (canon §15.8)
+  and which of them call a person. A project's containers carry Docker Compose labels, so Docker Desktop shows them as
+  one stack subgrouped by role.
+
+### Fixed
+- A plan's Level-2 review runs as soon as the machine issuer's fix changes the split; the issuer's answers stay rate
+  limited after it. A promoted producer is read under the move's own key, a probe's files written as `{path, content}`
+  keep their content, and a new probe naming a file its split already pins carries it — each had refused a correct move
+  of the machine issuer, the refusal not naming its own correction.
 
 ### Changed
 - No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,
