@@ -74,6 +74,21 @@ Q_MEANS = {
     "q_Del": "delegations that fit: 1 − (nodes reassigned for capability mismatch) / (contracts issued).",
 }
 
+#: How far each can be trusted (§15.8): two genuine observables, two proxies with known biases, one weak — served beside
+#: `means` so no door keeps its own copy (the page's drifted once already, 2026-09-02).
+Q_GRADES = {"q_D": "observed", "q_V": "observed", "q_T": "proxy", "q_Dep": "proxy", "q_Del": "weak"}
+
+#: Below this an OBSERVED metric calls a person; the canon fixes no threshold, this one is the implementation's.
+ALARM_BELOW = 0.5
+
+
+def alarm(m: dict) -> dict:
+    """Which metrics call a person — the observed two only, proxies bounding nothing alone (§15.8): q_V low; q_D low
+    unless a high false-FAIL share says the validator, not the split, did it (read together, §15.4, §16.9)."""
+    low = {k: m.get(k) is not None and m[k] < ALARM_BELOW for k in ("q_V", "q_D")}
+    ffs = m.get("false_fail_share")
+    return {"q_V": low["q_V"], "q_D": low["q_D"] and not (ffs is not None and ffs >= ALARM_BELOW)}
+
 def q_T(graph: Graph) -> Optional[float]:
     """Task quality (canon §15.4/§15.6, v3.8): 1 − (contested contracts) / (issued contracts).
 

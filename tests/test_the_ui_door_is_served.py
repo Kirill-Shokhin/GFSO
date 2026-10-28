@@ -297,7 +297,10 @@ def test_the_numbers_arrive_with_what_they_are_about(client):
     """
     body = client.get("/api/metrics").json()
     means = body.get("means") or {}
-    scores = {k: v for k, v in body.items() if k != "means" and not k.endswith("_from")}   # `_from`: who the number counts
+    # `_from`: who the number counts; `grades`, `alarm`, `calls_person`: how far each holds and which call a person —
+    # served beside `means` for the same reason, so the page keeps no copy of §15.8 either
+    about = ("means", "grades", "alarm", "calls_person")
+    scores = {k: v for k, v in body.items() if k not in about and not k.endswith("_from")}
     assert scores, "the metrics read returned no numbers"
     assert set(means) == set(scores), "a number was served without what it is about"
 
@@ -317,7 +320,7 @@ def test_the_numbers_arrive_with_what_they_are_about(client):
     # …AND THE AGENT DOOR SAYS THE SAME. One rule, and both doors serve it, or the writing has
     # simply moved rather than been unified — which is the defect this whole test is about.
     tool = tool_metrics(make_engine())
-    assert set(tool.get("means") or {}) == {k for k in tool if k != "means"}, (
+    assert set(tool.get("means") or {}) == {k for k in tool if k not in about}, (
         "the agent door serves a number without what it is about")
 
     page = _ui(client)

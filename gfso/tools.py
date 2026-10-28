@@ -21,7 +21,7 @@ from gfso.core.types import (
     SignalData, Signal, Predictability, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS, Verdict, State,
     RevisionReason, Register, register_of, settled_positive, passed,
 )
-from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_T_numerator, q_V_reversed
+from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_GRADES, Q_MEANS, alarm, q_T_numerator, q_V_reversed
 from gfso.core.graph.model import door_off_s, on_the_wall, root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
@@ -1380,8 +1380,11 @@ def metrics(engine: Engine) -> dict:
                            "later_found_wrong": reversed_}
     # BOTH doors serve every number with what it is about — `false_fail_share` runs the
     # OPPOSITE way to every q_* (high is bad) and is the one most easily read backwards.
-    return {**out, "means": {k: v for k, v in {**Q_MEANS, **DIAGNOSTIC_MEANS}.items()
-                             if k in out}}
+    # …with how far each can be trusted and which call a person, so no door keeps its own copy of §15.8
+    called = alarm(out)
+    return {**out, "means": {k: v for k, v in {**Q_MEANS, **DIAGNOSTIC_MEANS}.items() if k in out},
+            "grades": {k: g for k, g in Q_GRADES.items() if k in out}, "alarm": called,
+            "calls_person": any(called.values())}
 
 
 # ── AUTHORING (each desugars to the 12-signal FSM — logged, no bypass) ────────
