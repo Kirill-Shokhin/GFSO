@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gfso.adapters.execution import LocalExecution
+from gfso.adapters.execution import PLACEHOLDER, LocalExecution
 from gfso.config import SECRET_ENV
 from . import credentials
 from .stats import calls_of
@@ -75,7 +75,9 @@ def _credential_hidden(provider) -> dict:
         if not f.is_file():
             return {"pass": False, "saw": "no env.txt: the tools' environment was not shown"}
         shown = f.read_text(encoding="utf-8", errors="replace")
-    names = sorted({n for n, _, _ in (ln.partition("=") for ln in shown.splitlines()) if SECRET_ENV.search(n)})
+    # …a door's key is not one: it opens that door alone, and the credential behind it is the door's (`ExecutionPort.door`)
+    names = sorted({n for n, _, v in (ln.partition("=") for ln in shown.splitlines())
+                    if SECRET_ENV.search(n) and not v.startswith(PLACEHOLDER)})
     values = sum(v in shown for v in credentials.held())
     return {"pass": not names and not values, "names": names, "values": values}
 

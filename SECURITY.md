@@ -64,8 +64,8 @@ How far a project's container reaches outside is a switch you set in its executi
 (`"network": {"mode": ..., "hosts": [...]}`):
 - `open` (the default) reaches everything but your host — other containers on Docker's bridge
   included.
-- `off` reaches nothing: the container stands on an internal Docker network of its own with no
-  route out and no capability to make one. Each closed project takes one of Docker's address pools;
+- `off` reaches nothing but its model, through the door below: the container stands on an internal
+  Docker network of its own with no route out and no capability to make one. Each closed project takes one of Docker's address pools;
   past their number a start fails.
 - `allowlist` adds one gateway container, the only way out. It opens a connection only to a host
   you named, on 443, when the TLS handshake names that host; what the session then sends inside
@@ -76,10 +76,29 @@ How far a project's container reaches outside is a switch you set in its executi
   whole way out.
 
 An allowed host carries whatever a session sends it, under any credentials the session presents —
-a model API that stores data is a way out to someone else's account. A session's own model client
-calls its model from inside the container, so under `allowlist` the provider's host must be on the
-list, and that host is such a way out; `off` suits only a provider that calls the model from
-outside. Nothing watches the declaration: a turned switch is read at the project's next lookup of
+a model API that stores data is a way out to someone else's account.
+
+No session holds its provider's credential. A provider over a chat API calls its model from the
+server itself; only its tools run in the container. The Claude Code client, which runs inside,
+reaches its model under every switch through its project's door: a container of its own that
+holds the credential (from `gfso credential`) and nothing of the project. The client holds only
+the door's key, which opens that door and no other; the door puts the credential in and passes the
+request to the provider alone. So no process in a session — the client, its tools, what they run —
+holds the credential to read or carry away, and another container is refused by the door. The
+credential is in no container's configuration, environment or disk: the door reads it once from
+memory and removes it; a credential replaced while calls run keeps its door, and so stays live,
+until the project stops. Under every switch the door passes the model's messages alone — the
+credential opens far more of the account (its files, its batches) — and it runs on the
+execution's own image, which must have `python3`. Under `allowlist` and `off` it passes only the
+messages the model answers by itself: every tool the client's own, no content the provider
+would fetch from a URL, no server-side tool, MCP server or container — so the door is no way out
+the switch does not govern. Under `open` the door stands on Docker's shared bridge and the key
+travels there in plain HTTP: a container on that bridge able to intercept its traffic could take
+the key and spend through the door, though not the credential. What the door cannot stop: a
+session spending the model through it, as its client does. Every passed request is logged beside
+the gateway's log as its answer starts; refusals too, until the log reaches its cap.
+
+Nothing watches the declaration: a turned switch is read at the project's next lookup of
 its execution, which then ends the project's running container — until then a session already out
 stays out. A declaration that does not read shuts the way out.
 

@@ -213,6 +213,12 @@ class ExecutionPort(ABC):
         points; on this host, as it is."""
         return text
 
+    def door(self, credential, upstream: str) -> Optional[tuple]:
+        """(base URL, key): where a model client started here reaches its provider's `upstream`, through a door that
+        holds `credential` itself, and the key the client presents there in its place — so no agent process holds the
+        credential; None where the client must hold it (this host)."""
+        return None
+
     def unavailable(self) -> Optional[str]:
         """Why this place cannot start a call now, or None where it can — a cheap health check. This host always can."""
         return None

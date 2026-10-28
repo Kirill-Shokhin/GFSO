@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 from gfso.core.types import ExecutionPort, PlaceUnavailable
 from .base import RecordingProvider
@@ -147,13 +148,22 @@ def _is_the_answer(result: dict, live: bool) -> bool:
 
 #: the variable the CLI authenticates by, per kind of credential
 AUTH = {"token": "CLAUDE_CODE_OAUTH_TOKEN", "api": "ANTHROPIC_API_KEY"}
+#: where the CLI's model answers — what a door passes to
+UPSTREAM = "api.anthropic.com"
 
 
-def client_env(credential, scrubs: bool = True) -> dict:
+def client_env(credential, scrubs: bool = True, door: tuple | None = None) -> dict:
     """A credential as the CLI's process takes it, and its tools' shells scrubbed of it where the execution can
     (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: the conformance battery's `env` through the tool path shows none; `scrubs`).
     Where it cannot, the tools see it — said in the log once per image (`execution.scrubs`), and the
-    battery's "credential hidden" fails there."""
+    battery's "credential hidden" fails there. Where the execution has a `door` (`ExecutionPort.door`: its URL and
+    key) the CLI holds only the door's key and calls its model through it; the door holds the credential: no process
+    the CLI starts can read what it does not hold."""
+    if credential and door:
+        url, key = door
+        host = urlparse(url).hostname
+        return {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "0", AUTH[credential.kind]: key,
+                "ANTHROPIC_BASE_URL": url, "NO_PROXY": host, "no_proxy": host}
     return {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1" if scrubs else "0",
             **({AUTH[credential.kind]: credential.value} if credential else {})}
 
@@ -501,9 +511,6 @@ class ClaudeCodeProvider(RecordingProvider):
         if not cwd:
             with self._exec.scratch("gfso-noplace-") as empty:
                 return self._call(system, user, tools_args, empty, timeout, session)
-        env = subprocess_env(credential=client_env(self._credential, scrubs(self._exec)))
-        if self._max_thinking is not None:
-            env["MAX_THINKING_TOKENS"] = str(self._max_thinking)
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
                 # The CLI inherits the USER's MCP configuration, and this installation registers its
                 # own door there — so every internal call (decompose, the Level-2 review, the
@@ -541,6 +548,10 @@ class ClaudeCodeProvider(RecordingProvider):
         self._est_chars = 0  # per-call char-estimate (fallback token counter while usage is absent)
         proc, out, n0 = None, {}, len(self.calls)
         try:
+            # …its door first, where the execution keeps one: a place down there is the call's own ending (critic 3)
+            door = self._exec.session(cwd).door(self._credential, UPSTREAM) if self._credential else None
+            env = {**subprocess_env(credential=client_env(self._credential, door is None and scrubs(self._exec), door)),
+                   **({"MAX_THINKING_TOKENS": str(self._max_thinking)} if self._max_thinking is not None else {})}
             # in the session's own place (`ExecutionPort.session`): it writes there alone and sees no other node's
             proc = self._exec.session(cwd).popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                                  stderr=subprocess.DEVNULL, text=True, encoding="utf-8")

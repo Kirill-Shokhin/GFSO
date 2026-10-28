@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -21,7 +22,7 @@ from pathlib import Path
 
 from gfso.core.types import ExecutionPort, PlaceUnavailable
 from gfso.config import SECRET_ENV, claude_config_dir, host_env
-from gfso.adapters import egress
+from gfso.adapters import door, egress
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
 log = logging.getLogger(__name__)
@@ -37,7 +38,8 @@ HOST_NET = "192.168.65.0/24"
 #: the container by root. `allowlist` and `off` — the container stands on an internal network with no route out, so the
 #: fence is the network's, out of reach of anything inside, root included; under `allowlist` one gateway container
 #: (`egress.py`) joins it and lets a session reach the named hosts on 443, the TLS handshake naming the host asked for.
-#: A session's own CLI calls its model from inside, so `off` suits only a provider that calls it from outside. What the
+#: Under every switch a session's CLI reaches its model through its project's door (`Door`), which holds the credential;
+#: under a closed one the door passes the model alone, nothing the provider would fetch or run elsewhere. What the
 #: allowlist does NOT hold: an allowed host carries whatever the session sends it under any credentials it presents (a
 #: model API that stores data is a way out to another tenant's account); inside the encrypted stream the request may
 #: still name another site the same front serves — reading it needs the gateway to end TLS itself; the gateway stands on
@@ -50,6 +52,8 @@ NETWORK = ("open", "allowlist", "off")
 SYSTEM_CAPS = ("CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER")
 #: the gateway's address and port as a session inside an allowlisted project reaches it
 GATEWAY = "gateway"
+#: how the key a model client inside holds for its credential begins (`Door`) — it opens one door and nothing else
+PLACEHOLDER = "held-by-the-door-"
 #: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes
 LABEL = "gfso.execution"
 #: the containers this server process started — one per (execution, project), whichever object asks for it — with
@@ -65,6 +69,10 @@ _SESSIONS: dict = {}
 _SWITCH: dict = {}
 #: each image's answer to `scrubs`
 _SCRUBS: dict = {}
+#: the model doors this server process started (`Door`) — each holds a credential, so none outlives it
+_DOORS: set = set()
+#: each project container's doors (`Door`), by its name
+_GATES: dict = {}
 _START = threading.RLock()     # a turn stops what a start holds, under the same lock
 
 
@@ -160,7 +168,7 @@ def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
     if ids := list(_STARTED):
-        run(["docker", "rm", "-f", *ids, *[f"{i}-gw" for i in ids]], timeout=120)
+        run(["docker", "rm", "-f", *ids, *[f"{i}-gw" for i in ids], *_DOORS], timeout=120)
         run(["docker", "network", "rm", *[f"{i}-net" for i in ids]], timeout=120)
         _STARTED.clear()
 
@@ -262,6 +270,80 @@ class WayOut:
         run(["docker", "network", "rm", self.net], timeout=60)
 
 
+class Door:
+    """A project's doors to its model (`door.py`): one container per credential the project's calls hold — the one
+    place each credential is, started by the first call holding it, so a credential changed while older calls run
+    starts a door beside theirs rather than cutting them. Each answers only its own KEY, the placeholder its clients
+    hold (`PLACEHOLDER` and a random tail): no other container on the machine spends through it. Under a closed way out
+    a door stands on the project's network by a name of its own and joins Docker's bridge to reach out, passing the
+    model alone; under an open one, on the bridge by its address. Read-only, unprivileged and bounded, nothing of the
+    project mounted; the credential laid in its memory-backed `door.RUN`, read once and removed; its log beside the
+    gateway's, out of every session's reach. Gone with its project's container and with the server."""
+
+    def __init__(self, way: WayOut):
+        self.way, self.held = way, {}            # credential digest -> (container, key)
+
+    def url(self, credential, upstream: str) -> tuple[str, str]:
+        """Where a client inside reaches `upstream` with `credential` put in, and the key it presents there."""
+        d = self._digest(credential, upstream)
+        closed = self.way.network[0] != "open"
+        name = f"{self.way.container}-door-{d}"
+        if d not in self.held or not (address := self._address(name)):
+            try:
+                address = self._start(name, credential, upstream, closed)
+            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                # …no call of the project reaches its model: the place down, its stop said as such (critic 3)
+                raise PlaceUnavailable(self.way.name, f"its model door did not start ({e})") from e
+        return f"http://{name if closed else address}:{door.PORT}", self.held[d][1]
+
+    def _start(self, name: str, credential, upstream: str, closed: bool) -> str | None:
+        """One door started holding `credential`, its key kept; its address on Docker's bridge."""
+        run(["docker", "rm", "-f", name], timeout=60)
+        self.log().parent.mkdir(parents=True, exist_ok=True)
+        key = PLACEHOLDER + uuid.uuid4().hex
+        run(["docker", "run", "-d", "--init", "--name", name, "--label", f"{LABEL}={self.way.name}",
+             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--memory", "256m",
+             "--pids-limit", "256", "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
+             *(["--network", self.way.net, "--network-alias", name] if closed else []),
+             "--mount", f"type=bind,src={Path(door.__file__).resolve()},dst=/gfso-door.py,readonly",
+             "--mount", f"type=bind,src={self.log().parent},dst=/log",
+             self.way.image, "python3", "/gfso-door.py", upstream, "/log/" + self.log().name,
+             name if closed else "0.0.0.0", "1" if closed else "0"], timeout=120).check_returncode()
+        _DOORS.add(name)                      # …at once: a start cut after this still ends with the server
+        # …laid by a `docker exec` whose environment is its own and gone with it: in no configuration Docker keeps
+        laid = json.dumps({"kind": credential.kind, "value": credential.value, "key": key})
+        run(["docker", "exec", "-e", "GFSO_DOOR_LAID", name, "sh", "-c",
+             f'printf %s "$GFSO_DOOR_LAID" > {door.RUN}/laid && mv {door.RUN}/laid {door.RUN}/credential'],
+            timeout=60, env={**host_env(), "GFSO_DOOR_LAID": laid}).check_returncode()
+        if closed:
+            run(["docker", "network", "connect", "bridge", name], timeout=60).check_returncode()
+        self.held[self._digest(credential, upstream)] = (name, key)
+        return self._address(name)
+
+    def _digest(self, credential, upstream: str) -> str:
+        """What a door holds and how it is shaped — the switch decides where it stands and what it passes."""
+        return hashlib.sha256(f"{credential.kind}:{credential.value}:{upstream}:{self.way.network}".encode()).hexdigest()[:12]
+
+    @staticmethod
+    def _address(name: str) -> str | None:
+        """Its address on Docker's bridge while it runs, else None."""
+        got = run(["docker", "inspect", "-f", "{{.State.Running}} {{.NetworkSettings.Networks.bridge.IPAddress}}",
+                   name], timeout=30, text=True)
+        up, _, address = (got.stdout or "").strip().partition(" ")
+        return address or None if got.returncode == 0 and up == "true" else None
+
+    def log(self) -> Path:
+        """Every request the doors passed or refused, written by the door as it happens."""
+        return self.way.home / "door" / self.way.container / "door.log"
+
+    def close(self) -> None:
+        """Every door of the project, and the credentials they hold."""
+        if names := [n for n, _ in self.held.values()]:
+            run(["docker", "rm", "-f", *names], timeout=60)
+            _DOORS.difference_update(names)
+        self.held = {}
+
+
 class ContainerExecution(ExecutionPort):
     #: does a session's CLI run here, its state mounted? Not in the project's container: every session runs in its
     #: place's (`session`), and the project's runs the plan's probes, written by agents — with the state mounted they
@@ -289,6 +371,9 @@ class ContainerExecution(ExecutionPort):
         self.name, self.image, self.env_file = name, image, env_file
         self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{name}-{project}").lower()
         self.way = WayOut(self.container, name, image, Path(state))
+        # …one per container, whichever object of it asks: two roles' objects kept a door each, and a switch one turned
+        # left the other's standing in the old shape (critic over the door v2)
+        self.gate = _GATES.setdefault(self.container, Door(self.way))
         if network is not None:
             self.switch(network)
         # THE CLI'S STATE IS THE PROJECT'S: shared by an execution's projects, every E3 row (all at /gfso-place/ws) read
@@ -388,11 +473,13 @@ class ContainerExecution(ExecutionPort):
     def _open_the_way(self) -> None:
         self.way.open()
 
+
     def stop(self) -> None:
         """The project's container, its sessions' and its way out."""
         for key in [k for k in _SESSIONS if k[0] == self.container]:
             _SESSIONS.pop(key).stop()
         run(["docker", "rm", "-f", self.container], timeout=60)
+        self.gate.close()                                 # …first: a network with a member is not removed
         self.way.close()
         _STARTED.pop(self.container, None)
 
@@ -594,6 +681,12 @@ class PlaceContainer(ContainerExecution):
 
     def session(self, cwd: str) -> "ExecutionPort":
         return self if Path(cwd).resolve().is_relative_to(self.rw) else self.project.session(cwd)
+
+    def door(self, credential, upstream: str):
+        """Its project's door (`Door`), once the project's network stands."""
+        with _START:
+            self.project.start()
+            return self.gate.url(credential, upstream)
 
     def _open_the_way(self) -> None:
         self.project.start()                              # the project's network and gateway stand before any session

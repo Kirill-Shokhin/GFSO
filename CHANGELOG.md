@@ -25,8 +25,10 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 ### Changed
 - No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,
   `GFSO_GENERIC_API_KEY`), and `GFSO_BILLING` is gone: per-token billing is an `api` credential of `claude`. No process
-  the system starts inherits a key or a token but the model's client, whose tools are scrubbed of it where the
-  execution can (on Linux, with bubblewrap); a container's `env_file` is optional and refused if it names a credential.
+  the system starts inherits a key or a token but the model's client on this host, whose tools are scrubbed of it where
+  the host can (on Linux, with bubblewrap); in a container execution not even the client holds it — the project's model
+  door does, and the client only the door's key. A container's `env_file` is optional and refused if it names a
+  credential.
 - A refused authentication (the account signed out, a key refused or missing) and an execution place down stop the
   project as the account's limit does, and every door names which of them stopped it.
 - A continued round of the Claude Code provider books its own cost, not the whole conversation's.

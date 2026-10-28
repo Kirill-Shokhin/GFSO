@@ -1,0 +1,128 @@
+"""The model door (`adapters/door.py`): the one place of a project that holds its provider's credential. A client
+inside holds the door's key; the door answers that key alone, and under a closed switch passes the model and nothing
+the provider would reach elsewhere for it."""
+import http.client
+import json
+import subprocess
+import threading
+
+import pytest
+
+from gfso.adapters import door as D
+from gfso.adapters import execution as E
+from gfso.adapters.execution import PLACEHOLDER, LocalExecution
+from gfso.adapters.llm.credentials import Credential
+from gfso.adapters.llm.headless import ClaudeCodeProvider, client_env
+
+
+_IMG = {"type": "image", "source": {"type": "url", "url": "https://example.com/?d=secret"}}
+
+
+@pytest.mark.parametrize("body, alone", [
+    ({"tools": [{"name": "Bash", "input_schema": {"properties": {"url": {"type": "string"}}}}]}, True),
+    ({"tools": [{"type": "custom", "name": "Read"}],
+      "messages": [{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "data": "x"}}]}]}, True),
+    ({"tools": [{"type": "web_search_20250305", "name": "web_search"}]}, False),
+    ({"tools": [{"type": "web_browser_20990101", "name": "a_tool_not_yet_named"}]}, False),
+    ({"tools": {"type": "custom"}}, False),
+    ({"mcp_servers": [{"type": "url", "url": "https://example.com/sse"}]}, False),
+    ({"container": "c_1"}, False),
+    ({"messages": [{"role": "user", "content": [_IMG]}]}, False),
+    ({"messages": [{"role": "user", "content": [{"type": "tool_result", "content": [_IMG]}]}]}, False),
+    ([{"messages": []}], False),
+])
+def test_under_a_closed_switch_only_what_the_model_answers_alone_passes(body, alone):
+    """The client's own tools and the content it carries; never a tool the provider runs, a URL it would fetch, an MCP
+    server it would call — by kind, not by a list of the provider's tools (critic over the door v2)."""
+    assert D.model_alone(json.dumps(body).encode()) is alone
+    assert D.model_alone(b"not json") is False
+
+
+@pytest.fixture
+def served(tmp_path):
+    log = tmp_path / "door.log"
+
+    def serve(closed: bool):
+        s = D._Server(("127.0.0.1", 0), D.handler("127.0.0.1", {"kind": "token", "value": "V", "key": "K"}, str(log),
+                                                     closed))
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+        return s, log
+    yield serve
+
+
+def _ask(s, path="/v1/messages", key="K", body=b"{}", method="POST"):
+    c = http.client.HTTPConnection("127.0.0.1", s.server_address[1], timeout=10)
+    c.request(method, path, body=body, headers={"authorization": f"Bearer {key}"})
+    return c.getresponse().status
+
+
+def test_a_request_without_the_doors_key_is_refused_and_said(served):
+    """Another container on the bridge — another project's session, any other software — spends nothing through it."""
+    s, log = served(False)
+    assert _ask(s, key="other") == 403
+    assert "refused: not this door's key" in log.read_text(encoding="utf-8")
+    s.shutdown()
+
+
+@pytest.mark.parametrize("path, body, method", [
+    ("/api/oauth/profile", b"{}", "GET"),
+    ("/v1/models", b"", "GET"),
+    ("/v1/messages", json.dumps({"tools": [{"type": "web_fetch_20250910", "name": "web_fetch"}]}).encode(), "POST"),
+])
+def test_under_a_closed_switch_the_door_passes_the_model_alone(served, path, body, method):
+    """No way out of its own: a server tool would fetch for the session what the switch shuts (critic over the door)."""
+    s, log = served(True)
+    assert _ask(s, path, body=body, method=method) == 403
+    assert "refused: " in log.read_text(encoding="utf-8")
+    s.shutdown()
+
+
+def test_a_flood_of_refusals_neither_erases_nor_crowds_out_what_was_passed(tmp_path, monkeypatch):
+    """Past the cap refusals are dropped, passed requests — spend — still written (critic over the door v2: a rotation
+    let free refusals erase the record)."""
+    monkeypatch.setattr(D, "LOG_CAP", 100)
+    monkeypatch.setattr(D, "_full", [])
+    log = tmp_path / "door.log"
+    D._say(str(log), "passed first", passed=True)
+    for i in range(30):
+        D._say(str(log), f"refused {i}")
+    D._say(str(log), "passed last", passed=True)
+    text = log.read_text(encoding="utf-8")
+    assert "passed first" in text and "passed last" in text and "refused 29" not in text and "log is full" in text
+
+
+def test_the_client_holds_the_doors_key_and_never_the_credential():
+    cred = Credential("token", "the-real-token")
+    env = client_env(cred, False, ("http://gfso-x-door-abc:8080", PLACEHOLDER + "k"))
+    assert "the-real-token" not in json.dumps(env)
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == PLACEHOLDER + "k" and env["ANTHROPIC_BASE_URL"] == "http://gfso-x-door-abc:8080"
+    assert env["NO_PROXY"] == "gfso-x-door-abc"
+    assert LocalExecution().door(cred, "api.anthropic.com") is None                 # …on the host, as before
+    assert client_env(cred, True) == {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_OAUTH_TOKEN": "the-real-token"}
+
+
+def test_under_every_switch_the_door_passes_the_models_messages_alone(served):
+    """The credential opens the whole account — its files, batches, profile; the door, its model (critic over the door
+    v3)."""
+    s, log = served(False)
+    assert _ask(s, "/v1/files", method="GET") == 403 and _ask(s, "/api/oauth/profile", method="GET") == 403
+    assert "refused: not the model's messages" in log.read_text(encoding="utf-8")
+    s.shutdown()
+
+
+def test_what_a_models_tool_call_said_is_the_clients_to_run_and_no_fetch():
+    asked = {"messages": [{"role": "assistant", "content": [
+        {"type": "tool_use", "name": "fetch_it", "input": {"source": {"type": "url", "url": "https://example.com"}}}]}]}
+    assert D.model_alone(json.dumps(asked).encode()) is True
+
+
+def test_a_place_down_at_its_door_is_the_calls_own_ending(tmp_path, monkeypatch):
+    """With a credential the door starts the project first; a Docker that does not answer is the place down — the stop
+    a booked call makes — not an exception out of the call (critic over the door v3)."""
+    monkeypatch.setattr(E, "run", lambda args, **kw: subprocess.CompletedProcess(args, 1, "", "daemon down"))
+    monkeypatch.setattr(E, "_STARTED", {})
+    (base := tmp_path / "ws").mkdir()
+    ex = E.ContainerExecution("e3-linux", "img", None, str(tmp_path / "state"), str(base), "p")
+    llm = ClaudeCodeProvider("haiku", execution=ex, credential=Credential("api", "sk-ant-x"))
+    assert llm.run_agent("sys", "packet", ("Read",), cwd=str(base)) == ""
+    assert llm.calls[-1]["ended"] == "unavailable"
