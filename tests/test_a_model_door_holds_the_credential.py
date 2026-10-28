@@ -116,6 +116,32 @@ def test_what_a_models_tool_call_said_is_the_clients_to_run_and_no_fetch():
     assert D.model_alone(json.dumps(asked).encode()) is True
 
 
+@pytest.mark.parametrize("asked", [
+    {"type": "tool_use", "messages": [{"role": "user", "content": [_IMG]}]},
+    {"messages": [{"role": "user", "type": "tool_use", "content": [_IMG]}]},
+    {"messages": [{"role": "assistant", "content": [{"type": "tool_use", "name": "x", "input": {}, "content": [_IMG]}]}]},
+])
+def test_what_is_typed_a_tool_call_carries_no_fetch_beside_its_input(asked):
+    """Only a tool call's `input` is the client's: typing a request, a message or a call so let a URL under it pass a
+    closed switch (critic over the door v4)."""
+    assert D.model_alone(json.dumps(asked).encode()) is False
+
+
+def test_a_door_reads_no_body_before_its_key_nor_past_its_cap(served, monkeypatch):
+    """Keyless 400 MB bodies, four at once, killed a door read before its key was (critic over the door v4): its body is
+    never read, and a keyed one past the cap is refused unread."""
+    monkeypatch.setattr(D, "MAX_BODY", 64)
+    read = []
+    real = D.model_alone
+    monkeypatch.setattr(D, "model_alone", lambda b: read.append(b) or real(b))
+    s, log = served(True)
+    assert _ask(s, key="other", body=b"x" * 1000) == 403 and _ask(s, body=b"{" + b" " * 100 + b"}") == 403
+    assert read == []
+    text = log.read_text(encoding="utf-8")
+    assert "refused: not this door's key" in text and "refused: the body is over its cap" in text
+    s.shutdown()
+
+
 def test_a_place_down_at_its_door_is_the_calls_own_ending(tmp_path, monkeypatch):
     """With a credential the door starts the project first; a Docker that does not answer is the place down — the stop
     a booked call makes — not an exception out of the call (critic over the door v3)."""

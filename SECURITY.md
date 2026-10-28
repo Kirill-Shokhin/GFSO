@@ -80,7 +80,9 @@ project has work in it, only with your own words asking for the change):
 An allowed host carries whatever a session sends it, under any credentials the session presents —
 a model API that stores data is a way out to someone else's account.
 
-No session holds its provider's credential. A provider over a chat API calls its model from the
+In a container execution no session holds its provider's credential; a session on the host
+(`LocalExecution`) runs as the user it runs under and reads what that user reads, the credential
+store included. A provider over a chat API calls its model from the
 server itself; only its tools run in the container. The Claude Code client, which runs inside,
 reaches its model under every switch through its project's door: a container of its own that
 holds the credential (from `gfso credential`) and nothing of the project. The client holds only

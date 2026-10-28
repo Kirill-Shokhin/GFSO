@@ -43,6 +43,8 @@ CLIENT_TOOLS = (None, "custom")
 CLOSED_DENIED = ("mcp_servers", "container")
 #: how long a client may take to send a request — a held connection is one of the door's few threads
 WAIT = 60
+#: the largest request body a door reads — the provider's own cap on a messages request
+MAX_BODY = 32 * 2 ** 20
 _lock = threading.Lock()
 _full: list = []
 
@@ -73,8 +75,8 @@ def _fetches(x) -> bool:
     """Is there content the provider would fetch — a `source` of type `url` — anywhere but in what a model's tool call
     said (its `input` is the client's to run)?"""
     if isinstance(x, dict):
-        if x.get("type") == "tool_use":
-            return False
+        if x.get("type") == "tool_use":       # …its `input` alone: a whole request typed so passed a URL under it (critic)
+            x = {k: v for k, v in x.items() if k != "input"}
         return (isinstance(x.get("source"), dict) and x["source"].get("type") == "url") or any(map(_fetches, x.values()))
     return isinstance(x, list) and any(map(_fetches, x))
 
@@ -112,10 +114,13 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
         protocol_version, timeout = "HTTP/1.1", WAIT
 
         def _pass(self):
-            n = int(self.headers.get("content-length") or 0)
-            body = self.rfile.read(n) if n else None
-            path = self.path.split("?")[0]
-            status = refused(self.headers.get(name) == key, self.command, path, body, closed)
+            n, path = int(self.headers.get("content-length") or 0), self.path.split("?")[0]
+            keyed = self.headers.get(name) == key
+            # …the key and the size before the body is read: any container on the bridge, keyless, ran four 400 MB bodies
+            # into memory at once and the door was killed, its address free for the next container to take (critic)
+            body = self.rfile.read(n) if keyed and 0 < n <= MAX_BODY else None
+            status = (refused(keyed, self.command, path, body, closed) if not n or body is not None
+                      else "refused: not this door's key" if not keyed else "refused: the body is over its cap")
             try:
                 if status:
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {status}")
