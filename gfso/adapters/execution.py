@@ -85,6 +85,14 @@ GATEWAY = "gateway"
 PLACEHOLDER = "held-by-the-door-"
 #: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes
 LABEL = "gfso.execution"
+
+
+def grouped(project_container: str, role: str) -> list[str]:
+    """The labels that show a project's containers as ONE stack in Docker Desktop, subgrouped by role — a row's twenty
+    containers hung side by side, alike by name (the author, 2026-10-28: «контейнеры … для одной задачи логично держать в
+    группе»). A compose project's name: lower-case letters, digits, `_`, `-`."""
+    return ["--label", f"com.docker.compose.project={re.sub(r'[^a-z0-9_-]+', '-', project_container.lower())}",
+            "--label", f"com.docker.compose.service={role}"]
 #: the containers this server process started — one per (execution, project), whichever object asks for it — with
 #: what each was started holding: a project re-created on another base gets a container of its own again
 _STARTED: dict = {}
@@ -248,6 +256,7 @@ class WayOut:
         joins Docker's bridge after, to reach out), the execution's own image running `egress.py` read-only,
         unprivileged and bounded, nothing of the project mounted."""
         return ["docker", "run", "-d", "--init", "--name", self.gateway, "--label", f"{LABEL}={self.name}",
+                *grouped(self.container, "gateway"),
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
                 "--sysctl", "net.ipv4.ip_forward=0", "--memory", "256m", "--pids-limit", "256",
                 "--network", self.net, "--network-alias", GATEWAY,
@@ -330,6 +339,7 @@ class Door:
         self.log().parent.mkdir(parents=True, exist_ok=True)
         key = PLACEHOLDER + uuid.uuid4().hex
         run(["docker", "run", "-d", "--init", "--name", name, "--label", f"{LABEL}={self.way.name}",
+             *grouped(self.way.container, "door"),
              "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--memory", "256m",
              "--pids-limit", "256", "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
              *(["--network", self.way.net, "--network-alias", name] if closed else []),
@@ -450,6 +460,7 @@ class ContainerExecution(ExecutionPort):
         mounts = [a for src, ro in self._mounts() for a in (
             "--mount", f"type=bind,src={src},dst={self.to_inside(str(src))}" + (",readonly" if ro else ""))]
         return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
+                *grouped(self.way.container, "places" if self.holds_sessions else "system"),
                 *self.way.run_args(), *([] if self.holds_sessions else [a for c in SYSTEM_CAPS for a in ("--cap-add", c)]),
                 "--security-opt", "no-new-privileges",
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,

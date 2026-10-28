@@ -206,3 +206,17 @@ def test_a_turn_stops_the_container_under_the_starts_lock(tmp_path, monkeypatch)
     monkeypatch.setattr(x, "stop", lambda: held.append(E._START._is_owned()))
     x.switch({"mode": "off"})
     assert held == [True]
+
+
+def test_a_projects_containers_stand_as_one_stack_subgrouped_by_role(tmp_path):
+    """«контейнеры которые создаются для одной задачи логично держать в группе» (the author, 2026-10-28): a row's twenty
+    containers hung side by side, alike by name. Every container of a project carries its compose project, by role."""
+    x = _ex(tmp_path, {"mode": "allowlist", "hosts": ["pypi.org"]})
+    place = E.PlaceContainer(x, x.base / "node")
+
+    def group(args):
+        labels = dict(a.split("=", 1) for a in args[1:] if a.startswith("com.docker.compose."))
+        return labels["com.docker.compose.project"], labels["com.docker.compose.service"]
+    project = group(x.run_args())[0]
+    assert group(x.run_args()) == (project, "system") and group(place.run_args()) == (project, "places")
+    assert group(x.way.gateway_args()) == (project, "gateway")
