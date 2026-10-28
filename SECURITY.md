@@ -32,15 +32,28 @@ declared in `data/executions.json`) runs its project's work in Docker, with the 
   delivery's own scripts), so each runs in a container of its own copy of the delivery, with the
   base read-only and nothing of another node.
 - The system's own commands — git on the agents' repositories, the copies it makes — run in the
-  project's container, which holds every place of the project and no session's state. Two git
+  project's container, which holds every place of the project and no session's state; its copies
+  run as root there, so what an executor made unreadable in its place does not stop them. Two git
   operations that find a place by the path it was registered under (locking it, removing it) fall
   back to the host for places registered there, and run nothing the agents wrote.
 
+- No one who judges a delivery works in its executor's place: a validation and an issuer's
+  contact, a root's included, each run in a container of their own copy of it, and the place's
+  validation scratch, where the probes of its standing findings stand, is read-only to its
+  executor. A delivery that could not be copied is not judged: its validation reads as one that
+  never started — asked again, then put to a person — and an issuer's contact is asked again later.
+
 What one session can still reach:
-- The sessions working in one place share it and its model-client state. A root's executor, its
-  validations and its issuer's contacts all work in the base, which they can write, and in the
-  base's validation scratch, where the probes of its standing findings stand.
-- A project whose base is not a git repository works every node in the base: no node is held apart.
+- The sessions working in the base share it and its model-client state: a root's executor, and a
+  parent's consent asked before its own place exists.
+- A project whose base is not a git repository works every node in the base: no node is held apart,
+  and each judgement copies the whole base.
+- A process an executor starts may outlive its session in its place's container, which stands
+  until the place goes: it can change the place while the delivery is being copied to be judged,
+  so what is judged may differ from the commit recorded at delivery.
+- The system's git in the project's container reads a node's own repository as its executor left
+  it, so what that repository's configuration tells git to run (a monitor, a hook, a filter) runs
+  there, as the agents' user, in the container that holds every place.
 - A parent's consent asked before its own place exists runs in the base and reads its inputs from
   the base's temp.
 

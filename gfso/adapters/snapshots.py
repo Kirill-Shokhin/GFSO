@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.adapters import worktrees as W
+from gfso.core.types import PlaceUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,8 @@ def snapshot(place, at, execution, edits: Optional[list] = None):
         with _place(place).enter(alone=False):
             execution.copy_tree(str(place), str(at))
             _own_git(place, at, execution)
+    except PlaceUnavailable:
+        raise                    # …the place down is its project's stop, not a copy to do without (`PlaceUnavailable`)
     except (OSError, subprocess.TimeoutExpired) as e:
         log.warning(f"no snapshot of {place} at {at} ({e}) — this run validates the place itself, alone")
         try:

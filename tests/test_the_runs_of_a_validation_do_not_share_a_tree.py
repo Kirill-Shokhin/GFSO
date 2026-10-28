@@ -23,6 +23,7 @@ from gfso import tools_llm as TL
 from gfso.adapters import snapshots as S
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ContainerExecution, LocalExecution
+from gfso.delegate import _classify_no_verdict
 from tests.support import criterion
 from tests.test_validate_result import _eng, _fenced
 
@@ -95,7 +96,8 @@ class _Run:
         return _fenced({"verdict": "PASS", "failed_criteria": [], "per_criterion": entries})
 
     def tag_last(self, stage):
-        self.calls[-1]["stage"] = stage
+        if self.calls:                                     # …as the port's: a validation may have made none
+            self.calls[-1]["stage"] = stage
 
 
 def _task(e, n: int):
@@ -280,6 +282,30 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
         ex.stop()
 
 
+@pytest.mark.parametrize("network", [None, {"mode": "off"}])
+def test_what_an_executor_made_unreadable_in_its_place_does_not_stop_its_copy(tmp_path, network):
+    """Copied by the agent's user, one `chmod 000` in the executor's own place failed every copy, and where places stand
+    apart its delivery was then never judged (critic over the judges slice). By root in the project's container, under
+    every switch: the copy stands, its owner kept, so a judge — the agent's user — works in it."""
+    if not (image := _image()):
+        pytest.skip("no docker image")
+    root = tmp_path / "w"
+    (base := root / "base").mkdir(parents=True)
+    (root / "state").mkdir()
+    ex = ContainerExecution("snap", image, None, str(root / "state"), str(base), "chmodprobe", network=network)
+    sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
+    try:
+        sh("mkdir -p d && echo x > f && echo y > d/g && chmod 000 f d", base)
+        (at := root / ".gfso-scratch-base" / "r" / "delivery").parent.mkdir(parents=True)
+        ex.copy_tree(str(base), str(at))
+        with pytest.raises(OSError, match="already exists"):     # …never INTO what stands there (critic 3)
+            ex.copy_tree(str(base), str(at))
+        assert sh("chmod u+rwX f d && cat f d/g && touch new && echo WROTE", at).stdout.split() == ["x", "y", "WROTE"]
+    finally:
+        sh("chmod -R u+rwX .", base)
+        ex.stop()
+
+
 class _Timed(_Run):
     """A run that only takes its time, logging when it stood where."""
 
@@ -337,6 +363,41 @@ def test_runs_that_could_not_copy_take_the_place_one_at_a_time(monkeypatch, plac
     assert not _overlap(*runs), runs
     assert out["verdict"] == "PASS"
     assert not list(at.parent.glob(".gfso-scratch-big/*/batch*/delivery"))      # …no partial copy left
+    e.stop()
+
+
+class _Apart(_Copies):
+    """The same failing copies where places stand apart (`ExecutionPort.apart`): a container's."""
+    apart = True
+
+
+def test_where_places_stand_apart_a_run_that_could_not_copy_is_not_judged_in_the_executors_place(monkeypatch, place):
+    """There the place is its executor's container and CLI state, and its tree a run could change (§10.3): no run, no
+    verdict — a validator that never started, said as such: no refusal booked, no stop of a place that answers, and
+    asked again on its own tier, not a bigger one (critics over this slice)."""
+    _, at = place
+    ex = _Apart([])
+    e, out = _timed(monkeypatch, at, ex)
+    assert not [x for x in ex.log if x[0] == "run"]
+    assert out["verdict"] is None and "could not be copied" in out["error"] and "nothing was validated" in out["error"]
+    assert not e.rejected_report(T.TaskId("big")) and e.paused() is None
+    assert _classify_no_verdict(e, T.TaskId("big"), out) == "no-verdict:never-ran"
+    e.stop()
+
+
+def test_where_places_stand_apart_a_root_judged_in_one_run_is_judged_in_a_copy(monkeypatch, place):
+    """A lone run copies only a node's clone on this host; a root's base, where places stand apart, too — else it would
+    find no copy and judge nothing (critic over this slice)."""
+    base, _ = place
+    ex = _Apart([], fail=())
+    monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
+    monkeypatch.setenv("GFSO_VALIDATION_BATCH", "0")
+    e = _eng()
+    _task(e, 1)
+    out = TL.validate_result(e, "big", workdir=str(base), _llm=_Timed(ex.log), _spawn=lambda: _Timed(ex.log))
+    runs = [x for x in ex.log if x[0] == "run"]
+    assert len(runs) == 1 and runs[0][1] != str(base) and runs[0][1].endswith("delivery")
+    assert out["verdict"] == "PASS"
     e.stop()
 
 

@@ -44,6 +44,10 @@ HOST_NET = "192.168.65.0/24"
 #: Docker's bridge, so a gateway taken over is the whole way out; and each closed project takes one of Docker's address
 #: pools, past which a start fails closed
 NETWORK = ("open", "allowlist", "off")
+#: what root holds in a project's container, where only the system's own commands run (every agent session runs in
+#: its place's): enough to copy a place whatever modes its executor left on it, owners kept so a judge can work in the
+#: copy. No agent process holds them: they run as the image's user, under no-new-privileges
+SYSTEM_CAPS = ("CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER")
 #: the gateway's address and port as a session inside an allowlisted project reaches it
 GATEWAY = "gateway"
 #: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes
@@ -263,6 +267,7 @@ class ContainerExecution(ExecutionPort):
     #: place's (`session`), and the project's runs the plan's probes, written by agents — with the state mounted they
     #: read every place's conversations under it (critic over the CLI state per place)
     holds_sessions = False
+    apart = True
 
     """`image` with an optional `env_file` (settings of the image, never a credential: the provider gives its own to its
     process, `_exec_argv`) and the CLI's `state` dir, holding `base`'s parent's four directories
@@ -332,7 +337,7 @@ class ContainerExecution(ExecutionPort):
         mounts = [a for src, ro in self._mounts() for a in (
             "--mount", f"type=bind,src={src},dst={self.to_inside(str(src))}" + (",readonly" if ro else ""))]
         return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
-                *self.way.run_args(),
+                *self.way.run_args(), *([] if self.holds_sessions else [a for c in SYSTEM_CAPS for a in ("--cap-add", c)]),
                 "--security-opt", "no-new-privileges",
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,
                 *(["--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}"] if self.holds_sessions else []),
@@ -413,7 +418,7 @@ class ContainerExecution(ExecutionPort):
     def which(self, program: str):
         return program                         # resolved on the container's PATH when the call starts
 
-    def _exec_argv(self, args, env, cwd, call: str) -> tuple[list[str], dict]:
+    def _exec_argv(self, args, env, cwd, call: str, root: bool = False) -> tuple[list[str], dict]:
         """`docker exec` of one call, and the environment of the `docker` client that runs it. What the call itself sets
         goes in, not the host's environment — its PATH is the container's own; a credential by its NAME alone, its value
         in the client's environment, so no process list on the host shows it (`docker exec -e NAME`) — given to this
@@ -424,7 +429,7 @@ class ContainerExecution(ExecutionPort):
         own = {k: v for k, v in (env or {}).items()
                if here.get(k) != v or k.startswith("ANTHROPIC_") or SECRET_ENV.search(k)}
         secret = {k: v for k, v in own.items() if SECRET_ENV.search(k)}
-        return (["docker", "exec", "-i", "-w", self._inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
+        return (["docker", "exec", "-i", *(["-u", "0"] if root else []), "-w", self._inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
                  *[a for k, v in own.items() for a in ("-e", k if k in secret else f"{k}={self.to_inside(v)}")],
                  self.container, "sh", "-c", f'echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh",
                  *map(self.to_inside, args)], {**here, **secret})
@@ -434,9 +439,9 @@ class ContainerExecution(ExecutionPort):
         argv, client = self._exec_argv(args, env, cwd, call)
         return _Call(LocalExecution().popen(argv, env=client, cwd=str(self.parent), **pipes), self, call)
 
-    def run(self, args, *, cwd, timeout, env=None):
+    def run(self, args, *, cwd, timeout, env=None, root: bool = False):
         call = uuid.uuid4().hex
-        argv, client = self._exec_argv(args, env, cwd, call)
+        argv, client = self._exec_argv(args, env, cwd, call, root)
         try:
             done = run(argv, timeout=timeout, cwd=str(self.parent), env=client, text=True,
                        encoding="utf-8", errors="replace")
@@ -451,7 +456,12 @@ class ContainerExecution(ExecutionPort):
 
     def copy_tree(self, src: str, dst: str) -> None:
         # inside, as the place was made: a symlink a session made in here is no link on the host (probe P5)
-        r = self.run(["cp", "-a", "--", src, dst], cwd=src, timeout=1800)
+        # …by root, in the project's container (`SYSTEM_CAPS`): as the agent, one unreadable file the executor left in
+        # its place failed every copy and kept its delivery from being judged (critic over the judges slice) — and only
+        # where nothing stands: into a directory or a link left there, `cp -a` copies INTO it (critic 3)
+        if os.path.lexists(dst):
+            raise OSError(f"{dst} already exists: a copy is made only where nothing stands")
+        r = self.run(["cp", "-a", "--", src, dst], cwd=src, timeout=1800, root=True)
         if r.returncode != 0:
             raise OSError(f"cp -a {src} {dst} failed in {self.container}: {r.stderr.strip()[-300:]}")
 
@@ -542,12 +552,11 @@ class PlaceContainer(ContainerExecution):
     project's container. Started on its session's first call, gone with its directory, its place or its project. Its
     temp is its node's own (`temp_of`): what the system lays for the node's sessions, no other node's reads — save that
     whatever works in the base shares the base's: every node with no git base, a root's sessions, a parent's consent
-    before its own place is made. Its CLI's state is its place's own, under its project's. NOT HELD YET: the sessions of
-    ONE place share its CLI state — a root's executor, judges and consents in the base, a node's validation that could
-    not copy the place in the node's clone — so one may read a conversation another kept there; a root's sessions — its
-    validation with no copy and its issuer's contact among them — write the base and its scratch; a node's validation
-    that could not copy the place cannot write its round; a tool-loop provider's issuer reads a node's inputs by its
-    shell only; a round's container stands until its round is pruned, a done node's until its directories go or the
+    before its own place is made. Its CLI's state is its place's own, under its project's. No judge shares a place with
+    its executor: a validation and an issuer's contact, a root's included, work each in a round of their own, on a copy,
+    and a delivery that could not be copied is not judged — the place down (`apart`). NOT HELD YET: the sessions that work in the base
+    share its CLI state — a root's executor and a parent's consent before its own place is made; a tool-loop provider's
+    issuer reads a node's inputs by its shell only; a round's container stands until its round is pruned, a done node's until its directories go or the
     project stops."""
 
     def __init__(self, project: ContainerExecution, rw: Path):
@@ -561,8 +570,8 @@ class PlaceContainer(ContainerExecution):
 
     def _mounts(self) -> list:
         """The base read-only unless the place is the base; a validation's round writable, its earlier rounds
-        read-only beneath it; a place writable with its validations' scratch — a validation that could not copy the
-        place runs in it, and a node's standing findings name probes there; the temp writable."""
+        read-only beneath it; a place writable, its validations' scratch read-only — a node's standing findings name
+        probes there; the temp writable."""
         tmp, system = self.parent / self.mounts[3], self.parent / self.mounts[4]
         if self.rw.parent.name.startswith(SCRATCH):
             own = [(self.rw.parent, True), (self.rw, False)]
@@ -571,11 +580,11 @@ class PlaceContainer(ContainerExecution):
         elif self.rw.is_relative_to(system):
             own = [(self.rw, False)]                     # the one directory of the system's a session is handed
         else:
-            # its validations' scratch read-only beside a node's clone: its rounds hold the probes the node's standing
-            # findings re-run, which the node's own executor must not rewrite (critic 3 over the session slice); a root
-            # works in the base, where a validation with no copy also runs, and keeps it writable
+            # its validations' scratch read-only beside its place, a root's base as a node's clone: its rounds hold the
+            # probes the node's standing findings re-run, which the node's own executor must not rewrite (critic 3 over
+            # the session slice); no judge works here (`apart`)
             (scratch := _scratch_of(self.rw)).mkdir(parents=True, exist_ok=True)
-            own = [(self.rw, False), (scratch, self.rw != self.base)]
+            own = [(self.rw, False), (scratch, True)]
         return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
 
     def temp_root(self):

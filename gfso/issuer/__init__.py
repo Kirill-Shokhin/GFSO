@@ -47,8 +47,8 @@ from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, materialize_inputs, shows, pinned_files, probe_id,
                                           probes_from as _checks_of, unrerunnable, with_named_files)
-from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, Register, RevisionReason, Signal,
-                             SignalData, Spec, Stage, State, TaskId, register_of, set_aside_of)
+from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
+                             Signal, SignalData, Spec, Stage, State, TaskId, register_of, set_aside_of)
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
@@ -148,9 +148,10 @@ CONTACT_ROUND = "issuer_"
 def _contact_place(where: str, ex):
     """Where an issuer's contact with a node lays its inputs and its copy of the place: a ROUND OF THAT NODE'S
     VALIDATION SCRATCH, as a validator's run is (`tools_llm`) — so its session reads the probes the node's standing
-    findings name in the earlier rounds and writes only its own, and no other node's session reaches it. Where no copy is
-    made (the base, a root's place) the temp its session holds, as a validator's lone run there."""
-    if _NODES not in str(where):
+    findings name in the earlier rounds and writes only its own, and no other node's session reaches it. A root's too
+    where places stand apart: in the base it worked in its executor's container and could change the delivery. On this
+    host, where no copy is made (the base, a root's place), the temp its session holds."""
+    if _NODES not in str(where) and not ex.apart:
         return tempfile.TemporaryDirectory(prefix="gfso-issuer-inputs-", dir=ex.temp_of(where), ignore_cleanup_errors=True)
     (beside := Path(where).parent / f".gfso-scratch-{Path(where).name}").mkdir(parents=True, exist_ok=True)
     return tempfile.TemporaryDirectory(prefix=CONTACT_ROUND, dir=str(beside), ignore_cleanup_errors=True)
@@ -1529,21 +1530,30 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
-    with (_contact_place(where, ex or LocalExecution()) if where else contextlib.nullcontext()) as tmp:
+    at_place = ex or LocalExecution()
+    with (_contact_place(where, at_place) if where else contextlib.nullcontext()) as tmp:
         laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp) if tmp else {}
         packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
         with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
             if where:
                 # …IN A COPY OF THE PLACE, as a validator's run is: the issuer rules on that delivery and must not be able
-                # to change it (§10.3); its answer reads as run in the place
-                with (snapshot(where, Path(tmp) / "place", ex or LocalExecution()) if _NODES in str(where)
-                      else contextlib.nullcontext()) as copy:
-                    at = copy or where
-                    text = llm.run_agent(PROMPT.read_text(encoding="utf-8"),
-                                         CONTACT.format(where=at, checkout=checkout_note(at))
-                                         + (swap(packet, where, copy) if copy else packet),
-                                         allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
-                    text = swap(text, copy, where) if copy else text
+                # to change it (§10.3); its answer reads as run in the place — and where places stand apart, never in
+                # the executor's place, its container and its CLI state (`ExecutionPort.apart`)
+                try:
+                    with (snapshot(where, Path(tmp) / "place", at_place) if _NODES in str(where) or at_place.apart
+                          else contextlib.nullcontext()) as copy:
+                        if not copy and at_place.apart:
+                            raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
+                        at = copy or where
+                        text = llm.run_agent(PROMPT.read_text(encoding="utf-8"),
+                                             CONTACT.format(where=at, checkout=checkout_note(at))
+                                             + (swap(packet, where, copy) if copy else packet),
+                                             allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
+                        text = swap(text, copy, where) if copy else text
+                except PlaceUnavailable as e:    # …the place down while copying: booked as a call that could not start
+                    llm.calls.append({"duration_ms": 0, "ended": "unavailable", "place": e.place, "error": str(e),
+                                      "at": time.time()})
+                    text = ""
             else:
                 # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
                 # directory refused every real call, so no machine issuer ever answered (hidden by fakes that

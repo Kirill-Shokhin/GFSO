@@ -7,6 +7,8 @@ node's scratch and reads the earlier ones, whose probes its standing findings na
 Each node holds its own temp, each place its own CLI state. Not held yet: see `PlaceContainer` — a root's judges
 write the base.
 """
+import contextlib
+import inspect
 import os
 import shutil
 import subprocess
@@ -20,8 +22,12 @@ import gfso.adapters.execution as E
 from gfso.adapters.llm import headless as H
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution, PlaceContainer
+import gfso.issuer as I
+from gfso.core.types import TaskId
 from gfso.issuer import CONTACT_ROUND, _contact_place
 from gfso.observe import _run
+from gfso.tools_llm import _observe_exact
+from tests.test_the_mode_decides_who_holds_what import _auto_goal
 
 IMAGE = "e3-linux-agent:2"
 
@@ -49,7 +55,8 @@ def test_a_session_writes_its_place_and_reads_the_base(project):
     with pytest.raises(ValueError):
         a._inside_cwd(str(work / ".gfso-nodes-ws/p/b"))
     root = project.session(str(project.base))
-    assert root._mounts() == [(project.base, False), (work / ".gfso-scratch-ws", False), (Path(root.temp_root()), False)]
+    assert root._mounts() == [(project.base, False), (work / ".gfso-scratch-ws", True), (Path(root.temp_root()), False)], \
+        "a root's validations' rounds read-only to its executor too: no judge works in the base"
 
 
 @pytest.mark.parametrize("scratch", [".gfso-scratch-ws", ".gfso-nodes-ws/p/.gfso-scratch-a"])
@@ -151,17 +158,18 @@ def test_the_systems_own_checks_stand_where_no_session_reaches(project):
 
 
 def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
-    """It reads the probes the node's standing findings name in the earlier rounds and writes only its own; a root's,
-    with no copy, lays its inputs in the temp its session holds (critic 2 over the session slice: moved to the system's
-    scratch, a root's contact could not read its inputs nor a node's run its findings)."""
+    """It reads the probes the node's standing findings name in the earlier rounds and writes only its own — a root's as
+    a node's (critic 2 over the session slice: moved to the system's scratch, a root's contact could not read its inputs
+    nor a node's run its findings)."""
     node = project.parent / ".gfso-nodes-ws/p/a"
     with _contact_place(str(node), project) as d:
         assert Path(d).parent == node.parent / ".gfso-scratch-a"
         c = project.session(d + "/place")
         assert c.rw == Path(d) and (node.parent / ".gfso-scratch-a", True) in c._mounts()
-    with _contact_place(str(project.base), project) as d:
-        assert Path(d).parent == Path(project.temp_of(str(project.base)))
-        assert any(Path(d).is_relative_to(src) for src, _ in project.session(str(project.base))._mounts())
+    with _contact_place(str(project.base), project) as d:    # a root's too: in the base it ran in its executor's container
+        assert Path(d).parent == project.parent / ".gfso-scratch-ws"
+        c = project.session(d + "/place")
+        assert c.rw == Path(d) and c is not project.session(str(project.base))
 
 
 def test_a_session_whose_directory_is_gone_is_stopped_and_one_started_by_its_project_stays_tracked(project, monkeypatch):
@@ -190,6 +198,9 @@ def test_the_systems_own_copies_and_checks_take_the_systems_scratch():
         text = (gfso / f).read_text(encoding="utf-8")
         for p in prefixes:
             assert f'.scratch("{p}", system=True)' in text and f'.scratch("{p}")' not in text, (f, p)
+    # …and the exact checks are handed no validation round to run in: there the delivery's own scripts shared the
+    # container a judge's copy followed into, and planted or rewrote its tree (critic 3 over the judges slice)
+    assert "scratch" not in inspect.signature(_observe_exact).parameters
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
@@ -245,7 +256,6 @@ def test_what_the_system_lays_for_a_session_goes_to_its_nodes_temp():
     gfso = Path(__file__).resolve().parents[1] / "gfso"
     packets = (gfso / "packets.py").read_text(encoding="utf-8")
     assert "temp_root()" not in packets and packets.count("node_temp(engine,") == 2 and "temp_of(workdir)" in packets
-    assert "ex.temp_of(where)" in (gfso / "issuer/__init__.py").read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
@@ -360,3 +370,33 @@ def test_live_a_check_the_system_runs_over_a_delivery_reaches_its_copy_alone(pro
             assert "WROTE-OWN" in str(got) and "SAW-B" not in str(got) and "WROTE-B" not in str(got), got
     finally:
         project.stop()
+
+
+@pytest.mark.parametrize("apart", [True, False])
+def test_an_issuer_does_not_rule_in_its_executors_place_where_places_stand_apart(tmp_path, apart):
+    """As a validator (`tools_llm`): with no copy of the place, where places stand apart the contact does not run in
+    the executor's container, its CLI state and its tree (§10.3); on this host it runs in the place, alone."""
+    e, _ = _auto_goal(tmp_path)
+    (where := tmp_path / "ws").mkdir(exist_ok=True)
+
+    class _NoCopy(E.LocalExecution):
+        def copy_tree(self, src, dst):
+            raise OSError("cp -a failed")
+    _NoCopy.apart = apart
+    ran = []
+
+    class _Llm:
+        stage_hint, calls, last_tool_calls = "", [], {}
+
+        def run_agent(self, *a, cwd=None, **kw):
+            ran.append(cwd)
+            return ""
+
+        def tag_last(self, stage):
+            pass
+    verbs = I.Verbs(llm=None, busy=lambda *a: contextlib.nullcontext(), review=None, refine=None,
+                    execution=lambda en: _NoCopy())
+    with pytest.raises(I.Unavailable):
+        I._ask(e, TaskId("root"), "escalation", "exec-1", I.MOVE_SCHEMA, "", verbs, _Llm(), where=str(where))
+    assert ran == ([] if apart else [str(where)])
+    e.stop()

@@ -203,6 +203,11 @@ class ExecutionPort(ABC):
     its conversations in. One server can then run every project's work isolated without a second server. A launch
     the place cannot start raises `PlaceUnavailable`."""
 
+    #: does each session stand in a place of its own (`session`)? There a judge never works in its executor's place —
+    #: a delivery it could not copy is not judged (§10.3); this host holds no place apart, and a judge without a copy
+    #: works in the place, alone
+    apart = False
+
     def to_outside(self, text: str) -> str:
         """`text` with every path spelled as this execution sees it respelled as the host does — a container's mount
         points; on this host, as it is."""

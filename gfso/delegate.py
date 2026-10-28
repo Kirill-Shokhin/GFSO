@@ -259,6 +259,8 @@ def _auto_validate_scope(engine, top_id: TaskId, agents: AgentRegistry, _llm=Non
         return _sign_scope(engine, top, verdicts, str(validator_id), sign)
     if refused_by_limit(out.get("stats")):
         return "no-verdict:limit"
+    if any(isinstance(c, dict) and c.get("ended") == "uncopied" for c in out.get("stats") or ()):
+        return "no-verdict:never-ran"                    # …a delivery not copied to be judged: no validator started
     return "no-verdict:torn" if torn_among(out.get("stats") or ()) else "no-verdict"   # as a node's (`_classify_no_verdict`)
 
 

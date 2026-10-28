@@ -32,7 +32,7 @@ from gfso.workspaces import execution_of
 from gfso.adapters.snapshots import snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import AgentId, LLMProviderPort, Mode, State, TaskId, Stage, Verdict, passed
+from gfso.core.types import AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
                                           with_part_observations)
@@ -455,6 +455,12 @@ def _validation_cap(task, graph) -> Optional[int]:
     if task.state.name == "VALIDATING" and (left := state_bound_left(task, project_now(graph).timestamp())) is not None:
         return max(60, int(left))
     return int(state_bound("VALIDATING")) or None
+
+
+def _no_start(llm, ended: str, place: str, error: str) -> str:
+    """A validator run that never started, booked as its provider books one (`headless._never_started`): no answer."""
+    llm.calls.append({"duration_ms": 0, "ended": ended, "place": place, "error": error, "at": time.time()})
+    return ""
 
 
 def _own_place(scratch: Optional[str], i: int) -> Optional[str]:
@@ -1179,7 +1185,7 @@ def _scope_cap(batch: list, graph) -> Optional[int]:
     return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
 
 
-def _observe_exact(engine: Engine, parts: list, workdir, scratch) -> dict:
+def _observe_exact(engine: Engine, parts: list, workdir) -> dict:
     """{(node, probe id): {matched, out, note, …}} — every `exact` pinned probe of the criteria left to validate, own and
     parts', run by the system itself ON THE DELIVERY: a fresh copy of it with the inputs laid from the contract
     (`observe.run_checks`), once per validation and before any validator run. The validator's copy was no such run —
@@ -1200,7 +1206,10 @@ def _observe_exact(engine: Engine, parts: list, workdir, scratch) -> dict:
     why = ("the delivery could not be copied" if shell else "no shell to run it in" if workdir else
            "the delivery has no place to copy")
     if shell:
-        with nullcontext(scratch) if scratch else ex.scratch("gfso-exact-", system=True) as tmp:
+        # …in the system's own scratch, never the validation's round: these run the delivery's own scripts, and in the
+        # round a judge's copy follows they shared its container and CLI state and could plant or rewrite its tree
+        # (critic 3 over the judges slice)
+        with ex.scratch("gfso-exact-", system=True) as tmp:
             (at := Path(tmp) / "exact").mkdir(parents=True, exist_ok=True)
             with snapshot(workdir, at / "delivery", ex) as tree:
                 if tree:
@@ -1242,12 +1251,22 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         # reads as run in the place.
         # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
         # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
-        with snapshot(workdir, Path(place) / "delivery", execution_of(engine), edits) if place else nullcontext() as tree:
-            if tree:
-                body = swap(body, workdir, tree) + snapshot_note(tree)
-            text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
-                                             timeout=cap())
-            return swap(text, tree, workdir) if tree else text
+        ex = execution_of(engine)
+        try:
+            with snapshot(workdir, Path(place) / "delivery", ex, edits) if place else nullcontext() as tree:
+                if not tree and ex.apart:
+                    # …never in the executor's place where places stand apart: its container, its CLI state, its tree
+                    # to change (§10.3). No validator started: not a report it failed to write nor a contract to
+                    # narrow, nor the place down (it answers) — the never-started run, asked again on its own tier and
+                    # then of a person (critics over this slice: read as the place down, the project flapped)
+                    return _no_start(client or llm, "uncopied", str(workdir), f"no copy of {workdir} to judge in")
+                if tree:
+                    body = swap(body, workdir, tree) + snapshot_note(tree)
+                text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
+                                                 timeout=cap())
+                return swap(text, tree, workdir) if tree else text
+        except PlaceUnavailable as e:        # …the place down while copying: the stop a call that could not start makes
+            return _no_start(client or llm, "unavailable", e.place, str(e))
 
     def _run_again_if_unread(batch, client=None, place=None) -> str:
         """A batch whose report does not parse is run once more, alone, inside this validation, in a fresh place of its
@@ -1262,9 +1281,10 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         if again:
             Path(again).mkdir(parents=True, exist_ok=True)
         return _run(batch, client, again)
-    # a lone run copies a node's own place, never a shared directory with no git base: that is the user's whole tree
-    # (a copy per validation was refused on one of 77k files), and nothing there is isolated to begin with
-    lone = scratch if workdir and _NODES in str(workdir) else None
+    # a lone run copies a node's own place; on this host never a shared directory with no git base: that is the user's
+    # whole tree (a copy per validation was refused on one of 77k files), and nothing there is isolated to begin with.
+    # Where places stand apart it copies whatever it judges, a root's base too: else it would run in its executor's
+    lone = scratch if workdir and (_NODES in str(workdir) or execution_of(engine).apart) else None
     return _run_each(llm, spawn if len(batches) > 1 else None, scratch if len(batches) > 1 else lone, batches,
                      _run_again_if_unread if len(batches) > 1 else _run)
 
@@ -1290,7 +1310,7 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     try:
         edits: list = []
         # the system's own run of the exact checks FIRST, on the delivery as delivered (`_observe_exact`)
-        if observed := _observe_exact(engine, parts, workdir, scratch):
+        if observed := _observe_exact(engine, parts, workdir):
             _cb(f"{top_id}: the system ran {len(observed)} exact pinned check(s) on a fresh copy of the delivery — "
                 f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
                 f"{sum('matched' not in o for o in observed.values())} could not be run")
