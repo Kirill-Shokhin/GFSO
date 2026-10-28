@@ -124,9 +124,9 @@ class Place:
     def Read(self, file_path, offset=None, limit=None):
         """The file's lines, numbered, a window of them at most."""
         f = self.path(file_path)
-        if f.is_dir():
-            return f"Error: {file_path} is a directory"
-        lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+        if (text := self.exec.files.read_text(str(f))) is None:
+            return f"Error: {file_path} {'is a directory' if self.exec.files.is_dir(str(f)) else 'does not exist'}"
+        lines = text.splitlines()
         start = max(1, int(offset or 1))
         part = lines[start - 1:start - 1 + int(limit or READ_LINES)]
         body = "\n".join(f"{n:6}\t{line[:LINE_CAP]}" for n, line in enumerate(part, start))
@@ -136,15 +136,15 @@ class Place:
     def Write(self, file_path, content):
         """The file written whole."""
         f = self.path(file_path, write=True)
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(content, encoding="utf-8", newline="")
+        self.exec.files.write_bytes(str(f), content.encode("utf-8"))
         return f"wrote {len(content)} characters to {file_path}"
 
     def Edit(self, file_path, old_string, new_string, replace_all=False):
         """One occurrence replaced — or every one, asked so; none or several where one was meant is an error."""
         f = self.path(file_path, write=True)
-        with open(f, encoding="utf-8", newline="") as h:          # as written: a CRLF file stays CRLF
-            text = h.read()
+        if (raw := self.exec.files.read_bytes(str(f))) is None:
+            return f"Error: {file_path} does not exist"
+        text = raw.decode("utf-8")                                 # as written: a CRLF file stays CRLF
         if "\r\n" in text and "\r\n" not in old_string:
             old_string, new_string = (s.replace("\n", "\r\n") for s in (old_string, new_string))
         n = text.count(old_string)
@@ -152,8 +152,8 @@ class Place:
             return f"Error: old_string not found in {file_path}"
         if n > 1 and not replace_all:
             return f"Error: old_string occurs {n} times in {file_path} — give more context or set replace_all"
-        f.write_text(text.replace(old_string, new_string) if replace_all else text.replace(old_string, new_string, 1),
-                     encoding="utf-8", newline="")
+        self.exec.files.write_bytes(str(f), (text.replace(old_string, new_string) if replace_all
+                                       else text.replace(old_string, new_string, 1)).encode("utf-8"))
         return f"replaced {n if replace_all else 1} occurrence(s) in {file_path}"
 
     def Bash(self, command, timeout=None):
@@ -172,32 +172,32 @@ class Place:
         out = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
         return _capped(out.strip() + f"\n[exit code {r.returncode}]")
 
-    def _walk(self, base: Path, pattern: str):
-        """Files under `base` matching `pattern`, newest first — every one inside the place: an absolute pattern is read
-        from its own fixed head, and one climbing out (`..`) finds nothing outside."""
+    def _found(self, base: Path, pattern: str, rx: str = "", flags: str = "") -> list:
+        """Files under `base` matching `pattern`, newest first — with `rx`, [file, [[line number, line]]] of those
+        whose lines match it, `base` itself where it is a file — found by one run where the place is (`_FIND`), every
+        one inside the place: an absolute pattern is read from its own fixed head, and one climbing out (`..`) finds
+        nothing outside."""
         if Path(pattern).is_absolute():
             parts = Path(pattern).parts
             fixed = next((i for i, x in enumerate(parts) if any(c in x for c in "*?[")), len(parts))
             base, pattern = self.path(str(Path(*parts[:fixed]))), str(Path(*parts[fixed:])) if fixed < len(parts) else "*"
-        found = (p.resolve() for p in base.glob(pattern))
-        return sorted((p for p in found if p.is_file() and ".git" not in p.parts and self._inside(p)),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
+        r = self.exec.run([self.exec.python, "-c", _FIND, str(base), pattern, rx, flags, *map(str, self.roots)],
+                          cwd=str(self.cwd), timeout=SHELL_TIMEOUT_S)
+        if r.returncode != 0:
+            raise OSError((r.stderr or "").strip()[-300:])
+        return json.loads(r.stdout)
 
     def Glob(self, pattern, path=None):
         """Files matching, newest first, a listing's worth at most."""
-        found = self._walk(self.path(path or "."), pattern)
-        shown = "\n".join(str(p) for p in found[:LISTED])
+        found = self._found(self.path(path or "."), pattern)
+        shown = "\n".join(found[:LISTED])
         return (shown + (f"\n… {len(found) - LISTED} more" if len(found) > LISTED else "")) or "no files match"
 
     def Grep(self, pattern, path=None, glob=None, output_mode="files_with_matches", **kw):
         """Files, lines or counts matching a regular expression; binary and huge files skipped."""
-        rx = re.compile(pattern, re.IGNORECASE if kw.get("-i") else 0)
-        base = self.path(path or ".")
+        re.compile(pattern)                       # …a pattern that does not compile is the model's error, said here
         hits = []
-        for f in [base] if base.is_file() else self._walk(base, glob or "**/*"):
-            matched = _matching(f, rx)
-            if not matched:
-                continue
+        for f, matched in self._found(self.path(path or "."), glob or "**/*", pattern, "i" if kw.get("-i") else ""):
             if output_mode == "content":
                 hits += [f"{f}:{n}:{l[:LINE_CAP]}" for n, l in matched]
             else:
@@ -219,14 +219,32 @@ class Place:
             return f"Error: {type(e).__name__}: {e}"
 
 
-def _matching(f: Path, rx) -> list:
+#: Glob and Grep where the place is (`Place._found`), over argv: base, pattern, regex ("" for Glob), flags, roots
+_FIND = r'''
+import json, re, sys
+from pathlib import Path
+base, pattern, rx, flags = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+roots = [Path(r).resolve() for r in sys.argv[5:]]
+if rx and base.is_file():
+    found = [base]
+else:
+    found = sorted((p for p in (q.resolve() for q in base.glob(pattern)) if p.is_file() and ".git" not in p.parts
+                    and any(p == r or r in p.parents for r in roots)), key=lambda p: p.stat().st_mtime, reverse=True)
+if not rx:
+    print(json.dumps([str(p) for p in found]))
+    sys.exit()
+rx, out = re.compile(rx, re.IGNORECASE if "i" in flags else 0), []
+for f in found:
     try:
         if f.stat().st_size > 2_000_000 or b"\0" in f.open("rb").read(4096):
-            return []
+            continue
         lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return []                                  # a file gone or unreadable mid-walk is simply not a match
-    return [(n, l) for n, l in enumerate(lines, 1) if rx.search(l)]
+        continue                                   # a file gone or unreadable mid-walk is simply not a match
+    if hits := [(n, l) for n, l in enumerate(lines, 1) if rx.search(l)]:
+        out.append([str(f), hits])
+print(json.dumps(out))
+'''
 
 
 class ToolLoop:

@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 import gfso.adapters.llm.headless as _headless
+from gfso.adapters.execution import LocalExecution
+from gfso.core.types import HostFiles
 from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.adapters.llm.headless import _tool_use_name, ClaudeCodeProvider
@@ -995,14 +997,15 @@ def test_an_unreadable_delivery_accuses_nobody(monkeypatch, tmp_path):
     comparison exists to prevent, inverted (found while naming the swallowed failures, 2026-09-02).
     """
     (tmp_path / "already_here.py").write_text("x = 1", encoding="utf-8")
-    _real = Path.iterdir
-    monkeypatch.setattr(Path, "iterdir",
-                        lambda self: (_ for _ in ()).throw(OSError("gone"))
-                        if str(self) == str(tmp_path) else _real(self))
-    scratch, before = TL._validation_place("n1", str(tmp_path))
+    class _Unreadable(HostFiles):
+        def listdir(self, path):
+            if str(path) == str(tmp_path):
+                raise OSError("gone")
+            return super().listdir(path)
+    (ex := LocalExecution()).files = _Unreadable()
+    scratch, before = TL._validation_place("n1", str(tmp_path), ex)
     assert before is None, "an unreadable pre-image is UNKNOWN, not empty"
 
-    monkeypatch.undo()
     out: dict = {}
     TL._strays_left_behind(None, "n1", str(tmp_path), None, out, lambda *_: None)
     assert "strays" not in out and not out, "with no pre-image, the honest answer about strays is silence"

@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Union
 
-from gfso.core.types import (
+from gfso.core.types import (HOST, 
     TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping, DepEdge, seams_apart,
     SignalData, Signal, Predictability, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS, Verdict, State,
     RevisionReason, Register, register_of, settled_positive, passed,
@@ -2621,7 +2621,7 @@ def probe_inputs(engine: Engine, task_id: str) -> dict:
     under = [(c.name, c) for c in t.spec.criteria] + [
         (name, pc) for name, pcs in engine.parts_procedure(TaskId(task_id)).items() for pc in pcs]
     try:
-        dirs = materialize_inputs([c for _, c in under], base)
+        dirs = materialize_inputs([c for _, c in under], base, HOST)     # the state directory: this host's
     except ValueError as ex:
         return {"error": str(ex)}
     if not dirs:

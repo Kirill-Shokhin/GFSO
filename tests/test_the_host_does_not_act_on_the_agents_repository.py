@@ -84,7 +84,7 @@ def test_a_place_deleted_by_hand_is_made_again_from_its_branch(tmp_path):
     W.ensure(base, b, "gfso/p/b", base)
     (a / "a.c").write_text("A\n")
     W.commit_all(base, a, "gfso: a delivery", "exec-1", branch="gfso/p/a")
-    W.remove_tree(a)
+    LocalExecution().remove_tree(a)
     assert W.ensure(base, a, "gfso/p/a", base)
     assert (a / "a.c").read_text() == "A\n" and W.is_clone(b)
 
@@ -137,7 +137,7 @@ def test_a_worktree_place_deleted_by_hand_is_made_again_and_delivers(tmp_path):
     base, place = _repo(tmp_path / "ws"), tmp_path / "a"
     _legacy(base, place, "gfso/p/a")
     _git(base, "worktree", "lock", str(place))
-    W.remove_tree(place)
+    LocalExecution().remove_tree(place)
     assert W.ensure(base, place, "gfso/p/a", base) and W.is_clone(place)
     (place / "a.c").write_text("A\n")
     W.commit_all(base, place, "gfso: a delivery", "exec-1", branch="gfso/p/a")

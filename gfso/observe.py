@@ -64,7 +64,7 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
     if not (tree and probes and (bash := ex.shell())):
         return []
     try:
-        dirs = materialize_inputs({id(c): c for _, c, _ in probes}.values(), Path(tmp) / "inputs")
+        dirs = materialize_inputs({id(c): c for _, c, _ in probes}.values(), Path(tmp) / "inputs", ex.files)
     except ValueError:
         return []
     out, ran, t0 = [], {}, time.monotonic()

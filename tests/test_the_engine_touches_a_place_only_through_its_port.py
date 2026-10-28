@@ -1,0 +1,143 @@
+"""The engine touches a place's files only through its execution's port.
+
+A node's place, a judge's copy, a validation's round, a node's temp and the system's own copies are the execution's
+(`ExecutionPort`): where it runs them in a container they are its files, read and written there by the system — and
+the slice that moves them into Docker's volumes leaves them nowhere on this host. A host call over one of them reads a
+directory an agent wrote with the host's eyes (a link it made is followed on the host), or reads nothing once the place
+is gone from the host — both silent. So in the modules that work over places no direct file call stands but those
+listed below, each of which touches the base (the user's repository, the host's until it moves too) or the host's own
+state, never a place.
+"""
+import ast
+from pathlib import Path
+
+GFSO = Path(__file__).resolve().parents[1] / "gfso"
+#: the modules that work over places
+RADIUS = ("workspaces.py", "adapters/worktrees.py", "adapters/snapshots.py", "tools_llm.py", "delegate.py",
+          "issuer/__init__.py", "packets.py", "core/protocol/procedure.py", "adapters/execution.py",
+          "adapters/llm/toolloop.py", "adapters/llm/conformance.py", "roster.py", "observe.py", "sessions.py")
+#: a path's own methods that touch the file system, and how many positional arguments the path's form takes — the
+#: port's methods of the same name take the path first (`ex.is_dir(p)`), which is what tells the two apart
+PATH_CALLS = {**dict.fromkeys(("is_dir", "is_file", "exists", "iterdir", "read_text", "read_bytes", "mkdir", "unlink",
+                               "stat", "lstat", "rmdir", "touch", "is_symlink"), 0),
+              **dict.fromkeys(("write_text", "write_bytes"), 1), **dict.fromkeys(("glob", "rglob"), None)}
+MODULE_CALLS = {"shutil": None, "tempfile": None,
+                "os": {"listdir", "scandir", "walk", "remove", "unlink", "mkdir", "makedirs", "rmdir", "chmod", "stat",
+                       "lstat", "rename", "replace", "readlink", "symlink"},
+                "os.path": {"exists", "isdir", "isfile", "lexists", "islink", "getsize", "getmtime"}}
+
+#: (module, function, call) -> why it touches no place
+HOSTS_OWN = {
+    ("workspaces.py", "stands", "Path(where).is_dir()"): "a directory that is no node's place is a base",
+    ("workspaces.py", "made", "HOST.is_dir(place)"): "the legacy record's fallback, a host directory until V2",
+    ("core/protocol/procedure.py", "_gone", "HOST.exists(path)"): "a path in no round: the base or outside the places",
+    ("core/protocol/procedure.py", "_gone", "HOST.exists(str(Path(path).parent))"): "a path in no round, as above",
+    ("adapters/worktrees.py", "is_repo_top", "shutil.which('git')"): "this host's git",
+    ("adapters/worktrees.py", "is_repo_top", "Path(base).is_dir()"): "the base",
+    ("adapters/worktrees.py", "_start", "HOST.read_bytes(str(Path(base) / '.git' / 'info' / name))"): "the base",
+    ("tools_llm.py", "_keep_rejected_report", "d.mkdir(parents=True, exist_ok=True)"): "the server's state",
+    ("tools_llm.py", "_keep_rejected_report",
+     "f.write_text('# refused as a verdict: ' + defects + '\\n\\n' + text, encoding='utf-8')"): "the server's state",
+    ("tools_llm.py", "_validator_texts",
+     "(Path(__file__).parent / 'mcp' / 'prompts' / 'validator.md').read_text(encoding='utf-8')"): "the product's prompt",
+    ("tools_llm.py", "_named_documents", "Path(tok).is_file()"): "a name in the user's request; only one in a base is read",
+    ("tools_llm.py", "_named_documents", "p.is_file()"): "a file of a base",
+    ("tools_llm.py", "_named_documents", "p.stat()"): "a file of a base",
+    ("tools_llm.py", "_named_documents", "p.read_bytes()"): "a file of a base",
+    ("tools_llm.py", "_work_places", "Path(w).is_dir()"): "a role's workdir: a base",
+    ("delegate.py", "_oracle_workdir", "Path(vcfg['oracle_map']).read_text(encoding='utf-8')"): "the issuer's oracle map",
+    ("delegate.py", "_checker_validate", "Path(vcfg['oracle_map']).read_text(encoding='utf-8')"): "the issuer's oracle map",
+    ("delegate.py", "_checker_validate", "Path(entry['canonical']).read_text(encoding='utf-8')"): "the hidden tests",
+    ("issuer/__init__.py", "_ask", "PROMPT.read_text(encoding='utf-8')"): "the product's prompt",
+    ("sessions.py", "_spawn", "(_PROMPTS / prompt).read_text(encoding='utf-8')"): "the product's prompt",
+    ("roster.py", "_put_atomically", "tmp.write_text(text, encoding='utf-8')"): "the roster file",
+    ("roster.py", "_put_atomically", "tmp.unlink(missing_ok=True)"): "the roster file",
+    ("roster.py", "_put_atomically", "os.replace(tmp, path)"): "the roster file",
+    ("roster.py", "missing_workdir", "Path(wd).is_dir()"): "a role's workdir: a base",
+    ("roster.py", "AgentRegistry._load", "self._path.stat()"): "the roster file",
+    ("roster.py", "AgentRegistry._load", "self._path.read_text(encoding='utf-8')"): "the roster file",
+    ("roster.py", "AgentRegistry.register", "Path(workdir).is_dir()"): "a role's workdir: a base",
+    ("roster.py", "AgentRegistry._write", "self._path.parent.mkdir(parents=True, exist_ok=True)"): "the roster file",
+    ("roster.py", "AgentRegistry._write", "lock.stat()"): "the roster's lock",
+    ("roster.py", "AgentRegistry._write", "lock.unlink(missing_ok=True)"): "the roster's lock",
+    ("roster.py", "AgentRegistry._write", "self._path.stat()"): "the roster file",
+    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.is_file()"): "a conversation kept in the CLI's state",
+    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.read_text(encoding='utf-8')"): "a conversation kept in the state",
+    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.parent.mkdir(parents=True, exist_ok=True)"): "the CLI's state",
+    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.write_text(json.dumps(msgs), encoding='utf-8')"): "the state",
+    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.unlink(missing_ok=True)"): "a conversation kept in the state",
+    ("adapters/llm/toolloop.py", "_open_trace", "Path(tdir).mkdir(parents=True, exist_ok=True)"): "the audit trace",
+    ("adapters/llm/toolloop.py", "_open_trace", "open(Path(tdir) / f\"{time.strftime('%Y%m%dT%H%M%S')}-"
+     "{uuid.uuid4().hex[:8]}-{tag}.jsonl\", 'w', encoding='utf-8', buffering=1)"): "the audit trace",
+    ("adapters/execution.py", "_env_names", "Path(env_file).read_text(encoding='utf-8')"): "the operator's env-file",
+    ("adapters/execution.py", "scrubs", "shutil.which('bwrap')"): "this host's bubblewrap",
+    ("adapters/execution.py", "LocalExecution.which", "shutil.which(program)"): "this host's PATH",
+    ("adapters/execution.py", "LocalExecution.temp_root", "tempfile.gettempdir()"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.copy_tree", "shutil.copytree(src, dst, symlinks=True)"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.remove_tree", "os.path.lexists(path)"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.remove_tree", "os.walk(path)"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.remove_tree", "os.path.islink((p := os.path.join(d, x)))"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.remove_tree",
+     "shutil.rmtree(path, onerror=lambda fn, p, _: (_own(p), fn(p)))"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.shell", "shutil.which('git')"): "this host's git",
+    ("adapters/execution.py", "LocalExecution.shell",
+     "(b := (Path(git).resolve().parents[1] / 'bin' / 'bash.exe')).is_file()"): "this host's bash",
+    ("adapters/execution.py", "LocalExecution.shell", "shutil.which('bash')"): "this host's bash",
+    ("adapters/execution.py", "_own", "os.chmod(path, os.lstat(path).st_mode | stat.S_IRWXU)"): "this host IS the place",
+    ("adapters/execution.py", "_own", "os.lstat(path)"): "this host IS the place",
+    ("adapters/execution.py", "end_leftovers", "shutil.which('docker')"): "this host's docker client",
+    ("adapters/execution.py", "WayOut.open", "self.log().parent.mkdir(parents=True, exist_ok=True)"): "the gateway's log",
+    ("adapters/execution.py", "Door._start", "self.log().parent.mkdir(parents=True, exist_ok=True)"): "the door's log",
+    ("adapters/execution.py", "ContainerExecution.remove_tree", "shutil.rmtree(s.state, ignore_errors=True)"): "the CLI's state",
+    # …the bind mounts' sources: a mount stands on a host directory until the places move into volumes
+    ("adapters/execution.py", "ContainerExecution.start", "d.mkdir(parents=True, exist_ok=True)"): "a mount's source",
+    ("adapters/execution.py", "ContainerExecution.temp_root",
+     "(d := (self.parent / self.mounts[3])).mkdir(parents=True, exist_ok=True)"): "a mount's source",
+    ("adapters/execution.py", "ContainerExecution.temp_of", "d.mkdir(parents=True, exist_ok=True)"): "a mount's source",
+    ("adapters/execution.py", "PlaceContainer._mounts",
+     "(scratch := _scratch_of(self.rw)).mkdir(parents=True, exist_ok=True)"): "a mount's source",
+}
+
+
+def _touches(path: Path, module: str) -> set:
+    """(module, function, call) of every direct file call in `path`."""
+    out, stack = set(), []
+
+    class _V(ast.NodeVisitor):
+        def generic_visit(self, n):
+            named = isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            stack.append(n.name) if named else None
+            if isinstance(n, ast.Call) and _direct(n.func, len(n.args)):
+                out.add((module, ".".join(stack), ast.unparse(n)))
+            super().generic_visit(n)
+            stack.pop() if named else None
+    _V().visit(ast.parse(path.read_text(encoding="utf-8-sig")))
+    return out
+
+
+def _direct(f, positional: int) -> bool:
+    if isinstance(f, ast.Name):
+        return f.id == "open"
+    if not isinstance(f, ast.Attribute):
+        return False
+    if (mod := ast.unparse(f.value)) == "HOST":
+        return True                                   # …this host's files by name: never a place's
+    if mod in MODULE_CALLS:
+        return MODULE_CALLS[mod] is None or f.attr in MODULE_CALLS[mod]
+    return f.attr in PATH_CALLS and PATH_CALLS[f.attr] in (None, positional)
+
+
+def test_no_direct_file_call_over_a_place_in_the_modules_that_work_over_places():
+    found = set().union(*(_touches(GFSO / m, m) for m in RADIUS))
+    stray = sorted(found - set(HOSTS_OWN))
+    assert not stray, ("a direct file call where places are worked over — go through the execution's port "
+                       f"(`ExecutionPort.read_bytes` & co.), or list it with why it is no place's: {stray}")
+    assert not set(HOSTS_OWN) - found, f"listed but no longer called: {sorted(set(HOSTS_OWN) - found)}"
+
+
+def test_the_guard_sees_a_host_call_and_passes_the_port(tmp_path):
+    p = tmp_path / "m.py"
+    p.write_text("def f(ex, place):\n    Path(place).is_dir()\n    ex.is_dir(place)\n    ex.write_bytes(place, b'')\n"
+                 "    (Path(place) / 'x').write_bytes(b'')\n    os.listdir(place)\n    open(place)\n    HOST.is_dir(place)\n")
+    assert {c for _, _, c in _touches(p, "m.py")} == {"Path(place).is_dir()", "(Path(place) / 'x').write_bytes(b'')",
+                                                       "os.listdir(place)", "open(place)", "HOST.is_dir(place)"}

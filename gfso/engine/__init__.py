@@ -44,7 +44,8 @@ from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
                        OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside)
-from .findings import disputed_findings, ever_pinned, released, regression as standing_regression, standing_rulings
+from .findings import (disputed_findings, ever_pinned, released, regression as standing_regression, round_stands,
+                       standing_rulings)
 from .frontier import Frontier
 from .claims import Claims
 from .joins import Joins
@@ -1014,7 +1015,8 @@ class Engine:
             gaps = unaccounted_for(task, per_criterion, by_hand, validator_id,
                                    self.regression_probes(task_id),
                                    internal=not self._graph.is_public(task), dirs=inputs_dirs,
-                                   parts=self.parts_procedure(task_id), delivery=workdir)
+                                   parts=self.parts_procedure(task_id), delivery=workdir,
+                                   standing=round_stands(self._graph))
             for _c in unrun_probes(per_criterion, tools_used):
                 gaps.setdefault(_c, []).append(
                     "its probe names a command, and this validation run's tool ledger records no shell "
@@ -2947,7 +2949,8 @@ class Engine:
                 if str(e.get("criterion")) in known
                 and not verdict_report_defects([str(e.get("criterion"))], Verdict.PASS, [e], [],
                                                require_probe=True)
-                and not unaccounted_for(task, [e], False, None, regression, parts=parts)
+                and not unaccounted_for(task, [e], False, None, regression, parts=parts,
+                                        standing=round_stands(self._graph))
                 and not unrun_probes([e], e["reused_from_refused"].get("tools_used"))]
 
 
@@ -3053,7 +3056,9 @@ class Engine:
         lay, standing = self.layable(task_id), self.regression_probes(task_id)
         now = {probe_id(c.name, p) for c in task.spec.criteria for p in (c.check or ())} if task else set()
         retired = self.retired_findings(task_id)
-        dead = [(c, p) for c, ps in standing.items() for p in ps if unrerunnable(p, lay, rec.get("workdir"))]
+        up = round_stands(self._graph)
+        dead = [(c, p) for c, ps in standing.items() for p in ps
+                if unrerunnable(p, lay, rec.get("workdir"), standing=up)]
         gone = {**{w: c for w, c in ever_pinned(entries, task).items() if w not in now},
                 **{str(r["id"]): str(r.get("command") or "") for r in retired},
                 **{str(p.get("id")): str(p.get("command") or "") for _, p in dead}}

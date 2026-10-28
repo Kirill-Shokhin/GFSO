@@ -28,6 +28,9 @@ from gfso.packets import _validator_packet
 from gfso.tools_llm import _VALIDATOR_SCHEMA, _listed_failed, _report_contradicts_itself
 from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, criterion, make_engine, REGISTER
 
+#: every round stands: these findings name none the system removed
+_STANDS = lambda r: True
+
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
           "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
 ESC = "Escape decoding"
@@ -210,7 +213,8 @@ def test_a_criterion_short_on_another_count_is_refused_for_everything_it_is_shor
     criterion does not stand, and the behaviour named past the procedure is named in its refusal as before."""
     e = engine(SWEEP)
     regression = {ESC: [{"id": f"{ESC}#deadbeef", "command": "printf '\\0101' | ./echo -e"}]}
-    gaps = unaccounted_for(e.graph.get_task(TaskId("root")), [_entry(_ran(SWEEP))], False, "validator", regression)
+    gaps = unaccounted_for(e.graph.get_task(TaskId("root")), [_entry(_ran(SWEEP))], False, "validator", regression,
+                           standing=_STANDS)
     assert NAMED[1] in gaps[ESC] and any("REFUTED" in g for g in gaps[ESC]), gaps
 
 

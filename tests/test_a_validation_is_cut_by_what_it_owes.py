@@ -31,8 +31,10 @@ _SHAPE = {"F": (_POOL[:22], 24), "C": (_POOL[4:], 12), "B": (_POOL[10:23], 0), "
 
 
 class _Owed:
-    """The four reads `owed_probes` and the packet make — the measured root's procedure, nothing else."""
+    """The reads `owed_probes` and the packet make — the measured root's procedure, nothing else, and an empty record of
+    the rounds standing (its findings name none)."""
     def __init__(self):
+        self.graph = SimpleNamespace(setting=lambda k: None, store_setting=lambda k, v: None)
         self.crits = [Criteria(n, f"{n} holds", check=(Probe(f"{n} own", f"own {n}", "ok"),)) for n in _SHAPE]
 
     def parts_procedure(self, _):

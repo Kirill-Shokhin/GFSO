@@ -29,6 +29,9 @@ from gfso.core.protocol.procedure import (claim_digest, laid, orphaned_regressio
 from gfso.core.types import AgentId, Criteria, Probe, Signal, SignalData, Spec, TaskId, register_of
 from tests.support import REGISTER, UNMODELLED_FAULT, criterion, make_engine, DENIAL_ENTRY
 
+#: every round stands: these findings name none the system removed
+_STANDS = lambda r: True
+
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent", "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
 
 
@@ -190,8 +193,8 @@ def test_a_once_refuting_probe_cited_by_its_hash_counts_as_re_run():
     so it reads the bare hash the same way — else a rework round refuses what the first round accepted."""
     reg = {"exits_zero": [{"id": "exits_zero#1a2b3c4d", "command": "run it"}]}
     ran = [{"criterion": "exits_zero", "verdict": "pass", "probe": [{"id": "1a2b3c4d", "command": "run  it"}]}]
-    assert unrun_regression(reg, ran) == {}
-    assert unrun_regression(reg, [dict(ran[0], probe=[{"id": "ffffffff", "command": "other"}])])
+    assert unrun_regression(reg, ran, standing=_STANDS) == {}
+    assert unrun_regression(reg, [dict(ran[0], probe=[{"id": "ffffffff", "command": "other"}])], standing=_STANDS)
 
 
 def test_a_hash_from_another_criterion_does_not_count_as_this_ones_probe():
@@ -740,8 +743,8 @@ def test_a_finding_over_a_withdrawn_probe_s_inputs_is_shown_not_demanded(tmp_pat
     would stand on nothing the current contract faults (§14.4 (ii))."""
     reg = {"conf": [{"id": "conf#aa", "command": "x", "as_run": "python -m jp {inputs:conf#gone}/deep.json"}]}
     ran = [{"criterion": "conf", "verdict": "pass", "probe": [{"command": "other", "expect": "ok"}]}]
-    assert unrun_regression(reg, ran, layable={"conf#here"}) == {}
-    assert unrun_regression(reg, ran, layable={"conf#gone"}) == {"conf": ["conf#aa"]}
+    assert unrun_regression(reg, ran, layable={"conf#here"}, standing=_STANDS) == {}
+    assert unrun_regression(reg, ran, layable={"conf#gone"}, standing=_STANDS) == {"conf": ["conf#aa"]}
 
 
 def test_two_probes_of_one_criterion_on_one_command_are_refused_at_admission():

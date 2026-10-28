@@ -32,14 +32,14 @@ from gfso.core.graph.model import generation_of_task
 from gfso.core.protocol.procedure import criterionless, probes_from as _checks_of
 from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Verdict, Action, Mode, PlaceUnavailable,
-                             SPAWNABLE_ACTIONS, passed, register_of)
+                             SPAWNABLE_ACTIONS, files_at, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
                           split_has_a_mover)
 from gfso.adapters.llm.chat import answers, is_address
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what_stopped
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
-from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace,
-                             clear_workspaces, execution_of, join_whole, node_workspace, session_scope)
+from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, clear_workspaces, execution_of,
+                             join_whole, made, node_workspace, session_scope, stands)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
 from gfso.sessions import run_consent, run_executor, run_scope_executor
 
@@ -95,7 +95,8 @@ def _contact_place(engine, agents, node) -> "str | None":
     can run: a directory that is not there (the run returned nothing and the question waited forever), or a
     transport without tool-using agent runs (`GFSO_PROVIDER=generic`). None asks as before contact existed."""
     where = validator_workdir(engine, agents, node)
-    return where if where and provider() != "generic" and cheap_to_ask(where) and Path(where).is_dir() else None
+    return (where if where and provider() != "generic" and cheap_to_ask(where) and stands(engine, agents, where)
+            else None)
 
 
 def _in_flight_as(name: str, fn):
@@ -290,13 +291,12 @@ def _checker_validate(engine, task_id: TaskId, vcfg: dict, workdir: str | None =
     if not entry:
         return {"verdict": None, "note": f"no hidden-test oracle registered for project {project}"}
     crits = entry["criteria"]
-    sol = Path(workdir or entry["workdir"]) / "solution.py"      # the node's own delivery, where it has a place
-    if not sol.exists():
+    sol = str(Path(workdir or entry["workdir"]) / "solution.py")      # the node's own delivery, where it has a place
+    if (delivered := files_at(sol).read_text(sol)) is None:
         return {"verdict": Verdict.FAIL, "failed_criteria": list(crits),
                 "per_criterion": [{"criterion": c, "verdict": "fail",
                                    "evidence": "no solution.py delivered"} for c in crits]}
-    results = evaluate_unittest(sol.read_text(encoding="utf-8"),
-                               Path(entry["canonical"]).read_text(encoding="utf-8"))
+    results = evaluate_unittest(delivered, Path(entry["canonical"]).read_text(encoding="utf-8"))
     by = {r.check_name: r for r in results}
     per, failed = [], []
     for c in crits:
@@ -707,7 +707,7 @@ class Dispatcher:
         self._retry_at: dict[str, tuple[float, float]] = {}   # a refused root join: (next try, its delay)
         # a root that has a place owes a join, and is complete only once it landed (`Joins.root_landed`)
         self._engine.joins.set_join_owed(lambda t: (w := _place_of(self._engine, self._agents, t)) is not None
-                                   and Path(w[1]).is_dir())
+                                   and made(self._engine, w[1]))
         # …and the place the project runs in, probed while it is down (`Engine.lift_the_system_stop`)
         self._engine.probe_the_place_with(lambda place: (answers(place) if is_address(place)
                                                          else execution_of(self._engine, self._agents).unavailable()))
@@ -1808,7 +1808,7 @@ class Dispatcher:
             # HERE, before the thread starts, so no reader sees it DONE with its join neither running nor done — and
             # asked without git (a place exists only in a git base), which the signal path never waits on
             t = self._engine.graph.get_task(tid)
-            if (w := _place_of(self._engine, self._agents, t)) is not None and Path(w[1]).is_dir():
+            if (w := _place_of(self._engine, self._agents, t)) is not None and made(self._engine, w[1]):
                 self._engine.joins.mark_joining(tid, True)
             threading.Thread(target=self._join, args=(tid,), daemon=True).start()
         self._dirty.set()
@@ -1817,7 +1817,8 @@ class Dispatcher:
         """Has this passed node a place of its own whose result must still land somewhere — so it is joining now?"""
         t = self._engine.graph.get_task(TaskId(tid))
         w = _workspace(self._engine, self._agents, t) if t is not None else None
-        return w is not None and Path(w[1]).is_dir() and _where_it_joins(self._engine, self._agents, t, w) is not None
+        return (w is not None and made(self._engine, w[1])
+                and _where_it_joins(self._engine, self._agents, t, w) is not None)
 
     def _join(self, tid) -> None:
         """A part PASSed: it joins the whole (`join_whole`); at the root's PASS the joined places go."""

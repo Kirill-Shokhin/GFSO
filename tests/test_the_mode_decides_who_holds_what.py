@@ -361,6 +361,9 @@ class _Roster:
     def get(self, agent_id):
         return self._ids.get(str(agent_id))
 
+    def list(self):
+        return dict(self._ids)
+
 
 def test_the_decomposer_challenges_a_defect_of_its_own_packet_to_the_packets_issuer():
     """§11.5, §9.7: a plan-gate defect sourced in the node's OWN contract is no split's to repair — the decomposer's

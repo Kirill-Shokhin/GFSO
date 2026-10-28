@@ -137,18 +137,19 @@ def kill_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def run(args, *, timeout: float, **kw) -> subprocess.CompletedProcess:
+def run(args, *, timeout: float, input=None, **kw) -> subprocess.CompletedProcess:
     """`subprocess.run` for a child of this process: adopted, in a group of its own, without the
     server's mark in its environment, and ended with its whole tree however the call ends — a
-    `TimeoutExpired` still reaches the caller."""
+    `TimeoutExpired` still reaches the caller. `input` is fed to its stdin."""
     kw.setdefault("env", subprocess_env())
-    kw.setdefault("stdin", subprocess.DEVNULL)       # under `gfso mcp` stdin is the protocol pipe
+    # under `gfso mcp` stdin is the protocol pipe
+    kw.setdefault("stdin", subprocess.DEVNULL if input is None else subprocess.PIPE)
     if os.name == "nt":
         kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
     proc = adopt(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw,
                                   **spawn_kw()))
     try:
-        out, err = proc.communicate(timeout=timeout)
+        out, err = proc.communicate(input, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, out, err)
     finally:
         kill_tree(proc)

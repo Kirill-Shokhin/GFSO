@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Optional
 
 from gfso.core.protocol.procedure import INPUTS_TOKEN, laid, materialize_inputs, probe_id, same_probe, unrerunnable
-from gfso.core.types import Signal, TaskId, set_aside_of
+from gfso.core.types import Signal, TaskId, files_at, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
+from gfso.engine.findings import round_stands
 from gfso.engine.verdicts import OUTSIDE_NOTE
 from gfso.engine.validation import is_auto_root
 from gfso.observe import TAIL
@@ -27,7 +27,8 @@ def _executor_inputs(engine, task) -> dict:
     their contents, the root executor of c_compiler searched the file system for them and read the plan's own copies
     (EVIDENCE_LOG §13.34). The validator still lays its own from the contract, so nothing done to this copy reaches a verdict."""
     criteria = task.spec.criteria
-    return (materialize_inputs(criteria, tempfile.mkdtemp(prefix="gfso-check-inputs-", dir=node_temp(engine, task)))
+    ex = execution_of(engine)
+    return (materialize_inputs(criteria, ex.files.mkdtemp("gfso-check-inputs-", node_temp(engine, task)), ex.files)
             if any(p.inputs for c in criteria or () for p in (c.check or ())) else {})
 
 
@@ -303,7 +304,8 @@ def _why_it_failed(engine, task, failed: list) -> str:
                             list_key(engine, task.id, f, "probes"))
                    + capped([f"standing finding [{p.get('id')}]: `{p.get('seen') or p.get('as_run')}`"
                              + (f" — {w}: shown, not demanded"
-                                if (w := unrerunnable(p, engine.layable(task.id), workdir)) else "")
+                                if (w := unrerunnable(p, engine.layable(task.id), workdir,
+                                                      standing=round_stands(engine.graph))) else "")
                              for p in standing.get(f, ())], "standing findings", list_key(engine, task.id, f, "findings")))
     return "\n".join(out) + "\n"
 
@@ -330,8 +332,7 @@ def capped(lines: list, what: str, key: str) -> str:
     text = "".join(f"\n  {x}" for x in lines[:SHOWN_FINDINGS])
     if len(lines) > SHOWN_FINDINGS:
         path = Path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(f"- {x}\n" for x in lines), encoding="utf-8", newline="")
+        files_at(key).write_bytes(key, "".join(f"- {x}\n" for x in lines).encode("utf-8"))
         text += (f"\n  … and {len(lines) - SHOWN_FINDINGS} more {what} — all {len(lines)}, one per line with its id, in "
                  f"{path.as_posix()}: grep it for what you need, do not read it whole")
     return text
@@ -398,10 +399,11 @@ def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list 
             + _working_directory(workdir))
 
 
-def _regression_line(p: dict, dirs: dict, workdir: Optional[str] = None) -> str:
+def _regression_line(p: dict, dirs: dict, workdir: Optional[str], engine) -> str:
     """One once-refuting probe, shown over this round's inputs directories and asked for under its id."""
     cmd = laid(p.get("as_run") or p.get("command", ""), dirs)
-    orphan = f"({why} — shown, not demanded) " if (why := unrerunnable(p, dirs, workdir)) else ""
+    why = unrerunnable(p, dirs, workdir, standing=round_stands(engine.graph))
+    orphan = f"({why} — shown, not demanded) " if why else ""
     return (f"    - REGRESSION [{p.get('id')}] (this probe REFUTED this criterion in an earlier round — re-run "
             f"it and report it under this id) — {p.get('behaviour')}: run `{cmd}` {orphan}"
             f"(recorded then: «{p.get('expect')}», which may be what was required or what was "
@@ -473,9 +475,9 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     _all = engine.validation_procedure(TaskId(tid))
     # A probe's INPUTS are laid down here, from the contract, by the system — never read from the
     # delivery, where the executor could have grown them (the corpus that moved under `c_compiler`).
+    ex = execution_of(engine)
     _dirs = (materialize_inputs(_all, Path(scratch) / "probe_inputs" if scratch
-                                else tempfile.mkdtemp(prefix="gfso-probe-inputs-",
-                                                      dir=execution_of(engine).temp_of(workdir)))
+                                else ex.files.mkdtemp("gfso-probe-inputs-", ex.temp_of(workdir)), ex.files)
              if any(p.inputs for c in _all for p in (c.check or ())) else {})
     owed = owed_probes(engine, task, crits)
     if carry is None:
@@ -512,7 +514,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
         # criterion required and sometimes what the failing round printed: "must show" had a repaired delivery FAILed
         # for no longer printing the error (GB_coreutils_tltuq7652), and "it showed" inverted the guard for the
         # majority that recorded the requirement. The criterion decides; the probe is what to run.
-        lines += [(_probe_line(*x) if isinstance(x, tuple) else _regression_line(x, _dirs, workdir))
+        lines += [(_probe_line(*x) if isinstance(x, tuple) else _regression_line(x, _dirs, workdir, engine))
                   for pid, x in items if carry.get(pid) == c.name]
         # A PART'S PROBE WRITTEN ELSEWHERE serves this criterion too: one observation of it, wherever it is made
         again: dict = {}

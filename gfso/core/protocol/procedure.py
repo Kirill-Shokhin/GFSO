@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import os
 import re
 import sys
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Optional, Sequence
 
-from gfso.core.types import Criteria, Probe
+from gfso.core.types import HOST, Criteria, Probe, files_at
 from gfso.core.protocol.invariants import emits_a_constant, probe_held, probes_of, spoken_verdict, underprobed
 
 
@@ -83,17 +84,24 @@ def finding_id(criterion_name: str, command: str) -> str:
 
 
 def _content(path: Path) -> str | None:
-    """A digest of what stands at `path` — a file's bytes, or a directory's files by their place in it — or None."""
+    """A digest of what stands at `path` — a file's bytes, or a directory's files by their place in it — or None. Read
+    where the place holding it is (`files_at`): a round's scratch may stand nowhere on this host. Once while the round
+    stands (`_read_once`)."""
     try:
-        if path.is_file():
-            return hashlib.sha256(path.read_bytes()).hexdigest()
-        if path.is_dir():
-            h = hashlib.sha256()
-            for f in sorted(x for x in path.rglob("*") if x.is_file()):
-                h.update(f.relative_to(path).as_posix().encode("utf-8") + b"\x00" + f.read_bytes() + b"\x00")
-            return h.hexdigest()
+        return _read_once("digest", path, lambda: _digest(path))
     except OSError:
         return None                       # unreadable is not there to read: the round stays in the id
+
+
+def _digest(path: Path) -> str | None:
+    fs = files_at(path)
+    if (raw := fs.read_bytes(str(path))) is not None:
+        return hashlib.sha256(raw).hexdigest()
+    if (tree := fs.read_tree(str(path))) is not None:
+        h = hashlib.sha256()
+        for rel, raw in sorted(tree.items(), key=lambda x: Path(x[0])):
+            h.update(rel.encode("utf-8") + b"\x00" + raw + b"\x00")
+        return h.hexdigest()
     return None
 
 
@@ -483,8 +491,9 @@ def hollow_procedures(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
-def materialize_inputs(criteria: Iterable[Criteria], base: str | Path) -> dict[str, Path]:
-    """Write every pinned probe's inputs under `base/<probe id>/`, from the contract, at validation time.
+def materialize_inputs(criteria: Iterable[Criteria], base: str | Path, files) -> dict[str, Path]:
+    """Write every pinned probe's inputs under `base/<probe id>/`, from the contract, at validation time — where
+    `files` (a `FilesPort`) writes, in one operation (`write_files`).
 
     {probe id: its directory}. Done by the SYSTEM so nothing the executor writes can stand in for
     the corpus the issuer pinned; unsafe paths were refused at admission and are skipped here."""
@@ -500,21 +509,21 @@ def materialize_inputs(criteria: Iterable[Criteria], base: str | Path) -> dict[s
             + "; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(unsafe.items()))
             + " — a probe over a truncated corpus is not the procedure the contract pins")
     dirs: dict[str, Path] = {}
+    laid: dict[str, bytes] = {}
     for c in criteria or ():
         for p in (c.check or ()):
             if not p.inputs:
                 continue
             pid = probe_id(c.name, p)
-            d = Path(base) / inputs_dir_name(pid)
             for path, body in p.inputs:
                 # a path naming `{inputs}` is the same file: the token is the command's (an integration node's 41
-                # pinned files were stored so, 2026-10-22) — laid down where the command reads it
-                f = d / PurePosixPath(input_name(path))
-                f.parent.mkdir(parents=True, exist_ok=True)
-                # byte for byte: a text-mode write on Windows made every newline a CRLF, and a check's `diff` against its
-                # expected file failed for every program inside a Linux execution (gb-sql-database-tngdkx244)
-                f.write_text(body, encoding="utf-8", newline="")
-            dirs[pid] = d
+                # pinned files were stored so, 2026-10-22) — laid down where the command reads it; byte for byte: a
+                # text-mode write on Windows made every newline a CRLF, and a check's `diff` against its expected file
+                # failed for every program inside a Linux execution (gb-sql-database-tngdkx244)
+                laid[(PurePosixPath(inputs_dir_name(pid)) / input_name(path)).as_posix()] = body.encode("utf-8")
+            dirs[pid] = Path(base) / inputs_dir_name(pid)
+    if laid:
+        files.write_files(str(base), laid)
     return dirs
 
 
@@ -753,10 +762,29 @@ def _binary(path: Path) -> bool:
     """A built program: an executable's header (ELF, PE, Mach-O). Not any file with a NUL in it — a database the delivery
     writes, or an input of NUL bytes, is data the delivery reads, and a finding over it re-runs the delivery (critic)."""
     try:
-        with path.open("rb") as f:
-            return path.is_file() and f.read(4).startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe"))
+        head = _read_once("head", path, lambda: files_at(path).read_bytes(str(path), 4))   # where the round stands
     except OSError:
         return False
+    return bool(head) and head.startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe"))
+
+
+#: what was read of a round's files, by (what, path) — every read of the standing findings asks it again
+#: (`without_past_builds`, `finding_id`), and a round's files are its judge's, done, until the system removes the round
+_READ: dict = {}
+
+
+def _read_once(what: str, path, read):
+    """`read()` of a round's file, once per process while the round stands (`forget_round`)."""
+    if (key := (what, os.path.normcase(os.path.normpath(str(path))))) not in _READ:
+        _READ[key] = read()
+    return _READ[key]
+
+
+def forget_round(path: str) -> None:
+    """The round at `path` is gone: what was read of its files goes with it."""
+    under = os.path.normcase(os.path.normpath(str(path)))
+    for k in [k for k in _READ if k[1] == under or k[1].startswith(under + os.sep)]:
+        _READ.pop(k, None)
 
 
 def _writes(cmd: str, path: str) -> bool:
@@ -869,14 +897,16 @@ def without_pinned_runs(regression: Mapping, pinned: Mapping[str, str]) -> dict[
 
 
 def laid_down_dirs(criteria: Iterable[Criteria], base: str | Path | None) -> tuple[tuple[str, Path], ...]:
-    """(probe id, directory) for every pinned probe's inputs laid down anywhere under `base` this round —
-    batches lay them in subdirectories of their own."""
-    if not base or not Path(base).is_dir():
+    """(probe id, directory) for every pinned probe's inputs laid down under `base` this round — in its `probe_inputs`,
+    and in each batch's, a directory of its own (`materialize_inputs`): where the system lays them, read where the
+    round stands (`files_at`), not wherever a run made a directory of that name."""
+    if not base:
         return ()
-    names = {inputs_dir_name(probe_id(c.name, p)): probe_id(c.name, p)
-             for c in criteria or () for p in (c.check or ()) if p.inputs}
-    return tuple((names[d.name], d) for d in sorted(Path(base).rglob("*"))
-                 if d.is_dir() and d.parent.name == "probe_inputs" and d.name in names)
+    fs, names = files_at(base), {inputs_dir_name(probe_id(c.name, p)): probe_id(c.name, p)
+                                 for c in criteria or () for p in (c.check or ()) if p.inputs}
+    laid = [Path(base, d) for d in fs.subdirs(str(base), 3)              # one walk: [<batch>/]probe_inputs/<probe>
+            if d.split("/")[-2:-1] == ["probe_inputs"]]
+    return tuple((names[d.name], d) for d in sorted(laid) if d.name in names)
 
 
 def inputs_token(pid: str) -> str:
@@ -936,7 +966,7 @@ def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> st
 
 def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
                      dirs: Iterable[tuple[str, object]] = (), layable: Iterable[str] | None = None,
-                     delivery: str | Path | None = None) -> dict[str, list[str]]:
+                     delivery: str | Path | None = None, *, standing) -> dict[str, list[str]]:
     """{criterion: [ids of once-refuting probes this PASS did not re-run]}.
 
     A criterion that failed here before passes now only if the observation that refuted it was
@@ -948,7 +978,7 @@ def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
         if verdicts.get(_norm(name)) != "pass":
             continue
         missing = [p["id"] for p in probes if p.get("id") not in ran.get(_norm(name), set())
-                   and not unrerunnable(p, layable, delivery)]
+                   and not unrerunnable(p, layable, delivery, standing=standing)]
         if missing:
             out[name] = missing
     return out
@@ -959,7 +989,7 @@ def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
 _ABSOLUTE = re.compile(r"^(?:/|[A-Za-z]:[\\/])")
 
 
-def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path | None = None) -> str:
+def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path | None = None, *, standing) -> str:
     """Why a stored finding cannot be re-run as recorded — '' where it can. Such a finding is SHOWN, not demanded: a
     probe that cannot run decides nothing (A1 (i)), and demanding it holds the node `undecidable` whatever is repaired.
 
@@ -967,9 +997,9 @@ def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path
     orphaned by a rename. Or it names a file by an absolute path that is GONE here, now — neither it nor the directory
     it would sit in exists — outside the delivery's own tree, where a missing file is what the finding may be about:
     an earlier validation's pruned scratch (`root.pp_1791646628/dt/hh3.c`, GB_c_compiler_tmp5cb096). Read where the
-    engine stands, when it is asked. A marker for "some validation's scratch" in its place made 198 of that node's
-    271 findings advisory, most of them programs the validator wrote there that still stood and still ran (critic over
-    f0584f3): a finding is demanded while it can run."""
+    place holding it stands (`files_at`), when it is asked. A marker for "some validation's scratch" in its place made
+    198 of that node's 271 findings advisory, most of them programs the validator wrote there that still stood and still
+    ran (critic over f0584f3): a finding is demanded while it can run."""
     cmd = str(p.get("as_run") or p.get("command") or "")
     if layable is not None and set(re.findall(r"\{inputs:([^}]*)\}", cmd)) - set(layable):
         return "it reads the inputs of a probe the contract no longer pins"
@@ -977,9 +1007,24 @@ def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path
     # a path under a pinned probe's inputs is laid down every round: never gone — cut whole, `{inputs:X}/tests/a.c`
     # left `/tests/a.c` behind, an absolute path that never existed
     gone = [w for w in re.split(r"[\s'\"=<>|;&()`]+", re.sub(r"\{inputs:[^}]*\}[^\s'\"=<>|;&()`]*", "", cmd))
-            if _ABSOLUTE.match(w) and not (home and Path(w).as_posix().startswith(home))
-            and not Path(w).exists() and not Path(w).parent.exists()]
+            if _ABSOLUTE.match(w) and not (home and Path(w).as_posix().startswith(home)) and _gone(w, standing)]
     return f"it names {', '.join(gone)}, which no longer exist here" if gone else ""
+
+
+def round_of(path) -> Optional[tuple[str, str]]:
+    """(the round's own path, its name in the record — `.gfso-scratch-<place>/<round>`, one spelling whatever separators
+    the path came in) of the validation or contact round `path` lies in; None for no round's."""
+    m = re.match(r"(.*?[\\/](\.gfso-scratch-[^\\/]+)[\\/]+([^\\/]+))", str(path))
+    return (m.group(1), f"{m.group(2)}/{m.group(3)}") if m else None
+
+
+def _gone(path: str, standing) -> bool:
+    """Is what `path` names gone? In a round, the round no longer standing — the system's record (`standing`), kept as
+    it makes and removes rounds and asked of no container; else neither it nor its directory there on this host: the
+    base and what lies outside every place are this host's until the places and the base move into volumes."""
+    if (r := round_of(path)) is not None:
+        return not standing(r)
+    return not HOST.exists(path) and not HOST.exists(str(Path(path).parent))
 
 
 def layable_pids(criteria: Iterable[Criteria]) -> set[str]:
@@ -1243,7 +1288,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
                     regression: Mapping, internal: bool = False,
                     dirs: Iterable[tuple[str, object]] = (),
                     parts: Mapping[str, Sequence[Criteria]] | None = None,
-                    delivery: str | Path | None = None) -> dict[str, list[str]]:
+                    delivery: str | Path | None = None, *, standing) -> dict[str, list[str]]:
     """{criterion: [what this report did not account for]} — ONE owner for that question.
 
     Four sources, one answer: the behaviours the report itself named and did not probe
@@ -1279,7 +1324,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # a repair CHECKED rather than asserted: the loop this closes is the executor fixing what was
     # named while the next validator writes fresh probes and never looks there again.
     layable = layable_over(task.spec.criteria, parts)
-    for name, ids in unrun_regression(regression, per_criterion, dirs, layable, delivery).items():
+    for name, ids in unrun_regression(regression, per_criterion, dirs, layable, delivery, standing=standing).items():
         gaps.setdefault(name, []).append(
             "a probe that REFUTED this criterion in an earlier round was not re-run: "
             + ", ".join(ids)

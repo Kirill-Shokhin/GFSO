@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
 import subprocess
 import threading
 from contextlib import contextmanager
@@ -108,29 +107,41 @@ def _changed_or_unknown(place, at, execution) -> list[str]:
         return []
 
 
+#: `_own_git`, run IN THE COPY'S OWN CONTAINER over (place, copy): it reads the copy and what that container mounts — the
+#: place itself only as a path, never its files, so a link the place's agent left leads nowhere — and keeps links links
+_OWN_GIT = r'''
+import os, shutil, subprocess, sys
+from pathlib import Path
+place, at = sys.argv[1], Path(sys.argv[2])
+dot = at / ".git"
+if dot.is_dir():
+    alt = dot / "objects" / "info" / "alternates"
+    if alt.is_file():
+        borrowed = os.path.normpath(os.path.join(place, ".git", "objects", alt.read_text(encoding="utf-8").strip()))
+        alt.write_bytes((Path(os.path.relpath(borrowed, dot / "objects")).as_posix() + "\n").encode())
+elif dot.is_file():
+    gitdir = Path(os.path.normpath(os.path.join(place, dot.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())))
+    if (gitdir / "commondir").is_file() and not (gitdir / "commondir").is_symlink():
+        common = os.path.normpath(gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip())
+        dot.unlink()
+        shutil.copytree(gitdir, dot, symlinks=True, ignore=shutil.ignore_patterns("gitdir", "locked", "*.lock"))
+        (dot / "commondir").write_text(Path(os.path.relpath(common, dot)).as_posix() + "\n", encoding="utf-8")
+        head = subprocess.run(["git", "--git-dir", str(dot), "rev-parse", "HEAD"], capture_output=True, text=True)
+        (dot / "HEAD").write_text(head.stdout.strip() + "\n", encoding="utf-8")
+'''
+
+
 def _own_git(place: Path, at: Path, execution) -> None:
     """A node's place is a worktree whose `.git` names its gitdir relatively: copied, it names nothing — and pointed
     back, every run would share one index (its lock: concurrent `git status` fail) and HEAD (a run's commit would move
     the delivery's branch). The copy gets a gitdir of its own: the worktree's files, HEAD detached at the place's
-    commit, the repository's objects shared through a relative `commondir` that reads the same in a container."""
-    dot = at / ".git"
-    if dot.is_dir():                 # a node's own repository: its copy is one too — only where it borrows from moves
-        alt = place / ".git" / "objects" / "info" / "alternates"
-        if alt.is_file():
-            borrowed = (alt.parent.parent / alt.read_text(encoding="utf-8").strip()).resolve()
-            W.relative_alternates(dot / "objects", borrowed)
-        return
-    if not dot.is_file():
-        return
-    gitdir = (place / dot.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip()).resolve()
-    if not (gitdir / "commondir").is_file():
-        return
-    common = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()).resolve()
-    head = W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()
-    dot.unlink()
-    shutil.copytree(gitdir, dot, ignore=shutil.ignore_patterns("gitdir", "locked", "*.lock"))
-    (dot / "commondir").write_text(Path(os.path.relpath(common, dot)).as_posix() + "\n", encoding="utf-8")
-    (dot / "HEAD").write_text(head + "\n", encoding="utf-8")
+    commit, the repository's objects shared through a relative `commondir` that reads the same in a container. A node's
+    own repository's copy is one too: only where it borrows from moves (relative alternates). Done by one call in the
+    copy's own container (`_OWN_GIT`)."""
+    ex = execution.session(str(at))
+    r = ex.run([ex.python, "-c", _OWN_GIT, str(place), str(at)], cwd=str(at), timeout=600)
+    if r.returncode != 0:
+        raise OSError(f"the copy {at} could not get a git of its own: {(r.stderr or '').strip()[-300:]}")
 
 
 def changed(place, at, execution) -> list[str]:
@@ -140,9 +151,11 @@ def changed(place, at, execution) -> list[str]:
     head = W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()
     # …both trees written into ONE repository, the copy's: a node's own repository and its copy keep their objects
     # apart, and a tree written in one is no object in the other
-    repo = Path(at) if W.is_clone(place) else Path(place)
-    own = {"GIT_DIR": str(repo / ".git")} if W.is_clone(place) else {}
-    a, b = (_tree(p, head, Path(at).parent / f".gfso-index-{n}-{Path(at).name}", execution,
+    clone = W.is_clone(place, execution)
+    repo = Path(at) if clone else Path(place)
+    own = {"GIT_DIR": str(repo / ".git")} if clone else {}
+    # …each in an index of its own inside the copy's gitdir, gone with the copy
+    a, b = (_tree(p, head, Path(at) / ".git" / f"gfso-index-{n}", execution,
                   {**own, "GIT_WORK_TREE": str(p)} if own else None) if head else None
             for n, p in (("place", place), ("copy", at)))
     if not (a and b):
@@ -152,16 +165,13 @@ def changed(place, at, execution) -> list[str]:
 
 
 def _tree(where, head: str, index: Path, execution, env: Optional[dict] = None) -> Optional[str]:
-    """The tree of `head`'s files as they stand on disk in `where`, built in an index of its own (`index`): the place's
-    commit on both sides, whatever a run committed in its copy."""
+    """The tree of `head`'s files as they stand on disk in `where`, built in an index of its own (`index`, gone with
+    the copy): the place's commit on both sides, whatever a run committed in its copy."""
     env = {"GIT_INDEX_FILE": str(index), **(env or {})}
-    try:
-        for args in (("read-tree", head), ("add", "-u")):
-            if W.git(where, *args, execution=execution, env=env).returncode != 0:
-                return None
-        return W.git(where, "write-tree", execution=execution, env=env).stdout.strip() or None
-    finally:
-        index.unlink(missing_ok=True)
+    for args in (("read-tree", head), ("add", "-u")):
+        if W.git(where, *args, execution=execution, env=env).returncode != 0:
+            return None
+    return W.git(where, "write-tree", execution=execution, env=env).stdout.strip() or None
 
 
 def swap(text: str, frm, to) -> str:

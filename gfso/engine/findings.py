@@ -19,10 +19,45 @@ import json
 import re
 from typing import Iterable, Optional
 
-from gfso.core.protocol.procedure import pinned_run, probe_id, without_past_builds, without_pinned_runs, without_retired
-from gfso.core.types import Signal
+from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_of, without_past_builds,
+                                          without_pinned_runs, without_retired)
+from gfso.core.types import HOST, Signal
 from .audit import VERSION_INSTALLING
 from .verdicts import REGRESSION, criterion_version, ledger_read
+
+
+#: what keys a validation or contact round in the record of the rounds standing (`round_stands`), by its name
+_ROUND = "round-made:"
+#: the rounds this process asked about where the record had none, and found not standing (`round_stands`)
+_UNMADE: set = set()
+
+
+def record_round(graph, path, made: bool) -> None:
+    """The system made — or removed — the round `path` lies in: kept with the project's settings, a restart reads it;
+    a removal drops what was read of the round's files (`forget_round`). A path in no round records nothing."""
+    if (r := round_of(path)) is not None:
+        graph.store_setting(_ROUND + r[1], "1" if made else "0")
+        if not made:
+            forget_round(r[0])
+
+
+def round_stands(graph):
+    """`unrerunnable`'s `standing`: does the round stand? THE SYSTEM'S RECORD — it alone makes and removes rounds
+    (`tools_llm._validation_place`, `issuer._contact_place`) — read with no subprocess, whoever asks: a verdict's record
+    included. A round made before the record was kept is found once on this host, where rounds are directories until
+    the places move into volumes (a fallback that goes with that move), then recorded."""
+    def standing(r: tuple) -> bool:
+        """Does the round `r` — (its path, its name in the record) — stand?"""
+        if (got := graph.setting(_ROUND + r[1])) is not None:
+            return got == "1"
+        if r[0] in _UNMADE:
+            return False
+        if HOST.is_dir(r[0]):
+            graph.store_setting(_ROUND + r[1], "1")
+            return True
+        _UNMADE.add(r[0])
+        return False
+    return standing
 
 
 def ever_pinned(entries: Iterable, task) -> dict:

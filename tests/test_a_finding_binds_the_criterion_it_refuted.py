@@ -35,6 +35,11 @@ from gfso.core.types import AgentId, TaskId
 from tests.support import REGISTER, UNMODELLED_FAULT, DENIAL_ENTRY, criterion, make_engine
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM, _IssuerLLM
 
+from gfso.engine.findings import record_round
+
+#: every round stands: these findings name none the system removed
+_STANDS = lambda r: True
+
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
           "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
 _OWN = "./cc p_wide.c; echo exit=$?"
@@ -244,9 +249,9 @@ def test_a_finding_names_the_text_it_refuted_as_validated():
 
 
 def test_a_path_under_pinned_inputs_or_an_escape_is_never_gone():
-    assert unrerunnable({"as_run": "./cc {inputs:conf#1}/tests/a.c"}, ["conf#1"]) == ""
-    assert unrerunnable({"as_run": r"printf '#if 1 \nowhere\x.h\n' | ./cc -E -"}, None) == ""
-    assert unrerunnable({"as_run": "./cc /nowhere/at/all/a.c"}, None)
+    assert unrerunnable({"as_run": "./cc {inputs:conf#1}/tests/a.c"}, ["conf#1"], standing=_STANDS) == ""
+    assert unrerunnable({"as_run": r"printf '#if 1 \nowhere\x.h\n' | ./cc -E -"}, None, standing=_STANDS) == ""
+    assert unrerunnable({"as_run": "./cc /nowhere/at/all/a.c"}, None, standing=_STANDS)
 
 
 def test_the_issuer_sees_what_the_engine_demands(tmp_path):
@@ -270,6 +275,7 @@ def test_a_finding_is_demanded_while_the_file_it_names_stands_and_shown_once_it_
     with pytest.raises(ValueError, match="REFUTED"):
         _pass(e)                                        # a validator's program in its scratch, still standing: it runs
     shutil.rmtree(tmp_path / ".gfso-scratch-ws")
+    record_round(e.graph, str(prog), False)            # …gone as the system removes a round: by its rotation
     packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
     assert "no longer exist here" in packet and "shown, not demanded" in packet
     assert _pass(e)["verdict"] == "PASS", "a finding no round can re-run held the node undecidable"

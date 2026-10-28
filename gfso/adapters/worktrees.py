@@ -21,6 +21,8 @@ from pathlib import Path
 
 from gfso.adapters import children
 from gfso.config import subprocess_env
+from gfso.adapters.execution import LocalExecution
+from gfso.core.types import HOST
 
 #: a base's node places stand beside it, under this prefix and the base's name
 NODES = ".gfso-nodes-"
@@ -62,15 +64,9 @@ def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
                         errors="replace", env=env)
 
 
-def _relative_gitfile(place: Path, execution=None) -> None:
-    """A worktree's `.git` names its gitdir by a path relative to the place: written absolute (`C:/…`), the same tree
-    is no repository inside a container that mounts it elsewhere (probe P2). Hidden on Windows, so rewritten in place."""
-    with open(place / ".git", "r+", encoding="utf-8") as f:
-        gitdir = f.read().split("gitdir:", 1)[1].strip()
-        gitdir = execution.to_outside(gitdir) if execution is not None else gitdir
-        f.seek(0)
-        f.write("gitdir: " + Path(os.path.relpath(gitdir, place)).as_posix() + "\n")
-        f.truncate()
+def _fs(execution):
+    """Where a place's files are reached: its execution, this host where none is named."""
+    return execution if execution is not None else LocalExecution()
 
 
 def checks_out_crlf(base) -> bool:
@@ -91,16 +87,16 @@ def is_repo_top(base) -> bool:
     return _TOPS[k]
 
 
-def is_clone(place) -> bool:
+def is_clone(place, execution=None) -> bool:
     """Is `place` a node's repository of its own (a clone of the base), not a worktree of the base's?"""
-    return (Path(place) / ".git").is_dir()
+    return _fs(execution).files.is_dir(str(Path(place) / ".git"))
 
 
-def relative_alternates(objects: Path, base_objects: Path) -> None:
+def relative_alternates(objects: Path, base_objects: Path, execution=None) -> None:
     """A clone borrows the base's objects by a path relative to its own `objects/`: the same files read the same from
     the host and from a container that mounts them elsewhere (an absolute path is one side's only)."""
-    (objects / "info" / "alternates").write_text(Path(os.path.relpath(base_objects, objects)).as_posix() + "\n",
-                                                encoding="utf-8", newline="\n")    # a CR is read as part of the path
+    _fs(execution).files.write_bytes(str(objects / "info" / "alternates"),   # …LF alone: a CR is read as part of the path
+                                     (Path(os.path.relpath(base_objects, objects)).as_posix() + "\n").encode())
 
 
 def ensure(base, place, branch: str, start_from, execution=None) -> bool:
@@ -114,10 +110,10 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
     project's work runs. A place made as a worktree before this keeps working as one, locked."""
     place = Path(place)
     with _lock(base):
-        if (place / ".git").is_file():
-            _by_registration(base, ["worktree", "lock", str(place)], execution)
+        if is_clone(place, execution):
             return False
-        if (place / ".git").is_dir():
+        if _fs(execution).files.exists(str(place / ".git")):
+            _by_registration(base, ["worktree", "lock", str(place)], execution)
             return False
         # …the base's own settings, as a worktree had them: line endings, links, attributes (a clone reads only its own)
         own = [a for k in INHERITED for v in [git(base, "config", "--local", "--get", k, execution=execution)
@@ -128,7 +124,7 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
         try:
             _start(base, place, branch, start_from, execution)
         except Exception:   # …a half-made place would be reused as it stands, empty, and its emptiness delivered
-            execution.remove_tree(str(place)) if execution is not None else remove_tree(place)
+            _fs(execution).remove_tree(str(place))
             raise
         return True
 
@@ -138,11 +134,10 @@ INHERITED = ("core.autocrlf", "core.eol", "core.symlinks", "core.filemode", "cor
 
 
 def _start(base, place: Path, branch: str, start_from, execution) -> None:
-    relative_alternates(place / ".git" / "objects", Path(base) / ".git" / "objects")
+    relative_alternates(place / ".git" / "objects", Path(base) / ".git" / "objects", execution)
     for name in ("exclude", "attributes"):        # what the base keeps out of its commits stays out of the node's
-        src = Path(base) / ".git" / "info" / name
-        if src.is_file():
-            (place / ".git" / "info" / name).write_bytes(src.read_bytes())
+        if (kept := HOST.read_bytes(str(Path(base) / ".git" / "info" / name))) is not None:    # the base: the host's
+            _fs(execution).files.write_bytes(str(place / ".git" / "info" / name), kept)
     git(place, "remote", "remove", "origin", execution=execution)        # nothing in the place names the base to push to
     if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0:
         start = git(base, "rev-parse", f"refs/heads/{branch}", execution=execution).stdout.strip()
@@ -173,7 +168,8 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
         r = git(place, "commit", "--allow-empty", "--no-verify", "-q", "-m", message, who=who, execution=execution)
         if r.returncode != 0:
             raise OSError(f"the delivery could not be committed in {place}: {r.stderr.strip()}")
-        if branch and is_clone(place):   # …taken back into the base under the node's own name, never the place's word
+        # …taken back into the base under the node's own name, never the place's word
+        if branch and is_clone(place, execution):
             got = git(base, "fetch", "-q", "--update-head-ok", str(place), f"+HEAD:refs/heads/{branch}",
                       execution=execution)     # …a worktree registration left from before may still claim the branch
             if got.returncode != 0:
@@ -183,7 +179,7 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
 
 def bring(base, place, branch: str, execution=None) -> None:
     """`branch` of the base brought into a node's own repository under its name — what its packet tells it to merge."""
-    if is_clone(place):
+    if is_clone(place, execution):
         with _lock(base):
             git(place, "fetch", "-q", str(base), f"+refs/heads/{branch}:refs/heads/{branch}", execution=execution)
 
@@ -250,7 +246,7 @@ def settled(base, place, branch: str, execution=None) -> bool:
     """Is all the place holds already in the base's tree? A worktree: its branch is joined. A node's own repository:
     its HEAD — delivered or not — is an ancestor of the base's HEAD; a commit never taken back is in no branch of the
     base, and a place holding one is kept."""
-    if not is_clone(place):
+    if not is_clone(place, execution):
         return contains(base, base, branch, execution=execution)
     sha = head(place, execution=execution)
     with _lock(base):
@@ -258,22 +254,13 @@ def settled(base, place, branch: str, execution=None) -> bool:
                                  execution=execution).returncode == 0
 
 
-def remove_tree(path) -> None:
-    """`path` and everything under it — git writes its objects read-only, which a plain removal leaves behind on
-    Windows (WinError 5)."""
-    def _writable(fn, p, _):
-        os.chmod(p, 0o700)
-        fn(p)
-    shutil.rmtree(path, onerror=_writable)
-
-
 def remove(base, place, branch: str, execution=None) -> bool:
     """Take a joined node's worktree and branch away (twice forced: the place is locked). False when git refused (a
     file held open, a branch not joined — `branch -d` refuses to lose commits)."""
     with _lock(base):
-        if is_clone(place):
-            (execution.remove_tree(str(place)) if execution is not None else remove_tree(place))
-            ok = not Path(place).exists()
+        if is_clone(place, execution):
+            _fs(execution).remove_tree(str(place))
+            ok = not _fs(execution).files.exists(str(place))
             if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}",
                    execution=execution).returncode != 0:
                 return ok                        # never delivered: no branch of its own in the base to take away
@@ -281,7 +268,7 @@ def remove(base, place, branch: str, execution=None) -> bool:
             ok = _by_registration(base, ["worktree", "remove", "--force", "--force", str(place)],
                                   execution).returncode == 0
         r = git(base, "branch", "-d", branch, execution=execution)
-        if r.returncode and "used by worktree" in (r.stderr or "") and not Path(place).exists():
+        if r.returncode and "used by worktree" in (r.stderr or "") and not _fs(execution).files.exists(str(place)):
             # …a worktree registration this path had before it was a repository of its own still claims the branch
             _by_registration(base, ["worktree", "remove", "--force", "--force", str(place)], execution)
             r = git(base, "branch", "-d", branch, execution=execution)

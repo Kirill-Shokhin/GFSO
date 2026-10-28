@@ -5,6 +5,7 @@ paths: a container sees the base's parent as `/gfso-place`, and every path cross
 from __future__ import annotations
 
 import hashlib
+import io
 import ipaddress
 import json
 import logging
@@ -13,6 +14,7 @@ import re
 import shutil
 import socket
 import stat
+import tarfile
 import tempfile
 import subprocess
 import sys
@@ -20,7 +22,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from gfso.core.types import ExecutionPort, PlaceUnavailable
+from gfso.core.types import HOST, ExecutionPort, FilesPort, PlaceUnavailable
 from gfso.config import SECRET_ENV, claude_config_dir, host_env
 from gfso.adapters import door, egress
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
@@ -93,6 +95,25 @@ def grouped(project_container: str, role: str) -> list[str]:
     группе»). A compose project's name: lower-case letters, digits, `_`, `-`."""
     return ["--label", f"com.docker.compose.project={re.sub(r'[^a-z0-9_-]+', '-', project_container.lower())}",
             "--label", f"com.docker.compose.service={role}"]
+
+
+#: each file operation inside (`ContainerFiles`), over "$1" the path — no bound of its own: the container it runs in is
+#: the bound (`ContainerFiles._where`); a non-zero exit below 125 is the operation's own "not there"
+_FILE_OPS = {
+    "exists": '[ -e "$1" ] || [ -L "$1" ]',
+    "is_dir": '[ -d "$1" ]',
+    "listdir": '[ -d "$1" ] && find -H "$1" -mindepth 1 -maxdepth 1 -printf "%f\\0"',
+    "read_bytes": '[ -f "$1" ] && if [ -n "$2" ]; then head -c "$2" -- "$1"; else cat -- "$1"; fi',
+    "write_bytes": 'mkdir -p -- "$(dirname -- "$1")" && cat > "$1"',
+    "mkdir": 'mkdir -p -- "$1"',
+    "write_files": 'mkdir -p -- "$1" && tar -x -m -C "$1" -f -',
+    "read_tree": '[ -d "$1" ] && tar -c -C "$1" .',
+    "subdirs": '[ -d "$1" ] && find "$1" -mindepth 1 -maxdepth "$2" -type d -printf "%P\\0"',
+}
+#: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
+_DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
+#: …and where the container is gone or stopped under a live server — started again, once
+_GONE = re.compile(r"No such container|is not running", re.I)
 #: the containers this server process started — one per (execution, project), whichever object asks for it — with
 #: what each was started holding: a project re-created on another base gets a container of its own again
 _STARTED: dict = {}
@@ -100,6 +121,8 @@ _STARTED: dict = {}
 SCRATCH = ".gfso-scratch-"
 #: the session containers of each project's places, by (project container, writable root)
 _SESSIONS: dict = {}
+#: each node temp's owner place (`temp_of`), whose session container mounts it
+_TEMPS: dict = {}
 #: each container's switch as last declared — the container's, not an object's: a session keeps its object for its whole
 #: life, so any object starting the container must start it under the switch as it stands now (critic 4: a second
 #: object of one container started it back under its own)
@@ -142,6 +165,8 @@ def scrubs(execution: ExecutionPort) -> bool:
 
 
 class LocalExecution(ExecutionPort):
+    files = HOST
+
     def which(self, program: str):
         return shutil.which(program)
 
@@ -383,6 +408,7 @@ class Door:
 
 
 class ContainerExecution(ExecutionPort):
+    python = "python3"
     #: does a session's CLI run here, its state mounted? Not in the project's container: every session runs in its
     #: place's (`session`), and the project's runs the plan's probes, written by agents — with the state mounted they
     #: read every place's conversations under it (critic over the CLI state per place)
@@ -412,6 +438,7 @@ class ContainerExecution(ExecutionPort):
         # …one per container, whichever object of it asks: two roles' objects kept a door each, and a switch one turned
         # left the other's standing in the old shape (critic over the door v2)
         self.gate = _GATES.setdefault(self.container, Door(self.way))
+        self.files = ContainerFiles(self)
         if network is not None:
             self.switch(network)
         # THE CLI'S STATE IS THE PROJECT'S: shared by an execution's projects, every E3 row (all at /gfso-place/ws) read
@@ -478,10 +505,6 @@ class ContainerExecution(ExecutionPort):
             rw = _writable_root(Path(cwd).resolve(), self)
         except ValueError:
             return self        # refused where the call starts, after the place's own health — a dead place stops first
-        for gone in [k for k in list(_SESSIONS) if k[0] == self.container and not os.path.isdir(k[1])]:
-            if s := _SESSIONS.pop(gone, None):            # a round, a contact, a no-place call: its directory is gone
-                s.stop()
-                shutil.rmtree(s.state, ignore_errors=True)   # …and its CLI's state with it: nothing will resume there
         with _START:
             return _SESSIONS.setdefault((self.container, os.path.normcase(rw)), PlaceContainer(self, rw))
 
@@ -544,12 +567,14 @@ class ContainerExecution(ExecutionPort):
     def which(self, program: str):
         return program                         # resolved on the container's PATH when the call starts
 
-    def _exec_argv(self, args, env, cwd, call: str, root: bool = False) -> tuple[list[str], dict]:
+    def _exec_argv(self, args, env, cwd, call: str, root: bool = False, start: bool = True) -> tuple[list[str], dict]:
         """`docker exec` of one call, and the environment of the `docker` client that runs it. What the call itself sets
         goes in, not the host's environment — its PATH is the container's own; a credential by its NAME alone, its value
         in the client's environment, so no process list on the host shows it (`docker exec -e NAME`) — given to this
-        call's process only, never to the container (S4: the provider's credential, one process)."""
-        self.start()
+        call's process only, never to the container (S4: the provider's credential, one process). `start` False: the
+        caller has the container running (`ContainerFiles`)."""
+        if start:
+            self.start()
         here = host_env()
         # …a credential even when the host holds the same value: the container has no other way to it
         own = {k: v for k, v in (env or {}).items()
@@ -580,22 +605,40 @@ class ContainerExecution(ExecutionPort):
     def shell(self):
         return "bash"
 
+    def bytes_call(self, args, *, cwd, input: bytes | None = None) -> subprocess.CompletedProcess:
+        """`args` to its end here as the image's user, bytes in and out as they are — a file's, never a path to map;
+        the container started only where this process has not started it, no `docker inspect` per call
+        (`ContainerFiles`, which starts it again where it went)."""
+        if self.container not in _STARTED:
+            self.start()
+        call = uuid.uuid4().hex
+        argv, client = self._exec_argv(args, None, cwd, call, start=False)
+        try:
+            return run(argv, timeout=600, cwd=str(self.parent), env=client, input=input)
+        except subprocess.TimeoutExpired:
+            self._end_inside(call)
+            raise
+
     def copy_tree(self, src: str, dst: str) -> None:
         # inside, as the place was made: a symlink a session made in here is no link on the host (probe P5)
         # …by root, in the project's container (`SYSTEM_CAPS`): as the agent, one unreadable file the executor left in
         # its place failed every copy and kept its delivery from being judged (critic over the judges slice) — and only
         # where nothing stands: into a directory or a link left there, `cp -a` copies INTO it (critic 3)
-        if os.path.lexists(dst):
+        if self.files.exists(dst):
             raise OSError(f"{dst} already exists: a copy is made only where nothing stands")
         r = self.run(["cp", "-a", "--", src, dst], cwd=src, timeout=1800, root=True)
         if r.returncode != 0:
             raise OSError(f"cp -a {src} {dst} failed in {self.container}: {r.stderr.strip()[-300:]}")
 
     def remove_tree(self, path: str) -> None:
-        if not os.path.lexists(path):
+        # a place going takes its session's container with it, and its CLI's state: nothing will resume there — the
+        # system's removal is what ends a session, not a directory found gone (a round's, a contact's, a no-place call's)
+        for key in [k for k in _SESSIONS if k[0] == self.way.container          # …the project's, a session's too
+                    and Path(k[1]).is_relative_to(Path(path).resolve())]:
+            (s := _SESSIONS.pop(key)).stop()
+            shutil.rmtree(s.state, ignore_errors=True)
+        if not self.files.exists(path):
             return
-        for key in [k for k in _SESSIONS if k[0] == self.container and Path(k[1]).is_relative_to(Path(path).resolve())]:
-            _SESSIONS.pop(key).stop()                     # a place going takes its session's container with it
         r = self.run(["sh", "-c", 'chmod -R u+rwX -- "$1" 2>/dev/null; rm -rf -- "$1"', "sh", path],
                      cwd=str(Path(path).parent), timeout=600)
         if r.returncode != 0:
@@ -634,17 +677,117 @@ class ContainerExecution(ExecutionPort):
             return str(owner)                            # a directory of the temp lent to one call is its own temp
         d = self.parent / self.mounts[3] / f"node-{hashlib.sha1(os.path.normcase(owner).encode()).hexdigest()[:12]}"
         d.mkdir(parents=True, exist_ok=True)
+        _TEMPS[os.path.normcase(d)] = owner                # …whose sessions' container mounts it (`ContainerFiles`)
         return str(d)
 
-    def scratch(self, prefix: str, *, system: bool = False):
-        (d := Path(self.temp_root()) if not system else self.parent / self.mounts[4]).mkdir(parents=True, exist_ok=True)
-        return tempfile.TemporaryDirectory(prefix=prefix, dir=str(d), ignore_cleanup_errors=True)
+    def _scratch_root(self, system: bool) -> str:
+        return str(self.parent / self.mounts[4]) if system else self.temp_root()
 
     def state_dir(self):
         return self.state
 
     def state_seen(self) -> str:
         return STATE_INSIDE
+
+
+class ContainerFiles(FilesPort):
+    """The files of a project's places (`ContainerExecution.files`), each operation one `docker exec` as the image's
+    user, never root — IN THE CONTAINER THE SYSTEM'S OWN RECORD OF THE PATH NAMES (`_writable_root`, a name the system
+    chose, never what stands there): a path inside a place runs in that place's own session container, whose mounts
+    are the bound — a link an agent made out of its place leads nowhere there, whenever it is made; a place's root and
+    what stands above it, which only the system writes, in the project's."""
+
+    def __init__(self, ex: "ContainerExecution"):
+        self.ex = ex
+
+    def _where(self, path: str) -> tuple:
+        """(container, its working directory) a file operation over `path` runs in — None for the container where the
+        place `path` lies inside is not there: nothing of it can be read, nor written."""
+        p = Path(os.path.abspath(path))
+        try:
+            rw = _writable_root(p, self.ex)
+        except ValueError:
+            self.ex.start()                 # …a dead place stops first: refused for its own health, then for the path
+            raise
+        if p == rw:
+            return self.ex, str(self.ex.base)
+        rw = _TEMPS.get(os.path.normcase(rw), rw)            # a node's temp: its place's container mounts it
+        s = _SESSIONS.get((self.ex.container, os.path.normcase(rw)))
+        if (s is None or s.container not in _STARTED) and self._run(self.ex, str(self.ex.base), "is_dir", str(rw)).returncode:
+            return None, None
+        return self.ex.session(str(rw)), str(rw)
+
+    def _run(self, at, cwd: str, op: str, *args: str, data: bytes | None = None) -> subprocess.CompletedProcess:
+        """One operation in `at`: started where it is not, and once more where it is gone under a live server (a Docker
+        restart) — no `docker inspect` per operation. A failure of the exec itself is no "not there": the daemon down
+        raises `PlaceUnavailable`, any other `OSError`."""
+        for again in (False, True):
+            done = at.bytes_call(["sh", "-c", _FILE_OPS[op], "sh", *args], cwd=cwd, input=data)
+            why = (done.stderr or b"").decode(errors="replace").strip()
+            if done.returncode and _GONE.search(why) and not again:
+                _STARTED.pop(at.container, None)
+                continue
+            if done.returncode and _DOWN.search(why):
+                raise PlaceUnavailable(at.name, why)
+            if done.returncode >= 125 or (done.returncode and _GONE.search(why)):
+                raise OSError(f"{op} {args[0]} did not run in {at.container} (exit {done.returncode}): {why[-300:]}")
+            return done
+
+    def _file(self, op: str, path: str, *more: str, data: bytes | None = None):
+        """The operation's run, or None where the place it lies inside is not there."""
+        at, cwd = self._where(path)
+        return None if at is None else self._run(at, cwd, op, path, *more, data=data)
+
+    def _wrote(self, r, path: str) -> None:
+        if r is None or r.returncode:
+            raise OSError(f"{path} could not be written in {self.ex.container}"
+                          + (f": {(r.stderr or b'').decode(errors='replace').strip()[-300:]}" if r else ": no such place"))
+
+    def exists(self, path: str) -> bool:
+        return (r := self._file("exists", path)) is not None and r.returncode == 0
+
+    def is_dir(self, path: str) -> bool:
+        return (r := self._file("is_dir", path)) is not None and r.returncode == 0
+
+    def listdir(self, path: str) -> list[str]:
+        r = self._file("listdir", path)
+        return [n for n in r.stdout.decode("utf-8", errors="replace").split("\0") if n] if r and not r.returncode else []
+
+    def read_bytes(self, path: str, size: int | None = None) -> bytes | None:
+        r = self._file("read_bytes", path, "" if size is None else str(size))
+        return r.stdout if r is not None and r.returncode == 0 else None
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        self._wrote(self._file("write_bytes", path, data=data), path)
+
+    def mkdir(self, path: str) -> None:
+        self._wrote(self._file("mkdir", path), path)
+
+    def write_files(self, base: str, files: dict) -> None:
+        """One `tar -x` inside, the files fed through its stdin."""
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as t:
+            for rel, data in files.items():
+                (i := tarfile.TarInfo(rel)).size = len(data)
+                t.addfile(i, io.BytesIO(data))
+        self._wrote(self._file("write_files", base, data=buf.getvalue()), base)
+
+    def read_tree(self, path: str) -> dict | None:
+        """One `tar -c` inside, its regular files read out of the stream."""
+        if (r := self._file("read_tree", path)) is None or r.returncode:
+            return None
+        with tarfile.open(fileobj=io.BytesIO(r.stdout)) as t:
+            return {m.name.removeprefix("./"): t.extractfile(m).read() for m in t.getmembers() if m.isreg()}
+
+    def subdirs(self, path: str, depth: int) -> list[str]:
+        r = self._file("subdirs", path, str(depth))
+        return [n for n in r.stdout.decode("utf-8", errors="replace").split("\0") if n] if r and not r.returncode else []
+
+    def holds(self, path: str) -> bool:
+        try:
+            return bool(_writable_root(Path(os.path.abspath(path)), self.ex))
+        except ValueError:
+            return False
 
 
 def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
@@ -716,7 +859,6 @@ class PlaceContainer(ContainerExecution):
     def temp_root(self):
         """Its node's own temp (`ContainerExecution.temp_of`), not the project's."""
         return self.project.temp_of(str(self.rw))
-
 
     def session(self, cwd: str) -> "ExecutionPort":
         return self if Path(cwd).resolve().is_relative_to(self.rw) else self.project.session(cwd)

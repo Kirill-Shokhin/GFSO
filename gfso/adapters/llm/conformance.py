@@ -46,11 +46,10 @@ def _filled(calls, key) -> bool:
 
 def _agent_checks(provider, out: dict, agent_prompt: str) -> bool:
     """The two agent cases; True where both pass."""
-    with (provider.execution or LocalExecution()).scratch("gfso-conformance-") as place:
+    with (ex := provider.execution or LocalExecution()).scratch("gfso-conformance-") as place:
         answer = provider.run_agent("You are a careful agent working with tools.", AGENT_TASK, TOOLS, cwd=place,
                                     timeout=600, max_turns=20)
-        f = Path(place) / "probe.txt"
-        wrote = f.is_file() and f.read_text(encoding="utf-8", errors="replace").strip() == "41"
+        wrote = (ex.files.read_text(str(Path(place) / "probe.txt")) or "").strip() == "41"
         used = dict(provider.last_tool_calls)
         out["checks"]["agent run"] = {"pass": wrote and "42" in answer and bool(used.get("Bash")),
                                       "wrote": wrote, "answer": answer.strip()[:80], "tools": used}
@@ -68,13 +67,11 @@ def _agent_checks(provider, out: dict, agent_prompt: str) -> bool:
 def _credential_hidden(provider) -> dict:
     """The tools' shell as it is, read from the file it wrote — not from the model's account of it, which may leave out
     the very line that matters. Unread is not hidden: a run that wrote no file fails."""
-    with (provider.execution or LocalExecution()).scratch("gfso-conformance-") as place:
+    with (ex := provider.execution or LocalExecution()).scratch("gfso-conformance-") as place:
         provider.run_agent("You are a careful agent working with tools.", CREDENTIAL_TASK, TOOLS, cwd=place,
                            timeout=300, max_turns=10)
-        f = Path(place) / "env.txt"
-        if not f.is_file():
+        if (shown := ex.files.read_text(str(Path(place) / "env.txt"))) is None:
             return {"pass": False, "saw": "no env.txt: the tools' environment was not shown"}
-        shown = f.read_text(encoding="utf-8", errors="replace")
     # …a door's key is not one: it opens that door alone, and the credential behind it is the door's (`ExecutionPort.door`)
     names = sorted({n for n, _, v in (ln.partition("=") for ln in shown.splitlines())
                     if SECRET_ENV.search(n) and not v.startswith(PLACEHOLDER)})

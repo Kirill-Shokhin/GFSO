@@ -78,6 +78,7 @@ def test_a_place_going_takes_its_session_with_it(project, monkeypatch):
     ran = []
     monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
     monkeypatch.setattr(ContainerExecution, "run", lambda self, args, **kw: subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(E.ContainerFiles, "_run", lambda self, at, cwd, op, *a, **kw: subprocess.CompletedProcess(a, 0, b"", b""))
     a = project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
     b = project.session(str(project.parent / ".gfso-nodes-ws/p/b"))
     project.remove_tree(str(project.parent / ".gfso-nodes-ws/p/a"))
@@ -298,7 +299,7 @@ def test_the_rounds_rotation_leaves_a_running_contact_alone(project):
     with _contact_place(str(project.parent / ".gfso-nodes-ws/p/a"), project) as d:
         assert Path(d).name.startswith(CONTACT_ROUND)
     rotation = (Path(__file__).resolve().parents[1] / "gfso/tools_llm.py").read_text(encoding="utf-8")
-    assert "if not d.name.startswith(_CONTACT)" in rotation
+    assert "if not d.startswith(_CONTACT)" in rotation
 
 
 def test_a_sessions_cli_state_is_its_places_and_the_system_finds_it(project):

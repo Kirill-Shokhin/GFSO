@@ -27,7 +27,6 @@ import dataclasses
 import logging
 import re
 import subprocess
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -152,9 +151,20 @@ def _contact_place(where: str, ex):
     where places stand apart: in the base it worked in its executor's container and could change the delivery. On this
     host, where no copy is made (the base, a root's place), the temp its session holds."""
     if _NODES not in str(where) and not ex.apart:
-        return tempfile.TemporaryDirectory(prefix="gfso-issuer-inputs-", dir=ex.temp_of(where), ignore_cleanup_errors=True)
-    (beside := Path(where).parent / f".gfso-scratch-{Path(where).name}").mkdir(parents=True, exist_ok=True)
-    return tempfile.TemporaryDirectory(prefix=CONTACT_ROUND, dir=str(beside), ignore_cleanup_errors=True)
+        return ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
+    return ex.scratch(CONTACT_ROUND, dir=str(Path(where).parent / f".gfso-scratch-{Path(where).name}"))
+
+@contextlib.contextmanager
+def _round(engine, tmp):
+    """A contact's round in the record of the rounds standing (`findings.record_round`) while it stands."""
+    if tmp:
+        findings.record_round(engine.graph, tmp, True)
+    try:
+        yield
+    finally:
+        if tmp:
+            findings.record_round(engine.graph, tmp, False)
+
 
 def _execution(engine, verbs: "Verbs | None"):
     return verbs.execution(engine) if verbs is not None and verbs.execution is not None else None
@@ -290,10 +300,10 @@ def _standing_findings(engine, task_id) -> str:
     """The node's regression set, a line per finding with its id, as run, as the engine demands it — bounded as the
     executor's packet is (`capped`): the whole set inline, 562k characters, would end the dispute's issuer session
     `prompt_too_long` (GB_sql_database_tmxu0n436)."""
-    workdir = (engine.get_exec_verdict(task_id) or {}).get("workdir")
+    workdir, up = (engine.get_exec_verdict(task_id) or {}).get("workdir"), findings.round_stands(engine.graph)
     return "".join(f"\n- {c}:" + capped([f"[{p.get('id')}] {p.get('behaviour')}: `{p.get('seen') or p.get('as_run')}` "
                                          f"(recorded: «{p.get('expect')}»)" + (f" — {why}: shown, not demanded" if (
-                                             why := unrerunnable(p, None, workdir)) else "") for p in ps],
+                                             why := unrerunnable(p, None, workdir, standing=up)) else "") for p in ps],
                                         "standing findings", list_key(engine, task_id, c, "issuer"))
                    for c, ps in engine.regression_probes(task_id).items()).lstrip("\n")
 
@@ -712,7 +722,7 @@ def _derived(command: str, criterion, probe, execution=None) -> tuple[Optional[s
         return None, "could not run: no `bash` here"
     with ex.scratch("gfso-derive-", system=True) as tmp:
         try:
-            laid = materialize_inputs((criterion,), Path(tmp) / "inputs")
+            laid = materialize_inputs((criterion,), Path(tmp) / "inputs", ex.files)
         except ValueError as e:
             return None, f"could not lay down the probe's inputs ({e})"
         cmd = command.replace(INPUTS_TOKEN, laid.get(probe_id(criterion.name, probe), Path(tmp)).as_posix())
@@ -1543,16 +1553,16 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
-    at_place = ex or LocalExecution()
-    with (_contact_place(where, at_place) if where else contextlib.nullcontext()) as tmp:
-        laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp) if tmp else {}
-        packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
-        with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
-            if where:
-                # …IN A COPY OF THE PLACE, as a validator's run is: the issuer rules on that delivery and must not be able
-                # to change it (§10.3); its answer reads as run in the place — and where places stand apart, never in
-                # the executor's place, its container and its CLI state (`ExecutionPort.apart`)
-                try:
+    at_place, text, laid = ex or LocalExecution(), "", {}
+    try:
+        with (_contact_place(where, at_place) if where else contextlib.nullcontext()) as tmp, _round(engine, tmp):
+            laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp, at_place.files) if tmp else {}
+            packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
+            with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
+                if where:
+                    # …IN A COPY OF THE PLACE, as a validator's run is: the issuer rules on that delivery and must not be
+                    # able to change it (§10.3); its answer reads as run in the place — and where places stand apart,
+                    # never in the executor's place, its container and its CLI state (`ExecutionPort.apart`)
                     with (snapshot(where, Path(tmp) / "place", at_place) if _NODES in str(where) or at_place.apart
                           else contextlib.nullcontext()) as copy:
                         if not copy and at_place.apart:
@@ -1563,15 +1573,13 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                                              + (swap(packet, where, copy) if copy else packet),
                                              allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
                         text = swap(text, copy, where) if copy else text
-                except PlaceUnavailable as e:    # …the place down while copying: booked as a call that could not start
-                    llm.calls.append({"duration_ms": 0, "ended": "unavailable", "place": e.place, "error": str(e),
-                                      "at": time.time()})
-                    text = ""
-            else:
-                # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
-                # directory refused every real call, so no machine issuer ever answered (hidden by fakes that
-                # accepted the missing argument)
-                text = llm.complete(packet, context=PROMPT.read_text(encoding="utf-8"))
+                else:
+                    # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
+                    # directory refused every real call, so no machine issuer ever answered (hidden by fakes that
+                    # accepted the missing argument)
+                    text = llm.complete(packet, context=PROMPT.read_text(encoding="utf-8"))
+    except PlaceUnavailable as e:    # …the place down laying the inputs or copying: booked as a call that could not start
+        llm.calls.append({"duration_ms": 0, "ended": "unavailable", "place": e.place, "error": str(e), "at": time.time()})
     llm.tag_last(Stage.ISSUER)
     engine.record_llm_usage(Stage.ISSUER, llm, task_id)
     if failed := unanswered(llm.calls[-1:]):

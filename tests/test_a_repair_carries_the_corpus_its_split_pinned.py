@@ -14,6 +14,7 @@ import gfso.tools as T
 from gfso import issuer as I
 from gfso.core.protocol.procedure import materialize_inputs, pinned_files, with_named_files
 from gfso.core.types import Criteria, Probe, TaskId
+from gfso.core.types import HOST
 from tests.support import REGISTER, criterion, make_engine
 
 CMD = "cat {inputs}/x.txt"
@@ -123,7 +124,7 @@ def test_a_path_naming_the_token_is_laid_down_where_the_command_reads_it(tmp_pat
     probe's directory, not under a literal `{inputs}` the command never reads (contracts stored so stay runnable)."""
     c = Criteria("reads", check=(Probe.of({"behaviour": "b", "command": CMD, "expect": "x",
                                            "inputs": {"{inputs}/x.txt": "the corpus\n"}}),))
-    (d,) = materialize_inputs([c], tmp_path).values()
+    (d,) = materialize_inputs([c], tmp_path, HOST).values()
     assert (d / "x.txt").read_text(encoding="utf-8") == "the corpus\n"
 
 

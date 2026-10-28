@@ -6,11 +6,15 @@ MISSING implementation costs — a degraded feature, or a voided guarantee — b
 """
 from __future__ import annotations
 
+import os
 import queue
-import tempfile
+import sys
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
+from contextlib import contextmanager, suppress
+from pathlib import Path
 from typing import Optional
 
 from .primitives import (
@@ -196,6 +200,72 @@ class PlaceUnavailable(OSError):
         self.place, self.why = place, why
 
 
+class FilesPort(ABC):
+    """THE FILES OF A PLACE, read and written where the place is — an execution's (`ExecutionPort.files`): the system
+    touches a node's place, a judge's copy, a scratch round, a temp or its own copies through these alone, since a
+    place may stand nowhere on this host."""
+
+    @abstractmethod
+    def exists(self, path: str) -> bool:
+        """Does anything stand at `path` — a link included, even one to nothing?"""
+        ...
+
+    @abstractmethod
+    def is_dir(self, path: str) -> bool:
+        """Is `path` a directory (through a link)?"""
+        ...
+
+    @abstractmethod
+    def listdir(self, path: str) -> list[str]:
+        """The names in the directory `path`; none where it is no directory."""
+        ...
+
+    @abstractmethod
+    def read_bytes(self, path: str, size: Optional[int] = None) -> Optional[bytes]:
+        """The file's bytes — its first `size` where given — or None where no file stands."""
+        ...
+
+    @abstractmethod
+    def write_bytes(self, path: str, data: bytes) -> None:
+        """`data` as the file `path`, its directories made. A failure raises `OSError`."""
+        ...
+
+    @abstractmethod
+    def mkdir(self, path: str) -> None:
+        """The directory `path`, its parents made; there already is fine."""
+        ...
+
+    @abstractmethod
+    def read_tree(self, path: str) -> Optional[dict]:
+        """{path relative to `path`, posix: bytes} of every regular file under the directory `path` — one walk, a link
+        not followed — or None where it is no directory."""
+        ...
+
+    @abstractmethod
+    def subdirs(self, path: str, depth: int) -> list[str]:
+        """The directories under `path`, `depth` levels down at most, relative and posix — one walk, a link not
+        followed; none where it is no directory."""
+        ...
+
+    def read_text(self, path: str) -> Optional[str]:
+        """The file as UTF-8 text, undecodable bytes replaced, or None where no file stands."""
+        return None if (b := self.read_bytes(path)) is None else b.decode("utf-8", errors="replace")
+
+    def write_files(self, base: str, files: dict) -> None:
+        """{path relative to `base`: bytes} written under `base` — one operation where a call costs one."""
+        for rel, data in files.items():
+            self.write_bytes(str(Path(base) / rel), data)
+
+    def mkdtemp(self, prefix: str, dir: str) -> str:
+        """A new empty directory of its own under `dir`, named `prefix` and a random tail."""
+        self.mkdir(d := os.path.join(dir, f"{prefix}{uuid.uuid4().hex[:8]}"))
+        return d
+
+    def holds(self, path: str) -> bool:
+        """Is `path` in a place held apart from this host (`files_at`)? This host holds none apart."""
+        return False
+
+
 class ExecutionPort(ABC):
     """WHERE a session or a command runs — this host, or a place isolated from it — as opposed to WHO answers
     (`LLMProviderPort`) and who pumps the signals (`RunnerPort`). A launch touches the host only through it: the
@@ -203,6 +273,10 @@ class ExecutionPort(ABC):
     its conversations in. One server can then run every project's work isolated without a second server. A launch
     the place cannot start raises `PlaceUnavailable`."""
 
+    #: its places' files, read and written where they are (`FilesPort`)
+    files: "FilesPort"
+    #: the Python a system script is run with here
+    python = sys.executable
     #: does each session stand in a place of its own (`session`)? There a judge never works in its executor's place —
     #: a delivery it could not copy is not judged (§10.3); this host holds no place apart, and a judge without a copy
     #: works in the place, alone
@@ -245,11 +319,22 @@ class ExecutionPort(ABC):
         lists named to an agent are read there, not here."""
         ...
 
-    def scratch(self, prefix: str, *, system: bool = False):
-        """A context manager lending an empty directory of its own under `temp_root`, removed when the block leaves.
-        `system`: for the system's own copies and checks — where an isolated place gives its sessions a temp, one none
-        of them reaches but a session handed a directory in it. This host has one temp."""
-        return tempfile.TemporaryDirectory(prefix=prefix, dir=self.temp_root(), ignore_cleanup_errors=True)
+    @contextmanager
+    def scratch(self, prefix: str, *, system: bool = False, dir: Optional[str] = None):
+        """A context manager lending an empty directory of its own under `dir` — else `temp_root` —, made and removed
+        where this execution runs (`FilesPort.mkdtemp`, `remove_tree`; a removal that fails leaves it). `system`: for
+        the system's own copies and checks — where an isolated place gives its sessions a temp, one none of them reaches
+        but a session handed a directory in it. This host has one temp."""
+        d = self.files.mkdtemp(prefix, dir or self._scratch_root(system))
+        try:
+            yield d
+        finally:
+            with suppress(OSError):
+                self.remove_tree(d)
+
+    def _scratch_root(self, system: bool) -> str:
+        """Where `scratch` lends its directories."""
+        return self.temp_root()
 
     def temp_of(self, place: Optional[str]) -> str:
         """The temp a session working in `place` holds — where the system lays what it is to read (its inputs, its
@@ -276,6 +361,7 @@ class ExecutionPort(ABC):
         """The shell the plan's probes are written for, as this execution starts it, or None where it has none."""
         ...
 
+
     @abstractmethod
     def copy_tree(self, src: str, dst: str) -> None:
         """`src` as it stands where this execution runs — every file, symlinks as links, times kept — at `dst`, which
@@ -295,6 +381,66 @@ class ExecutionPort(ABC):
     def stop(self) -> None:
         """Release what this execution holds for its project — its goal settled, or the project deleted. The host
         holds nothing."""
+
+
+class HostFiles(FilesPort):
+    """The files of a place that is this host (`LocalExecution`): plain host calls."""
+
+    def exists(self, path: str) -> bool:
+        return os.path.lexists(path)
+
+    def is_dir(self, path: str) -> bool:
+        return os.path.isdir(path)
+
+    def listdir(self, path: str) -> list[str]:
+        return os.listdir(path) if os.path.isdir(path) else []
+
+    def read_bytes(self, path: str, size: Optional[int] = None) -> Optional[bytes]:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as f:
+            return f.read(-1 if size is None else size)
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_bytes(data)
+
+    def mkdir(self, path: str) -> None:
+        os.makedirs(path, exist_ok=True)
+
+    def read_tree(self, path: str) -> Optional[dict]:
+        if not os.path.isdir(path):
+            return None
+        return {Path(d, f).relative_to(path).as_posix(): Path(d, f).read_bytes()
+                for d, _, fs in os.walk(path) for f in fs if Path(d, f).is_file() and not Path(d, f).is_symlink()}
+
+    def subdirs(self, path: str, depth: int) -> list[str]:
+        return [Path(d, x).relative_to(path).as_posix() for d, xs, _ in os.walk(path)
+                if len(Path(d).relative_to(path).parts) < depth for x in xs if not os.path.islink(os.path.join(d, x))]
+
+
+#: the files of the places held apart from this host, latest first — the system's own table of where each place is
+_HOLDERS: list = []
+
+
+def hold_places(files: FilesPort, held: bool = True) -> None:
+    """`files` hold their places (`files_at`) from now on — or, `held` False, no longer: their project is gone."""
+    with suppress(ValueError):
+        _HOLDERS.remove(files)
+    if held:
+        _HOLDERS.insert(0, files)
+
+
+def files_at(path) -> FilesPort:
+    """The files that reach `path`: those holding the place it lies in (`FilesPort.holds`), else this host's. For a
+    reader handed a path the system named — a finding's command over a validation round — and no execution in hand: the
+    place is found by the system's table, never by what stands at the path."""
+    # …two projects on one base hold the same mount names, and the first holder answers: V2's, which names the project
+    # in every system directory
+    return next((f for f in _HOLDERS if f.holds(str(path))), HOST)
+
+
+HOST = HostFiles()
 
 
 class LLMProviderPort(ABC):

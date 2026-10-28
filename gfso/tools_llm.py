@@ -17,10 +17,9 @@ import json
 import logging
 import os
 import re
-import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
@@ -43,6 +42,7 @@ import gfso.decompose as _decompose
 from gfso.adapters.execution import ContainerExecution, network_of
 from gfso.decompose import NoPlan, decompose_into
 from gfso.engine.events import emit_cb
+from gfso.engine.findings import record_round
 from gfso.engine.moves import DOOR_KEYS, door_holder
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
 from gfso.core.graph.model import project_now
@@ -464,21 +464,20 @@ def _no_start(llm, ended: str, place: str, error: str) -> str:
     return ""
 
 
-def _own_place(scratch: Optional[str], i: int) -> Optional[str]:
+def _own_place(scratch: Optional[str], i: int, ex) -> Optional[str]:
     """The directory batch `i` copies the delivery into, under the validation's scratch — None without one."""
     if not scratch:
         return None
-    place = Path(scratch) / f"batch{i + 1}"
-    place.mkdir(parents=True, exist_ok=True)
-    return str(place)
+    ex.files.mkdir(place := str(Path(scratch) / f"batch{i + 1}"))
+    return place
 
 
-def _run_each(llm, spawn, scratch: Optional[str], batches: list, run) -> list:
+def _run_each(llm, spawn, scratch: Optional[str], batches: list, run, ex) -> list:
     """One validator call per batch, `run(batch, client, place)`, the texts in batch order."""
     if spawn is None:
         # …ALONE, STILL IN A COPY: a validator judges the delivery and must not be able to change it (§10.3) — run in
         # the place itself, an edit of its own went into the next commit as the executor's delivery
-        return [run(batch, None, _own_place(scratch, i)) for i, batch in enumerate(batches)]
+        return [run(batch, None, _own_place(scratch, i, ex)) for i, batch in enumerate(batches)]
     # THE BATCHES ARE INDEPENDENT, SO THEY RUN AT THE SAME TIME. Splitting the contract unblocked
     # acceptance on a rich node but left its LATENCY additive, and latency is what stalls a run:
     # measured over 170 recorded validations, the median validation takes 46 s at ≤5 criteria, 90 s
@@ -493,7 +492,7 @@ def _run_each(llm, spawn, scratch: Optional[str], batches: list, run) -> list:
         i, batch = i_batch
         client = spawn()
         client.on_tick, client.stage_hint = llm.on_tick, llm.stage_hint
-        place = _own_place(scratch, i)
+        place = _own_place(scratch, i, ex)
         try:
             return i, run(batch, client, place)
         finally:
@@ -567,11 +566,8 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     # asks the same question of the same directory. A rule kept in two places moves in one of them,
     # which is the defect this repository keeps paying for; both now read `cheap_to_ask`. A network
     # workdir is therefore not pre-checked: the validator opens it and reports what it finds.
-    _wd = Path(workdir) if workdir and cheap_to_ask(workdir) else None
-    if _llm is None and cheap_to_ask(workdir) and (
-            _wd is None or not _wd.is_dir()
-            or not any(q.name not in ("__pycache__", ".gfso-scratch")
-                       for q in _wd.iterdir())):
+    if _llm is None and cheap_to_ask(workdir) and not any(
+            q not in ("__pycache__", ".gfso-scratch") for q in workdir and execution_of(engine).files.listdir(workdir) or ()):
         # …and the way OUT of the refusal depends on whether the roster was able to answer. It used
         # to read "`list_agents` shows where this node's executor works" in both cases — advice that
         # is a dead end for a node held by a person, and homework the server has already done for a
@@ -608,7 +604,7 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     return None, task, deliverable
 
 
-def _validation_place(task_id: str, workdir, named: tuple = ()):
+def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None):
     """Where the validator runs, and what the delivery held before it did.
 
     Two needs once collapsed into one: a fresh scratch per validation (a shared one let
@@ -628,16 +624,21 @@ def _validation_place(task_id: str, workdir, named: tuple = ()):
         # everyone else's leavings (measured on the human door 2026-08-22).
         root = Path(workdir).parent / f".gfso-scratch-{Path(workdir).name}"
         scratch = str(root / f"{task_id}_{int(time.time())}")
-        Path(scratch).mkdir(parents=True, exist_ok=True)
+        ex.files.mkdir(scratch)
+        if graph is not None:              # …in the record of the rounds standing, as it goes (`findings.record_round`)
+            record_round(graph, scratch, True)
         # Keep the recent ones (a verdict's evidence is worth reading after the fact) and drop
         # the rest: one directory per validation, inside the repository being validated, otherwise
         # accumulates for the life of the project — a rework loop alone makes several.
         # …but never a round a standing finding runs: gone, its probe would read as unrunnable and stop being
         # demanded with no ruling (a 16-round root, GB_c_compiler — critic 2026-10-11)
         # …nor an issuer's contact running in this scratch beside them (`issuer._contact_place`): it removes itself
-        for old_dir in sorted((d for d in root.iterdir() if not d.name.startswith(_CONTACT)), key=lambda d: d.name)[:-20]:
-            if old_dir.is_dir() and not any(f"{root.name}/{old_dir.name}" in str(n).replace("\\", "/") for n in named):
-                shutil.rmtree(old_dir, ignore_errors=True)
+        for old in sorted(d for d in ex.files.listdir(str(root)) if not d.startswith(_CONTACT))[:-20]:
+            if not any(f"{root.name}/{old}" in str(n).replace("\\", "/") for n in named):
+                with suppress(OSError):
+                    ex.remove_tree(str(root / old))
+                    if graph is not None:
+                        record_round(graph, str(root / old), False)
     # What the delivery held BEFORE the validator touched it. The instruction above is a prompt, and
     # a prompt is not enforcement (the lesson this project keeps relearning), so the difference is
     # MEASURED rather than assumed. Nothing is deleted: the executor's tree is not this code's to
@@ -650,9 +651,11 @@ def _validation_place(task_id: str, workdir, named: tuple = ()):
     _before = None
     if workdir and cheap_to_ask(workdir):     # see `gfso.places.cheap_to_ask`: a share can hang
         try:
-            _before = {q.name for q in Path(workdir).iterdir()}
-        except OSError as e:
-            log.warning(f"the delivery could not be listed before validation ({e}) — this run can "
+            _before = set(ex.files.listdir(workdir)) if ex.files.is_dir(workdir) else None
+        except OSError:
+            pass                      # …an unlistable delivery is unknown, said just below
+        if _before is None:
+            log.warning(f"the delivery {workdir} could not be listed before validation — this run can "
                         f"say NOTHING about what the validator left behind, and says nothing")
 
     return scratch, _before
@@ -666,11 +669,7 @@ def _strays_left_behind(engine, task_id: str, workdir, _before, out: dict, _cb) 
     assumed. Nothing is deleted: the executor's tree is not this code's to prune, and a
     stray named in the record is a fact its owner can act on."""
     if workdir and _before is not None and cheap_to_ask(workdir):
-        try:
-            strays = sorted({q.name for q in Path(workdir).iterdir()}
-                            - _before - {".gfso-scratch"})
-        except OSError:
-            strays = []
+        strays = sorted(set(execution_of(engine).files.listdir(workdir)) - _before - {".gfso-scratch"})
         if strays:
             # …AND WHO ELSE COULD HAVE WRITTEN THEM. Two executors of one plan legitimately share
             # a workspace, so files appearing during a validation may be a SIBLING's work, not
@@ -1211,7 +1210,7 @@ def _observe_exact(engine: Engine, parts: list, workdir) -> dict:
         # round a judge's copy follows they shared its container and CLI state and could plant or rewrite its tree
         # (critic 3 over the judges slice)
         with ex.scratch("gfso-exact-", system=True) as tmp:
-            (at := Path(tmp) / "exact").mkdir(parents=True, exist_ok=True)
+            ex.files.mkdir(str(at := Path(tmp) / "exact"))
             with snapshot(workdir, at / "delivery", ex) as tree:
                 if tree:
                     # …as it stands, whatever git ignores included: a `git clean` here emptied a shared place's copy
@@ -1233,6 +1232,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size."""
     system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     batches = _scope_batches(engine, parts, validation_batch())
+    ex = execution_of(engine)
 
     def _run(batch, client=None, place=None) -> str:
         if inside is not None:
@@ -1252,7 +1252,6 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         # reads as run in the place.
         # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
         # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
-        ex = execution_of(engine)
         try:
             with snapshot(workdir, Path(place) / "delivery", ex, edits) if place else nullcontext() as tree:
                 if not tree and ex.apart:
@@ -1280,14 +1279,15 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
             return text
         again = f"{place}_again" if place else None
         if again:
-            Path(again).mkdir(parents=True, exist_ok=True)
+            ex.files.mkdir(again)
+            record_round(engine.graph, again, True)
         return _run(batch, client, again)
     # a lone run copies a node's own place; on this host never a shared directory with no git base: that is the user's
     # whole tree (a copy per validation was refused on one of 77k files), and nothing there is isolated to begin with.
     # Where places stand apart it copies whatever it judges, a root's base too: else it would run in its executor's
-    lone = scratch if workdir and (_NODES in str(workdir) or execution_of(engine).apart) else None
+    lone = scratch if workdir and (_NODES in str(workdir) or ex.apart) else None
     return _run_each(llm, spawn if len(batches) > 1 else None, scratch if len(batches) > 1 else lone, batches,
-                     _run_again_if_unread if len(batches) > 1 else _run)
+                     _run_again_if_unread if len(batches) > 1 else _run, ex)
 
 
 def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, workdir, validator, model, llm, spawn,
@@ -1305,9 +1305,9 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     # The validator runs WHERE THE WORK IS, with a private scratch BESIDE it (`_validation_place`): a shared scratch
     # let one run validate another's leftovers, and a scratch made the working directory opened the validator in an
     # empty tree, where it failed correct work saying nothing was there. A false FAIL at the seam is worse than none.
-    scratch, _before = _validation_place(top_id, workdir, tuple(
+    scratch, _before = _validation_place(top_id, workdir, execution_of(engine), tuple(
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
-        for ps in engine.regression_probes(t.id).values() for p in ps))
+        for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph)
     try:
         edits: list = []
         # the system's own run of the exact checks FIRST, on the delivery as delivered (`_observe_exact`)
@@ -1715,6 +1715,12 @@ def _answering(fn):
                 msg = (f"the payload is missing a required key: {msg}. `gfso run {fn.__name__} "
                        f"--help` (or the tool's description) gives the shape it expects.")
             return {"error": msg, "refused": True}
+        except PlaceUnavailable as ex:
+            # …met outside a model call — a place's file read or written through its execution: the stop a booked call
+            # makes (`Engine.stop_for_the_place`)
+            if (engine := sig.bind(*a, **kw).arguments.get("engine")) is not None:
+                engine.stop_for_the_place(ex.place, str(ex))
+            return {"error": str(ex)}
         except Exception as ex:                                   # noqa: BLE001 — see the docstring
             log.exception(f"{getattr(fn, '__name__', 'verb')} failed")
             return {"error": f"{type(ex).__name__}: {ex}", "unexpected": True}

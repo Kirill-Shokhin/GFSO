@@ -1,6 +1,7 @@
 """Where a node's work stands: the scope one executor's session carries it in (`session_scope`), the node's own git
 workspace derived from its executor's roster place (`node_workspace`), entering it, joining its PASSed parts into the
-whole (`join_whole`), and clearing them at the root's PASS (`clear_workspaces`). Derived, never stored."""
+whole (`join_whole`), and clearing them at the root's PASS (`clear_workspaces`). Derived, never stored — save which
+places were made (`made`)."""
 from __future__ import annotations
 
 import json
@@ -14,7 +15,7 @@ from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task
-from gfso.core.types import Signal, TaskId, State
+from gfso.core.types import HOST, Signal, TaskId, State, hold_places
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.roster import AgentRegistry
 
@@ -62,7 +63,7 @@ def _workspace(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | 
 
 def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | None:
     """(base, place, branch) as `_workspace` derives them, asking git nothing — so a caller that must not wait on a
-    subprocess (the transition bus) can ask whether a place was ever made (`Path(place).is_dir()`)."""
+    subprocess (the transition bus) can ask whether a place was ever made (`made`)."""
     base = (performer(engine, agents, task.assignee)[1] or {}).get("workdir") if task is not None else None
     if not base:
         return None
@@ -71,10 +72,45 @@ def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | N
 
 
 
+#: what keys a place in the record of the places made (`made`), by its path
+_MADE = "place-made:"
+#: the places this process asked about where the record had none, and found not made (`made`)
+_UNMADE: set = set()
+
+
+def made(engine, place: str) -> bool:
+    """Was `place` made? THE SYSTEM'S RECORD, not the file system: `_ensure_place` adds a place it made,
+    `clear_workspaces` drops one it removed, kept with the project's settings (a restart reads it) and read with no subprocess — the
+    transition bus asks it. A place may stand nowhere on this host, and what stands where an agent writes decides
+    nothing of the protocol."""
+    if (got := engine.graph.setting(_MADE + place)) is not None:
+        return got == "1"
+    # …a place made before the record was kept: asked once (once per process where it is not made), then recorded —
+    # the record decides from there on. On this host, never by a call into a container from the transition bus: until
+    # the places move into volumes they are host directories (a fallback that goes with that move)
+    if place in _UNMADE:
+        return False
+    if HOST.is_dir(place):
+        _record(engine, place, True)
+        return True
+    _UNMADE.add(place)
+    return False
+
+
+def _record(engine, place: str, made: bool) -> None:
+    engine.graph.store_setting(_MADE + place, "1" if made else "0")
+
+
+def stands(engine, agents: "AgentRegistry", where: str) -> bool:
+    """Does the directory a role works in stand: a node's place by the record (`made`); any other is a base, the user's
+    repository, read on this host."""
+    return made(engine, where) if base_of(where) else Path(where).is_dir()
+
+
 def node_workspace(engine, agents: "AgentRegistry", task_id) -> str | None:
     """The node's own workspace, once its first session has made it — where its delivery stands and is validated."""
     w = _workspace(engine, agents, engine.graph.get_task(TaskId(task_id)))
-    return w[1] if w is not None and Path(w[1]).is_dir() else None
+    return w[1] if w is not None and made(engine, w[1]) else None
 
 
 def _where_it_joins(engine, agents: "AgentRegistry", task, w: tuple) -> str | None:
@@ -84,7 +120,7 @@ def _where_it_joins(engine, agents: "AgentRegistry", task, w: tuple) -> str | No
     pw = _workspace(engine, agents, parent) if parent is not None else None
     if pw is not None and pw[2] == w[2]:
         return None
-    return pw[1] if pw is not None and same_place(pw[0], w[0]) and Path(pw[1]).is_dir() else w[0]
+    return pw[1] if pw is not None and same_place(pw[0], w[0]) and made(engine, pw[1]) else w[0]
 
 
 def _has_branch(w: tuple, execution) -> bool:
@@ -154,6 +190,7 @@ def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
             and same_place(pw[0], w[0]):
         _ensure_place(engine, agents, parent, pw)
     W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=execution_of(engine, agents))
+    _record(engine, w[1], True)
 
 
 def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tuple:
@@ -255,6 +292,7 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
     if key not in _EXECUTIONS:
         _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d.get("env_file"), d["state"],
                                               role["workdir"], engine.project_name)
+        hold_places(_EXECUTIONS[key].files)
     # the switch as set NOW — the more closed of its execution's declaration and the project's own (`set_mode`), the
     # declaration a ceiling — kept by the container: every holder of any object of it starts it under this one
     own = engine.graph.setting("network")
@@ -282,7 +320,8 @@ def node_temp(engine, task) -> str:
 def drop_execution(engine) -> None:
     """The project is gone: its container goes, and so does the object that held it."""
     for key in [k for k in _EXECUTIONS if k[1] == engine.project_name]:
-        _EXECUTIONS.pop(key).stop()
+        (ex := _EXECUTIONS.pop(key)).stop()
+        hold_places(ex.files, False)
 
 
 def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):
@@ -313,12 +352,14 @@ def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
         for role in CONVERSING_ROLES:          # the work its conversations served is settled
             llm.forget(conversation_of(engine, t.id, t.assignee, role))
         w = _workspace(engine, agents, t)
-        if w is None or w[2] in seen or not Path(w[1]).is_dir():
+        if w is None or w[2] in seen or not made(engine, w[1]):
             continue
         seen.add(w[2])
         ex = execution_of(engine, agents)
         if not (W.settled(*w, execution=ex) and W.remove(*w, execution=ex)):
             left.append(f"{w[1]} (`{w[2]}`)")
+        else:
+            _record(engine, w[1], False)
     execution_of(engine, agents).stop()        # the goal is settled: its project's container goes too
     if left:
         engine.emit_info("delegate", f"{root.id}: DONE - node workspaces not joined into the base are kept: "

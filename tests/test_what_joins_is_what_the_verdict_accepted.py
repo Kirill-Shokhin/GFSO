@@ -72,7 +72,7 @@ def test_a_branch_that_no_longer_carries_the_accepted_tree_does_not_join(tmp_pat
 
 def test_a_place_removed_by_hand_still_has_its_work_to_join(tmp_path):
     base, place, tree, w = _delivered(tmp_path)
-    W.remove_tree(place)
+    LocalExecution().remove_tree(place)
     assert WS._has_branch(w, LocalExecution())
     assert not WS._has_branch((base, place, "gfso/p/nothing"), LocalExecution())
 
