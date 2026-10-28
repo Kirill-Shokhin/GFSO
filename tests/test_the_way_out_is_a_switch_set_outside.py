@@ -46,10 +46,10 @@ def test_a_closed_switch_stands_on_its_internal_network_with_no_capability(tmp_p
         assert ("HTTPS_PROXY=http://gateway:3128" in a) == (mode == "allowlist")
         assert ["--cap-drop", "ALL"] == a[a.index("--cap-drop"):][:2], "a closed container has no capability at all"
     x = _ex(tmp_path, {"mode": "allowlist", "hosts": ["api.anthropic.com", "pypi.org"]})
-    g = x.way.gateway_args()
+    g, args = x.way.gateway_args()
     assert ["--cap-drop", "ALL"] == g[g.index("--cap-drop"):][:2] and "--read-only" in g and "no-new-privileges" in g
     assert "net.ipv4.ip_forward=0" in g, "the gateway forwards nothing it did not open itself"
-    assert g[-5:] == ["python3", "/gfso-egress.py", "api.anthropic.com,pypi.org", "/log/egress.log", "gateway"]
+    assert args == ["api.anthropic.com,pypi.org", "/gfso-own/egress.log", "gateway"] and "--mount" not in g
     assert g[g.index("--network") + 1] == x.way.net, "started on the project's network, it listens there alone"
     assert not any("/gfso-place" in m or str(x.state_dir()) in m for m in g), "the gateway holds nothing of the project"
     assert not x.way.log().is_relative_to(x.state_dir()), "the session's container mounts its state"
@@ -81,7 +81,7 @@ def test_turning_the_switch_starts_the_container_again(tmp_path, monkeypatch):
     _ex(tmp_path).start()
     _ex(tmp_path).start()
     _ex(tmp_path, {"mode": "off"}).start()
-    assert sum(1 for a in ran if a[:2] == ["docker", "run"]) == 2
+    assert sum(1 for a in ran if a[:3] == ["docker", "run", "-d"]) == 2
     assert ran[-1][-1].startswith(_ex(tmp_path, {"mode": "off"}).way.seal())
 
 
@@ -212,11 +212,11 @@ def test_a_projects_containers_stand_as_one_stack_subgrouped_by_role(tmp_path):
     """«контейнеры которые создаются для одной задачи логично держать в группе» (the author, 2026-10-28): a row's twenty
     containers hung side by side, alike by name. Every container of a project carries its compose project, by role."""
     x = _ex(tmp_path, {"mode": "allowlist", "hosts": ["pypi.org"]})
-    place = E.PlaceContainer(x, x.base / "node")
+    place = E.PlaceContainer(x, x.own / "node")
 
     def group(args):
         labels = dict(a.split("=", 1) for a in args[1:] if a.startswith("com.docker.compose."))
         return labels["com.docker.compose.project"], labels["com.docker.compose.service"]
     project = group(x.run_args())[0]
-    assert group(x.run_args()) == (project, "system") and group(place.run_args()) == (project, "places")
-    assert group(x.way.gateway_args()) == (project, "gateway")
+    assert group(x.run_args()) == (project, "system") and group(place.run_args()) == (project, "executors")
+    assert group(x.way.gateway_args()[0]) == (project, "gateway")

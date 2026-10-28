@@ -39,7 +39,7 @@ class _Project(LocalExecution):
         self.started.append(args)
         return _Proc()
 
-    def session(self, cwd):
+    def session(self, cwd, agent=None):
         return self.places.setdefault(cwd, _Session())
 
     def end(self, proc):

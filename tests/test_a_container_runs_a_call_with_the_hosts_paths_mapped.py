@@ -148,7 +148,7 @@ def test_a_call_is_started_inside_its_mapped_place_with_only_what_it_sets(place,
     monkeypatch.setenv("PATH", "C:\\Windows")
     call = one.popen(["claude", "-p", "--system-prompt", f"work in {place}"], env=env, cwd=str(place))
     two.popen(["claude"], env=env, cwd=str(place))
-    assert sum(1 for a in ran if a[:2] == ["docker", "run"]) == 1, "one container per project, whichever object asks"
+    assert sum(1 for a in ran if a[:3] == ["docker", "run", "-d"]) == 1, "one container per project, whichever object asks"
     argv = started[0][0]
     assert argv[:5] == ["docker", "exec", "-i", "-w", "/gfso-place/base"]
     assert f"GFSO_CALL={call.call}" in argv and "CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000" in argv
@@ -225,7 +225,10 @@ def test_each_project_keeps_its_own_cli_state(place, tmp_path):
     every row's cwd is `/gfso-place/ws` (critic over d5c8f7a)."""
     a = ContainerExecution("e3-linux", IMAGE, "f", str(tmp_path / "state"), str(place), "row-a")
     b = ContainerExecution("e3-linux", IMAGE, "f", str(tmp_path / "state"), str(place), "row-b")
-    assert a.state_dir() != b.state_dir() and a.state_dir().parent == b.state_dir().parent
+    assert a.state_dir() == a.own / ".gfso-state" and b.state_dir() == b.own / ".gfso-state" != a.state_dir()
+    assert len({a.volume.name, a.volume.state, b.volume.name, b.volume.state}) == 4, "each in its project's own volumes"
+    c = ContainerExecution("e3-linux", IMAGE, "f", str(tmp_path / "state"), str(tmp_path / "elsewhere" / "ws"), "row-a")
+    assert c.volume.name != a.volume.name, "a project moved to another base mounts none of the first one's places"
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")

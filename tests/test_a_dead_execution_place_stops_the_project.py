@@ -194,10 +194,10 @@ def test_a_round_the_dead_place_refused_keeps_the_conversation_it_would_continue
     ex, docker = _place(tmp_path, monkeypatch)
     llm = ClaudeCodeProvider("haiku", execution=ex)
     sid = "11111111-2222-3333-4444-555555555555"
-    (t := Path(ex.state_dir()) / "projects" / "-gfso-place-ws" / f"{sid}.jsonl").parent.mkdir(parents=True)
-    t.write_text('{"turn": "cut at its cap"}\n')
+    forgot = []
+    monkeypatch.setattr(llm, "forget", forgot.append)
     assert llm.run_agent("sys", "packet", ("Read",), cwd=str(tmp_path / "ws"), session=sid) == ""
-    assert llm.calls[-1]["ended"] == "unavailable" and t.exists(), "the refused round forgot the node's conversation"
+    assert llm.calls[-1]["ended"] == "unavailable" and not forgot, "the refused round forgot the node's conversation"
 
 
 def test_a_probe_that_raises_is_a_place_that_does_not_answer_and_the_monitor_lives_on():

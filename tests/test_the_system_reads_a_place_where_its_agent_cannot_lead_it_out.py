@@ -34,14 +34,20 @@ live = pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "_SESSIONS", {})
-    work = tmp_path / "work"
-    for d in ("ws", ".gfso-nodes-ws/p/a", ".gfso-nodes-ws/p/b", ".gfso-nodes-ws/p/.gfso-tmp", ".gfso-nodes-ws/p/.gfso-sys"):
-        (work / d).mkdir(parents=True, exist_ok=True)
-    ex = ContainerExecution("vol-v1", IMAGE, None, str(tmp_path / "state"), str(work / "ws"), "p")
+    (work := tmp_path / "work" / "ws").mkdir(parents=True)
+    ex = ContainerExecution("vol-v1", IMAGE, None, str(tmp_path / "state"), str(work), "p")
     ex.container = ex.way.container = f"vol-v1-files-{time.time_ns()}"
     ex.way.net, ex.way.gateway = f"{ex.container}-net", f"{ex.container}-gw"
+    ex.volume.name, ex.volume.state = f"{ex.container}-v", f"{ex.container}-state"
     yield ex
     ex.stop()
+    assert not ex.own.exists(), "the places stand in the project's volume alone"
+
+
+def _places(ex) -> None:
+    """Its two nodes' places and the system's directories, made as the system makes them: inside, in the volume."""
+    ex.run(["mkdir", "-p", *[str(ex.own / d) for d in ("a", "b", ".gfso-tmp", ".gfso-sys")]], cwd=str(ex.base),
+           timeout=60).check_returncode()
 
 
 def _sh(ex, cwd, command):
@@ -50,6 +56,7 @@ def _sh(ex, cwd, command):
 
 @live
 def test_live_a_place_that_is_not_there_does_not_stand(project):
+    _places(project)
     nodes, scratch = project.parent / ".gfso-nodes-ws/p", project.parent / ".gfso-nodes-ws/p/.gfso-scratch-a"
     assert project.files.exists(str(nodes / "a")) and not project.files.exists(str(nodes / "gone"))
     pruned = scratch / "a_1700000000" / "hh3.c"            # …a finding's file in a round the rotation pruned
@@ -61,6 +68,7 @@ def test_live_a_place_that_is_not_there_does_not_stand(project):
 
 @live
 def test_live_a_link_flipped_out_of_a_place_never_leads_the_system_into_another(project):
+    _places(project)
     a, b = project.parent / ".gfso-nodes-ws/p/a", project.parent / ".gfso-nodes-ws/p/b"
     project.files.write_bytes(str(b / "secret"), b"SECRET-B\n")
     project.files.write_bytes(str(a / "ok"), b"benign\n")
@@ -82,6 +90,7 @@ def test_live_a_link_flipped_out_of_a_place_never_leads_the_system_into_another(
 
 @live
 def test_live_a_copys_git_reaches_no_other_place_through_its_agents_links(project):
+    _places(project)
     a, b = project.parent / ".gfso-nodes-ws/p/a", project.parent / ".gfso-nodes-ws/p/b"
     project.files.write_bytes(str(b / "secret"), b"SECRET-B\n")
     _sh(project, a, f"mkdir -p x && printf 'gitdir: x\\n' > .git && printf '.\\n' > x/commondir && "
@@ -143,6 +152,26 @@ def test_an_io_error_stops_the_place_only_where_the_systems_own_probe_fails(proj
         assert project.run(["cat", "x"], cwd=where, timeout=10).returncode == 1
 
 
+def test_the_storage_probe_reads_the_base_through_the_mount_the_project_stands_on(project, monkeypatch):
+    """Row 2's outage (engineering, 2026-10-28): a FRESH mount of the base passed at 09:45 while the standing mounts
+    threw I/O errors, and only at 10:02 did a new one fail. Its project's container running, the base is read through
+    that container's own mount; a container of its own reads it only where none runs."""
+    ran = []
+
+    def _docker_client(args, **kw):
+        ran.append(args)
+        if args[:3] == ["docker", "exec", project.container]:
+            return subprocess.CompletedProcess(args, 1, "", "ls: /gfso-place/ws: Input/output error")
+        return subprocess.CompletedProcess(args, 0, "ok" if args[:2] == ["docker", "run"] else "", "")
+    monkeypatch.setattr(E, "run", _docker_client)
+    monkeypatch.setitem(E._STARTED, project.container, ("args", ("open", ())))
+    assert "Input/output error" in (project.unavailable(storage=True) or ""), "down, though a fresh mount passes"
+    E._STARTED.pop(project.container)
+    assert project.unavailable(storage=True) is None and [a for a in ran if a[:2] == ["docker", "run"]], \
+        "no container running: one of its own reads it"
+
+
 @live
 def test_live_the_storage_probe_answers_on_storage_that_works(project):
+    _places(project)
     assert project.unavailable(storage=True) is None

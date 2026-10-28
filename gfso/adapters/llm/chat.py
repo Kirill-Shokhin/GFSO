@@ -358,4 +358,5 @@ class ChatProvider(RecordingProvider):
 
     def forget(self, session: str) -> None:
         """Drop a conversation kept between rounds."""
-        transcript_path(self.execution, session).unlink(missing_ok=True)
+        t = transcript_path(self.execution, session)
+        self.execution.files.remove_matching(str(t.parent), [t.name])

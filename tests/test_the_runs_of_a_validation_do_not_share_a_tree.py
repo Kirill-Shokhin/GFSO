@@ -258,28 +258,31 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
     for args in (("init", "-q"), ("config", "core.symlinks", "false"), ("add", "-A"), ("commit", "-q", "-m", "s")):
         _git(base, *args)
     place = root / ".gfso-nodes-base" / "proj" / "root"
-    W.ensure(base, place, "gfso/proj/root", base)
     ex = ContainerExecution("snap", _image(), str(root / "env"), str(root / "state"), str(base), "proj")
+    W.ensure(base, place, "gfso/proj/root", base, execution=ex)
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
     try:
         sh("ln -s a.sh run.sh && echo built > out.bin", place)
         W.commit_all(base, place, "delivery", "agent", ex)
         head = sh("git rev-parse HEAD", place).stdout.strip()
         at = root / ".gfso-nodes-base" / "proj" / ".gfso-scratch-root" / "r" / "batch1" / "delivery"
-        at.parent.mkdir(parents=True)
+        ex.files.mkdir(str(at.parent.parent))
+        ex.files.mkdir(str(at.parent))
         edits: list = []
         with S.snapshot(place, at, ex, edits) as c:
             assert sh("test -L run.sh && readlink run.sh", c).stdout.strip() == "a.sh"
             assert sh("git rev-parse HEAD", c).stdout.strip() == head
             sh("rm out.bin && echo bye >> a.sh && touch run.sh && git commit -qam v && "
                "mkdir -p ro && touch ro/f && chmod a-w ro ro/f", c)
-        assert edits == ["a.sh", "out.bin"] and not at.exists()
+        assert edits == ["a.sh", "out.bin"] and not ex.files.exists(str(at))
+        assert not (root / ".gfso-nodes-base").exists(), "the place, its copy and its removal: all in the volume"
         assert sh("git rev-parse HEAD", place).stdout.strip() == head                 # …the delivery's branch stays
         assert sh("test -L run.sh && echo LINK", place).stdout.strip() == "LINK"
         assert _git(base, "worktree", "list", "--porcelain").count("worktree ") == 1
     finally:
         sh("rm -f run.sh", place)                           # a container's link is no file the host can remove
         ex.stop()
+        ex.volume.remove()                    # …the project's places: kept by every stop
 
 
 @pytest.mark.parametrize("network", [None, {"mode": "off"}])
@@ -296,7 +299,7 @@ def test_what_an_executor_made_unreadable_in_its_place_does_not_stop_its_copy(tm
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
     try:
         sh("mkdir -p d && echo x > f && echo y > d/g && chmod 000 f d", base)
-        (at := scratch_of(base, "chmodprobe") / "r" / "delivery").parent.mkdir(parents=True)
+        ex.files.mkdir(str((at := scratch_of(base, "chmodprobe") / "r" / "delivery").parent))
         ex.copy_tree(str(base), str(at))
         with pytest.raises(OSError, match="already exists"):     # …never INTO what stands there (critic 3)
             ex.copy_tree(str(base), str(at))
@@ -304,6 +307,7 @@ def test_what_an_executor_made_unreadable_in_its_place_does_not_stop_its_copy(tm
     finally:
         sh("chmod -R u+rwX .", base)
         ex.stop()
+        ex.volume.remove()                    # …the project's places: kept by every stop
 
 
 class _Timed(_Run):

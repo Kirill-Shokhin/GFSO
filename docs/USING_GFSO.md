@@ -182,6 +182,19 @@ session is told which branches did not join, and integrating them is its work. W
 the worktrees whose branches joined are removed; the others stay and are named. A project dir that is
 not a repository is shared by every executor as it stands, and the log says so once.
 
+Under a container execution (`register_agent(..., execution=<name>)`) those places are not on your disk:
+the project's own directory — node places, validation rounds, temps, the sessions' CLI state — lives in
+the project's Docker volumes, named by the installation, the execution, the project and the base, and
+only the project dir itself stays a directory of yours. To read the places, write them out:
+`gfso export-places <project> <dir>` puts them under `<dir>/<project>/`, each node's repository whole
+(it no longer borrows objects from the project dir) and inert: no repository carries the config or hooks
+an agent gave it, so reading the export runs nothing an agent wrote; what could not be exported as it
+stood is listed in `<dir>/.gfso-export-notes`. A project whose places stood beside the project dir
+before it moved into volumes is copied in on its first start, and the host directory is renamed
+`<dir>.copied-in-<time>`. To go back to host directories, export the places first — what the project did
+since the copy-in exists only in the volumes — then remove the two volumes and the project's `volume:`
+settings and rename the `.copied-in-` directories back. The volumes go when the project is deleted.
+
 One thing decides whether that is safe, and it is a property of your PLAN, not of the machinery: two
 nodes that will write the same file are not independent, whatever their topics. Give each node its
 own artifact, or declare the dependency between them — otherwise both run, and the later one's join

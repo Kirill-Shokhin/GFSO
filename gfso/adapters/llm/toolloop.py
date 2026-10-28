@@ -102,9 +102,9 @@ class Place:
     its execution lends (where a packet's inputs are laid). Each tool answers in text, an error included; a command
     gets the time the run has left."""
 
-    def __init__(self, execution, cwd: str, deadline: float = float("inf")):
+    def __init__(self, execution, cwd: str, deadline: float = float("inf"), agent: str | None = None):
         # its commands run in the session's own place (`ExecutionPort.session`), not the system's
-        self.exec, self.cwd, self.deadline = execution.session(str(cwd)), Path(cwd).resolve(), deadline
+        self.exec, self.cwd, self.deadline = execution.session(str(cwd), agent), Path(cwd).resolve(), deadline
         base = base_of(str(self.cwd))
         self.roots = [self.cwd, Path(self.exec.temp_root()).resolve(), *([Path(base).resolve()] if base else [])]
 
@@ -268,17 +268,19 @@ class ToolLoop:
         """The run's final answer, or "" where it gave none; its record booked on the provider either way."""
         p, t0 = self.p, time.monotonic()
         names = [n for n in dict.fromkeys(t.split("(", 1)[0].strip() for t in allowed_tools) if n in TOOLS]
-        kept = transcript_path(p.execution, session) if session else None
-        resumed = bool(kept and kept.is_file())
-        msgs = json.loads(kept.read_text(encoding="utf-8")) if resumed else [{"role": "system", "content": system}]
+        kept = str(transcript_path(p.execution, session)) if session else None
+        files = p.execution.files                 # …the system's, beside its sessions' CLI state: no session reaches it
+        held = files.read_text(kept) if kept else None
+        resumed = held is not None
+        msgs = json.loads(held) if resumed else [{"role": "system", "content": system}]
         # a conversation not found opens on what the run reopens on (`resume_fallback`), as the CLI's cold retry does
         msgs.append({"role": "user", "content": user if resumed else (p.resume_fallback or user)})
         p.begin_run()
         turns, (answer, ended, stop, error) = [], ("", "answered", None, None)
         trace, place = _open_trace(p.stage_hint), None
         try:
-            answer, ended, stop, error = self._turns(msgs, names, Place(p.execution, cwd, t0 + timeout), turns, t0,
-                                                     timeout, max_turns, trace)
+            answer, ended, stop, error = self._turns(msgs, names, Place(p.execution, cwd, t0 + timeout, p.agent), turns,
+                                                     t0, timeout, max_turns, trace)
         except PlaceUnavailable as e:
             answer, ended, stop, error, place = "", "unavailable", None, str(e), e.place
             _answer_pending(msgs, f"Error: the place went down before this ran ({e}) — run it again")
@@ -289,10 +291,9 @@ class ToolLoop:
         if kept is not None:                # only a round cut at its cap is continued (the CLI's rule)
             if stop == "max_turns" or ended in ("limit", "unavailable", "unauthorized"):
                 # …and a round a stop refused mid-run is continued after the lift, as the CLI's is (`headless`)
-                kept.parent.mkdir(parents=True, exist_ok=True)
-                kept.write_text(json.dumps(msgs), encoding="utf-8")
+                files.write_bytes(kept, json.dumps(msgs).encode())
             else:
-                kept.unlink(missing_ok=True)
+                files.remove_matching(str(Path(kept).parent), [Path(kept).name])
         return answer if ended == "answered" else ""
 
     def _turns(self, msgs, names, place, turns, t0, timeout, max_turns, trace):

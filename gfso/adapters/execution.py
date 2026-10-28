@@ -1,9 +1,12 @@
 """Where a session or a command runs (`ExecutionPort`): `LocalExecution` — on this host, as every launch ran before
 the port existed; `ContainerExecution` — inside one long-lived Linux container per (execution, project), the same server
 starting every call through `docker exec`, so a project's work is isolated without a second server. The graph keeps host
-paths: a container sees the base's parent as `/gfso-place`, and every path crossing the boundary is mapped both ways."""
+paths as the system's names: a container sees the base's parent as `/gfso-place`, and every path crossing the boundary
+is mapped both ways — while under the project's own directory nothing stands on the host: it is the project's Docker
+volume, mounted at the same inside path."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import ipaddress
@@ -19,11 +22,12 @@ import tempfile
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import HOST, NODES, SCRATCH, ExecutionPort, FilesPort, PlaceUnavailable
-from gfso.config import DEFAULT_PROJECT, SECRET_ENV, claude_config_dir, host_env
+from gfso.core.types import HOST, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
+from gfso.config import DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, host_env
 from gfso.adapters import door, egress
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
@@ -92,8 +96,15 @@ def stricter(a: tuple | None, b: tuple | None) -> tuple:
 GATEWAY = "gateway"
 #: how the key a model client inside holds for its credential begins (`Door`) — it opens one door and nothing else
 PLACEHOLDER = "held-by-the-door-"
-#: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes
+#: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes; its
+#: volume carries it too, and no sweep removes that: it holds the project's work (`ContainerExecution.drop`)
 LABEL = "gfso.execution"
+#: the project's directory of its sessions' CLI state — a volume of its own (`Volume`), which only its keeper mounts
+#: whole and each session its own place's of (`PlaceContainer`)
+STATE_DIR = ".gfso-state"
+#: a system container's own memory-backed directory — its script laid there by the system, its log written there:
+#: nothing of the host is mounted, and `docker cp` writes no read-only root nor sees a tmpfs
+OWN = "/gfso-own"
 
 
 def grouped(project_container: str, role: str) -> list[str]:
@@ -102,6 +113,95 @@ def grouped(project_container: str, role: str) -> list[str]:
     группе»). A compose project's name: lower-case letters, digits, `_`, `-`."""
     return ["--label", f"com.docker.compose.project={re.sub(r'[^a-z0-9_-]+', '-', project_container.lower())}",
             "--label", f"com.docker.compose.service={role}"]
+
+
+#: the base read as the running project's container reads it — through its own mount, nothing written into the user's
+#: repository: its listing, and its git's HEAD and objects where it has a git
+_BASE_READ = ('ls "$1" >/dev/null && { [ ! -e "$1/.git/HEAD" ] || { cat "$1/.git/HEAD" >/dev/null && '
+              'ls "$1/.git/objects" >/dev/null; }; }')
+
+
+def _unavailable(ex, storage: bool):
+    """Why `ex` cannot start a call (`ExecutionPort.unavailable`): the daemon's own words where it does not answer —
+    Docker Desktop not running reads "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+    …" — else, with `storage`, the storage's: the base read through the running project container's OWN mount (a fresh
+    mount of it passed while the standing ones threw I/O errors, engineering 2026-10-28, row 2: the daemon answering,
+    every session dying, the probe saying "up" for 35 min), or by a container of its own where none runs; and a file
+    written, read and removed in the project's places volume where it is made — else None."""
+    try:
+        got = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=60, text=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return str(e)
+    if got.returncode:
+        return (got.stderr or "").strip() or f"docker info exited {got.returncode}"
+    if not storage:
+        return None
+    p = ex.project if isinstance(ex, PlaceContainer) else ex
+    base, read = p.to_inside(str(p.base)), True
+    try:
+        if p.container in _STARTED:
+            got = run(["docker", "exec", p.container, "sh", "-c", _BASE_READ, "sh", base], timeout=120, text=True)
+            if got.returncode and not _GONE.search(got.stderr or ""):
+                return f"its storage does not answer: {(got.stderr or got.stdout or '').strip()[-300:]}"
+            read = bool(got.returncode)                  # …its container gone: a container of its own reads it
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"its storage does not answer ({e})"
+    try:                                     # …its volume asked first, never made by the probe (`Volume.require`)
+        p.volume.require(places := p.volume.mount(p.own, False, "/p"))
+    except PlaceUnavailable as e:
+        return e.why
+    except LookupError:
+        places = []                          # …not made yet: its making is `Volume.ready`'s
+    if not places and not read:
+        return None
+    try:
+        got = run(["docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt",
+                   "no-new-privileges", *places, *(p.volume.mount(p.base, True, base) if read else []), p.image,
+                   "sh", "-c", '{ [ ! -d /p ] || { f=/p/.gfso-probe-$$ && echo ok > "$f" && cat "$f" >/dev/null && '
+                   'rm -f "$f"; }; } && { [ -z "$1" ] || ' + _BASE_READ + "; } && echo ok",
+                   "sh", base if read else ""], timeout=120, text=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"its storage does not answer ({e})"
+    return None if got.returncode == 0 and got.stdout.strip() == "ok" else \
+        f"its storage does not answer: {(got.stderr or got.stdout or '').strip()[-300:]}"
+
+
+def _system_run(name: str, image: str, flags: list, script: Path, args: list, mirror: Path) -> None:
+    """A system container (a door, a gateway) running `script` with `args`: started waiting for it, the script laid
+    whole into its `OWN` through one `docker exec`, so nothing of the host is mounted into it. Its `OWN` holds its log
+    well past the log's cap on refusals, room left for what it passes; the log's host `mirror` named on it, so any
+    removal of it keeps the log first (`_keep_logs`)."""
+    run(["docker", "run", "-d", "--init", "--name", name, *flags, "--label", f"gfso.log={mirror}",
+         "--tmpfs", f"{OWN}:size={3 * door.LOG_CAP // 2 ** 20}m,mode=1777", image,
+         "sh", "-c", f'until [ -f {OWN}/run.py ]; do sleep 0.1; done; exec python3 {OWN}/run.py "$@"', "sh", *args],
+        timeout=120).check_returncode()
+    run(["docker", "exec", "-i", name, "sh", "-c", f"cat > {OWN}/laid && mv {OWN}/laid {OWN}/run.py"],
+        input=script.read_bytes(), timeout=60).check_returncode()
+
+
+def _log_out(names, mirror: Path) -> str:
+    """What the system containers `names` logged in their `OWN`, appended to the host's `mirror` before they go —
+    the mirror read with them: what they logged outlives them."""
+    got = [run(["docker", "exec", n, "sh", "-c", f"cat {OWN}/*.log 2>/dev/null; true"], timeout=60, text=True,
+               encoding="utf-8", errors="replace").stdout or "" for n in names]
+    kept = mirror.read_text(encoding="utf-8") if mirror.is_file() else ""
+    return kept + "".join(got)
+
+
+def _mirror(names, mirror: Path) -> None:
+    if text := _log_out(names, mirror):
+        mirror.parent.mkdir(parents=True, exist_ok=True)
+        mirror.write_text(text, encoding="utf-8")
+
+
+def _keep_logs(names) -> None:
+    """Each system container of `names` that names its log's mirror (`_system_run`) has its log kept there — before a
+    sweep removes it, at this server's exit or the next one's start."""
+    got = run(["docker", "inspect", "-f", '{{.Name}} {{index .Config.Labels "gfso.log"}}', *names], timeout=60,
+              text=True) if names else None
+    for n, _, m in [x.partition(" ") for x in (got.stdout or "").splitlines()] if got else []:
+        if m.strip() and m.strip() != "<no value>":
+            _mirror([n.lstrip("/")], Path(m.strip()))
 
 
 #: each file operation inside (`ContainerFiles`), over "$1" the path — no bound of its own: the container it runs in is
@@ -116,7 +216,57 @@ _FILE_OPS = {
     "write_files": 'mkdir -p -- "$1" && tar -x -m -C "$1" -f -',
     "read_tree": '[ -d "$1" ] && tar -c -C "$1" .',
     "subdirs": '[ -d "$1" ] && find "$1" -mindepth 1 -maxdepth "$2" -type d -printf "%P\\0"',
+    "remove_matching": 'r=$1; shift; [ -d "$r" ] || exit 0; '
+                       'for g; do find -P "$r" -mindepth 1 -path "$r/$g" ! -type d -delete || exit 1; done',
 }
+#: `Volume.bring_in` inside, as root: "$1" `made` where the record says so, "$2" the image's user, "$3" the origin,
+#: then (old key, new name) pairs; exit 3: a volume lost. Each kind of entry counted on both sides of the copy
+_BRING_IN = r'''u="$(id -u "$1"):$(id -g "$1")" && shift || exit 1
+find /to /state -mindepth 1 -delete || exit 1
+kinds() { (cd "$1" && find . -printf '%y\n' | sort | uniq -c); }
+if [ -d /from ]; then
+  cp -a /from/. /to/ || exit 1
+  [ "$(kinds /from)" = "$(kinds /to)" ] || { echo "the copy differs: $(kinds /from | tr '\n' ' ')/ $(kinds /to | tr '\n' ' ')" >&2; exit 1; }
+fi
+if [ -d /old ]; then
+  for f in /old/* /old/.[!.]*; do [ -e "$f" ] && [ "$f" != /old/places ] && { cp -a "$f" /state/ || exit 1; }; done
+  while [ $# -gt 1 ]; do
+    [ -d "/old/places/$1" ] && { mkdir -p "/state/$2" && cp -a "/old/places/$1/." "/state/$2/" || exit 1; }
+    shift 2
+  done
+fi
+chown -R "$u" /to /state'''
+#: `Volume.export` inside, as the image's user — never root — over the places at /from: a copy in the container's own
+#: file system; in it every repository made inert — the agent's config and hooks dropped for a config of the format
+#: alone, so nothing it wrote runs, here nor on the host that reads the export — and each node's clone dissociated
+#: from the base ("$1", mounted at its own path): its borrowed objects repacked in, by git under no config but its
+#: own, its alternates gone. What could not be done is said on stderr ("NOTE: …"), the rest exported
+_EXPORT = r'''b=$1
+note() { printf 'NOTE: %s\n' "$*" >&2; }
+mkdir -p /tmp/x || exit 1
+(cd /from && tar -c --exclude=./.gfso-sys --exclude=./.gfso-tmp .) | tar -x -C /tmp/x || note "files it could not read are not exported"
+find /tmp/x -name .git -type d -prune > /tmp/repos
+while read -r g; do
+  r=${g%/.git}
+  mv "$g/config" /tmp/theirs 2>/dev/null || : > /tmp/theirs
+  rm -rf "$g/hooks"
+  for k in core.repositoryformatversion core.bare; do
+    v=$(git config --file /tmp/theirs --get "$k" </dev/null) && git config --file "$g/config" "$k" "$v" </dev/null
+  done
+  git config --file /tmp/theirs --get-regexp '^extensions\.' | while read -r k v; do git config --file "$g/config" "$k" "$v"; done
+  a=$g/objects/info/alternates
+  [ -f "$a" ] || continue
+  cp "$a" /tmp/alternates
+  printf '%s\n' "$b/.git/objects" > "$a"
+  if GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+      -C "$r" repack -a -d -q </dev/null; then
+    rm -f "$a"
+  else
+    cp /tmp/alternates "$a" && note "${r#/tmp/x/}: not repacked — exported as it stands, its objects still the base's"
+  fi
+done < /tmp/repos
+[ -n "$(ls -A /tmp/x)" ] || { note "nothing to export"; exit 1; }
+tar -c -C /tmp/x .'''
 #: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
 _DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
 #: …and where the container is gone or stopped under a live server — started again, once
@@ -141,6 +291,8 @@ _DOORS: set = set()
 #: each project container's doors (`Door`), by its name
 _GATES: dict = {}
 _START = threading.RLock()     # a turn stops what a start holds, under the same lock
+#: each project's own lock over its volume's making — a copy-in of one project stalls no other
+_VOLUMES: dict = {}
 
 
 def component(s) -> str:
@@ -272,6 +424,7 @@ def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
     if ids := list(_STARTED):
+        _keep_logs([*[f"{i}-gw" for i in ids], *_DOORS])
         run(["docker", "rm", "-f", *ids, *[f"{i}-gw" for i in ids], *_DOORS], timeout=120)
         run(["docker", "network", "rm", *[f"{i}-net" for i in ids]], timeout=120)
         _STARTED.clear()
@@ -286,6 +439,7 @@ def end_leftovers() -> None:
     if shutil.which("docker"):
         got = run(["docker", "ps", "-aq", "--filter", f"label={LABEL}"], timeout=60, text=True)
         if ids := (got.stdout or "").split():
+            _keep_logs(ids)
             run(["docker", "rm", "-f", *ids], timeout=120)
         run(["docker", "network", "prune", "-f", "--filter", f"label={LABEL}"], timeout=120)
 
@@ -318,19 +472,15 @@ class WayOut:
         """This container's switch as last declared; open where none was."""
         return _SWITCH.get(self.container, ("open", ()))
 
-    def gateway_args(self) -> list[str]:
-        """`docker run` for the allowlist's gateway: on the project's network first, so it listens there alone (it
-        joins Docker's bridge after, to reach out), the execution's own image running `egress.py` read-only,
-        unprivileged and bounded, nothing of the project mounted."""
-        return ["docker", "run", "-d", "--init", "--name", self.gateway, "--label", f"{LABEL}={self.name}",
-                *grouped(self.container, "gateway"),
-                "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
-                "--sysctl", "net.ipv4.ip_forward=0", "--memory", "256m", "--pids-limit", "256",
-                "--network", self.net, "--network-alias", GATEWAY,
-                "--mount", f"type=bind,src={Path(egress.__file__).resolve()},dst=/gfso-egress.py,readonly",
-                "--mount", f"type=bind,src={self.log().parent},dst=/log",
-                self.image, "python3", "/gfso-egress.py", ",".join(self.network[1]), "/log/" + self.log().name,
-                GATEWAY]
+    def gateway_args(self) -> tuple[list, list]:
+        """(flags, args) of the allowlist's gateway (`_system_run`): on the project's network first, so it listens
+        there alone (it joins Docker's bridge after, to reach out), the execution's own image running `egress.py`
+        read-only, unprivileged and bounded, nothing of the host mounted."""
+        return (["--label", f"{LABEL}={self.name}", *grouped(self.container, "gateway"),
+                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+                 "--sysctl", "net.ipv4.ip_forward=0", "--memory", "256m", "--pids-limit", "256",
+                 "--network", self.net, "--network-alias", GATEWAY],
+                [",".join(self.network[1]), f"{OWN}/egress.log", GATEWAY])
 
     def run_args(self) -> list[str]:
         """What `docker run` of the container takes for this way out: NET_ADMIN for the host rule when open; else its
@@ -361,17 +511,22 @@ class WayOut:
         run(["docker", "network", "create", "--internal", "-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated",
              "--label", f"{LABEL}={self.name}", self.net], timeout=60).check_returncode()
         if mode == "allowlist":
-            self.log().parent.mkdir(parents=True, exist_ok=True)
-            run(self.gateway_args(), timeout=120).check_returncode()
+            flags, args = self.gateway_args()
+            _system_run(self.gateway, self.image, flags, Path(egress.__file__), args, self.log())
             run(["docker", "network", "connect", "bridge", self.gateway], timeout=60).check_returncode()
 
     def log(self) -> Path:
-        """Every connection the allowlist's gateway opened or refused, written by the gateway as it happens — in a
-        directory of its own, not the CLI's state: the session's container mounts that, and the log is out of its reach."""
+        """The host's mirror of every connection the allowlist's gateway opened or refused — written by the gateway in
+        its own memory as it happens, out of every session's reach, and kept here as it goes (`log_text`)."""
         return self.home / "egress" / self.container / "egress.log"
 
+    def log_text(self) -> str:
+        """The gateway's log: what the mirror kept and what the running gateway wrote since."""
+        return _log_out([self.gateway], self.log())
+
     def close(self) -> None:
-        """The gateway and the network."""
+        """The gateway, its log kept in the mirror, and the network."""
+        _mirror([self.gateway], self.log())
         run(["docker", "rm", "-f", self.gateway], timeout=60)
         run(["docker", "network", "rm", self.net], timeout=60)
 
@@ -405,18 +560,15 @@ class Door:
     def _start(self, name: str, credential, upstream: str, closed: bool) -> str | None:
         """One door started holding `credential`, its key kept; its address on Docker's bridge."""
         run(["docker", "rm", "-f", name], timeout=60)
-        self.log().parent.mkdir(parents=True, exist_ok=True)
         key = PLACEHOLDER + uuid.uuid4().hex
-        run(["docker", "run", "-d", "--init", "--name", name, "--label", f"{LABEL}={self.way.name}",
-             *grouped(self.way.container, "door"),
-             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--memory", "256m",
-             "--pids-limit", "256", "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
-             *(["--network", self.way.net, "--network-alias", name] if closed else []),
-             "--mount", f"type=bind,src={Path(door.__file__).resolve()},dst=/gfso-door.py,readonly",
-             "--mount", f"type=bind,src={self.log().parent},dst=/log",
-             self.way.image, "python3", "/gfso-door.py", upstream, "/log/" + self.log().name,
-             name if closed else "0.0.0.0", "1" if closed else "0"], timeout=120).check_returncode()
-        _DOORS.add(name)                      # …at once: a start cut after this still ends with the server
+        _DOORS.add(name)                      # …before it runs: a start cut after this still ends with the server
+        _system_run(name, self.way.image, [
+            "--label", f"{LABEL}={self.way.name}", *grouped(self.way.container, "door"),
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--memory", "256m",
+            "--pids-limit", "256", "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
+            *(["--network", self.way.net, "--network-alias", name] if closed else [])],
+            Path(door.__file__), [upstream, f"{OWN}/door.log", name if closed else "0.0.0.0", "1" if closed else "0"],
+            self.log())
         # …laid by a `docker exec` whose environment is its own and gone with it: in no configuration Docker keeps
         laid = json.dumps({"kind": credential.kind, "value": credential.value, "key": key})
         run(["docker", "exec", "-e", "GFSO_DOOR_LAID", name, "sh", "-c",
@@ -440,15 +592,241 @@ class Door:
         return address or None if got.returncode == 0 and up == "true" else None
 
     def log(self) -> Path:
-        """Every request the doors passed or refused, written by the door as it happens."""
+        """The host's mirror of every request the doors passed or refused — written by each door in its own memory as
+        it happens, and kept here as they go (`log_text`)."""
         return self.way.home / "door" / self.way.container / "door.log"
 
+    def log_text(self) -> str:
+        """The doors' log: what the mirror kept and what the running doors wrote since."""
+        return _log_out([n for n, _ in self.held.values()], self.log())
+
     def close(self) -> None:
-        """Every door of the project, and the credentials they hold."""
+        """Every door of the project, its log kept in the mirror, and the credentials they hold."""
         if names := [n for n, _ in self.held.values()]:
+            _mirror(names, self.log())
             run(["docker", "rm", "-f", *names], timeout=60)
             _DOORS.difference_update(names)
         self.held = {}
+
+
+class Volume:
+    """A project's own directory as two Docker volumes — its places (`name`) and its sessions' CLI state (`state`,
+    `.gfso-state`), which the project's container never mounts: the system's own git runs there over places an agent
+    wrote, and a hook it planted read and rewrote another place's conversation (critic over 6202d19).
+
+    ONE RULE, here alone. A volume's name carries all that identifies it — this installation's state home, the
+    execution, the project, the base — so two installations, two bases or two executions never share one. It is
+    made in `ready` alone, labelled with this home, and one standing under its name without that label — another
+    home's, or Docker's own making — is refused, never emptied nor used. Every container that mounts it — the
+    project's, a session's, the keeper, the storage probe, the copy-in, an export — asks `require` first, and the
+    project's and a session's ask again once started: Docker makes a missing volume, empty and unlabelled, wherever
+    one is named. Which volume holds each role is the project's own record (`VOLUME` + `places` / `state` in its
+    settings, the system's: it survives the server): the record's volume missing is the place down, never refilled;
+    the record naming another volume than this execution would mount (a state home moved, the execution declared on
+    another base) is the place down too, both names said; no record, not made yet. Kept across every stop and every
+    sweep of leftovers — it holds the project's work —, removed with the project alone (`drop_volumes`)."""
+
+    def __init__(self, container: str, execution: str, own: Path, base: Path, project: str):
+        key = f"{_home()}-{hashlib.sha1(os.path.normcase(base).encode()).hexdigest()[:6]}"
+        self.name, self.state = f"{container}-{key}-v", f"{container}-{key}-state"
+        self.execution, self.own, self.project = execution, own, project
+        self.labels = {LABEL: execution, "gfso.project": project, "gfso.home": _home()}
+        made: dict = {}
+        #: (read, write) of the project's own settings, where the record of its volumes is kept — set by whoever holds
+        #: the project (`workspaces.execution_of`), with what a copy-in `carried` (the places and rounds it moved in);
+        #: none held, this process's alone
+        self.record, self.carried = (made.get, made.__setitem__), lambda dirs: None
+        self.copy_time = 1800                            # seconds a copy-in may take
+
+    def mount(self, src: Path, ro: bool, dst: str) -> list[str]:
+        """`--mount` of the directory the system names `src` at `dst`: its CLI state's volume under `.gfso-state`, the
+        places' under the rest of the project's own directory (`own`), whole or a subpath; else (the base) the host's.
+        A spec, nothing asked: whoever starts a container on it asks `require`."""
+        states = self.own / STATE_DIR
+        if src.is_relative_to(self.own):
+            vol, sub = (self.state, src.relative_to(states)) if src.is_relative_to(states) else (
+                self.name, src.relative_to(self.own))
+            spec = f"type=volume,src={vol},dst={dst}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
+        else:
+            spec = f"type=bind,src={src},dst={dst}"
+        return ["--mount", spec + (",readonly" if ro else "")]
+
+    def _roles(self) -> dict:
+        return {"places": self.name, "state": self.state}
+
+    @staticmethod
+    def _labels(v: str):
+        """The labels of the volume `v` as it stands, None where it does not."""
+        got = run(["docker", "volume", "inspect", "-f", "{{json .Labels}}", v], timeout=60, text=True)
+        if got.returncode:
+            return None
+        with contextlib.suppress(ValueError):
+            if isinstance(labels := json.loads(got.stdout or "{}"), dict):
+                return labels
+        return {}
+
+    def require(self, args: list) -> None:
+        """Each of this project's volumes `args` mount stands as the project's record names it, made by this
+        installation — else no container runs on it: the place down (`PlaceUnavailable`), or, with no record and no
+        volume, not made yet (`LookupError`)."""
+        for role, v in self._roles().items():
+            if not any(f"type=volume,src={v}," in a for a in args):
+                continue
+            if (named := self.record[0](VOLUME + role)) and named != v:
+                raise PlaceUnavailable(self.execution, f"the project's record holds its {role} in the volume {named}, "
+                                       f"and this execution would mount {v}: declare the execution back as it was, or "
+                                       f"remove the project's `{VOLUME}` settings to start it on new, empty volumes")
+            if (labels := self._labels(v)) is None:
+                if named:
+                    raise PlaceUnavailable(self.execution, f"its volume {v} is gone: the project's record holds its "
+                                                           f"{role} there")
+                raise LookupError(f"its volume {v} is not made yet")
+            if labels.get("gfso.home") != _home():
+                raise PlaceUnavailable(self.execution, f"the volume {v} is not this installation's making (its labels: "
+                                                       f"{labels or 'none'}): nothing runs on it")
+
+    def ready(self, image: str, host: Path, old: Path, places: dict, dirs: list) -> None:
+        """Both volumes as the project's record names them, else made now, ONCE. Made: each created with its labels,
+        what stood in them emptied (a copy cut midway), a project's directory that stood on the `host` before it moved
+        in copied whole by a container of its own (Linux reads an agent's links as links there; Docker Desktop's
+        `docker cp` skipped every one and exited 0, critic over 71b49ad), checked by the count of each kind of entry,
+        and each place's CLI state from the `old` per-project state carried to its new name (`places`: {old key: new
+        name}); then the places and rounds it carried (`dirs`) recorded as made, the volumes recorded, and the sources
+        CONSUMED — renamed `<dir>.copied-in-<time>`, at each start until it took — so neither a lost volume nor a
+        project made again under the name refills from them. A copy that fails, differs or outruns its time records
+        nothing, its container removed, and the next start tries again. To roll back to the host: export the places
+        (`gfso export-places`) — what the project did since lives in the volume alone —, remove both volumes and the
+        project's `volume:` settings, and rename each `.copied-in-<time>` directory back."""
+        both = [f"type=volume,src={v}," for v in (self.name, self.state)]
+        try:
+            self.require(both)
+            if all(self.record[0](VOLUME + r) for r in self._roles()):
+                return self._consume(host, old)
+        except LookupError:                  # …not made yet: made below
+            pass
+        for v in (self.name, self.state):
+            if self._labels(v) is None:
+                run(["docker", "volume", "create", *[a for k, x in self.labels.items() for a in ("--label", f"{k}={x}")],
+                     v], timeout=60).check_returncode()
+        self.require(both)
+        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
+        got = self._one_shot(image, [*[a for p, at in ((host, "/from"), (old, "/old")) if p.is_dir()
+                                       for a in ("--mount", f"type=bind,src={p},dst={at},readonly")],
+                                     "--mount", f"type=volume,src={self.name},dst=/to",
+                                     "--mount", f"type=volume,src={self.state},dst=/state"],
+                             [_BRING_IN, "sh", user or "0", *[x for k, v in places.items() for x in (k, v)]],
+                             "bring-in", text=True)
+        if got.returncode:
+            raise OSError(f"{self.name}: the volume could not take its places ({(got.stderr or '').strip()[-300:]})")
+        self.carried(dirs)
+        for role, v in self._roles().items():
+            self.record[1](VOLUME + role, v)
+        self._consume(host, old)
+
+    def _one_shot(self, image: str, mounts: list, script: list, role: str, user: str = "0",
+                  **kw) -> subprocess.CompletedProcess:
+        """`script` in a container of the system's own over `mounts` — no network, its volumes asked first; as root with
+        the system's capabilities, or as `user` with none — named by its `role`, so a cut one is removed with the cut
+        and a server's next start sweeps one left (`end_leftovers`)."""
+        self.require(mounts)
+        one = f"{self.name}-{role}"
+        run(["docker", "rm", "-f", one], timeout=60)
+        try:
+            got = run(["docker", "run", "--rm", "--name", one, "--label", f"{LABEL}={self.execution}",
+                       "--network", "none", "--cap-drop", "ALL",
+                       *[a for c in SYSTEM_CAPS if user == "0" for a in ("--cap-add", c)],
+                       "--security-opt", "no-new-privileges", "-u", user, *mounts, image, "sh", "-c", *script],
+                      timeout=self.copy_time, **kw)
+        except subprocess.TimeoutExpired:
+            run(["docker", "rm", "-f", one], timeout=60)        # …a copy cut by its time must not go on writing
+            raise
+        if got.returncode:
+            run(["docker", "rm", "-f", one], timeout=60)
+        return got
+
+    @staticmethod
+    def _consume(host: Path, old: Path) -> None:
+        """The copy-in's sources renamed aside; one the host will not rename now (a file held open) is tried again at
+        the next start."""
+        for p in (host, old):
+            if p.is_dir():
+                try:
+                    p.rename(p.with_name(f"{p.name}.copied-in-{time.strftime('%Y%m%dT%H%M%S')}"))
+                except OSError as e:
+                    log.warning(f"{p} was copied in and could not be moved aside now ({e}): tried again at the next start")
+
+    def export(self, image: str, base: Path, inside_base: str, to: Path) -> list:
+        """The places as they stand, written to the host directory `to`, INERT — no repository carries its agent's
+        config or hooks, so nothing an agent wrote runs where the export is read — each node's clone made whole on the
+        way (`_EXPORT`), in a copy and never in the place, so it reads with the volume and the base both gone. What
+        could not be carried as it stood — a clone not repacked, an entry the host refused, a link leading out of
+        `to`, kept as a file naming its target — is said in `.gfso-export-notes` beside `to`, and returned; nothing
+        exported at all is an `OSError`. Its CLI state is not exported."""
+        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
+        got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly",
+                                     "--mount", f"type=bind,src={base},dst={inside_base},readonly"],
+                             [_EXPORT, "sh", inside_base], "export", user or "0")
+        said = [x[6:] for x in (got.stderr or b"").decode(errors="replace").splitlines() if x.startswith("NOTE: ")]
+        if got.returncode:
+            raise OSError(f"{self.name}: its places could not be exported ({'; '.join(said) or got.returncode})")
+        if notes := said + _untar(got.stdout, to):
+            (to.parent / ".gfso-export-notes").write_text("\n".join(notes) + "\n", encoding="utf-8")
+        return notes
+
+    def remove(self) -> None:
+        """Both gone, with every place in them."""
+        run(["docker", "volume", "rm", "-f", self.name, self.state], timeout=120)
+
+
+def export_places(ex: "ContainerExecution", to: str) -> list:
+    """The places of `ex`'s project as they stand, written under the host directory `to` in a directory named by the
+    project — read with the project's volumes and its base gone, inert (`Volume.export`); what it could not carry."""
+    return ex.volume.export(ex.image, ex.base, ex.to_inside(str(ex.base)), Path(to) / ex.project_name)
+
+
+def _untar(data: bytes, to: Path) -> list:
+    """A tar stream's entries under `to`, none outside it — a link whose target, read from its own directory, leaves
+    `to`, or one the host cannot make, written as a file naming its target; an entry the host refuses (two names one
+    on a case-blind disk) passed over — and what was not written as it stood, said."""
+    to.mkdir(parents=True, exist_ok=True)
+    root, notes = to.resolve(), []
+    with tarfile.open(fileobj=io.BytesIO(data)) as t:
+        for m in t.getmembers():
+            at = Path(os.path.abspath(root / m.name))
+            try:
+                if not at.is_relative_to(root):
+                    raise OSError("outside the export")
+                if not m.issym():
+                    t.extract(m, to, filter="tar")
+                    continue
+                at.parent.mkdir(parents=True, exist_ok=True)
+                if not Path(os.path.abspath(at.parent / m.linkname)).is_relative_to(root) or os.path.isabs(m.linkname):
+                    notes.append(f"{m.name}: a link out of the export, kept as a file naming {m.linkname}")
+                    at.write_text(m.linkname, encoding="utf-8")
+                    continue
+                try:
+                    os.symlink(m.linkname, at)
+                except OSError:
+                    at.write_text(m.linkname, encoding="utf-8")
+            except (OSError, tarfile.TarError) as e:
+                notes.append(f"{m.name}: not written ({e})")
+    return notes
+
+
+def _home() -> str:
+    """This installation's state home, as a volume's label names it: two servers on one machine delete theirs alone."""
+    return hashlib.sha1(str(data_dir().resolve()).encode()).hexdigest()[:8]
+
+
+def drop_volumes(project: str) -> None:
+    """Every volume of the project — of this installation, whatever execution or base it was made for, its roster
+    read or not: a new project of the name inherits none of its places."""
+    got = run(["docker", "volume", "ls", "-q", "--filter", f"label=gfso.project={component(project)}",
+               "--filter", f"label=gfso.home={_home()}"], timeout=60, text=True)
+    for v in (got.stdout or "").split():
+        if ids := (run(["docker", "ps", "-aq", "--filter", f"volume={v}"], timeout=60, text=True).stdout or "").split():
+            run(["docker", "rm", "-f", *ids], timeout=120)
+        run(["docker", "volume", "rm", "-f", v], timeout=120)
 
 
 class ContainerExecution(ExecutionPort):
@@ -460,13 +838,16 @@ class ContainerExecution(ExecutionPort):
     apart = True
 
     """`image` with an optional `env_file` (settings of the image, never a credential: the provider gives its own to its
-    process, `_exec_argv`) and the CLI's `state` dir, holding the directories of THIS project beside `base`, at
-    `/gfso-place/<path under base's parent>`: the base, and the project's own directory beside it — its node places, every
-    validation's rounds, its temp (`.gfso-tmp`), its system copies (`.gfso-sys`) — so two projects on one base hold none
-    of each other's. `base`'s parent is any absolute directory, a POSIX one or a Windows drive's; a network share is refused,
-    since a container cannot bind-mount it (until the places move into volumes). Nothing else of the host is mounted,
-    the host's network is shut at start, and the rest of the way out is as `network` switches it (`{"mode": one of
-    NETWORK, "hosts": [...]}`: the container's switch, kept by its name; open where none was given)."""
+    process, `_exec_argv`) and a host `state` dir (the mirrors of its door's and gateway's logs), holding the
+    directories of THIS project beside `base`, at `/gfso-place/<path under base's parent>`: the base, bind-mounted, and
+    the project's own directory beside it — its node places, every validation's rounds, its temp (`.gfso-tmp`), its
+    system copies (`.gfso-sys`), its sessions' CLI state (`.gfso-state`) — which is the project's Docker volume
+    (`volume`), on no host file system, so two projects on one base hold none of each other's and no host file sharing
+    stands between a session and its files. `base`'s parent is any absolute directory, a POSIX one or a Windows
+    drive's; a network share is refused, since a container cannot bind-mount it (until the base moves into the volume
+    too). Nothing else of the host is mounted, the host's network is shut at start, and the rest of the way out is as
+    `network` switches it (`{"mode": one of NETWORK, "hosts": [...]}`: the container's switch, kept by its name; open
+    where none was given)."""
 
     def __init__(self, name: str, image: str, env_file: str | None, state: str, base: str, project: str,
                  network=None):
@@ -488,14 +869,15 @@ class ContainerExecution(ExecutionPort):
         self.files = ContainerFiles(self)
         if network is not None:
             self.switch(network)
-        # THE CLI'S STATE IS THE PROJECT'S: shared by an execution's projects, every E3 row (all at /gfso-place/ws) read
-        # and appended to another row's conversation (critic over d5c8f7a, measured on two containers)
-        self.state = Path(state) / self.container
         b, self.project_name = self.base.name, component(project or DEFAULT_PROJECT)
         self.mounts = [b, f"{NODES}{b}/{self.project_name}"]
-        # dotted, as no node's key is (`component`): the system's own among the project's places — the last its copies
-        # and checks, which no session but the one handed a copy reaches
-        self.tmp, self.sys = self.parent / self.mounts[1] / ".gfso-tmp", self.parent / self.mounts[1] / ".gfso-sys"
+        self.own = self.parent / self.mounts[1]
+        self.volume = Volume(self.container, name, self.own, self.base, self.project_name)
+        # dotted, as no node's key is (`component`): the system's own among the project's places — the copies and
+        # checks no session but the one handed a copy reaches; THE CLI'S STATE THE PROJECT'S, each place's under it
+        # (`PlaceContainer`): shared by an execution's projects, every E3 row (all at /gfso-place/ws) read and appended
+        # to another row's conversation (critic over d5c8f7a, measured on two containers)
+        self.tmp, self.sys, self.state = self.own / ".gfso-tmp", self.own / ".gfso-sys", self.own / STATE_DIR
         self._host = _host_paths((self.parent, type(self.base)(base).parent), self.mounts)
 
     def switch(self, network) -> None:
@@ -530,50 +912,62 @@ class ContainerExecution(ExecutionPort):
     def run_args(self) -> list[str]:
         """`docker run` for this project's container: sealed (`--init`, its own mounts only, no new privileges, its way
         out as switched), sleeping until the server calls into it."""
-        mounts = [a for src, ro in self._mounts() for a in (
-            "--mount", f"type=bind,src={src},dst={self.to_inside(str(src))}" + (",readonly" if ro else ""))]
+        mounts = [a for src, ro in self._mounts() for a in self._mount(src, ro)]
         return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
-                *grouped(self.way.container, "places" if self.holds_sessions else "system"),
-                *self.way.run_args(), *([] if self.holds_sessions else [a for c in SYSTEM_CAPS for a in ("--cap-add", c)]),
+                *self._labels(), *self.way.run_args(),
+                *([] if self.holds_sessions else [a for c in SYSTEM_CAPS for a in ("--cap-add", c)]),
                 "--security-opt", "no-new-privileges",
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,
-                *(["--mount", f"type=bind,src={self.state},dst={STATE_INSIDE}"] if self.holds_sessions else []),
+                *(self._mount(self.state, False) + self._mount(self.state, False, STATE_INSIDE)
+                  if self.holds_sessions and self.state else []),
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
 
+    def _labels(self) -> list[str]:
+        return [*grouped(self.way.container, "system"), "--label", "gfso.role=system"]
+
     def _mounts(self) -> list:
-        """(host directory, read-only?) for each directory the container holds: the base and the project's own, both writable."""
+        """(directory, read-only?) for each directory the container holds: the base and the project's own, both writable."""
         return [(self.parent / m, False) for m in self.mounts]
 
-    def session(self, cwd: str) -> "ExecutionPort":
+    def _mount(self, src: Path, ro: bool, dst: str | None = None) -> list[str]:
+        """`--mount` of one directory at `dst`, else where the system's name of it maps inside (`Volume.mount`)."""
+        return self.volume.mount(src, ro, dst or self.to_inside(str(src)))
+
+    def session(self, cwd: str, agent: str | None = None) -> "ExecutionPort":
         """The container of the place a session works in (`PlaceContainer`): it writes there alone, reads the base,
-        and never sees another node's place."""
+        and never sees another node's place. `agent`: who works there, labelled on it where it starts by this call."""
         try:
             rw = _writable_root(_real(cwd), self)
         except ValueError:
             return self        # refused where the call starts, after the place's own health — a dead place stops first
         with _START:
-            return _SESSIONS.setdefault((self.container, os.path.normcase(rw)), PlaceContainer(self, rw))
+            s = _SESSIONS.setdefault((self.container, os.path.normcase(rw)), PlaceContainer(self, rw, agent))
+            if agent and s.container not in _STARTED:
+                s.agent = agent
+            return s
 
     def start(self) -> None:
-        """The project's container, running and sealed — started once per server process, whoever asks first."""
+        """The project's container, running and sealed — started once per server process, whoever asks first — on its
+        volume as the project left it (`Volume.bring_in`)."""
+        _volume_ready(self)
         with _START:
             if _STARTED.get(self.container) == (self.run_args(), self.way.network) and self._running():
                 return
             if why := self.unavailable():
                 raise PlaceUnavailable(self.name, why)
-            for d in [self.parent / m for m in self.mounts] + [self.state]:
-                d.mkdir(parents=True, exist_ok=True)
             self.stop()                                                  # what a server that is gone left
             try:
+                self.volume.require(self.run_args())              # …before Docker makes a missing one, empty
                 self._open_the_way()
                 if (got := run(self.run_args(), timeout=120, text=True)).returncode:
                     if down := self._storage_down(got.stderr):     # …a new directory failing to mount (case 15)
                         raise PlaceUnavailable(self.name, down)
                     raise subprocess.CalledProcessError(got.returncode, "docker run", got.stdout, got.stderr)
+                self.volume.require(self.run_args())    # …again: one made by Docker between the asking and the run
             except PlaceUnavailable:
                 self.stop()
                 raise
-            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            except (OSError, LookupError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 self.stop()
                 raise RuntimeError(f"{self.container}: {e} — no call runs unsealed") from e
             seal = run(["docker", "exec", "-u", "0", self.container, "sh", "-c",       # uid 0: the rule is root's
@@ -586,7 +980,6 @@ class ContainerExecution(ExecutionPort):
 
     def _open_the_way(self) -> None:
         self.way.open()
-
 
     def stop(self) -> None:
         """The project's container, its sessions' and its way out."""
@@ -608,28 +1001,7 @@ class ContainerExecution(ExecutionPort):
         return True
 
     def unavailable(self, storage: bool = False):
-        """The daemon's own words where it does not answer — Docker Desktop not running reads "failed to connect to the
-        docker API at npipe:////./pipe/dockerDesktopLinuxEngine …" — else, with `storage`, the storage's where a file
-        written, read and removed there by a container of its own fails: the daemon answering while its host mounts threw
-        I/O errors for 35 min, every session dying and the probe saying "up" (engineering, 2026-10-28, clock case 15) —
-        else None."""
-        try:
-            got = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=60, text=True)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            return str(e)
-        if got.returncode:
-            return (got.stderr or "").strip() or f"docker info exited {got.returncode}"
-        if not storage:
-            return None
-        try:
-            d = self.temp_root()
-            got = run(["docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt",
-                       "no-new-privileges", "--mount", f"type=bind,src={d},dst=/p", self.image, "sh", "-c",
-                       'f=/p/.gfso-probe-$$ && echo ok > "$f" && cat "$f" && rm -f "$f"'], timeout=120, text=True)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            return f"its storage does not answer ({e})"
-        return None if got.returncode == 0 and got.stdout.strip() == "ok" else \
-            f"its storage does not answer: {(got.stderr or got.stdout or '').strip()[-300:]}"
+        return _unavailable(self, storage)
 
     def _storage_down(self, why: str):
         """`why` an I/O error AND the system's own probe of the storage failing: a place down — never the words alone,
@@ -710,10 +1082,13 @@ class ContainerExecution(ExecutionPort):
         for key in [k for k in _SESSIONS if k[0] == self.way.container          # …the project's, a session's too
                     and Path(k[1]).is_relative_to(_real(path))]:
             (s := _SESSIONS.pop(key)).stop()
-            shutil.rmtree(s.state, ignore_errors=True)
+            if s.state:
+                with contextlib.suppress(OSError):
+                    s.project.remove_tree(str(s.state))
         if not self.files.exists(path):
             return
-        r = self.run(["sh", "-c", 'chmod -R u+rwX -- "$1" 2>/dev/null; rm -rf -- "$1"', "sh", path],
+        at = self.session(str(self.own / STATE_DIR)) if Path(path).is_relative_to(self.own / STATE_DIR) else self
+        r = at.run(["sh", "-c", 'chmod -R u+rwX -- "$1" 2>/dev/null; rm -rf -- "$1"', "sh", path],
                      cwd=str(Path(path).parent), timeout=600)
         if r.returncode != 0:
             raise OSError(f"rm -rf {path} failed in {self.container}: {r.stderr.strip()[-300:]}")
@@ -735,8 +1110,7 @@ class ContainerExecution(ExecutionPort):
              f"q=${{e#/proc/}} && kill -KILL ${{q%/environ}}; done; rm -f /tmp/gfso-calls/{call}"], timeout=60)
 
     def temp_root(self):
-        (d := self.tmp).mkdir(parents=True, exist_ok=True)
-        return str(d)
+        return str(self.tmp)            # …a name: made where it is written, in the volume (`FilesPort.mkdtemp`)
 
     def temp_of(self, place) -> str:
         """The temp of the node `place` belongs to (`_owner`): its executor, its validations, its issuer's contacts
@@ -750,8 +1124,7 @@ class ContainerExecution(ExecutionPort):
         if owner.is_relative_to(self.tmp):
             return str(owner)                            # a directory of the temp lent to one call is its own temp
         d = self.tmp / f"node-{hashlib.sha1(os.path.normcase(owner).encode()).hexdigest()[:12]}"
-        d.mkdir(parents=True, exist_ok=True)
-        _TEMPS[os.path.normcase(d)] = owner                # …whose sessions' container mounts it (`ContainerFiles`)
+        _TEMPS[os.path.normcase(d)] = owner        # …whose session's container mounts it, made at its start (`ContainerFiles`)
         return str(d)
 
     def _scratch_root(self, system: bool) -> str:
@@ -783,9 +1156,11 @@ class ContainerFiles(FilesPort):
         except ValueError:
             self.ex.start()                 # …a dead place stops first: refused for its own health, then for the path
             raise
+        if rw == (st := self.ex.state) or (rw.parent == st and (p == rw or not rw.name.startswith("+"))):
+            return self.ex.session(str(st)), str(st)        # …the CLI state: its keeper's, never the project's
         if p == rw:
             return self.ex, str(self.ex.base)
-        rw = _TEMPS.get(os.path.normcase(rw), rw)            # a node's temp: its place's container mounts it
+        rw = _served(rw, self.ex)
         s = _SESSIONS.get((self.ex.container, os.path.normcase(rw)))
         if (s is None or s.container not in _STARTED) and self._run(self.ex, str(self.ex.base), "is_dir", str(rw)).returncode:
             return None, None
@@ -857,6 +1232,9 @@ class ContainerFiles(FilesPort):
         r = self._file("subdirs", path, str(depth))
         return [n for n in r.stdout.decode("utf-8", errors="replace").split("\0") if n] if r and not r.returncode else []
 
+    def remove_matching(self, path: str, patterns: list) -> None:
+        self._wrote(self._file("remove_matching", path, *patterns), path)
+
     def holds(self, path: str) -> bool:
         try:
             return bool(_writable_root(Path(os.path.abspath(path)), self.ex))
@@ -865,6 +1243,33 @@ class ContainerFiles(FilesPort):
 
     def old_layout(self) -> tuple:
         return tuple(self.ex.parent / f".gfso-{k}-{self.ex.base.name}" for k in ("scratch", "tmp", "sys"))
+
+
+def _volume_ready(ex) -> None:
+    """The volume of `ex`'s project made, or found as the project left it, before its container first starts in this
+    process — under the project's own lock, never the start's: a copy-in may take minutes."""
+    p = ex.project if isinstance(ex, PlaceContainer) else ex          # …a session's: its project's
+    with _VOLUMES.setdefault(p.container, threading.Lock()):
+        if p.container in _STARTED:
+            return
+        if why := p.unavailable():
+            raise PlaceUnavailable(p.name, why)
+        try:
+            p.volume.ready(p.image, p.own, p.way.home / p.container, *_left(p))
+        except PlaceUnavailable:
+            raise
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            raise RuntimeError(f"{p.container}: {e} — no call runs on a volume half made") from e
+
+
+def _left(ex) -> tuple:
+    """What the host's leftover of the project's directory holds: ({a place's key in the per-project CLI state of
+    before the volume: its name in `.gfso-state`} for the base and every place there, [each place and round there])."""
+    rels = [(d.name, *([x.name] if d.name.startswith(".") else [])) for d in
+            (ex.own.iterdir() if ex.own.is_dir() else ()) if d.is_dir()
+            for x in (d.iterdir() if d.name.startswith(".") else [d]) if x.is_dir()]
+    return ({hashlib.sha1(os.path.normcase(ex.own.joinpath(*r) if r else ex.base).encode()).hexdigest()[:12]:
+             "+" + "+".join(r) for r in [(), *rels]}, [ex.own.joinpath(*r) for r in rels])
 
 
 def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
@@ -878,6 +1283,28 @@ def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
     if rel[:2] != Path(project.mounts[1]).parts:
         raise ValueError(f"{cwd} is not inside {project.container}'s mounts ({', '.join(project.mounts)})")
     return project.parent.joinpath(*rel[:3 + (len(rel) > 2 and rel[2].startswith("."))])
+
+
+def _served(rw: Path, project: "ContainerExecution") -> Path:
+    """The place whose session's container mounts the writable root `rw`: a node's temp its node's (`temp_of`); a
+    place's CLI state its place's, read off its name (`PlaceContainer.state`), so a restarted server finds it too; else
+    itself."""
+    if rw.parent == project.state:
+        return project.base if rw.name == "+" else project.own.joinpath(*rw.name[1:].split("+"))
+    return _TEMPS.get(os.path.normcase(rw), rw)
+
+
+def _kind_of(rel: tuple, systems: tuple) -> tuple:
+    """(role, node, the rest) of a place by its path in the project's directory (`_writable_root`), the base's ():
+    the base and a node's clone its executor's, a validation's or a contact's round a judge's, a directory the system
+    lends a call (`systems`) a check's."""
+    if not rel:
+        return "executor", ROOT_ID, ()
+    if rel == (STATE_DIR,):
+        return "system", "state", ()
+    if rel[0].startswith(SCRATCH):
+        return "judge", ROOT_ID if rel[0][len(SCRATCH):].startswith(".") else rel[0][len(SCRATCH):], rel[1:]
+    return ("check", rel[-1], ()) if rel[0] in systems else ("executor", rel[0], ())
 
 
 def _owner(rw: Path) -> Path:
@@ -903,20 +1330,32 @@ class PlaceContainer(ContainerExecution):
     issuer reads a node's inputs by its shell only; a round's container stands until its round is pruned, a done node's until its directories go or the
     project stops."""
 
-    def __init__(self, project: ContainerExecution, rw: Path):
+    def __init__(self, project: ContainerExecution, rw: Path, agent: str | None = None):
         self.__dict__.update(project.__dict__)
-        self.project, self.rw = project, rw
-        key = hashlib.sha1(os.path.normcase(rw).encode()).hexdigest()[:12]
-        self.container = f"{project.container}-s-{key}"
-        # the CLI's state of THIS place, under its project's — mounted here alone: the others' conversations, the
-        # system's notes on them and the CLI's own memory of another place are not in reach of any container
-        self.state, self.holds_sessions = project.state / "places" / key, True
+        self.project, self.rw, self.agent = project, rw, agent
+        rel = () if rw == self.base else rw.relative_to(self.own).parts
+        # named as the system names the place — its role, its node, its round — the hash keeping two spellings apart
+        self.role, self.node, sub = _kind_of(rel, (self.tmp.name, self.sys.name))
+        key = hashlib.sha1(os.path.normcase(rw).encode()).hexdigest()[:6]
+        self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", ".".join((project.container, self.role, self.node, *sub))
+                                ) + f"-{key}"
+        # the CLI's state of THIS place, under its project's, named by the place — mounted here alone: the others'
+        # conversations, the system's notes on them and the CLI's own memory of another place are in no session's reach
+        self.state = None if rw == project.state else project.state / ("+" + "+".join(rel))
+        self.holds_sessions = True
+
+    def _labels(self) -> list[str]:
+        """Its project's stack, subgrouped by role (`grouped`); who works here, which node, as what."""
+        return [*grouped(self.way.container, self.role + "s"), "--label", f"gfso.role={self.role}",
+                "--label", f"gfso.node={self.node}", *(["--label", f"gfso.agent={self.agent}"] if self.agent else [])]
 
     def _mounts(self) -> list:
         """The base read-only unless the place is the base; a validation's round writable, its earlier rounds
         read-only beneath it; a place writable, its validations' scratch read-only — a node's standing findings name
         probes there; the temp writable."""
         tmp, system = self.tmp, self.sys
+        if self.state is None:
+            return [(self.rw, False)]                    # the keeper of the CLI state: it alone, nothing of a place
         if self.rw.parent.name.startswith(SCRATCH):
             own = [(self.rw.parent, True), (self.rw, False)]
         elif self.rw.is_relative_to(tmp):
@@ -927,19 +1366,19 @@ class PlaceContainer(ContainerExecution):
             # its validations' scratch read-only beside its place, a root's base as a node's clone: its rounds hold the
             # probes the node's standing findings re-run, which the node's own executor must not rewrite (critic 3 over
             # the session slice); no judge works here (`apart`)
-            (scratch := scratch_of(self.rw, self.project_name)).mkdir(parents=True, exist_ok=True)
-            own = [(self.rw, False), (scratch, True)]
+            own = [(self.rw, False), (scratch_of(self.rw, self.project_name), True)]
         return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
 
     def temp_root(self):
         """Its node's own temp (`ContainerExecution.temp_of`), not the project's."""
         return self.project.temp_of(str(self.rw))
 
-    def session(self, cwd: str) -> "ExecutionPort":
-        return self if _real(cwd).is_relative_to(self.rw) else self.project.session(cwd)
+    def session(self, cwd: str, agent: str | None = None) -> "ExecutionPort":
+        return self if _real(cwd).is_relative_to(self.rw) else self.project.session(cwd, agent)
 
     def door(self, credential, upstream: str):
         """Its project's door (`Door`), once the project's network stands."""
+        _volume_ready(self)                          # …before the start's lock is taken
         with _START:
             self.project.start()
             return self.gate.url(credential, upstream)
@@ -948,6 +1387,15 @@ class PlaceContainer(ContainerExecution):
         self.project.start()                              # the project's network and gateway stand before any session
         # …and a project started here stopped its sessions first, this one among them: it is tracked again
         _SESSIONS[(self.project.container, os.path.normcase(self.rw))] = self
+        # a volume's subpath mounts once it stands: what the system lends it made by the project's container — its place
+        # not, which the system made, or the session is refused where nothing of its place stands
+        lent = [str(s) for s, _ in self._mounts() if s.is_relative_to(self.own) and s != self.rw]
+        if self.state is None:
+            return                                       # …the keeper's own: the state volume whole, nothing lent
+        keeper = self.project.session(str(self.project.state))
+        for at, cwd, made in ((self.project, self.base, lent), (keeper, keeper.rw, [str(self.state)])):
+            if made and (r := at.run(["mkdir", "-p", "--", *made], cwd=str(cwd), timeout=60)).returncode:
+                raise OSError(f"{self.container}: its directories could not be made ({r.stderr.strip()[-300:]})")
 
     def stop(self) -> None:
         """This session's container only: the way out is its project's."""

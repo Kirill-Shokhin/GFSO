@@ -5,16 +5,21 @@ places were made (`made`)."""
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import NODES as _NODES, base_of
-from gfso.adapters.execution import ContainerExecution, LocalExecution, component, network_of, stricter
+from gfso.adapters.execution import (ContainerExecution, LocalExecution, component, drop_volumes, network_of,
+                                     stricter)
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task
-from gfso.core.types import HOST, Signal, TaskId, State, hold_places
+from gfso.core.types import HOST, VOLUME, Signal, TaskId, State, hold_places
+from gfso.core.protocol.procedure import round_of
+from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.roster import AgentRegistry
 
@@ -77,12 +82,13 @@ def made(engine, place: str) -> bool:
     `clear_workspaces` drops one it removed, kept with the project's settings (a restart reads it) and read with no subprocess — the
     transition bus asks it. A place may stand nowhere on this host, and what stands where an agent writes decides
     nothing of the protocol."""
-    if (got := engine.graph.setting(_MADE + place)) is not None:
+    if (got := engine.graph.setting(_MADE + place)) is not None or (
+            got := engine.graph.setting(_MADE + _spelled(place))) is not None:   # …as a copy-in carried it
         return got == "1"
     # …a place made before the record was kept: asked once (once per process where it is not made), then recorded —
     # the record decides from there on. On this host, never by a call into a container from the transition bus: until
     # the places move into volumes they are host directories (a fallback that goes with that move)
-    if place in _UNMADE:
+    if place in _UNMADE or engine.graph.setting(VOLUME + "places"):     # …moved into a volume: the record alone
         return False
     if HOST.is_dir(place):
         _record(engine, place, True)
@@ -93,6 +99,21 @@ def made(engine, place: str) -> bool:
 
 def _record(engine, place: str, made: bool) -> None:
     engine.graph.store_setting(_MADE + place, "1" if made else "0")
+
+
+def _spelled(place) -> str:
+    """One spelling of a place, whichever it arrived in — what a copy-in records it by (`_carried`)."""
+    return os.path.normcase(os.path.abspath(place))
+
+
+def _carried(engine, dirs) -> None:
+    """The places and rounds a copy-in carried into the project's volume, recorded as made — before their host copy
+    is consumed, which the record of places made before it was kept fell back on (`made`, `round_stands`)."""
+    for d in map(str, dirs):
+        if round_of(d):
+            record_round(engine.graph, d, True)
+        elif not Path(d).parent.name.startswith("."):
+            _record(engine, _spelled(d), True)
 
 
 def stands(engine, agents: "AgentRegistry", where: str) -> bool:
@@ -274,12 +295,13 @@ def declaring_role(engine, agents: "AgentRegistry | None" = None) -> "dict | Non
                  if c.get("execution") and c.get("project") == engine.project_name and c.get("workdir")), None)
 
 
-def execution_of(engine, agents: "AgentRegistry | None" = None):
-    """WHERE this project's sessions and commands run: the execution its roles declare (`register_agent(execution=)`,
-    one per project), in the place of the role that declared it — else this host."""
+def _declared(engine, agents: "AgentRegistry | None" = None):
+    """(the object of the execution this project declares, its declaration) — made once per (execution, project,
+    place); (None, None) for this host."""
     if (role := declaring_role(engine, agents)) is None:
-        return LocalExecution()
-    key = (role["execution"], engine.project_name, role["workdir"])
+        return None, None
+    project = engine.project_name
+    key = (role["execution"], project, role["workdir"])
     try:
         d = executions()[role["execution"]]
     except (ValueError, KeyError):
@@ -289,8 +311,26 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
         raise
     if key not in _EXECUTIONS:
         _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d.get("env_file"), d["state"],
-                                              role["workdir"], engine.project_name)
+                                              role["workdir"], project)
         hold_places(_EXECUTIONS[key].files)
+    return _EXECUTIONS[key], d
+
+
+def execution_named(project: str, agents: "AgentRegistry | None" = None):
+    """The execution a project declares, by its name alone — no engine loaded, nothing started: what reads its volumes
+    from outside the server (`gfso export-places`). This host where it declares none."""
+    return _declared(SimpleNamespace(project_name=project), agents)[0] or LocalExecution()
+
+
+def execution_of(engine, agents: "AgentRegistry | None" = None):
+    """WHERE this project's sessions and commands run: the execution its roles declare (`register_agent(execution=)`,
+    one per project), in the place of the role that declared it — else this host. Its volume's making is the
+    project's own record (`Volume.record`): a volume lost under it is the place down, never refilled."""
+    ex, d = _declared(engine, agents)
+    if ex is None:
+        return LocalExecution()
+    ex.volume.record = (engine.graph.setting, engine.graph.store_setting)
+    ex.volume.carried = lambda dirs: _carried(engine, dirs)
     # the switch as set NOW — the more closed of its execution's declaration and the project's own (`set_mode`), the
     # declaration a ceiling — kept by the container: every holder of any object of it starts it under this one
     own = engine.graph.setting("network")
@@ -299,8 +339,8 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
         network = {"mode": mode, "hosts": list(hosts)}
     except ValueError:
         network = {"mode": "unreadable"}   # either one unreadable shuts the way out, as an unreadable declaration does
-    _EXECUTIONS[key].switch(network)
-    return _EXECUTIONS[key]
+    ex.switch(network)
+    return ex
 
 
 def node_temp(engine, task) -> str:
@@ -315,11 +355,13 @@ def node_temp(engine, task) -> str:
     return execution_of(engine, agents).temp_of(here)
 
 
-def drop_execution(engine) -> None:
-    """The project is gone: its container goes, and so does the object that held it."""
-    for key in [k for k in _EXECUTIONS if k[1] == engine.project_name]:
+def drop_execution(project: str) -> None:
+    """The project is gone: its containers go, and the objects that held them, and every volume of it by its label
+    (`drop_volumes`) — the one removal of its places, its roster read or not."""
+    for key in [k for k in _EXECUTIONS if k[1] == project]:
         (ex := _EXECUTIONS.pop(key)).stop()
         hold_places(ex.files, False)
+    drop_volumes(project)
 
 
 def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):

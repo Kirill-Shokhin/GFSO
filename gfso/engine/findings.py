@@ -21,7 +21,7 @@ from typing import Iterable, Optional
 
 from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_of, without_past_builds,
                                           without_pinned_runs, without_retired)
-from gfso.core.types import HOST, Signal
+from gfso.core.types import HOST, VOLUME, Signal
 from .audit import VERSION_INSTALLING
 from .verdicts import REGRESSION, criterion_version, ledger_read
 
@@ -50,7 +50,7 @@ def round_stands(graph):
         """Does the round `r` — (its path, its name in the record) — stand?"""
         if (got := graph.setting(_ROUND + r[1])) is not None:
             return got == "1"
-        if r[0] in _UNMADE:
+        if r[0] in _UNMADE or graph.setting(VOLUME + "places"):         # …moved into a volume: the record alone
             return False
         if HOST.is_dir(r[0]):
             graph.store_setting(_ROUND + r[1], "1")

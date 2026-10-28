@@ -248,6 +248,12 @@ class FilesPort(ABC):
         followed; none where it is no directory."""
         ...
 
+    @abstractmethod
+    def remove_matching(self, path: str, patterns: list) -> None:
+        """Every entry but a directory under `path` matching one of `patterns` (globs relative to it) removed — a link
+        as a link, none followed on the way; none there is fine."""
+        ...
+
     def read_text(self, path: str) -> Optional[str]:
         """The file as UTF-8 text, undecodable bytes replaced, or None where no file stands."""
         return None if (b := self.read_bytes(path)) is None else b.decode("utf-8", errors="replace")
@@ -322,8 +328,8 @@ class ExecutionPort(ABC):
 
     @abstractmethod
     def temp_root(self) -> str:
-        """The host directory a temporary file must stand in to be seen where this execution runs — a packet's inputs or
-        lists named to an agent are read there, not here."""
+        """The directory a temporary file must stand in to be seen where this execution runs — a packet's inputs or
+        lists named to an agent are read there, not here; made and written through `files`."""
         ...
 
     @contextmanager
@@ -350,7 +356,8 @@ class ExecutionPort(ABC):
 
     @abstractmethod
     def state_dir(self):
-        """Where the agent CLI started here keeps its state — the conversations a session continues live under it."""
+        """Where the agent CLI started here keeps its state — the conversations a session continues live under it —,
+        read and written through `files` alone: an isolated place keeps it on no host file system."""
         ...
 
     def state_seen(self) -> str:
@@ -380,9 +387,9 @@ class ExecutionPort(ABC):
         """`path` gone, whatever it holds — a read-only directory a test made in it included. Gone already is fine."""
         ...
 
-    def session(self, cwd: str) -> "ExecutionPort":
+    def session(self, cwd: str, agent: Optional[str] = None) -> "ExecutionPort":
         """Where an agent's session working in `cwd` runs, as opposed to the system's own commands: an isolated place
-        may give each session a boundary of its own. This host is one place for both."""
+        may give each session a boundary of its own, shown as `agent`'s. This host is one place for both."""
         return self
 
     def stop(self) -> None:
@@ -425,12 +432,19 @@ class HostFiles(FilesPort):
         return [Path(d, x).relative_to(path).as_posix() for d, xs, _ in os.walk(path)
                 if len(Path(d).relative_to(path).parts) < depth for x in xs if not os.path.islink(os.path.join(d, x))]
 
+    def remove_matching(self, path: str, patterns: list) -> None:
+        for p in [p for g in patterns for p in Path(path).glob(g) if p.is_symlink() or not p.is_dir()]:
+            p.unlink(missing_ok=True)
+
 
 #: a base's project directories stand beside it, under this prefix and the base's name, each holding its project's
 #: places and every system directory of the project (`ContainerExecution`)
 NODES = ".gfso-nodes-"
 #: what names a validation's scratch beside the place it validates (`scratch_of`)
 SCRATCH = ".gfso-scratch-"
+#: what keys, in a project's settings, the name of each of its volumes by its role (`places`, `state`): the system's
+#: record that its places moved into them — from there on no place nor round is looked for on this host
+VOLUME = "volume:"
 #: a system directory as it stood directly beside a base before each named its project
 
 

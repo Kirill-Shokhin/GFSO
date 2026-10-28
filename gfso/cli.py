@@ -18,7 +18,7 @@ import urllib.request
 from importlib.resources import files
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
-from gfso.adapters.execution import end_leftovers
+from gfso.adapters.execution import ContainerExecution, end_leftovers, export_places
 from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.conformance import assess, report
 from gfso import __version__, serverctl
@@ -27,6 +27,7 @@ from gfso import serverctl
 from gfso.doctor import claude_cli, doctor, setup
 from gfso.examples import DEMOS, NEEDS_MODEL
 from gfso.runtime import data_dir
+from gfso.workspaces import execution_named
 
 
 def main():
@@ -229,6 +230,11 @@ def _add_provider_parser(sub) -> None:
     credp.add_argument("--order", metavar="A,B,…", default=None, help="the order the pointer moves in when a limit "
                                                                       "refuses the one in force")
     credp.add_argument("--remove", action="store_true", help="remove NAME (`--name`), else every credential of it")
+    expp = sub.add_parser("export-places", help="Write a project's places — kept in its execution's volume, on no host "
+                                                "directory — under DIR/<project>, each node's clone readable without "
+                                                "the base or the volume")
+    expp.add_argument("project")
+    expp.add_argument("dir")
 
 def _dispatch(args) -> None:
     if args.command == "serve":
@@ -285,6 +291,23 @@ def _dispatch(args) -> None:
         sys.exit(_provider_check(args))
     elif args.command == "credential":
         sys.exit(_credential(args))
+    elif args.command == "export-places":
+        sys.exit(_export_places(args))
+
+
+def _export_places(args) -> int:
+    """`gfso export-places PROJECT DIR`: the project's places out of its volume; non-zero where it has none."""
+    if not isinstance(ex := execution_named(args.project), ContainerExecution):
+        print(f"{args.project}: its places stand on this host already — nothing to export", file=sys.stderr)
+        return 1
+    try:
+        for n in export_places(ex, args.dir):
+            print(f"{args.project}: {n}", file=sys.stderr)
+    except (OSError, LookupError) as e:
+        print(f"{args.project}: {e}", file=sys.stderr)
+        return 1
+    print(f"{args.project}: its places are under {os.path.join(args.dir, ex.project_name)}")
+    return 0
 
 
 def _provider_check(args) -> int:

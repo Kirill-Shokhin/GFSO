@@ -195,20 +195,17 @@ class _Hooks:
         on them out of its reach."""
         return self._at.get(sid, self._exec)
 
-    def place(self, sid: str | None, cwd: str | None) -> None:
-        """The conversation `sid` runs in the session of `cwd` from now on."""
+    def place(self, sid: str | None, cwd: str | None, agent: str | None = None) -> None:
+        """The conversation `sid` runs in the session of `cwd` from now on, as `agent`'s."""
         if sid and cwd:
-            self._at[sid] = self._exec.session(cwd)
+            self._at[sid] = self._exec.session(cwd, agent)
 
 
     def arm(self, sid: str, state: dict) -> None:
         """The hook armed for the conversation `sid`: the script where the CLI runs it, the session's line, ceiling and
-        checked-point request where it reads them."""
-        f = kept(self.where(sid), sid, "hook")
-        f.parent.mkdir(parents=True, exist_ok=True)
-        if not (hook := f.with_name(_HOOK.name)).exists() or hook.read_bytes() != _HOOK.read_bytes():
-            hook.write_bytes(_HOOK.read_bytes())
-        f.write_text(json.dumps(state), encoding="utf-8")
+        checked-point request where it reads them — one write where its session runs."""
+        f = kept(ex := self.where(sid), sid, "hook")
+        ex.files.write_files(str(f.parent), {_HOOK.name: _HOOK.read_bytes(), f.name: json.dumps(state).encode()})
         self.armed.add(sid)
 
     def across(self, sid: str, forget) -> None:
@@ -222,7 +219,7 @@ class _Hooks:
     def state(self, sid: str) -> dict:
         """What the hook left of the session `sid` — `{}` where it left nothing readable."""
         try:
-            return json.loads(kept(self.where(sid), sid, "hook").read_text(encoding="utf-8"))
+            return json.loads((ex := self.where(sid)).files.read_text(str(kept(ex, sid, "hook"))) or "")
         except (OSError, ValueError):
             return {}
 
@@ -344,19 +341,19 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         """Where its processes run."""
         return self._exec
 
-    def _transcripts(self, sid: str) -> list[Path]:
-        """Where the CLI keeps the conversation: `<its state dir>/projects/<its cwd, encoded>/<id>.jsonl`."""
-        return list((Path(self.hooks.where(sid).state_dir()) / "projects").glob(f"*/{sid}.jsonl"))
+    def _transcripts(self, sid: str) -> bool:
+        """Does the CLI keep the conversation — `<its state dir>/projects/<its cwd, encoded>/<id>.jsonl`?"""
+        at = Path((ex := self.hooks.where(sid)).state_dir()) / "projects"
+        return any(ex.files.exists(str(at / d / f"{sid}.jsonl")) for d in ex.files.listdir(str(at)))
 
     def forget(self, session: str) -> None:
         """Drop a conversation's transcript: the work it served is settled, or it would not resume — and what this
         execution keeps of it beside the CLI's state, whichever provider kept it (a chat run's transcript too: the
         workspaces forget a project's conversations through one provider)."""
         # …wherever its session kept it: a place's state lies under its project's (`PlaceContainer`), and a server
-        # that restarted no longer knows which place a conversation ran in
-        for root in (top := Path(self._exec.state_dir()), *top.glob("places/*")):     # two levels: never the whole home
-            for p in [*root.glob(f"projects/*/{session}.jsonl"), *root.glob(f"gfso-sessions/{session}.*")]:
-                p.unlink(missing_ok=True)
+        # that restarted no longer knows which place a conversation ran in — two levels: never the whole home
+        self._exec.files.remove_matching(str(self._exec.state_dir()), [
+            f"{at}{p}" for at in ("", "*/") for p in (f"projects/*/{session}.jsonl", f"gfso-sessions/{session}.*")])
         self.hooks.armed.discard(session)
 
     def _own_cost(self, sid: str | None, total, resumed: bool):
@@ -366,7 +363,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         if not (resumed and sid and isinstance(total, (int, float))):
             return total
         try:
-            before = float(kept(self.hooks.where(sid), sid, "spent").read_text(encoding="utf-8"))
+            before = float((ex := self.hooks.where(sid)).files.read_text(str(kept(ex, sid, "spent"))) or "")
         except (OSError, ValueError):
             return total                   # nothing kept (a conversation from before this was kept): as the CLI said
         return max(0.0, total - before)
@@ -387,7 +384,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
     def arm(self, sid: str, state: dict, cwd: str | None = None) -> None:
         """The handover hook armed for `sid` (`_Hooks.arm`) where its session will run (`cwd`), told whether the
         conversation continues an earlier run."""
-        self.hooks.place(sid, cwd)
+        self.hooks.place(sid, cwd, self.agent)
         self.hooks.arm(sid, {**state, "resumed": bool(self._transcripts(sid))})
 
     def _never_started(self, e: PlaceUnavailable, resumed: bool) -> str:
@@ -413,9 +410,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         if sid and out.get("subtype") != "error_max_turns" and not (hook or {}).get("stopped"):
             self.forget(sid)
         elif sid and isinstance(out.get("total_cost_usd"), (int, float)):
-            f = kept(self.hooks.where(sid), sid, "spent")
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(str(out["total_cost_usd"]), encoding="utf-8")
+            (ex := self.hooks.where(sid)).files.write_bytes(str(kept(ex, sid, "spent")),
+                                                            str(out["total_cost_usd"]).encode())
 
     def agent_round(self, system: str, user: str, allowed_tools: tuple[str, ...],
                      cwd: str | None = None, timeout: int | None = None,
@@ -446,7 +442,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         # (2026-09-27), and a read-only validator holding Write and Edit.
         loaded = ",".join(dict.fromkeys(t.split("(", 1)[0].strip() for t in allowed_tools))
         if session:                                      # a named conversation's CLI state is its place's from here on
-            self.hooks.place(session, cwd)
+            self.hooks.place(session, cwd, self.agent)
         return self._call(system, user, cwd=cwd, timeout=timeout, session=session,
                           tools_args=["--tools", loaded,
                                       "--allowedTools", " ".join(allowed_tools),
@@ -579,6 +575,10 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         return self._on_credentials(lambda cred: self._attempt(cred, system, user, tools_args, cwd, timeout, session))
 
     def _attempt(self, credential, system: str, user: str, tools_args, cwd: str, timeout, session) -> str:
+        try:
+            resuming = self._session_args(session)      # …read where its session keeps it: a dead place stops first
+        except PlaceUnavailable as e:
+            return self._never_started(e, False)
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
                 # The CLI inherits the USER's MCP configuration, and this installation registers its
                 # own door there — so every internal call (decompose, the Level-2 review, the
@@ -608,7 +608,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                 # `--safe-mode` drops CLAUDE.md, skills, plugins, hooks and MCP and keeps auth (probed:
                 # none of those instructions reached the call; tools and the system prompt work).
                 *self.hooks.clean(session),
-                *self._session_args(session),
+                *resuming,
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 *(tools_args if tools_args is not None else ["--disallowedTools", "*"])]
         t0 = time.monotonic()
@@ -617,12 +617,13 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         proc, out, n0 = None, {}, len(self.calls)
         try:
             # …its door first, where the execution keeps one: a place down there is the call's own ending (critic 3)
-            door = self._exec.session(cwd).door(credential, UPSTREAM) if credential else None
+            door = self._exec.session(cwd, self.agent).door(credential, UPSTREAM) if credential else None
             env = {**subprocess_env(credential=client_env(credential, door is None and scrubs(self._exec), door)),
                    **({"MAX_THINKING_TOKENS": str(self._max_thinking)} if self._max_thinking is not None else {})}
             # in the session's own place (`ExecutionPort.session`): it writes there alone and sees no other node's
-            proc = self._exec.session(cwd).popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+            proc = self._exec.session(cwd, self.agent).popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE,
+                                                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                                             text=True, encoding="utf-8")
 
             def _feed():  # a writer thread — a large prompt would deadlock a same-thread pipe write
                 try:

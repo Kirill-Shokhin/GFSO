@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from gfso.adapters import execution as E
 from gfso.adapters.llm import chat as _chat
 
 
@@ -104,6 +105,31 @@ class _NoLiveModel(subprocess.Popen):          # a subclass: callers subscript i
 def pytest_configure(config):
     config.addinivalue_line("markers", "no_model_path: the test drives the path where no model answers "
                                        "(a spawn attempt is expected and fails as a missing CLI does)")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _the_suites_volumes_go_with_it():
+    """Every project volume a test named (`Volume`) goes at the session's end, with any container still using it —
+    no sweep of the product removes a volume (it holds a project's work), so none would. Set by hand, as below."""
+    made, init, labels, docker = set(), E.Volume.__init__, E.Volume._labels, E.run
+
+    def recorded(self, *a, **k):
+        init(self, *a, **k)
+        made.update((self.name, self.state))
+
+    def faked(v):
+        # …a test that fakes the docker client answers every inspect alike: its volumes are this installation's
+        got = labels(v)
+        return {"gfso.home": E._home()} if got == {} and E.run is not docker else got
+    E.Volume.__init__, E.Volume._labels = recorded, staticmethod(faked)
+    yield
+    E.Volume.__init__, E.Volume._labels = init, staticmethod(labels)
+    there = subprocess.run(["docker", "volume", "ls", "-q"], capture_output=True, text=True).stdout.split() if made else []
+    for v in made & set(there):
+        using = subprocess.run(["docker", "ps", "-aq", "--filter", f"volume={v}"], capture_output=True, text=True)
+        if ids := using.stdout.split():
+            subprocess.run(["docker", "rm", "-f", *ids], capture_output=True)
+        subprocess.run(["docker", "volume", "rm", "-f", v], capture_output=True)
 
 
 @pytest.fixture(autouse=True, scope="session")

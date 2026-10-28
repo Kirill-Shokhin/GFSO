@@ -88,12 +88,16 @@ def _pipe(a, b):
 
 def _say(log: str, line: str, *, opened: bool = False) -> None:
     """One line of the log. Past its cap only refusals are dropped: a session that floods it with refusals must not
-    leave unrecorded the connection it opens next."""
-    with _log_lock, open(log, "a", encoding="utf-8") as f:
-        if opened or f.tell() < LOG_CAP:
-            f.write(line + "\n")
-        elif not _full:
-            _full.append(f.write("the log is full: refusals are no longer written, openings still are\n"))
+    leave unrecorded the connection it opens next — and a write that fails is dropped, never raised into the
+    connection: a full disk would otherwise refuse every opening after it (critic over 71b49ad)."""
+    try:
+        with _log_lock, open(log, "a", encoding="utf-8") as f:
+            if opened or f.tell() < LOG_CAP:
+                f.write(line + "\n")
+            elif not _full:
+                _full.append(f.write("the log is full: refusals are no longer written, openings still are\n"))
+    except OSError:          # …a log line the disk refuses is dropped: the request is served all the same
+        pass
 
 
 def _serve(c, peer, allowed, log):

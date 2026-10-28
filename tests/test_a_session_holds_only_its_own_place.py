@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 import gfso.adapters.execution as E
+import gfso.adapters.worktrees as W
 from gfso.adapters.llm import headless as H
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution, PlaceContainer
@@ -34,14 +35,34 @@ IMAGE = "e3-linux-agent:2"
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    """A project of one base on the host; its own directory — places, rounds, temps, CLI state — in its volume alone,
+    laid and read through its port (`lay`, `made`), gone with the test."""
     monkeypatch.setattr(E, "_SESSIONS", {})
     monkeypatch.setattr(E, "_SWITCH", {})
-    base = tmp_path / "work" / "ws"
-    for d in ("ws", ".gfso-nodes-ws/p/a", ".gfso-nodes-ws/p/b", ".gfso-nodes-ws/p/.gfso-tmp"):
-        (tmp_path / "work" / d).mkdir(parents=True, exist_ok=True)
+    (base := tmp_path / "work" / "ws").mkdir(parents=True)
     (tmp_path / "e.env").write_text("NOTHING=1\n")
-    return ContainerExecution(f"t{time.time_ns()}", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base),
-                              "p")
+    x = ContainerExecution(f"t{time.time_ns()}", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base),
+                           "p")
+    yield x
+    x.stop()
+    x.volume.remove()
+    assert not x.own.exists(), "nothing of the project's own directory stands on the host"
+
+
+def made(ex, *dirs) -> None:
+    """Directories under the project's own one, made as the system makes them: in its container, in its volume."""
+    r = ex.run(["mkdir", "-p", "--", *[str(ex.own / d) for d in dirs]], cwd=str(ex.base), timeout=60)
+    assert r.returncode == 0, r.stderr
+
+
+def lay(ex, files: dict) -> None:
+    """{path under the project's own directory: text} written through its port (`FilesPort.write_files`) — the CLI
+    state's by its keeper, in its own volume."""
+    state = {k[len(".gfso-state/"):]: v.encode() for k, v in files.items() if k.startswith(".gfso-state/")}
+    places = {k: v.encode() for k, v in files.items() if not k.startswith(".gfso-state/")}
+    for root, got in ((ex.own, places), (ex.state, state)):
+        if got:
+            ex.files.write_files(str(root), got)
 
 
 def test_a_session_writes_its_place_and_reads_the_base(project):
@@ -104,12 +125,9 @@ def test_live_a_session_sees_its_place_alone(project):
     (project.base / "b.txt").write_text("base\n")
     _git(project.base, "add", "b.txt")
     _git(project.base, "commit", "-qm", "base")
-    for n in ("a", "b"):
-        node = work / ".gfso-nodes-ws/p" / n
-        shutil.rmtree(node)
-        _git(node.parent, "clone", "-q", "--shared", str(project.base), n)
-        (node / ".git/objects/info/alternates").write_bytes(b"../../../../../ws/.git/objects\n")   # LF: git reads a CR
-    (work / ".gfso-nodes-ws/p/b/secret.txt").write_text("b's work\n")
+    for n in ("a", "b"):                                          # …as the engine makes a place: inside, in the volume
+        assert W.ensure(project.base, work / ".gfso-nodes-ws/p" / n, f"gfso/p/{n}", project.base, execution=project)
+    lay(project, {"b/secret.txt": "b's work\n"})
     a = project.session(str(work / ".gfso-nodes-ws/p/a"))
     probe = ("echo x > a.c && git add a.c && git -c user.name=t -c user.email=t@t commit -qm work && echo COMMITTED; "
              "ls /gfso-place/.gfso-nodes-ws/p/b/secret.txt 2>/dev/null && echo SAW-B; "
@@ -119,7 +137,8 @@ def test_live_a_session_sees_its_place_alone(project):
     try:
         got = a.run(["bash", "-c", probe], cwd=str(work / ".gfso-nodes-ws/p/a"), timeout=120).stdout.split()
         assert got == ["COMMITTED", "base"], got
-        assert (work / ".gfso-nodes-ws/p/a/a.c").exists(), "the session's work stands in its place on the host"
+        assert project.files.exists(str(work / ".gfso-nodes-ws/p/a/a.c")), "the session's work stands in its place"
+        assert not project.own.exists(), "…in the volume: nothing of it on the host"
         sys_view = project.run(["ls", str(work / ".gfso-nodes-ws/p/b")], cwd=str(project.base), timeout=60).stdout
         assert "secret.txt" in sys_view, "the system's own commands still see every place"
     finally:
@@ -129,9 +148,8 @@ def test_live_a_session_sees_its_place_alone(project):
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_a_validation_writes_its_round_alone_and_its_call_ends_where_it_runs(project):
     scratch = project.parent / ".gfso-nodes-ws/p/.gfso-scratch-.ws"
-    (scratch / "root_1/run").mkdir(parents=True)
-    (scratch / "root_1/run/probe.sh").write_text("echo earlier\n")
-    (scratch / "root_2/run/delivery").mkdir(parents=True)
+    lay(project, {".gfso-scratch-.ws/root_1/run/probe.sh": "echo earlier\n"})
+    made(project, ".gfso-scratch-.ws/root_2/run/delivery")
     v = project.session(str(scratch / "root_2/run/delivery"))
     probe = ("echo r > ../mine.txt && echo WROTE-ITS-ROUND; cat /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/run/probe.sh; "
              "touch /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/run/x 2>/dev/null && echo WROTE-AN-EARLIER-ROUND; true")
@@ -207,19 +225,19 @@ def test_the_systems_own_copies_and_checks_take_the_systems_scratch():
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_an_issuers_contact_reads_its_inputs_and_the_nodes_earlier_probes(project):
     node = project.parent / ".gfso-nodes-ws/p/a"
-    (node.parent / ".gfso-scratch-a/a_1/run").mkdir(parents=True)
-    (node.parent / ".gfso-scratch-a/a_1/run/probe.sh").write_text("echo probed\n")
+    made(project, "a")
+    lay(project, {".gfso-scratch-a/a_1/run/probe.sh": "echo probed\n"})
     try:
         with _contact_place(str(node), project) as d:
-            (Path(d) / "place").mkdir()
-            (Path(d) / "in.txt").write_text("node-input\n")
+            project.files.mkdir(d + "/place")
+            project.files.write_bytes(d + "/in.txt", b"node-input\n")
             got = project.session(d + "/place").run(
                 ["bash", "-c", "cat ../in.txt; bash /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/run/probe.sh; "
                                "touch /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/x 2>/dev/null && echo WROTE; true"],
                 cwd=d + "/place", timeout=120).stdout.split()
             assert got == ["node-input", "probed"], got
         with _contact_place(str(project.base), project, "p") as d:
-            (Path(d) / "in.txt").write_text("root-input\n")
+            project.files.write_bytes(d + "/in.txt", b"root-input\n")
             got = project.session(str(project.base)).run(["cat", str(Path(d) / "in.txt")], cwd=str(project.base),
                                                          timeout=120).stdout.split()
             assert got == ["root-input"], got
@@ -230,9 +248,9 @@ def test_live_an_issuers_contact_reads_its_inputs_and_the_nodes_earlier_probes(p
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_an_executor_reads_its_findings_probes_and_cannot_rewrite_them(project):
     node = project.parent / ".gfso-nodes-ws/p/a"
-    (node.parent / ".gfso-scratch-a/a_1").mkdir(parents=True)
-    (node.parent / ".gfso-scratch-a/a_1/probe.sh").write_text("echo probed\n")
-    probe = ("bash /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/probe.sh; "
+    made(project, "a")
+    lay(project, {".gfso-scratch-a/a_1/probe.sh": "echo probed\n"})
+    probe =("bash /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/probe.sh; "
              "echo 'echo forged' > /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/probe.sh 2>/dev/null && echo REWROTE; true")
     try:
         got = project.session(str(node)).run(["bash", "-c", probe], cwd=str(node), timeout=120).stdout.split()
@@ -263,9 +281,10 @@ def test_what_the_system_lays_for_a_session_goes_to_its_nodes_temp():
 def test_live_a_node_reads_its_own_temp_and_not_its_neighbours(project):
     work = project.parent
     a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
-    (Path(a.temp_root()) / "mine.md").write_text("a-list\n")
-    (Path(b.temp_root()) / "theirs.md").write_text("b-list\n")
-    probe = (f"cat {a.to_inside(str(Path(a.temp_root()) / 'mine.md'))}; "
+    made(project, "a", "b")
+    project.files.write_bytes(str(Path(a.temp_root()) / "mine.md"), b"a-list\n")
+    project.files.write_bytes(str(Path(b.temp_root()) / "theirs.md"), b"b-list\n")
+    probe =(f"cat {a.to_inside(str(Path(a.temp_root()) / 'mine.md'))}; "
              f"cat {a.to_inside(str(Path(b.temp_root()) / 'theirs.md'))} 2>/dev/null && echo SAW-B; "
              f"ls {a.to_inside(str(work / '.gfso-nodes-ws/p/.gfso-tmp'))} 2>/dev/null | grep -c node- ; true")
     try:
@@ -304,38 +323,65 @@ def test_the_rounds_rotation_leaves_a_running_contact_alone(project):
 
 def test_a_sessions_cli_state_is_its_places_and_the_system_finds_it(project):
     """Each place keeps its CLI's state — conversations, the system's notes on them, the CLI's memory — under its
-    project's: a session reaches its own alone, the system every one (critic over the session slice: the state was the
-    project's, read and written by every session)."""
-
+    project's, in its volume, named by its place: a session reaches its own alone, the system every one (critic over
+    the session slice: the state was the project's, read and written by every session)."""
     work = project.parent
     a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
-    assert a.state_dir() != b.state_dir() and Path(a.state_dir()).parent == Path(project.state_dir()) / "places"
-    assert [m for m in a.run_args() if "/home/agent/.claude" in m] == [
-        f"type=bind,src={a.state_dir()},dst=/home/agent/.claude"]
+    assert a.state_dir() == project.state / "+a" and b.state_dir() == project.state / "+b"
+    assert project.session(str(project.base)).state_dir() == project.state / "+"
+    v = project.volume.state
+    assert [m for m in a.run_args() if v in m] == [
+        f"type=volume,src={v},dst=/gfso-place/.gfso-nodes-ws/p/.gfso-state/+a,volume-subpath=+a",
+        f"type=volume,src={v},dst=/home/agent/.claude,volume-subpath=+a"], "its own, at both its names, in its volume"
+    assert not [m for m in project.run_args() if v in m], "the project's container mounts no CLI state"
     llm = H.ClaudeCodeProvider(execution=project)
     llm.hooks.place("sid-a", str(work / ".gfso-nodes-ws/p/a"))
     assert H.kept(llm.hooks.where("sid-a"), "sid-a", "hook").is_relative_to(a.state_dir())
-    t = Path(a.state_dir()) / "projects" / "-x" / "sid-a.jsonl"
-    t.parent.mkdir(parents=True)
-    t.write_text("{}\n")
-    deeper = Path(project.state_dir()) / "elsewhere" / "deep" / "projects" / "-x" / "sid-a.jsonl"
-    deeper.parent.mkdir(parents=True)
-    deeper.write_text("{}\n")
-    H.ClaudeCodeProvider(execution=project).forget("sid-a")      # a server restarted: it knows no place for it
-    assert not t.exists() and deeper.exists(), "two levels, never a walk of the whole CLI home (on a host: ~/.claude)"
+    assert E._served(project.state / "+a", project) == a.rw and E._served(project.state / "+", project) == project.base
+
+
+@pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
+def test_live_the_system_reads_and_forgets_a_conversation_where_its_session_keeps_it(project):
+    work = project.parent
+    made(project, "a", "b")
+    llm = H.ClaudeCodeProvider(execution=project)
+    llm.hooks.place("sid-a", str(work / ".gfso-nodes-ws/p/a"))
+    try:
+        llm.hooks.arm("sid-a", {"budget": 7})
+        assert llm.hooks.state("sid-a") == {"budget": 7} and not llm._transcripts("sid-a")
+        lay(project, {".gfso-state/+a/projects/-x/sid-a.jsonl": "{}", ".gfso-state/+b/projects/-x/sid-b.jsonl": "{}"})
+        assert llm._transcripts("sid-a"), "found through the port, in its place's container"
+        H.ClaudeCodeProvider(execution=project).forget("sid-a")      # a server restarted: it knows no place for it
+        gone = [str(project.state / "+a" / p) for p in ("projects/-x/sid-a.jsonl", "gfso-sessions/sid-a.hook")]
+        assert not any(map(project.files.exists, gone)) and project.files.exists(
+            str(project.state / "+b/projects/-x/sid-b.jsonl")), "its own conversation alone"
+    finally:
+        project.stop()
+
+
+def test_on_this_host_forgetting_walks_two_levels_never_the_whole_cli_home(tmp_path):
+    class _Home(E.LocalExecution):
+        def state_dir(self):
+            return tmp_path
+    for rel in ("projects/-x/s.jsonl", "one/projects/-x/s.jsonl", "elsewhere/deep/projects/-x/s.jsonl"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("{}")
+    H.ClaudeCodeProvider(execution=_Home()).forget("s")
+    assert [p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.jsonl")] == [
+        "elsewhere/deep/projects/-x/s.jsonl"], "on a host the CLI home is the operator's ~/.claude"
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_a_session_holds_its_places_cli_state_alone(project):
     work = project.parent
     a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
-    Path(b.state_dir()).mkdir(parents=True, exist_ok=True)
-    (Path(b.state_dir()) / "theirs.jsonl").write_text("b's conversation\n")
+    made(project, "a", "b")
+    lay(project, {".gfso-state/+b/theirs.jsonl": "b's conversation"})
     try:
         got = a.run(["bash", "-c", "cat /home/agent/.claude/theirs.jsonl 2>/dev/null && echo SAW-B; "
                                    "touch /home/agent/.claude/mine && echo OWN"], cwd=str(work / ".gfso-nodes-ws/p/a"),
                     timeout=120).stdout.split()
-        assert got == ["OWN"] and (Path(a.state_dir()) / "mine").exists(), got
+        assert got == ["OWN"] and project.files.exists(str(a.state / "mine")), got
         seen = project.run(["bash", "-c", "ls /home/agent/.claude/places 2>/dev/null && echo SAW-PLACES; true"],
                            cwd=str(project.base), timeout=120).stdout
         assert "SAW-PLACES" not in seen, "the project's container runs the agents' probes: no CLI state is mounted there"
@@ -343,16 +389,19 @@ def test_live_a_session_holds_its_places_cli_state_alone(project):
         project.stop()
 
 
-def test_a_gone_directorys_cli_state_goes_with_its_container(project, monkeypatch):
+@pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
+def test_live_a_gone_directorys_cli_state_goes_with_its_container(project):
     """A round's, a contact's, a no-place call's place is gone once it ends: its CLI state — a validator's
     conversation among it — would otherwise outlive it unforgotten and pile up under the project's (critic over the
     CLI state per place)."""
-    monkeypatch.setattr(E, "run", lambda args, **kw: subprocess.CompletedProcess(args, 0, "", ""))
-    with project.scratch("gfso-noplace-") as d:
-        gone = project.session(d)
-        Path(gone.state_dir()).mkdir(parents=True)
-    project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
-    assert not Path(gone.state_dir()).exists()
+    try:
+        with project.scratch("gfso-noplace-") as d:
+            gone = project.session(d)
+            assert gone.run(["touch", "/home/agent/.claude/left"], cwd=d, timeout=120).returncode == 0
+            assert project.files.exists(str(gone.state / "left"))
+        assert not project.files.exists(str(gone.state))
+    finally:
+        project.stop()
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
@@ -360,10 +409,11 @@ def test_live_a_check_the_system_runs_over_a_delivery_reaches_its_copy_alone(pro
     """The system's checks run what the agents wrote — the plan's probes, the delivery's scripts: in the project's
     container they would reach every node's place (critic over SECURITY.md); they run in the copy's own."""
     work = project.parent
-    (work / ".gfso-nodes-ws/p/b/theirs.txt").write_text("b's work\n")
+    lay(project, {"b/theirs.txt": "b's work\n"})
+    made(project, "a")
     try:
         with project.scratch("gfso-observe-", system=True) as d:
-            (Path(d) / "place").mkdir()
+            project.files.mkdir(str(Path(d) / "place"))
             got = _run(project, "bash", "echo ok > mine.txt && echo WROTE-OWN; "
                                         "cat /gfso-place/.gfso-nodes-ws/p/b/theirs.txt 2>/dev/null && echo SAW-B; "
                                         "touch /gfso-place/.gfso-nodes-ws/p/b/x 2>/dev/null && echo WROTE-B; true",

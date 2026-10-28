@@ -22,8 +22,8 @@ from tests.support import make_engine
 
 
 def _p(name, **settings):
-    """An engine as `execution_of` reads it: its project's name and its own settings."""
-    return SimpleNamespace(project_name=name, graph=SimpleNamespace(setting=settings.get))
+    """An engine as `execution_of` reads it: its project's name and its own settings, which it may write."""
+    return SimpleNamespace(project_name=name, graph=SimpleNamespace(setting=settings.get, store_setting=settings.__setitem__))
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ def test_a_role_names_a_declared_execution_and_the_project_runs_there(declared):
     agents.register("q-exec", "llm-executor", workdir=str(base), project="q")
     x = WS.execution_of(_p("p"), agents)
     assert isinstance(x, ContainerExecution) and x.image == "e3-linux-agent:2" and x.base == base.resolve()
-    assert x.state_dir().parts[-4:] == ("executions", "e3-linux", "claude", x.container)
+    assert x.state_dir() == x.own / ".gfso-state" and x.way.log().parts[-6:-3] == ("executions", "e3-linux", "claude")
     assert WS.execution_of(_p("p"), agents) is x, "one object per (execution, project)"
     assert isinstance(WS.execution_of(_p("q"), agents), LocalExecution)
 
@@ -69,7 +69,7 @@ def test_a_turned_network_switch_holds_for_every_holder(declared, tmp_path, monk
     held.start()
     held.start()
     seals = [a[-1] for a in ran if a[:4] == ["docker", "exec", "-u", "0"]]
-    assert sum(1 for a in ran if a[:2] == ["docker", "run"]) == 2 and seals[-1].startswith(held.way.seal())
+    assert sum(1 for a in ran if a[:3] == ["docker", "run", "-d"]) == 2 and seals[-1].startswith(held.way.seal())
 
 
 @pytest.mark.parametrize("broken", ["{not json", '{"renamed": {"image": "x", "env_file": "e.env"}}'])

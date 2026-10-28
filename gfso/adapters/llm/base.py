@@ -8,6 +8,7 @@ trusted to enforce a schema).
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 from gfso.core.types import LLMProviderPort
@@ -57,6 +58,12 @@ class RecordingProvider(LLMProviderPort):
         self.resume_fallback = None       # what a lost conversation reopens on, set while a budget runs (`budget.run`)
         self.machine_state = None         # optional: the place's state as the system reads it, for a reopen (`budget.run`)
         self.reads_as_report = None       # optional: does an answer parse as the role's report (`budget._as_note`)
+
+    @property
+    def agent(self) -> str | None:
+        """Who the calls work as — the name the stage carries (`<node> <role>(<agent>)`), None where it names none: what
+        an isolated place shows its session's container as (`ExecutionPort.session`)."""
+        return (m := re.search(r"\(([^()]+)\)", self.stage_hint or "")) and m.group(1)
 
     def begin_run(self) -> None:
         """A new call starts: what the last one reached for and how full it got are its own, not this one's."""

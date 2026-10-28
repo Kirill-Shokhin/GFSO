@@ -185,10 +185,10 @@ class ProjectRegistry:
                 log.warning(f"the dispatcher of {name!r} did not stop ({_ex}); it is unregistered and "
                             f"may still be polling a database this call is about to delete")
             eng.stop()
-            drop_execution(eng)
             close = getattr(eng._graph._storage, "close", None)
             if close:
                 close()
+        drop_execution(name)       # …its engine loaded or not: a new project of the name inherits no volume
         base = os.path.join(self._dir, f"{name}.db")
         for suffix in ("", "-wal", "-shm"):
             try:

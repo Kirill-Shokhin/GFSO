@@ -15,7 +15,8 @@ GFSO = Path(__file__).resolve().parents[1] / "gfso"
 #: the modules that work over places
 RADIUS = ("workspaces.py", "adapters/worktrees.py", "adapters/snapshots.py", "tools_llm.py", "delegate.py",
           "issuer/__init__.py", "packets.py", "core/protocol/procedure.py", "adapters/execution.py",
-          "adapters/llm/toolloop.py", "adapters/llm/conformance.py", "roster.py", "observe.py", "sessions.py")
+          "adapters/llm/toolloop.py", "adapters/llm/headless.py", "adapters/llm/chat.py", "adapters/llm/conformance.py",
+          "roster.py", "observe.py", "sessions.py")
 #: a path's own methods that touch the file system, and how many positional arguments the path's form takes — the
 #: port's methods of the same name take the path first (`ex.is_dir(p)`), which is what tells the two apart
 PATH_CALLS = {**dict.fromkeys(("is_dir", "is_file", "exists", "iterdir", "read_text", "read_bytes", "mkdir", "unlink",
@@ -61,11 +62,12 @@ HOSTS_OWN = {
     ("roster.py", "AgentRegistry._write", "lock.stat()"): "the roster's lock",
     ("roster.py", "AgentRegistry._write", "lock.unlink(missing_ok=True)"): "the roster's lock",
     ("roster.py", "AgentRegistry._write", "self._path.stat()"): "the roster file",
-    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.is_file()"): "a conversation kept in the CLI's state",
-    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.read_text(encoding='utf-8')"): "a conversation kept in the state",
-    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.parent.mkdir(parents=True, exist_ok=True)"): "the CLI's state",
-    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.write_text(json.dumps(msgs), encoding='utf-8')"): "the state",
-    ("adapters/llm/toolloop.py", "ToolLoop.run", "kept.unlink(missing_ok=True)"): "a conversation kept in the state",
+    ("adapters/llm/headless.py", "ClaudeCodeProvider._read_stream", "Path(tdir).mkdir(parents=True, exist_ok=True)"):
+        "the audit trace",
+    ("adapters/llm/headless.py", "ClaudeCodeProvider._read_stream", "open(Path(tdir) / f\"{time.strftime('%Y%m%dT%H%M%S')}-"
+     "{uuid.uuid4().hex[:8]}-{''.join((c if c.isalnum() else '_' for c in self.stage_hint or 'call'))[-60:]}.jsonl\", "
+     "'w', encoding='utf-8', buffering=1)"): "the audit trace",
+    ("adapters/llm/headless.py", "_Hooks.arm", "_HOOK.read_bytes()"): "the system's own hook script",
     ("adapters/llm/toolloop.py", "_open_trace", "Path(tdir).mkdir(parents=True, exist_ok=True)"): "the audit trace",
     ("adapters/llm/toolloop.py", "_open_trace", "open(Path(tdir) / f\"{time.strftime('%Y%m%dT%H%M%S')}-"
      "{uuid.uuid4().hex[:8]}-{tag}.jsonl\", 'w', encoding='utf-8', buffering=1)"): "the audit trace",
@@ -86,16 +88,25 @@ HOSTS_OWN = {
     ("adapters/execution.py", "_own", "os.chmod(path, os.lstat(path).st_mode | stat.S_IRWXU)"): "this host IS the place",
     ("adapters/execution.py", "_own", "os.lstat(path)"): "this host IS the place",
     ("adapters/execution.py", "end_leftovers", "shutil.which('docker')"): "this host's docker client",
-    ("adapters/execution.py", "WayOut.open", "self.log().parent.mkdir(parents=True, exist_ok=True)"): "the gateway's log",
-    ("adapters/execution.py", "Door._start", "self.log().parent.mkdir(parents=True, exist_ok=True)"): "the door's log",
-    ("adapters/execution.py", "ContainerExecution.remove_tree", "shutil.rmtree(s.state, ignore_errors=True)"): "the CLI's state",
-    # …the bind mounts' sources: a mount stands on a host directory until the places move into volumes
-    ("adapters/execution.py", "ContainerExecution.start", "d.mkdir(parents=True, exist_ok=True)"): "a mount's source",
-    ("adapters/execution.py", "ContainerExecution.temp_root",
-     "(d := self.tmp).mkdir(parents=True, exist_ok=True)"): "a mount's source",
-    ("adapters/execution.py", "ContainerExecution.temp_of", "d.mkdir(parents=True, exist_ok=True)"): "a mount's source",
-    ("adapters/execution.py", "PlaceContainer._mounts",
-     "(scratch := scratch_of(self.rw, self.project_name)).mkdir(parents=True, exist_ok=True)"): "a mount's source",
+    ("adapters/execution.py", "_system_run", "script.read_bytes()"): "the system's own script",
+    ("adapters/execution.py", "_log_out", "mirror.is_file()"): "the host's mirror of a system container's log",
+    ("adapters/execution.py", "_log_out", "mirror.read_text(encoding='utf-8')"): "the host's mirror of a log",
+    ("adapters/execution.py", "_mirror", "mirror.parent.mkdir(parents=True, exist_ok=True)"): "the host's mirror of a log",
+    ("adapters/execution.py", "_mirror", "mirror.write_text(text, encoding='utf-8')"): "the host's mirror of a log",
+    # …a project's places as they stood on the host before its volume, read once to be copied in
+    ("adapters/execution.py", "Volume.ready", "p.is_dir()"): "the host's leftover, or its CLI state of before",
+    ("adapters/execution.py", "_left", "ex.own.is_dir()"): "the host's leftover of a project's places",
+    ("adapters/execution.py", "_left", "ex.own.iterdir()"): "the host's leftover of a project's places",
+    ("adapters/execution.py", "_left", "d.is_dir()"): "the host's leftover of a project's places",
+    ("adapters/execution.py", "_left", "d.iterdir()"): "the host's leftover of a project's places",
+    ("adapters/execution.py", "_left", "x.is_dir()"): "the host's leftover of a project's places",
+    ("adapters/execution.py", "Volume._consume", "p.is_dir()"): "the host's leftover, consumed by its copy-in",
+    ("adapters/execution.py", "_untar", "to.mkdir(parents=True, exist_ok=True)"): "an export's host directory",
+    ("adapters/execution.py", "Volume.export",
+     "(to.parent / '.gfso-export-notes').write_text('\\n'.join(notes) + '\\n', encoding='utf-8')"): "an export's notes",
+    ("adapters/execution.py", "_untar", "at.parent.mkdir(parents=True, exist_ok=True)"): "an export's host directory",
+    ("adapters/execution.py", "_untar", "os.symlink(m.linkname, at)"): "an export's host directory",
+    ("adapters/execution.py", "_untar", "at.write_text(m.linkname, encoding='utf-8')"): "an export's host directory",
 }
 
 

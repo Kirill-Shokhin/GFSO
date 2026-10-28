@@ -50,12 +50,17 @@ _full: list = []
 
 
 def _say(log: str, line: str, *, passed: bool = False) -> None:
-    """One line of the log. Past its cap only refusals are dropped: a passed request is spend, and always written."""
-    with _lock, open(log, "a", encoding="utf-8") as f:
-        if passed or f.tell() < LOG_CAP:
-            f.write(line + "\n")
-        elif not _full:
-            _full.append(f.write("the log is full: refusals are no longer written, passed requests still are\n"))
+    """One line of the log. Past its cap only refusals are dropped: a passed request is spend, and always written —
+    and a write that fails is dropped, never raised into the request: a log's full disk let a flood of refusals turn
+    every keyed request after it into a 502 (critic over 71b49ad, measured)."""
+    try:
+        with _lock, open(log, "a", encoding="utf-8") as f:
+            if passed or f.tell() < LOG_CAP:
+                f.write(line + "\n")
+            elif not _full:
+                _full.append(f.write("the log is full: refusals are no longer written, passed requests still are\n"))
+    except OSError:          # …a log line the disk refuses is dropped: the request is served all the same
+        pass
 
 
 def model_alone(body: bytes) -> bool:
