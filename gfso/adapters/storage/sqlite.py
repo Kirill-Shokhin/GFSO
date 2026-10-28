@@ -70,6 +70,26 @@ def _mode_named(value: str) -> Optional[str]:
         return value or None
 
 
+def _looked_at(db_path: str):
+    """A file this process has not opened as a store, opened to be read alone (`peek_project` says why so)."""
+    how = "mode=ro" if os.path.exists(db_path + "-wal") else "immutable=1"
+    c = sqlite3.connect(f"file:{pathname2url(os.path.abspath(db_path))}?{how}", uri=True)
+    c.row_factory = sqlite3.Row
+    return closing(c)
+
+
+def settings_of(db_path: str) -> Optional[dict]:
+    """A project's own settings — the system's record of it that outlives the server — read from its file without
+    opening it as a store; None where no file stands or none reads."""
+    if not os.path.exists(db_path):
+        return None
+    try:
+        with _looked_at(db_path) as c:
+            return dict(c.execute("SELECT key, value FROM settings").fetchall())
+    except sqlite3.Error:
+        return None
+
+
 def peek_project(db_path: str) -> Optional[dict]:
     """What a project IS, read from a file this process has not opened as a store: its root (goal
     name, state, started), its last protocol event, its spend and its mode — None when there is no
@@ -87,11 +107,8 @@ def peek_project(db_path: str) -> Optional[dict]:
     it writes no WAL of its own."""
     if not os.path.exists(db_path):
         return None
-    how = "mode=ro" if os.path.exists(db_path + "-wal") else "immutable=1"
     try:
-        with closing(sqlite3.connect(f"file:{pathname2url(os.path.abspath(db_path))}?{how}",
-                                     uri=True)) as c:
-            c.row_factory = sqlite3.Row
+        with _looked_at(db_path) as c:
             root = _one(c, "SELECT state, done_reason, spec_json, created_at FROM tasks "
                               "WHERE parent_id IS NULL ORDER BY created_at LIMIT 1")
             spent = _one(c, "SELECT MAX(ts), SUM(cost_usd) FROM llm_usage")

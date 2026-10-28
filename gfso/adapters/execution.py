@@ -26,8 +26,9 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import HOST, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
-from gfso.config import DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, host_env
+from gfso.core.types import HOST, MADE, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
+from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, executions, executions_path,
+                         host_env)
 from gfso.adapters import door, egress
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
@@ -629,7 +630,7 @@ class Volume:
     def __init__(self, container: str, execution: str, own: Path, base: Path, project: str):
         key = f"{_home()}-{hashlib.sha1(os.path.normcase(base).encode()).hexdigest()[:6]}"
         self.name, self.state = f"{container}-{key}-v", f"{container}-{key}-state"
-        self.execution, self.own, self.project = execution, own, project
+        self.execution, self.own, self.base, self.project = execution, own, base, project
         self.labels = {LABEL: execution, "gfso.project": project, "gfso.home": _home()}
         made: dict = {}
         #: (read, write) of the project's own settings, where the record of its volumes is kept — set by whoever holds
@@ -701,6 +702,7 @@ class Volume:
         try:
             self.require(both)
             if all(self.record[0](VOLUME + r) for r in self._roles()):
+                self._keep(image)
                 return self._consume(host, old)
         except LookupError:                  # …not made yet: made below
             pass
@@ -721,7 +723,14 @@ class Volume:
         self.carried(dirs)
         for role, v in self._roles().items():
             self.record[1](VOLUME + role, v)
+        self._keep(image)
         self._consume(host, old)
+
+    def _keep(self, image: str) -> None:
+        """Beside the volumes in the record, what an export reads them by: the base and the image they stand over."""
+        for k, v in (("base", str(self.base)), ("image", image)):
+            if self.record[0](VOLUME + k) != v:
+                self.record[1](VOLUME + k, v)
 
     def _one_shot(self, image: str, mounts: list, script: list, role: str, user: str = "0",
                   **kw) -> subprocess.CompletedProcess:
@@ -777,11 +786,43 @@ class Volume:
         """Both gone, with every place in them."""
         run(["docker", "volume", "rm", "-f", self.name, self.state], timeout=120)
 
+    @classmethod
+    def of_record(cls, project: str, record: dict) -> tuple["Volume", str]:
+        """(the volume `project`'s own record names, asked against that record, the image it stands over)."""
+        if not (named := record.get(VOLUME + "places")):
+            raise LookupError("the project's record names no volume of its places: none was made for it")
+        if (labels := cls._labels(named)) is None:
+            raise PlaceUnavailable(project, f"its volume {named} is gone: the project's record holds its places there")
+        execution = labels.get(LABEL, "")
+        if not (base := record.get(VOLUME + "base") or _base_of_places(record)):
+            raise LookupError(f"the project's record names no base its volume {named} stands over")
+        if not (image := record.get(VOLUME + "image") or executions().get(execution, {}).get("image")):
+            raise LookupError(f"the project's record names no image, and its execution {execution!r} is declared "
+                              f"nowhere here ({executions_path()})")
+        b, name = Path(base), component(project)
+        v = cls(container_name(execution, project), execution, b.parent / f"{NODES}{b.name}" / name, b, name)
+        v.record = (record.get, None)     # …asked against the record: a base that names another volume, refused
+        return v, image
 
-def export_places(ex: "ContainerExecution", to: str) -> list:
-    """The places of `ex`'s project as they stand, written under the host directory `to` in a directory named by the
-    project — read with the project's volumes and its base gone, inert (`Volume.export`); what it could not carry."""
-    return ex.volume.export(ex.image, ex.base, ex.to_inside(str(ex.base)), Path(to) / ex.project_name)
+
+def export_places(project: str, record: dict, to: str) -> list:
+    """The places of `project` as they stand, written under the host directory `to` in a directory named by the
+    project — read with its volumes and its base gone, inert (`Volume.export`); what it could not carry. By the
+    project's own record (`record`, its settings) alone — the volume it names, the base and image kept beside it —, never
+    by the roster or declarations of whoever asks, which may be another server's or none (measured: a project with a
+    volume exported "nothing"). No volume recorded, none was made (`LookupError`); the recorded one gone, the place down."""
+    v, image = Volume.of_record(project, record)
+    return v.export(image, v.base, f"{INSIDE}/{v.base.name}", Path(to) / v.project)
+
+
+def _base_of_places(record: dict) -> str | None:
+    """The base, by a place the record holds made (`<parent>/<NODES><base>/<project>/<node>`) — a volume recorded before
+    its base was kept beside it; the volume's own name then confirms it (`Volume.require`)."""
+    for k in record:
+        if k.startswith(MADE):
+            p = Path(k[len(MADE):])
+            return str(p.parents[2] / p.parents[1].name.removeprefix(NODES))
+    return None
 
 
 def _untar(data: bytes, to: Path) -> list:
@@ -811,6 +852,11 @@ def _untar(data: bytes, to: Path) -> list:
             except (OSError, tarfile.TarError) as e:
                 notes.append(f"{m.name}: not written ({e})")
     return notes
+
+
+def container_name(execution: str, project: str) -> str:
+    """The project's container under `execution` — the stem its volumes are named by."""
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{execution}-{project}").lower()
 
 
 def _home() -> str:
@@ -861,7 +907,7 @@ class ContainerExecution(ExecutionPort):
             raise ValueError(f"execution {name!r}: its env_file holds {', '.join(held)} — a credential is its "
                              f"provider's, set by `gfso credential <provider>`, never the container's")
         self.name, self.image, self.env_file = name, image, env_file
-        self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{name}-{project}").lower()
+        self.container = container_name(name, project)
         self.way = WayOut(self.container, name, image, Path(state))
         # …one per container, whichever object of it asks: two roles' objects kept a door each, and a switch one turned
         # left the other's standing in the old shape (critic over the door v2)

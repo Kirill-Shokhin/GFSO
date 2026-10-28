@@ -444,7 +444,10 @@ NODES = ".gfso-nodes-"
 SCRATCH = ".gfso-scratch-"
 #: what keys, in a project's settings, the name of each of its volumes by its role (`places`, `state`): the system's
 #: record that its places moved into them — from there on no place nor round is looked for on this host
+#: …and beside them the base and the image they were made over (`base`, `image`): what an export reads them by
 VOLUME = "volume:"
+#: what keys a place in the record of the places made, by its path (`workspaces.made`)
+MADE = "place-made:"
 #: a system directory as it stood directly beside a base before each named its project
 
 

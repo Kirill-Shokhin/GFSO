@@ -186,7 +186,8 @@ Under a container execution (`register_agent(..., execution=<name>)`) those plac
 the project's own directory — node places, validation rounds, temps, the sessions' CLI state — lives in
 the project's Docker volumes, named by the installation, the execution, the project and the base, and
 only the project dir itself stays a directory of yours. To read the places, write them out:
-`gfso export-places <project> <dir>` puts them under `<dir>/<project>/`, each node's repository whole
+`gfso export-places <project> <dir>` puts them under `<dir>/<project>/` — the volume found by the project's
+own record in the installation's data directory, whatever roster the shell points at —, each node's repository whole
 (it no longer borrows objects from the project dir) and inert: no repository carries the config or hooks
 an agent gave it, so reading the export runs nothing an agent wrote; what could not be exported as it
 stood is listed in `<dir>/.gfso-export-notes`. A project whose places stood beside the project dir

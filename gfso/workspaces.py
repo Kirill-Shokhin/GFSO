@@ -8,7 +8,6 @@ import json
 import os
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import NODES as _NODES, base_of
 from gfso.adapters.execution import (ContainerExecution, LocalExecution, component, drop_volumes, network_of,
@@ -17,7 +16,7 @@ from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task
-from gfso.core.types import HOST, VOLUME, Signal, TaskId, State, hold_places
+from gfso.core.types import HOST, MADE, VOLUME, Signal, TaskId, State, hold_places
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
@@ -71,8 +70,6 @@ def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | N
 
 
 
-#: what keys a place in the record of the places made (`made`), by its path
-_MADE = "place-made:"
 #: the places this process asked about where the record had none, and found not made (`made`)
 _UNMADE: set = set()
 
@@ -82,8 +79,8 @@ def made(engine, place: str) -> bool:
     `clear_workspaces` drops one it removed, kept with the project's settings (a restart reads it) and read with no subprocess — the
     transition bus asks it. A place may stand nowhere on this host, and what stands where an agent writes decides
     nothing of the protocol."""
-    if (got := engine.graph.setting(_MADE + place)) is not None or (
-            got := engine.graph.setting(_MADE + _spelled(place))) is not None:   # …as a copy-in carried it
+    if (got := engine.graph.setting(MADE + place)) is not None or (
+            got := engine.graph.setting(MADE + _spelled(place))) is not None:   # …as a copy-in carried it
         return got == "1"
     # …a place made before the record was kept: asked once (once per process where it is not made), then recorded —
     # the record decides from there on. On this host, never by a call into a container from the transition bus: until
@@ -98,7 +95,7 @@ def made(engine, place: str) -> bool:
 
 
 def _record(engine, place: str, made: bool) -> None:
-    engine.graph.store_setting(_MADE + place, "1" if made else "0")
+    engine.graph.store_setting(MADE + place, "1" if made else "0")
 
 
 def _spelled(place) -> str:
@@ -314,12 +311,6 @@ def _declared(engine, agents: "AgentRegistry | None" = None):
                                               role["workdir"], project)
         hold_places(_EXECUTIONS[key].files)
     return _EXECUTIONS[key], d
-
-
-def execution_named(project: str, agents: "AgentRegistry | None" = None):
-    """The execution a project declares, by its name alone — no engine loaded, nothing started: what reads its volumes
-    from outside the server (`gfso export-places`). This host where it declares none."""
-    return _declared(SimpleNamespace(project_name=project), agents)[0] or LocalExecution()
 
 
 def execution_of(engine, agents: "AgentRegistry | None" = None):

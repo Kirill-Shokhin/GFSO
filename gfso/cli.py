@@ -18,16 +18,16 @@ import urllib.request
 from importlib.resources import files
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
-from gfso.adapters.execution import ContainerExecution, end_leftovers, export_places
+from gfso.adapters.execution import component, end_leftovers, export_places
+from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.conformance import assess, report
 from gfso import __version__, serverctl
-from gfso.config import LOOPBACK, admit_host, install_mcp_env, install_serve_env
+from gfso.config import LOOPBACK, admit_host, db_path, install_mcp_env, install_serve_env
 from gfso import serverctl
 from gfso.doctor import claude_cli, doctor, setup
 from gfso.examples import DEMOS, NEEDS_MODEL
 from gfso.runtime import data_dir
-from gfso.workspaces import execution_named
 
 
 def main():
@@ -296,17 +296,18 @@ def _dispatch(args) -> None:
 
 
 def _export_places(args) -> int:
-    """`gfso export-places PROJECT DIR`: the project's places out of its volume; non-zero where it has none."""
-    if not isinstance(ex := execution_named(args.project), ContainerExecution):
-        print(f"{args.project}: its places stand on this host already — nothing to export", file=sys.stderr)
+    """`gfso export-places PROJECT DIR`: the project's places out of the volume its own record names; non-zero where
+    it has none or nothing was exported."""
+    if (record := settings_of(str(db_path(args.project)))) is None:
+        print(f"{args.project}: no project of the name in {data_dir()}", file=sys.stderr)
         return 1
     try:
-        for n in export_places(ex, args.dir):
+        for n in export_places(args.project, record, args.dir):
             print(f"{args.project}: {n}", file=sys.stderr)
-    except (OSError, LookupError) as e:
+    except (OSError, LookupError, ValueError) as e:
         print(f"{args.project}: {e}", file=sys.stderr)
         return 1
-    print(f"{args.project}: its places are under {os.path.join(args.dir, ex.project_name)}")
+    print(f"{args.project}: its places are under {os.path.join(args.dir, component(args.project))}")
     return 0
 
 

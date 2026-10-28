@@ -488,11 +488,12 @@ host loopback forward shut; paths are mapped both ways so the graph keeps host p
 own directory stands on the host. Each session runs in a container of its own place, which mounts the subpaths of that
 volume its role holds, and its CLI state from a second volume the project's container never mounts. Both volumes are
 named by the installation, the execution, the project and the base; the project's settings record which volumes hold
-it (`volume:places`, `volume:state`), every container start checks them first, and a recorded volume that is missing is
-the place down, never made again empty. A project whose places stood on the host is copied in once and its host
-directory renamed `<dir>.copied-in-<time>`; `gfso export-places` writes the places out, each node's clone whole. A call
-is ended inside with whatever it started; the server's ordinary exit ends its containers, and the next server's start
-ends any a hard kill left behind; the volumes go with the project's deletion alone.
+it (`volume:places`, `volume:state`, and the base and image they stand over), every container start checks them first,
+and a recorded volume that is missing is the place down, never made again empty. A project whose places stood on the
+host is copied in once and its host directory renamed `<dir>.copied-in-<time>`; `gfso export-places` writes the places
+out by that record alone, each node's clone whole. A call is ended inside with whatever it started; the server's
+ordinary exit ends its containers, and the next server's start ends any a hard kill left behind; the volumes go with
+the project's deletion alone.
 `tests/test_every_launch_goes_through_an_execution.py` keeps every process start and host temp behind the port.
 What differs between projects of one server — the system's model, the Level-2 gate, the deadline nobody typed — is the
 project's own setting on `set_mode`.

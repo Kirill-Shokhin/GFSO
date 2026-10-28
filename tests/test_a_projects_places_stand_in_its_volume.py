@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import tarfile
 import time
@@ -21,6 +22,7 @@ import gfso.adapters.execution as E
 import gfso.adapters.worktrees as W
 import gfso.engine.findings as F
 import gfso.workspaces as WS
+from gfso.cli import _export_places
 from gfso.adapters.execution import STATE_INSIDE, ContainerExecution
 from gfso.core.types import PlaceUnavailable
 from tests.test_a_session_holds_only_its_own_place import IMAGE, _docker, _git, lay, made, project  # noqa: F401
@@ -104,6 +106,8 @@ def test_live_a_projects_places_left_on_the_host_are_copied_in_once(tmp_path, mo
         assert x.session(str(x.own / "a")).run(["sh", "-c", "echo after > f.txt"], cwd=str(x.own / "a"),
                                                timeout=120).returncode == 0
         assert x.volume.record[0]("volume:places") == x.volume.name and x.volume.record[0]("volume:state")
+        assert (x.volume.record[0]("volume:base"), x.volume.record[0]("volume:image")) == (str(x.base), IMAGE), \
+            "what an export reads the volume by, kept beside it"
         assert not left.parent.exists() and len(list(left.parent.parent.glob("p.copied-in-*"))) == 1, "consumed"
         left.mkdir(parents=True)
         (left / "f.txt").write_bytes(b"the host's leftover, changed\n")
@@ -459,7 +463,7 @@ def test_live_a_projects_places_export_to_the_host_whole_its_clones_free_of_the_
         x.session(str(x.own / "a")).run(["sh", "-c", "echo w > w.txt && ln -s w.txt l"], cwd=str(x.own / "a"),
                                         timeout=120).check_returncode()
         W.commit_all(base, x.own / "a", "work", "agent", x)
-        E.export_places(x, str(out))
+        _export(x, out)
         assert x.files.exists(str(x.own / "a" / ".git" / "objects" / "info" / "alternates")), "the place untouched"
     finally:
         x.stop()
@@ -471,6 +475,11 @@ def test_live_a_projects_places_export_to_the_host_whole_its_clones_free_of_the_
         r = subprocess.run(["git", "-c", f"safe.directory={clone.as_posix()}", *cmd], cwd=clone, capture_output=True,
                            text=True)
         assert r.returncode == 0 and r.stdout.strip(), (cmd, r.stderr)
+
+
+def _export(x, out) -> list:
+    """`gfso export-places` over the project's record as the server kept it — the dict `_fresh` hands its volume."""
+    return E.export_places("p", x.volume.record[0].__self__, str(out))
 
 
 def _two_clones(tmp_path):
@@ -501,7 +510,7 @@ def test_live_an_export_runs_nothing_an_agent_wrote_and_carries_none_of_it(tmp_p
         x.session(str(a)).run(["sh", "-c", "chmod +x .git/fsm.sh .git/hooks/post-checkout && "
                                            "git config core.fsmonitor /tmp/x/a/.git/fsm.sh"],   # …the export's copy
                     cwd=str(a), timeout=120)
-        E.export_places(x, str(out))
+        _export(x, out)
     finally:
         x.stop()
         x.volume.remove()
@@ -518,7 +527,7 @@ def test_live_a_clone_that_does_not_repack_is_exported_as_it_stands_and_named(tm
     out = tmp_path / "out"
     try:
         x.files.write_bytes(str(x.own / "a" / ".git" / "refs" / "heads" / "broken"), b"1" * 40 + b"\n")
-        assert E.export_places(x, str(out)), "what could not be done is said"
+        assert _export(x, out), "what could not be done is said"
     finally:
         x.stop()
         x.volume.remove()
@@ -581,3 +590,58 @@ def test_live_a_lost_state_volume_is_the_place_down_and_a_project_made_again_inh
     finally:
         x.stop()
         x.volume.remove()
+
+
+def _a_project_on_disk(tmp_path, monkeypatch, record: dict) -> None:
+    """A server's data dir holding project `p`'s own file with `record` its settings, and the caller's roster and
+    declarations naming no execution of it — as `python -m gfso.cli` is typed with PYTHONPATH alone."""
+    (data := tmp_path / "data").mkdir()
+    (tmp_path / "roster.json").write_text("{}")
+    for k, v in (("GFSO_DATA_DIR", data), ("GFSO_AGENTS_PATH", tmp_path / "roster.json"),
+                 ("GFSO_EXECUTIONS_PATH", tmp_path / "none.json")):
+        monkeypatch.setenv(k, str(v))
+    with sqlite3.connect(data / "p.db") as c:
+        c.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+        c.executemany("INSERT INTO settings VALUES (?, ?)", record.items())
+    c.close()
+
+
+def _exported(tmp_path, capsys) -> tuple:
+    rc = _export_places(SimpleNamespace(project="p", dir=str(tmp_path / "out")))
+    return rc, capsys.readouterr().err
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["base recorded", "recorded before its base was kept"])
+def test_export_places_exports_the_volume_the_projects_own_record_names_whatever_the_callers_roster(
+        tmp_path, monkeypatch, capsys, legacy):
+    """Measured on a live project: with no roster of its execution in the caller's environment the verb said "its
+    places stand on this host already" of a project whose places were in a volume. The system's record decides."""
+    base = tmp_path / "w" / "ws"
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "data"))       # …the volume's name carries this home
+    v = E.Volume(E.container_name("ex", "p"), "ex", base.parent / ".gfso-nodes-ws" / "p", base, "p")
+    record = {"volume:places": v.name, "volume:state": v.state, "volume:image": "img:1",
+              **({f"place-made:{base.parent / '.gfso-nodes-ws' / 'p' / 'root'}": "1"} if legacy else
+                 {"volume:base": str(base)})}
+    _a_project_on_disk(tmp_path, monkeypatch, record)
+    monkeypatch.setattr(E.Volume, "_labels", staticmethod(lambda n: {E.LABEL: "ex", "gfso.home": E._home()}))
+    got = []
+    monkeypatch.setattr(E.Volume, "export", lambda self, *a: got.append((self.name, *a)) or [])
+    assert _exported(tmp_path, capsys)[0] == 0
+    assert got == [(v.name, "img:1", base, f"{E.INSIDE}/ws", tmp_path / "out" / "p")]
+
+
+def test_export_places_of_a_recorded_volume_that_is_gone_is_said_and_fails(tmp_path, monkeypatch, capsys):
+    _a_project_on_disk(tmp_path, monkeypatch, {"volume:places": "gone-v", "volume:base": str(tmp_path / "ws")})
+    monkeypatch.setattr(E.Volume, "_labels", staticmethod(lambda n: None))
+    rc, err = _exported(tmp_path, capsys)
+    assert rc == 1 and "its volume gone-v is gone" in err
+
+
+@pytest.mark.parametrize("record", [None, {"mode": "solo"}], ids=["no project file", "no volume recorded"])
+def test_export_places_with_nothing_recorded_fails_and_says_why(tmp_path, monkeypatch, capsys, record):
+    if record is None:
+        monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "empty"))
+    else:
+        _a_project_on_disk(tmp_path, monkeypatch, record)
+    rc, err = _exported(tmp_path, capsys)
+    assert rc == 1 and ("no project of the name" if record is None else "names no volume") in err
