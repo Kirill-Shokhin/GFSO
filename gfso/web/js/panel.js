@@ -19,20 +19,24 @@ const link = (facet, label) => `<button class="pn-link" data-action="read" data-
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
     const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], id => nameOf(taskOf(id)) || id);
-    return words === '—' ? '' : `<span>waiting on <b>${esc(words)}</b></span> · `;
+    return words === '—' ? ['', ''] : [`<span>waiting on <b>${esc(words)}</b></span> · `, `waiting on ${words} · `];
 }
+// a meta line is one line, cut at its end: the whole of it on hover
+const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</div>`;
 
 function head({d, rounds}) {
     const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure);
     const live = !terminal(d.state), mode = S.graph.mode?.mode;
+    const [wait, waitText] = waiting(d), round = consented(d.state) && (!rounds.length || rounds.at(-1).verdict)
+        ? `round ${rounds.length + 1}, in work` : `round ${rounds.length}`;
+    const ids = [d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).join(' · ');
     return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
-        + `<div class="pn-meta">${[d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).map(esc).join(' · ')}</div>`
+        + meta(esc(ids), ids)
         + `<div class="pn-status"><span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`
         + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
         + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? PANEL.deadline(at(d.deadline), Date.now()) : ''}>⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
-        + `</div><div class="pn-meta">${waiting(d)}${consented(d.state) && (!rounds.length || rounds.at(-1).verdict)
-            ? `round ${rounds.length + 1}, in work` : `round ${rounds.length}`}</div>`
+        + '</div>' + meta(wait + round, waitText + round)
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-meta pn-by" id="pn-by">${signedBy(S.run, d.id)}</div>`
         + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip"${PANEL.escalated}>issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
@@ -327,9 +331,10 @@ function render() {
     const f = FACETS.find(x => x.id === tab && x.n(cur)) || FACETS.find(x => x.n(cur)), {d} = cur;
     tab = f.id;
     box().hidden = false;
-    rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2>${esc(nameOf(d))}</h2>`
+    const budget = `${d.id} · rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN · reopens ${d.reopens || 0}`;
+    rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2${PANEL.full(nameOf(d))}>${esc(nameOf(d))}</h2>`
         + `<button class="sidebar-close" data-action="read"${frame('close')}>&times;</button></div>`
-        + `<div class="pn-meta">${esc(d.id)} · rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN · reopens ${d.reopens || 0}</div>`
+        + meta(esc(budget), budget)
         + `<div class="rd-tabs">${FACETS.map(x => chip(x, cur, x === f)).join('')}</div></div>${f.body(cur)}`);
 }
 

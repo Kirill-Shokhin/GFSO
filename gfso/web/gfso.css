@@ -55,6 +55,10 @@ body {
     line-height: 1.5;
     background: var(--ui-page);
     color: var(--ui-text);
+    /* ONE RULE FOR A LONG UNBROKEN NAME, inherited by every element: shown in full, it breaks where it would overflow (a
+       node id of 90 characters ran past its tip and its panel, the author 2026-10-28). Where a line is single by design
+       (`nowrap`) it is cut, and that element carries the whole name as its hover (hints.js), shown only when cut (tip.js). */
+    overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
     -webkit-font-smoothing: antialiased;
@@ -624,7 +628,6 @@ body {
 .verdict-evidence {
     margin: 2px 0 0;
     color: var(--ui-text-soft);
-    overflow-wrap: anywhere;      /* evidence quotes operator soup and absolute paths */
     /* A CEILING IN CSS, NEVER A SLICE IN JS. The old panel cut evidence at 300 characters, which is
        one past the MEDIAN of every verdict this repository holds (p50 302, p90 537, max 1311), so
        half of them were shown mutilated and the rest existed nowhere a reader could reach. A box
@@ -648,11 +651,9 @@ body {
        for, not a caption. */
     color: var(--ui-text-soft);
     white-space: pre-wrap;        /* a command is read as written, and it wraps */
-    overflow-wrap: anywhere;
 }
 /* A CRITERION IS A COLUMN, not a row: name, then what it asks at the panel's full width, then its
-   pinned check folded under it. `min-width: 0` for the same reason as `.verdict-body`. */
-.crit-desc { overflow-wrap: anywhere; }
+   pinned check folded under it. */
 .crit-check { margin-top: 4px; }
 .crit-check summary {
     cursor: pointer;
@@ -671,7 +672,6 @@ body {
     background: var(--ui-card);
     color: var(--ui-text-soft);
     white-space: pre-wrap;        /* a command is read as written, and it wraps */
-    overflow-wrap: anywhere;
     /* …CHARACTER FOR CHARACTER. The mono face draws `==` `<=` `->` `!=` as the ligatures ═ ≤ → ≠,
        so `a<=b` in a probe showed as `a≤b` — a command nobody can type (seen on the page, 2026-09-24). */
     font-variant-ligatures: none;
@@ -1106,10 +1106,10 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .rd-top .sidebar-header { margin-bottom: 4px; }
 .rd-top h2 { font-size: 15px; -webkit-line-clamp: 1; }
 .rd-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
-.rd-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.6; color: var(--ui-text-soft); }
+.rd-text { white-space: pre-wrap; font-size: 12.5px; line-height: 1.6; color: var(--ui-text-soft); }
 .reader .audit-list, .reader .verdict-evidence { max-height: none; }
 .reader .audit-list summary { cursor: pointer; }
-.rd-field { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-body); font-size: 11.5px; padding: 4px 0 4px 12px; }
+.rd-field { white-space: pre-wrap; font-family: var(--font-body); font-size: 11.5px; padding: 4px 0 4px 12px; }
 .rd-field b { font-family: var(--font-mono); font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: var(--tr-mono); color: var(--ui-text-faint); margin-right: 8px; }
 
 .tl .tl-legend text { font-size: 9.5px; fill: var(--ink-soft); }

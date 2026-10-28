@@ -42,9 +42,11 @@ function tracks(el, run, name, tasks) {
         y += GAP;
         const lx = 8 + Math.max(r.d - 1, 0) * INDENT;
         const caret = r.kids && r.d ? `<tspan class="pg-caret">${unfolded.has(r.id) ? '▾' : '▸'} </tspan>` : '';
+        // a name cut to the track's width: the whole of it on hover (the caret makes the text differ, so only when cut)
+        const label = r.d ? name(r.id) : "the goal's criteria", fits = 34 - Math.max(r.d - 1, 0) * 2;
         return `<g class="pg-track${r.d ? ' pg-part' : ''}" data-node="${esc(r.id)}">
             <rect class="pg-band" x="0" y="${top - GAP / 2}" width="${W}" height="${h(r) + GAP}"/>
-            <text class="pg-level" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}>${caret}${esc(trim(r.d ? name(r.id) : "the goal's criteria", 34 - Math.max(r.d - 1, 0) * 2))}</text>
+            <text class="pg-level" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}${label.length > fits ? TIP.cell(label) : ''}>${caret}${esc(trim(label, fits))}</text>
             <text class="pg-count" x="${LEFT - 10}" y="${top + (r.d ? 24 : 28)}">${last}<tspan> of ${T.total}</tspan></text>
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>

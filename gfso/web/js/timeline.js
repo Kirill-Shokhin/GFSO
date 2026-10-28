@@ -59,8 +59,11 @@ export function render(el, run, nodes) {
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
         return `<g class="tl-v" data-v="${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
     const state = Object.fromEntries(nodes.map(n => [n.id, n.state]));
-    const idle = id => run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${
-        run.waits[id]?.deps.length ? `waits on ${esc(waitWords(run.waits[id], d => trim(name(d), 24)))}` : esc(state[id].toLowerCase())}</text>`;
+    // the names it waits on cut to fit: the whole of them on hover
+    const waitsOn = (id, cut) => `waits on ${waitWords(run.waits[id], d => cut ? trim(name(d), 24) : name(d))}`;
+    const idle = id => run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : !run.waits[id]?.deps.length
+        ? `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${esc(state[id].toLowerCase())}</text>`
+        : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}"${TIP.cell(waitsOn(id))}>${esc(waitsOn(id, true))}</text>`;
     // the bar kinds are a LABEL (hints.js): read each time, so drawn beside the bars; PASS and FAIL are the key's
     // consent shown only where a run has it: rows recorded before it was booked apart have none
     const kinds = ['exec', ...(run.sessions.some(s => s.kind === 'consent') ? ['consent'] : []), 'val', 'issuer'], legendW = kinds.length * 92;
@@ -68,7 +71,7 @@ export function render(el, run, nodes) {
         `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 4}" width="${W}" height="${ROW}"/>
-        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" x="${LEFT - 10}" y="${Y(id) + 4}">${esc(trim(name(id)))}</text>
+        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" x="${LEFT - 10}" y="${Y(id) + 4}"${TIP.cell(name(id))}>${esc(trim(name(id)))}</text>
         ${work.map((s, i) => s.node === id && !HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${work.map((s, i) => s.node === id && HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${marks(id)}${idle(id)}</g>`;
     // how many executors ran at once: its own band with its own scale, a line — not one more row of bars
     const c0 = 30 + CONC, peak = Math.max(run.exec.peak, 1), cy = k => c0 - (k / peak) * (CONC - 6);

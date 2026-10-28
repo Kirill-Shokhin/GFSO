@@ -146,8 +146,9 @@ async function init() {
     refreshDeck().then(afterDeck);
     if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
     if (GOAL && !S.tasks.length) goal.openGoal();     // a new project's first act: its goal
-    connectWS(LIVE);
+    // the picker's name is its own read, so a feed that cannot open does not leave it blank
     projects();
+    connectWS(LIVE);
 }
 
 // …AFTER the deferred graph libraries have run, or every load reports them missing.
