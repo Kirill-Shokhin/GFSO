@@ -17,12 +17,16 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import uuid
 from pathlib import Path
 
 from gfso.adapters import children
 from gfso.config import subprocess_env
 from gfso.adapters.execution import NODES, LocalExecution
 from gfso.core.types import HOST
+
+#: the largest bundle `_carry` moves through the server's memory
+BUNDLE_CAP = 512 * 2 ** 20
 
 
 def base_of(place: str | None) -> str | None:
@@ -48,16 +52,29 @@ def _lock(base) -> threading.RLock:
         return _LOCKS.setdefault(_key(base), threading.RLock())
 
 
+#: every system git call's own settings, after the caller's: no config but the repository's (the system's and the
+#: user's are not the agent's to read, and an image's `safe.directory` goes with them), no hook, no fsmonitor. Depth,
+#: not the bound — a repository's config still names filters, drivers, commands, and a denylist leaks by class
+APART = ("-c", "safe.directory=*", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+NO_CONFIG = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+
+
 def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
     """One git call in `cwd`, as `who` — a delivery is its executor's commit, and no identity needs configuring —
-    where `execution` runs the project's work (this host when None)."""
+    where `execution` runs the project's work (this host when None): IN THE CONTAINER OF THE PLACE THE REPOSITORY
+    STANDS IN (`session`, by the system's own name of the path — `_writable_root` —, never by what stands there) — a
+    node's clone in its own, a judge's copy in its round's, the base in the root's. A repository's config is its agent's
+    to write (`core.fsmonitor`, a filter `.gitattributes` names, a merge driver, …), and run there it gives that agent
+    nothing it does not hold already; in the project's container, which mounts every place, it read and wrote the
+    others' and forged a clone (critics, three times). Asking the config before use was a race."""
+    repo = (env or {}).get("GIT_DIR") or (args[1] if args[:1] == ("-C",) else cwd)
     mail = f"{who}@gfso.local"
     env = subprocess_env(extra={"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail,
                                                 "GIT_COMMITTER_NAME": who, "GIT_COMMITTER_EMAIL": mail,
-                                                "GIT_TERMINAL_PROMPT": "0", **(env or {})})
+                                                "GIT_TERMINAL_PROMPT": "0", **(env or {}), **NO_CONFIG})
     if execution is not None:
-        return execution.run(["git", *args], cwd=str(cwd), timeout=_SLOW, env=env)
-    return children.run(["git", *args], timeout=_SLOW, cwd=str(cwd), text=True, encoding="utf-8",
+        return execution.session(str(repo)).run(["git", *APART, *args], cwd=str(cwd), timeout=_SLOW, env=env)
+    return children.run(["git", *APART, *args], timeout=_SLOW, cwd=str(cwd), text=True, encoding="utf-8",
                         errors="replace", env=env)
 
 
@@ -67,8 +84,10 @@ def _fs(execution):
 
 
 def checks_out_crlf(base) -> bool:
-    """Does the repository at `base` check its files out with CRLF (`core.autocrlf=true`, any level that applies)?"""
-    return is_repo_top(base) and git(base, "config", "--get", "core.autocrlf").stdout.strip().lower() == "true"
+    """Does the repository at `base` check its files out with CRLF (`core.autocrlf=true`, any level that applies)? The
+    user's checkout read on the host at registration, its own config and the user's — a read that runs nothing."""
+    return is_repo_top(base) and children.run(["git", "config", "--get", "core.autocrlf"], timeout=60, cwd=str(base),
+                                              text=True).stdout.strip().lower() == "true"
 
 
 def is_repo_top(base) -> bool:
@@ -102,9 +121,10 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
 
     A REPOSITORY OF ITS OWN, not a worktree of the base's: a worktree writes the base's refs, objects and
     registrations, so a session in one place could move or break every other node's (NODE_ISOLATION_RESEARCH §6, G).
-    The clone reads the base's objects (`--shared`, relative alternates) and holds its own refs and index; the system
-    brings in what it needs (`bring`) and takes the node's branch back at DELIVER (`commit_all`). Run where the
-    project's work runs. A place made as a worktree before this keeps working as one, locked."""
+    The clone reads the base's objects (relative alternates) and holds its own refs and index; the system brings in
+    what it needs (`bring`) and takes the node's branch back at DELIVER (`commit_all`). Made in its own container by
+    `init`, never by a transport from the base — whose `upload-pack` would run beside the place, under the root's
+    config. A place made as a worktree before this keeps working as one, locked."""
     place = Path(place)
     with _lock(base):
         if is_clone(place, execution):
@@ -113,12 +133,13 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
             _by_registration(base, ["worktree", "lock", str(place)], execution)
             return False
         # …the base's own settings, as a worktree had them: line endings, links, attributes (a clone reads only its own)
-        own = [a for k in INHERITED for v in [git(base, "config", "--local", "--get", k, execution=execution)
-                                                .stdout.strip()] if v for a in ("-c", f"{k}={v}")]
-        r = git(base, "clone", "--shared", "--no-checkout", "-q", *own, str(base), str(place), execution=execution)
-        if r.returncode != 0:
-            raise OSError(f"git clone {place} failed: {r.stderr.strip()}")
+        own = {k: v for k in INHERITED if (v := git(base, "config", "--local", "--get", k, execution=execution)
+                                                .stdout.strip())}
+        _fs(execution).files.mkdir(str(place))           # …a session's container mounts only a place that stands
         try:
+            for args in (("init", "-q"), *(("config", k, v) for k, v in own.items())):
+                if (r := git(place, *args, execution=execution)).returncode:
+                    raise OSError(f"git {args[0]} in {place} failed: {r.stderr.strip()}")
             _start(base, place, branch, start_from, execution)
         except Exception:   # …a half-made place would be reused as it stands, empty, and its emptiness delivered
             _fs(execution).remove_tree(str(place))
@@ -131,18 +152,16 @@ INHERITED = ("core.autocrlf", "core.eol", "core.symlinks", "core.filemode", "cor
 
 
 def _start(base, place: Path, branch: str, start_from, execution) -> None:
+    """The new clone on `branch`: the base's commit of that name where it has one, else the HEAD of `start_from` — a
+    parent's place, whose commit comes over by bundle (`_carry`): no container holds both places."""
     relative_alternates(place / ".git" / "objects", Path(base) / ".git" / "objects", execution)
     for name in ("exclude", "attributes"):        # what the base keeps out of its commits stays out of the node's
         if (kept := HOST.read_bytes(str(Path(base) / ".git" / "info" / name))) is not None:    # the base: the host's
             _fs(execution).files.write_bytes(str(place / ".git" / "info" / name), kept)
-    git(place, "remote", "remove", "origin", execution=execution)        # nothing in the place names the base to push to
     if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0:
         start = git(base, "rev-parse", f"refs/heads/{branch}", execution=execution).stdout.strip()
     else:
-        got = git(place, "fetch", "-q", str(start_from), "HEAD", execution=execution)
-        if got.returncode != 0:
-            raise OSError(f"{place} could not fetch its start from {start_from}: {got.stderr.strip()}")
-        start = "FETCH_HEAD"
+        start = _carry(base, start_from, place, "HEAD", execution)
     r = git(place, "checkout", "-q", "-B", branch, start, execution=execution)
     if r.returncode != 0:
         raise OSError(f"{place} could not start {branch}: {r.stderr.strip()}")
@@ -158,7 +177,9 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
     """Everything in the place but caches as one commit — empty or not, so every delivery has a name. Its TREE: the
     same files are the same id whatever commit carries them, so a re-delivery of an unchanged result reads as one
     (four FAILs over one tree read as four attempts and split a leaf, GB_sql_database_tngo2o700 root.joins). Taken
-    where the work was made: host git cannot index a symlink made inside a container (probe P5)."""
+    where the work was made: host git cannot index a symlink made inside a container (probe P5) — in the place's own
+    container, whose agent's filters and fsmonitor ran over every place from the project's; and taken back into the
+    base by bundle (`_carry`), the base's side in the root's container."""
     with _lock(base):
         git(place, "add", "-A", "--", ".", *(f":(exclude,glob)**/{c}" for c in CACHES),
              *(f":(exclude,glob)**/{c}/**" for c in CACHES if "*" not in c), execution=execution)
@@ -167,10 +188,7 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
             raise OSError(f"the delivery could not be committed in {place}: {r.stderr.strip()}")
         # …taken back into the base under the node's own name, never the place's word
         if branch and is_clone(place, execution):
-            got = git(base, "fetch", "-q", "--update-head-ok", str(place), f"+HEAD:refs/heads/{branch}",
-                      execution=execution)     # …a worktree registration left from before may still claim the branch
-            if got.returncode != 0:
-                raise OSError(f"the delivery could not be taken back from {place}: {got.stderr.strip()}")
+            _name(base, branch, _carry(base, place, base, "HEAD", execution), execution)
         return git(place, "rev-parse", "HEAD^{tree}", execution=execution).stdout.strip()
 
 
@@ -178,7 +196,49 @@ def bring(base, place, branch: str, execution=None) -> None:
     """`branch` of the base brought into a node's own repository under its name — what its packet tells it to merge."""
     if is_clone(place, execution):
         with _lock(base):
-            git(place, "fetch", "-q", str(base), f"+refs/heads/{branch}:refs/heads/{branch}", execution=execution)
+            _name(place, branch, _carry(base, base, place, f"refs/heads/{branch}", execution), execution)
+
+
+def _name(repo, branch: str, sha: str, execution) -> None:
+    """`branch` of the repository at `repo` set to `sha`, whatever it held — checked out by a worktree left from
+    before or not: the commit is the system's word, read in its source (`_carry`)."""
+    r = git(repo, "update-ref", f"refs/heads/{branch}", sha, execution=execution)
+    if r.returncode != 0:
+        raise OSError(f"{repo} could not name {sha} {branch}: {r.stderr.strip()}")
+
+
+def _carry(base, src, dst, rev: str, execution) -> str:
+    """The commit `rev` names in the repository at `src`, present in the one at `dst` — its id. TWO REPOSITORIES, AND
+    NEITHER'S GIT RUNS WHERE THE OTHER STANDS: a fetch from a path ran the source's `upload-pack` beside the target, in
+    one container holding both. Here the source writes a bundle of what the base lacks in its own container (`git`), the
+    system moves the file through the port, from the source's temp to the target's (`temp_of`), and the target takes its
+    objects in its own: a bundle is objects and refs — no config, no hook — so each side runs only its own agent's
+    config, where that agent already works. The id is read in the source's container and the bundle's refs are never
+    taken: a bundle swapped on the way brings no other commit under it. What the base holds travels not at all — a
+    clone reads its objects."""
+    sha = git(src, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", execution=execution).stdout.strip()
+    if not sha:
+        raise OSError(f"{src} names no commit {rev} for {dst} to take")
+    if git(dst, "cat-file", "-e", f"{sha}^{{commit}}", execution=execution).returncode == 0:
+        return sha
+    ex, name = _fs(execution), f"gfso-{uuid.uuid4().hex}.bundle"
+    a, b = (Path(ex.temp_of(str(p))) / name for p in (src, dst))
+    tips = git(base, "for-each-ref", "--format=%(objectname)", "refs/heads/", execution=execution).stdout.split()
+    try:
+        got = git(src, "bundle", "create", "-q", str(a), rev, "--not", *tips, execution=execution)
+        # …read to a cap, not whole: the source's agent holds its temp, and a bundle swapped for a huge sparse file
+        # filled the server's memory, every project's with it (critic over 61bf915) — past the cap the carry fails
+        if got.returncode == 0 and (data := ex.files.read_bytes(str(a), BUNDLE_CAP + 1)) is not None:
+            if len(data) > BUNDLE_CAP:
+                raise OSError(f"{src}'s bundle of {rev} passes {BUNDLE_CAP >> 20} MiB: not carried")
+            ex.files.write_bytes(str(b), data)
+            got = git(dst, "bundle", "unbundle", str(b), execution=execution)
+        if got.returncode or git(dst, "cat-file", "-e", f"{sha}^{{commit}}", execution=execution).returncode:
+            raise OSError(f"{dst} could not take {rev} of {src}: {got.stderr.strip()[-300:]}")
+    finally:
+        for p in {a, b}:
+            ex.files.remove_matching(str(p.parent), [name])
+    return sha
 
 
 def _commit_in(base, ref: str, execution) -> str:
@@ -196,7 +256,10 @@ def head(place, execution=None) -> str | None:
 def merge(base, into, branch: str, message: str, execution=None) -> str | None:
     """Join `branch` into the tree at `into`. None when joined (or already in); else why not, with the tree
     returned to where it stood — a half-merged tree would be the torn read this module exists against. Written where the
-    work runs, so a symlink a part made is checked out as one."""
+    work runs, so a symlink a part made is checked out as one. Two repositories, one git: the commit is named in the
+    base's container, and the merge runs in `into`'s own — a parent's place in its, the base in the root's, whose
+    agent writes the base's config — reading the part's objects through the base's: the drivers and filters that run
+    are `into`'s config, the attributes the part brought only name them."""
     with _lock(base):
         r = git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, _commit_in(base, branch, execution),
                 execution=execution)

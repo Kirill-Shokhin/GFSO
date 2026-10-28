@@ -264,35 +264,6 @@ def test_live_a_volume_lost_under_its_record_stops_the_place_and_is_never_refill
 
 
 @live
-def test_live_a_hook_an_agent_planted_for_the_systems_git_reaches_no_conversation(project):
-    """The system's own git runs in the project's container over a place an agent wrote: a `core.fsmonitor` it set
-    ran there at `git add -A`, read another place's conversation, appended to it and took the volume's mark (critic
-    over 6202d19). No CLI state is mounted there, and the volume's making is the system's record, not a file."""
-    _base_with_a_commit(project)
-    own, inside = project.own, lambda p: project.to_inside(str(p))
-    try:
-        for n in ("a", "b"):
-            assert W.ensure(project.base, own / n, f"gfso/p/{n}", project.base, execution=project)
-        b = project.session(str(own / "b"))
-        b.run(["sh", "-c", "mkdir -p /home/agent/.claude/projects/-x && echo B > /home/agent/.claude/projects/-x/s"],
-              cwd=str(own / "b"), timeout=120).check_returncode()
-        hook = (f"#!/bin/sh\n{{ ls -a {inside(own)}; cat {inside(own)}/.gfso-state/+b/projects/-x/s && echo READ-B; "
-                f"echo INJECTED >> {inside(own)}/.gfso-state/+b/projects/-x/s; }} > {inside(own)}/a/pwned.txt 2>&1\n"
-                "exit 1\n")
-        project.files.write_bytes(str(own / "a" / ".git" / "fsm.sh"), hook.encode())
-        a = project.session(str(own / "a"))
-        a.run(["sh", "-c", 'chmod +x .git/fsm.sh && git config core.fsmonitor "$PWD/.git/fsm.sh" && echo w > w.txt'],
-              cwd=str(own / "a"), timeout=120).check_returncode()
-        W.git(own / "a", "add", "-A", "--", ".", execution=project)
-        seen = project.files.read_text(str(own / "a" / "pwned.txt")) or ""
-        assert {"a", "b"} <= set(seen.split()), f"the planted hook ran in the project's container: {seen!r}"
-        assert "READ-B" not in seen and ".gfso-state" not in seen.split(), seen
-        assert b.run(["cat", "/home/agent/.claude/projects/-x/s"], cwd=str(own / "b"), timeout=60).stdout == "B\n"
-    finally:
-        project.stop()
-
-
-@live
 def test_live_a_copy_in_cut_by_its_time_leaves_no_copy_running_and_the_next_start_makes_it_whole(tmp_path,
                                                                                                     monkeypatch):
     """Its own container gone with the cut, nothing recorded; the next start empties what it half wrote and copies

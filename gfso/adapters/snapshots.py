@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.adapters import worktrees as W
+from gfso.config import subprocess_env
 from gfso.core.types import PlaceUnavailable
 
 log = logging.getLogger(__name__)
@@ -126,7 +127,8 @@ elif dot.is_file():
         dot.unlink()
         shutil.copytree(gitdir, dot, symlinks=True, ignore=shutil.ignore_patterns("gitdir", "locked", "*.lock"))
         (dot / "commondir").write_text(Path(os.path.relpath(common, dot)).as_posix() + "\n", encoding="utf-8")
-        head = subprocess.run(["git", "--git-dir", str(dot), "rev-parse", "HEAD"], capture_output=True, text=True)
+        head = subprocess.run(["git", *sys.argv[3:], "--git-dir", str(dot), "rev-parse", "HEAD"], capture_output=True,
+                              text=True)
         (dot / "HEAD").write_text(head.stdout.strip() + "\n", encoding="utf-8")
 '''
 
@@ -139,7 +141,8 @@ def _own_git(place: Path, at: Path, execution) -> None:
     own repository's copy is one too: only where it borrows from moves (relative alternates). Done by one call in the
     copy's own container (`_OWN_GIT`)."""
     ex = execution.session(str(at))
-    r = ex.run([ex.python, "-c", _OWN_GIT, str(place), str(at)], cwd=str(at), timeout=600)
+    r = ex.run([ex.python, "-c", _OWN_GIT, str(place), str(at), *W.APART], cwd=str(at), timeout=600,
+               env=subprocess_env(extra=W.NO_CONFIG))
     if r.returncode != 0:
         raise OSError(f"the copy {at} could not get a git of its own: {(r.stderr or '').strip()[-300:]}")
 
@@ -147,31 +150,30 @@ def _own_git(place: Path, at: Path, execution) -> None:
 def changed(place, at, execution) -> list[str]:
     """The place's committed files that differ in the copy — content, kind, link target or presence; a touch is no
     change. Each side is written as a git tree where the work runs: on the host, a link a container made is no file
-    to read (WinError 1920). Empty where either side could not be read: unknown is not "changed"."""
+    to read (WinError 1920) — EACH IN ITS OWN REPOSITORY AND CONTAINER (`W.git`): the place's in its executor's, the
+    copy's in its round's, which already runs what the executor delivered (its checks); one container holding both ran
+    the copy's config over the place's neighbours. The two compared entry by entry: a blob's id is its content's,
+    whichever repository wrote it. Empty where either side could not be read: unknown is not "changed"."""
     head = W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()
-    # …both trees written into ONE repository, the copy's: a node's own repository and its copy keep their objects
-    # apart, and a tree written in one is no object in the other
-    clone = W.is_clone(place, execution)
-    repo = Path(at) if clone else Path(place)
-    own = {"GIT_DIR": str(repo / ".git")} if clone else {}
-    # …each in an index of its own inside the copy's gitdir, gone with the copy
-    a, b = (_tree(p, head, Path(at) / ".git" / f"gfso-index-{n}", execution,
-                  {**own, "GIT_WORK_TREE": str(p)} if own else None) if head else None
-            for n, p in (("place", place), ("copy", at)))
-    if not (a and b):
+    if not head:
         return []
-    r = W.git(repo, "diff-tree", "-r", "-z", "--name-only", "--no-renames", a, b, execution=execution)
-    return sorted(filter(None, r.stdout.split("\0")))
+    with execution.scratch("gfso-index-", dir=execution.temp_of(str(place))) as d:   # …the place's own temp
+        a = _tree(place, head, Path(d) / "index", execution)
+    b = _tree(at, head, Path(at) / ".git" / "gfso-index-copy", execution)              # …gone with the copy
+    return [] if a is None or b is None else sorted(p for p in a.keys() | b.keys() if a.get(p) != b.get(p))
 
 
-def _tree(where, head: str, index: Path, execution, env: Optional[dict] = None) -> Optional[str]:
-    """The tree of `head`'s files as they stand on disk in `where`, built in an index of its own (`index`, gone with
-    the copy): the place's commit on both sides, whatever a run committed in its copy."""
-    env = {"GIT_INDEX_FILE": str(index), **(env or {})}
+def _tree(where, head: str, index: Path, execution) -> Optional[dict]:
+    """{path: mode and id} of `head`'s files as they stand on disk in `where`, built in an index of its own (`index`):
+    the place's commit on both sides, whatever a run committed in its copy."""
+    env = {"GIT_INDEX_FILE": str(index)}
     for args in (("read-tree", head), ("add", "-u")):
         if W.git(where, *args, execution=execution, env=env).returncode != 0:
             return None
-    return W.git(where, "write-tree", execution=execution, env=env).stdout.strip() or None
+    if not (t := W.git(where, "write-tree", execution=execution, env=env).stdout.strip()):
+        return None
+    r = W.git(where, "ls-tree", "-r", "-z", "--full-tree", t, execution=execution)
+    return None if r.returncode else {p: meta for meta, _, p in (e.partition("\t") for e in r.stdout.split("\0") if e)}
 
 
 def swap(text: str, frm, to) -> str:
