@@ -450,7 +450,8 @@ a third party's class (entry-point group `gfso.providers`). Every provider's cre
 subscription's token — has one place, `credentials.json` in the data directory, readable by its owner alone, and one
 door, `gfso credential <provider>` (value on stdin) or `PUT /api/credentials/{provider}`; neither ever answers with a
 value and MCP has no such verb. No key is read from the environment, and no child process inherits one: the provider
-gives its credential to its own client's process alone, and the Claude Code CLI's tool shells are scrubbed of it. That
+gives its credential to its own client's process alone, and the Claude Code CLI's tool shells are scrubbed of it where
+its execution can (on Linux that needs bubblewrap; without it the CLI's tools see the credential). That
 keeps it from a session's tools where the session runs in a container execution, which holds neither the data
 directory nor a way to the server; on this host a tool runs as the same user and can read the store, as it can read the
 CLI's own login. The spec rides wherever a model id rides, so each role may
