@@ -77,6 +77,26 @@ def test_the_hook_as_the_cli_runs_it(tmp_path):
     assert run().stdout == ""                                                     # a session armed for nothing
 
 
+def test_runs_for_parallel_tool_calls_leave_the_state_whole(tmp_path):
+    """Three runs at once on one session's state, one of them crossing the line: the state stays readable and read —
+    torn, it read as "no handover armed" and the session ran on unasked (GB_sql_database_tnl5do036, root.select)."""
+    hook = tmp_path / "handover_hook.py"
+    hook.write_bytes(H._HOOK.read_bytes())
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"message": {"usage": {"input_tokens": 10_000}}}), encoding="utf-8")
+    for _ in range(60):
+        (tmp_path / "sid.hook").write_text(json.dumps({**ARMED, "budget": 25_000, "ceiling": 180_000}), encoding="utf-8")
+        runs = [subprocess.Popen([sys.executable, "-I", str(hook)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                 text=True) for _ in range(3)]
+        for k, p in enumerate(runs):                  # every run fed before any is waited for: they run at once
+            p.stdin.write(json.dumps({"session_id": "sid", "transcript_path": str(t), "tool_response": "y" * 50_000 * k}))
+            p.stdin.close()
+        for p in runs:
+            p.wait(timeout=60)
+        assert json.loads((tmp_path / "sid.hook").read_text(encoding="utf-8"))["read"] is True
+        assert not list(tmp_path.glob("sid.hook.*")), "a lock or a temp file was left behind"
+
+
 class Hooked(RecordingProvider):
     """A provider whose one round per session ends as `ends` says — the hook asked (and the session wrote its note or
     delivered), stopped it at the ceiling, or never spoke."""

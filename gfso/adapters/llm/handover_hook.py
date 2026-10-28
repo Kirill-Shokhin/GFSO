@@ -12,6 +12,7 @@ the session ends."""
 import json
 import os
 import sys
+import time
 
 TURN = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
@@ -58,18 +59,52 @@ def decide(s: dict, ctx: int) -> tuple[dict, dict]:
     return {}, s
 
 
+def locked(path: str):
+    """The state's one writer at a time: runs of this hook for parallel tool calls each read, decided and rewrote it in
+    place, and a torn file read as "no handover armed" — the session ran on to 169k with no ask (GB_sql_database_tnl5do036,
+    root.select; probed: 13 of 150 three-at-once runs tore it)."""
+    lock = path + ".lock"
+    for _ in range(400):                          # 10 ms apart: a run holds it for a read and a write
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return lock
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(lock).st_mtime > 10:     # left by a run that died holding it
+                    os.unlink(lock)
+            except FileNotFoundError:
+                continue
+        except PermissionError:                   # Windows: the last holder's delete still pending
+            pass
+        time.sleep(0.01)
+    return None
+
+
 def main() -> None:
     """One PostToolUse run: the CLI's event on stdin, the session's state beside this file, `decide`'s answer out."""
     got = json.load(sys.stdin)
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{got.get('session_id')}.hook")
+    if not os.path.exists(path):
+        return                                    # a session the system armed no handover for
+    lock = locked(path)
     try:
         with open(path, encoding="utf-8") as f:
             s = json.load(f)
-    except (OSError, ValueError):
-        return                                    # a session the system armed no handover for
-    say, s = decide(s, context(got.get("transcript_path") or "") + result(got.get("tool_response")))
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(s, f)
+        say, s = decide(s, context(got.get("transcript_path") or "") + result(got.get("tool_response")))
+        tmp = f"{path}.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:   # …whole or not at all: a new file renamed over the old
+            json.dump(s, f)
+        for left in range(200, -1, -1):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:               # Windows: a reader holds the old one open for an instant
+                if not left:
+                    raise
+                time.sleep(0.01)
+    finally:
+        if lock:
+            os.unlink(lock)
     if say:
         print(json.dumps(say))
 
