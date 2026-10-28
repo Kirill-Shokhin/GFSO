@@ -170,9 +170,8 @@ export async function drawHeader() {
     $('hd-needs').innerHTML = status + (chips || (heard ? '<span class="hd-quiet">nothing needs you</span>' : ''));
 }
 
-// The quality metrics. What each MEANS is the server's (`means`), from the module computing it — a copy
-// kept here drifted (2026-09-02). How far each can be trusted is canon §15.8's grade.
-const GRADE = {q_D: 'observed', q_V: 'observed', q_T: 'proxy', q_Dep: 'proxy', q_Del: 'weak'};
+// The quality metrics. What each MEANS, how far it can be trusted (§15.8's grade) and which of them call a person are the
+// server's (`means`, `grades`, `alarm`, from the module computing them) — a copy kept here drifted (2026-09-02).
 
 // the server's `means` is a paragraph: its first sentence says what the metric counts and stands under the heading,
 // the rest — how to read it, what it is not — one click away (a popover of five paragraphs read as prose, not a list);
@@ -194,13 +193,10 @@ const readMeans = r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*
 export function drawQuality() {
     const m = S.metrics;
     if (m) {
-        const means = m.means || {}, ffs = m.false_fail_share;
-        // ⊥ is an empty population (§15.4) — a dash, not a fake 100%. ONLY AN OBSERVED METRIC CALLS A PERSON
-        // (§15.8): q_V low, or q_D low with no high false-FAIL share to say the validator, not the split, did it.
-        const low = v => v != null && v < 0.5;
-        const alarm = {q_V: low(m.q_V), q_D: low(m.q_D) && !(ffs >= 0.5)};
-        $('hd-quality').innerHTML = `<button class="hd-q${alarm.q_V || alarm.q_D ? ' acc' : ''}" data-action="pop">quality</button>`
-            + H.quality(Object.entries(GRADE).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: `${k}, ${grade}`, means: means[k] || '', none: m[k] == null,
+        // ⊥ is an empty population (§15.4) — a dash, not a fake 100%
+        const means = m.means || {}, alarm = m.alarm || {}, ffs = m.false_fail_share;
+        $('hd-quality').innerHTML = `<button class="hd-q${m.calls_person ? ' acc' : ''}" data-action="pop">quality</button>`
+            + H.quality(Object.entries(m.grades || {}).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: `${k}, ${grade}`, means: means[k] || '', none: m[k] == null,
                 val: m[k] == null ? '<span class="hq-val">—</span><span class="hq-nil">no observations yet</span>'
                     : `<span class="hq-val${alarm[k] ? ' acc' : ''}">${pct(m[k])}</span>`},
                 // §15.4: a low q_D is read TOGETHER with the false-FAIL share (an over-strict validator inflates it).
