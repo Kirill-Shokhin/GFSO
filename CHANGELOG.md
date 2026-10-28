@@ -39,6 +39,10 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   mode was chosen stays in it, and `set_mode(network=…)` stores the switch even while the execution's declaration does
   not read (the way out stays shut meanwhile). The page of an allowed host name served over https by a proxy in front
   (`tailscale serve`) may act, not only read.
+- The context handover hook keeps a session's state whole when the client runs it for parallel tool calls; a torn state
+  had read as "no handover armed" and let the session run on unasked.
+- The page served over https opens its live feed over `wss` and names its project on load (it stayed blank, with no live
+  updates); a long name with no spaces wraps where it would overflow, its whole text on hover wherever a line is cut.
 
 ### Changed
 - No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,
