@@ -146,3 +146,45 @@ def test_an_accepted_dispute_naming_the_files_keeps_their_content():
     (p,) = I._probes(stored, (Probe.of({"behaviour": "b", "command": CMD + " && echo ok", "expect": "ok",
                                         "inputs": {"x.txt": ""}}),))
     assert dict(p.inputs) == {"x.txt": "the corpus\n"}
+
+
+def test_a_file_written_in_the_answers_own_shape_keeps_its_content():
+    """The model's schema writes a probe's inputs as [{path, content}]; read as `body`, every such file came out empty
+    and the engine refused the move as "pinned input file(s) it feeds or runs are EMPTY" — 9 refusals, 19 probes, in
+    one row whose answers all carried the content (GB_c_compiler_tnl51c552, 2026-10-28)."""
+    got = with_named_files({"name": "c", "check": [{"command": "cc {inputs}/a.c", "inputs": [
+        {"path": "a.c", "content": "int main(void){return 0;}"}]}]}, {})
+    assert got["check"][0]["inputs"] == {"a.c": "int main(void){return 0;}"}
+
+
+def test_a_new_command_naming_a_file_its_split_pins_carries_that_file():
+    """48 of 50 refused probes in one row named a sibling's pinned file under `{inputs}` in a NEW command without
+    repeating its pin (GB_c_compiler_tnl51c552, 2026-10-28): the file the split pins with one content is carried."""
+    e = _split()
+    ok, why = _add(e, "grep corpus {inputs}/x.txt")
+    assert ok, why
+    (p,) = e.graph.get_task(TaskId("root.kid2")).spec.criteria[0].check
+    assert dict(p.inputs) == CORPUS
+    e.stop()
+
+
+def test_a_file_the_split_pins_with_two_contents_is_not_guessed():
+    e = _split()
+    T.revise(e, "kid", {"description": "part", "criteria": [{**criterion("reads"), "check": [
+        {"behaviour": "a", "command": CMD, "expect": "the corpus", "inputs": CORPUS},
+        {"behaviour": "b", "command": "wc -l {inputs}/x.txt", "expect": "1", "inputs": {"x.txt": "other\n"}}]}]},
+        agent=str(e.graph.issuer_of(TaskId("kid"))))
+    ok, why = _add(e, "grep corpus {inputs}/x.txt")
+    assert not ok and "pins nothing there" in why, why
+    e.stop()
+
+
+@pytest.mark.parametrize("command", ["cat {inputs}/x.txt {inputs}/*.log", "ls {inputs} && cat {inputs}/x.txt",
+                                     "for f in {inputs}/*; do cat $f; done; cat {inputs}/x.txt"])
+def test_a_command_reading_inputs_as_a_directory_is_not_handed_a_subset(command):
+    """Carried the one file it names, a glob or a listing over `{inputs}` would decide over a directory the system chose
+    (critic over the carry): the model pins its own corpus."""
+    e = _split()
+    ok, why = _add(e, command)
+    assert not ok and "pins nothing there" in why, why
+    e.stop()

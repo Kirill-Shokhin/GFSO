@@ -1066,10 +1066,16 @@ def _corpora(engine, task) -> dict:
     pins = [(c.name, " ".join(p.command.split()), p.to_dict()["inputs"])
             for k in [task, *engine.graph.get_children(task.id)] for c in k.spec.criteria for p in (c.check or ())
             if p.inputs]
-    by_cmd: dict = {}
-    for _, cmd, files in pins:
+    by_cmd, by_file = {}, {}
+    for name, cmd, files in pins:
         by_cmd.setdefault(cmd, []).append(files)
-    return {**{(None, cmd): fs[0] for cmd, fs in by_cmd.items() if all(f == fs[0] for f in fs)},
+        for path, body in files.items():
+            by_file.setdefault((None, None, path), set()).add(body)
+            by_file.setdefault((name, None, path), set()).add(body)
+    # …and {(None, None, file): body} where the split pins that file with one content: a new probe naming a sibling's
+    # file under `{inputs}` without repeating its pin was 48 of 50 refused probes in one row (GB_c_compiler_tnl51c552)
+    return {**{k: next(iter(b)) for k, b in by_file.items() if len(b) == 1},
+            **{(None, cmd): fs[0] for cmd, fs in by_cmd.items() if all(f == fs[0] for f in fs)},
             **{(name, cmd): files for name, cmd, files in pins}}
 
 
@@ -1090,6 +1096,13 @@ def _with_corpora(criterion, corpora: dict):
         """The probe with the corpus its split pinned under this criterion and command, where it reads one and has none."""
         cmd = " ".join(str(p.get("command", "")).split()) if isinstance(p, dict) else ""
         files = corpora.get((criterion.get("name"), cmd), corpora.get((None, cmd)))
+        if not files and INPUTS_TOKEN in cmd:
+            # every file the command names under `{inputs}`, each pinned in the split with one content — under this
+            # criterion first, else under any; and only where `{inputs}` is never read as a directory (a glob, `ls`), or
+            # the probe would decide over a subset the system picked (critic)
+            refs = re.findall(re.escape(INPUTS_TOKEN) + r"/([\w.-]+(?:/[\w.-]+)*)(?![\w*?$/])", cmd)
+            got = {n: corpora.get((criterion.get("name"), None, n), corpora.get((None, None, n))) for n in refs}
+            files = got if refs and len(refs) == cmd.count(INPUTS_TOKEN) and None not in got.values() else None
         return {**p, "inputs": files} if INPUTS_TOKEN in cmd and not p.get("inputs") and files else p
     return {**criterion, "check": [carried(p) for p in criterion["check"]]}
 

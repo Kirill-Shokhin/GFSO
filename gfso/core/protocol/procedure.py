@@ -230,11 +230,13 @@ def unsafe_input_paths(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
 
 
 def _input_items(inputs) -> list[tuple[str, str]]:
-    """A probe's pinned files as (path, body), whichever shape carries them: a spec's dict or pairs, a `Probe`'s tuple."""
+    """A probe's pinned files as (path, body), whichever shape carries them: a spec's dict or pairs, a `Probe`'s tuple, or
+    the answer's own [{path, content}] — read as `body`, every file a model wrote that way came out empty and its move
+    was refused as pinning EMPTY inputs (9 refusals in GB_c_compiler_tnl51c552); `Probe` reads `content` the same way."""
     if isinstance(inputs, dict):
         return [(str(k), str(v or "")) for k, v in inputs.items()]
     return [(str(x[0]), str(x[1] or "")) if isinstance(x, (list, tuple))
-            else (str(x.get("path")), str(x.get("body") or "")) for x in inputs or ()]
+            else (str(x.get("path")), str(x.get("content") or "")) for x in inputs or ()]
 
 
 def input_name(path: str) -> str:
