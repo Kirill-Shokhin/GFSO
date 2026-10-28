@@ -61,7 +61,9 @@ Without an execution, sessions run as you, on your machine, with nothing between
 of it.
 
 How far a project's container reaches outside is a switch you set in its execution's declaration
-(`"network": {"mode": ..., "hosts": [...]}`):
+(`"network": {"mode": ..., "hosts": [...]}`). For one project, `set_mode(network=...)` can only narrow it —
+open → allowlist → off, an allowlist reaching only hosts the declaration also names — never widen it (once the
+project has work in it, only with your own words asking for the change):
 - `open` (the default) reaches everything but your host — other containers on Docker's bridge
   included.
 - `off` reaches nothing but its model, through the door below: the container stands on an internal

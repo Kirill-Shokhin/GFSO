@@ -3,12 +3,13 @@ workspace derived from its executor's roster place (`node_workspace`), entering 
 whole (`join_whole`), and clearing them at the root's PASS (`clear_workspaces`). Derived, never stored."""
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import NODES as _NODES, base_of
-from gfso.adapters.execution import ContainerExecution, LocalExecution
+from gfso.adapters.execution import ContainerExecution, LocalExecution, network_of, stricter
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
@@ -254,8 +255,15 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
     if key not in _EXECUTIONS:
         _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d.get("env_file"), d["state"],
                                               role["workdir"], engine.project_name)
-    # the switch as declared NOW, kept by the container: every holder of any object of it starts it under this one
-    _EXECUTIONS[key].switch(d.get("network"))
+    # the switch as set NOW — the more closed of its execution's declaration and the project's own (`set_mode`), the
+    # declaration a ceiling — kept by the container: every holder of any object of it starts it under this one
+    own = engine.graph.setting("network")
+    try:
+        mode, hosts = stricter(network_of(d.get("network")), network_of(json.loads(own)) if own else None)
+        network = {"mode": mode, "hosts": list(hosts)}
+    except ValueError:
+        network = {"mode": "unreadable"}   # either one unreadable shuts the way out, as an unreadable declaration does
+    _EXECUTIONS[key].switch(network)
     return _EXECUTIONS[key]
 
 

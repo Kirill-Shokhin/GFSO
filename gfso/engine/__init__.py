@@ -521,12 +521,31 @@ class Engine:
                **({"user_said": said} if said else {}),
                # …AND WHAT THE PROJECT SETS FOR ITSELF, which differs between projects of one server: the system's model,
                # the Level-2 gate, the deadline nobody typed (`Graph.setting`)
-               **({"settings": settings} if settings else {})}
+               # …those set before carried too: a later mode change dropped a turned switch from the record while it
+               # stood in force (critic)
+               **({"settings": kept} if (kept := {**(prev.get("settings") or {}), **(settings or {})}) else {})}
         for k, v in (settings or {}).items():
             self._storage.store_setting(k, str(v))
         self._storage.store_setting("mode", json.dumps(rec))
         self.emit_info("mode", f"mode set to {mode.value}"
                        + (f" (boundary {boundary})" if boundary is not None else "") + f" by {author}")
+        return rec
+
+    def set_settings(self, settings: dict, author: AgentId, said: str = "") -> dict:
+        """Change only what the project sets for itself (`set_mode`'s settings), leaving who holds what as recorded — a
+        user turning one switch mid-run had re-recorded the mode, its boundary and how its nodes are performed reset to
+        their defaults (critic over the network switch). An empty value returns the setting to the server's."""
+        prev = {k: v for k, v in (self.mode() or {}).items() if k != "user_said"}   # words are the change's own (critic)
+        # …carried IN the mode record where there is one, numbered and stamped like any of its changes: a page reading the
+        # record showed the switch the user had just turned the other way, and a reader comparing records saw nothing move
+        rec = {**prev, "by": str(author), "seq": (prev.get("seq") or 0) + 1, "at": datetime.now().isoformat(),
+               "settings": {**(prev.get("settings") or {}), **settings}, **({"user_said": said} if said else {})}
+        for k, v in settings.items():
+            self._storage.store_setting(k, str(v))
+        if prev.get("mode"):               # a project with no mode turns its settings too, choosing no holder by it
+            self._storage.store_setting("mode", json.dumps(rec))
+        self.emit_info("mode", f"settings {', '.join(f'{k}={v or chr(8709)}' for k, v in settings.items())} by {author}"
+                       + (f" — «{said}»" if said else ""))
         return rec
 
     def paused(self) -> Optional[dict]:

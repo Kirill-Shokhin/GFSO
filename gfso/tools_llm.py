@@ -24,7 +24,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
-from typing import Optional
+from typing import Optional, Union
 
 from gfso import runtime
 from gfso.llm import llm_factory
@@ -40,6 +40,7 @@ from gfso.observe import OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
+from gfso.adapters.execution import ContainerExecution, network_of
 from gfso.decompose import NoPlan, decompose_into
 from gfso.engine.events import emit_cb
 from gfso.engine.moves import DOOR_KEYS, door_holder
@@ -1966,10 +1967,11 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
 next_steps.__doc__ += "\n\n    " + (_tools.next_steps.__doc__ or "").strip()
 
 
-def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
-             agent: Optional[str] = None, user_said: str = "", perform: str = "dispatch",
+def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int] = None,
+             agent: Optional[str] = None, user_said: str = "", perform: Optional[str] = None,
              system_model: Optional[str] = None, l2_gate: Optional[bool] = None,
-             deadline_s: Optional[float] = None, observe: Optional[bool] = None) -> dict:
+             deadline_s: Optional[float] = None, observe: Optional[bool] = None,
+             network: Optional[Union[str, dict]] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
     - `solo` — you (the user-agent) hold and execute every node; the one seam is the root.
@@ -1999,9 +2001,17 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
     system's own roles run on here (its issuer, its plan's author and reviewer); `l2_gate` — whether the plan's
     Level-2 review gates execution (off: the plan was verified where it was authored); `deadline_s` — how far ahead a
     deadline nobody typed is written (0 = none); `observe` — whether the system runs a node's pinned checks once on its
-    place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`)."""
+    place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`);
+    `network` — how far this project's container reaches out, where its execution is a container: `open` (everything but
+    your host), `off` (nothing), or `{"mode": "allowlist", "hosts": [...]}` (only the named hosts, on 443, through one
+    gateway) — it only narrows the execution's own declaration, the more closed of the two holding (the operator's is a
+ceiling), `declared` to follow that alone again; a turn ends the project's running container at once. Under
+    `allowlist` and `off` a session still reaches its model through the project's model door — list no provider host
+    for it (SECURITY.md); the answer names the switch in force, `network_in_force`.
+
+    Without `mode`, only the settings named change — who holds what stays as recorded (a switch turned mid-run)."""
     try:
-        m = Mode(str(mode).strip().lower())
+        m = None if mode is None else Mode(str(mode).strip().lower())
     except ValueError:
         return {"refused": True, "error": f"mode must be one of solo | semi | auto, got {mode!r}"}
     if engine.all_tasks() and not str(user_said).strip():
@@ -2009,14 +2019,34 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
         return {"refused": True, "error":
                 "this project already has work in it, and who holds it is the USER's choice: ask the "
                 "user, and pass their own words asking for the change as `user_said`."}
+    if m is None and (boundary is not None or perform is not None):
+        return {"refused": True, "error": "boundary and perform belong to a mode: name the mode with them"}
+    perform = perform or "dispatch"
     if perform not in ("dispatch", "in_chat"):
         return {"refused": True, "error": f"perform must be dispatch | in_chat, got {perform!r}"}
     if deadline_s is not None and float(deadline_s) < 0:
         return {"refused": True, "error": f"deadline_s is seconds ahead, 0 or more, got {deadline_s!r}"}
+    if network is not None and network != "declared":
+        network = {"mode": network} if isinstance(network, str) else network
+        try:
+            network_of(network if isinstance(network, dict) and "mode" in network else ())
+        except ValueError as e:
+            return {"refused": True, "error": str(e)}
     settings = {k: v for k, v in (("system_model", str(system_model).strip() or None if system_model else None),
+                                  ("network", None if network is None else "" if network == "declared"
+                                   else json.dumps(network)),
                                   ("l2_gate", None if l2_gate is None else "1" if l2_gate else "0"),
                                   ("deadline_s", None if deadline_s is None else float(deadline_s)),
                                   ("observe", None if observe is None else "1" if observe else "0")) if v is not None}
+    if network is not None and not isinstance(execution_of(engine), ContainerExecution):
+        return {"refused": True, "error": "this project's sessions run on this host — no execution is declared for its "
+                                          "roles (`register_agent(..., execution=)`) — so there is no container whose "
+                                          "network a switch could turn"}
+    if m is None:
+        if not settings:
+            return {"refused": True, "error": "name a mode, or a setting of this project to change"}
+        rec = engine.set_settings(settings, AgentId(agent or _agent_id()), said=str(user_said).strip())
+        return {**rec, **(_turn_the_way_out(engine) if network is not None else {})}
     staff = mode_staffing(engine, m.value, perform)
     pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
     if not staff["ready"]:
@@ -2026,10 +2056,21 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
                               hands=str(pool[0]) if dispatch else None, settings=settings)
     except ValueError as e:
         return {"refused": True, "error": str(e)}
-    return {**rec, "executors": [str(a) for a in pool],
+    return {**rec, **(_turn_the_way_out(engine) if network is not None else {}), "executors": [str(a) for a in pool],
             "holds": {"solo": "you hold every node",
                       "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
                       "auto": "the system holds every node; you are the customer"}[m.value]}
+
+
+def _turn_the_way_out(engine: Engine) -> dict:
+    """Read the project's switch NOW: a turned one ends its running container at once (`WayOut.switch`), not at the
+    next session's lookup — a session already out under the old one stays out until then (critic). The switch IN FORCE,
+    the declaration's ceiling applied: asked `open` under a declared `off`, the user must not read "open" (review)."""
+    try:
+        mode, hosts = execution_of(engine).way.network
+    except (ValueError, KeyError):
+        mode, hosts = "off", ()             # an unreadable switch or declaration has shut the way out already
+    return {"network_in_force": {"mode": mode, "hosts": list(hosts)}}
 
 
 def list_agents(engine: Engine, match: str = "", limit: int = 25) -> dict:

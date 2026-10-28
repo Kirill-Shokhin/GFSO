@@ -50,6 +50,35 @@ NETWORK = ("open", "allowlist", "off")
 #: its place's): enough to copy a place whatever modes its executor left on it, owners kept so a judge can work in the
 #: copy. No agent process holds them: they run as the image's user, under no-new-privileges
 SYSTEM_CAPS = ("CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER")
+
+
+def network_of(network) -> tuple | None:
+    """(mode, hosts) of a switch as given — `{"mode": one of NETWORK, "hosts": [host names]}`, None for none given — or a
+    ValueError: one reading for the declaration and for the project's own switch (`set_mode`)."""
+    if network is None:
+        return None
+    # …a value that is not one shuts, never opens: `false` or `[]` meant "no network" and read as "open" (critic)
+    try:
+        mode, hosts = network.get("mode", "open"), tuple(network.get("hosts") or ())
+        ok = isinstance(network, dict) and mode in NETWORK and all(
+            isinstance(h, str) and re.fullmatch(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", h) for h in hosts)
+    except (AttributeError, TypeError):
+        ok = False
+    if not ok:
+        raise ValueError(f"network {network!r} — a mode of {NETWORK} and host names only")
+    return mode, hosts
+
+
+def stricter(a: tuple | None, b: tuple | None) -> tuple:
+    """The more closed of two switches, (mode, hosts) each or None for open: off < allowlist < open, two allowlists
+    reaching only the hosts both name. The operator's declaration is a ceiling a project's own switch can only lower —
+    let the project's word win and an operator's emergency `off` missed every project that had set `open` (critic)."""
+    a, b = a or ("open", ()), b or ("open", ())
+    rank = {"off": 0, "allowlist": 1, "open": 2}
+    if a[0] == b[0] == "allowlist":
+        both = tuple(h for h in a[1] if h in b[1])
+        return ("allowlist", both) if both else ("off", ())   # reaching no host is off, without a gateway (review)
+    return min(a, b, key=lambda x: rank[x[0]])
 #: the gateway's address and port as a session inside an allowlisted project reaches it
 GATEWAY = "gateway"
 #: how the key a model client inside holds for its credential begins (`Door`) — it opens one door and nothing else
@@ -202,11 +231,10 @@ class WayOut:
         since a holder that keeps the old one would stay out under a switch someone meant to close."""
         with _START:
             try:
-                mode, hosts = (network or {}).get("mode", "open"), tuple((network or {}).get("hosts") or ())
-                ok = mode in NETWORK and all(re.fullmatch(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", h) for h in hosts)
-            except (AttributeError, TypeError):
-                ok = False
-            _SWITCH[self.container] = (mode, hosts) if ok else ("off", ())
+                got, ok = network_of(network) or ("open", ()), True
+            except ValueError:
+                got, ok = ("off", ()), False
+            _SWITCH[self.container] = got
         if not ok:
             raise ValueError(f"{self.container}: network {network!r} — a mode of {NETWORK} and host names only")
 
