@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 #: what its transport reports; what it does not report stays None, never 0.
 RECORD = ("duration_ms", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
           "cost_usd", "model", "context_window", "peak_context", "turns", "transport_torn", "ended", "limit_resets_at",
-          "resumed", "stop_reason", "error", "at")
+          "resumed", "stop_reason", "error", "at", "credential")
 
 
 def record(**fields) -> dict:

@@ -287,6 +287,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         ("llm_usage", "resumed", "INTEGER"),                            # 1: it continued a conversation (`--resume`)
         ("llm_usage", "ended", "TEXT"),                                 # answered / cut / limit / the CLI's reason
         ("llm_usage", "handover", "INTEGER"),                           # n: this round wrote the session's n-th note
+        ("llm_usage", "credential", "TEXT"),                            # the provider's credential it ran on, by name
         ("dep_edges", "glue", "TEXT DEFAULT ''"),
         ("dep_edges", "provisional", "INTEGER DEFAULT 0"),
         ("dep_edges", "closed", "INTEGER DEFAULT 0"),                   # a record nobody answered (§15.5)
@@ -757,12 +758,12 @@ class SqliteStorage(_ProjectSettings, StoragePort):
     _USAGE_COLS = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens",
                    "cache_input_tokens", "cost_usd", "duration_ms",
                    "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed",
-                   "handover")
+                   "handover", "credential")
     # an absent reading stays absent — tokens and price too: a provider that does not report them spent an unknown
     # amount, and a 0 read as "spent nothing". Only the duration, which our own adapter measures, is always there.
     _USAGE_KEPT_NULL = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens", "cache_input_tokens", "cost_usd",
                         "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed",
-                        "handover")
+                        "handover", "credential")
 
     def log_usage(self, row: dict) -> None:
         with self._write() as conn:

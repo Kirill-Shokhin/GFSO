@@ -86,3 +86,12 @@ def test_the_name_a_server_is_started_on_is_answered(client, monkeypatch):
     monkeypatch.setenv("GFSO_ALLOWED_HOSTS", "testserver")
     config.admit_host("box.lan")
     assert client.get("/api/tools", headers={"host": "box.lan:8000"}).status_code == 200
+
+
+def test_its_own_name_served_over_tls_in_front_may_write_and_a_stranger_may_not(client, monkeypatch):
+    """`tailscale serve` hands the page over https under the name the server answers to; the page is its own."""
+    monkeypatch.setenv("GFSO_ALLOWED_HOSTS", "kir.tail.ts.net")
+    own = {"host": "kir.tail.ts.net", "origin": "https://kir.tail.ts.net"}
+    assert client.post("/api/run/create_task", headers=own, json={"task_id": "x"}).status_code != 403
+    stranger = {**own, "origin": "https://stranger.example"}
+    assert client.post("/api/run/create_task", headers=stranger, json={"task_id": "x"}).status_code == 403

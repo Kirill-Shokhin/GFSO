@@ -72,6 +72,10 @@ from .loop import _guard_context, event_loop, refresh_checks, timeout_monitor
 
 log = logging.getLogger(__name__)
 
+#: what a project sets for itself (`set_mode`): the system's model, the Level-2 gate, the switch on the way out, the
+#: deadline nobody typed, the place's observation — each in the settings table alone (`Engine.settings`)
+SETTINGS = ("system_model", "l2_gate", "network", "deadline_s", "observe")
+
 #: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
 LIFT_MARGIN_S = 30
 
@@ -489,8 +493,16 @@ class Engine:
 
     def mode(self) -> Optional[dict]:
         """The project's mode as set — {mode, boundary, by} — or None: no mode set, and every rule
-        that reads it behaves as it did before modes existed."""
-        return _project_mode(self._graph)
+        that reads it behaves as it did before modes existed. Its `settings` are read from their one carrier, the
+        settings table, as they stand: a copy kept in the record went stale (no mode → a switch → a mode)."""
+        rec = _project_mode(self._graph)
+        return rec and {**{k: v for k, v in rec.items() if k != "settings"},
+                        **({"settings": s} if (s := self.settings()) else {})}
+
+    def settings(self) -> dict:
+        """What the project sets for itself (`set_mode`'s settings) as it stands; unset ones are the server's."""
+        # …typed as `set_mode` gave them: the page reads a number of seconds, not its text (critic, header.js)
+        return {k: float(v) if k == "deadline_s" else v for k in SETTINGS if (v := self._storage.get_setting(k))}
 
     def system_model(self) -> str:
         """The model the system's own roles run on in this project — its issuer, its plan's author and reviewer: the
@@ -519,32 +531,28 @@ class Engine:
                # HOW the user-agent performs what it holds — nothing to say under AUTO, where it holds nothing
                **({} if mode == Mode.AUTO else {"perform": "dispatch" if hands else "in_chat"}),
                **({"hands": str(hands)} if hands else {}),
-               **({"user_said": said} if said else {}),
-               # …AND WHAT THE PROJECT SETS FOR ITSELF, which differs between projects of one server: the system's model,
-               # the Level-2 gate, the deadline nobody typed (`Graph.setting`)
-               # …those set before carried too: a later mode change dropped a turned switch from the record while it
-               # stood in force (critic)
-               **({"settings": kept} if (kept := {**(prev.get("settings") or {}), **(settings or {})}) else {})}
+               **({"user_said": said} if said else {})}
         for k, v in (settings or {}).items():
             self._storage.store_setting(k, str(v))
         self._storage.store_setting("mode", json.dumps(rec))
         self.emit_info("mode", f"mode set to {mode.value}"
                        + (f" (boundary {boundary})" if boundary is not None else "") + f" by {author}")
-        return rec
+        return self.mode()
 
     def set_settings(self, settings: dict, author: AgentId, said: str = "") -> dict:
         """Change only what the project sets for itself (`set_mode`'s settings), leaving who holds what as recorded — a
         user turning one switch mid-run had re-recorded the mode, its boundary and how its nodes are performed reset to
         their defaults (critic over the network switch). An empty value returns the setting to the server's."""
-        prev = {k: v for k, v in (self.mode() or {}).items() if k != "user_said"}   # words are the change's own (critic)
-        # …carried IN the mode record where there is one, numbered and stamped like any of its changes: a page reading the
-        # record showed the switch the user had just turned the other way, and a reader comparing records saw nothing move
+        prev = {k: v for k, v in (_project_mode(self._graph) or {}).items() if k not in ("user_said", "settings")}
+        # …numbered and stamped in the mode record where there is one, so a reader comparing records sees it move; the
+        # values themselves stay in the settings table alone (`mode`) — words are the change's own (critic)
         rec = {**prev, "by": str(author), "seq": (prev.get("seq") or 0) + 1, "at": datetime.now().isoformat(),
-               "settings": {**(prev.get("settings") or {}), **settings}, **({"user_said": said} if said else {})}
+               **({"user_said": said} if said else {})}
         for k, v in settings.items():
             self._storage.store_setting(k, str(v))
         if prev.get("mode"):               # a project with no mode turns its settings too, choosing no holder by it
             self._storage.store_setting("mode", json.dumps(rec))
+        rec = self.mode() or {**rec, "settings": self.settings()}
         self.emit_info("mode", f"settings {', '.join(f'{k}={v or chr(8709)}' for k, v in settings.items())} by {author}"
                        + (f" — «{said}»" if said else ""))
         return rec
@@ -857,7 +865,7 @@ class Engine:
                 "cache_read_tokens": c.get("cache_read_input_tokens"),
                 "cache_write_tokens": c.get("cache_creation_input_tokens"),
                 "peak_context": c.get("peak_context"), "context_window": c.get("context_window"),
-                "turns": c.get("turns"), "ended": c.get("ended"), "resumed": c.get("resumed"), "handover": c.get("handover"),
+                "turns": c.get("turns"), "ended": c.get("ended"), "resumed": c.get("resumed"), "handover": c.get("handover"), "credential": c.get("credential"),
                 "cost_usd": c.get("cost_usd"),
                 "duration_ms": c.get("duration_ms") or 0,
             })

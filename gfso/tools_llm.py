@@ -27,7 +27,7 @@ from typing import Optional, Union
 
 from gfso import runtime
 from gfso.llm import llm_factory
-from gfso.workspaces import execution_of
+from gfso.workspaces import declaring_role, execution_of
 from gfso.adapters.snapshots import snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.issuer import CONTACT_ROUND as _CONTACT
@@ -39,7 +39,7 @@ from gfso.observe import OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
-from gfso.adapters.execution import ContainerExecution, network_of
+from gfso.adapters.execution import network_of
 from gfso.decompose import NoPlan, decompose_into
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
@@ -2044,7 +2044,9 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
                                   ("l2_gate", None if l2_gate is None else "1" if l2_gate else "0"),
                                   ("deadline_s", None if deadline_s is None else float(deadline_s)),
                                   ("observe", None if observe is None else "1" if observe else "0")) if v is not None}
-    if network is not None and not isinstance(execution_of(engine), ContainerExecution):
+    # …asked of the roster, not of the declaration: an unreadable declaration still names a container, whose switch the
+    # user must be able to store (it holds the way out shut meanwhile, `execution_of`)
+    if network is not None and declaring_role(engine) is None:
         return {"refused": True, "error": "this project's sessions run on this host — no execution is declared for its "
                                           "roles (`register_agent(..., execution=)`) — so there is no container whose "
                                           "network a switch could turn"}

@@ -152,8 +152,9 @@ def test_set_mode_turns_the_switch_alone_in_the_mode_record_and_at_once(monkeypa
     close it, at once; refused where nothing could be switched or the value is no switch (critics)."""
     e = make_engine()
     turned = []
-    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: turned.append(engine) or LocalExecution())
+    monkeypatch.setattr(TL, "declaring_role", lambda engine, agents=None: None)
     assert "no container" in TL.set_mode(e, "auto", network="off")["error"]
+    monkeypatch.setattr(TL, "declaring_role", lambda engine, agents=None: {"execution": "t"})
     monkeypatch.setattr(E, "_SWITCH", {})
     container = ContainerExecution("t", "img", "e.env", "state", ".", "p")
 
@@ -183,7 +184,29 @@ def test_set_mode_turns_the_switch_alone_in_the_mode_record_and_at_once(monkeypa
     e.set_mode(Mode.SOLO, None, AgentId("agent"), said="solo")
     assert e.mode()["settings"]["network"] == '{"mode": "off"}', "a mode change dropped the switch from the record"
     TL.set_mode(e, network="declared")
-    assert not e.graph.setting("network") and e.mode()["settings"]["network"] == ""
+    assert not e.graph.setting("network") and "network" not in (e.mode().get("settings") or {})
+
+
+def test_a_switch_turned_before_any_mode_stands_in_the_mode_set_after(monkeypatch):
+    """D1: the mode record copied settings only from the previous record, so a switch turned while no mode stood went
+    missing from it while `off` held — the settings table is the one carrier, the record reads it."""
+    e = make_engine()
+    monkeypatch.setattr(TL, "declaring_role", lambda engine, agents=None: {"execution": "t"})
+    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: (_ for _ in ()).throw(ValueError("no read")))
+    TL.set_mode(e, network="off")
+    e.set_mode(Mode.SEMI, 2, AgentId("agent"), said="semi please")
+    assert json.loads(e.mode()["settings"]["network"]) == {"mode": "off"}
+
+
+def test_a_switch_is_stored_where_the_declaration_does_not_read(monkeypatch):
+    """D2: set_mode(network=…) raised on an unreadable declaration and the user's `off` did not land; the roster says
+    a container is declared, the switch is stored, and the answer says the way out is shut."""
+    e = make_engine()
+    monkeypatch.setattr(TL, "declaring_role", lambda engine, agents=None: {"execution": "t"})
+    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: (_ for _ in ()).throw(KeyError("t")))
+    got = TL.set_mode(e, network="off")
+    assert not got.get("refused") and got["network_in_force"] == {"mode": "off", "hosts": []}
+    assert json.loads(e.graph.setting("network")) == {"mode": "off"}
 
 
 def test_two_allowlists_with_no_host_in_common_are_off():

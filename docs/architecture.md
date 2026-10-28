@@ -449,7 +449,10 @@ one place (`adapters/llm/registry.py`): an unprefixed id is Anthropic's, through
 a third party's class (entry-point group `gfso.providers`). Every provider's credential — an API key, or for Claude a
 subscription's token — has one place, `credentials.json` in the data directory, readable by its owner alone, and one
 door, `gfso credential <provider>` (value on stdin) or `PUT /api/credentials/{provider}`; neither ever answers with a
-value and MCP has no such verb. No key is read from the environment, and no child process inherits one: the provider
+value and MCP has no such verb. A provider holds several named credentials, an active pointer and an order
+(`--name`, `--use`, `--order`); the Claude Code provider reads the one in force at each call's start and, when one's
+limit or sign-in refuses a call, marks it spent until it lifts and runs the call on the next — the refused attempt
+booked `moved`, which stops nothing; only every one spent stops the project, and each ledger row names its credential. No key is read from the environment, and no child process inherits one: the provider
 gives its credential to its own client's process alone. In a container execution the Claude Code CLI holds not even
 that: its project's model door (`adapters/door.py`), a container of its own, holds the credential and the CLI only the
 door's key, so no process in a session — the client, its tools, what they run — can read it; under a closed network

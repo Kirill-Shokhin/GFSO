@@ -22,6 +22,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from gfso.core.types import ExecutionPort, PlaceUnavailable
+from . import credentials
 from .base import RecordingProvider
 from .stats import is_limit, is_unauthorized, refused_by_limit
 from .structured import holds_an_object
@@ -147,9 +148,13 @@ def _is_the_answer(result: dict, live: bool) -> bool:
 
 
 #: the variable the CLI authenticates by, per kind of credential
-AUTH = {"token": "CLAUDE_CODE_OAUTH_TOKEN", "api": "ANTHROPIC_API_KEY"}
+AUTH = credentials.CLAUDE_ENV
 #: where the CLI's model answers — what a door passes to
 UPSTREAM = "api.anthropic.com"
+#: the name its credentials are held by in their one place (`credentials`)
+PROVIDER = "claude"
+#: a provider made with no credential named reads the one in force at each call's start
+STORED = "stored"
 
 
 def client_env(credential, scrubs: bool = True, door: tuple | None = None) -> dict:
@@ -242,7 +247,67 @@ class _Hooks:
         return ["--setting-sources", ""] if sid in self.armed else ["--safe-mode"]
 
 
-class ClaudeCodeProvider(RecordingProvider):
+class _Credentials:
+    """WHICH CREDENTIAL A CALL RUNS ON, apart from how it runs: the one given, or its provider's in force at the call's
+    start (`credentials.current`); refused by that one's limit or sign-in, it is marked spent, the pointer moves to the
+    next in the order and the call runs again there — its refused attempt booked as `moved`, which stops nothing. Only
+    with every one spent does the refusal stand, and the project stops until the first of them lifts
+    (docs/notes/PROJECT_CLOCK.md, case 10). Every record a call makes names the credential it ran on (`_booked`)."""
+
+    credential_kinds = tuple(AUTH)
+    #: the credential each thread's call runs on, and its last record — a thread runs one call at a time
+    _mine = threading.local()
+
+    def _on_credentials(self, run) -> str:
+        """`run(credential)` — one attempt of the call — until it is not refused or nothing is left to move to."""
+        while True:
+            try:
+                name, cred = self._in_force()
+            except (OSError, ValueError) as e:
+                return self._no_store(e)
+            self._mine.name, self._mine.last = name, None
+            text = run(cred)
+            # …THIS thread's last record, on the credential it ran on: one provider serves parallel calls (`parallel_safe`),
+            # and a cold resume inside the attempt ran a call of its own, which may have moved on (critic)
+            last = self._mine.last or {}
+            name = last.get("credential")
+            # …settled already where a cold resume's own call ran it to the end (critic: spent twice, shorter)
+            if last.get("_settled") or not (name and last.get("ended") in ("limit", "unauthorized")):
+                return text
+            try:
+                nxt = credentials.spend(PROVIDER, name, last.get("limit_resets_at"))
+            except (OSError, ValueError) as e:
+                log.warning(f"the credential store took no mark of {name}'s refusal: {e}")
+                return text                    # the refusal stands as it is: the project stops on it, as before
+            if nxt is None:
+                last.update(_settled=True, limit_resets_at=credentials.lifts(PROVIDER) or last.get("limit_resets_at"))
+                return text
+            # …words that name no limit: the attempt is no refusal of the call, which runs on (`refused_by_limit`)
+            last.update(ended="moved", limit_resets_at=None, error=f"{last['ended']} on {name}: moved to {nxt}")
+
+    def _in_force(self) -> tuple:
+        """(name, credential) a call starts on: the one given, or the provider's in force now."""
+        if self._credential is not STORED:
+            return None, self._credential
+        return credentials.current(PROVIDER) or (None, None)
+
+    def _no_store(self, e: Exception) -> str:
+        """THE STORE DOES NOT READ: no call can say which credential it runs on — not the node's failure, and not the
+        host's login either. Booked as a refused sign-in, so the project stops until a person mends it, no node is
+        parked (critic: it was one retry, then parked)."""
+        self._mine.name = None
+        self._booked({"duration_ms": 0, "model": self._model, "ended": "unauthorized", "error": str(e)[:300],
+                      "transport_torn": False, "resumed": False, "at": time.time()})
+        return ""
+
+    def _booked(self, rec: dict) -> None:
+        """One call's record, naming the credential this thread's call ran on."""
+        rec["credential"] = self._mine.name
+        self._mine.last = rec
+        self.calls.append(rec)
+
+
+class ClaudeCodeProvider(_Credentials, RecordingProvider):
     """Anthropic's models through the Claude Code CLI: this class builds every `claude -p` invocation and reads its
     stream; WHERE the process runs is its execution's (`ExecutionPort`, this host by default)."""
     #: each call is its own `claude -p` process, so independent readings may run at once (`stats.readings`)
@@ -253,7 +318,7 @@ class ClaudeCodeProvider(RecordingProvider):
 
     def __init__(self, model: str = MODEL_DEFAULT, timeout: int = 900, claude_cmd: str = "claude",
                  max_thinking_tokens: int | None = None, execution: ExecutionPort | None = None,
-                 credential=None):
+                 credential=STORED):
         super().__init__(model)
         self._timeout = timeout
         self._exec = execution or LocalExecution()
@@ -261,7 +326,9 @@ class ClaudeCodeProvider(RecordingProvider):
         # Latency lever: per-call wall time is dominated by OUTPUT tokens, and thinking tokens bill into
         # output. Caps the child CLI's thinking budget (MAX_THINKING_TOKENS env); None = CLI default.
         self._max_thinking = max_thinking_tokens
-        self._credential = credential   # `credentials.Credential`: a token or an API key, or None = the host's login
+        # `credentials.Credential` given, or None = the host's login; by default the provider's one in force at each
+        # call's start (`credentials.current`), so a moved pointer reaches every new call and none in flight
+        self._credential = credential
         self.last_model = ""          # the model its turns name — what a cut session ran on
         self.last_turns: dict = {}    # each turn's own usage, by message id — what a cut session spent
         self._turn_id = ""            # the message whose closing `message_delta` is still to come
@@ -313,8 +380,6 @@ class ClaudeCodeProvider(RecordingProvider):
             return ["--no-session-persistence"]
         return ["--resume", sid] if self._transcripts(sid) else ["--session-id", sid]
 
-    credential_kinds = tuple(AUTH)
-
     def window(self) -> int | None:
         """The model's window as the CLI last reported it, or None before any call did."""
         return _WINDOWS.get(self._model)
@@ -329,7 +394,7 @@ class ClaudeCodeProvider(RecordingProvider):
         """NOTHING STARTED: read as an empty answer, a dead Docker daemon was redialled as a cut call four times, then
         parked the node as an unreadable report (GB_sql_database_tnij0m952). Recorded as its own ending, so booking it
         stops the project (`Engine.record_llm_usage`); no answer."""
-        self.calls.append({"duration_ms": 0, "model": self._model, "ended": "unavailable", "place": e.place,
+        self._booked({"duration_ms": 0, "model": self._model, "ended": "unavailable", "place": e.place,
                            "error": str(e), "transport_torn": False, "resumed": resumed, "at": time.time()})
         return ""
 
@@ -502,7 +567,7 @@ class ClaudeCodeProvider(RecordingProvider):
         generates, cumulative output tokens tick to `on_tick` — real progress, never an estimate. The
         final `result` event carries the same envelope the aggregate json format did (usage,
         duration_ms, is_error, result); if it is missing, the accumulated delta text is the fallback.
-        Default = a zero-tool one-shot (Port A); `tools_args`/`cwd` = an agent run (Port B)."""
+        Default = a zero-tool one-shot (Port A); `tools_args`/`cwd` = an agent run (Port B). On the credential `_Credentials` gives it."""
         if self._cmd is None:
             return ""
         # …and a call naming no place runs in an empty one of its own, never where the server stands: there the plan's
@@ -511,6 +576,9 @@ class ClaudeCodeProvider(RecordingProvider):
         if not cwd:
             with self._exec.scratch("gfso-noplace-") as empty:
                 return self._call(system, user, tools_args, empty, timeout, session)
+        return self._on_credentials(lambda cred: self._attempt(cred, system, user, tools_args, cwd, timeout, session))
+
+    def _attempt(self, credential, system: str, user: str, tools_args, cwd: str, timeout, session) -> str:
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
                 # The CLI inherits the USER's MCP configuration, and this installation registers its
                 # own door there — so every internal call (decompose, the Level-2 review, the
@@ -549,8 +617,8 @@ class ClaudeCodeProvider(RecordingProvider):
         proc, out, n0 = None, {}, len(self.calls)
         try:
             # …its door first, where the execution keeps one: a place down there is the call's own ending (critic 3)
-            door = self._exec.session(cwd).door(self._credential, UPSTREAM) if self._credential else None
-            env = {**subprocess_env(credential=client_env(self._credential, door is None and scrubs(self._exec), door)),
+            door = self._exec.session(cwd).door(credential, UPSTREAM) if credential else None
+            env = {**subprocess_env(credential=client_env(credential, door is None and scrubs(self._exec), door)),
                    **({"MAX_THINKING_TOKENS": str(self._max_thinking)} if self._max_thinking is not None else {})}
             # in the session's own place (`ExecutionPort.session`): it writes there alone and sees no other node's
             proc = self._exec.session(cwd).popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -573,7 +641,7 @@ class ClaudeCodeProvider(RecordingProvider):
             # output alone: its turns' own usage, once per message, is what it spent (input and cache as the
             # message carries them, output as its `message_delta` does — together they reproduce the envelope)
             usage = _obj(out.get("usage")) if envelope is not None else _summed(self.last_turns.values())
-            self.calls.append({
+            self._booked({
                 "at": time.time(),
                 # …the process's own life, measured here: the CLI's figure is its last result's, and a command that
                 # outlived it (a `make` past its Bash timeout) kept the process 12 minutes the ledger did not see (ui)

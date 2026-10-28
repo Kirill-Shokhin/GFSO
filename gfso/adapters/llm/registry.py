@@ -116,7 +116,7 @@ def provider_for(spec: str, execution=None):
         if p.keyed and not key:                # every call answers "unauthorized": the project stops, no node is parked
             made.wire.missing_key = f"set it: gfso credential {name} --kind api"
         return made
-    return ClaudeCodeProvider(model=model, execution=execution, credential=credentials.get("claude"))
+    return ClaudeCodeProvider(model=model, execution=execution)    # its credential read at each call's start
 
 
 def _key(name: str) -> Optional[str]:
@@ -139,7 +139,7 @@ def takes(name: str) -> tuple[str, ...]:
     raise ValueError(f"no provider {name!r}: one of {', '.join(names())}")
 
 
-def set_credential(name: str, kind: str, value: str | None) -> dict:
-    """THE door's one act, for every provider: set (or, with None, remove) `name`'s credential of `kind` in its one
-    place. Answers what is set now, never a value."""
-    return credentials.put(name, kind, value, takes(name))
+def set_credential(name: str, kind: str, value: str | None, label: str | None = None) -> dict:
+    """THE door's one act, for every provider: set (or, with None, remove) `name`'s credential `label` of `kind` in its
+    one place. Answers what is set now, never a value."""
+    return credentials.put(name, kind, value, takes(name), label)

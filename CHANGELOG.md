@@ -17,10 +17,13 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   OpenAI-compatible presets, a user's own by `GFSO_PROVIDER_<NAME>_*`, a third party's class by the entry-point group
   `gfso.providers`); agent roles over a chat API run in the system's own tool loop; `gfso provider-check <spec>` names
   the roles a provider can hold. `GFSO_PROVIDER=generic` keeps its meaning.
-- One place for every provider's credential: `gfso credential <provider> [--kind token|api] [--remove]` (the value
-  on stdin) and `GET`/`PUT /api/credentials[/{provider}]`, never answering with a value. The Claude Code provider takes
-  a subscription's token or an API key there; `gfso provider-check` fails the agent roles when a tool's shell can see
-  a credential.
+- One place for every provider's credentials: `gfso credential <provider> [--kind token|api] [--name NAME] [--remove]`
+  (the value on stdin), `--use NAME` and `--order A,B,…`, and `GET`/`PUT /api/credentials[/{provider}]`, never answering
+  with a value. A provider holds several named credentials, one active; the Claude Code provider takes a subscription's
+  token or an API key, reads the one in force at each call's start (a moved pointer reaches every new call, calls in
+  flight finish on theirs) and, when one's limit or sign-in refuses a call, marks it spent until the limit lifts and
+  runs the call on the next in the order — the project stops only when every one is spent. Every `llm_usage` row names
+  the credential its call ran on. `gfso provider-check` fails the agent roles when a tool's shell can see a credential.
 - A project's container network can be narrowed by its user, `set_mode(network="off" | "open" | {"mode": "allowlist",
   "hosts": [...]} | "declared")`: the more closed of it and the operator's declaration is in force at once, never wider;
   `set_mode` without a mode changes only the project's settings. `/api/metrics` serves each metric's grade (canon §15.8)
@@ -32,6 +35,10 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   limited after it. A promoted producer is read under the move's own key, a probe's files written as `{path, content}`
   keep their content, and a new probe naming a file its split already pins carries it — each had refused a correct move
   of the machine issuer, the refusal not naming its own correction.
+- A project's settings have one carrier: the mode record reads them as they stand, so a network switch turned before a
+  mode was chosen stays in it, and `set_mode(network=…)` stores the switch even while the execution's declaration does
+  not read (the way out stays shut meanwhile). The page of an allowed host name served over https by a proxy in front
+  (`tailscale serve`) may act, not only read.
 
 ### Changed
 - No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,

@@ -222,7 +222,13 @@ def _add_provider_parser(sub) -> None:
     credp.add_argument("provider", nargs="?", default=None, help="claude, deepseek, openai, … (`provider-check --list`)")
     credp.add_argument("--kind", choices=("token", "api"), default=None,
                        help="token = a subscription's (`claude setup-token`); api = an API key. Default: what it takes")
-    credp.add_argument("--remove", action="store_true")
+    credp.add_argument("--name", default=None, help="which of the provider's credentials (default: its kind) — a "
+                                                    "provider holds several, e.g. two accounts' tokens and keys")
+    credp.add_argument("--use", metavar="NAME", default=None, help="move the pointer: every new call runs on NAME, "
+                                                                   "calls in flight finish on theirs")
+    credp.add_argument("--order", metavar="A,B,…", default=None, help="the order the pointer moves in when a limit "
+                                                                      "refuses the one in force")
+    credp.add_argument("--remove", action="store_true", help="remove NAME (`--name`), else every credential of it")
 
 def _dispatch(args) -> None:
     if args.command == "serve":
@@ -302,12 +308,16 @@ def _credential(args) -> int:
         print(json.dumps(credentials.listing()))
         return 0
     try:
+        if args.use or args.order:
+            print(json.dumps(credentials.use(args.provider, args.use) if args.use
+                             else credentials.order(args.provider, [n.strip() for n in args.order.split(",") if n.strip()])))
+            return 0
         kind = args.kind or (registry.takes(args.provider) or ("api",))[0]
         value = None if args.remove else (getpass.getpass(f"{args.provider} {kind}: ") if sys.stdin.isatty()
                                           else sys.stdin.read()).strip()
         if value == "":
             sys.exit("gfso: no credential on stdin")
-        print(json.dumps(registry.set_credential(args.provider, kind, value)))
+        print(json.dumps(registry.set_credential(args.provider, kind, value, args.name)))
     except ValueError as ex:                   # no such provider, or a kind it does not take
         sys.exit(f"gfso: {ex}")
     return 0

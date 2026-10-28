@@ -274,12 +274,16 @@ CONVERSING_ROLES = ("executor", "scope-executor")
 _EXECUTIONS: dict = {}
 
 
+def declaring_role(engine, agents: "AgentRegistry | None" = None) -> "dict | None":
+    """The role of this project that declares its execution, whether or not the declaration reads now."""
+    return next((c for c in (agents or AgentRegistry()).list().values()
+                 if c.get("execution") and c.get("project") == engine.project_name and c.get("workdir")), None)
+
+
 def execution_of(engine, agents: "AgentRegistry | None" = None):
     """WHERE this project's sessions and commands run: the execution its roles declare (`register_agent(execution=)`,
     one per project), in the place of the role that declared it — else this host."""
-    role = next((c for c in (agents or AgentRegistry()).list().values()
-                 if c.get("execution") and c.get("project") == engine.project_name and c.get("workdir")), None)
-    if role is None:
+    if (role := declaring_role(engine, agents)) is None:
         return LocalExecution()
     key = (role["execution"], engine.project_name, role["workdir"])
     try:

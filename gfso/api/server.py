@@ -831,19 +831,24 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
     # credential`, never MCP: a secret passed through the agent stays in its transcript. Nothing answers with a value.
     @app.get("/api/credentials")
     def get_credentials():
-        """{provider: kind} of every credential set — never a value."""
+        """Every provider's credentials by name and kind, the one active, the one in force, the order — never a value."""
         return _credentials.listing()
 
     @app.put("/api/credentials/{provider}")
     def put_credential(provider: str, body: dict = Body(...)):
-        """Set `provider`'s credential ({kind?, value}; the kind it takes first by default) or remove it ({remove:
-        true}); an empty value, an unknown provider or a kind it does not take is a 422."""
-        value = None if body.get("remove") else str(body.get("value") or "").strip()
-        if value == "":
-            raise HTTPException(422, "no credential: give `value`, or `remove: true`")
+        """Set `provider`'s credential `name` ({kind?, value, name?}; the kind it takes first and its name by default),
+        remove it ({remove: true, name?} — without a name every one), move the pointer ({use: name}) or the order
+        ({order: [names]}) — the CLI's `gfso credential` acts; an empty value, an unknown provider or name or a kind it
+        does not take is a 422."""
         try:
+            if body.get("use") or body.get("order"):
+                return (_credentials.use(provider, str(body["use"])) if body.get("use")
+                        else _credentials.order(provider, [str(n) for n in body["order"]]))
+            value = None if body.get("remove") else str(body.get("value") or "").strip()
+            if value == "":
+                raise HTTPException(422, "no credential: give `value`, or `remove: true`")
             return _providers.set_credential(provider, body.get("kind") or (_providers.takes(provider) or ("api",))[0],
-                                             value)
+                                             value, body.get("name"))
         except ValueError as ex:
             raise HTTPException(422, str(ex))
 
@@ -1034,8 +1039,9 @@ class _DoorGuard:
         headers = dict(scope["headers"])
         host = urlparse("//" + headers.get(b"host", b"").decode("latin-1")).hostname or ""
         origin = headers.get(b"origin", b"").decode("latin-1")
+        # …by either scheme: a name of its own served through a TLS proxy in front (`tailscale serve`) is the same page
         own = (not origin or origin in _door_origins()
-               or origin == "http://" + headers.get(b"host", b"").decode("latin-1"))
+               or origin in (f"{s}://{headers.get(b'host', b'').decode('latin-1')}" for s in ("http", "https")))
         read = scope["type"] == "http" and scope.get("method") in ("GET", "HEAD", "OPTIONS")
         # …and nothing at all a browser marks as sent from another site — an image tag sends no Origin, and a read with
         # `?project=` wakes that project's engine and its clock (`Sec-Fetch-Site`: every current browser, every request)

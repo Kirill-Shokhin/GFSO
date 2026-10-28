@@ -9,6 +9,7 @@ tools' shells none; a container call carries a secret by name, its value never i
 same act and never answer with a value; and the battery fails an agent role whose tools can print a credential.
 """
 import io
+import json
 import os
 import stat
 import sys
@@ -30,6 +31,12 @@ from tests.support import make_engine
 from tests.test_a_session_is_launched_the_same_through_its_provider import seen  # noqa: F401 — the fake CLI
 
 
+def _one(kind, name=None):
+    """What the door shows of a provider holding one credential, `name` (default: its kind)."""
+    n = name or kind
+    return {"active": n, "in_force": n, "order": [n], "held": {n: kind}}
+
+
 @pytest.fixture(autouse=True)
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "data"))
@@ -37,12 +44,12 @@ def store(monkeypatch, tmp_path):
 
 
 def test_the_store_keeps_what_was_set_and_shows_only_its_kind(store):
-    assert credentials.put("deepseek", "api", " k-ds \n") == {"deepseek": "api"}
+    assert credentials.put("deepseek", "api", " k-ds \n") == {"deepseek": _one("api")}
     assert credentials.get("deepseek") == credentials.Credential("api", "k-ds")
     credentials.put("claude", "token", "t-sub")
-    assert credentials.listing() == {"deepseek": "api", "claude": "token"}
+    assert credentials.listing() == {"deepseek": _one("api"), "claude": _one("token")}
     assert "k-ds" not in str(credentials.listing()) and "t-sub" not in str(credentials.listing())
-    assert credentials.put("deepseek", "api", None) == {"claude": "token"} and credentials.get("deepseek") is None
+    assert credentials.put("deepseek", "api", None) == {"claude": _one("token")} and credentials.get("deepseek") is None
     if os.name != "nt":                        # a mode only a POSIX file system keeps
         assert stat.S_IMODE(store.stat().st_mode) == 0o600
 
@@ -55,8 +62,8 @@ def test_the_door_refuses_a_kind_the_provider_does_not_take():
     with pytest.raises(ValueError):
         registry.set_credential("nobody", "api", "k")
     registry.set_credential("claude", "token", "t")
-    assert registry.set_credential("claude", "api", "k") == {"claude": "api"}   # both, one at a time
-    assert credentials.listing() == {"claude": "api"}
+    got = registry.set_credential("claude", "api", "k")["claude"]          # both, each under its name
+    assert got["held"] == {"token": "token", "api": "api"} and got["active"] == "token"
 
 
 def test_a_presets_key_comes_from_the_store_alone(monkeypatch):
@@ -111,7 +118,7 @@ def test_the_cli_door_writes_and_never_prints_the_value(monkeypatch, capsys):
         cli.main()
     said = capsys.readouterr()
     assert done.value.code == 0 and credentials.get("deepseek") == credentials.Credential("api", "k-cli-secret")
-    assert "k-cli-secret" not in said.out + said.err and '"deepseek": "api"' in said.out
+    assert "k-cli-secret" not in said.out + said.err and json.loads(said.out) == {"deepseek": _one("api")}
 
 
 def test_the_http_door_writes_and_never_answers_the_value():
@@ -119,9 +126,9 @@ def test_the_http_door_writes_and_never_answers_the_value():
     engine.start()
     c = TestClient(create_app(engine))
     put = c.put("/api/credentials/deepseek", json={"value": "k-http-secret"})
-    assert put.status_code == 200 and put.json() == {"deepseek": "api"}
+    assert put.status_code == 200 and put.json() == {"deepseek": _one("api")}
     got = c.get("/api/credentials")
-    assert got.json() == {"deepseek": "api"} and "k-http-secret" not in got.text
+    assert got.json() == {"deepseek": _one("api")} and "k-http-secret" not in got.text
     assert c.put("/api/credentials/deepseek", json={"value": " "}).status_code == 422
     assert c.put("/api/credentials/deepseek", json={"kind": "token", "value": "t"}).status_code == 422
     assert c.put("/api/credentials/deepseek", json={"remove": True}).json() == {}
