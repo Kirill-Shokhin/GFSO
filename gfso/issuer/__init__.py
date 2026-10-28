@@ -1026,9 +1026,16 @@ def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -
     """One child `cid` for a re-admission of `task`'s split, as `decompose` takes it: its criteria, its declared Dep
     edges onto the siblings it `reads`, the node's criteria it `covers`. (None, why) refused. `reads` names a standing child,
     or what `ids` resolves — a child the same act creates, by its name, and one it drops, to what replaces it."""
-    covers = [x for x in (c.get("covers") or []) if x in {k.name for k in task.spec.criteria}]
-    if not (c.get("criteria") and covers):
-        return None, "a new child carries criteria and names which of this node's criteria it covers"
+    mine = [k.name for k in task.spec.criteria]
+    covers = [x for x in (c.get("covers") or []) if x in mine]
+    # …each refusal names its own correction: one sentence for both halves sent a model round 44 times on a child that
+    # carried its criteria under another key (GB_c_compiler_tnl51c552)
+    if not c.get("criteria"):
+        return None, "a new child carries criteria: none were given in this child's `criteria`"
+    if not covers:
+        stray = [x for x in (c.get("covers") or []) if x not in mine]
+        return None, (f"a new child names which of {task.id}'s criteria it covers (`covers`), from: {', '.join(mine)}"
+                      + (f" — {', '.join(map(str, stray))} is not one of them" if stray else ""))
     if engine.graph.get_task(TaskId(cid)) is not None:
         return None, (f"{cid} exists — to change it, `revise_child` it (which may not remove what it "
                       f"carries); to reshape the split, `drop_child` it and add the child that replaces it")
@@ -1318,7 +1325,17 @@ def _promote(engine, task, actor, answer, why, verbs):
                                               str(task.id): (blocked, ("(promoted)",), None)}).defaults()["(promoted)"]
     if made_by is None and parent.deadline and parent.deadline <= project_now(engine.graph):
         made_by = project_now(engine.graph) + timedelta(hours=24)   # past the parent's deadline the issuer types one (§12.16)
-    ok, bad = _add_child(engine, parent, actor, {"child": {**(answer.get("child") or {}), "covers": covers, "reads": [],
+    # …its producer read under either name the move gives it: the schema's "promote: {name, description, criteria}" sat
+    # in `child`'s description, the model wrote it under `promote`, and 44 refusals said the child carried no criteria
+    # while it carried two (GB_c_compiler_tnl51c552, 2026-10-28)
+    made_of = {**(answer["promote"] if isinstance(answer.get("promote"), dict) else {}),
+               **{k: v for k, v in (answer.get("child") or {}).items() if v}}
+    if not [c for c in covers if c in {k.name for k in parent.spec.criteria}]:
+        # …and a producer of nothing the split states is no promotion: whatever `covers` the move sends is not read, so
+        # "name the criteria it covers" could not be lifted (critic, §12.16 (ii))
+        return False, (f"{task.id} carries none of {parent.id}'s criteria (no mapping names it), so a producer beside "
+                       f"it would carry nothing of the split: resolve_block, reassign or cancel")
+    ok, bad = _add_child(engine, parent, actor, {"child": {**made_of, "covers": covers, "reads": [],
                                                            **({"deadline": made_by} if made_by else {})}},   # a datetime on the project's clock, not a typed date
                          why, verbs)
     if not ok:
@@ -1946,7 +1963,14 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
                         # not an answer to it) and a dispute do not; a question that closed starts the count over
                         counted = not review and (q != "plan" or out.get("move") != "dispute")
                         n = n + counted if (t, q) in open_questions(engine) else 0
-                        ledger[g] = (0, now_ + (backoff(n - FREE_ANSWERS - 1) if counted and n > FREE_ANSWERS else 0), n)
+                        paced = backoff(n - FREE_ANSWERS - 1) if n > FREE_ANSWERS else 0
+                        # …but the plan's READER is owed at once, and the rate is laid AFTER it: an own-plan root's
+                        # admitting review waited 32 min behind its issuer's count (GB_c_compiler_tnl51c552,
+                        # 2026-10-28); dropped instead of moved, a review rewording its findings after every fix let
+                        # fix and review alternate at the model's pace (critic over that fix)
+                        wait = ((0 if q == "plan" and review_due(engine, t) else paced) if counted
+                                else paced if review else 0)
+                        ledger[g] = (0, now_ + wait, n)
                     elif st in UNANSWERED:
                         wait = (engine.stop_wait_s() or min(backoff(w), LIMIT_RETRY_S)) if out.get("limit") else backoff(w)
                         ledger[g] = (w + 1, now_ + wait, n)
@@ -1956,7 +1980,8 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
                             engine.emit_info("issuer", f"{t}: the issuer's turn on {q} was not answered — "
                                                        f"{out.get('why')}; asked again in {wait:.0f}s")
                     elif st == "inflight":
-                        ledger[g] = (w, now_ + PACE_S, n)
+                        # a review running (started outside this sweep) is the read: the answer's rate is laid after it
+                        ledger[g] = (w, now_ + max(PACE_S, backoff(n - FREE_ANSWERS - 1) if n > FREE_ANSWERS else 0), n)
                     elif st != "gone":
                         # an answer came and moved nothing: one more answer at the model's pace, its wait only past
                         # the free count — the refusal it carries is the next answer's prompt, not a reason to wait

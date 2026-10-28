@@ -14,10 +14,10 @@ from tests.test_the_mode_decides_who_holds_what import _auto_goal, _sweeps
 LIMIT = "rate_limit: You've hit your org's monthly spend limit · resets 3:50pm (UTC)"
 
 
-def _waits(e, agents, settles, monkeypatch) -> list:
+def _waits(e, agents, settles, monkeypatch, settle=None) -> list:
     """Sweep once per scripted settle, the clock moved past each wait; the wait each one left, in seconds."""
     script, out = iter(settles), []
-    monkeypatch.setattr(I, "settle", lambda *a, **k: next(script))
+    monkeypatch.setattr(I, "settle", settle or (lambda *a, **k: next(script)))
     ledger, cap = {}, threading.Semaphore(1)
     for _ in settles:
         before = set(threading.enumerate())
@@ -90,3 +90,24 @@ def test_a_review_in_flight_is_waited_for_not_backed_off(tmp_path, monkeypatch):
 def test_a_context_window_is_no_account_limit():
     assert not I.unanswered([{"error": "invalid_request: input length and `max_tokens` exceed context limit"}]).limit
     assert I.unanswered([{"error": LIMIT}]).limit
+
+
+
+def test_the_review_of_a_plan_an_answer_changed_goes_at_once_and_the_rate_is_laid_after_it(tmp_path, monkeypatch):
+    """The rate paces the issuer's answers, not the reading of the split an answer just changed: past FREE_ANSWERS an
+    own-plan root's admitting review waited 32 min behind its issuer's count (GB_c_compiler_tnl51c552, 2026-10-28).
+    Moved, not dropped: a review rewording its findings after every fix must not let fix and review alternate at the
+    model's pace (critic over the first fix). As the engine does it: a fix stales the review, a review makes it current."""
+    e, agents = _auto_goal(tmp_path)
+    fix, read = {"status": "applied", "kind": "fix"}, {"status": "applied", "kind": "review"}
+    due = {"now": False}
+    script = iter([fix, read] * (I.FREE_ANSWERS + 4))
+
+    def settle(*a, **k):
+        out = next(script)
+        due["now"] = out is fix
+        return out
+    monkeypatch.setattr(I, "review_due", lambda en, tid: due["now"])
+    waits = _waits(e, agents, [None] * (2 * (I.FREE_ANSWERS + 4)), monkeypatch, settle=settle)
+    assert max(waits[0::2]) <= 0, "a review owed after a fix waited behind the answers' count"
+    assert waits[-1] > 0, "fix and review alternated at the model's pace past the free count"

@@ -480,13 +480,13 @@ def test_no_count_of_answers_closes_a_node_its_clock_does(tmp_path, monkeypatch)
     assert e.graph.get_state(TaskId("root")) == state, "applied answers closed the node"
 
 
-def _served(e, agents, settles, monkeypatch, closes_after=(), waits=None):
+def _served(e, agents, settles, monkeypatch, closes_after=(), waits=None, settle=None):
     """Sweep once per scripted settle, the clock never moving; return how many were served. The answers whose index
     is in `closes_after` close their question (its plan episode ends): the read after them finds it gone, the next
     sweep open again (a child re-issued). With `waits`, the clock moves past each wait and the wait each answer left
     is appended there."""
     script, reads, real = iter(settles), {"left": 0}, I.open_questions
-    monkeypatch.setattr(I, "settle", lambda *a, **k: next(script))
+    monkeypatch.setattr(I, "settle", settle or (lambda *a, **k: next(script)))
 
     def questions(eng):
         reads["left"] -= 1
@@ -544,10 +544,20 @@ def test_a_converging_plan_is_never_slowed(tmp_path, monkeypatch):
     per_episode = [fix] * (I.FREE_ANSWERS - 1) + [review]
     closes = {k * I.FREE_ANSWERS + I.FREE_ANSWERS - 1 for k in range(3)}
     assert _served(e, agents, per_episode * 3, monkeypatch, closes) == 3 * I.FREE_ANSWERS, "a closed question kept its count"
-    # …and past the free count only the counted answer waits: the review that reads a fix, and a dispute, do not
+    # …and past the free count the pace lies ONCE per fix and its read, after the read (the read is owed at once,
+    # GB_c_compiler_tnl51c552): as the engine does it, a fix stales the review and the review makes it current; a
+    # dispute waits nothing
+    due = {"now": False}
+    script = iter([fix] * (I.FREE_ANSWERS + 1) + [review, dispute])
+
+    def settle(*a, **k):
+        out = next(script)
+        due["now"] = out is fix
+        return out
+    monkeypatch.setattr(I, "review_due", lambda en, tid: due["now"])
     waits = []
-    _served(e, agents, [fix] * (I.FREE_ANSWERS + 1) + [review, dispute], monkeypatch, waits=waits)
-    assert waits[-3] > 0 and waits[-2:] == [0, 0], ("an uncounted answer waited the counted ones' backoff", waits[-3:])
+    _served(e, agents, [None] * (I.FREE_ANSWERS + 3), monkeypatch, waits=waits, settle=settle)
+    assert waits[-3] <= 0 and waits[-2] > 0 and waits[-1] == 0, ("the pace was not laid once, after the read", waits[-3:])
 
 def test_a_semi_goal_with_no_split_is_not_delivered_by_its_holder():
     """SEMI is a boundary in the plan's depth; a goal with no split has nothing below it, and its holder
