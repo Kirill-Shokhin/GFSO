@@ -22,4 +22,5 @@ from .effects import (
     MutateGraph, RunChecks, Recommend, Dispatch, EmitSignal, Effect,
 )
 from .ports import (StoragePort, LLMProviderPort, ExecutionPort, PlaceUnavailable, AgentPort, VerifierPort,
-                    FilesPort, HOST, HostFiles, files_at, hold_places, ClockPort, SystemClock, RunnerPort, ThreadRunner)
+                    FilesPort, HOST, HostFiles, NODES, SCRATCH, files_at, hold_places, unprojected, ClockPort,
+                    SystemClock, RunnerPort, ThreadRunner)

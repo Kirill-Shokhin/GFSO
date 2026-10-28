@@ -7,13 +7,13 @@ only the 20 newest rounds, so a root refuted over 16+ rounds lost its oldest fin
 from __future__ import annotations
 
 import gfso.tools_llm as TL
-from gfso.adapters.execution import LocalExecution
+from gfso.adapters.execution import LocalExecution, scratch_of
 
 
 def _rounds(tmp_path, n: int):
     work = tmp_path / "ws"
     work.mkdir()
-    root = tmp_path / ".gfso-scratch-ws"
+    root = scratch_of(work, None)
     for i in range(n):
         (root / f"kid_{1000 + i}").mkdir(parents=True)
         (root / f"kid_{1000 + i}" / "t.c").write_text("int main(){}", encoding="utf-8")

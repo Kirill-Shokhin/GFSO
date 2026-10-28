@@ -37,7 +37,8 @@ class _Docker:
 
     def __call__(self, args, **kw):
         self.calls.append(list(args[:2]))
-        return subprocess.CompletedProcess(args, 0 if self.up else 1, "29.7.2\n" if self.up else "",
+        out = "ok\n" if args[1:2] == ["run"] else "29.7.2\n"          # …a storage probe's file read back, or the version
+        return subprocess.CompletedProcess(args, 0 if self.up else 1, out if self.up else "",
                                            "" if self.up else DOWN)
 
 

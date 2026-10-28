@@ -29,7 +29,7 @@ from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.workspaces import declaring_role, execution_of
 from gfso.adapters.snapshots import snapshot, swap
-from gfso.adapters.worktrees import NODES as _NODES
+from gfso.adapters.execution import NODES as _NODES, scratch_of
 from gfso.issuer import CONTACT_ROUND as _CONTACT
 from gfso.core.types import AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage, Verdict, passed
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
@@ -604,7 +604,7 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     return None, task, deliverable
 
 
-def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None):
+def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, project=None):
     """Where the validator runs, and what the delivery held before it did.
 
     Two needs once collapsed into one: a fresh scratch per validation (a shared one let
@@ -622,7 +622,7 @@ def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None):
         # criterion like "every file under the target dir belongs to this package" is then true:
         # our own scratch was sitting in the deliverable while the validator dutifully reported
         # everyone else's leavings (measured on the human door 2026-08-22).
-        root = Path(workdir).parent / f".gfso-scratch-{Path(workdir).name}"
+        root = scratch_of(workdir, project)
         scratch = str(root / f"{task_id}_{int(time.time())}")
         ex.files.mkdir(scratch)
         if graph is not None:              # …in the record of the rounds standing, as it goes (`findings.record_round`)
@@ -1307,7 +1307,7 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     # empty tree, where it failed correct work saying nothing was there. A false FAIL at the seam is worse than none.
     scratch, _before = _validation_place(top_id, workdir, execution_of(engine), tuple(
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
-        for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph)
+        for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph, engine.project_name)
     try:
         edits: list = []
         # the system's own run of the exact checks FIRST, on the delivery as delivered (`_observe_exact`)

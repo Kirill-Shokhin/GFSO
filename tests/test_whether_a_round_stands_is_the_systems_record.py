@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution
 from gfso.core.protocol.procedure import finding_id, runs_a_past_build, unrerunnable
-from gfso.core.types import hold_places
+from gfso.core.types import HOST, files_at, hold_places
 from gfso.engine.findings import record_round, round_stands
 
 
@@ -25,7 +25,7 @@ def _graph():
 def test_the_findings_over_rounds_are_read_with_no_container_asked(tmp_path, monkeypatch):
     base = tmp_path / "work" / "ws"
     base.mkdir(parents=True)
-    ex = ContainerExecution("vol-v1", "img", None, str(tmp_path / "state"), str(base), "rounds")
+    ex = ContainerExecution("vol-v1", "img", None, str(tmp_path / "state"), str(base), "p")
     calls = []
     monkeypatch.setattr(E.ContainerFiles, "_run", lambda self, at, cwd, op, *a, **kw: calls.append(op) or
                         subprocess.CompletedProcess(a, 0, b"\x7fELF", b""))
@@ -48,5 +48,21 @@ def test_the_findings_over_rounds_are_read_with_no_container_asked(tmp_path, mon
         record_round(graph, str(kept), False)
         runs_a_past_build(finding(kept)["as_run"])
         assert calls.count("read_bytes") == 4, "…and read again once the system removed the round"
+        # a base's round, a temp made before every system directory named its project: mounted by no container, so
+        # gone whatever their record or the host says — a re-run would not find them (critic over d80e311)
+        work = tmp_path / "work"
+        old, temp = work / ".gfso-scratch-ws" / "root_1700000003", work / ".gfso-tmp-ws" / "node-1"
+        for d in (old / "x", temp):
+            d.mkdir(parents=True)
+        record_round(graph, str(old), True)
+        assert "no longer exist" in unrerunnable(finding(old), None, str(base), standing=up)
+        assert "no longer exist" in unrerunnable({"as_run": f"cat {(temp / 'in.txt').as_posix()}"}, None, str(base),
+                                                 standing=up)
+        assert files_at(old / "in.txt") is HOST
+        # …by the bases held, never by a name: a directory an agent named so in its place, copied into a standing round,
+        # or in the base itself, is no old layout (critic over 00187de)
+        record_round(graph, str(kept), True)
+        for named in (kept / ".gfso-tmp-cache" / "t.c", base / ".gfso-tmp-x" / "t.sh"):
+            assert unrerunnable({"as_run": f"cat {named.as_posix()}"}, None, str(base), standing=up) == "", named
     finally:
         hold_places(ex.files, False)

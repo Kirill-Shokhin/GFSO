@@ -92,10 +92,10 @@ HOSTS_OWN = {
     # …the bind mounts' sources: a mount stands on a host directory until the places move into volumes
     ("adapters/execution.py", "ContainerExecution.start", "d.mkdir(parents=True, exist_ok=True)"): "a mount's source",
     ("adapters/execution.py", "ContainerExecution.temp_root",
-     "(d := (self.parent / self.mounts[3])).mkdir(parents=True, exist_ok=True)"): "a mount's source",
+     "(d := self.tmp).mkdir(parents=True, exist_ok=True)"): "a mount's source",
     ("adapters/execution.py", "ContainerExecution.temp_of", "d.mkdir(parents=True, exist_ok=True)"): "a mount's source",
     ("adapters/execution.py", "PlaceContainer._mounts",
-     "(scratch := _scratch_of(self.rw)).mkdir(parents=True, exist_ok=True)"): "a mount's source",
+     "(scratch := scratch_of(self.rw, self.project_name)).mkdir(parents=True, exist_ok=True)"): "a mount's source",
 }
 
 

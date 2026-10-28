@@ -6,6 +6,7 @@ The execution is a project's setting chosen on the existing door (`register_agen
 named and is never written by a door.
 """
 import json
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -106,8 +107,9 @@ def test_a_base_that_checks_out_crlf_is_refused(declared):
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
 
 
-def test_a_base_off_a_local_drive_is_refused():
-    with pytest.raises(ValueError, match="local drive"):
+@pytest.mark.skipif(os.name != "nt", reason="a network share's path is Windows'")
+def test_a_base_on_a_network_share_is_refused():
+    with pytest.raises(ValueError, match="network share"):
         ContainerExecution("e", "i", "f", "s", "\\\\server\\share\\base", "p")
 
 

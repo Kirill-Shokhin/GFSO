@@ -5,12 +5,11 @@ places were made (`made`)."""
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import NODES as _NODES, base_of
-from gfso.adapters.execution import ContainerExecution, LocalExecution, network_of, stricter
+from gfso.adapters.execution import ContainerExecution, LocalExecution, component, network_of, stricter
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
@@ -45,11 +44,6 @@ def session_scope(engine, agents: "AgentRegistry", task):
     return top if vid and (agents.get(vid) or {}).get("kind") == "llm-validator" else None
 
 
-def _safe(s) -> str:
-    """A node id or a project name as one path component and one ref component."""
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(s)).replace("..", "_").strip(".") or "_"
-
-
 
 
 def _workspace(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | None:
@@ -67,7 +61,7 @@ def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | N
     base = (performer(engine, agents, task.assignee)[1] or {}).get("workdir") if task is not None else None
     if not base:
         return None
-    key, proj = _safe((session_scope(engine, agents, task) or task).id), _safe(engine.project_name or DEFAULT_PROJECT)
+    key, proj = component((session_scope(engine, agents, task) or task).id), component(engine.project_name or DEFAULT_PROJECT)
     return base, str(Path(base).parent / f"{_NODES}{Path(base).name}" / proj / key), f"gfso/{proj}/{key}"
 
 

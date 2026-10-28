@@ -26,7 +26,7 @@ from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Optional, Sequence
 
-from gfso.core.types import HOST, Criteria, Probe, files_at
+from gfso.core.types import HOST, Criteria, Probe, files_at, unprojected
 from gfso.core.protocol.invariants import emits_a_constant, probe_held, probes_of, spoken_verdict, underprobed
 
 
@@ -1021,7 +1021,11 @@ def round_of(path) -> Optional[tuple[str, str]]:
 def _gone(path: str, standing) -> bool:
     """Is what `path` names gone? In a round, the round no longer standing — the system's record (`standing`), kept as
     it makes and removes rounds and asked of no container; else neither it nor its directory there on this host: the
-    base and what lies outside every place are this host's until the places and the base move into volumes."""
+    base and what lies outside every place are this host's until the places and the base move into volumes. Under a
+    system directory of the layout before each named its project, gone: no container mounts it, a re-run would not
+    find it (`unprojected`)."""
+    if unprojected(path):
+        return True
     if (r := round_of(path)) is not None:
         return not standing(r)
     return not HOST.exists(path) and not HOST.exists(str(Path(path).parent))

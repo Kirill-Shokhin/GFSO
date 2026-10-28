@@ -32,7 +32,7 @@ def _ex(tmp_path, network=None, project="p"):
 
 def test_open_shuts_only_the_host(tmp_path):
     x = _ex(tmp_path)
-    assert x.way.seal() == f"iptables -A OUTPUT -d {E.HOST_NET} -j REJECT"
+    assert x.way.seal().startswith(f"iptables -A OUTPUT -d {E.HOST_NET} -j REJECT && ") and         x.way.seal().endswith('iptables -A OUTPUT -d "$gw" -j REJECT'), "Docker Desktop's host and Docker Engine's"
     assert "--sysctl" not in x.run_args()
 
 

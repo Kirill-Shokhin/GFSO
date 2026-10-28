@@ -37,11 +37,11 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "_SESSIONS", {})
     monkeypatch.setattr(E, "_SWITCH", {})
     base = tmp_path / "work" / "ws"
-    for d in ("ws", ".gfso-nodes-ws/p/a", ".gfso-nodes-ws/p/b", ".gfso-scratch-ws", ".gfso-tmp-ws"):
+    for d in ("ws", ".gfso-nodes-ws/p/a", ".gfso-nodes-ws/p/b", ".gfso-nodes-ws/p/.gfso-tmp"):
         (tmp_path / "work" / d).mkdir(parents=True, exist_ok=True)
     (tmp_path / "e.env").write_text("NOTHING=1\n")
-    return ContainerExecution("t", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base),
-                              f"sess{time.time_ns()}")
+    return ContainerExecution(f"t{time.time_ns()}", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base),
+                              "p")
 
 
 def test_a_session_writes_its_place_and_reads_the_base(project):
@@ -55,11 +55,11 @@ def test_a_session_writes_its_place_and_reads_the_base(project):
     with pytest.raises(ValueError):
         a._inside_cwd(str(work / ".gfso-nodes-ws/p/b"))
     root = project.session(str(project.base))
-    assert root._mounts() == [(project.base, False), (work / ".gfso-scratch-ws", True), (Path(root.temp_root()), False)], \
+    assert root._mounts() == [(project.base, False), (work / ".gfso-nodes-ws/p/.gfso-scratch-.ws", True), (Path(root.temp_root()), False)], \
         "a root's validations' rounds read-only to its executor too: no judge works in the base"
 
 
-@pytest.mark.parametrize("scratch", [".gfso-scratch-ws", ".gfso-nodes-ws/p/.gfso-scratch-a"])
+@pytest.mark.parametrize("scratch", [".gfso-nodes-ws/p/.gfso-scratch-.ws", ".gfso-nodes-ws/p/.gfso-scratch-a"])
 def test_a_validation_writes_its_round_and_reads_the_earlier_ones(project, scratch):
     """The scratch stands beside the place validated — the base's, or a node clone's (`tools_llm`)."""
     scratch = project.parent / scratch
@@ -128,13 +128,13 @@ def test_live_a_session_sees_its_place_alone(project):
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_a_validation_writes_its_round_alone_and_its_call_ends_where_it_runs(project):
-    scratch = project.parent / ".gfso-scratch-ws"
+    scratch = project.parent / ".gfso-nodes-ws/p/.gfso-scratch-.ws"
     (scratch / "root_1/run").mkdir(parents=True)
     (scratch / "root_1/run/probe.sh").write_text("echo earlier\n")
     (scratch / "root_2/run/delivery").mkdir(parents=True)
     v = project.session(str(scratch / "root_2/run/delivery"))
-    probe = ("echo r > ../mine.txt && echo WROTE-ITS-ROUND; cat /gfso-place/.gfso-scratch-ws/root_1/run/probe.sh; "
-             "touch /gfso-place/.gfso-scratch-ws/root_1/run/x 2>/dev/null && echo WROTE-AN-EARLIER-ROUND; true")
+    probe = ("echo r > ../mine.txt && echo WROTE-ITS-ROUND; cat /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/run/probe.sh; "
+             "touch /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/run/x 2>/dev/null && echo WROTE-AN-EARLIER-ROUND; true")
     try:
         got = v.run(["bash", "-c", probe], cwd=str(scratch / "root_2/run/delivery"), timeout=120).stdout.split()
         assert got == ["WROTE-ITS-ROUND", "echo", "earlier"], got
@@ -153,9 +153,9 @@ def test_the_systems_own_checks_stand_where_no_session_reaches(project):
     """The system's exact checks and observations: in the temp every session holds, a session could change what a
     check runs on (critic over the session slice)."""
     with project.scratch("gfso-exact-", system=True) as d:
-        assert Path(d).parent == project.parent / ".gfso-sys-ws"
+        assert Path(d).parent == project.parent / ".gfso-nodes-ws/p/.gfso-sys"
         a = project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
-        assert not any(src.is_relative_to(project.parent / ".gfso-sys-ws") for src, _ in a._mounts())
+        assert not any(src.is_relative_to(project.parent / ".gfso-nodes-ws/p/.gfso-sys") for src, _ in a._mounts())
 
 
 def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
@@ -167,8 +167,8 @@ def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
         assert Path(d).parent == node.parent / ".gfso-scratch-a"
         c = project.session(d + "/place")
         assert c.rw == Path(d) and (node.parent / ".gfso-scratch-a", True) in c._mounts()
-    with _contact_place(str(project.base), project) as d:    # a root's too: in the base it ran in its executor's container
-        assert Path(d).parent == project.parent / ".gfso-scratch-ws"
+    with _contact_place(str(project.base), project, "p") as d:    # a root's too: in the base it ran in its executor's container
+        assert Path(d).parent == project.parent / ".gfso-nodes-ws/p/.gfso-scratch-.ws"
         c = project.session(d + "/place")
         assert c.rw == Path(d) and c is not project.session(str(project.base))
 
@@ -218,7 +218,7 @@ def test_live_an_issuers_contact_reads_its_inputs_and_the_nodes_earlier_probes(p
                                "touch /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/x 2>/dev/null && echo WROTE; true"],
                 cwd=d + "/place", timeout=120).stdout.split()
             assert got == ["node-input", "probed"], got
-        with _contact_place(str(project.base), project) as d:
+        with _contact_place(str(project.base), project, "p") as d:
             (Path(d) / "in.txt").write_text("root-input\n")
             got = project.session(str(project.base)).run(["cat", str(Path(d) / "in.txt")], cwd=str(project.base),
                                                          timeout=120).stdout.split()
@@ -246,8 +246,8 @@ def test_each_node_holds_its_own_temp_and_its_validations_share_it(project):
     (critic 3 over the session slice: the temp every session held carried every node's, read and written)."""
     work = project.parent
     a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
-    assert a.temp_root() != b.temp_root() and Path(a.temp_root()).parent == work / ".gfso-tmp-ws"
-    assert not any(Path(b.temp_root()).is_relative_to(src) or src == work / ".gfso-tmp-ws" for src, _ in a._mounts())
+    assert a.temp_root() != b.temp_root() and Path(a.temp_root()).parent == work / ".gfso-nodes-ws/p/.gfso-tmp"
+    assert not any(Path(b.temp_root()).is_relative_to(src) or src == work / ".gfso-nodes-ws/p/.gfso-tmp" for src, _ in a._mounts())
     round_of_a = project.session(str(work / ".gfso-nodes-ws/p/.gfso-scratch-a/a_1/run/delivery"))
     assert round_of_a.temp_root() == a.temp_root() == project.temp_of(str(work / ".gfso-nodes-ws/p/a"))
 
@@ -267,7 +267,7 @@ def test_live_a_node_reads_its_own_temp_and_not_its_neighbours(project):
     (Path(b.temp_root()) / "theirs.md").write_text("b-list\n")
     probe = (f"cat {a.to_inside(str(Path(a.temp_root()) / 'mine.md'))}; "
              f"cat {a.to_inside(str(Path(b.temp_root()) / 'theirs.md'))} 2>/dev/null && echo SAW-B; "
-             f"ls {a.to_inside(str(work / '.gfso-tmp-ws'))} 2>/dev/null | grep -c node- ; true")
+             f"ls {a.to_inside(str(work / '.gfso-nodes-ws/p/.gfso-tmp'))} 2>/dev/null | grep -c node- ; true")
     try:
         got = a.run(["bash", "-c", probe], cwd=str(work / ".gfso-nodes-ws/p/a"), timeout=120).stdout.split()
         assert got[:1] == ["a-list"] and "SAW-B" not in got, got

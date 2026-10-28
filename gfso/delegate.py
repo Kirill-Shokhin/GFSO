@@ -710,7 +710,8 @@ class Dispatcher:
                                    and made(self._engine, w[1]))
         # …and the place the project runs in, probed while it is down (`Engine.lift_the_system_stop`)
         self._engine.probe_the_place_with(lambda place: (answers(place) if is_address(place)
-                                                         else execution_of(self._engine, self._agents).unavailable()))
+                                                         else execution_of(self._engine, self._agents).unavailable(
+                                                             storage=True)))
         # Subscribed HERE, not in `start()`: the callback no longer only sets a flag — it is what
         # makes a cleared block executable again (see `_on_bus`), and that must not depend on
         # whether this dispatcher's poll loop was ever started.

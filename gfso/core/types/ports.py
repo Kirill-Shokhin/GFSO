@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -265,6 +266,11 @@ class FilesPort(ABC):
         """Is `path` in a place held apart from this host (`files_at`)? This host holds none apart."""
         return False
 
+    def old_layout(self) -> tuple:
+        """The system directories beside a base this holds, as laid out before each named its project (`unprojected`)
+        — none on this host, where they still stand as they were."""
+        return ()
+
 
 class ExecutionPort(ABC):
     """WHERE a session or a command runs — this host, or a place isolated from it — as opposed to WHO answers
@@ -293,8 +299,9 @@ class ExecutionPort(ABC):
         credential; None where the client must hold it (this host)."""
         return None
 
-    def unavailable(self) -> Optional[str]:
-        """Why this place cannot start a call now, or None where it can — a cheap health check. This host always can."""
+    def unavailable(self, storage: bool = False) -> Optional[str]:
+        """Why this place cannot start a call now, or None where it can — a cheap health check; with `storage`, its
+        storage asked too (a probe that costs a call: while the place stands stopped). This host always can."""
         return None
 
     @abstractmethod
@@ -419,6 +426,23 @@ class HostFiles(FilesPort):
                 if len(Path(d).relative_to(path).parts) < depth for x in xs if not os.path.islink(os.path.join(d, x))]
 
 
+#: a base's project directories stand beside it, under this prefix and the base's name, each holding its project's
+#: places and every system directory of the project (`ContainerExecution`)
+NODES = ".gfso-nodes-"
+#: what names a validation's scratch beside the place it validates (`scratch_of`)
+SCRATCH = ".gfso-scratch-"
+#: a system directory as it stood directly beside a base before each named its project
+
+
+def unprojected(path) -> bool:
+    """Is `path` under a system directory laid out before every one named its project — a scratch, a temp, system
+    copies directly beside a base an execution holds (`FilesPort.old_layout`), not among a project's places? No
+    container mounts one any more: nothing there stands for a check to run. By the holders' bases, never by a name:
+    a directory an agent named `.gfso-tmp-x` in its place was read so, its findings no longer demanded (critic)."""
+    p = os.path.normcase(os.path.abspath(path))
+    return any(p.startswith(os.path.normcase(str(d)) + os.sep) for f in _HOLDERS for d in f.old_layout())
+
+
 #: the files of the places held apart from this host, latest first — the system's own table of where each place is
 _HOLDERS: list = []
 
@@ -434,9 +458,10 @@ def hold_places(files: FilesPort, held: bool = True) -> None:
 def files_at(path) -> FilesPort:
     """The files that reach `path`: those holding the place it lies in (`FilesPort.holds`), else this host's. For a
     reader handed a path the system named — a finding's command over a validation round — and no execution in hand: the
-    place is found by the system's table, never by what stands at the path."""
-    # …two projects on one base hold the same mount names, and the first holder answers: V2's, which names the project
-    # in every system directory
+    place is found by the system's table, never by what stands at the path: every system directory names its project,
+    so of two projects on one base only the path's own holds it."""
+    # …save the base itself, which each project on it holds and either reads alike while it is a host directory: the
+    # move into volumes makes it a per-project record
     return next((f for f in _HOLDERS if f.holds(str(path))), HOST)
 
 

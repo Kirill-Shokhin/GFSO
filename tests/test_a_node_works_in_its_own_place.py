@@ -259,7 +259,7 @@ def test_a_directory_that_is_not_a_repository_is_shared_as_before(tmp_path):
     assert sessions["a"].cwd == sessions["b"].cwd == str(base) == where["a"] == where["b"]
     assert {"a.c", "b.c"} <= sessions["a"].saw
     assert sum("is not the top of a git repository" in m for m in said) == 1
-    assert not (tmp_path / ".gfso-nodes-ws").exists()
+    assert not [p for p in (tmp_path / ".gfso-nodes-ws").glob("*/*") if not p.name.startswith(".gfso-scratch-")],         "no node's place: only the base's validation rounds, among its project's"
 
 
 def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path):

@@ -35,9 +35,9 @@ live = pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def project(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "_SESSIONS", {})
     work = tmp_path / "work"
-    for d in ("ws", ".gfso-nodes-ws/p/a", ".gfso-nodes-ws/p/b", ".gfso-scratch-ws", ".gfso-tmp-ws", ".gfso-sys-ws"):
+    for d in ("ws", ".gfso-nodes-ws/p/a", ".gfso-nodes-ws/p/b", ".gfso-nodes-ws/p/.gfso-tmp", ".gfso-nodes-ws/p/.gfso-sys"):
         (work / d).mkdir(parents=True, exist_ok=True)
-    ex = ContainerExecution("vol-v1", IMAGE, None, str(tmp_path / "state"), str(work / "ws"), "files")
+    ex = ContainerExecution("vol-v1", IMAGE, None, str(tmp_path / "state"), str(work / "ws"), "p")
     ex.container = ex.way.container = f"vol-v1-files-{time.time_ns()}"
     ex.way.net, ex.way.gateway = f"{ex.container}-net", f"{ex.container}-gw"
     yield ex
@@ -117,3 +117,32 @@ def test_a_call_that_did_not_run_is_no_absence(project, monkeypatch):
     answers[:] = [(1, "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine")]
     with pytest.raises(PlaceUnavailable):
         project.files.listdir(root)
+
+
+@pytest.mark.parametrize("storage", ["its storage does not answer: Input/output error", None])
+def test_an_io_error_stops_the_place_only_where_the_systems_own_probe_fails(project, monkeypatch, storage):
+    """The daemon answered while its host mounts threw I/O errors for 35 min: every session died, nothing stopped the
+    project (clock case 15). The error's words alone stop nothing — a session's output, or a link of its own to
+    `/proc/self/mem`, can print them; the probe of the storage decides."""
+    def _docker_client(args, **kw):
+        err = "cat: x: Input/output error"
+        if args[:2] == ["docker", "exec"] and any(a.startswith("GFSO_CALL=") for a in args):
+            return subprocess.CompletedProcess(args, 1, "" if kw.get("text") else b"", err if kw.get("text") else err.encode())
+        return subprocess.CompletedProcess(args, 0, "" if kw.get("text") else b"", "" if kw.get("text") else b"")
+    monkeypatch.setattr(E, "run", _docker_client)
+    monkeypatch.setattr(ContainerExecution, "unavailable", lambda self, storage=False, _said=storage: _said if storage
+                        else None)
+    where = str(project.parent / ".gfso-nodes-ws/p")
+    if storage:
+        with pytest.raises(PlaceUnavailable, match="does not answer"):
+            project.files.read_bytes(where)
+        with pytest.raises(PlaceUnavailable):
+            project.run(["cat", "x"], cwd=where, timeout=10)
+    else:
+        assert project.files.read_bytes(where) is None                      # …the operation's own no
+        assert project.run(["cat", "x"], cwd=where, timeout=10).returncode == 1
+
+
+@live
+def test_live_the_storage_probe_answers_on_storage_that_works(project):
+    assert project.unavailable(storage=True) is None

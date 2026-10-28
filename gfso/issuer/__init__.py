@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso import tools as _tools
-from gfso.adapters.execution import LocalExecution
+from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.adapters.snapshots import snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
@@ -144,15 +144,16 @@ class Verbs:
 CONTACT_ROUND = "issuer_"
 
 
-def _contact_place(where: str, ex):
+def _contact_place(where: str, ex, project=None):
     """Where an issuer's contact with a node lays its inputs and its copy of the place: a ROUND OF THAT NODE'S
     VALIDATION SCRATCH, as a validator's run is (`tools_llm`) — so its session reads the probes the node's standing
     findings name in the earlier rounds and writes only its own, and no other node's session reaches it. A root's too
     where places stand apart: in the base it worked in its executor's container and could change the delivery. On this
-    host, where no copy is made (the base, a root's place), the temp its session holds."""
+    host, where no copy is made (the base, a root's place), the temp its session holds. `project`: whose places hold a
+    base's rounds (`scratch_of`)."""
     if _NODES not in str(where) and not ex.apart:
         return ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
-    return ex.scratch(CONTACT_ROUND, dir=str(Path(where).parent / f".gfso-scratch-{Path(where).name}"))
+    return ex.scratch(CONTACT_ROUND, dir=str(scratch_of(where, project)))
 
 @contextlib.contextmanager
 def _round(engine, tmp):
@@ -1555,7 +1556,7 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
     at_place, text, laid = ex or LocalExecution(), "", {}
     try:
-        with (_contact_place(where, at_place) if where else contextlib.nullcontext()) as tmp, _round(engine, tmp):
+        with (_contact_place(where, at_place, engine.project_name) if where else contextlib.nullcontext()) as tmp,                 _round(engine, tmp):
             laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp, at_place.files) if tmp else {}
             packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
             with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):

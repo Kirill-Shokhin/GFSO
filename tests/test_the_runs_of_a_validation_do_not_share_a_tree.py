@@ -22,7 +22,7 @@ from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.adapters import snapshots as S
 from gfso.adapters import worktrees as W
-from gfso.adapters.execution import ContainerExecution, LocalExecution
+from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
 from gfso.delegate import _classify_no_verdict
 from tests.support import criterion
 from tests.test_validate_result import _eng, _fenced
@@ -259,7 +259,7 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
         _git(base, *args)
     place = root / ".gfso-nodes-base" / "proj" / "root"
     W.ensure(base, place, "gfso/proj/root", base)
-    ex = ContainerExecution("snap", _image(), str(root / "env"), str(root / "state"), str(base), "snapprobe")
+    ex = ContainerExecution("snap", _image(), str(root / "env"), str(root / "state"), str(base), "proj")
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
     try:
         sh("ln -s a.sh run.sh && echo built > out.bin", place)
@@ -296,7 +296,7 @@ def test_what_an_executor_made_unreadable_in_its_place_does_not_stop_its_copy(tm
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
     try:
         sh("mkdir -p d && echo x > f && echo y > d/g && chmod 000 f d", base)
-        (at := root / ".gfso-scratch-base" / "r" / "delivery").parent.mkdir(parents=True)
+        (at := scratch_of(base, "chmodprobe") / "r" / "delivery").parent.mkdir(parents=True)
         ex.copy_tree(str(base), str(at))
         with pytest.raises(OSError, match="already exists"):     # …never INTO what stands there (critic 3)
             ex.copy_tree(str(base), str(at))

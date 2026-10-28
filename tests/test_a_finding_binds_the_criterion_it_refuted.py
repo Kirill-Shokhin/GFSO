@@ -29,6 +29,7 @@ import pytest
 
 import gfso.tools as T
 from gfso import issuer as I
+from gfso.adapters.execution import scratch_of
 from gfso.core.protocol.procedure import unrerunnable
 from gfso.packets import _executor_packet, _validator_packet
 from gfso.core.types import AgentId, TaskId
@@ -266,7 +267,7 @@ def test_the_issuer_sees_what_the_engine_demands(tmp_path):
 
 
 def test_a_finding_is_demanded_while_the_file_it_names_stands_and_shown_once_it_is_gone(tmp_path):
-    prog = tmp_path / ".gfso-scratch-ws" / "kid_1791646628" / "dt" / "hh3.c"
+    prog = (scratch := scratch_of(tmp_path / "ws", "p")) / "kid_1791646628" / "dt" / "hh3.c"
     prog.parent.mkdir(parents=True)
     prog.write_text("int main(void){return 0;}")
     e = _seam()
@@ -274,7 +275,7 @@ def test_a_finding_is_demanded_while_the_file_it_names_stands_and_shown_once_it_
     _delivered(e, "fixed it")
     with pytest.raises(ValueError, match="REFUTED"):
         _pass(e)                                        # a validator's program in its scratch, still standing: it runs
-    shutil.rmtree(tmp_path / ".gfso-scratch-ws")
+    shutil.rmtree(scratch)
     record_round(e.graph, str(prog), False)            # …gone as the system removes a round: by its rotation
     packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
     assert "no longer exist here" in packet and "shown, not demanded" in packet

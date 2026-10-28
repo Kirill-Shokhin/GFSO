@@ -21,11 +21,8 @@ from pathlib import Path
 
 from gfso.adapters import children
 from gfso.config import subprocess_env
-from gfso.adapters.execution import LocalExecution
+from gfso.adapters.execution import NODES, LocalExecution
 from gfso.core.types import HOST
-
-#: a base's node places stand beside it, under this prefix and the base's name
-NODES = ".gfso-nodes-"
 
 
 def base_of(place: str | None) -> str | None:
