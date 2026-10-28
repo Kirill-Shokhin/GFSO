@@ -5,12 +5,12 @@
 // numbers are on hover: the same «median 27% of 200k» on every row was noise (the author, 2026-10-27).
 import {esc} from './dom.js';
 import {modelName, TOKENS} from './vocab.js';
-import {usd, tok as fmtTok, pct} from './fmt.js';
+import {usd, tok as fmtTok, pct, money, NOT_REPORTED} from './fmt.js';
 import {median} from './run.js';
 import {MODELS, COST_CLS, KIND} from './hints.js';
 
 // what a provider did not report is said so; a reported 0 is a 0
-const NOT = '<span class="wk-none">not reported</span>';
+const NOT = `<span class="wk-none">${NOT_REPORTED}</span>`;
 const tok = x => fmtTok(x, NOT);
 
 // how full the sessions' contexts got: the median session's fullest turn dark, the fullest session's light behind it
@@ -38,22 +38,23 @@ export function render(el, run) {
     const {rows, total, unanswered} = run.work;
     if (!rows.length) return void (el.innerHTML = '<div class="pn-meta">no model call recorded yet</div>');
     const byModel = {};
-    rows.forEach(r => { const m = byModel[r.model] ??= {cost: 0, calls: 0, priced: 0, roles: [], rows: [], window: null};
-        m.cost += r.cost; m.calls += r.calls - r.resumed; m.priced += r.calls - r.unpriced; m.roles.push(KIND[r.kind].name); m.rows.push(r); m.window ??= r.window; });
+    rows.forEach(r => { const m = byModel[r.model] ??= {cost: 0, calls: 0, priced: 0, booked: 0, unpriced: 0, roles: [], rows: [], window: null};
+        m.cost += r.cost; m.calls += r.calls - r.resumed; m.priced += r.calls - r.unpriced; m.booked += r.calls; m.unpriced += r.unpriced; m.roles.push(KIND[r.kind].name); m.rows.push(r); m.window ??= r.window; });
     const models = Object.entries(byModel).sort((a, b) => b[1].cost - a[1].cost);
     // a price no session of it reported is no $0.00 and no 0% of the run
-    const price = (x, priced) => priced ? usd(x) : NOT, share = (x, priced) => priced && total ? pct(x / total) : '—';
+    const price = (x, calls, unpriced) => (m => m === NOT_REPORTED ? NOT : m)(money(x, calls, unpriced)),
+          share = (x, priced) => priced && total ? pct(x / total) : '—';
     const row = (r, i, m) => `<tr${i ? '' : ' class="wk-first"'}>${i ? '<td></td>' : `<td${MODELS.id(r.model)}><b>${esc(modelName(r.model))}</b></td>`}`
         + `<td>${KIND[r.kind].name}</td><td>${r.resumed ? `<span${MODELS.processes(r.calls)}>${r.calls - r.resumed}</span>` : r.calls}${r.handed ? `<span class="wk-none"${MODELS.handed(r.handed)}>, ${r.handed} handed over</span>` : ''}`
         + `${Object.keys(r.ends).length ? ` <span class="wk-none"${MODELS.ends}>(${Object.entries(r.ends).map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')})</span>` : ''}</td>`
         + `<td>${!r.turned ? NOT : r.turned < r.calls ? `<span${MODELS.turns(r.turned, r.calls)}>${r.turns} in ${r.turned}</span>` : r.turns}</td>`
-        + `<td>${price(r.cost, r.calls - r.unpriced)}${r.unpriced && r.unpriced < r.calls ? ` <span class="wk-none"${MODELS.unpriced}>+ ${r.unpriced} unpriced</span>` : ''}</td>`
+        + `<td>${price(r.cost, r.calls, r.unpriced)}${r.unpriced && r.unpriced < r.calls ? ` <span class="wk-none"${MODELS.unpriced}>+ ${r.unpriced} unpriced</span>` : ''}</td>`
         + `<td>${share(r.cost, r.calls - r.unpriced)}</td><td>${where(r)}</td><td>${fill(r)}</td></tr>`;
     el.innerHTML = `<div class="wk">
         <div class="cs-tiles">${models.map(([m, x]) =>
             `<div class="cs-tile"><b>${esc(modelName(m))}${x.window ? ` <em${MODELS.window}>${fmtTok(x.window)}</em>` : ''}</b><span>${esc(x.roles.join(' · '))}</span>`
             // its share of the run on a line of its own, and only beside another model — one model's 100% says nothing
-            + `<i>${price(x.cost, x.priced)}</i>${models.length > 1 && x.priced && total ? `<i>${pct(x.cost / total)} of the run</i>` : ''}<i>${x.calls} sessions</i></div>`).join('')}</div>
+            + `<i>${price(x.cost, x.booked, x.unpriced)}</i>${models.length > 1 && x.priced && total ? `<i>${pct(x.cost / total)} of the run</i>` : ''}<i>${x.calls} sessions</i></div>`).join('')}</div>
         <table class="wk-table"><thead><tr><th>model</th><th>role</th><th${MODELS.sessions}>sessions</th><th>turns</th><th>cost</th><th>share</th>
             <th${MODELS.cost}>cost split</th>
             <th${MODELS.fill}>context filled</th></tr></thead><tbody>

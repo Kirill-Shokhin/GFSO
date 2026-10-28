@@ -3,6 +3,7 @@ export const LOCALE = 'en-GB';                     // the page's language, not t
 
 export const hm = t => new Date(t).toTimeString().slice(0, 5);
 export const hms = t => new Date(t).toTimeString().slice(0, 8);
+export const dayLong = t => new Date(t).toLocaleDateString(LOCALE, {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
 export const day = t => new Date(t).toLocaleDateString(LOCALE, {day: 'numeric', month: 'short'});
 export const moment = t => new Date(t).toLocaleString(LOCALE);
 export const when = t => new Date(t).toLocaleString(LOCALE, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});

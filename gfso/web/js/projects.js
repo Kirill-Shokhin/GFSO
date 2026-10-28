@@ -8,7 +8,7 @@ import {PROJECT, getJSON, api, leave} from './api.js';
 import {S, procs} from './state.js';
 import {notice, askInPage, act} from './overlays.js';
 import {modelName, goalWord, terminal} from './vocab.js';
-import {LOCALE, hm, day as date, usd} from './fmt.js';
+import {hm, day as date, dayLong, usd} from './fmt.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
 export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (m[w.project] || 0) + 1, m), {});
@@ -74,7 +74,7 @@ const day = t => { const d = new Date(t * 1e3); d.setHours(0, 0, 0, 0); return d
 function dayName(ms) {
     const today = day(Date.now() / 1e3);
     return ms === today ? 'Today' : ms === today - DAY ? 'Yesterday'
-        : new Date(ms).toLocaleDateString(LOCALE, {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
+        : dayLong(ms);
 }
 const clock = t => hm(t * 1e3);
 const recent = p => p.t && Date.now() / 1e3 - p.t < DAY / 1e3;
