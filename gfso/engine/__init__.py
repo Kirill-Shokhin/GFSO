@@ -3011,6 +3011,13 @@ class Engine:
                 accepted = handed
         return accepted
 
+    def delivered(self, *task_ids) -> "tuple | None":
+        """(tree, commit) of the last DELIVER under this version among `task_ids` — the tree their one place stood at
+        when it was last handed in (a scope's whole is delivered after its parts) — None where it recorded no commit."""
+        last = max((e for t in task_ids for e in on_current_version(self._audit.get_entries(t))
+                    if e.signal == Signal.DELIVER), key=lambda e: e.timestamp, default=None)
+        return (last.artifact, last.commit) if last is not None and last.commit else None
+
     def accepted_artifact(self, task_id: TaskId):
         """The tree of `accepted_delivery`."""
         return self.accepted_delivery(task_id)[0]

@@ -28,10 +28,11 @@ from typing import Optional, Union
 from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.workspaces import declaring_role, execution_of
-from gfso.adapters.snapshots import snapshot, swap
+from gfso.adapters.snapshots import NotTheDelivery, snapshot, swap
 from gfso.adapters.execution import NODES as _NODES, scratch_of
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage, Verdict, passed
+from gfso.core.types import (BATCH, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage, Verdict,
+                             passed)
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
                                           with_part_observations)
@@ -466,9 +467,15 @@ def _no_start(llm, ended: str, place: str, error: str) -> str:
 
 def _own_place(scratch: Optional[str], i: int, ex) -> Optional[str]:
     """The directory batch `i` copies the delivery into, under the validation's scratch — None without one."""
-    if not scratch:
-        return None
-    ex.files.mkdir(place := str(Path(scratch) / f"batch{i + 1}"))
+    return _fresh(ex, str(Path(scratch) / f"{BATCH}{i + 1}")) if scratch else None
+
+
+def _fresh(ex, place: str) -> str:
+    """`place` made by the system where nothing stood: a batch's own writable root (`execution._writable_root`), which
+    no session has held — a directory or a link found there is refused, never copied into."""
+    if ex.files.exists(place):
+        raise OSError(f"{place} already stands: a batch's directory is made fresh")
+    ex.files.mkdir(place)
     return place
 
 
@@ -623,7 +630,10 @@ def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, 
         # our own scratch was sitting in the deliverable while the validator dutifully reported
         # everyone else's leavings (measured on the human door 2026-08-22).
         root = scratch_of(workdir, project)
-        scratch = str(root / f"{task_id}_{int(time.time())}")
+        # …a round of its own, never one an earlier validation in the same second holds: its batches are made fresh
+        at = int(time.time())
+        while ex.files.exists(scratch := str(root / f"{task_id}_{at}")):
+            at += 1
         ex.files.mkdir(scratch)
         if graph is not None:              # …in the record of the rounds standing, as it goes (`findings.record_round`)
             record_round(graph, scratch, True)
@@ -1211,12 +1221,17 @@ def _observe_exact(engine: Engine, parts: list, workdir) -> dict:
         # (critic 3 over the judges slice)
         with ex.scratch("gfso-exact-", system=True) as tmp:
             ex.files.mkdir(str(at := Path(tmp) / "exact"))
-            with snapshot(workdir, at / "delivery", ex) as tree:
-                if tree:
-                    # …as it stands, whatever git ignores included: a `git clean` here emptied a shared place's copy
-                    # inside an enclosing repository and took a delivery's ignored `node_modules` (critic over the
-                    # fresh copy). State an executor's own run left is the pin's to start clean of (`EXACT_TEXT`)
-                    why, rows = "its inputs could not be laid", dict(run_checks(ex, probes, workdir, tree, at, OBSERVE_S))
+            try:
+                with snapshot(workdir, at / "delivery", ex, delivered=engine.delivered(*(t.id for t, *_ in parts))
+                              ) as tree:
+                    if tree:
+                        # …as it stands, whatever git ignores included: a `git clean` here emptied a shared place's
+                        # copy inside an enclosing repository and took a delivery's ignored `node_modules` (critic over
+                        # the fresh copy). State an executor's own run left is the pin's to start clean of (`EXACT_TEXT`)
+                        why, rows = ("its inputs could not be laid",
+                                     dict(run_checks(ex, probes, workdir, tree, at, OBSERVE_S)))
+            except NotTheDelivery as e:
+                why = str(e)
     return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
 
 
@@ -1232,7 +1247,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size."""
     system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     batches = _scope_batches(engine, parts, validation_batch())
-    ex = execution_of(engine)
+    ex, delivered = execution_of(engine), engine.delivered(*(t.id for t, *_ in parts))
 
     def _run(batch, client=None, place=None) -> str:
         if inside is not None:
@@ -1253,7 +1268,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
         # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
         try:
-            with snapshot(workdir, Path(place) / "delivery", ex, edits) if place else nullcontext() as tree:
+            with snapshot(workdir, Path(place) / "delivery", ex, edits, delivered) if place else nullcontext() as tree:
                 if not tree and ex.apart:
                     # …never in the executor's place where places stand apart: its container, its CLI state, its tree
                     # to change (§10.3). No validator started: not a report it failed to write nor a contract to
@@ -1267,6 +1282,8 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
                 return swap(text, tree, workdir) if tree else text
         except PlaceUnavailable as e:        # …the place down while copying: the stop a call that could not start makes
             return _no_start(client or llm, "unavailable", e.place, str(e))
+        except NotTheDelivery as e:          # …a copy that is not the delivery is no copy to judge: booked as none made
+            return _no_start(client or llm, "uncopied", str(workdir), str(e))
 
     def _run_again_if_unread(batch, client=None, place=None) -> str:
         """A batch whose report does not parse is run once more, alone, inside this validation, in a fresh place of its
@@ -1279,7 +1296,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
             return text
         again = f"{place}_again" if place else None
         if again:
-            ex.files.mkdir(again)
+            _fresh(ex, again)
             record_round(engine.graph, again, True)
         return _run(batch, client, again)
     # a lone run copies a node's own place; on this host never a shared directory with no git base: that is the user's

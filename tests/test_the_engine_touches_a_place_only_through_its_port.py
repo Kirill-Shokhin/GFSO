@@ -35,7 +35,7 @@ HOSTS_OWN = {
     ("core/protocol/procedure.py", "_gone", "HOST.exists(str(Path(path).parent))"): "a path in no round, as above",
     ("adapters/worktrees.py", "is_repo_top", "shutil.which('git')"): "this host's git",
     ("adapters/worktrees.py", "is_repo_top", "Path(base).is_dir()"): "the base",
-    ("adapters/worktrees.py", "_start", "HOST.read_bytes(str(Path(base) / '.git' / 'info' / name))"): "the base",
+    ("adapters/worktrees.py", "kept_out", "HOST.read_bytes(str(Path(base) / '.git' / 'info' / n))"): "the base",
     ("tools_llm.py", "_keep_rejected_report", "d.mkdir(parents=True, exist_ok=True)"): "the server's state",
     ("tools_llm.py", "_keep_rejected_report",
      "f.write_text('# refused as a verdict: ' + defects + '\\n\\n' + text, encoding='utf-8')"): "the server's state",

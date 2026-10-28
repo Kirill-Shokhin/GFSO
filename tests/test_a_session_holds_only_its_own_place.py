@@ -88,6 +88,10 @@ def test_a_validation_writes_its_round_and_reads_the_earlier_ones(project, scrat
     assert v.rw == scratch / "root_1700000000"
     assert v._mounts() == [(project.base, True), (scratch, True), (scratch / "root_1700000000", False),
                            (Path(v.temp_root()), False)]
+    b = project.session(str(scratch / "root_1700000000" / "batch2" / "delivery"))
+    assert b.rw == scratch / "root_1700000000" / "batch2" and b.temp_root() == v.temp_root()
+    assert b._mounts() == [(project.base, True), (scratch, True), (b.rw, False), (Path(b.temp_root()), False)], \
+        "one batch writes itself alone: its round and its sibling batches read-only"
 
 
 def test_the_systems_commands_stay_in_the_projects_container(project):

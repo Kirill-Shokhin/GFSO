@@ -66,6 +66,8 @@ def test_a_posix_parent_maps_paths_both_ways(tmp_path, monkeypatch):
     assert _writable_root(w / "base" / "src", x) == w / "base"
     assert _writable_root(nodes / "k" / "src", x) == nodes / "k"
     assert _writable_root(nodes / ".gfso-scratch-k" / "k_1" / "run", x) == nodes / ".gfso-scratch-k" / "k_1"
+    assert _writable_root(nodes / ".gfso-scratch-k" / "k_1" / "batch2_again" / "delivery", x) == \
+        nodes / ".gfso-scratch-k" / "k_1" / "batch2_again", "a validation's batch is a root of its own"
     assert _writable_root(nodes / ".gfso-tmp" / "node-1" / "f", x) == nodes / ".gfso-tmp" / "node-1"
     with pytest.raises(ValueError):
         x._inside_cwd("/home/u/other")

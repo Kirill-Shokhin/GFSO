@@ -20,7 +20,9 @@ from pathlib import Path
 
 import pytest
 
+import gfso.issuer as I
 import gfso.tools as T
+from gfso.adapters.snapshots import NotTheDelivery
 from gfso.delegate import ISSUER_VERBS
 from gfso.issuer import Unavailable, Verbs, answer_the_challenge, settle
 from gfso.core.types import State, TaskId
@@ -402,5 +404,29 @@ def test_in_a_nodes_own_place_the_issuer_runs_in_a_copy_of_it(tmp_path):
         (stood, _), = llm.where
         assert stood != str(place) and stood.endswith("place") and stood in llm.packets[0]
         assert [p.name for p in place.iterdir()] == ["delivered.c"]
+    finally:
+        e.stop()
+
+
+def test_a_dispute_is_ruled_only_on_the_delivery_the_fail_judged(tmp_path, monkeypatch):
+    """The ruling can retire findings: on a copy that is not what DELIVER recorded — the place changed after it — no
+    contact runs (`snapshots.NotTheDelivery`), as where no copy could be made."""
+    place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
+    place.mkdir(parents=True)
+    held = []
+
+    def _held(where, at, ex, delivered=None):
+        held.append(delivered)
+        raise NotTheDelivery("the place changed after DELIVER (c0ffee): 1 tracked file(s) differ — f")
+    monkeypatch.setattr(I, "snapshot", _held)
+    e = make_engine()
+    e.start()
+    try:
+        _disputed(e)
+        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee"))
+        llm = _ContactLLM({"decision": "accept", "justification": "ran it"}, ran={"Bash": 1})
+        with pytest.raises(Unavailable, match="changed after DELIVER"):
+            answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        assert held == [("tree", "c0ffee")] and not llm.where
     finally:
         e.stop()

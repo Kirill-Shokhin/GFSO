@@ -12,6 +12,8 @@ crash leaves a directory in the run's scratch, which the scratch's own rotation 
 """
 from __future__ import annotations
 
+import inspect
+import json
 import logging
 import os
 import re
@@ -55,6 +57,10 @@ class _Place:
                 self._c.notify_all()
 
 
+class NotTheDelivery(Exception):
+    """The copy made to judge is not what was delivered: the place changed after DELIVER (§11.3)."""
+
+
 _PLACES: dict[str, _Place] = {}
 _GUARD = threading.Lock()
 
@@ -65,13 +71,19 @@ def _place(path: Path) -> _Place:
 
 
 @contextmanager
-def snapshot(place, at, execution, edits: Optional[list] = None):
+def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Optional[tuple] = None):
     """`place` copied to `at` for one run, yielded as a path. Where the copy cannot be made (a host that may not make
     symlinks, WinError 1314; a `cp -a` that failed or outran its time) the run is yielded None and works in the place
     itself — ALONE among the runs that fell back so: side by side there is the race this module exists to end. An
     engine error instead would void the batches already paid for, and a cause that does not pass (the host's
     privilege) would refuse the node's every validation. On leaving, the tracked files the run changed in the copy go
-    into `edits` (paths relative to the place) and the copy is removed."""
+    into `edits` (paths relative to the place) and the copy is removed.
+
+    `delivered`: the (tree, commit) DELIVER recorded. A copy whose tracked files are not that tree is no copy of the
+    delivery — a process its executor left running changed the place after DELIVER — and raises `NotTheDelivery`
+    before anything runs in it: a verdict is about the result as it stood at DELIVER (§11.3). What git does not track
+    (a build) is judged as it stands. A delivery with no recorded commit — no git base, a record from before the
+    commit was kept — is judged as it stands, as before."""
     place, at = Path(place), Path(at)
     try:
         if at.resolve().is_relative_to(place.resolve()):   # a scratch inside the place (no git base): no copy of a tree into itself
@@ -91,6 +103,8 @@ def snapshot(place, at, execution, edits: Optional[list] = None):
             yield None
         return
     try:
+        if delivered and delivered[1] and (why := _not_delivered(place, at, *delivered, execution)):
+            raise NotTheDelivery(why)
         yield str(at)
         if edits is not None:      # …after a run that ended, not one that raised: its copy is no record
             edits.extend(_changed_or_unknown(place, at, execution))
@@ -161,6 +175,127 @@ def changed(place, at, execution) -> list[str]:
         a = _tree(place, head, Path(d) / "index", execution)
     b = _tree(at, head, Path(at) / ".git" / "gfso-index-copy", execution)              # …gone with the copy
     return [] if a is None or b is None else sorted(p for p in a.keys() | b.keys() if a.get(p) != b.get(p))
+
+
+#: `_judges_git`, run in the copy's own container. The copy's `.git` is neutralised where it stands — the system's
+#: config (the base's settings a node's repository is made with, `W.INHERITED`, and the object format), the base's
+#: `info/*` (`W.kept_out`), no hooks, no `commondir` (its objects borrowed instead), a gitfile or a link replaced by a
+#: git of its own — so `.git/modules` stays and nothing of the executor's runs under a judge's git. The tree is
+#: written in a git dir the system makes beside the copy (GIT_DIR, the copy its work tree, its objects borrowed),
+#: staged by the one rule DELIVER staged by (`W.stage`, whose source is handed in). Exit 3: nested repositories.
+_JUDGES_GIT = r'''
+import json, os, shutil, subprocess, sys
+from pathlib import Path
+at, commit, delivered, base = Path(sys.argv[1]), sys.argv[2], sys.argv[3], Path(sys.argv[4])
+given, apart = json.loads(sys.argv[5]), sys.argv[6:]
+DELIVERED = tuple(given["spec"])
+exec(given["stage"])
+
+
+def put(path, text):                                     # …LF on any host: a CR ends no path git reads
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode() if isinstance(text, str) else text)
+
+
+def objects_of(gitdir):
+    """The object stores a git dir reads: its own, and its `commondir`'s."""
+    out, common = [gitdir / "objects"], gitdir / "commondir"
+    if common.is_file() and not common.is_symlink():
+        out.append(Path(os.path.normpath(gitdir / common.read_text(encoding="utf-8", errors="replace").strip())) / "objects")
+    return out
+
+
+def borrow(gitdir, stores):
+    put(gitdir / "objects/info/alternates",
+        "".join(Path(os.path.relpath(s, gitdir / "objects")).as_posix() + "\n" for s in stores))
+
+
+def run(*args, **env):
+    return subprocess.run(["git", *apart, *args], cwd=at, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env={**os.environ, **env})
+
+
+dot = at / ".git"
+fmt = ""
+if dot.is_dir() and not dot.is_symlink():
+    fmt = subprocess.run(["git", "config", "-f", str(dot / "config"), "--get", "extensions.objectFormat"],
+                         capture_output=True, text=True).stdout.strip()
+    stores = objects_of(dot)
+    if len(stores) > 1:
+        old = (dot / "objects/info/alternates").read_text(encoding="utf-8", errors="replace") \
+            if (dot / "objects/info/alternates").is_file() else ""
+        put(dot / "objects/info/alternates", old + Path(os.path.relpath(stores[1], dot / "objects")).as_posix() + "\n")
+        (dot / "commondir").unlink()
+    for gone in ("hooks", "info", "config.worktree"):
+        p = dot / gone
+        shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink() if os.path.lexists(p) else None
+else:
+    stores = []
+    if dot.is_file() and not dot.is_symlink():
+        stores = objects_of(Path(os.path.normpath(
+            at / dot.read_text(encoding="utf-8", errors="replace").split("gitdir:", 1)[-1].strip())))
+    if os.path.lexists(dot):
+        dot.unlink()
+    for d in ("objects", "refs/heads"):
+        (dot / d).mkdir(parents=True)
+    borrow(dot, stores)
+    put(dot / "HEAD", commit + "\n")
+config = f"[core]\n\trepositoryformatversion = {1 if fmt else 0}\n\tbare = false\n"
+config += f"[extensions]\n\tobjectFormat = {fmt}\n" if fmt else ""
+for k in given["inherited"]:
+    v = subprocess.run(["git", "config", "-f", str(base / ".git" / "config"), "--get", k], capture_output=True, text=True)
+    if v.returncode == 0 and v.stdout.strip():
+        config += f"[{k.split('.')[0]}]\n\t{k.split('.')[1]} = {v.stdout.strip()}\n"
+own = at.parent / ("gfso-judge-" + os.urandom(4).hex())
+for gitdir in (dot, own):
+    put(gitdir / "config", config)
+    for name, text in given["kept_out"].items():
+        put(gitdir / "info" / name, text.encode("latin-1"))
+for d in ("objects", "refs/heads"):
+    (own / d).mkdir(parents=True, exist_ok=True)
+borrow(own, [dot / "objects"])
+put(own / "HEAD", commit + "\n")
+git = lambda *a: run(*a, GIT_DIR=str(own), GIT_WORK_TREE=str(at))
+if (r := git("read-tree", commit)).returncode or (r := stage(git)).returncode:
+    sys.exit(r.stderr[-300:])
+tree = git("write-tree").stdout.strip()
+nested = [line.split("\t", 1)[1] for line in git("ls-tree", "-r", tree).stdout.splitlines() if line.startswith("160000")]
+if nested:
+    print("\n".join(nested))
+    sys.exit(3)
+if tree != delivered:
+    print("\n".join(git("diff-tree", "-r", "--name-only", delivered, tree).stdout.splitlines()) or tree)
+    sys.exit(4)
+'''
+
+
+def _not_delivered(place, at, tree: str, commit: str, execution) -> Optional[str]:
+    """Why the copy at `at` is not the delivery — its files staged as DELIVER staged them (`W.stage`) over a git the
+    system made (`_JUDGES_GIT`), written as a tree and held against the `tree` the system recorded — or None where it
+    is. NOTHING OF THE COPY'S `.git` IS READ FOR BEHAVIOUR: its config, hooks, attributes and excludes are its
+    executor's, and a filter they name, run in the copy's container before its judge, could change the copy after this
+    look, or hash a changed file as delivered (critics over cba729f: a `commondir` led to a config of its own). Its
+    objects are borrowed — a forged one can only make the tree differ. The copy keeps its neutralised git: a judge's git
+    runs no filter of the executor's. A nested repository's files are no part of the recorded tree — DELIVER records its
+    commit, whose objects are its agent's to forge — so a delivery holding one is not judged, and that is named. A
+    repository whose executor ran a clean filter of its own at DELIVER is not reproduced and reads as changed."""
+    base = W.base_of(str(place)) or str(place)
+    given = {"inherited": W.INHERITED, "spec": W.DELIVERED, "stage": inspect.getsource(W.stage),
+             "kept_out": {k: v.decode("latin-1") for k, v in W.kept_out(base).items()}}
+    ex = execution.session(str(at))
+    r = ex.run([ex.python, "-c", _JUDGES_GIT, str(at), commit, tree, str(base), json.dumps(given), *W.APART],
+               cwd=str(at), timeout=1800, env=subprocess_env(extra=W.NO_CONFIG))
+    said = (r.stdout or "").split()
+    if r.returncode == 0:
+        return None
+    if r.returncode == 3:
+        return (f"the delivery holds nested repositories ({', '.join(said[:5])}): their files are no part of the tree "
+                f"DELIVER recorded ({commit[:12]}), so no copy can be held to it — commit their files into the node's "
+                f"own repository instead")
+    if r.returncode == 4:
+        return (f"the place changed after DELIVER ({commit[:12]}): {len(said)} tracked file(s) differ — "
+                f"{', '.join(said[:5])}")
+    return f"the copy could not be held to its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}"
 
 
 def _tree(where, head: str, index: Path, execution) -> Optional[dict]:

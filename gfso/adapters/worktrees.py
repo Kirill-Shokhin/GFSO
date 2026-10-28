@@ -133,8 +133,7 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
             _by_registration(base, ["worktree", "lock", str(place)], execution)
             return False
         # …the base's own settings, as a worktree had them: line endings, links, attributes (a clone reads only its own)
-        own = {k: v for k in INHERITED if (v := git(base, "config", "--local", "--get", k, execution=execution)
-                                                .stdout.strip())}
+        own = inherited(base, execution)
         _fs(execution).files.mkdir(str(place))           # …a session's container mounts only a place that stands
         try:
             for args in (("init", "-q"), *(("config", k, v) for k, v in own.items())):
@@ -151,13 +150,24 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
 INHERITED = ("core.autocrlf", "core.eol", "core.symlinks", "core.filemode", "core.ignorecase")
 
 
+def inherited(base, execution) -> dict:
+    """{key: value} of the base's `INHERITED` settings it sets — what every node's own repository is made with."""
+    return {k: v for k in INHERITED if (v := git(base, "config", "--local", "--get", k, execution=execution).stdout.strip())}
+
+
+def kept_out(base) -> dict:
+    """{name: bytes} of the base's `info/exclude` and `info/attributes` — what every node's own repository is made with:
+    what the base keeps out of its commits stays out of the node's."""
+    return {n: b for n in ("exclude", "attributes") if (b := HOST.read_bytes(str(Path(base) / ".git" / "info" / n)))
+            is not None}
+
+
 def _start(base, place: Path, branch: str, start_from, execution) -> None:
     """The new clone on `branch`: the base's commit of that name where it has one, else the HEAD of `start_from` — a
     parent's place, whose commit comes over by bundle (`_carry`): no container holds both places."""
     relative_alternates(place / ".git" / "objects", Path(base) / ".git" / "objects", execution)
-    for name in ("exclude", "attributes"):        # what the base keeps out of its commits stays out of the node's
-        if (kept := HOST.read_bytes(str(Path(base) / ".git" / "info" / name))) is not None:    # the base: the host's
-            _fs(execution).files.write_bytes(str(place / ".git" / "info" / name), kept)
+    for name, kept in kept_out(base).items():
+        _fs(execution).files.write_bytes(str(place / ".git" / "info" / name), kept)
     if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0:
         start = git(base, "rev-parse", f"refs/heads/{branch}", execution=execution).stdout.strip()
     else:
@@ -170,7 +180,26 @@ def _start(base, place: Path, branch: str, start_from, execution) -> None:
 #: What a session leaves behind that is no one's delivery: interpreter and compiler caches. Committed, two siblings'
 #: caches of one shared module collide at the join, and one left untracked in the base aborts it (critic r2,
 #: 2026-10-04). The repository's own `.gitignore` decides everything else.
-CACHES = ("__pycache__", "*.pyc", "*.pyo", ".pytest_cache", "*.o", "*.obj")
+#: …and the tools' own caches and environments, which mark themselves ignored with a `.gitignore` of their own
+CACHES = ("__pycache__", "*.pyc", "*.pyo", ".pytest_cache", "*.o", "*.obj", ".mypy_cache", ".ruff_cache", ".tox",
+          ".nox", ".venv", "venv")
+#: the pathspec of what a delivery commits: everything in the place but its caches
+DELIVERED = (".", *(f":(exclude,glob)**/{c}" for c in CACHES),
+             *(f":(exclude,glob)**/{c}/**" for c in CACHES if "*" not in c))
+
+
+def stage(git):
+    """THE DELIVERED TREE, staged by `git(*args)` (a CompletedProcess, text out): everything `DELIVERED` names that
+    the ignore rules let in, and every `.gitignore` or `.gitattributes` there that ignore rules hide — a rule that
+    hides itself is still part of what was handed in, and one added after DELIVER to hide a file is seen. The one rule
+    of both sides: `commit_all` at DELIVER, and a judge holding its copy to that tree (`snapshots._JUDGES_GIT`, which
+    runs this function's own source). The last git call's result."""
+    r = git("add", "-A", "--", *DELIVERED)
+    if r.returncode:
+        return r
+    hidden = [p for p in git("ls-files", "-z", "-o", "-i", "--exclude-standard", "--", ":(glob)**/.gitignore",
+                             ":(glob)**/.gitattributes", *DELIVERED[1:]).stdout.split("\0") if p]
+    return git("add", "-f", "--", *hidden) if hidden else r
 
 
 def commit_all(base, place, message: str, who: str, execution=None, branch: str | None = None) -> str:
@@ -181,8 +210,7 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
     container, whose agent's filters and fsmonitor ran over every place from the project's; and taken back into the
     base by bundle (`_carry`), the base's side in the root's container."""
     with _lock(base):
-        git(place, "add", "-A", "--", ".", *(f":(exclude,glob)**/{c}" for c in CACHES),
-             *(f":(exclude,glob)**/{c}/**" for c in CACHES if "*" not in c), execution=execution)
+        stage(lambda *a: git(place, *a, execution=execution))
         r = git(place, "commit", "--allow-empty", "--no-verify", "-q", "-m", message, who=who, execution=execution)
         if r.returncode != 0:
             raise OSError(f"the delivery could not be committed in {place}: {r.stderr.strip()}")

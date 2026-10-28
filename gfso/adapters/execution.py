@@ -26,7 +26,7 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import HOST, MADE, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
+from gfso.core.types import BATCH, HOST, MADE, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, executions, executions_path,
                          host_env)
 from gfso.adapters import door, egress
@@ -1115,10 +1115,13 @@ class ContainerExecution(ExecutionPort):
         # inside, as the place was made: a symlink a session made in here is no link on the host (probe P5)
         # …by root, in the project's container (`SYSTEM_CAPS`): as the agent, one unreadable file the executor left in
         # its place failed every copy and kept its delivery from being judged (critic over the judges slice) — and only
-        # where nothing stands: into a directory or a link left there, `cp -a` copies INTO it (critic 3)
-        if self.files.exists(dst):
-            raise OSError(f"{dst} already exists: a copy is made only where nothing stands")
-        r = self.run(["cp", "-a", "--", src, dst], cwd=src, timeout=1800, root=True)
+        # where nothing stands: into a directory or a link left there, `cp -a` copies INTO it (critic 3) — made fresh
+        # by the same call that copies, so nothing can stand there between a look and the copy
+        r = self.run(["sh", "-c", 'mkdir -- "$2" || exit 3; cp -a -- "$1/." "$2/"', "sh", src, dst], cwd=src,
+                     timeout=1800, root=True)
+        if r.returncode == 3:
+            raise OSError(f"{dst} already exists or cannot be made: a copy is made only where nothing stands "
+                          f"({r.stderr.strip()[-200:]})")
         if r.returncode != 0:
             raise OSError(f"cp -a {src} {dst} failed in {self.container}: {r.stderr.strip()[-300:]}")
 
@@ -1321,14 +1324,22 @@ def _left(ex) -> tuple:
 def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
     """What a session working in `cwd` may write — read off the system's names at fixed depths, never off what stands
     there: the base whole, for a root; in the project's own directory (`.gfso-nodes-<base>/<project>`) a node's clone,
-    or one entry of a dotted directory, the system's (no key starts with a dot): a validation's round of the scratch it
-    stands in, whole (its copy of the delivery and its own files: `scratch_of`/<round>), a temp of its own, a copy."""
+    or one entry of a dotted directory, the system's (no key starts with a dot): a round of the scratch it stands in
+    (`scratch_of`/<round>, an issuer's contact whole) — one batch of it, where it stands in one (`<round>/batch<N>`:
+    a process one batch's validator left behind reaches no other's copy) —, a temp of its own, a copy."""
     rel = cwd.relative_to(project.parent).parts if cwd.is_relative_to(project.parent) else ()
     if rel[:1] == (project.mounts[0],):
         return project.base
     if rel[:2] != Path(project.mounts[1]).parts:
         raise ValueError(f"{cwd} is not inside {project.container}'s mounts ({', '.join(project.mounts)})")
-    return project.parent.joinpath(*rel[:3 + (len(rel) > 2 and rel[2].startswith("."))])
+    dotted = len(rel) > 2 and rel[2].startswith(".")
+    batch = dotted and rel[2].startswith(SCRATCH) and len(rel) > 4 and rel[4].startswith(BATCH)
+    return project.parent.joinpath(*rel[:3 + dotted + batch])
+
+
+def _scratch_above(rw: Path) -> "Path | None":
+    """The scratch whose round — or a round's batch — the writable root `rw` is; None for any other root."""
+    return next((p for p in (rw.parent, rw.parent.parent) if p.name.startswith(SCRATCH)), None)
 
 
 def _served(rw: Path, project: "ContainerExecution") -> Path:
@@ -1356,10 +1367,10 @@ def _kind_of(rel: tuple, systems: tuple) -> tuple:
 def _owner(rw: Path) -> Path:
     """The place a writable root serves: a validation's round, the node it validates — the base, for its scratch among
     the project's places (`scratch_of`); else itself."""
-    if not rw.parent.name.startswith(SCRATCH):
+    if (s := _scratch_above(rw)) is None:
         return rw
-    name = rw.parent.name[len(SCRATCH):]
-    return rw.parents[3] / name[1:] if name.startswith(".") else rw.parents[1] / name
+    name = s.name[len(SCRATCH):]
+    return s.parents[2] / name[1:] if name.startswith(".") else s.parent / name
 
 
 class PlaceContainer(ContainerExecution):
@@ -1370,8 +1381,8 @@ class PlaceContainer(ContainerExecution):
     temp is its node's own (`temp_of`): what the system lays for the node's sessions, no other node's reads — save that
     whatever works in the base shares the base's: every node with no git base, a root's sessions, a parent's consent
     before its own place is made. Its CLI's state is its place's own, under its project's. No judge shares a place with
-    its executor: a validation and an issuer's contact, a root's included, work each in a round of their own, on a copy,
-    and a delivery that could not be copied is not judged — the place down (`apart`). NOT HELD YET: the sessions that work in the base
+    its executor: a validation and an issuer's contact, a root's included, work each in a round of their own, on a copy —
+    a validation's batches each in a batch of its own, its siblings read-only —, and a delivery that could not be copied is not judged — the place down (`apart`). NOT HELD YET: the sessions that work in the base
     share its CLI state — a root's executor and a parent's consent before its own place is made; a tool-loop provider's
     issuer reads a node's inputs by its shell only; a round's container stands until its round is pruned, a done node's until its directories go or the
     project stops."""
@@ -1396,14 +1407,14 @@ class PlaceContainer(ContainerExecution):
                 "--label", f"gfso.node={self.node}", *(["--label", f"gfso.agent={self.agent}"] if self.agent else [])]
 
     def _mounts(self) -> list:
-        """The base read-only unless the place is the base; a validation's round writable, its earlier rounds
-        read-only beneath it; a place writable, its validations' scratch read-only — a node's standing findings name
-        probes there; the temp writable."""
+        """The base read-only unless the place is the base; a validation's round — or its one batch — writable, its
+        earlier rounds and sibling batches read-only beneath it; a place writable, its validations' scratch read-only —
+        a node's standing findings name probes there; the temp writable."""
         tmp, system = self.tmp, self.sys
         if self.state is None:
             return [(self.rw, False)]                    # the keeper of the CLI state: it alone, nothing of a place
-        if self.rw.parent.name.startswith(SCRATCH):
-            own = [(self.rw.parent, True), (self.rw, False)]
+        if scratch := _scratch_above(self.rw):
+            own = [(scratch, True), (self.rw, False)]      # …its round's other batches, and earlier rounds, read-only
         elif self.rw.is_relative_to(tmp):
             return [*([] if self.rw == self.base else [(self.base, True)]), (self.rw, False)]
         elif self.rw.is_relative_to(system):

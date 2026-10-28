@@ -442,6 +442,9 @@ class HostFiles(FilesPort):
 NODES = ".gfso-nodes-"
 #: what names a validation's scratch beside the place it validates (`scratch_of`)
 SCRATCH = ".gfso-scratch-"
+#: what names one batch's directory in its validation's round (`<round>/batch<N>`): a session's writable root of its
+#: own, so a process one batch's validator left behind reaches no other batch's copy of the delivery
+BATCH = "batch"
 #: what keys, in a project's settings, the name of each of its volumes by its role (`places`, `state`): the system's
 #: record that its places moved into them — from there on no place nor round is looked for on this host
 #: …and beside them the base and the image they were made over (`base`, `image`): what an export reads them by

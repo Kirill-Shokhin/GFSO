@@ -36,7 +36,7 @@ from typing import Optional
 
 from gfso import tools as _tools
 from gfso.adapters.execution import LocalExecution, scratch_of
-from gfso.adapters.snapshots import snapshot, swap
+from gfso.adapters.snapshots import NotTheDelivery, snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
@@ -1564,7 +1564,10 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                     # …IN A COPY OF THE PLACE, as a validator's run is: the issuer rules on that delivery and must not be
                     # able to change it (§10.3); its answer reads as run in the place — and where places stand apart,
                     # never in the executor's place, its container and its CLI state (`ExecutionPort.apart`)
-                    with (snapshot(where, Path(tmp) / "place", at_place) if _NODES in str(where) or at_place.apart
+                    # …a dispute is ruled on the delivery the FAIL judged: held to it as a validator's copy is
+                    held = engine.delivered(task_id) if question == "dispute" else None
+                    with (snapshot(where, Path(tmp) / "place", at_place, delivered=held)
+                          if _NODES in str(where) or at_place.apart
                           else contextlib.nullcontext()) as copy:
                         if not copy and at_place.apart:
                             raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
@@ -1581,6 +1584,8 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                     text = llm.complete(packet, context=PROMPT.read_text(encoding="utf-8"))
     except PlaceUnavailable as e:    # …the place down laying the inputs or copying: booked as a call that could not start
         llm.calls.append({"duration_ms": 0, "ended": "unavailable", "place": e.place, "error": str(e), "at": time.time()})
+    except NotTheDelivery as e:      # …a copy that is not the delivery: no ruling on it, as no copy at all (`apart`)
+        raise Unavailable(f"no copy of {where} to rule on: {e}") from e
     llm.tag_last(Stage.ISSUER)
     engine.record_llm_usage(Stage.ISSUER, llm, task_id)
     if failed := unanswered(llm.calls[-1:]):
