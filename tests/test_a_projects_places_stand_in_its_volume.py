@@ -149,7 +149,8 @@ def test_a_sessions_container_is_named_and_labelled_by_its_agent_node_and_role(p
         assert project.container not in s.container, "the project's group names the project; the name, the role first"
         labels = dict(a.split("=", 1) for a in s.run_args() if a.startswith(("gfso.", "com.docker.compose.service")))
         assert labels == {"com.docker.compose.service": role + "s", "gfso.role": role, "gfso.node": node,
-                          "gfso.agent": "exec-2", "gfso.execution": project.name}
+                          "gfso.agent": "exec-2", "gfso.execution": project.name, "gfso.project": "p",
+                          "gfso.home": E._home()}
     assert project.session(str(own / "b"), "first").agent == "first"
     assert project.session(str(own / "b"), "then").agent == "then", "the agent of whichever session starts it"
     assert E._kind_of(("r",), ()) == ("executor", "r", ())

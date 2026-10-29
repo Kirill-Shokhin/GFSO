@@ -207,8 +207,8 @@ class ProjectRegistry:
                 pass
         return self.list()
 
-    def list(self) -> dict:
-        """{active, projects}: every .db in GFSO_DATA_DIR + the loaded ones (default always present)."""
+    def names(self) -> set:
+        """Every project held: every .db in GFSO_DATA_DIR + the loaded ones (default always present) — no file peeked."""
         names = {"default", *self._engines.keys()}
         try:
             names |= {f[:-3] for f in os.listdir(self._dir)
@@ -218,6 +218,11 @@ class ProjectRegistry:
         except OSError:
             pass
         names.discard("gfso")  # the default project's own file — not a separate project
+        return names
+
+    def list(self) -> dict:
+        """{active, projects}: every project held (`names`), the last worked in first."""
+        names = self.names()
         # …ordered by when each was last WORKED IN, newest first: the last act of a party or a model call
         # in its log. Alphabetical order made the picker useless the moment the installation had a
         # history (measured: 271 entries, the live one 69th). Nothing has to be deleted to make the list

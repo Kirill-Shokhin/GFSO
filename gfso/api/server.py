@@ -40,6 +40,7 @@ from gfso.engine.validation import l2_gate_on as _l2_gate_on
 from gfso.engine.verdicts import observations
 from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_staffing
 from gfso.adapters.children import end_this_process, reap as reap_children
+from gfso.adapters import resources as _resources
 from gfso import config as _config
 from gfso.adapters.llm import credentials as _credentials, registry as _providers
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
@@ -752,6 +753,18 @@ def _mount_projects(app, _e) -> None:
         except ValueError as ex:
             raise HTTPException(422, str(ex))
 
+def _mount_resources(app) -> None:
+    """What this installation holds in Docker — read only: a node's work is stopped by the protocol's verbs, a project's
+    volumes removed with the project (`DELETE /api/projects/{name}`)."""
+    @app.get("/api/resources")
+    def get_resources():
+        """SERVER-WIDE, every project of this installation: its containers per node — role, agent, busy, CPU, memory —
+        and its volumes on disk (`resources.held`); `known: false` — volumes no project the registry lists holds. Read
+        from Docker alone: no project is woken."""
+        reg = app.state.registry
+        return _resources.held(reg.names() if reg else None)
+
+
 def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
     """What THIS process is serving: its roster, a node's verdict, and the runtime panel.
 
@@ -1157,6 +1170,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     _mount_lifecycle(app, _e, engine, _scope_name)
 
     _mount_projects(app, _e)
+    _mount_resources(app)
 
     _mount_events(app)
 

@@ -100,6 +100,9 @@ PLACEHOLDER = "held-by-the-door-"
 #: what marks a container as a project's execution of THIS product — the one thing a sweep of leftovers removes; its
 #: volume carries it too, and no sweep removes that: it holds the project's work (`ContainerExecution.drop`)
 LABEL = "gfso.execution"
+#: the other labels the system sets: whose installation, which project — every making (`identity`); who works in a
+#: session's container, on which node, as what (`PlaceContainer`)
+HOME, PROJECT, ROLE, NODE, AGENT = "gfso.home", "gfso.project", "gfso.role", "gfso.node", "gfso.agent"
 #: the project's directory of its sessions' CLI state — a volume of its own (`Volume`), which only its keeper mounts
 #: whole and each session its own place's of (`PlaceContainer`)
 STATE_DIR = ".gfso-state"
@@ -111,6 +114,18 @@ IMPORTED = "imported"
 #: a system container's own memory-backed directory — its script laid there by the system, its log written there:
 #: nothing of the host is mounted, and `docker cp` writes no read-only root nor sees a tmpfs
 OWN = "/gfso-own"
+
+
+def identity(execution: str, project: str) -> dict:
+    """What marks a container, a network or a volume as this installation's, of `project` under `execution` — set by the
+    system at its making, out of any agent's reach: what a sweep removes (`end_leftovers`) and what the resource view
+    counts (`resources`). Without the home a second installation's start swept the first's running containers."""
+    return {LABEL: execution, PROJECT: project, HOME: _home()}
+
+
+def labelled(execution: str, project: str) -> list[str]:
+    """`identity` as `docker run` / `docker network create` flags."""
+    return [a for k, v in identity(execution, project).items() for a in ("--label", f"{k}={v}")]
 
 
 def grouped(project_container: str, role: str) -> list[str]:
@@ -158,8 +173,8 @@ def _unavailable(ex, storage: bool):
     except LookupError:
         return None                          # …not made yet: its making is `Volume.ready`'s
     try:
-        got = run(["docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt",
-                   "no-new-privileges", *places, p.image,
+        got = run(["docker", "run", "--rm", *labelled(p.name, p.project_name), "--network", "none", "--cap-drop", "ALL",
+                   "--security-opt", "no-new-privileges", *places, p.image,
                    "sh", "-c", 'f=/p/.gfso-probe-$$ && echo ok > "$f" && cat "$f" >/dev/null && rm -f "$f" && '
                    '{ [ ! -d "$1" ] || ' + _BASE_READ + "; } && echo ok", "sh", f"/p/{BASE_DIR}"],
                   timeout=120, text=True)
@@ -476,13 +491,15 @@ at_exit(end_started)
 
 def end_leftovers() -> None:
     """At a server's start: the project containers of a server that is gone — their calls died with it, and each is
-    started afresh on its project's first call."""
+    started afresh on its project's first call. This installation's alone (`identity`) — and those of a build that set
+    no home, whichever installation's: a server started while another installation's older build runs ends its run."""
     if shutil.which("docker"):
-        got = run(["docker", "ps", "-aq", "--filter", f"label={LABEL}"], timeout=60, text=True)
-        if ids := (got.stdout or "").split():
+        got = run(["docker", "ps", "-a", "--filter", f"label={LABEL}", "--format", f'{{{{.ID}}}} {{{{.Label "{HOME}"}}}}'],
+                  timeout=60, text=True)
+        if ids := [i for i, *h in map(str.split, (got.stdout or "").splitlines()) if h in ([], [_home()])]:
             _keep_logs(ids)
             run(["docker", "rm", "-f", *ids], timeout=120)
-        run(["docker", "network", "prune", "-f", "--filter", f"label={LABEL}"], timeout=120)
+        run(["docker", "network", "prune", "-f", "--filter", f"label={HOME}={_home()}"], timeout=120)
 
 
 class WayOut:
@@ -490,8 +507,8 @@ class WayOut:
     an internal network of its own, out of reach of anything inside, with the allowlist's gateway the one member of both
     networks, writing its log under `home`, beside the CLI's state and not in it."""
 
-    def __init__(self, container: str, name: str, image: str, home: Path):
-        self.container, self.name, self.image, self.home = container, name, image, home
+    def __init__(self, container: str, name: str, image: str, home: Path, project: str):
+        self.container, self.name, self.image, self.home, self.project = container, name, image, home, project
         self.net, self.gateway = f"{container}-net", gateway_of(container)
 
     def switch(self, network) -> None:
@@ -517,7 +534,7 @@ class WayOut:
         """(flags, args) of the allowlist's gateway (`_system_run`): on the project's network first, so it listens
         there alone (it joins Docker's bridge after, to reach out), the execution's own image running `egress.py`
         read-only, unprivileged and bounded, nothing of the host mounted."""
-        return (["--label", f"{LABEL}={self.name}", *grouped(self.container, "gateway"),
+        return ([*labelled(self.name, self.project), *grouped(self.container, "gateway"),
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
                  "--sysctl", "net.ipv4.ip_forward=0", "--memory", "256m", "--pids-limit", "256",
                  "--network", self.net, "--network-alias", GATEWAY],
@@ -550,7 +567,7 @@ class WayOut:
             raise OSError(f"no public address for {', '.join(missing)}")
         # isolated: the network's bridge gets no address of the Docker VM's own, which every member would reach on-link
         run(["docker", "network", "create", "--internal", "-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated",
-             "--label", f"{LABEL}={self.name}", self.net], timeout=60).check_returncode()
+             *labelled(self.name, self.project), self.net], timeout=60).check_returncode()
         if mode == "allowlist":
             flags, args = self.gateway_args()
             _system_run(self.gateway, self.image, flags, Path(egress.__file__), args, self.log())
@@ -604,7 +621,7 @@ class Door:
         key = PLACEHOLDER + uuid.uuid4().hex
         _DOORS.add(name)                      # …before it runs: a start cut after this still ends with the server
         _system_run(name, self.way.image, [
-            "--label", f"{LABEL}={self.way.name}", *grouped(self.way.container, "door"),
+            *labelled(self.way.name, self.way.project), *grouped(self.way.container, "door"),
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--memory", "256m",
             "--pids-limit", "256", "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
             *(["--network", self.way.net, "--network-alias", name] if closed else [])],
@@ -671,7 +688,7 @@ class Volume:
         key = f"{_home()}-{hashlib.sha1(os.path.normcase(base).encode()).hexdigest()[:6]}"
         self.name, self.state = f"{container}-{key}-v", f"{container}-{key}-state"
         self.execution, self.own, self.base, self.project = execution, own, base, project
-        self.labels = {LABEL: execution, "gfso.project": project, "gfso.home": _home()}
+        self.labels = identity(execution, project)
         made: dict = {}
         #: (read, write) of the project's own settings, where the record of its volumes is kept — set by whoever holds
         #: the project (`workspaces.execution_of`), with what a copy-in `carried` (the places and rounds it moved in);
@@ -725,7 +742,7 @@ class Volume:
                     raise PlaceUnavailable(self.execution, f"its volume {v} is gone: the project's record holds its "
                                                            f"{role} there")
                 raise LookupError(f"its volume {v} is not made yet")
-            if labels.get("gfso.home") != _home():
+            if labels.get(HOME) != _home():
                 raise PlaceUnavailable(self.execution, f"the volume {v} is not this installation's making (its labels: "
                                                        f"{labels or 'none'}): nothing runs on it")
 
@@ -835,8 +852,7 @@ class Volume:
         run(["docker", "rm", "-f", one], timeout=60)
         try:
             got = run(["docker", "run", "--rm", *(["-i"] if interactive else []), "--name", one,
-                       "--label", f"{LABEL}={self.execution}",
-                       "--network", "none", "--cap-drop", "ALL",
+                       *labelled(self.execution, self.project), "--network", "none", "--cap-drop", "ALL",
                        *[a for c in SYSTEM_CAPS if user == "0" for a in ("--cap-add", c)],
                        "--security-opt", "no-new-privileges", "-u", user, *mounts, image, "sh", "-c", *script],
                       timeout=self.copy_time, **kw)
@@ -1007,11 +1023,15 @@ def _home() -> str:
     return hashlib.sha1(str(data_dir().resolve()).encode()).hexdigest()[:8]
 
 
+#: `_home`, read from outside: the resource view attributes what Docker holds by it
+installation = _home
+
+
 def drop_volumes(project: str) -> None:
     """Every volume of the project — of this installation, whatever execution or base it was made for, its roster
     read or not: a new project of the name inherits none of its places."""
-    got = run(["docker", "volume", "ls", "-q", "--filter", f"label=gfso.project={component(project)}",
-               "--filter", f"label=gfso.home={_home()}"], timeout=60, text=True)
+    got = run(["docker", "volume", "ls", "-q", "--filter", f"label={PROJECT}={component(project)}",
+               "--filter", f"label={HOME}={_home()}"], timeout=60, text=True)
     for v in (got.stdout or "").split():
         if ids := (run(["docker", "ps", "-aq", "--filter", f"volume={v}"], timeout=60, text=True).stdout or "").split():
             run(["docker", "rm", "-f", *ids], timeout=120)
@@ -1052,14 +1072,14 @@ class ContainerExecution(ExecutionPort):
                              f"provider's, set by `gfso credential <provider>`, never the container's")
         self.name, self.image, self.env_file = name, image, env_file
         self.container = container_name(name, project)
-        self.way = WayOut(self.container, name, image, Path(state))
+        b, self.project_name = self.base.name, component(project or DEFAULT_PROJECT)
+        self.way = WayOut(self.container, name, image, Path(state), self.project_name)
         # …one per container, whichever object of it asks: two roles' objects kept a door each, and a switch one turned
         # left the other's standing in the old shape (critic over the door v2)
         self.gate = _GATES.setdefault(self.container, Door(self.way))
         self.files = ContainerFiles(self)
         if network is not None:
             self.switch(network)
-        b, self.project_name = self.base.name, component(project or DEFAULT_PROJECT)
         self.mounts = [b, f"{NODES}{b}/{self.project_name}"]
         self.own = self.parent / self.mounts[1]
         self.volume = Volume(self.container, name, self.own, self.base, self.project_name)
@@ -1103,7 +1123,7 @@ class ContainerExecution(ExecutionPort):
         """`docker run` for this project's container: sealed (`--init`, its own mounts only, no new privileges, its way
         out as switched), sleeping until the server calls into it."""
         mounts = [a for src, ro in self._mounts() for a in self._mount(src, ro)]
-        return ["docker", "run", "-d", "--init", "--name", self.container, "--label", f"{LABEL}={self.name}",
+        return ["docker", "run", "-d", "--init", "--name", self.container, *labelled(self.name, self.project_name),
                 *self._labels(), *self.way.run_args(),
                 *([] if self.holds_sessions else [a for c in SYSTEM_CAPS for a in ("--cap-add", c)]),
                 "--security-opt", "no-new-privileges",
@@ -1113,7 +1133,7 @@ class ContainerExecution(ExecutionPort):
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
 
     def _labels(self) -> list[str]:
-        return [*grouped(self.way.container, "system"), "--label", "gfso.role=system"]
+        return [*grouped(self.way.container, "system"), "--label", f"{ROLE}=system"]
 
     def _mounts(self) -> list:
         """(directory, read-only?) for each directory the container holds: the base and the project's own, both writable."""
@@ -1551,8 +1571,8 @@ class PlaceContainer(ContainerExecution):
 
     def _labels(self) -> list[str]:
         """Its project's stack, subgrouped by role (`grouped`); who works here, which node, as what."""
-        return [*grouped(self.way.container, self.role + "s"), "--label", f"gfso.role={self.role}",
-                "--label", f"gfso.node={self.node}", *(["--label", f"gfso.agent={self.agent}"] if self.agent else [])]
+        return [*grouped(self.way.container, self.role + "s"), "--label", f"{ROLE}={self.role}",
+                "--label", f"{NODE}={self.node}", *(["--label", f"{AGENT}={self.agent}"] if self.agent else [])]
 
     def _mounts(self) -> list:
         """The base read-only unless the place is the base; a validation's round — or its one batch — writable, its
