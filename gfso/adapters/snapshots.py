@@ -283,7 +283,7 @@ def _not_delivered(place, at, tree: str, commit: str, execution) -> Optional[str
     repository whose executor ran a clean filter of its own at DELIVER is not reproduced and reads as changed."""
     base = W.base_of(str(place)) or str(place)
     given = {"inherited": W.INHERITED, "spec": W.DELIVERED, "stage": inspect.getsource(W.stage),
-             "kept_out": {k: v.decode("latin-1") for k, v in W.kept_out(base).items()}}
+             "kept_out": {k: v.decode("latin-1") for k, v in W.kept_out(base, execution).items()}}
     ex = execution.session(str(at))
     r = ex.run([ex.python, "-I", "-c", _JUDGES_GIT, str(at), commit, tree, str(base), json.dumps(given), *W.APART],
                cwd=str(at), timeout=1800, env=subprocess_env(extra=W.NO_CONFIG))

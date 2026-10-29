@@ -167,3 +167,19 @@ def test_live_a_copy_is_held_to_its_delivery_as_deliver_took_it(project, case):
     except NotTheDelivery as e:
         refused = str(e)
     assert refused is None if cause is None else cause in str(refused), refused
+
+
+@live
+def test_live_a_judge_keeps_out_what_the_base_in_the_volume_keeps_out(project):
+    """The rules a node's repository is made with are the base's in the volume — the user's host repository may hold
+    others (a linked worktree's, a line removed since the import): read there, an honest build was refused every round."""
+    x, a = project, project.own / "a"
+    for repo in (x.base, a):
+        _sh(x, repo, "mkdir -p .git/info && printf 'build/\n' >> .git/info/exclude")
+    _sh(x, a, "mkdir -p build && echo o > build/app.bin")
+    tree = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x, branch="gfso/p/a")
+    commit = W.head(a, execution=x)
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
+    batch = Path(TL._own_place(str(round_), 0, x))
+    with snapshot(a, batch / "delivery", x, delivered=(tree, commit)) as at:
+        assert x.files.read_bytes(str(Path(at) / "build" / "app.bin")) == b"o\n"

@@ -365,3 +365,37 @@ def test_the_host_takes_only_a_bundle(tmp_path, monkeypatch):
     assert "no git bundle" in E.fetched_on_host(tmp_path, b"//attacker/share/repo\n")
     assert ran == []
     assert E.fetched_on_host(tmp_path, b"# v2 git bundle\nabc HEAD\n\nPACK") == "" and ran
+
+
+def test_a_commit_left_without_its_blobs_is_fetched_again_never_landed(tmp_path, monkeypatch):
+    """A fetch that failed leaves the commit and its tree in the user's store without their blobs; a landing retried
+    on them found the commit and set the branch to what no checkout reads (critic over e59b9d5, run)."""
+    env = {"GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@a", "GIT_COMMITTER_NAME": "a", "GIT_COMMITTER_EMAIL": "a@a",
+           "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"}
+    g = lambda repo, *a, **kw: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True,
+                                              env={**W.subprocess_env(), **env}, **kw)
+    full, user = tmp_path / "full", tmp_path / "user"
+    for r in (full, user):
+        g(tmp_path, "init", "-q", "-b", "main", str(r))
+    (full / "a.txt").write_text("the content\n")
+    g(full, "add", "a.txt")
+    sha = g(full, "commit-tree", g(full, "write-tree").stdout.strip(), "-m", "c").stdout.strip()
+    g(full, "update-ref", "HEAD", sha)
+    (user / "u.txt").write_text("u\n")
+    g(user, "add", "u.txt")
+    g(user, "commit", "-qm", "u")
+    blob = g(full, "rev-parse", "HEAD:a.txt").stdout.strip()            # …the commit planted, its blob not
+    tree = subprocess.run(["git", "-C", str(user), "mktree", "--missing"], capture_output=True,   # …bytes: a text
+                          input=f"100644 blob {blob}\ta.txt\n".encode()).stdout.decode().strip()  # stdin ends in CRLF
+    assert g(user, "commit-tree", tree, "-m", "c").stdout.strip() == sha
+    bundle = g(full, "bundle", "create", str(tmp_path / "b"), "HEAD")
+    monkeypatch.setattr(W, "git", lambda *a, **kw: subprocess.CompletedProcess(a, 0, sha + "\n", ""))
+    monkeypatch.setattr(W, "_bundled", lambda *a: (tmp_path / "b").read_bytes())
+    g(user, "update-ref", "refs/heads/gfso/q/accepted", sha)          # …as the old landing left one: a ref on it
+    with pytest.raises(OSError, match="could not be fetched"):        # git's own fetch trusts that ref: refused,
+        W.land(user, "refs/heads/gfso/p/accepted", None, None, tree)  # never said landed
+    assert g(user, "rev-parse", "--verify", "-q", "gfso/p/accepted").returncode != 0
+    g(user, "update-ref", "-d", "refs/heads/gfso/q/accepted")
+    assert bundle.returncode == 0 and W.land(user, "refs/heads/gfso/p/accepted", None, None, tree) == sha
+    assert g(user, "rev-list", "--objects", "--missing=error", "gfso/p/accepted").returncode == 0, "landed whole"
+    assert g(user, "cat-file", "blob", f"{sha}:a.txt").stdout == "the content\n"

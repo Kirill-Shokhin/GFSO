@@ -308,21 +308,27 @@ def land(base, ref: str, execution, since: str | None, tree: str | None = None) 
     the place, never their working tree nor any branch of theirs; `ref` checked out in any worktree of theirs is
     refused. `ref` standing is moved to the new commit (its reflog keeps where it stood)."""
     sha = git(base, "rev-parse", "--verify", "--quiet", "HEAD^{commit}", execution=execution).stdout.strip()
+    # …no replace refs: an object they stand in for is not the one a checkout without them reads (critic, run)
     host = lambda *a: children.run(["git", "-C", str(base), *a], timeout=_SLOW, text=True, encoding="utf-8",
-                                   errors="replace")
+                                   errors="replace", env=subprocess_env(extra={"GIT_NO_REPLACE_OBJECTS": "1"}))
     if not sha:
         raise OSError("the base names no commit")
     if f"branch {ref}" in host("worktree", "list", "--porcelain").stdout.splitlines():
         raise OSError(f"`{ref}` is checked out there (in a worktree of it), and the system lands only on a branch "
                       f"nobody works on: check out another branch")
+    # …WHOLE, not merely there: a fetch that failed leaves the commit and its tree behind without their blobs, and a
+    # landing retried on them set the branch to a commit no checkout reads (critic over e59b9d5, run)
+    # …and none taken on trust from the system's own refs: the old landing left one naming such a commit (critic, run)
+    whole = lambda: host("rev-list", "--objects", "--missing=error", sha, "--not", "--exclude=refs/heads/gfso/*",
+                         "--all").returncode == 0
     why = ""
     for nots in ([since] if since and since != sha else [], []):
-        if host("cat-file", "-e", f"{sha}^{{commit}}").returncode == 0:
+        if whole():
             break
         if not (why := fetched_on_host(base, _bundled(base, "HEAD", nots, execution))):
             break
     # …a fetch that said an error is no landing, whatever it took in: it went past the bundle (a submodule's remote)
-    if why or host("cat-file", "-e", f"{sha}^{{commit}}").returncode:
+    if why or not whole():
         raise OSError(f"its commit {sha[:12]} could not be fetched: {why or 'not in the bundle'}")
     # …the tree the root's PASS accepted, read on the host: the base's HEAD is read in a container a session's leftover
     # may still run in, and what lands is the issuer's PASS, never what stood there at landing (critic over a99ea34)
