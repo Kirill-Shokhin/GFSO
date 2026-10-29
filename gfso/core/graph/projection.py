@@ -13,6 +13,7 @@ is the thin build→render convenience kept for call-sites that want the markdow
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -118,12 +119,8 @@ def build(
     dep_edges may be the full edge set; only sibling seams (both endpoints are
     children of `node`) are captured — this decomposition's internal structure.
     """
-    criteria = tuple(
-        CriterionView(c.name, c.description,
-                      tuple((p.behaviour, p.command, p.expect, [x for x, _ in p.inputs])
-                            for p in (c.check or ())))
-        for c in node.spec.criteria
-    )
+    criteria = tuple(CriterionView(c.name, c.description, tuple(map(probe_view, c.check or ())))
+                     for c in node.spec.criteria)
 
     if not children:
         return NodeProjection(
@@ -136,10 +133,7 @@ def build(
             id=str(c.id),
             description=c.spec.description,
             assignee=c.assignee,
-            criteria=tuple(CriterionView(cc.name, cc.description,
-                                         tuple((p.behaviour, p.command, p.expect,
-                                                [x for x, _ in p.inputs])
-                                               for p in (cc.check or ())))
+            criteria=tuple(CriterionView(cc.name, cc.description, tuple(map(probe_view, cc.check or ())))
                            for cc in c.spec.criteria),
             accepted_risks=tuple(n.item for n in set_aside_of(c)),
             name=c.spec.name,
@@ -186,6 +180,23 @@ def build(
 
 # === Render: NodeProjection → markdown (the LLM-prompt boundary) ===
 
+def probe_view(p) -> tuple:
+    """A pinned probe as the readers see it: behaviour, command, expect, and its pinned inputs named WITH a short hash of
+    their content — "a child carries the parent's probe" was judged by the file's name, and a child holding the same
+    command over another `prog.c` read as carrying it (critic over 9997bb6)."""
+    return (p.behaviour, p.command, p.expect,
+            [f"{x}@{hashlib.sha256(str(body).encode()).hexdigest()[:8]}" for x, body in p.inputs])
+
+
+def pinned_lines(check, indent: str) -> list[str]:
+    """A criterion's pinned checks as the checker reads them — the parent's and the children's alike: a criterion IS
+    what its procedure decides (A1(i)), and a checker shown the parent's probes and only the children's prose judged the
+    prose (own-plan row 3: a child carrying the root's exact probe, and the checker naming one more instance for 98 min)."""
+    return [f"{indent}- pinned check — {beh}: `{cmd}` → expect: {exp}"
+            + (f" (`{{inputs}}` = {len(files)} file(s) pinned with this probe: {', '.join(files)})" if files else "")
+            for beh, cmd, exp, *rest in (check or ()) for files in [rest[0] if rest else []]]
+
+
 def _render_split(p, out: list) -> None:
     """The two sections that describe the SPLIT: the subtasks, and the seams between them.
 
@@ -200,6 +211,7 @@ def _render_split(p, out: list) -> None:
         if s.criteria:
             for cc in s.criteria:
                 out.append(f"  - {cc.name}: {cc.description or '(no description)'}")
+                out += pinned_lines(cc.check, "      ")
         else:
             out.append("  - (no criteria declared)")
         for item in s.accepted_risks:
@@ -291,11 +303,7 @@ def render(projection: NodeProjection) -> str:
     if p.criteria:
         for c in p.criteria:
             out.append(f"- **{c.name}**: {c.description or '(no description)'}")
-            for beh, cmd, exp, *rest in (c.check or ()):
-                files = rest[0] if rest else []
-                out.append(f"    - pinned check — {beh}: `{cmd}` → expect: {exp}"
-                           + (f" (`{{inputs}}` = {len(files)} file(s) pinned with this probe: "
-                              f"{', '.join(files)})" if files else ""))
+            out += pinned_lines(c.check, "    ")
     else:
         out.append("- (none declared)")
     out.append("")

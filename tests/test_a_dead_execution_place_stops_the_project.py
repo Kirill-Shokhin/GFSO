@@ -130,7 +130,7 @@ def test_a_parked_node_s_machine_issuer_meets_the_dead_place_as_the_stop_and_is_
     assert "root.part" in {str(x) for x in e.parking.parked_executions()}     # parked by reports that came, unread
     assert (e.paused() or {}).get("place") == "e3-linux", ("the issuer's dead place stopped nothing", said)
     assert any("the issuer's turn on parked was not answered" in m for m in said), said
-    _, not_before, _ = d._issuer_attempts["root.part#0#0"]
+    _, not_before, _ = d._issuer_attempts["root.part#0#0#parked"]
     assert not_before - time.monotonic() < 5, "the parked node's question waits past the place's return"
     asked = []
     monkeypatch.setattr(I, "settle", lambda en, ag, t, q, a, v: asked.append((str(t), q, a)) or {"status": "gone"})

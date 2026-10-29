@@ -2003,8 +2003,10 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
     for task_id, question in open_questions(engine):
         task = engine.graph.get_task(task_id)
         actor = system_mover(engine, agents, task_id, question)
-        gen = f"{task_id}#{task.iteration}#{task.reopens}" if task else ""   # a revision the machine makes
-        # itself must not reset its own backoff
+        # a revision the machine makes itself must not reset its own backoff — and a new question on the same version
+        # owes none of the old one's: a dispute's doubled wait kept the TIMEOUT into ESCALATED from asking the decision
+        # for 2 h (series 2 REF 2)
+        gen = f"{task_id}#{task.iteration}#{task.reopens}#{question}" if task else ""
         waits, not_before, answers = ledger.get(gen, (0, 0.0, 0))
         if actor is None or task is None or now < not_before or not claim(f"q:{task_id}"):
             continue

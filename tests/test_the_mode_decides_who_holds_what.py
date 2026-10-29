@@ -431,7 +431,8 @@ def test_a_question_whose_answers_keep_failing_is_asked_rarely_never_muted(tmp_p
     The wait doubles up to a cap instead; after it passes, the node is asked again."""
     e, agents = _auto_goal(tmp_path)
     task = e.graph.get_task(TaskId("root"))
-    gen = f"root#{task.iteration}#{task.reopens}"
+    q = next(q for t, q in I.open_questions(e) if str(t) == "root")
+    gen = f"root#{task.iteration}#{task.reopens}#{q}"   # the ledger keys a node version AND its question
     asked = []
 
     def claim(key):

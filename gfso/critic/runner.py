@@ -25,6 +25,7 @@ from typing import Optional
 
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import CHECKER_READINGS, SUFFICIENCY_READINGS
+from gfso.core.graph.projection import pinned_lines, probe_view
 from gfso.core.graph.review import progress_baseline
 from gfso.core.types import CriticVerdict, Stage, TaskId
 from gfso.engine.validation import _EXEC_GATING_CHECKS
@@ -226,7 +227,7 @@ def _critique_leaf(engine, node_id: TaskId, llm=None) -> NodeCritique:
         return NodeCritique(nid, gate_passed=True)   # no instrument — no verdict, never read as clean
 
     system = (Path(__file__).parent / "prompts" / "atomicity.md").read_text(encoding="utf-8")
-    crits = "\n".join(f"- {c.name}: {c.description}" for c in task.spec.criteria)
+    crits = _own_criteria(task)
     user = (f"# GOAL DECLARED ATOMIC (no decomposition)\n"
             f"**{task.spec.name or nid}**\n\n{task.spec.description}\n\n"
             f"## Acceptance criteria\n{crits}\n\n"
@@ -371,13 +372,16 @@ def _criterion_stamps(engine, task) -> dict:
     re-derivation, which was immediately correct: the checker was capable, it was simply not asked.
     A gate that re-runs and returns a lie is worse than one that does not re-run.
     """
-    kids = {str(k.id): tuple(sorted((c.name, c.description) for c in k.spec.criteria))
+    # …AND THE PINNED CHECKS, since the checker judges them (prompts/checker.md): a child's pin swapped for `true`
+    # under the same name and text carried `sufficient` forward on the swapped-out probe (critic over e379c65)
+    pins = lambda c: json.dumps(sorted(map(probe_view, c.check or ()), key=str))
+    kids = {str(k.id): tuple(sorted((c.name, c.description, pins(c)) for c in k.spec.criteria))
             for k in engine._graph.get_children(task.id)}
     out = {}
     for c in task.spec.criteria:
         covering = tuple(sorted(str(m.child_id) for m in (task.criterion_mappings or ())
                                 if m.criterion_name == c.name))
-        out[c.name] = [c.description, list(covering),
+        out[c.name] = [f"{c.description}\n{pins(c)}", list(covering),
                        [[k, list(kids.get(k, ()))] for k in covering]]
     return out
 
@@ -551,14 +555,13 @@ def _still_undecided(engine, task, llm, prior: tuple, *,
     if not prior:
         return ()
     listed = "\n".join(f"{i + 1}. {g.get('obligation', '')}" for i, g in enumerate(prior))
-    crits = "\n".join(f"- {c.name}: {c.description}"
-                      for c in task.spec.criteria) or "- (none)"
+    crits = _own_criteria(task) or "- (none)"
     user = (f"# THE NODE: {task.id}\n\n# GOAL\n{task.spec.description}\n\n"
             f"# ITS CRITERIA NOW\n{crits}\n\n"
             f"# OBLIGATIONS NAMED EARLIER AS UNDECIDED BY THEM\n{listed}\n\n"
             f"For EACH numbered obligation decide one thing only: do the criteria as they now stand "
-            f"DECIDE it — would a result satisfying every criterion necessarily have it? Answer with "
-            f"the numbers of the obligations that are now decided. Name nothing new: what the goal "
+            f"DECIDE it — would a result satisfying every criterion necessarily have it? {PINS_DECIDE} Answer "
+            f"with the numbers of the obligations that are now decided. Name nothing new: what the goal "
             f"carries was enumerated when it was read, and this round is about what the criteria "
             f"have since covered.")
     def _not_rechecked(why: str) -> tuple:
@@ -607,6 +610,22 @@ def _first_reading(g: dict) -> str:
     return str(g.get("first_reading", g.get("admits", "")))
 
 
+#: What a criterion decides, said to BOTH obligation readers — the first reading and the re-check. Said to the first
+#: alone, the re-check read the prose and cleared an unprobed clause the first had named (critic, measured 2/2).
+PINS_DECIDE = ("A criterion's run is its PINNED CHECKS, listed under it: where a criterion has pinned checks it decides "
+               "only what they probe — a clause its own wording names that no pinned check probes is undecided. A "
+               "behaviour its pins DO probe is decided: \"any …\" / \"every …\" over it is the pins' sample, its residue "
+               "read when the work is validated, never an undecided obligation.")
+
+
+def _own_criteria(task) -> str:
+    """A node's own criteria with their pinned checks — what each one decides is what its pins probe (A1(i)), and a
+    reader shown only the prose counted a clause no pin probes as decided (critic over e379c65)."""
+    return "\n".join(f"- {c.name}: {c.description}"
+                     + "".join("\n" + l for l in pinned_lines(map(probe_view, c.check or ()), "    "))
+                     for c in task.spec.criteria)
+
+
 def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_OBLIGATIONS) -> Optional[tuple[dict, ...]]:
     """Obligations of the node's OWN goal that none of its OWN criteria decides (FM-1.f).
 
@@ -628,15 +647,14 @@ def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_
     question. Duplicates are folded by the obligation's own words.
     """
     system = (Path(__file__).parent / "prompts" / "undecided.md").read_text(encoding="utf-8")
-    crits = "\n".join(f"- {c.name}: {c.description}"
-                      for c in task.spec.criteria) or "- (none)"
+    crits = _own_criteria(task) or "- (none)"
     excluded = "\n".join(f"- {x}" for x in task.spec.scope) or "- (none declared)"
     user = (f"# THE NODE UNDER CHECK: {task.id}\n"
             f"Its OWN criteria are the whole of what you quantify over — never its children's.\n\n"
             f"# GOAL\n{task.spec.description}\n\n"
             f"# CRITERIA OF {task.id}\n{crits}\n\n"
             f"# DECLARED SCOPE EXCLUSIONS (deliberate absences — never gaps)\n{excluded}\n\n"
-            f"Name the obligations of the GOAL that none of these criteria decides.")
+            f"Name the obligations of the GOAL that none of these criteria decides. {PINS_DECIDE}")
     prior = _prior_review(engine, task)
     if not _goal_changed(prior, task):
         # THE GOAL HAS NOT MOVED, so the obligations it carries have not either. What CAN have
