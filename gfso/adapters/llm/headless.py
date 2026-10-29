@@ -105,15 +105,39 @@ def _tool_use_name(ev: dict) -> str | None:
     without parsing its prose or trusting it. Measured need: 4 of 7 checkable claims in one run's
     verdicts described executions that did not match the artefact they validated.
     """
+    return str(block["name"]) if (block := _tool_use(ev)) else None
+
+
+def _tool_use(ev: dict) -> dict | None:
+    """The tool call block a stream event announces, if it announces one (`_tool_use_name`)."""
     inner = _obj(ev.get("event"))
-    for block in (ev.get("content_block"), inner.get("content_block"), ev.get("delta"), inner.get("delta")):
-        if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name"):
-            return str(block["name"])
     content = _obj(ev.get("message")).get("content")
-    for block in (content if isinstance(content, list) else []):
+    for block in (ev.get("content_block"), inner.get("content_block"), ev.get("delta"), inner.get("delta"),
+                  *(content if isinstance(content, list) else [])):
         if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name"):
-            return str(block["name"])
+            return block
     return None
+
+
+def _tool_results(ev: dict) -> list:
+    """The tool results a stream event carries back to the model."""
+    content = _obj(ev.get("message")).get("content")
+    return [b for b in (content if isinstance(content, list) else []) if _obj(b).get("type") == "tool_result"]
+
+
+def _refusal(sess: ExecutionPort, proc, ran: int) -> dict:
+    """WHY A SESSION WHOSE COMMANDS RUN APART IS REFUSED (`ExecutionPort.commands_env`), as its call's record says it —
+    the place's stop, as every call of the place would meet it — or {}: its CLI ran a bash beside itself — it takes no
+    shell it finds wrong, and says nothing (CLI 2.1.310) — which the system's guard there refused and put on the record;
+    or its commands ran (`ran`, the Bash results that were no error) and the record of `proc`'s holds none. A command
+    beside the CLI could forge the stream the call is read from. {} where no record is kept."""
+    if (record := sess.commands_of(proc)) is None:
+        return {}
+    why = ("the agent CLI did not take the system's shell (CLAUDE_CODE_SHELL): it ran its commands' shell beside "
+           "itself, where they are refused" if any(r.get("beside") for r in record) else
+           f"the agent CLI's commands did not come through the system's shell: {ran} ran, its record holds none"
+           if ran and not any("argv" in r for r in record) else None)
+    return {"ended": "unavailable", "place": sess.name, "error": why} if why else {}
 
 
 def _cannot_resume(out: dict) -> bool:
@@ -174,6 +198,15 @@ def client_env(credential, scrubs: bool = True, door: tuple | None = None) -> di
             **({AUTH[credential.kind]: credential.value} if credential else {})}
 
 
+def denied(sess: ExecutionPort) -> tuple:
+    """What the CLI's own writers — Edit, Write, NotebookEdit (an Edit rule covers Write) — may not touch where its
+    commands run apart: its stdout, through `/proc` or `/dev`, a forged stream as a command beside it wrote; and its
+    state, where the hook it runs beside itself lies. Held under `--dangerously-skip-permissions`, through a link too
+    (S6 probe, CLI 2.1.310)."""
+    return tuple(f"{t}(/{p}/**)" for t in ("Edit", "Write", "NotebookEdit")
+                 for p in ("/proc", "/dev", Path(sess.state_seen()).as_posix()))
+
+
 def kept(execution: ExecutionPort, sid: str, what: str) -> Path:
     """What the system keeps of a conversation beside the CLI's own state — its spend so far (`spent`), its handover
     hook's state (`hook`); `forget` drops them with it."""
@@ -224,18 +257,19 @@ class _Hooks:
         except (OSError, ValueError):
             return {}
 
-    def settings(self, sid: str | None) -> str:
-        """The settings a call carries over the operator's: no language, and no hook but the system's own handover hook
-        on a conversation it armed one for."""
+    def settings(self, sid: str | None, denied: tuple = ()) -> str:
+        """The settings a call carries over the operator's: no language, no hook but the system's own handover hook on a
+        conversation it armed one for, and the CLI's own writers kept off what `denied` names."""
+        deny = {"permissions": {"deny": list(denied)}} if denied else {}
         if sid not in self.armed:
-            return '{"disableAllHooks": true, "language": ""}'
+            return json.dumps({"disableAllHooks": True, "language": "", **deny})
         # …on this host the server's own interpreter: `python3` on a Windows PATH is the Store's stub, which runs nothing
         py = Path(sys.executable if isinstance(self.where(sid), LocalExecution) else "python3").as_posix()
         at = f"{Path(self.where(sid).state_seen()).as_posix()}/gfso-sessions/{_HOOK.name}"
         # …and no auto-memory: with no setting source loaded the CLI still read the operator's MEMORY.md (probed, CLI
         # 2.1.311: "# Memory index" quoted); in a container it would carry one session's notes to the next outside the log
         return json.dumps({"language": "", "autoMemoryEnabled": False, "hooks": {"PostToolUse": [
-            {"matcher": "*", "hooks": [{"type": "command", "command": f'"{py}" "{at}"'}]}]}})
+            {"matcher": "*", "hooks": [{"type": "command", "command": f'"{py}" "{at}"'}]}]}, **deny})
 
     def clean(self, sid: str | None) -> list[str]:
         """What keeps the operator out of the call. `--safe-mode` also drops the hooks `--settings` brings, so a session
@@ -498,8 +532,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         named = msg.get("model")
         if isinstance(named, str) and named and not named.startswith("<"):   # `<synthetic>`: the CLI's own refusal
             self.last_model = named
-        if (tname := _tool_use_name(ev)):
-            self.note_tool(tname)
+        self.note_tools(_tool_use(ev), _tool_results(ev))
 
     def _note_turn(self, msg: dict, inner: dict) -> None:
         """A turn's own usage, by message id. What it was read over arrives with the message; its output arrives
@@ -581,6 +614,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
             resuming = self._session_args(session)      # …read where its session keeps it: a dead place stops first
         except PlaceUnavailable as e:
             return self._never_started(e, False)
+        # in the session's own place (`ExecutionPort.session`): it writes there alone and sees no other node's
+        sess = self._exec.session(cwd, self.agent)
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
                 # The CLI inherits the USER's MCP configuration, and this installation registers its
                 # own door there — so every internal call (decompose, the Level-2 review, the
@@ -602,7 +637,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                 # English goal wrote its justifications into the graph in Russian and in German.
                 # The empty value removes the instruction (probed 2026-09-25: the child reports
                 # none); the call's own prompt then decides, as it does for every other rule.
-                "--settings", self.hooks.settings(session),
+                # …and where its commands run apart, its own writers off its stdout and its state (`denied`)
+                "--settings", self.hooks.settings(session, denied(sess) if sess.commands_apart else ()),
                 # …AND THE OPERATOR'S OWN INSTRUCTIONS. Hooks and MCP were shut, and the call still
                 # loaded the person's CLAUDE.md: probed 2026-09-24, an internal call listed the
                 # operator's working-mode and coding rules among its instructions — so an executor or
@@ -619,13 +655,12 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         proc, out, n0 = None, {}, len(self.calls)
         try:
             # …its door first, where the execution keeps one: a place down there is the call's own ending (critic 3)
-            door = self._exec.session(cwd, self.agent).door(credential, UPSTREAM) if credential else None
+            door = sess.door(credential, UPSTREAM) if credential else None
             env = {**subprocess_env(credential=client_env(credential, door is None and scrubs(self._exec), door)),
-                   **({"MAX_THINKING_TOKENS": str(self._max_thinking)} if self._max_thinking is not None else {})}
-            # in the session's own place (`ExecutionPort.session`): it writes there alone and sees no other node's
-            proc = self._exec.session(cwd, self.agent).popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE,
-                                                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                                             text=True, encoding="utf-8")
+                   **({"MAX_THINKING_TOKENS": str(self._max_thinking)} if self._max_thinking is not None else {}),
+                   **sess.commands_env()}
+            proc = sess.popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
 
             def _feed():  # a writer thread — a large prompt would deadlock a same-thread pipe write
                 try:
@@ -689,10 +724,14 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                           + (f"{out['api_error']}: " if out.get("api_error") else "")
                           + str(out.get("result") or "")[:160]
                           if out.get("is_error") else None),
+                # …and its commands as the system ran them: a CLI that ran them beside itself is refused, its answer
+                # unread (`_refusal`)
+                **(refused := _refusal(sess, proc, self.last_shell_ran)),
             })
-            if out.get("is_error"):
-                log.warning(f"headless claude call errored: {str(out)[:300]}")
-                if not (session and "--resume" in args and _cannot_resume(out)):
+            if refused or out.get("is_error"):
+                log.warning(f"headless claude call {'refused' if refused else 'errored'}: "
+                            f"{refused.get('error') or str(out)[:300]}")
+                if refused or not (session and "--resume" in args and _cannot_resume(out)):
                     return ""
             else:
                 return (out.get("result") if isinstance(out.get("result"), str) else "") or "".join(text_acc)

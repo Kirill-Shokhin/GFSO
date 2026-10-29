@@ -30,7 +30,7 @@ from gfso.core.types import (BATCH, HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH
                              PlaceUnavailable)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits,
                          executions, executions_path, host_env, subprocess_env)
-from gfso.adapters import door, egress, lfs
+from gfso.adapters import door, egress, lfs, shell
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
 log = logging.getLogger(__name__)
@@ -187,16 +187,17 @@ def _unavailable(ex, storage: bool):
         f"its storage does not answer: {(got.stderr or got.stdout or '').strip()[-300:]}"
 
 
-def _system_run(name: str, image: str, flags: list, script: Path, args: list, mirror: Path) -> None:
-    """A system container (a door, a gateway) running `script` with `args`: started waiting for it, the script laid
-    whole into its `OWN` through one `docker exec`, so nothing of the host is mounted into it. Its `OWN` holds its log
-    well past the log's cap on refusals, room left for what it passes; the log's host `mirror` named on it, so any
-    removal of it keeps the log first (`_keep_logs`). Bounded in memory and processes by its `flags`, or it does not
-    start: one unbounded container can starve every project on the machine (`container_limits`)."""
+def _system_run(name: str, image: str, flags: list, script: Path, args: list, mirror: Path, mode: str = "1777") -> None:
+    """A system container (a door, a gateway, a session's commands) running `script` with `args`: started waiting for
+    it, the script laid whole into its `OWN` through one `docker exec`, so nothing of the host is mounted into it. Its
+    `OWN` (of `mode`) holds its log well past the log's cap on refusals, room left for what it passes; the log's host
+    `mirror` named on it, so any removal of it keeps the log first (`_keep_logs`). Bounded in memory and processes by
+    its `flags`, or it does not start: one unbounded container can starve every project on the machine
+    (`container_limits`)."""
     if not {"--memory", "--pids-limit"} <= set(flags):
         raise ValueError(f"{name}: a system container starts bounded in memory and processes")
     run(["docker", "run", "-d", "--init", "--name", name, *flags, "--label", f"gfso.log={mirror}",
-         "--tmpfs", f"{OWN}:size={3 * door.LOG_CAP // 2 ** 20}m,mode=1777", image,
+         "--tmpfs", f"{OWN}:size={3 * door.LOG_CAP // 2 ** 20}m,mode={mode}", image,
          "sh", "-c", f'until [ -f {OWN}/run.py ]; do sleep 0.1; done; exec python3 {OWN}/run.py "$@"', "sh", *args],
         timeout=120).check_returncode()
     run(["docker", "exec", "-i", name, "sh", "-c", f"cat > {OWN}/laid && mv {OWN}/laid {OWN}/run.py"],
@@ -494,7 +495,7 @@ def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
     if ids := list(_STARTED):
-        _keep_logs([*map(gateway_of, ids), *_DOORS])
+        _keep_logs([*ids, *map(gateway_of, ids), *_DOORS])          # …a session's commands among `ids`
         run(["docker", "rm", "-f", *ids, *map(gateway_of, ids), *_DOORS], timeout=120)
         run(["docker", "network", "rm", *[f"{i}-net" for i in ids]], timeout=120)
         _STARTED.clear()
@@ -679,6 +680,97 @@ class Door:
             run(["docker", "rm", "-f", *names], timeout=60)
             _DOORS.difference_update(names)
         self.held = {}
+
+
+def _ending(call: str) -> str:
+    """What ends a call inside a container: its group, by the pid it wrote, and whatever left the group (`setsid`),
+    found by its mark in the environment."""
+    return (f"p=$(cat /tmp/gfso-calls/{call} 2>/dev/null) && kill -KILL -$p; "
+            f"for e in /proc/[0-9]*/environ; do grep -qz GFSO_CALL={call} $e 2>/dev/null && "
+            f"q=${{e#/proc/}} && kill -KILL ${{q%/environ}}; done; rm -f /tmp/gfso-calls/{call}")
+
+
+def _up(name: str) -> bool:
+    got = run(["docker", "inspect", "-f", "{{.State.Running}}", name], timeout=30, text=True)
+    return got.returncode == 0 and (got.stdout or "").strip() == "true"
+
+
+class Commands:
+    """A SESSION'S COMMANDS, APART FROM ITS MODEL CLIENT (`shell.py`). Run beside the client, as its uid in its PID
+    namespace, a command wrote the client's stdout through `/proc` and forged the stream the system reads as the record
+    of what the session did (S6 probe). So the client's CLI takes the system's `shell.CLIENT` for its shell, and each
+    command runs in a container of its own beside the session's: the place mounted as the session mounts it — never its
+    CLI state —, the session's network and so its way out, a PID namespace of its own, as the image's user with no
+    capability under no-new-privileges. Its listener is root there, holding SETUID, SETGID and KILL alone: no command
+    signals it, reads it, or writes its record, which it keeps in its memory, the system reading it (`record`) and
+    mirroring it beside the door's log when it goes. A bash the CLI starts beside itself — it takes no shell it finds
+    wrong, silently — runs nothing (`shell.GUARD`) and is on the record as such. Started by the session's first model
+    client, checked by one command through it; gone with the session's container."""
+
+    #: what the listener holds: each command run as the image's user, and its group ended
+    CAPS = ("SETUID", "SETGID", "KILL")
+
+    def __init__(self, session: "PlaceContainer"):
+        self.session, self.name, self.user = session, f"{session.container}-commands", None
+
+    def start(self, flags: list) -> None:
+        """Running with the session's `flags` (its labels and mounts), the client laid in the session's container
+        (running already) and answering through it."""
+        s = self.session
+        if self.name in _STARTED and _up(self.name):
+            return
+        # …the session's own user, as numbers: the listener refuses root, who would reach what holds the record
+        user = ":".join(run(["docker", "exec", s.container, "sh", "-c", "id -u; id -g"], timeout=60,
+                            text=True).stdout.split())
+        self.close()
+        run(["docker", "rm", "-f", self.name], timeout=60)
+        _STARTED[self.name], self.user = s.container, user     # …before it runs: a cut start ends with the server
+        said = {PROJECT: s.project_name, NODE: s.node, ROLE: s.role, AGENT: s.agent, "session": s.container}
+        _system_run(self.name, s.image, [
+            *labelled(s.name, s.project_name), *flags, "-u", "0", "--cap-drop", "ALL",
+            *[a for c in self.CAPS for a in ("--cap-add", c)], "--security-opt", "no-new-privileges",
+            *container_limits(), "--network", f"container:{s.container}"],
+            Path(shell.__file__), ["serve", user, f"{OWN}/commands.log", json.dumps(said)], self.log(), "0700")
+        laid = io.BytesIO()
+        with tarfile.open(fileobj=laid, mode="w") as t:
+            for name, mode, data in ((shell.CLIENT, 0o555, b"#!/usr/bin/env -S python3 -I\n"
+                                      + Path(shell.__file__).read_bytes()), (shell.BESIDE, 0o444, shell.GUARD.encode())):
+                (i := tarfile.TarInfo(Path(name).name)).size, i.mode = len(data), mode
+                t.addfile(i, io.BytesIO(data))
+        run(["docker", "exec", "-i", "-u", "0", s.container, "sh", "-c",
+             f"mkdir -p -m 755 {shell.HOME} && tar -x -C {shell.HOME} -f -"], input=laid.getvalue(),
+            timeout=60).check_returncode()
+        # …and one command through it, as the CLI will send them: a listener not up yet is waited for, never passed
+        run(["docker", "exec", "-u", user, s.container, "sh", "-c",
+             'for i in $(seq 100); do "$0" -c true 2>/dev/null && exit; sleep 0.1; done; exit 1', shell.CLIENT],
+            timeout=60).check_returncode()
+
+    def record(self) -> list[dict]:
+        """Each line the listener wrote — its mirror's first, from the containers it stood in before."""
+        lines = _log_out([self.name] if self.name in _STARTED else [], self.log()).splitlines()
+        return [r for r in map(_json_or_none, lines) if isinstance(r, dict)]
+
+    def end(self, call: str) -> None:
+        """What the client's call `call` left running here, ended as its user: the listener holds no command's uid."""
+        if self.name in _STARTED and self.user:
+            run(["docker", "exec", "-u", self.user, self.name, "sh", "-c", _ending(call)], timeout=60)
+
+    def log(self) -> Path:
+        """The host's mirror of the record, beside the door's log."""
+        return self.session.way.home / "commands" / self.session.way.container / f"{self.session.container}.log"
+
+    def close(self) -> None:
+        """Gone, its record kept in the mirror."""
+        if _STARTED.pop(self.name, None) is not None:
+            _mirror([self.name], self.log())
+            run(["docker", "rm", "-f", self.name], timeout=60)
+
+
+def _json_or_none(line: str):
+    try:
+        return json.loads(line)
+    except ValueError:
+        return None
 
 
 class Volume:
@@ -1326,11 +1418,7 @@ class ContainerExecution(ExecutionPort):
         """Is the container still up — and its allowlist's gateway, whose death would leave the project hanging on
         proxy errors with no cause said? A Docker restart (the host slept, an update) removes them under a live server,
         and every later call of the project then failed `No such container` (critic over d5c8f7a)."""
-        for c in [self.container] + ([self.way.gateway] if self.way.network[0] == "allowlist" else []):
-            got = run(["docker", "inspect", "-f", "{{.State.Running}}", c], timeout=30, text=True)
-            if got.returncode != 0 or (got.stdout or "").strip() != "true":
-                return False
-        return True
+        return all(map(_up, [self.container] + ([self.way.gateway] if self.way.network[0] == "allowlist" else [])))
 
     def unavailable(self, storage: bool = False):
         return _unavailable(self, storage)
@@ -1441,10 +1529,7 @@ class ContainerExecution(ExecutionPort):
         LocalExecution().end(proc)
 
     def _end_inside(self, call: str) -> None:
-        run(["docker", "exec", self.container, "sh", "-c",
-             f"p=$(cat /tmp/gfso-calls/{call} 2>/dev/null) && kill -KILL -$p; "
-             f"for e in /proc/[0-9]*/environ; do grep -qz GFSO_CALL={call} $e 2>/dev/null && "
-             f"q=${{e#/proc/}} && kill -KILL ${{q%/environ}}; done; rm -f /tmp/gfso-calls/{call}"], timeout=60)
+        run(["docker", "exec", self.container, "sh", "-c", _ending(call)], timeout=60)
 
     def temp_root(self):
         return str(self.tmp)            # …a name: made where it is written, in the volume (`FilesPort.mkdtemp`)
@@ -1668,6 +1753,7 @@ class PlaceContainer(ContainerExecution):
     share its CLI state — a root's executor and a parent's consent before its own place is made; a tool-loop provider's
     issuer reads a node's inputs by its shell only; a done node's container stands until its directories go or the
     project stops. A judge's ends with its run (`ExecutionPort.release`)."""
+    commands_apart = True
 
     def __init__(self, project: ContainerExecution, rw: Path, agent: str | None = None):
         self.__dict__.update(project.__dict__)
@@ -1684,6 +1770,7 @@ class PlaceContainer(ContainerExecution):
         # conversations, the system's notes on them and the CLI's own memory of another place are in no session's reach
         self.state = None if rw == project.state else project.state / ("+" + "+".join(rel))
         self.holds_sessions = True
+        self.commands = Commands(self)
 
     def _labels(self) -> list[str]:
         """Its project's stack, subgrouped by role (`grouped`); who works here, which node, as what."""
@@ -1731,6 +1818,26 @@ class PlaceContainer(ContainerExecution):
             self.project.start()
             return self.gate.url(credential, upstream)
 
+    def commands_env(self) -> dict:
+        """Its commands' container started (`Commands`), and the CLI pointed at it; a CLI that runs a bash of its own
+        beside itself refused there (`shell.GUARD`)."""
+        _volume_ready(self)
+        with _START:
+            self.start()
+            try:
+                self.commands.start([*self._labels(), *[a for src, ro in self._mounts() for a in self._mount(src, ro)]])
+            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                self.commands.close()
+                raise PlaceUnavailable(self.name, f"its commands' container did not start ({e})") from e
+        return {"CLAUDE_CODE_SHELL": shell.CLIENT, "BASH_ENV": shell.BESIDE}
+
+    def commands_of(self, proc) -> list:
+        return [r for r in self.commands.record() if r.get("run") == proc.call]
+
+    def _end_inside(self, call: str) -> None:
+        run(["docker", "exec", self.container, "sh", "-c", _ending(call)], timeout=60)
+        self.commands.end(call)
+
     def _open_the_way(self) -> None:
         self.project.start()                              # the project's network and gateway stand before any session
         # …and a project started here stopped its sessions first, this one among them: it is tracked again
@@ -1746,7 +1853,8 @@ class PlaceContainer(ContainerExecution):
                 raise OSError(f"{self.container}: its directories could not be made ({r.stderr.strip()[-300:]})")
 
     def stop(self) -> None:
-        """This session's container only: the way out is its project's."""
+        """This session's container and its commands': the way out is its project's."""
+        self.commands.close()
         run(["docker", "rm", "-f", self.container], timeout=60)
         _STARTED.pop(self.container, None)
 

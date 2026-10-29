@@ -53,6 +53,7 @@ class RecordingProvider(LLMProviderPort):
         self.calls: list[dict] = []       # one `record` per call, in completion order
         self.last_tool_calls: dict[str, int] = {}   # the tools the LAST agent run reached for, by name
         self.last_peak_context = 0
+        self.last_shell_ran, self._shell = 0, set()   # how many of its shell calls came back no error, and their ids
         self.on_tick = None               # optional: live progress lines (`on_tick(msg)`)
         self.stage_hint = ""
         self.resume_fallback = None       # what a lost conversation reopens on, set while a budget runs (`budget.run`)
@@ -67,7 +68,7 @@ class RecordingProvider(LLMProviderPort):
 
     def begin_run(self) -> None:
         """A new call starts: what the last one reached for and how full it got are its own, not this one's."""
-        self.last_tool_calls, self.last_peak_context = {}, 0
+        self.last_tool_calls, self.last_peak_context, self.last_shell_ran, self._shell = {}, 0, 0, set()
 
     def note_peak(self, tokens: int) -> None:
         """How full the context got on a turn of the call being read — the fullest one is the call's peak."""
@@ -76,6 +77,14 @@ class RecordingProvider(LLMProviderPort):
     def note_tool(self, name: str) -> None:
         """The run reached for a work tool — counted by its name (the invariants read the shell's)."""
         self.last_tool_calls[name] = self.last_tool_calls.get(name, 0) + 1
+
+    def note_tools(self, use: dict | None, results: list) -> None:
+        """What one event of the run says of its tools: a call it makes (`use`, counted by name), and the results it
+        gets back — a shell call's that is no error is a command that ran (`last_shell_ran`)."""
+        if use:
+            self.note_tool(str(use["name"]))
+            self._shell |= {use.get("id")} if use["name"] == "Bash" else set()
+        self.last_shell_ran += sum(1 for r in results if r.get("tool_use_id") in self._shell and not r.get("is_error"))
 
     def tag_last(self, stage: str) -> None:
         """Label the most recent call with its pipeline stage (the caller knows; the port does not)."""

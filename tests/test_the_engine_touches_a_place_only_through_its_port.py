@@ -113,6 +113,7 @@ HOSTS_OWN = {
     ("adapters/execution.py", "_own", "os.lstat(path)"): "this host IS the place",
     ("adapters/execution.py", "end_leftovers", "shutil.which('docker')"): "this host's docker client",
     ("adapters/execution.py", "_system_run", "script.read_bytes()"): "the system's own script",
+    ("adapters/execution.py", "Commands.start", "Path(shell.__file__).read_bytes()"): "the system's own script",
     ("adapters/execution.py", "_log_out", "mirror.is_file()"): "the host's mirror of a system container's log",
     ("adapters/execution.py", "_log_out", "mirror.read_text(encoding='utf-8')"): "the host's mirror of a log",
     ("adapters/execution.py", "_mirror", "mirror.parent.mkdir(parents=True, exist_ok=True)"): "the host's mirror of a log",

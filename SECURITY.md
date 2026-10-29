@@ -39,6 +39,17 @@ and nothing of your disk is mounted into any of its containers:
   base read-only, and holds its node's own temp and its place's own model-client state. It does not
   see another node's place, conversations or inputs, nor the system's own checks; what it receives
   of other nodes' work comes by the joins the system makes into its place and the base.
+- The commands a session's Claude Code client runs (its Bash tool) do not run beside the client. The
+  client's shell is one the system lays where no agent process writes, and it sends each command to
+  a container of its own beside the session's: the same place mounted, the same network and switch,
+  a process space of its own, the image's user with no capability. So no command can write into the
+  client's output, which the system reads as the record of what the session did. Each command is
+  also recorded as it starts and as it ends — its session, node, role and agent, its arguments, its
+  exit code — by the system's listener in that container, which no command can signal, read or ask
+  for anything; the record is kept beside the door's log. A client that runs a shell beside itself
+  instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
+  is refused with that cause: the project stops. The client's own file tools may not write through
+  `/proc` or `/dev`, nor into its own state.
 - The checks the system runs over a delivery run what the agents wrote (the plan's probes, the
   delivery's own scripts), so each runs in a container of its own copy of the delivery, mounting
   that copy and a temp of its own and nothing else.
@@ -104,8 +115,13 @@ What one session can still reach:
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
   agent through the door rather than by the system's executor — is copied as it stands, ignored files
   and builds included, and nothing is built.
-- A process an executor starts may outlive its session in its place's container, which stands
+- A process an executor starts may outlive its session in its place's containers, which stand
   until the place goes.
+- The Claude Code client's own tools — Read, Edit, Write — still run in its process, beside its
+  output: the settings above keep them off it, as far as the client holds to them (NotebookEdit onto
+  a pipe was not measured). A command cannot read the client's task-output files nor its
+  model-client state; its Read tool can. A working directory a command leaves outside the place does
+  not carry to the next command.
 - A judge runs the delivered code in its own container: while its run lasts, that code can rewrite
   what the judge itself writes in its batch, a pinned probe's inputs laid there, and a finding's files
   once the re-run has copied them out of the read-only directory and before it reads them. A file the

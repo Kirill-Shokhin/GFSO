@@ -306,6 +306,19 @@ class ExecutionPort(ABC):
         credential; None where the client must hold it (this host)."""
         return None
 
+    #: does a model client started here run its commands apart from itself (`commands_env`)?
+    commands_apart = False
+
+    def commands_env(self) -> dict:
+        """What a model client started here takes into its environment to run each of its commands apart from itself,
+        where none of them reaches the client — that place started; {} where they run beside it (this host)."""
+        return {}
+
+    def commands_of(self, proc) -> Optional[list]:
+        """The record of the commands the client `proc` ran apart (`commands_env`), each as the system ran it — None
+        where none is kept (this host)."""
+        return None
+
     def unavailable(self, storage: bool = False) -> Optional[str]:
         """Why this place cannot start a call now, or None where it can — a cheap health check; with `storage`, its
         storage asked too (a probe that costs a call: while the place stands stopped). This host always can."""
