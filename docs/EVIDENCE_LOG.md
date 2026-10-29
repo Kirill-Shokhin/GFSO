@@ -3542,7 +3542,12 @@ windows taken out, disclosed per row in `results/_grid/E3_TABLE.md`); cost is th
 The system's own plan (one row a cell, Amendments 1 and 3): coreutils — haiku 5.5 DONE ×2 (1.000), sonnet DONE (1.000);
 sql_database — haiku 5.5 DONE (0.909), sonnet DONE (1.000); c_compiler × sonnet — two attempts, neither built a goal (the
 plan's authoring returned JSON with its closers lost; the second, a built plan, ended on a refused call at the harness);
-the rest in flight or stopped at a spend ceiling with no verdict (below).
+c_compiler × haiku 5.5 — NOT DONE at the 4 h ceiling (2026-10-29, build 14f9bbe, the environment's time 0 s; two earlier
+rows void, one on engine defects since fixed, one on the host's file sharing failing): the root's own split was never
+admitted — its Level-2 review held the whole plan, the parts its findings did not concern included, for 3 h 50 min while
+each review named one more requirement of a universal criterion and the issuer added a part for it; the run also met
+an engine defect, a shared table read while threads wrote to it (fixed since, 6d73d55); the rest in flight or stopped
+at a spend ceiling with no verdict (below).
 
 **Read across the table.** The cells above pool rows of earlier builds on the same contract (arm A) or the same plan
 (automatic), each row with its build in `E3_TABLE.md`; the pre-registration counts only its build (`65cf516`, harness
