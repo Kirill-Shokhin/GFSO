@@ -23,7 +23,18 @@ them at a directory you are willing to lose, and treat a task graph from an untr
 untrusted input: its criteria are instructions that will reach a model with a shell.
 
 Run unattended work in a container. A role registered with an execution (`register_agent(execution=)`,
-declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut:
+declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut,
+and nothing of your disk is mounted into any of its containers:
+- The project's work lives in Docker volumes of its own: the agents' places, the judges' copies, the
+  temps, the system's own copies and every session's model-client state. Your repository enters
+  once per root: your own git bundles its committed HEAD, and the project's copy is cloned inside
+  with none of your configuration or hooks; what did not come in (uncommitted or untracked files,
+  submodule contents) is said in the project's log when it comes in. The root's accepted result comes back as the
+  branch `gfso/<project>/accepted` of your repository — your git fetches a bundle of it, nothing
+  of the agents' configuration travels, and your working tree and branches are not touched; a
+  project whose base is no git repository gets its result in `.gfso-accepted-<base>/<project>/`
+  beside it. `gfso export-places` writes the places out for reading, with every agent repository's
+  configuration and hooks replaced.
 - Each agent session runs in a container of its own place. It writes there alone, reads the project's
   base read-only, and holds its node's own temp and its place's own model-client state. It does not
   see another node's place, conversations or inputs, nor the system's own checks; what it receives
@@ -31,31 +42,30 @@ declared in `data/executions.json`) runs its project's work in Docker, with the 
 - The checks the system runs over a delivery run what the agents wrote (the plan's probes, the
   delivery's own scripts), so each runs in a container of its own copy of the delivery, with the
   base read-only and nothing of another node.
-- The system's own commands — git on the agents' repositories, the copies it makes — run in the
-  project's container, which holds every place of the project and no session's state; its copies
-  run as root there, so what an executor made unreadable in its place does not stop them. Two git
-  operations that find a place by the path it was registered under (locking it, removing it) fall
-  back to the host for places registered there, and run nothing the agents wrote.
-
+- The system's own commands over an agent's repository — git, reading and writing its files — run in
+  the container of the place that repository stands in, chosen by the system's own record of the
+  place, never by what stands there: what that repository's configuration tells git to run reaches
+  nothing its agent did not already reach. Commits move between repositories as bundles.
 - No one who judges a delivery works in its executor's place: a validation and an issuer's
-  contact, a root's included, each run in a container of their own copy of it, and the place's
-  validation scratch, where the probes of its standing findings stand, is read-only to its
-  executor. A delivery that could not be copied is not judged: its validation reads as one that
-  never started — asked again, then put to a person — and an issuer's contact is asked again later.
+  contact, a root's included, each run in a container of their own copy of it, each batch of a
+  validation in its own, and the place's validation scratch is read-only to its executor. Before a
+  validation, or an issuer's ruling on a dispute, starts, the copy is compared with the tree recorded
+  at delivery, by a git the system makes;
+  a copy that differs, or that could not be made, is not judged: its validation reads as one that
+  never started — asked again, then put to a person. A delivery holding a nested repository or a
+  submodule, whose files that record cannot hold, is refused when it is delivered, with what lifts it.
 
 What one session can still reach:
 - The sessions working in the base share it and its model-client state: a root's executor, and a
   parent's consent asked before its own place exists.
-- A project whose base is not a git repository works every node in the base: no node is held apart,
-  and each judgement copies the whole base.
+- A judge's copy shares its node's temp with the node's executor.
+- What git does not record — ignored files such as a build, a file whose name differs from a tracked
+  one only by case on a case-insensitive base — is judged as it stands in the copy.
 - A process an executor starts may outlive its session in its place's container, which stands
-  until the place goes: it can change the place while the delivery is being copied to be judged,
-  so what is judged may differ from the commit recorded at delivery.
-- The system's git in the project's container reads a node's own repository as its executor left
-  it, so what that repository's configuration tells git to run (a monitor, a hook, a filter) runs
-  there, as the agents' user, in the container that holds every place.
-- A parent's consent asked before its own place exists runs in the base and reads its inputs from
-  the base's temp.
+  until the place goes.
+
+Under a container execution a node performed in your own chat (`perform="in_chat"`) is refused: its
+work stands on your disk, where no container reads it.
 
 Without an execution, sessions run as you, on your machine, with nothing between them and the rest
 of it.
