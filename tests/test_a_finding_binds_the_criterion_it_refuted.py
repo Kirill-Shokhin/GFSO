@@ -256,6 +256,16 @@ def test_a_path_under_pinned_inputs_or_an_escape_is_never_gone():
     assert unrerunnable({"as_run": "./cc /nowhere/at/all/a.c"}, None, standing=_STANDS)
 
 
+def test_a_finding_that_enters_the_delivery_itself_is_rerun():
+    """`cd <place> && ./cc …`: the place itself, not only what lies under it, is the delivery a judge's copy stands for —
+    with places in volumes it is on no host, and read as gone, 30 of 67 findings on c_compiler's root.types were shown
+    and not demanded, the node looping FAIL → CHALLENGE on criteria no run could decide (series 3, 2026-10-30)."""
+    place = "/nowhere/ws/.gfso-nodes-ws/p/root.types"
+    assert unrerunnable({"as_run": f"cd {place} && ./c_compiler t.c"}, None, place, standing=_STANDS) == ""
+    assert unrerunnable({"as_run": f"cd {place}x && ./c_compiler t.c"}, None, place, standing=_STANDS), \
+        "a sibling that only begins with its name is not it"
+
+
 def test_the_issuer_sees_what_the_engine_demands(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()

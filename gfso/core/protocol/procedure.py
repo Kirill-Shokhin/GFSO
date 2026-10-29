@@ -1025,7 +1025,7 @@ def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path
     # a path under a pinned probe's inputs is laid down every round: never gone — cut whole, `{inputs:X}/tests/a.c`
     # left `/tests/a.c` behind, an absolute path that never existed
     gone = [w for w in re.split(r"[\s'\"=<>|;&()`]+", re.sub(r"\{inputs:[^}]*\}[^\s'\"=<>|;&()`]*", "", cmd))
-            if _ABSOLUTE.match(w) and not (home and Path(w).as_posix().startswith(home)) and _gone(w, standing)]
+            if _ABSOLUTE.match(w) and not (home and (Path(w).as_posix() + "/").startswith(home)) and _gone(w, standing)]
     return f"it names {', '.join(gone)}, which no longer exist here" if gone else ""
 
 
