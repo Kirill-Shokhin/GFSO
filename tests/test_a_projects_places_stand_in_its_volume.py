@@ -144,8 +144,9 @@ def test_a_sessions_container_is_named_and_labelled_by_its_agent_node_and_role(p
     for place, (role, node) in cases.items():
         s = project.session(str(place), "exec-2")
         assert (s.role, s.node, s.agent) == (role, node, "exec-2")
-        assert s.container.startswith(f"{project.container}.{role}.{node}") and s.container == E.PlaceContainer(
+        assert s.container.startswith(f"{role}.{node}") and s.container == E.PlaceContainer(
             project, place).container, "stable per place"
+        assert project.container not in s.container, "the project's group names the project; the name, the role first"
         labels = dict(a.split("=", 1) for a in s.run_args() if a.startswith(("gfso.", "com.docker.compose.service")))
         assert labels == {"com.docker.compose.service": role + "s", "gfso.role": role, "gfso.node": node,
                           "gfso.agent": "exec-2", "gfso.execution": project.name}
@@ -645,3 +646,12 @@ def test_export_places_with_nothing_recorded_fails_and_says_why(tmp_path, monkey
         _a_project_on_disk(tmp_path, monkeypatch, record)
     rc, err = _exported(tmp_path, capsys)
     assert rc == 1 and ("no project of the name" if record is None else "names no volume") in err
+
+
+def test_two_projects_name_the_same_place_apart_and_their_doors_and_gateways_too(tmp_path):
+    """Short names, the project's left to its group (the author, 2026-10-29): still none shared on the machine."""
+    xs = [E.ContainerExecution("e", IMAGE, None, str(tmp_path / "state"), str(tmp_path / "w" / "ws"), p)
+          for p in ("p", "q")]
+    names = [x.session(str(x.own / "root.a"), None).container for x in xs]
+    assert names[0].startswith("executor.root.a-") and names[0] != names[1]
+    assert E.gateway_of(xs[0].container) != E.gateway_of(xs[1].container)

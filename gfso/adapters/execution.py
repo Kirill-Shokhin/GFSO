@@ -451,12 +451,22 @@ def _public_v4(host: str) -> set:
     return {a[4][0] for a in got if ipaddress.ip_address(a[4][0]).is_global}
 
 
+def _short(*parts: str) -> str:
+    """Six hex of `parts` — the tail that keeps a short container name apart from every other on the machine."""
+    return hashlib.sha1("\0".join(parts).encode()).hexdigest()[:6]
+
+
+def gateway_of(container: str) -> str:
+    """The allowlist's gateway of a project's `container`, named by its role within the project's group."""
+    return f"gateway-{_short(container)}"
+
+
 def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
     if ids := list(_STARTED):
-        _keep_logs([*[f"{i}-gw" for i in ids], *_DOORS])
-        run(["docker", "rm", "-f", *ids, *[f"{i}-gw" for i in ids], *_DOORS], timeout=120)
+        _keep_logs([*map(gateway_of, ids), *_DOORS])
+        run(["docker", "rm", "-f", *ids, *map(gateway_of, ids), *_DOORS], timeout=120)
         run(["docker", "network", "rm", *[f"{i}-net" for i in ids]], timeout=120)
         _STARTED.clear()
 
@@ -482,7 +492,7 @@ class WayOut:
 
     def __init__(self, container: str, name: str, image: str, home: Path):
         self.container, self.name, self.image, self.home = container, name, image, home
-        self.net, self.gateway = f"{container}-net", f"{container}-gw"
+        self.net, self.gateway = f"{container}-net", gateway_of(container)
 
     def switch(self, network) -> None:
         """Turn the way out to `network`. The container holds it, so every holder's next call starts the container
@@ -579,7 +589,7 @@ class Door:
         """Where a client inside reaches `upstream` with `credential` put in, and the key it presents there."""
         d = self._digest(credential, upstream)
         closed = self.way.network[0] != "open"
-        name = f"{self.way.container}-door-{d}"
+        name = f"door-{_short(self.way.container, d)}"
         if d not in self.held or not (address := self._address(name)):
             try:
                 address = self._start(name, credential, upstream, closed)
@@ -1163,9 +1173,8 @@ class ContainerExecution(ExecutionPort):
 
     def stop(self) -> None:
         """The project's container, its sessions' and its way out."""
-        for key in [k for k in _SESSIONS.copy() if k[0] == self.container]:
-            if s := _SESSIONS.pop(key, None):
-                s.stop()
+        for s in filter(None, [_SESSIONS.pop(k, None) for k in _SESSIONS.copy() if k[0] == self.container]):
+            s.stop()
         run(["docker", "rm", "-f", self.container], timeout=60)
         self.gate.close()                                 # …first: a network with a member is not removed
         self.way.close()
@@ -1265,10 +1274,8 @@ class ContainerExecution(ExecutionPort):
         # system's removal is what ends a session, not a directory found gone (a round's, a contact's, a no-place call's)
         # …over a copy, popped with a default: every thread of the server starts sessions into the one table, and a
         # removal iterating it live died "dictionary changed size during iteration" 140 times in one row (engineering)
-        for key in [k for k in _SESSIONS.copy() if k[0] == self.way.container   # …the project's, a session's too
-                    and Path(k[1]).is_relative_to(_real(path))]:
-            if not (s := _SESSIONS.pop(key, None)):
-                continue
+        for s in filter(None, [_SESSIONS.pop(k, None) for k in _SESSIONS.copy() if k[0] == self.way.container
+                               and Path(k[1]).is_relative_to(_real(path))]):   # …the project's, a session's too
             s.stop()
             if s.state:
                 with contextlib.suppress(OSError):
@@ -1532,9 +1539,11 @@ class PlaceContainer(ContainerExecution):
         rel = () if rw == self.base else rw.relative_to(self.own).parts
         # named as the system names the place — its role, its node, its round — the hash keeping two spellings apart
         self.role, self.node, sub = _kind_of(rel, (self.tmp.name, self.sys.name))
-        key = hashlib.sha1(os.path.normcase(rw).encode()).hexdigest()[:6]
-        self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", ".".join((project.container, self.role, self.node, *sub))
-                                ) + f"-{key}"
+        # …and nothing of its project's name: the project's group names that once (the author, 2026-10-29: «почему имена
+        # контейнеров все еще дурацкие») — the role first, so a group lists who acts together; the hash, over the project
+        # too, keeps every name on the machine apart
+        key = _short(project.container, os.path.normcase(rw))
+        self.container = re.sub(r"[^a-zA-Z0-9_.-]+", "-", ".".join((self.role, self.node, *sub))) + f"-{key}"
         # the CLI's state of THIS place, under its project's, named by the place — mounted here alone: the others'
         # conversations, the system's notes on them and the CLI's own memory of another place are in no session's reach
         self.state = None if rw == project.state else project.state / ("+" + "+".join(rel))
