@@ -3715,3 +3715,23 @@ every role `claude-haiku-5-5`, AUTO, one server build for the series. Every row:
   credited for every copy, voided for every copy when reported failing); replayed on the 19 archived refused reports,
   13 lift and none newly refused. Separately, a pinned expectation of two lines was printed raw in every packet, read as
   its first line alone, and a correct check was disputed; packets now write it on one line.
+
+### 13.49 The context budget on a cell whose sessions grow long (`c_compiler`) is not yet measured: its reference did not close, held by an engine defect since fixed (2026-10-29)
+
+Pre-registered (`experiments/e3_specbench/PREREGISTERED_context_budget_2.md`): `c_compiler`, the given plan v4, every
+role `claude-haiku-5-5`, AUTO, two unbudgeted references then budgets of 128k / 64k / 32k tokens; a reference that is
+not root DONE within 14 400 s stops the series. On this cell a budget has something to cut: in the first reference 11
+of 28 executor sessions passed 128k (peak 337k), executors 0.91 of the row's cost, 102.7 M cache-read tokens against
+~4 M on `sql_database` (§13.48).
+
+| row | verdict | wall | held-out |
+|---|---|---|---|
+| reference 1 | root DONE (promise kept) | 8 786 s | 0.973 |
+| reference 2 | NOT DONE at the ceiling | 14 400 s | 0.204 (base tree) |
+
+- **The series stopped by its own rule; no budget cell ran.** Reference 2 kept reference 1's pace for 55 min (5 of 11
+  parts DONE), then nothing ran for 2 h 26 min: the issuer could not rule on a part's dispute — the part's rework had
+  changed its place's tracked files before it challenged, the dispute's copy is held to the delivered commit, and the
+  ruling was asked again with a doubling wait. An implementation defect, not the models' variance; since fixed (a
+  dispute after such a rework is ruled by contact in the place as it stands, retiring no finding there).
+- What remains to show: whether a budget pays where sessions grow long — the series is re-run on the fixed build.
