@@ -123,6 +123,9 @@ _CASES = {
     "a .gitignore that hides itself added after": ("", "printf '.gitignore\nconftest.py\n' > .gitignore && "
                                                        "echo rigged > conftest.py", "changed after DELIVER"),
     "a tracked file deleted after": ("", "rm b.txt", "changed after DELIVER"),
+    "a delivered module named as the judge's own imports, then a change": (
+        "printf 'import os\\nos._exit(0)\\n' > json.py && cp json.py shutil.py && cp json.py subprocess.py",
+        "echo rigged > b.txt", "changed after DELIVER"),
     "a real pytest run before": ("mkdir -p tests && printf 'def test_a():\\n    assert 1\\n' > tests/test_a.py && "
                                  "(python3 -m pytest -q tests >/dev/null 2>&1 || true) && mkdir -p .pytest_cache && "
                                  "printf '*\\n' > .pytest_cache/.gitignore", "", None),

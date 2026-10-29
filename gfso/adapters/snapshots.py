@@ -155,7 +155,7 @@ def _own_git(place: Path, at: Path, execution) -> None:
     own repository's copy is one too: only where it borrows from moves (relative alternates). Done by one call in the
     copy's own container (`_OWN_GIT`)."""
     ex = execution.session(str(at))
-    r = ex.run([ex.python, "-c", _OWN_GIT, str(place), str(at), *W.APART], cwd=str(at), timeout=600,
+    r = ex.run([ex.python, "-I", "-c", _OWN_GIT, str(place), str(at), *W.APART], cwd=str(at), timeout=600,
                env=subprocess_env(extra=W.NO_CONFIG))
     if r.returncode != 0:
         raise OSError(f"the copy {at} could not get a git of its own: {(r.stderr or '').strip()[-300:]}")
@@ -183,6 +183,8 @@ def changed(place, at, execution) -> list[str]:
 #: git of its own — so `.git/modules` stays and nothing of the executor's runs under a judge's git. The tree is
 #: written in a git dir the system makes beside the copy (GIT_DIR, the copy its work tree, its objects borrowed),
 #: staged by the one rule DELIVER staged by (`W.stage`, whose source is handed in). Exit 3: nested repositories.
+#: Run `-I`, as every program the system runs in an agent's tree: `python -c` imports from its cwd first, and a
+#: delivered `json.py` exiting 0 passed a changed copy as the delivery (critic over 4817a32, run)
 _JUDGES_GIT = r'''
 import json, os, shutil, subprocess, sys
 from pathlib import Path
@@ -283,7 +285,7 @@ def _not_delivered(place, at, tree: str, commit: str, execution) -> Optional[str
     given = {"inherited": W.INHERITED, "spec": W.DELIVERED, "stage": inspect.getsource(W.stage),
              "kept_out": {k: v.decode("latin-1") for k, v in W.kept_out(base).items()}}
     ex = execution.session(str(at))
-    r = ex.run([ex.python, "-c", _JUDGES_GIT, str(at), commit, tree, str(base), json.dumps(given), *W.APART],
+    r = ex.run([ex.python, "-I", "-c", _JUDGES_GIT, str(at), commit, tree, str(base), json.dumps(given), *W.APART],
                cwd=str(at), timeout=1800, env=subprocess_env(extra=W.NO_CONFIG))
     said = (r.stdout or "").split()
     if r.returncode == 0:

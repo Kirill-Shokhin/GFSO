@@ -181,7 +181,7 @@ class Place:
             parts = Path(pattern).parts
             fixed = next((i for i, x in enumerate(parts) if any(c in x for c in "*?[")), len(parts))
             base, pattern = self.path(str(Path(*parts[:fixed]))), str(Path(*parts[fixed:])) if fixed < len(parts) else "*"
-        r = self.exec.run([self.exec.python, "-c", _FIND, str(base), pattern, rx, flags, *map(str, self.roots)],
+        r = self.exec.run([self.exec.python, "-I", "-c", _FIND, str(base), pattern, rx, flags, *map(str, self.roots)],
                           cwd=str(self.cwd), timeout=SHELL_TIMEOUT_S)
         if r.returncode != 0:
             raise OSError((r.stderr or "").strip()[-300:])
