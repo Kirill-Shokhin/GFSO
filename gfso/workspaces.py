@@ -349,8 +349,10 @@ def node_temp(engine, task) -> str:
 def drop_execution(project: str) -> None:
     """The project is gone: its containers go, and the objects that held them, and every volume of it by its label
     (`drop_volumes`) — the one removal of its places, its roster read or not."""
-    for key in [k for k in _EXECUTIONS if k[1] == project]:
-        (ex := _EXECUTIONS.pop(key)).stop()
+    for key in [k for k in _EXECUTIONS.copy() if k[1] == project]:   # …a copy: other threads make executions
+        if not (ex := _EXECUTIONS.pop(key, None)):
+            continue
+        ex.stop()
         hold_places(ex.files, False)
     drop_volumes(project)
 

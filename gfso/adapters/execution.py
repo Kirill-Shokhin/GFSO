@@ -1029,8 +1029,9 @@ class ContainerExecution(ExecutionPort):
 
     def stop(self) -> None:
         """The project's container, its sessions' and its way out."""
-        for key in [k for k in _SESSIONS if k[0] == self.container]:
-            _SESSIONS.pop(key).stop()
+        for key in [k for k in _SESSIONS.copy() if k[0] == self.container]:
+            if s := _SESSIONS.pop(key, None):
+                s.stop()
         run(["docker", "rm", "-f", self.container], timeout=60)
         self.gate.close()                                 # …first: a network with a member is not removed
         self.way.close()
@@ -1128,9 +1129,13 @@ class ContainerExecution(ExecutionPort):
     def remove_tree(self, path: str) -> None:
         # a place going takes its session's container with it, and its CLI's state: nothing will resume there — the
         # system's removal is what ends a session, not a directory found gone (a round's, a contact's, a no-place call's)
-        for key in [k for k in _SESSIONS if k[0] == self.way.container          # …the project's, a session's too
+        # …over a copy, popped with a default: every thread of the server starts sessions into the one table, and a
+        # removal iterating it live died "dictionary changed size during iteration" 140 times in one row (engineering)
+        for key in [k for k in _SESSIONS.copy() if k[0] == self.way.container   # …the project's, a session's too
                     and Path(k[1]).is_relative_to(_real(path))]:
-            (s := _SESSIONS.pop(key)).stop()
+            if not (s := _SESSIONS.pop(key, None)):
+                continue
+            s.stop()
             if s.state:
                 with contextlib.suppress(OSError):
                     s.project.remove_tree(str(s.state))
