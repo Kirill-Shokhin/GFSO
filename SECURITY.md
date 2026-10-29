@@ -113,7 +113,9 @@ and nothing of your disk is mounted into any of its containers:
 
 What one session can still reach:
 - The sessions working in the base share it and its model-client state: a root's executor, and a
-  parent's consent asked before its own place exists.
+  parent's consent asked before its own place exists. In a container execution their commands run where that state
+  is not mounted and the client's writers are denied it, but the client's own readers can read the others'
+  conversations there.
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
   agent through the door rather than by the system's executor — is copied as it stands, ignored files
   and builds included, and nothing is built.

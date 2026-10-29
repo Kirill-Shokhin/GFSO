@@ -202,9 +202,12 @@ def denied(sess: ExecutionPort) -> tuple:
     """What the CLI's own writers — Edit, Write, NotebookEdit (an Edit rule covers Write) — may not touch where its
     commands run apart: its stdout, through `/proc` or `/dev`, a forged stream as a command beside it wrote; and its
     state, where the hook it runs beside itself lies. Held under `--dangerously-skip-permissions`, through a link too
-    (S6 probe, CLI 2.1.310)."""
-    return tuple(f"{t}(/{p}/**)" for t in ("Edit", "Write", "NotebookEdit")
-                 for p in ("/proc", "/dev", Path(sess.state_seen()).as_posix()))
+    (S6 probe, CLI 2.1.310). Each path the state is mounted at — where the CLI reads it, and where its place's path maps
+    (`ContainerExecution.run_args`; critic over the readers: the second was open). Its readers are not denied it: the
+    CLI hands its own long outputs back through Read from there, and a link the agent makes leads Grep around any rule
+    (critic over the readers, both measured)."""
+    states = sorted({Path(sess.state_seen()).as_posix(), sess.to_inside(str(sess.state_dir()))})
+    return tuple(f"{t}(/{p}/**)" for t in ("Edit", "Write", "NotebookEdit") for p in ("/proc", "/dev", *states))
 
 
 def kept(execution: ExecutionPort, sid: str, what: str) -> Path:

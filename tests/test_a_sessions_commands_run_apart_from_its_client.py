@@ -35,10 +35,12 @@ class H(BaseHTTPRequestHandler):
         ev = [{"type": "message_start", "message": {"id": f"m{n}", "type": "message", "role": "assistant",
                "model": "fake", "content": [], "stop_reason": None, "usage": {"input_tokens": 1, "output_tokens": 1}}}]
         if body.get("tools") and n < len(CMDS):
-            block, delta, stop = {"type": "tool_use", "id": f"t{n}", "name": "Bash", "input": {}}, {
-                "type": "input_json_delta", "partial_json": json.dumps({"command": CMDS[n]})}, "tool_use"
+            name, given = ("Bash", {"command": CMDS[n]}) if isinstance(CMDS[n], str) else CMDS[n]
+            block, delta, stop = {"type": "tool_use", "id": f"t{n}", "name": name, "input": {}}, {
+                "type": "input_json_delta", "partial_json": json.dumps(given)}, "tool_use"
         else:
-            block, delta, stop = {"type": "text", "text": ""}, {"type": "text_delta", "text": "done"}, "end_turn"
+            said = "LEAKED" if "SECRET-" in json.dumps(body.get("messages", [])).split('"tool_result"', 1)[-1] else "done"
+            block, delta, stop = {"type": "text", "text": ""}, {"type": "text_delta", "text": said}, "end_turn"
         ev += [{"type": "content_block_start", "index": 0, "content_block": block},
                {"type": "content_block_delta", "index": 0, "delta": delta}, {"type": "content_block_stop", "index": 0},
                {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 1}},
@@ -69,6 +71,9 @@ class _Apart(LocalExecution):
 
     def which(self, program):
         return program
+
+    def to_inside(self, text):
+        return text
 
     def commands_env(self):
         return {"CLAUDE_CODE_SHELL": shell.CLIENT, "BASH_ENV": shell.BESIDE}
@@ -170,8 +175,9 @@ def _model(s, commands: list) -> None:
                     "sleep 0.1; done; exit 1"], check=True, capture_output=True)
 
 
-def _session(monkeypatch, project, commands: list, trace=None):
-    """(the provider's answer, its call's record, the session) of one agent round of `commands`."""
+def _session(monkeypatch, project, commands: list, trace=None, laid=None, tools=("Bash",)):
+    """(the provider's answer, its call's record, the session) of one agent round of `commands`, the files `laid`
+    ({path: text}) written into the session's container first."""
     monkeypatch.setattr(H, "client_env", lambda *a, **k: {"ANTHROPIC_API_KEY": "held-by-nobody",
                                                           "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{PORT}",
                                                           "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "0"})
@@ -179,9 +185,12 @@ def _session(monkeypatch, project, commands: list, trace=None):
         monkeypatch.setenv("GFSO_AGENT_TRACE_DIR", str(trace))
     s = _place(project)
     _model(s, commands)
+    for path, text in (laid or {}).items():
+        subprocess.run(["docker", "exec", "-u", "0", s.container, "sh", "-c", 'mkdir -p "${1%/*}" && printf %s "$2" > "$1" '
+                        '&& chmod 644 "$1"', "sh", path, text], check=True, capture_output=True)
     llm = H.ClaudeCodeProvider(model="haiku", execution=project, credential=None)
     llm.stage_hint = "a executor(agent-1)"
-    answer = llm.agent_round("s", "go", ("Bash",), cwd=str(project.own / "a"), timeout=180)
+    answer = llm.agent_round("s", "go", tools, cwd=str(project.own / "a"), timeout=180)
     return answer, llm.calls[-1], s
 
 
@@ -268,3 +277,14 @@ def test_live_no_command_reaches_the_listener_or_its_record(project):
     assert any(r.get("refused") for r in s.commands.record()), "…and is on the record as refused"
     caps = inside("grep -E '^Cap(Prm|Eff)' /proc/self/status").stdout.split()
     assert caps == ["CapPrm:", "0000000000000000", "CapEff:", "0000000000000000"], caps
+
+
+@live
+@pytest.mark.parametrize("second", [False, True])
+def test_live_no_session_writes_its_cli_state_at_either_mount(monkeypatch, project, second):
+    """The CLI's state holds the hook it runs beside itself: its writers are denied it where the CLI reads it and where
+    the place's path maps — it is mounted at both (critic over the readers: the second was open)."""
+    a = project.session(str(project.own / "a"))
+    at = f"{a.to_inside(str(a.state)) if second else '/home/agent/.claude'}/planted"
+    _session(monkeypatch, project, [["Write", {"file_path": at, "content": "x"}]], tools=("Bash", "Write"))
+    assert subprocess.run(["docker", "exec", a.container, "test", "-e", at]).returncode != 0, f"written: {at}"
