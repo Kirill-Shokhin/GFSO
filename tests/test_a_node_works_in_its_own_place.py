@@ -213,6 +213,57 @@ def test_a_whole_that_leaves_a_merge_unresolved_is_not_delivered(tmp_path):
     e.stop()
 
 
+class _Nester(_Executor):
+    """A part's session that delivers a nested repository — `inner_commit` or not — and, once its packet names the
+    refusal, does what it says: deletes the inner `.git`, untracks the gitlink where there is one, delivers again."""
+
+    def __init__(self, tid, files, inner_commit=True):
+        super().__init__(tid, files)
+        self.inner_commit = inner_commit
+
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        dep = Path(cwd) / "dep"
+        if "git rm --cached <path>" in user:
+            shutil.rmtree(dep / ".git", onerror=lambda f, p, _: (Path(p).chmod(0o700), f(p)))
+            subprocess.run(["git", "rm", "-q", "--cached", "dep"], cwd=cwd, capture_output=True)
+        elif not dep.exists():
+            dep.mkdir()
+            (dep / "d.c").write_text("D\n")
+            _git(dep, "init", "-q")
+            if self.inner_commit:
+                _git(dep, "add", "-A")
+                _git(dep, "commit", "-q", "-m", "inner")
+        return super().run_agent(system, user, allowed_tools, cwd=cwd, timeout=timeout)
+
+
+@pytest.mark.parametrize("inner_commit, checked, cause", [
+    (True, True, "nested git repositories"), (True, False, "nested git repositories"),
+    (False, True, "could not be staged")],
+    ids=["refused at DELIVER", "control: no check at DELIVER", "an inner repository with no commit: unstaged, held"])
+def test_a_delivery_holding_a_nested_repository_is_refused_with_its_cause_until_lifted(tmp_path, monkeypatch,
+                                                                                         inner_commit, checked, cause):
+    """§12.16 (ii): refused only at the judge's copy, the node was re-asked blind until it escalated — its executor
+    never told what to lift; with no commit inside, staging failed unread and the delivery went in without the files.
+    Held at DELIVER, named in its next packet, and lifted by the executor's own moves, it is then judged."""
+    if not checked:
+        monkeypatch.setattr("gfso.reports.W.nested", lambda *a, **k: [])
+    e, agents, base = _plan(tmp_path)
+    said: list = []
+    e.on_info(lambda src, msg: said.append(msg))
+    where: dict = {}
+    sessions = {"a": _Nester("a", {"a.c": "A\n"}, inner_commit), "b": _Executor("b", {"b.c": "B\n"})}
+    _run(e, agents, sessions, lambda: any("delivery held" in m for m in said)
+         or any(x.signal.name == "DELIVER" for x in e.audit_log(TaskId("a"))), validated=where)
+    assert checked == any("NOT delivered" in m and cause in m and "(dep)" in m for m in said)
+    if checked:
+        assert e.graph.get_state(TaskId("a")) in (State.EXECUTING, State.REWORKING)
+        assert not any(x.signal.name == "DELIVER" for x in e.audit_log(TaskId("a"))), "nothing recorded as delivered"
+        _run(e, agents, sessions, lambda: "a" in where, validated=where)
+        assert "NOT handed in" in sessions["a"].packet and cause in sessions["a"].packet
+        assert _git(base, "show", "gfso/p/a:dep/d.c") == "D", "its files are in the delivered tree"
+    e.stop()
+
+
 def _conflicting(tmp_path, whole):
     e, agents, base = _plan(tmp_path, whole="exec-1")
     said: list = []

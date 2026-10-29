@@ -11,7 +11,7 @@ from gfso.core.protocol.invariants import verdict_word
 from gfso.core.graph.model import generation_of_task
 from gfso.core.types import TaskId, Signal, Verdict
 from gfso.issuer import signal_ok as _signal
-from gfso.packets import _EXECUTOR_STATES
+from gfso.packets import DELIVERED, HELD, _EXECUTOR_STATES
 from gfso.workspaces import execution_of, still_unjoined
 
 log = logging.getLogger(__name__)
@@ -147,9 +147,9 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
     if started_on is not None and (now := engine.graph.get_task(task_id)) is not None             and tuple(generation_of_task(now)) != tuple(started_on):
         _cb(f"{task_id}: the report answers a contract revised while the session worked - nothing signalled; the "
             f"node waits under its new version · {_stat_line(llm)}")
-        if workspace is not None:   # what it wrote is the old version's, on the record as such — never in a later delivery
-            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} work under a superseded version", executor_id,
-                         execution=execution_of(engine), branch=workspace[2])
+        # …what it wrote is the old version's, on the record as such — never in a later delivery
+        if why := _committed(engine, executor_id, workspace, f"gfso: {task_id} work under a superseded version")[1]:
+            _cb(f"{task_id}: its work under the superseded version is not on the record — {why}")
         return
     if status == "challenge":
         # The dispute travels as the signal wherever the state admits it — OFFERED, and, since
@@ -214,25 +214,47 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         if workspace is not None and W.merging(workspace[0], workspace[1], execution=execution_of(engine)):
             _cb(f"{task_id}: NOT delivered — a merge is left unfinished in its tree (conflicts unresolved): resolve "
                 f"each conflicted file and commit the merge · {_stat_line(llm)}")
-            engine.emit_info("delegate", f"{task_id}: delivery held — a merge left unfinished in its tree")
+            engine.emit_info("delegate", f"{task_id}: {HELD}a merge left unfinished in its tree")
             return
-        artifact = (W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id,
-                                 execution=execution_of(engine), branch=workspace[2]) or None) \
-            if workspace is not None else None
+        artifact, unstaged = _committed(engine, executor_id, workspace, f"gfso: {task_id} delivery")
         carried = W.head(workspace[1], execution=execution_of(engine)) if artifact else None
-        # …AND IT CARRIES ITS PARTS' WORK. Told in its packet to merge four parts that conflicted, a root's executor
-        # rewrote their files instead, never merged, and delivered a tree without the JOINs a part had passed on; its
-        # deliveries failed until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16). Merging is its own move.
-        if left := still_unjoined(engine, workspace, task_id, unjoined):
-            _cb(f"{task_id}: NOT delivered — its tree does not contain the work of {', '.join(left)}, whose branch did "
-                f"not merge here: a whole is handed in as the integration of its parts (`git merge` each, resolve) · "
-                f"{_stat_line(llm)}")
-            engine.emit_info("delegate", f"{task_id}: delivery held — part(s) {', '.join(left)} not merged into it")
+        if why := unstaged or _not_handed_in(engine, task_id, workspace, artifact, unjoined):
+            _cb(f"{task_id}: NOT delivered — {why} · {_stat_line(llm)}")
+            engine.emit_info("delegate", f"{task_id}: {HELD}{why}")
             return
         _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
                 self_validation=_self, artifact=artifact, commit=carried)
-        _cb(f"{task_id}: executor DELIVERED · {_stat_line(llm)}")
+        _cb(f"{task_id}: {DELIVERED} · {_stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb, observed)
+
+
+def _committed(engine, executor_id, workspace: tuple | None, message: str) -> tuple:
+    """(tree, None) of the node's place committed whole (`W.commit_all`) — (None, None) with no place — or (None, why)
+    where its files could not be staged: nothing is then committed, nor handed in as though it were."""
+    if workspace is None:
+        return None, None
+    try:
+        return W.commit_all(workspace[0], workspace[1], message, executor_id, execution=execution_of(engine),
+                            branch=workspace[2]) or None, None
+    except W.NotStaged as e:
+        return None, str(e)
+
+
+def _not_handed_in(engine, task_id, workspace: tuple | None, artifact: str | None, unjoined: list) -> str | None:
+    """Why the committed tree `artifact` of the node's place is no delivery its executor may hand in — the cause it
+    reads and lifts by its own moves (§12.16 ii) — or None."""
+    # …ITS FILES IN ITS TREE: a nested repository is recorded as a commit, its files no part of the delivery, so no
+    # judge's copy could be held to it — refused here, where its executor can still lift it, not at the copy, where the
+    # node was re-asked blind until it escalated
+    if artifact and (inner := W.nested(workspace[1], artifact, execution=execution_of(engine))):
+        return W.nested_cause(inner)
+    # …AND IT CARRIES ITS PARTS' WORK. Told in its packet to merge four parts that conflicted, a root's executor
+    # rewrote their files instead, never merged, and delivered a tree without the JOINs a part had passed on; its
+    # deliveries failed until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16). Merging is its own move.
+    if left := still_unjoined(engine, workspace, task_id, unjoined):
+        return (f"its tree does not contain the work of part(s) {', '.join(left)}, whose branch did not merge here: a "
+                f"whole is handed in as the integration of its parts (`git merge` each, resolve)")
+    return None
 
 
 def _scope_report_into_signals(engine, order: list, executor_id: str, report: dict, llm, _cb,

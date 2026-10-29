@@ -99,6 +99,7 @@ def test_what_a_deliver_handed_over_is_on_its_row_after_a_restart(tmp_path, monk
     monkeypatch.setattr(W, "commit_all", lambda *a, **k: "2c3e0b54")
     monkeypatch.setattr(W, "head", lambda *a, **k: "c0ffee01")
     monkeypatch.setattr(W, "merging", lambda *a, **k: False)
+    monkeypatch.setattr(W, "nested", lambda *a, **k: [])
     monkeypatch.setattr("gfso.reports.still_unjoined", lambda *a, **k: [])
     monkeypatch.setattr("gfso.reports._settle_internal", lambda *a, **k: None)
     _report_into_signals(e, TaskId("n"), "worker", e.graph.get_task("n"), {"status": "delivered", "summary": "s"},

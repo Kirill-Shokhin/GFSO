@@ -15,6 +15,7 @@ only — sessions and validations run in their own trees in parallel.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -210,7 +211,8 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
     container, whose agent's filters and fsmonitor ran over every place from the project's; and taken back into the
     base by bundle (`_carry`), the base's side in the root's container."""
     with _lock(base):
-        stage(lambda *a: git(place, *a, execution=execution))
+        if (r := stage(lambda *a: git(place, *a, execution=execution))).returncode:
+            raise NotStaged(unstaged_cause(r.stderr or ""))
         r = git(place, "commit", "--allow-empty", "--no-verify", "-q", "-m", message, who=who, execution=execution)
         if r.returncode != 0:
             raise OSError(f"the delivery could not be committed in {place}: {r.stderr.strip()}")
@@ -218,6 +220,34 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
         if branch and is_clone(place, execution):
             _name(base, branch, _carry(base, place, base, "HEAD", execution), execution)
         return git(place, "rev-parse", "HEAD^{tree}", execution=execution).stdout.strip()
+
+
+class NotStaged(OSError):
+    """The place's files could not be staged as a delivery (`stage`): nothing was committed. Its text is the cause."""
+
+
+def unstaged_cause(stderr: str) -> str:
+    """Why staging failed, in git's own words — and, where a nested repository without a commit stopped it, what
+    lifts that (`nested_cause`)."""
+    said = " ".join(stderr.split())[-400:] or "git add failed"
+    inner = re.findall(r"'([^']+?)/?' does not have a commit checked out", stderr)
+    return f"its files could not be staged ({said})" + (f"; {nested_cause(inner)}" if inner else "")
+
+
+def nested(place, rev: str = "HEAD", execution=None) -> list[str]:
+    """The paths `rev`'s tree in `place` records only as a gitlink — a nested repository or a submodule, whose files
+    are no part of the tree, so no copy of the place can be held to it (`snapshots._not_delivered`)."""
+    r = git(place, "ls-tree", "-r", "-z", rev, execution=execution)
+    return [e.split("\t", 1)[1] for e in r.stdout.split("\0") if e.startswith("160000 ")] if r.returncode == 0 else []
+
+
+def nested_cause(paths: list) -> str:
+    """Why a delivery over `paths` (`nested`) is refused, and the executor's own move that lifts it."""
+    return (f"its tree holds nested git repositories or submodules ({', '.join(paths[:10])}"
+            f"{', …' if len(paths) > 10 else ''}): the delivery records only their commit, not their files, so they "
+            f"cannot be checked against it. Commit their files into this node's own repository: for each path, delete "
+            f"its inner `.git` (a directory, or a submodule's file) and run `git rm --cached <path>` (a submodule: "
+            f"drop its entry from `.gitmodules` too), so its files are plain files of your tree; then deliver again")
 
 
 def bring(base, place, branch: str, execution=None) -> None:

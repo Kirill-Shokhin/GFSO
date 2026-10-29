@@ -199,7 +199,7 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), see
             f"does not exist yet, report `status: \"blocked\"` and NAME it in `blocker_task_ids`. That "
             f"is a real dependency the plan did not declare, and naming it is what records it.\n"
             f"{chr(10).join(sibs) or '- none'}\n{CHALLENGE_WHEN}{rework}{answered_challenges(engine, task)}"
-            f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}\n"
+            f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}{_held_text(engine, [task])}\n"
             + _working_directory(workdir))
 
 
@@ -379,6 +379,23 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset, seen: dict | No
             f"{_observed_section((seen or {}).get(str(t.id), []), '###')}")
 
 
+#: what `reports` says of a delivery it held, and of one it handed in — the latest of the two per node decides
+HELD, DELIVERED = "delivery held — ", "executor DELIVERED"
+
+
+def _held_text(engine, nodes: list) -> str:
+    """Why the last delivery of each of `nodes` was held, where its last word on the record is a hold (`reports`): the
+    executor's to lift by its own moves (§12.16 ii), so said to it — the issuer reads the same line."""
+    last: dict = {}
+    for r in engine.pipeline_log():
+        tid, _, said = str(r.get("message", "")).partition(": ")
+        if said.startswith(HELD) or said.startswith(DELIVERED):
+            last[tid] = said
+    why = [f"- `{t.id}`: {last[str(t.id)][len(HELD):]}" for t in nodes if last.get(str(t.id), "").startswith(HELD)]
+    return ("\n## Your last delivery was NOT handed in — lift this before you deliver again\n" + "\n".join(why) + "\n"
+            if why else "")
+
+
 def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = (), seen: dict | None = None) -> str:
     """The scope session's contract: every node of the scope in build order, each with its criteria as the
     checklist its validation runs, its inputs from outside the scope and its rework feedback — and the plan's
@@ -395,7 +412,7 @@ def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list 
             + "\n".join(_scope_node_block(engine, i, t, top, inside, seen) for i, t in enumerate(order, 1))
             + f"\n## The other nodes of this plan — NOT your work, and you must not do it\n"
             f"If you cannot proceed because something one of them owns does not exist yet, report that node "
-            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{CHALLENGE_WHEN}{_unjoined_text(unjoined)}\n"
+            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{CHALLENGE_WHEN}{_unjoined_text(unjoined)}{_held_text(engine, order)}\n"
             + _working_directory(workdir))
 
 
