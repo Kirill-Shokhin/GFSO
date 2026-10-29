@@ -28,7 +28,7 @@ def test_the_bounds_are_the_installations_dial_with_defaults(monkeypatch):
     assert C.container_limits() == ["--memory", "4g", "--memory-swap", "4g", "--pids-limit", "4096"]
     monkeypatch.setenv("GFSO_CONTAINER_MEMORY", "6g")
     monkeypatch.setenv("GFSO_CONTAINER_PIDS", "512")
-    assert C.container_limits() == ["--memory", "6g", "--memory-swap", "6g", "--pids-limit", "512"]
+    assert C.container_limits() == ["--memory", "6144m", "--memory-swap", "6144m", "--pids-limit", "512"]
     monkeypatch.setenv("GFSO_CONTAINER_MEMORY", "unbounded")
     monkeypatch.setenv("GFSO_CONTAINER_PIDS", "-1")
     assert C.container_limits() == ["--memory", "4g", "--memory-swap", "4g", "--pids-limit", "4096"], \
@@ -36,8 +36,10 @@ def test_the_bounds_are_the_installations_dial_with_defaults(monkeypatch):
     for unbounded_or_refused in ("0", "0g", "512", "5m"):
         monkeypatch.setenv("GFSO_CONTAINER_MEMORY", unbounded_or_refused)
         assert C.container_limits()[1] == "4g", unbounded_or_refused
-    monkeypatch.setenv("GFSO_CONTAINER_MEMORY", "64M")
-    assert C.container_limits()[1] == "64m"
+    for said, read in (("64M", "64m"), ("8GB", "8192m"), ("8GiB", "8192m"), ("8gb", "8192m"), ("512mib", "512m"),
+                       ("1.5g", "1536m"), ("8 g", "8192m"), ("1t", "1048576m")):
+        monkeypatch.setenv("GFSO_CONTAINER_MEMORY", said)
+        assert C.container_limits()[1] == read, "as Docker reads it: the dial a bound-named FAIL points to"
 
 
 def test_every_docker_run_of_the_system_is_bounded():
@@ -51,7 +53,8 @@ def test_every_docker_run_of_the_system_is_bounded():
         assert "container_limits()" in call or "*flags" in call, src[at:at + 200]
     with pytest.raises(ValueError, match="bounded"):
         E._system_run("gfso-never-started", IMAGE, ["--label", "x=y"], Path(__file__), [], Path("log"))
-    assert src.count('"--memory", "256m"') == src.count('"--pids-limit", "256"') == 2, "the door's and the gateway's"
+    assert E._SMALL == ("--memory", "256m", "--memory-swap", "256m", "--pids-limit", "256")
+    assert src.count("*_SMALL") == 2, "the door's and the gateway's, no swap past their bound"
 
 
 @live
@@ -90,3 +93,22 @@ def test_a_reader_ended_past_the_bound_fails_the_delivery_with_its_cause():
     """The checkout's own readers: git ended by SIGKILL is the delivery's FAIL code with the bound named."""
     assert 'if r.returncode == -9:\n        bad(BAD, f"git {args[0]} reading it was {BOUND}")' in S._CHECKOUT
     assert "GFSO_CONTAINER_MEMORY" in S._CHECKOUT
+
+
+@live
+def test_live_a_large_file_the_build_rewrote_is_put_back_within_a_small_bound():
+    """`kept` puts a delivered file back a chunk at a time, hashing what it writes: a 200 MB tracked file the build
+    rewrote comes back as delivered under a 128 MiB bound (read whole, it was killed: a false FAIL blaming the build —
+    critic over the bounds)."""
+    name = f"gfso-kept-test-{time.time_ns()}"
+    script = ("set -e; mkdir /tmp/w && cd /tmp/w && git init -q && git config user.email t@t && git config user.name t; "
+              "head -c 200000000 /dev/urandom > big; git add big; git commit -qm d; "
+              "echo rewritten > big; c=$(git rev-parse HEAD); t=$(git rev-parse HEAD^{tree}); "
+              'python3 -I -c "$S" kept /tmp/w "$c" "$t"; echo rc=$?; git cat-file blob HEAD:big | cmp -s - big && echo restored')
+    try:
+        got = subprocess.run(["docker", "run", "--rm", "--name", name, "--memory", "128m", "--memory-swap", "128m",
+                              "-e", f"S={S._CHECKOUT}", IMAGE, "sh", "-c", script],
+                             capture_output=True, text=True, timeout=300)
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    assert "rc=0" in got.stdout and "restored" in got.stdout, (got.stdout[-300:], got.stderr[-300:])

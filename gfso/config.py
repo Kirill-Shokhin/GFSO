@@ -306,9 +306,11 @@ def container_limits() -> list[str]:
     host (series 3, c_compiler, 2026-10-30). Past its memory the kernel ends the container's largest process, the
     runaway, by SIGKILL: its command exits 137 as its own failure, and the session it ran in goes on."""
     mem = os.environ.get("GFSO_CONTAINER_MEMORY", "").strip().lower()
-    # …at least 64 MiB: `0` is Docker's "unbounded", and under 6 MiB Docker refuses every start
-    m = re.fullmatch(r"(\d+)([bkmg]?)", mem)
-    mem = mem if m and int(m[1]) * 1024 ** "bkmg".index(m[2] or "b") >= 64 * 2 ** 20 else CONTAINER_MEMORY
+    # …read as Docker reads a size (`8g`, `8GB`, `8GiB`, `1.5g`, `8 g`, `1t`), at least 64 MiB: `0` is Docker's
+    # "unbounded", and under 6 MiB Docker refuses every start
+    m = re.fullmatch(r"(\d+(?:\.\d+)?) ?([kmgtp]?)i?b?", mem)
+    size = float(m[1]) * 1024 ** " kmgtp".index(m[2] or " ") if m else 0
+    mem = f"{int(size) // 2 ** 20}m" if size >= 64 * 2 ** 20 else CONTAINER_MEMORY
     try:
         pids = int(os.environ.get("GFSO_CONTAINER_PIDS", CONTAINER_PIDS))
     except ValueError:

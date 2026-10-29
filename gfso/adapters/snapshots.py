@@ -317,41 +317,51 @@ def blob_id(data):
     return hashlib.new(algo, b"blob %d\0" % len(data) + data).hexdigest().encode()
 
 
-def file_blob_id(path):
-    """`blob_id` of a file read in chunks: a delivered file twice the copy's memory over is no longer its FAIL."""
-    h = hashlib.new(algo, b"blob %d\0" % path.stat().st_size)
+def hashed(path, h):
+    """`h` over the file `path`, read in chunks: a delivered file near the copy's memory bound is no FAIL of its own."""
     with open(path, "rb") as f:
         while chunk := f.read(1 << 20):
             h.update(chunk)
-    return h.hexdigest().encode()
+    return h.hexdigest()
 
 
-def lfs_content(data):
-    """The LFS object a pointer `data` names, from the copy's own store, only where its sha256 is the pointer's."""
+def file_blob_id(path):
+    return hashed(path, hashlib.new(algo, b"blob %d\0" % path.stat().st_size)).encode()
+
+
+def lfs_object(data):
+    """The copy's own store's file of the LFS object a pointer `data` names, only where its sha256 is the pointer's."""
     head = b"version https://git-lfs.github.com/spec/v1\n"
     keys = dict(ln.split(b" ", 1) for ln in data[len(head):].splitlines() if b" " in ln) if data.startswith(head) else {}
     oid = keys.get(b"oid", b"").removeprefix(b"sha256:").decode("ascii", "replace")
     o = at / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
-    raw = o.read_bytes() if len(oid) == 64 and o.is_file() else None
-    return raw if raw is not None and hashlib.sha256(raw).hexdigest() == oid else None
+    return o if len(oid) == 64 and o.is_file() and hashed(o, hashlib.sha256()) == oid else None
 
 
-def put(path, mode, data):
-    """`path` written as delivered, every directory above it a directory of the copy, not a link a build left."""
+def written(path, source, h, want):
+    """`source` (a binary stream) into `path` a chunk at a time, hashed as it is written: what lands is what was
+    checked, whatever a process the build left running does to the store meanwhile; False where it is not `want`."""
+    with open(path, "wb") as f:
+        while chunk := source.read(1 << 20):
+            h.update(chunk)
+            f.write(chunk)
+    return h.hexdigest() == want
+
+
+def put(path, mode, write):
+    """`path` made by `write` as delivered, every directory above it a directory of the copy, not a link a build left."""
     d = at
     for part in path.relative_to(at).parts[:-1]:
         d = d / part
         if d.is_symlink() or (d.exists() and not d.is_dir()):
             d.unlink()
         d.mkdir(exist_ok=True)
-    if path.is_symlink() or path.is_file():
-        path.unlink()
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        path.unlink()                       # …a fifo or a socket the build left too: opened, a fifo blocks the put
     elif path.is_dir():
         subprocess.run(["rm", "-rf", "--", str(path)])
-    if mode == b"120000":
-        os.symlink(os.fsdecode(data), path)
-    else:
-        path.write_bytes(data)
+    write(path)
+    if mode != b"120000":
         os.chmod(path, 0o755 if mode == b"100755" else 0o644)
 
 
@@ -374,14 +384,26 @@ if how == "kept":
         elif path.is_file() and not path.is_symlink() and (mode == b"100755") == bool(path.stat().st_mode & 0o100):
             if file_blob_id(path) == oid:
                 continue
-        data = git("cat-file", "blob", oid.decode()).stdout
-        if blob_id(data) != oid:
-            bad(6, f"its object {oid.decode()} does not hold what its id names")
-        content = lfs_content(data) if mode != b"120000" else None
-        if content is not None and path.is_file() and not path.is_symlink() and path.stat().st_size == len(content) \
-                and path.read_bytes() == content:
-            continue
-        put(path, mode, content if content is not None else data)
+        o, wrong = oid.decode(), f"its object {oid.decode()} does not hold what its id names"
+        size = int(git("cat-file", "-s", o).stdout or b"-1")
+        # …read whole only where small: a link's target, an LFS pointer
+        data = git("cat-file", "blob", o).stdout if mode == b"120000" or 0 <= size <= 1024 else None  # …`lfs.LONGEST`
+        if data is not None and blob_id(data) != oid:
+            bad(6, wrong)
+        obj = lfs_object(data) if data is not None and mode != b"120000" else None
+        if mode == b"120000":
+            put(path, mode, lambda p: os.symlink(os.fsdecode(data), p))
+        elif obj is not None:
+            if path.is_file() and not path.is_symlink() and path.stat().st_size == obj.stat().st_size and (
+                    mode == b"100755") == bool(path.stat().st_mode & 0o100) and hashed(path, hashlib.sha256()) == obj.name:
+                continue
+            with open(obj, "rb") as src:
+                put(path, mode, lambda p: written(p, src, hashlib.sha256(), obj.name) or bad(6, wrong))
+        else:
+            cat = subprocess.Popen(["git", *apart, "cat-file", "blob", o], cwd=at, stdout=subprocess.PIPE, env=env)
+            head = hashlib.new(algo, b"blob %d\0" % size)
+            put(path, mode, lambda p: written(p, cat.stdout, head, o) or lost(cat, wrong))
+            cat.wait()
         print(rel.decode("utf-8", "replace"))
     sys.exit(0)
 r = subprocess.run(["git", *apart, "init", "-q", "--template=", f"--object-format={algo}", str(at)],
@@ -439,6 +461,13 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> None:
     W.lfs_into_copy(W.base_of(str(place)) or str(place), place, at, commit, execution)
     r = ex.run([*end, "checkout", str(at), commit, tree, *W.apart(execution)], cwd=str(at.parent), timeout=1800,
                env=env)
+    # …ended past the copy's memory bound, the same each time it is asked: a FAIL that says so (§8.4), not a copy waited
+    # for forever. NOT HELD: git reads a Git LFS file whole through its filter here, so one about the bound's size
+    # fails an honest delivery — the cause names the dial that lifts it
+    if r.returncode == 4:
+        raise NotTheDelivery(f"the tree DELIVER recorded ({commit[:12]}) cannot be checked out within its judge's memory "
+                             f"bound — a Git LFS file is read whole here; GFSO_CONTAINER_MEMORY lifts it: "
+                             f"{(r.stdout or '').strip()[-300:]}")
     if r.returncode:
         raise OSError(f"the copy {at} could not check out its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}")
 

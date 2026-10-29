@@ -97,7 +97,9 @@ and nothing of your disk is mounted into any of its containers:
   failure, and the session or check it ran in goes on; one made of many smaller processes (a parallel build) can make
   the session's own model client the largest, and that session then ends with no answer and is asked again. Past its
   processes a new one is refused until some end. Nothing else runs in a judge's copy while it is made and its files
-  checked, so a copy whose reading its bound ended is the delivery's FAIL, the bound named as the cause. The bounds
+  checked, so a copy whose reading its bound ended is the delivery's FAIL, the bound named as the cause. The copy
+  writes files a chunk at a time, save a Git LFS file at its checkout, which git reads whole: one about the bound's
+  size fails an honest delivery until the bound is raised. The bounds
   are each container's: they keep one container from taking the machine, not many together. Up to
   `GFSO_MAX_SESSIONS` sessions run at once, and each of a validation's batches in a container of its own at the same
   time, with no bound on their number — a delivery that runs away in every batch can still hold their sum.
@@ -127,6 +129,8 @@ What one session can still reach:
   once the re-run has copied them out of the read-only directory and before it reads them. A file the
   delivered code rewrote in the judge's batch before its run ended is recorded as it then stood when
   a finding over it is filed.
+- A delivered build that removes the Git LFS objects from its judge's copy has their files put back as their
+  pointers, not their content: the checks then read the pointers.
 - A finding filed before the system recorded probe files has its files recorded at its first re-run,
   from its round as it stands then; one whose round is already gone is shown, not demanded.
 

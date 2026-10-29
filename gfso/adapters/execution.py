@@ -187,6 +187,9 @@ def _unavailable(ex, storage: bool):
         f"its storage does not answer: {(got.stderr or got.stdout or '').strip()[-300:]}"
 
 
+#: the bounds of a door or a gateway: a few small processes of the system's own, no swap past them
+_SMALL = ("--memory", "256m", "--memory-swap", "256m", "--pids-limit", "256")
+
 def _system_run(name: str, image: str, flags: list, script: Path, args: list, mirror: Path, mode: str = "1777") -> None:
     """A system container (a door, a gateway, a session's commands) running `script` with `args`: started waiting for
     it, the script laid whole into its `OWN` through one `docker exec`, so nothing of the host is mounted into it. Its
@@ -551,7 +554,7 @@ class WayOut:
         read-only, unprivileged and bounded, nothing of the host mounted."""
         return ([*labelled(self.name, self.project), *grouped(self.container, "gateway"),
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
-                 "--sysctl", "net.ipv4.ip_forward=0", "--memory", "256m", "--pids-limit", "256",
+                 "--sysctl", "net.ipv4.ip_forward=0", *_SMALL,
                  "--network", self.net, "--network-alias", GATEWAY],
                 [",".join(self.network[1]), f"{OWN}/egress.log", GATEWAY])
 
@@ -637,8 +640,8 @@ class Door:
         _DOORS.add(name)                      # …before it runs: a start cut after this still ends with the server
         _system_run(name, self.way.image, [
             *labelled(self.way.name, self.way.project), *grouped(self.way.container, "door"),
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--memory", "256m",
-            "--pids-limit", "256", "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", *_SMALL,
+            "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
             *(["--network", self.way.net, "--network-alias", name] if closed else [])],
             Path(door.__file__), [upstream, f"{OWN}/door.log", name if closed else "0.0.0.0", "1" if closed else "0"],
             self.log())
