@@ -1748,14 +1748,14 @@ class PlaceContainer(ContainerExecution):
     checks. Its way out is its project's; the system's own commands stay in the project's container. Started on its
     session's first call, gone with its directory, its place or its project. Its temp is its place's own (`temp_of`):
     what the system lays for the node's sessions, no other node's reads — save that whatever works in the base shares
-    the base's: every node with no git base, a root's sessions, a parent's consent before its own place is made. Its
+    the base's: every node with no git base, and the reader of the places a plan is made from. Its
     CLI's state is its place's own, under its project's. No judge shares a place with its executor: a validation and an
     issuer's contact, a root's included, work each in a round of their own, on a checkout of the delivery — a
     validation's batches each in a batch of its own —, mounting that and a temp of their own alone (`_mounts`), and a
     delivery that could not be checked out is not judged (`apart`). NOT HELD YET: the sessions that work in the base
-    share its CLI state — a root's executor and a parent's consent before its own place is made; a tool-loop provider's
-    issuer reads a node's inputs by its shell only; a done node's container stands until its directories go or the
-    project stops. A judge's ends with its run (`ExecutionPort.release`)."""
+    share its CLI state — every session where it is no git repository, else the plan's place reader; a tool-loop
+    provider's issuer reads a node's inputs by its shell only; a done node's container stands until its directories go
+    or the project stops. A judge's ends with its run (`ExecutionPort.release`)."""
     commands_apart = True
 
     def __init__(self, project: ContainerExecution, rw: Path, agent: str | None = None):

@@ -112,10 +112,10 @@ and nothing of your disk is mounted into any of its containers:
   the next delivery's own build is the re-check.
 
 What one session can still reach:
-- The sessions working in the base share it and its model-client state: a root's executor, and a
-  parent's consent asked before its own place exists. In a container execution their commands run where that state
-  is not mounted and the client's writers are denied it, but the client's own readers can read the others'
-  conversations there.
+- The sessions working in the base share it and its model-client state, and can read each other's conversations
+  there: in a project whose base is no git repository, every session; in one that is, the reader of the places a
+  plan is made from, whose state also holds what consents asked in the base wrote before they had places of their
+  own. Every other session, a parent's consent included, works in a place of its own.
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
   agent through the door rather than by the system's executor — is copied as it stands, ignored files
   and builds included, and nothing is built.

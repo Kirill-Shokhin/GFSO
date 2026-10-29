@@ -1467,7 +1467,8 @@ class Dispatcher:
                 out = self._consent(self._engine, task_id, executor_id, self._agents)
             except Exception as e:                      # noqa: BLE001 — a failed round is not a signal
                 log.warning(f"delegate: consent of {task_id} failed: {e}")
-                out = {"status": "error"}
+                # …its place made first now: a place down there waits it out, as an executor's round does
+                out = {"status": "error", "limit": _the_place_is_down(self._engine, e)}
             if out.get("status") in ("accepted", "challenged", "not_offered"):
                 return
             t = self._engine.graph.get_task(task_id)

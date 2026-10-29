@@ -255,11 +255,13 @@ def test_the_issuers_questions_are_answered_from_contact_and_the_splits_are_not(
     assert asked == [str(tmp_path)] * 4 + [None], asked
 
 
-def test_a_system_held_parent_gives_its_own_consent():
+def test_a_system_held_parent_gives_its_own_consent(tmp_path):
     e = _engine(Mode.AUTO)
     _goal(e)
     assert e.graph.get_state(TaskId("root")) == State.OFFERED
-    out = run_consent(e, TaskId("root"), "exec-1", _Roster(),
+    roster = _Roster()
+    roster._ids = {k: {**v, "workdir": str(tmp_path)} for k, v in roster._ids.items()}   # …no repository: its consent makes no place
+    out = run_consent(e, TaskId("root"), "exec-1", roster,
                       _llm=_FakeLLM({"decision": "accept", "reason": "the split carries it"}))
     e.wait_idle()
     assert out["status"] == "accepted", out

@@ -15,7 +15,7 @@ from gfso.core.types import TaskId, Signal, Stage, State, Verdict
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
-from gfso.workspaces import _enter_workspace, conversation_of, execution_of, node_workspace, performer, project_llm
+from gfso.workspaces import _enter_workspace, conversation_of, execution_of, performer, project_llm
 from gfso.observe import observe_place
 from gfso.adapters import worktrees as W
 from gfso.packets import (TECH_REPORT, _EXECUTOR_STATES, _executor_packet, observed_lines, _scope_order, _scope_packet,
@@ -247,8 +247,10 @@ def run_consent(engine, task_id: TaskId, executor_id: str, agents: "AgentRegistr
         return {"task_id": str(task_id), "status": "not_offered"}
     kids = "\n".join(f"- `{k.id}` ({k.label()}) — {k.state.name}; "
                      f"Del={k.assignee}" for k in engine.graph.get_active_children(task_id)) or "- none"
-    # …where its work stands: its own place once a session made it (a revised node), else the roster's directory
-    here = node_workspace(engine, agents, task_id) or cfg.get("workdir")
+    # …IN ITS OWN PLACE, made now as its first session would make it (`_enter_workspace`): asked in the base, before
+    # its executor made one, it shared the base's model-client state with the root's executor and read its
+    # conversations (measured, a stand-in model driving the real CLI). With no git base, the roster's directory
+    here = _enter_workspace(engine, agents, task, [task])[0] or cfg.get("workdir")
     packet = (_executor_packet(engine, task, here)
               + f"\n## The split under your node — built by its children, merged into your tree: what your criteria "
                 f"catch in it is yours to fix there, not a defect of your contract\n{kids}\n")

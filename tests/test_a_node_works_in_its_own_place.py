@@ -23,9 +23,9 @@ from gfso import delegate, tools as T
 from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.procedure import probe_id
-from gfso.core.types import State, TaskId
+from gfso.core.types import PlaceUnavailable, State, TaskId
 from gfso.delegate import Dispatcher, _auto_validate
-from gfso.sessions import run_executor
+from gfso.sessions import run_consent, run_executor
 from gfso.workspaces import _ensure_place, _workspace, node_workspace
 from gfso.roster import AgentRegistry
 from tests import test_one_session_carries_a_scope as S
@@ -565,4 +565,64 @@ def test_a_place_is_cut_from_where_its_whole_works_made_first_up_the_tree(tmp_pa
     assert (Path(cw[1]) / "h.py").exists(), "the part's tree misses what joined above it"
     assert Path(_workspace(e, agents, e.graph.get_task(TaskId("g")))[1]).is_dir(), "its whole's place was made first"
     assert not (base / "h.py").exists()
+    e.stop()
+
+
+def test_a_parents_consent_is_asked_in_its_own_place_not_the_base(tmp_path):
+    """A parent's consent asked before its executor made its place worked in the base, sharing the base's model-client
+    state with the root's executor — whose conversations its readers then read (measured, a stand-in model driving the
+    real CLI 2.1.310). Asked in its own place, made now as its first session would make it, it holds a state of its own."""
+    base = _repo(tmp_path / "ws")
+    e = make_engine(llm=StubLLM())
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    for aid in ("exec-1", "exec-2", "exec-3"):
+        agents.register(aid, "llm-executor", workdir=str(base), project="p")
+    T.create_task(e, "r", {"description": "top", "criteria": [criterion("t")]}, assignee="exec-1")
+    for whole, part, crit, holder, mine in (("r", "g", "t", "exec-2", "m"), ("g", "c", "m", "exec-3", "l")):
+        T.decompose(e, whole, [{"task_id": part, "spec": {"description": part, "criteria": [criterion(mine)]},
+                                "assignee": holder, "covers": [crit]}], accepted_risks=_RISK)
+    e.wait_idle()
+    assert node_workspace(e, agents, "g") is None, "no session of g has made its place yet"
+    asked = []
+
+    class _Consent:
+        calls = []
+
+        def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+            asked.append(cwd)
+            self.calls.append({"duration_ms": 1, "output_tokens": 1})
+            return _fenced({"decision": "accept", "reason": "ok"})
+
+        def tag_last(self, stage):
+            pass
+
+    run_consent(e, TaskId("g"), "exec-2", agents, _llm=_Consent())
+    assert asked and asked[0] == node_workspace(e, agents, "g") and Path(asked[0]) != base, asked
+    e.stop()
+
+
+def test_a_consent_that_meets_its_place_down_waits_and_is_not_parked(tmp_path, monkeypatch):
+    """Its place made first now, a consent meets a place that is down before any model call: the stop a booked call
+    makes, waited out, never "signalled nothing twice — PARKED" (critic over the consent's own place)."""
+    base = _repo(tmp_path / "ws")
+    e = make_engine(llm=StubLLM())
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    for aid in ("exec-1", "exec-2"):
+        agents.register(aid, "llm-executor", workdir=str(base), project="p")
+    T.create_task(e, "r", {"description": "top", "criteria": [criterion("t")]}, assignee="exec-1")
+    T.decompose(e, "r", [{"task_id": "g", "spec": {"description": "g", "criteria": [criterion("m")]},
+                          "assignee": "exec-2", "covers": ["t"]}], accepted_risks=REGISTER)
+    e.wait_idle()
+
+    def down(*a, **k):
+        raise PlaceUnavailable("box", "docker daemon is not running")
+    monkeypatch.setattr(W, "ensure", down)
+    d = Dispatcher(e, agents)
+    for _ in range(2):
+        d._consent_guarded(TaskId("r"), "exec-1")
+    assert e.paused(), "the place down is its project's stop"
     e.stop()
