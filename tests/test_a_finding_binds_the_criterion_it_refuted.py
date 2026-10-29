@@ -29,13 +29,14 @@ import pytest
 
 import gfso.tools as T
 from gfso import issuer as I
-from gfso.adapters.execution import scratch_of
+from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.core.protocol.procedure import unrerunnable
 from gfso.packets import _executor_packet, _validator_packet
 from gfso.core.types import AgentId, TaskId
 from tests.support import REGISTER, UNMODELLED_FAULT, DENIAL_ENTRY, criterion, make_engine
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM, _IssuerLLM
 
+from gfso.engine import findings as F
 from gfso.engine.findings import record_round
 
 #: every round stands: these findings name none the system removed
@@ -266,20 +267,48 @@ def test_the_issuer_sees_what_the_engine_demands(tmp_path):
     e.stop()
 
 
-def test_a_finding_is_demanded_while_the_file_it_names_stands_and_shown_once_it_is_gone(tmp_path):
+@pytest.mark.parametrize("kept", ["kept", "absent", "past the cap"])
+def test_a_finding_is_demanded_while_its_file_is_kept_and_shown_once_it_cannot_be_laid(tmp_path, monkeypatch, kept):
+    """The file a finding names in its round is kept in the system's record as the finding is filed, and a re-run lays
+    it from there (`findings.lay_files`): the round going leaves it demanded. One the record could not keep — not there
+    when the finding was filed, or past `KEEP_CAP` — is kept as lost and shown, not demanded, at once: laid as nothing,
+    it was re-run over an empty directory (`No such file`, rc 2), a refutation no delivery lifts (critic over 909e417)."""
     prog = (scratch := scratch_of(tmp_path / "ws", "p")) / "kid_1791646628" / "dt" / "hh3.c"
     prog.parent.mkdir(parents=True)
-    prog.write_text("int main(void){return 0;}")
+    if kept != "absent":
+        prog.write_text("int main(void){return 0;}")
+    if kept == "past the cap":
+        monkeypatch.setattr(F, "KEEP_CAP", 4)
     e = _seam()
     _refute(e, f"./cc {prog.as_posix()}; echo exit=$?")
+    prog.write_text("int main(void){return 0;}")
     _delivered(e, "fixed it")
-    with pytest.raises(ValueError, match="REFUTED"):
-        _pass(e)                                        # a validator's program in its scratch, still standing: it runs
-    shutil.rmtree(scratch)
-    record_round(e.graph, str(prog), False)            # …gone as the system removes a round: by its rotation
-    packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
-    assert "no longer exist here" in packet and "shown, not demanded" in packet
-    assert _pass(e)["verdict"] == "PASS", "a finding no round can re-run held the node undecidable"
+    if kept == "kept":
+        with pytest.raises(ValueError, match="REFUTED"):
+            _pass(e)                                    # a validator's program in its scratch, kept: it runs
+        shutil.rmtree(scratch)
+        record_round(e.graph, str(prog), False)         # …gone as the system removes a round: by its rotation
+        with pytest.raises(ValueError, match="REFUTED"):
+            _pass(e)                                    # …its file in the record: still demanded
+    else:
+        packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
+        assert "no longer exist here" in packet and "shown, not demanded" in packet
+        assert _pass(e)["verdict"] == "PASS", "a finding the record could not keep held the node"
+    e.stop()
+
+
+def test_a_reruns_command_writing_only_its_own_output_finds_its_directory(tmp_path):
+    """A validator's command that writes only into its round (`cc ok.c -o <round>/batch1/prog`) kept nothing there: laid
+    from the record, the re-run found no `batch1/` (ld: No such file) and, on a host, no laid directory to copy (cp:
+    cannot stat) — every later delivery refuted (critic over the judged tree, run). Every directory it names is made."""
+    out =scratch_of(tmp_path / "ws", "p") / "kid_1791646628" / "batch1" / "prog"
+    e = _seam()
+    at = tmp_path / "r2" / "batch1"
+    at.mkdir(parents=True)
+    cmd = e.lay_probe_files(f"echo built > {out.as_posix()} && cat {out.as_posix()}", at, LocalExecution())
+    ex = LocalExecution()
+    got = ex.run([ex.shell() or "bash", "-c", cmd], cwd=str(at), timeout=60)   # …the system's own shell on this host
+    assert got.returncode == 0 and got.stdout.strip() == "built", (got.returncode, got.stderr)
     e.stop()
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -387,6 +388,43 @@ class ExecutionPort(ABC):
         """`path` gone, whatever it holds — a read-only directory a test made in it included. Gone already is fine."""
         ...
 
+    def pipe(self, args: list[str], *, cwd: str, into: "ExecutionPort", into_args: list[str], into_cwd: str,
+             timeout: float, env: Optional[dict] = None, into_env: Optional[dict] = None) -> tuple:
+        """`args` run here in `cwd`, what it prints fed as it comes to `into_args` run where `into` runs, in `into_cwd`
+        — one OS pipe between the two processes (`popen`), never read here: what it carries is bounded by the disk it
+        lands on, not by this process's memory. (the first's exit code, its errors, the second's `CompletedProcess`
+        with text out); past `timeout` both are ended and `TimeoutExpired` reaches the caller."""
+        bytes_out = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+        a = self.popen(args, env=env, cwd=cwd, stdin=subprocess.DEVNULL, **bytes_out)
+        try:
+            b = into.popen(into_args, env=into_env, cwd=into_cwd, stdin=a.stdout, **bytes_out)
+        except BaseException:
+            self.end(a)
+            raise
+        a.stdout.close()                   # …the second holds the pipe alone: the first sees it close when it ends
+        got: dict = {}
+        readers = [threading.Thread(target=lambda k, f: got.__setitem__(k, f.read()), args=kf, daemon=True)
+                   for kf in (("err", a.stderr), ("out", b.stdout), ("berr", b.stderr))]
+        for t in readers:
+            t.start()
+        try:
+            b.wait(timeout)
+            a.wait(60)
+        finally:                           # …ended either way: a call left adopted, or running inside past its time
+            self.end(a)
+            into.end(b)
+        for t in readers:
+            t.join(60)
+        text = lambda k: into.to_outside((got.get(k) or b"").decode("utf-8", errors="replace"))
+        return a.returncode, text("err"), subprocess.CompletedProcess(into_args, b.returncode, text("out"), text("berr"))
+
+    def release(self, path: str) -> None:
+        """The session standing in `path` ended, and whatever its processes left running with it — its files stay: a
+        judge's round outlives its run as the record of what it ran, and nothing of its run may go on writing there.
+        Where it has no session of its own (this host: one place for all), nothing to end."""
+        if (s := self.session(path)) is not self:
+            s.stop()
+
     def session(self, cwd: str, agent: Optional[str] = None) -> "ExecutionPort":
         """Where an agent's session working in `cwd` runs, as opposed to the system's own commands: an isolated place
         may give each session a boundary of its own, shown as `agent`'s. This host is one place for both."""
@@ -445,6 +483,10 @@ SCRATCH = ".gfso-scratch-"
 #: what names one batch's directory in its validation's round (`<round>/batch<N>`): a session's writable root of its
 #: own, so a process one batch's validator left behind reaches no other batch's copy of the delivery
 BATCH = "batch"
+#: what names, beside a judge's round or batch (`<root>.laid`), the directory the system lays what that judge reads from
+#: the system's record — a standing finding's files (`engine.findings.lay_files`): written by the system alone, mounted
+#: read-only to the judge, so nothing the delivered code it runs does rewrites them
+LAID = ".laid"
 #: what keys, in a project's settings, the name of each of its volumes by its role (`places`, `state`): the system's
 #: record that its places moved into them — from there on no place nor round is looked for on this host
 #: …and beside them the base and the image they were made over (`base`, `image`): what an export reads them by

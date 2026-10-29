@@ -201,9 +201,8 @@ DELIVERED = (".", *(f":(exclude,glob)**/{c}" for c in CACHES),
 def stage(git):
     """THE DELIVERED TREE, staged by `git(*args)` (a CompletedProcess, text out): everything `DELIVERED` names that
     the ignore rules let in, and every `.gitignore` or `.gitattributes` there that ignore rules hide — a rule that
-    hides itself is still part of what was handed in, and one added after DELIVER to hide a file is seen. The one rule
-    of both sides: `commit_all` at DELIVER, and a judge holding its copy to that tree (`snapshots._JUDGES_GIT`, which
-    runs this function's own source). The last git call's result."""
+    hides itself is still part of what was handed in. What `commit_all` commits at DELIVER, and so what its judge
+    checks out (`snapshots._checkout`). The last git call's result."""
     r = git("add", "-A", "--", *DELIVERED)
     if r.returncode:
         return r
@@ -245,7 +244,7 @@ def unstaged_cause(stderr: str) -> str:
 
 def nested(place, rev: str = "HEAD", execution=None) -> list[str]:
     """The paths `rev`'s tree in `place` records only as a gitlink — a nested repository or a submodule, whose files
-    are no part of the tree, so no copy of the place can be held to it (`snapshots._not_delivered`)."""
+    are no part of the tree, so no copy of it can be checked out whole (`snapshots._checkout`)."""
     r = git(place, "ls-tree", "-r", "-z", rev, execution=execution)
     return [e.split("\t", 1)[1] for e in r.stdout.split("\0") if e.startswith("160000 ")] if r.returncode == 0 else []
 
@@ -343,16 +342,54 @@ def lfs_object(base, repo, oid: str, size: int, execution) -> bytes | None:
 def _lfs_carried(base, src, dst, revs: list, execution) -> None:
     """The LFS objects the pointers of the commits `revs` names in `src` (`pointed`) name, written into the own store
     of `dst` where none it reads holds them — a parent that joins a part's change then checks out its content, and a
-    landing finds it in the base (`land_lfs`). Each object only as `lfs_object` reads it; one `src` lacks is not
+    landing finds it in the base (`land_lfs`). Each object only as `carry_lfs` takes it; one `src` lacks is not
     carried, and its pointer reads as a pointer — said where the result lands."""
     if not _lfs_in(execution) or not (want := pointed(src, revs, execution)):
         return
     rel = {"/".join((o[:2], o[2:4], o)): o for o in want}
     lacking = execution.session(str(dst)).bytes_call(["sh", "-c", _LACKING, "sh", *_stores(base, dst)], cwd=str(dst),
                                                      input="".join(f"{p}\n" for p in rel).encode())
-    for oid in (rel[p] for p in lacking.stdout.decode().split() if p in rel):
-        if (data := lfs_object(base, src, oid, want[oid][0], execution)) is not None:
-            execution.files.write_bytes(lfs.path_in(_stores(base, dst)[0], oid), data)
+    carry_lfs(base, src, dst, {rel[p]: want[rel[p]] for p in lacking.stdout.decode().split() if p in rel}, execution)
+
+
+#: one LFS object taken from stdin in the container of the repository it goes to: written into the store "$1" as
+#: git-lfs lays it out, only where its size and sha256 are the pointer's ("$2", "$3"); exit 5 where they are not
+_TAKE_LFS = r'''
+import hashlib, os, sys, tempfile
+store, oid, size = sys.argv[1], sys.argv[2], int(sys.argv[3])
+at = os.path.join(store, oid[:2], oid[2:4], oid)
+os.makedirs(os.path.dirname(at), exist_ok=True)
+h, n = hashlib.sha256(), 0
+with tempfile.NamedTemporaryFile(dir=os.path.dirname(at), delete=False) as t:
+    while n <= size and (c := sys.stdin.buffer.read(1 << 20)):
+        n += len(c)
+        h.update(c)
+        t.write(c)
+if n == size and h.hexdigest() == oid:
+    os.replace(t.name, at)
+else:
+    os.unlink(t.name)
+    sys.exit(5)
+'''
+
+
+def carry_lfs(base, src, dst, want: dict, execution) -> list[str]:
+    """Each LFS object `want` names ({oid: (size, path)}) from a store the repository at `src` reads into the own store
+    of the one at `dst`: STREAMED from `src`'s container into `dst`'s (`ExecutionPort.pipe`), nothing of it held by the
+    server whatever its size, and kept only where it is the pointer's object (`_TAKE_LFS`) — the stores are agents' to
+    write, so a forged one in the first store gives way to the next. [The paths whose object no store held]."""
+    into, there = execution.session(str(dst)), execution.session(str(src))
+    take = lambda store, oid, size: there.pipe(
+        ["cat", "--", lfs.path_in(store, oid)], cwd=str(src), into=into, timeout=_SLOW, into_cwd=str(dst),
+        into_args=[into.python, "-I", "-c", _TAKE_LFS, _stores(base, dst)[0], oid, str(size)])[2].returncode == 0
+    return [path for oid, (size, path) in want.items() if not any(take(s, oid, size) for s in _stores(base, src))]
+
+
+def lfs_into_copy(base, src, dst, commit: str, execution) -> list[str]:
+    """The LFS objects the pointers of `commit` name — read in the copy at `dst`, from the objects the system checked
+    there, not in the place `src` — carried from the stores `src` reads into the copy's own (`carry_lfs`), so its
+    checkout writes their content; [the paths whose object no store held]. Nothing where no LFS filter runs."""
+    return carry_lfs(base, src, dst, pointed(dst, [commit], execution), execution) if _lfs_in(execution) else []
 
 
 def land_lfs(base, sha: str, since: str | None, execution) -> list[str]:

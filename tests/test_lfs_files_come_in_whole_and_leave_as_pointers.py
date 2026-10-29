@@ -3,7 +3,6 @@ its pointer; what of the user's the copy lacks is said in the answer of the call
 2026-10-29: the user's agent must SEE what did not come in; carry the LFS objects, materialized by the system with no
 config of the user's run, and never commit an LFS file's content as a blob)."""
 import hashlib
-import inspect
 import io
 import json
 import shutil
@@ -219,9 +218,8 @@ def test_one_filter_process_serves_a_git_call_and_the_repositorys_own_does_not_r
 
 
 def test_the_judges_command_line_rides_argv_on_windows(tmp_path):
-    given = {"inherited": W.INHERITED, "spec": W.DELIVERED, "stage": inspect.getsource(W.stage), "kept_out": {}}
     at = "C:/" + "x" * 120
-    line = subprocess.list2cmdline(["python3", "-c", S._JUDGES_GIT, at, "a" * 40, "b" * 40, at, json.dumps(given),
+    line = subprocess.list2cmdline(["python3", "-I", "-c", S._CHECKOUT, "checkout", at, "a" * 40, "b" * 40,
                                     *W.APART, *L.filter_args("python3")])
     assert len(line) < 16_000, len(line)                    # …CreateProcess's bound is 32767
 

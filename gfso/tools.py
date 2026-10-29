@@ -2244,7 +2244,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
            in_flight: Optional[str] = None, blocker_task_id: Optional[str] = None,
            blocker_task_ids: Optional[list] = None,
            external: bool = False, failed_criteria: Optional[list] = None,
-           retire_findings: Optional[list] = None) -> dict:
+           retire_findings: Optional[list] = None, build: Optional[str] = None) -> dict:
     """Send a raw protocol signal (the lifecycle transaction): ACCEPT / DELIVER / PASS / FAIL / BLOCK /
     RESOLVE_BLOCK / CHALLENGE / ACCEPT_CHALLENGE / REJECT_CHALLENGE / CANCEL / CONFIRM_CANCEL. The lower-layer
     primitive. On the AGENT door signals are signed as you automatically (`agent` — the MCP door pins
@@ -2253,7 +2253,9 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
     FSM validates the ROLE: executor signals require the node's
     Del == you, issuer signals require the parent's Del == you — a node delegated to someone else only
     moves on THEIR signals. DELIVER carries `result` (paths + how each criterion is met — the
-    validator's input).
+    validator's input) and `build`: the command that builds the result from its committed files — where DELIVER records a
+    commit, the judge checks a checkout of it, nothing ignored or untracked, and runs this there before any check (`""` =
+    nothing to build; left out: `make` where the tree has a Makefile at its root, else nothing).
     FAIL requires `failed_criteria` (Inv-3). CANCEL opens the two-step abandon handshake (→ CANCELLING);
     the executor settles it with CONFIRM_CANCEL (pass `in_flight` = the state of work at cancellation) →
     ABANDONED. BLOCK on undeclared prerequisites that are EXISTING nodes: pass `blocker_task_ids` with
@@ -2279,7 +2281,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
         # such a node self-verifies, its DELIVER carries the self-check, and the guarantee is carried
         # by the validation of the public result above it. The packet had the field, the schema asked
         # for it, and no door let a caller fill it in.
-        self_validation=_self_check_verdict(self_validation),
+        self_validation=_self_check_verdict(self_validation), build=build,
         justification=justification, action=action,
         in_flight=in_flight,
         blocker_task_id=TaskId(blocker_task_id) if blocker_task_id else None,

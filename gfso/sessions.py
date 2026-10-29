@@ -40,6 +40,12 @@ EXECUTOR_SCHEMA = {
         # doors held one field to two contracts, which is this codebase's most expensive class.
         "self_validation": {"type": "string", "enum": [Verdict.PASS, Verdict.FAIL],
                             "description": "your OWN verdict on this delivery (§11.2). The evidence goes in `summary`; this is what you conclude from it."},
+        # …and how the result is built: its judge checks a checkout of what DELIVER commits — nothing ignored or
+        # untracked — and runs this there before any check (`adapters.snapshots._build`)
+        "build": {"type": "string",
+                  "description": "with `delivered`: the shell command that builds your result from its committed files "
+                                 "alone (e.g. `make`, `pip install -e .`); \"\" when nothing needs building. Left out: "
+                                 "`make` where the tree has a Makefile at its root, else nothing"},
         "reason": {"type": "string"},
         "blocker_task_id": {"type": "string"},
         "blocker_task_ids": {"type": "array", "items": {"type": "string"}},

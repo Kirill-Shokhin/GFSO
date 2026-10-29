@@ -440,6 +440,9 @@ class SignalData:
     # …and the commit that carried it when it was handed over: what joins once a PASS accepts it, wherever the branch
     # has moved since (the branch is the agents' to write)
     commit: Optional[str] = None
+    # …and how its judge builds it before any check (a command run in the judge's copy; "" = nothing to build; None =
+    # not declared: `make` where the tree has a Makefile at its root, else nothing — `adapters.snapshots._build`)
+    build: Optional[str] = None
     self_validation: Optional[Verdict] = None      # DELIVER
     new_spec: Optional[Spec] = None                # ACCEPT_CHALLENGE
     # ACCEPT_CHALLENGE: the issuer's ruling — ids of the validator's findings the executor's CHALLENGE named that this

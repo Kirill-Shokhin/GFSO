@@ -26,7 +26,7 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import BATCH, HOST, MADE, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
+from gfso.core.types import BATCH, HOST, LAID, MADE, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, executions, executions_path,
                          host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs
@@ -1439,10 +1439,12 @@ class ContainerExecution(ExecutionPort):
         return str(self.tmp)            # …a name: made where it is written, in the volume (`FilesPort.mkdtemp`)
 
     def temp_of(self, place) -> str:
-        """The temp of the node `place` belongs to (`_owner`): its executor, its validations, its issuer's contacts
-        share it, and no other node's session holds it. A path outside the project's places: the temp itself."""
+        """The temp of the writable root `place` stands in (`_writable_root`): a node's place's, its executor's alone;
+        a judge's round or batch, and a directory of the system's, each one of its own — a judge shared its node's, and a
+        delivered link into it read what the executor wrote there after DELIVER (critic over the judged tree). A path
+        outside the project's places: the temp itself."""
         try:
-            owner = _owner(_writable_root(_real(place), self)) if place else None
+            owner = _writable_root(_real(place), self) if place else None
         except ValueError:
             owner = None
         if owner is None:
@@ -1641,28 +1643,20 @@ def _kind_of(rel: tuple, systems: tuple) -> tuple:
     return ("check", rel[-1], ()) if rel[0] in systems else ("executor", rel[0], ())
 
 
-def _owner(rw: Path) -> Path:
-    """The place a writable root serves: a validation's round, the node it validates — the base, for its scratch among
-    the project's places (`scratch_of`); else itself."""
-    if (s := _scratch_above(rw)) is None:
-        return rw
-    name = s.name[len(SCRATCH):]
-    return s.parents[2] / name[1:] if name.startswith(".") else s.parent / name
-
-
 class PlaceContainer(ContainerExecution):
     """One session's container: its place writable (`rw`), the base read-only — a node's clone borrows the base's
-    objects, and nothing it does reaches the base's refs — a validation's earlier rounds read-only, nothing of another
-    node's place nor of the system's own checks. Its way out is its project's; the system's own commands stay in the
-    project's container. Started on its session's first call, gone with its directory, its place or its project. Its
-    temp is its node's own (`temp_of`): what the system lays for the node's sessions, no other node's reads — save that
-    whatever works in the base shares the base's: every node with no git base, a root's sessions, a parent's consent
-    before its own place is made. Its CLI's state is its place's own, under its project's. No judge shares a place with
-    its executor: a validation and an issuer's contact, a root's included, work each in a round of their own, on a copy —
-    a validation's batches each in a batch of its own, its siblings read-only —, and a delivery that could not be copied is not judged — the place down (`apart`). NOT HELD YET: the sessions that work in the base
+    objects, and nothing it does reaches the base's refs — nothing of another node's place nor of the system's own
+    checks. Its way out is its project's; the system's own commands stay in the project's container. Started on its
+    session's first call, gone with its directory, its place or its project. Its temp is its place's own (`temp_of`):
+    what the system lays for the node's sessions, no other node's reads — save that whatever works in the base shares
+    the base's: every node with no git base, a root's sessions, a parent's consent before its own place is made. Its
+    CLI's state is its place's own, under its project's. No judge shares a place with its executor: a validation and an
+    issuer's contact, a root's included, work each in a round of their own, on a checkout of the delivery — a
+    validation's batches each in a batch of its own —, mounting that and a temp of their own alone (`_mounts`), and a
+    delivery that could not be checked out is not judged (`apart`). NOT HELD YET: the sessions that work in the base
     share its CLI state — a root's executor and a parent's consent before its own place is made; a tool-loop provider's
-    issuer reads a node's inputs by its shell only; a round's container stands until its round is pruned, a done node's until its directories go or the
-    project stops."""
+    issuer reads a node's inputs by its shell only; a done node's container stands until its directories go or the
+    project stops. A judge's ends with its run (`ExecutionPort.release`)."""
 
     def __init__(self, project: ContainerExecution, rw: Path, agent: str | None = None):
         self.__dict__.update(project.__dict__)
@@ -1686,23 +1680,30 @@ class PlaceContainer(ContainerExecution):
                 "--label", f"{NODE}={self.node}", *(["--label", f"{AGENT}={self.agent}"] if self.agent else [])]
 
     def _mounts(self) -> list:
-        """The base read-only unless the place is the base; a validation's round — or its one batch — writable, its
-        earlier rounds and sibling batches read-only beneath it; a place writable, its validations' scratch read-only —
-        a node's standing findings name probes there; the temp writable."""
-        tmp, system = self.tmp, self.sys
+        """(directory, read-only?) for each directory the container holds. A judge's round or batch writable with a
+        temp of its own, and what the system laid for it from its record read-only beside it (`LAID`): a standing
+        finding's files — never an earlier round, whose files the delivered code run there could rewrite after its
+        judge ran them, and whose container outlived its run (critic over the judged tree: a forged `../probe.sh`
+        re-run, rc 0); a directory of the system's checks, writable with a temp of its own. Nothing else: no base, no
+        node's temp, no place, no other round or batch. A judge runs the delivered tree it was handed, and anything more
+        it mounts is a way for that tree to read what the executor holds now — a delivered link into the node's temp, a
+        root's base (the root's executor's live place), a sibling batch's copy (critic over the judged tree). A temp of
+        the system's: the base read-only and itself. A place writable, the base read-only, its validations' scratch
+        read-only, its temp writable."""
+        tmp, own_temp = self.tmp, (Path(self.temp_root()), False)
         if self.state is None:
             return [(self.rw, False)]                    # the keeper of the CLI state: it alone, nothing of a place
-        if scratch := _scratch_above(self.rw):
-            own = [(scratch, True), (self.rw, False)]      # …its round's other batches, and earlier rounds, read-only
-        elif self.rw.is_relative_to(tmp):
+        if _scratch_above(self.rw):
+            laid = self.rw.with_name(self.rw.name + LAID)
+            return [(self.rw, False), *([] if self.rw.name.endswith(LAID) else [(laid, True)]), own_temp]
+        if self.rw.is_relative_to(self.sys):
+            return [(self.rw, False), own_temp]
+        if self.rw.is_relative_to(tmp):
             return [*([] if self.rw == self.base else [(self.base, True)]), (self.rw, False)]
-        elif self.rw.is_relative_to(system):
-            own = [(self.rw, False)]                     # the one directory of the system's a session is handed
-        else:
-            # its validations' scratch read-only beside its place, a root's base as a node's clone: its rounds hold the
-            # probes the node's standing findings re-run, which the node's own executor must not rewrite (critic 3 over
-            # the session slice); no judge works here (`apart`)
-            own = [(self.rw, False), (scratch_of(self.rw, self.project_name), True)]
+        # its validations' scratch read-only beside its place, a root's base as a node's clone: its rounds hold the
+        # probes the node's standing findings re-run, which the node's own executor must not rewrite (critic 3 over the
+        # session slice); no judge works here (`apart`)
+        own = [(self.rw, False), (scratch_of(self.rw, self.project_name), True)]
         return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
 
     def temp_root(self):
@@ -1746,7 +1747,10 @@ class _Call:
     def __init__(self, client, execution: ContainerExecution, call: str):
         self.client, self.call, self.execution = client, call, execution
         self.stdin = _Mapped(client.stdin, execution.to_inside) if client.stdin else None
-        self.stdout = (execution.to_outside(line) for line in client.stdout) if client.stdout else None
+        # …a byte stream as it is, a file's or a pack's: no line of it is a path to map (`ExecutionPort.pipe`)
+        self.stdout = (client.stdout if not client.text_mode else (execution.to_outside(line) for line in client.stdout)
+                       ) if client.stdout else None
+        self.stderr = client.stderr
         self.pid = client.pid
 
     @property

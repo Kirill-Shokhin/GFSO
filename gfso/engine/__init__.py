@@ -44,8 +44,8 @@ from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
                        OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside)
-from .findings import (disputed_findings, ever_pinned, released, regression as standing_regression, round_stands,
-                       standing_rulings)
+from .findings import (disputed_findings, ever_pinned, keep_files, lay_files, released,
+                       regression as standing_regression, round_stands, standing_rulings)
 from .frontier import Frontier
 from .claims import Claims
 from .joins import Joins
@@ -1165,12 +1165,13 @@ class Engine:
         # the contract stays an issuer's act (`edit_criteria`), and `claim_drift` shows it.
         # …AND ONLY GROWS UNTIL ITS ISSUER RULES ONE OUT (`findings`) — each with the text it refuted as the run
         # VALIDATED it, the one he rules on, not the spec standing when the record lands
-        if per_criterion:
-            _found = refuting_probes(per_criterion, inputs_dirs, texts={
+        if per_criterion and (_found := refuting_probes(per_criterion, inputs_dirs, texts={
                 **{c.name: c.description for c in (task.spec.criteria if task else ())},
-                **{n: v[0] for n, v in self._validated_versions(task_id).items()}})
-            if _found:
-                ledger_write(self._storage, task_id, REGRESSION, merge_regression(self._stored_regression(task_id), _found))
+                **{n: v[0] for n, v in self._validated_versions(task_id).items()}})):
+            ledger_write(self._storage, task_id, REGRESSION, merge_regression(self._stored_regression(task_id), _found))
+            # …and the files their commands name in the round, as they stand now that its runs ended: a re-run lays
+            # them from here (`lay_probe_files`), never from the round
+            keep_files(self._graph, self._storage, [p.get("as_run") or "" for ps in _found.values() for p in ps])
         # …placed where the run READ it: an instrument hands in the position its claim took when it began
         # (`ValidationClaim.log_at`) — a footing that moved while it ran is after its record; a hand record reads now
         store_verdict(self._storage, task_id, task, verdict, failed_criteria, validator_id,
@@ -1679,6 +1680,11 @@ class Engine:
         each verdict that refutes something; shrinks only by its issuer's ruling in force (`findings`)."""
         task = self._graph.get_task(task_id)
         return standing_regression(self._storage, self._audit.get_entries(task_id), task) if task is not None else {}
+
+    def lay_probe_files(self, command: str, at, execution) -> str:
+        """A standing finding's `command` as its re-run runs under `at`, a judge's own round or batch, over the files
+        the system's record holds of each round it names (`findings.lay_files`)."""
+        return lay_files(self._graph, self._storage, command, at, execution)
 
     def retired_findings(self, task_id: TaskId) -> list[dict]:
         """The rulings in force on this node — each finding its issuer's ACCEPT_CHALLENGE retired, while its criterion
@@ -3012,11 +3018,12 @@ class Engine:
         return accepted
 
     def delivered(self, *task_ids) -> "tuple | None":
-        """(tree, commit) of the last DELIVER under this version among `task_ids` — the tree their one place stood at
-        when it was last handed in (a scope's whole is delivered after its parts) — None where it recorded no commit."""
+        """(tree, commit, build) of the last DELIVER under this version among `task_ids` — the tree their one place stood
+        at when it was last handed in (a scope's whole is delivered after its parts), and how its judge builds it — None
+        where it recorded no commit."""
         last = max((e for t in task_ids for e in on_current_version(self._audit.get_entries(t))
                     if e.signal == Signal.DELIVER), key=lambda e: e.timestamp, default=None)
-        return (last.artifact, last.commit) if last is not None and last.commit else None
+        return (last.artifact, last.commit, last.build) if last is not None and last.commit else None
 
     def accepted_artifact(self, task_id: TaskId):
         """The tree of `accepted_delivery`."""

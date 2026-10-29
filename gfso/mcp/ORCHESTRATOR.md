@@ -154,6 +154,10 @@ inside the contract.
    code, actually run the tests), put WHAT YOU RAN AND WHAT IT PRINTED in the DELIVER's `result` —
    one line per criterion — and the WORD you conclude from it (`"PASS"` / `"FAIL"`, nothing else) in
    `self_validation`: that is your evidence and the observer's input, and it binds nothing by itself.
+   Say how the result is built in DELIVER's `build` (`make`, `pip install -e .`, or `""` for nothing):
+   where the delivery is committed, its validator judges a checkout of that commit — nothing ignored or
+   untracked — and the system runs `build` there before any check (left out: `make` where the tree has a
+   Makefile at its root, else nothing); a build that fails FAILs the delivery.
    Under a mode the PASS stands on the OBSERVER's record, not on your own word — and the verdict is
    YOURS: the project's validator observes by itself (or `validate_result(node)` observes this
    delivery now), and then you, the issuer, read `get_verdict(node)` and signal PASS or FAIL. A divergence the observer recorded is that criterion's value, FAIL

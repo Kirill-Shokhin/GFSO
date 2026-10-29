@@ -24,7 +24,7 @@ from gfso.adapters.llm import headless as H
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution, PlaceContainer
 import gfso.issuer as I
-from gfso.core.types import TaskId
+from gfso.core.types import LAID, TaskId
 from gfso.issuer import CONTACT_ROUND, _contact_place
 from gfso.observe import _run
 from gfso.tools_llm import _observe_exact
@@ -81,17 +81,18 @@ def test_a_session_writes_its_place_and_reads_the_base(project):
 
 
 @pytest.mark.parametrize("scratch", [".gfso-nodes-ws/p/.gfso-scratch-.ws", ".gfso-nodes-ws/p/.gfso-scratch-a"])
-def test_a_validation_writes_its_round_and_reads_the_earlier_ones(project, scratch):
-    """The scratch stands beside the place validated — the base's, or a node clone's (`tools_llm`)."""
+def test_a_validation_writes_its_round_and_reads_only_what_was_laid_for_it(project, scratch):
+    """The scratch stands beside the place validated — the base's, or a node clone's (`tools_llm`). A judge mounts its
+    round or batch, what the system laid for it read-only beside it, and its temp: no earlier round — the delivered
+    code run there rewrote a probe a standing finding re-ran (critic over the judged tree)."""
     scratch = project.parent / scratch
     v = project.session(str(scratch / "root_1700000000" / "run" / "delivery"))
     assert v.rw == scratch / "root_1700000000"
-    assert v._mounts() == [(project.base, True), (scratch, True), (scratch / "root_1700000000", False),
-                           (Path(v.temp_root()), False)]
+    assert v._mounts() == [(v.rw, False), (scratch / ("root_1700000000" + LAID), True), (Path(v.temp_root()), False)]
     b = project.session(str(scratch / "root_1700000000" / "batch2" / "delivery"))
-    assert b.rw == scratch / "root_1700000000" / "batch2" and b.temp_root() == v.temp_root()
-    assert b._mounts() == [(project.base, True), (scratch, True), (b.rw, False), (Path(b.temp_root()), False)], \
-        "one batch writes itself alone: its round and its sibling batches read-only"
+    assert b.rw == scratch / "root_1700000000" / "batch2" and b.temp_root() != v.temp_root()
+    assert b._mounts() == [(b.rw, False), (b.rw.with_name("batch2" + LAID), True), (Path(b.temp_root()), False)], \
+        "one batch writes itself alone and sees no other batch of its round, no earlier round, no base"
 
 
 def test_the_systems_commands_stay_in_the_projects_container(project):
@@ -155,11 +156,12 @@ def test_live_a_validation_writes_its_round_alone_and_its_call_ends_where_it_run
     lay(project, {".gfso-scratch-.ws/root_1/run/probe.sh": "echo earlier\n"})
     made(project, ".gfso-scratch-.ws/root_2/run/delivery")
     v = project.session(str(scratch / "root_2/run/delivery"))
-    probe = ("echo r > ../mine.txt && echo WROTE-ITS-ROUND; cat /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/run/probe.sh; "
+    probe = ("echo r > ../mine.txt && echo WROTE-ITS-ROUND; cat /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/run/probe.sh"
+             " 2>/dev/null && echo READ-AN-EARLIER-ROUND; "
              "touch /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/run/x 2>/dev/null && echo WROTE-AN-EARLIER-ROUND; true")
     try:
         got = v.run(["bash", "-c", probe], cwd=str(scratch / "root_2/run/delivery"), timeout=120).stdout.split()
-        assert got == ["WROTE-ITS-ROUND", "echo", "earlier"], got
+        assert got == ["WROTE-ITS-ROUND"], got
         q = v.popen(["sh", "-c", "setsid sleep 300 & sleep 300"], env={}, cwd=str(scratch / "root_2/run/delivery"),
                     stdout=subprocess.PIPE, text=True)
         time.sleep(2)
@@ -181,14 +183,16 @@ def test_the_systems_own_checks_stand_where_no_session_reaches(project):
 
 
 def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
-    """It reads the probes the node's standing findings name in the earlier rounds and writes only its own — a root's as
-    a node's (critic 2 over the session slice: moved to the system's scratch, a root's contact could not read its inputs
-    nor a node's run its findings)."""
+    """It writes only its own round and reads the probes the node's standing findings name as the system laid them
+    beside it — a root's as a node's (critic 2 over the session slice: moved to the system's scratch, a root's contact
+    could not read its inputs nor a node's run its findings); no earlier round (critic over the judged tree)."""
     node = project.parent / ".gfso-nodes-ws/p/a"
     with _contact_place(str(node), project) as d:
         assert Path(d).parent == node.parent / ".gfso-scratch-a"
         c = project.session(d + "/place")
-        assert c.rw == Path(d) and (node.parent / ".gfso-scratch-a", True) in c._mounts()
+        assert c.rw == Path(d) and (Path(d + LAID), True) in c._mounts()
+        assert (node.parent / ".gfso-scratch-a", True) not in c._mounts(), "an earlier round mounted"
+        assert not any(s in (node, project.base) for s, _ in c._mounts()), "nothing of the place or the base"
     with _contact_place(str(project.base), project, "p") as d:    # a root's too: in the base it ran in its executor's container
         assert Path(d).parent == project.parent / ".gfso-nodes-ws/p/.gfso-scratch-.ws"
         c = project.session(d + "/place")
@@ -227,7 +231,7 @@ def test_the_systems_own_copies_and_checks_take_the_systems_scratch():
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
-def test_live_an_issuers_contact_reads_its_inputs_and_the_nodes_earlier_probes(project):
+def test_live_an_issuers_contact_reads_its_inputs_and_no_earlier_round(project):
     node = project.parent / ".gfso-nodes-ws/p/a"
     made(project, "a")
     lay(project, {".gfso-scratch-a/a_1/run/probe.sh": "echo probed\n"})
@@ -236,10 +240,11 @@ def test_live_an_issuers_contact_reads_its_inputs_and_the_nodes_earlier_probes(p
             project.files.mkdir(d + "/place")
             project.files.write_bytes(d + "/in.txt", b"node-input\n")
             got = project.session(d + "/place").run(
-                ["bash", "-c", "cat ../in.txt; bash /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/run/probe.sh; "
-                               "touch /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/x 2>/dev/null && echo WROTE; true"],
+                ["bash", "-c", "cat ../in.txt; bash /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/run/probe.sh "
+                               "2>/dev/null; touch /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/x 2>/dev/null && "
+                               "echo WROTE; true"],
                 cwd=d + "/place", timeout=120).stdout.split()
-            assert got == ["node-input", "probed"], got
+            assert got == ["node-input"], got           # …an earlier round's probe is laid from the record, not read
         with _contact_place(str(project.base), project, "p") as d:
             project.files.write_bytes(d + "/in.txt", b"root-input\n")
             got = project.session(str(project.base)).run(["cat", str(Path(d) / "in.txt")], cwd=str(project.base),
@@ -271,7 +276,10 @@ def test_each_node_holds_its_own_temp_and_its_validations_share_it(project):
     assert a.temp_root() != b.temp_root() and Path(a.temp_root()).parent == work / ".gfso-nodes-ws/p/.gfso-tmp"
     assert not any(Path(b.temp_root()).is_relative_to(src) or src == work / ".gfso-nodes-ws/p/.gfso-tmp" for src, _ in a._mounts())
     round_of_a = project.session(str(work / ".gfso-nodes-ws/p/.gfso-scratch-a/a_1/run/delivery"))
-    assert round_of_a.temp_root() == a.temp_root() == project.temp_of(str(work / ".gfso-nodes-ws/p/a"))
+    # …and its judges hold one of their own: a delivered link into the node's temp read what its executor wrote there
+    # after DELIVER (critic over the judged tree)
+    assert a.temp_root() == project.temp_of(str(work / ".gfso-nodes-ws/p/a")) != round_of_a.temp_root()
+    assert not any(Path(a.temp_root()) == src for src, _ in round_of_a._mounts())
 
 
 def test_what_the_system_lays_for_a_session_goes_to_its_nodes_temp():

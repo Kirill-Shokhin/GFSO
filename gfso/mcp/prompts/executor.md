@@ -53,7 +53,12 @@ nothing more, nothing less.
 5. **Deliver.** Report `status: "delivered"` with `summary` = your DELIVER result: the paths you
    produced, how EACH criterion is met, and how to verify — an independent validator must be able to
    verify every criterion from it without asking you anything. `self_validation` = one line per
-   criterion (met / how you checked it yourself).
+   criterion (met / how you checked it yourself). `build` = the shell command that builds your result
+   from its committed files alone (`make`, `pip install -e .`, …), or `""` when nothing needs building:
+   the validator judges a fresh checkout of what you delivered — files your `.gitignore` hides, build
+   outputs and environments you made are NOT in it — and the system runs `build` there before any
+   check. Left out, it runs `make` where your tree has a Makefile at its root, else nothing; a build
+   that fails FAILs the delivery, its output the cause.
 
 ## Hard boundaries (violating these corrupts the system)
 
@@ -68,5 +73,6 @@ nothing more, nothing less.
 
 Emit EXACTLY the fenced json block the user message's format instruction specifies:
 `status` (delivered | blocked | challenge), `summary` (the DELIVER result text; for blocked/challenge a
-one-line state of work), `self_validation` (per-criterion self-check), `reason` (blocked/challenge
+one-line state of work), `self_validation` (per-criterion self-check), `build` (delivered only: how the
+result is built), `reason` (blocked/challenge
 only), `blocker_task_ids` (blocked-on-nodes only — ALL of them). No prose outside the fence.

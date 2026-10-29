@@ -85,14 +85,19 @@ def _working_directory(workdir: Optional[str], validating: bool = False) -> str:
             f"never write.\n{checkout_note(here)}")
 
 
-def snapshot_note(tree: str) -> str:
-    """What a validator run in its own copy of the place (`adapters.snapshots`) is told about where it stands."""
-    return (f"\nThis run has the delivery to itself: {tree} is a copy of the delivery's directory exactly as it stands "
-            f"on disk — uncommitted files, build outputs and links included — made for this run alone, while the "
+def snapshot_note(tree: str, built: Optional[str] = None) -> str:
+    """What a validator run in its own copy of the delivery (`adapters.snapshots`) is told about where it stands —
+    `built`: what the system built in it, where the copy is the tree DELIVER recorded."""
+    what = (f"a checkout of exactly the tree DELIVER recorded — nothing the delivery's directory holds besides (ignored "
+            f"or untracked files, build outputs, an environment) is in it — built by the system before you with "
+            f"{built}" if built is not None else
+            "a copy of the delivery's directory exactly as it stands on disk — uncommitted files, build outputs and "
+            "links included")
+    return (f"\nThis run has the delivery to itself: {tree} is {what}, made for this run alone, while the "
             f"other runs of this validation work in copies of their own: wherever the contract or the report names "
             f"the delivery's directory, it means this one. Build and clean as the checks say: the delivery's files are "
-            f"not reached from here. Git refs, config and worktrees are shared with the delivery: run no git command "
-            f"that writes (no commit, checkout -b, gc, worktree prune). You are still READ-ONLY: change no file the delivery holds — the copy is compared with the "
+            f"not reached from here. {'Run' if built is not None else 'Git refs, config and worktrees are shared with the delivery: run'}"
+            f" no git command that writes (no commit, checkout -b, gc, worktree prune). You are still READ-ONLY: change no file the delivery holds — the copy is compared with the "
             f"delivery before it goes, and a committed file that differs is recorded as your edit.\n")
 
 
@@ -199,7 +204,7 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), see
             f"does not exist yet, report `status: \"blocked\"` and NAME it in `blocker_task_ids`. That "
             f"is a real dependency the plan did not declare, and naming it is what records it.\n"
             f"{chr(10).join(sibs) or '- none'}\n{CHALLENGE_WHEN}{rework}{answered_challenges(engine, task)}"
-            f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}{_held_text(engine, [task])}\n"
+            f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}{_last_delivery_text(engine, [task])}\n"
             + _working_directory(workdir))
 
 
@@ -316,12 +321,13 @@ def _why_it_failed(engine, task, failed: list) -> str:
 SHOWN_FINDINGS = 20
 
 
-def list_key(engine, task_id, *parts) -> str:
+def list_key(engine, task_id, *parts, at: Optional[str] = None) -> str:
     """The file a capped list goes to: one per engine — two projects' roots are both `root`, and two runs of one task
     would overwrite each other's lists — per node, criterion and kind; in the temp of the node's place, so the session
-    it is named to reads it and no other node's does (`node_temp`)."""
+    it is named to reads it and no other node's does (`node_temp`) — or under `at`, where the reader is a judge, which
+    holds nothing of the node's temp (`PlaceContainer._mounts`)."""
     name = "-".join(map(str, (os.getpid(), id(engine), task_id, *parts)))
-    return str(Path(node_temp(engine, engine.graph.get_task(task_id))) / "gfso-lists"
+    return str(Path(at or node_temp(engine, engine.graph.get_task(task_id))) / "gfso-lists"
                / (re.sub(r"[^\w.-]+", "_", name)[:120] + ".md"))
 
 
@@ -379,21 +385,32 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset, seen: dict | No
             f"{_observed_section((seen or {}).get(str(t.id), []), '###')}")
 
 
-#: what `reports` says of a delivery it held, and of one it handed in — the latest of the two per node decides
-HELD, DELIVERED = "delivery held — ", "executor DELIVERED"
+#: what is said of a node's last delivery — `reports` held it, or handed it in; its judge built it
+#: (`tools_llm._validation_pass`) — the latest per node deciding
+HELD, DELIVERED, BUILT, UNCOPIED = ("delivery held — ", "executor DELIVERED", "the judge's build — ",
+                                    "the judge's copy — ")
+#: the heading each is said to the executor under; a hand-in is said under none
+_HEADS = {HELD: "Your last delivery was NOT handed in — lift this before you deliver again",
+          BUILT: "How the judge built your last delivery before any check ran — DELIVER's `build` when given (\"\" = "
+                 "nothing to build), else `make` where the tree has a Makefile at its root, else nothing",
+          UNCOPIED: "Your last delivery FAILED unjudged: no copy of the tree DELIVER recorded could be made for its "
+                    "judge, so no check ran — lift this before you deliver again"}
 
 
-def _held_text(engine, nodes: list) -> str:
-    """Why the last delivery of each of `nodes` was held, where its last word on the record is a hold (`reports`): the
-    executor's to lift by its own moves (§12.16 ii), so said to it — the issuer reads the same line."""
+def _last_delivery_text(engine, nodes: list) -> str:
+    """The last word on the record about the last delivery of each of `nodes`: why it was held (`reports`) — the
+    executor's to lift by its own moves (§12.16 ii) —, or how its judge built it and, where that failed, its output; said
+    to the executor — the issuer reads the same line."""
     last: dict = {}
     for r in engine.pipeline_log():
         tid, _, said = str(r.get("message", "")).partition(": ")
-        if said.startswith(HELD) or said.startswith(DELIVERED):
+        if said.startswith((HELD, DELIVERED, BUILT, UNCOPIED)):
             last[tid] = said
-    why = [f"- `{t.id}`: {last[str(t.id)][len(HELD):]}" for t in nodes if last.get(str(t.id), "").startswith(HELD)]
-    return ("\n## Your last delivery was NOT handed in — lift this before you deliver again\n" + "\n".join(why) + "\n"
-            if why else "")
+    out = ""
+    for p, head in _HEADS.items():
+        if lines := [f"- `{t.id}`: {last[str(t.id)][len(p):]}" for t in nodes if last.get(str(t.id), "").startswith(p)]:
+            out += f"\n## {head}\n" + "\n".join(lines) + "\n"
+    return out
 
 
 def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = (), seen: dict | None = None) -> str:
@@ -412,14 +429,17 @@ def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list 
             + "\n".join(_scope_node_block(engine, i, t, top, inside, seen) for i, t in enumerate(order, 1))
             + f"\n## The other nodes of this plan — NOT your work, and you must not do it\n"
             f"If you cannot proceed because something one of them owns does not exist yet, report that node "
-            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{CHALLENGE_WHEN}{_unjoined_text(unjoined)}{_held_text(engine, order)}\n"
+            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{CHALLENGE_WHEN}{_unjoined_text(unjoined)}{_last_delivery_text(engine, order)}\n"
             + _working_directory(workdir))
 
 
-def _regression_line(p: dict, dirs: dict, workdir: Optional[str], engine) -> str:
-    """One once-refuting probe, shown over this round's inputs directories and asked for under its id."""
+def _regression_line(p: dict, dirs: dict, workdir: Optional[str], engine, at: Optional[str] = None) -> str:
+    """One once-refuting probe, shown over this round's inputs directories and asked for under its id — over the files
+    of its own round the system laid under `at`, the judge's own round or batch, from its record (`lay_probe_files`)."""
     cmd = laid(p.get("as_run") or p.get("command", ""), dirs)
+    shown = engine.lay_probe_files(cmd, at, execution_of(engine)) if at else cmd     # …kept first: then asked
     why = unrerunnable(p, dirs, workdir, standing=round_stands(engine.graph))
+    cmd = cmd if why else shown
     orphan = f"({why} — shown, not demanded) " if why else ""
     return (f"    - REGRESSION [{p.get('id')}] (this probe REFUTED this criterion in an earlier round — re-run "
             f"it and report it under this id) — {p.get('behaviour')}: run `{cmd}` {orphan}"
@@ -531,7 +551,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
         # criterion required and sometimes what the failing round printed: "must show" had a repaired delivery FAILed
         # for no longer printing the error (GB_coreutils_tltuq7652), and "it showed" inverted the guard for the
         # majority that recorded the requirement. The criterion decides; the probe is what to run.
-        lines += [(_probe_line(*x) if isinstance(x, tuple) else _regression_line(x, _dirs, workdir, engine))
+        lines += [(_probe_line(*x) if isinstance(x, tuple) else _regression_line(x, _dirs, workdir, engine, scratch))
                   for pid, x in items if carry.get(pid) == c.name]
         # A PART'S PROBE WRITTEN ELSEWHERE serves this criterion too: one observation of it, wherever it is made
         again: dict = {}
@@ -679,13 +699,13 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
             + "\n" + _working_directory(workdir, validating=True) + _scratch_note(scratch))
 
 
-def outside_text(engine: Engine, task_id, rows: list) -> str:
+def outside_text(engine: Engine, task_id, rows: list, lists: Optional[str] = None) -> str:
     """The issuer's section of rows of `Engine.outside_the_criteria`, bounded as a packet's lists are (`capped`), each
     evidence by its tail as an observed check's is (`observe.TAIL`; the whole stays on the record): one evidence of 5000
-    characters took an issuer packet from 1.4k to 7k. Empty where there are none."""
+    characters took an issuer packet from 1.4k to 7k. Empty where there are none. `lists`: where its file goes (`list_key`)."""
     return ("## What validators observed outside the written criteria\nThese are " + OUTSIDE_NOTE
             + capped([f"`{r['node']}`: {r['what']}" + (f" — seen: {_flat(_tail(r['evidence']))}" if r["evidence"] else "")
-                      for r in rows], "observations", list_key(engine, task_id, "outside"))) if rows else ""
+                      for r in rows], "observations", list_key(engine, task_id, "outside", at=lists))) if rows else ""
 
 
 def _tail(text: str) -> str:

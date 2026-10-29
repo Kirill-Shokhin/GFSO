@@ -753,9 +753,19 @@ def runs_a_past_build(command: str) -> bool:
     a program from any parse, and a script or Makefile there runs the delivery: a word in a round's scratch naming a
     binary the command does not itself write. A scratch source compiled with the delivery, a script, a pinned probe's
     inputs (laid again each round) stay findings; a file no longer there is not identified, so it stays too."""
-    cmd = command or ""
-    return any(_binary(Path(w)) and not _writes(cmd, w) for w in dict.fromkeys(_WORD.split(cmd))
-               if _ROUND.search(w) and "/probe_inputs/" not in w.replace("\\", "/"))
+    return any(_binary(Path(w)) and not _writes(command or "", w) for w in round_words(command))
+
+
+def round_inputs(command: str) -> list[str]:
+    """`round_words` the command reads rather than makes — a compiler's or redirect's output is no input (`_writes`)."""
+    return [w for w in round_words(command) if not _writes(command or "", w)]
+
+
+def round_words(command: str) -> list[str]:
+    """The words of `command` naming a file in a validation round's scratch — its judge's own, not a pinned probe's
+    inputs, which are laid again each round — once each, in order."""
+    return [w for w in dict.fromkeys(_WORD.split(command or ""))
+            if _ROUND.search(w) and "/probe_inputs/" not in w.replace("\\", "/")]
 
 
 def _binary(path: Path) -> bool:
@@ -806,6 +816,13 @@ def without_past_builds(regression: Mapping) -> dict[str, list[dict]]:
             if (kept := [p for p in ps if not runs_a_past_build(str(p.get("as_run") or p.get("command") or ""))])}
 
 
+#: what marks a probe that records an act of the SYSTEM's own over the delivery — its build, its copy — failed: the
+#: delivery's FAIL with its cause, never a finding that stands (`refuting_probes`). The next delivery's own build and
+#: copy are its re-check: kept, a failed `make` was demanded of a redelivery whose tree had no Makefile any more, and
+#: only an issuer lifted it (critic over 909e417)
+SYSTEMS_ACT = "systems_act"
+
+
 def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, object]] = (),
                     texts: Mapping[str, str] | None = None) -> dict[str, list[dict]]:
     """{criterion: [the probes that REFUTED it this round]} — the regression set's new members, each with the text of
@@ -833,7 +850,8 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
         # round to 1,414 findings (GB_sql_database_tmxu0n436, 2026-10-15). An unsaid probe of the failing entry is
         # kept: the validator says `held` only of a part's pinned check, never of its own probes
         for p in probes:
-            if not _norm(p.get("command", "")) or probe_held(p.get("held")) is True or p.get("share") == "pass":
+            if (not _norm(p.get("command", "")) or probe_held(p.get("held")) is True or p.get("share") == "pass"
+                    or p.get(SYSTEMS_ACT)):
                 continue
             # …AS RUN, with this round's inputs directories NAMED rather than spelled: normalizing a multi-line
             # program onto one line left a command no shell runs, and the round's directory is gone the next round
@@ -1019,15 +1037,16 @@ def round_of(path) -> Optional[tuple[str, str]]:
 
 
 def _gone(path: str, standing) -> bool:
-    """Is what `path` names gone? In a round, the round no longer standing — the system's record (`standing`), kept as
-    it makes and removes rounds and asked of no container; else neither it nor its directory there on this host: the
+    """Is what `path` names gone? In a round, the round no longer standing and its content not in the system's record
+    either (`standing`, asked of (the round's path, its name, `path`)) — kept as it makes and removes rounds and files
+    findings, asked of no container; else neither it nor its directory there on this host: the
     base and what lies outside every place are this host's until the places and the base move into volumes. Under a
     system directory of the layout before each named its project, gone: no container mounts it, a re-run would not
     find it (`unprojected`)."""
     if unprojected(path):
         return True
     if (r := round_of(path)) is not None:
-        return not standing(r)
+        return not standing((*r, path))
     return not HOST.exists(path) and not HOST.exists(str(Path(path).parent))
 
 

@@ -40,35 +40,77 @@ and nothing of your disk is mounted into any of its containers:
   see another node's place, conversations or inputs, nor the system's own checks; what it receives
   of other nodes' work comes by the joins the system makes into its place and the base.
 - The checks the system runs over a delivery run what the agents wrote (the plan's probes, the
-  delivery's own scripts), so each runs in a container of its own copy of the delivery, with the
-  base read-only and nothing of another node.
+  delivery's own scripts), so each runs in a container of its own copy of the delivery, mounting
+  that copy and a temp of its own and nothing else.
 - The system's own commands over an agent's repository — git, reading and writing its files — run in
   the container of the place that repository stands in, chosen by the system's own record of the
   place, never by what stands there: what that repository's configuration tells git to run reaches
   nothing its agent did not already reach. Commits move between repositories as bundles.
 - No one who judges a delivery works in its executor's place: a validation and an issuer's
   contact, a root's included, each run in a container of their own copy of it, each batch of a
-  validation in its own, and the place's validation scratch is read-only to its executor. Before a
-  validation, or an issuer's ruling on a dispute, starts, the copy is compared with the tree recorded
-  at delivery, by a git the system makes;
-  a copy that differs, or that could not be made, is not judged: its validation reads as one that
-  never started — asked again, then put to a person. A delivery holding a nested repository or a
-  submodule, whose files that record cannot hold, is refused when it is delivered, with what lifts it.
+  validation in its own, and the place's validation scratch is read-only to its executor. A judge's
+  container mounts exactly three directories: its own round or batch, writable, holding its copy;
+  a temp of its own; and, read-only, the directory the system laid for it from its record beside
+  that round or batch. Nothing else — not the base, not its node's temp, not the place, not another
+  batch of its round, not an earlier round. Each input comes from the system's record, or from
+  content checked against an id that record holds:
+  - The copy is a checkout of the commit recorded at delivery and nothing else — no file the
+    executor's ignore rules hid, nothing it built or left in its place, nothing it changed there
+    afterwards. The commit's objects are packed in the executor's own container and streamed through
+    one pipe into a git the system makes in the copy's container, with no configuration, hook, filter
+    or rule of the executor's or the base's; every object is hashed again against its id there before
+    anything is checked out, so nothing the executor can write is read after that check. Nothing of it
+    passes through the server's memory, and no size limit applies but the disk.
+  - The Git LFS objects the recorded tree's pointers name are streamed the same way from the place's
+    and the base's LFS stores into the copy's own, each kept only where its size and sha256 are its
+    pointer's, and the checkout writes their content through the system's own filter; one no store
+    holds as its pointer names stays a pointer.
+  - The files a standing finding's command names in the round that found it are recorded by the
+    system, by their sha256, as the finding is filed. A later round's re-run lays them from that record
+    into its read-only directory, and the command it is shown copies them into a fresh directory of
+    its batch before it runs.
+  - A pinned probe's inputs are laid from the contract into the judge's own batch.
+  A copy the delivery itself makes impossible — an object missing or rewritten, a commit not carrying
+  the recorded tree, a nested repository or submodule — is not judged: the delivery FAILs with that
+  cause, which the executor's next packet states, and nothing of it stands for later rounds; an
+  issuer asked about it is told the cause and rules on it. A copy that fails for any other cause (a
+  Docker error, a timeout, a full disk) gives no verdict, and the judge is asked again. A delivery
+  holding a nested repository or a submodule is refused when it is delivered, with what lifts it.
+  An issuer's contact, whatever it asks, rules on the same checkout of the recorded commit.
+  A standing finding whose file the record could not keep (not there when it was filed, or past the
+  record's size limit) is shown to the judge, not demanded.
+- A judge's container ends when its run ends, with every process the run left behind.
+- What the delivery needs built is built in that copy, in the judge's container under its network
+  switch, before any check: the command the delivery declares (`build`), else `make` where the
+  delivered tree has a Makefile at its root, else nothing — the delivered code, run by the judge's
+  side, with a bounded time. Every process the build leaves running ends with it, before any check,
+  and a delivered file it changed is put back as delivered; what it adds beside them stays. A build
+  that fails is the delivery's FAIL, with its output, and nothing of it stands for later rounds:
+  the next delivery's own build is the re-check.
 
 What one session can still reach:
 - The sessions working in the base share it and its model-client state: a root's executor, and a
   parent's consent asked before its own place exists.
-- A judge's copy shares its node's temp with the node's executor.
-- What git does not record — ignored files such as a build, a file whose name differs from a tracked
-  one only by case on a case-insensitive base — is judged as it stands in the copy.
+- A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
+  agent through the door rather than by the system's executor — is copied as it stands, ignored files
+  and builds included, and nothing is built.
 - A process an executor starts may outlive its session in its place's container, which stands
   until the place goes.
+- A judge runs the delivered code in its own container: while its run lasts, that code can rewrite
+  what the judge itself writes in its batch, a pinned probe's inputs laid there, and a finding's files
+  once the re-run has copied them out of the read-only directory and before it reads them. A file the
+  delivered code rewrote in the judge's batch before its run ended is recorded as it then stood when
+  a finding over it is filed.
+- A finding filed before the system recorded probe files has its files recorded at its first re-run,
+  from its round as it stands then; one whose round is already gone is shown, not demanded.
 
 Under a container execution a node performed in your own chat (`perform="in_chat"`) is refused: its
 work stands on your disk, where no container reads it.
 
 Without an execution, sessions run as you, on your machine, with nothing between them and the rest
-of it.
+of it: a judge's copy is still the recorded commit where a scratch for it can be made, but nothing
+is read-only to it, no container ends with its run, and a validation with no scratch runs in the
+place itself.
 
 How far a project's container reaches outside is a switch you set in its execution's declaration
 (`"network": {"mode": ..., "hosts": [...]}`). For one project, `set_mode(network=...)` can only narrow it —

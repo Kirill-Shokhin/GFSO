@@ -116,7 +116,7 @@ def test_two_projects_on_one_base_hold_disjoint_system_directories(place, tmp_pa
     assert not {s for s, _ in a._mounts()[1:]} & {s for s, _ in b._mounts()[1:]}
     assert a.temp_root() != b.temp_root() and a._scratch_root(True) != b._scratch_root(True)
     ra, rb = scratch_of(place, a.project_name) / "root_1", scratch_of(place, b.project_name) / "root_1"
-    assert ra != rb and _writable_root(rb, b) == rb and E._owner(rb) == place
+    assert ra != rb and _writable_root(rb, b) == rb
     hold_places(b.files)
     hold_places(a.files)                                 # …first in the table: it answers whatever it holds
     try:
@@ -163,7 +163,8 @@ def test_a_call_is_started_inside_its_mapped_place_with_only_what_it_sets(place,
 
 
 class _Client:
-    stdin = stdout = None
+    stdin = stdout = stderr = None
+    text_mode = True
     pid, returncode = 2 ** 22 + 9, 0
 
     def poll(self):

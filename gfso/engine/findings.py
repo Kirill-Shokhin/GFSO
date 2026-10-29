@@ -15,13 +15,17 @@ finding on it; written after the ACCEPT_CHALLENGE returned, a dispatcher's ACCEP
 challenge accepted and nothing retired; unbounded in time, a ruling on `conf` outlived a tightened `conf`."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import os
 import re
+from pathlib import Path
 from typing import Iterable, Optional
 
-from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_of, without_past_builds,
-                                          without_pinned_runs, without_retired)
-from gfso.core.types import HOST, VOLUME, Signal
+from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_inputs, round_of, round_words,
+                                          without_past_builds, without_pinned_runs, without_retired)
+from gfso.core.types import HOST, LAID, VOLUME, Signal, TaskId, files_at
 from .audit import VERSION_INSTALLING
 from .verdicts import REGRESSION, criterion_version, ledger_read
 
@@ -41,13 +45,109 @@ def record_round(graph, path, made: bool) -> None:
             forget_round(r[0])
 
 
+#: what keys, in the project's settings, what the system read of a file a finding's command names in its round, once
+#: that round's runs had ended (`keep_files`): {"file": its sha256} or {"tree": {path in it: sha256}} — by the path;
+#: {"lost": why} for an input it could not keep, which no re-run can then lay
+_KEPT = "probe-file:"
+#: …and each content, by its sha256, beside the verdicts
+_BLOB = "probe-blob#"
+#: the most of one named path the record keeps — a file, or a directory's files together; past it the path is not kept
+KEEP_CAP = 16 << 20
+#: under a judge's round or batch, where a re-run of a standing finding makes each round it names afresh (`lay_files`)
+REGRESSION_DIR = "regression"
+
+
+def _path_key(path) -> str:
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def keep_files(graph, storage, commands: Iterable[str]) -> None:
+    """Each file the `commands` name in a validation round (`round_words`) kept in the system's record as it stands
+    now — the first reading of a path stands, whatever is written there after. Called as findings are filed, their
+    round's runs ended and every process of them with their containers (`ExecutionPort.release`); a re-run lays these
+    from the record (`lay_files`) and reads nothing of the round. An input that cannot be read, or passes `KEEP_CAP`,
+    is kept as LOST: re-run over an empty directory it refuted every delivery (`No such file`, critic over 909e417),
+    so its finding is shown, not demanded (`round_stands`). A file the command itself writes is no input to lose."""
+    for c in commands:
+        inputs = set(round_inputs(c))
+        for w in round_words(c):
+            if graph.setting(_KEPT + _path_key(w)) is not None:
+                continue
+            try:
+                fs = files_at(w)
+                got = {"": raw} if (raw := fs.read_bytes(w, KEEP_CAP + 1)) is not None else fs.read_tree(w)
+            except OSError as e:
+                got = f"unreadable when its finding was filed ({e})"
+            if not isinstance(got, dict) or sum(map(len, got.values())) > KEEP_CAP:
+                if w in inputs:
+                    graph.store_setting(_KEPT + _path_key(w), json.dumps({"lost": got if isinstance(got, str) else
+                                        "not there when its finding was filed" if got is None else
+                                        f"larger than the {KEEP_CAP >> 20} MiB the record keeps"}))
+                continue
+            sums = {rel: _keep_blob(storage, raw) for rel, raw in got.items()}
+            graph.store_setting(_KEPT + _path_key(w), json.dumps({"file": sums[""]} if "" in sums else {"tree": sums}))
+
+
+def _keep_blob(storage, raw: bytes) -> str:
+    if storage.get_critique(TaskId(_BLOB + (d := hashlib.sha256(raw).hexdigest()))) is None:
+        storage.store_critique(TaskId(_BLOB + d), base64.b64encode(raw).decode("ascii"))
+    return d
+
+
+def _blob(storage, d: str) -> Optional[bytes]:
+    """The content kept under `d`, only where it still hashes to it."""
+    raw = base64.b64decode(storage.get_critique(TaskId(_BLOB + d)) or "")
+    return raw if hashlib.sha256(raw).hexdigest() == d else None
+
+
+def lay_files(graph, storage, command: str, at, execution) -> str:
+    """`command` as its re-run runs under `at`, a judge's own round or batch: each validation round it names
+    (`round_of`) respelled as a directory of `at`'s own (`REGRESSION_DIR`), made afresh by the command itself from
+    what the system lays for it in `<at>.laid` (`LAID`): the files of that round the record holds (`keep_files`; those
+    of a round still standing kept now, first). From the record alone, and read-only to the judge: the delivered code
+    its run executes — a `make`, a test, a process either left — cannot rewrite what the re-run starts from, and no
+    earlier round is mounted to be read (critic over the judged tree: a forged `../probe.sh`, rc 0). A command naming
+    no round is returned as it is."""
+    if not (words := round_words(command)):
+        return command
+    keep_files(graph, storage, [command])
+    laid_root, fresh, out, rounds = Path(str(at) + LAID), [], command, {}
+    execution.files.mkdir(str(laid_root))           # …by the system, where no session writes
+    for w in words:
+        prefix = round_of(w)[0]
+        rounds.setdefault(_path_key(prefix), []).append((w, prefix))
+    for key, named in rounds.items():
+        k = hashlib.sha256(key.encode()).hexdigest()[:12]
+        src, work, laid = laid_root / k, Path(at) / REGRESSION_DIR / k, {}
+        for w, prefix in named:
+            rel = w[len(prefix):].replace("\\", "/").strip("/")
+            rec = json.loads(graph.setting(_KEPT + _path_key(w)) or "{}")
+            for sub, d in ({"": rec["file"]} if "file" in rec else rec.get("tree") or {}).items():
+                if (raw := _blob(storage, d)) is not None:
+                    laid["/".join(x for x in (rel, sub) if x)] = raw
+            out = re.sub(re.escape(prefix) + r"(?=[\\/])", lambda _: work.as_posix(), out)   # …not `<round>9`
+        execution.files.mkdir(str(src))             # …laid even when nothing was kept: the copy below reads it
+        execution.files.write_files(str(src), laid)
+        # …and the directory of every path it names, kept or not: a command writing its own output there found none
+        # (critic over the judged tree: `cc ok.c -o <round>/batch1/prog` refuted every later delivery)
+        dirs = sorted({(work / w[len(p):].replace("\\", "/").strip("/")).parent.as_posix() for w, p in named})
+        fresh.append(f'rm -rf "{work.as_posix()}" && mkdir -p "{work.as_posix()}" && '
+                     f'cp -a "{src.as_posix()}/." "{work.as_posix()}/" && '
+                     + " && ".join(f'mkdir -p "{d}"' for d in dirs))
+    execution.release(str(laid_root))           # …written: nothing of the system's runs there on
+    return " && ".join(fresh) + f" && ( {out} )"
+
+
 def round_stands(graph):
-    """`unrerunnable`'s `standing`: does the round stand? THE SYSTEM'S RECORD — it alone makes and removes rounds
-    (`tools_llm._validation_place`, `issuer._contact_place`) — read with no subprocess, whoever asks: a verdict's record
-    included. A round made before the record was kept is found once on this host, where rounds are directories until
-    the places move into volumes (a fallback that goes with that move), then recorded."""
+    """`unrerunnable`'s `standing`: does the round stand — or does the system's record hold what the path named there
+    (`keep_files`), which a re-run lays from it (`lay_files`)? THE SYSTEM'S RECORD — it alone makes and removes rounds
+    (`tools_llm._validation_place`, `issuer._contact_place`) and keeps their files — read with no subprocess, whoever
+    asks: a verdict's record included. A round made before the record was kept is found once on this host, where rounds
+    are directories until the places move into volumes (a fallback that goes with that move), then recorded."""
     def standing(r: tuple) -> bool:
-        """Does the round `r` — (its path, its name in the record) — stand?"""
+        """Does the round `r` — (its path, its name in the record[, the path named in it]) — stand, or its file kept?"""
+        if len(r) > 2 and (kept := graph.setting(_KEPT + _path_key(r[2]))) is not None:
+            return "lost" not in json.loads(kept)
         if (got := graph.setting(_ROUND + r[1])) is not None:
             return got == "1"
         if r[0] in _UNMADE or graph.setting(VOLUME + "places"):         # …moved into a volume: the record alone

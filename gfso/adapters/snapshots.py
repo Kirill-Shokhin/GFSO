@@ -1,19 +1,21 @@
-"""One run's own copy of a node's place, as it stands on disk, for the runs of ONE validation that work side by side.
+"""One run's own copy of a node's delivery, for the runs of ONE validation that work side by side.
 
 GB_sql_database_tngtvm580 (2026-10-25): the root's validation ran in 12 batches at once, all in the root's one place,
 and its pinned checks begin with `make clean`. One run's clean took `./sql_database` from under another's probes
 (rc=127 on a binary present a moment later, clock skew, a vanished main.o); the validators fled to copies in their
 scratch, and those copies' paths stood in the filed findings — a false root FAIL over a tree that passes every root
-check alone. A checkout of the delivery's commit per run (`git worktree add`) lost the place's symlinks to a
-`core.symlinks=false` git on either side and its registrations to a container's `worktree prune` (critics over
-wip/kappa d0fc0b5): what a validator judges is the place ON DISK — uncommitted files, build outputs, links — so that
-is what each run gets, copied where the work runs (`ExecutionPort.copy_tree`), and nothing registered anywhere: a
-crash leaves a directory in the run's scratch, which the scratch's own rotation clears.
+check alone. So each run gets a copy of its own, made where the work runs, and nothing registered anywhere: a crash
+leaves a directory in the run's scratch, which the scratch's own rotation clears.
+
+THE COPY OF A DELIVERY IS THE TREE DELIVER RECORDED, and nothing else (JOINT judge-on-the-delivered-tree): a copy of the
+place as it stood carried whatever the executor's `.gitignore` hid — a hidden `impl.py` that `main.py` imports, a stale
+binary c_compiler's 46 probes ran — an input nobody delivered, inside the judge's instrument. A checkout of the recorded
+commit in a repository of the copy's own (`git init` where the copy runs: its links links, no registration a `worktree
+prune` loses — what a `git worktree add` checkout lost, critics over wip/kappa d0fc0b5), then what the result needs built
+is built there, by the system, from that tree alone (`_build`). A place with no recorded commit is copied as it stands.
 """
 from __future__ import annotations
 
-import inspect
-import json
 import logging
 import os
 import re
@@ -58,7 +60,32 @@ class _Place:
 
 
 class NotTheDelivery(Exception):
-    """The copy made to judge is not what was delivered: the place changed after DELIVER (§11.3)."""
+    """No copy of what was delivered can be made, and the DELIVERY is the cause: the tree DELIVER recorded cannot be
+    read back whole as recorded — an object missing or rewritten, a commit not carrying that tree — or holds nested
+    repositories whose files are no part of it (§11.3). The delivery's FAIL."""
+
+
+class Uncopied(Exception):
+    """No copy of what was delivered could be made for a cause NOT the delivery's — a Docker error, a pack outrunning
+    its time, a full disk, the place's objects pruned: no verdict on it, the judge asked again (a FAIL is a verdict on
+    the delivery, JOINT judge-on-the-delivered-tree)."""
+
+
+class BuildFailed(Exception):
+    """The judge's build of the delivered tree failed (`_build`): the delivery's FAIL, its text the cause, `command`
+    what ran."""
+
+    def __init__(self, cause: str, command: str):
+        super().__init__(cause)
+        self.command = command
+
+
+#: how long the judge's build may run. c_compiler's `make -j4` takes seconds and a dependency install a few minutes; a
+#: build still running at 10 minutes is read as hung — it has taken a sixth of a validation's visit (an hour,
+#: `state_bound("VALIDATING")`) before any check, and every batch pays it again
+BUILD_S = 600
+#: the files GNU make reads by default, in its order: a delivered tree with one at its root is built by `make`
+MAKEFILES = ("GNUmakefile", "makefile", "Makefile")
 
 
 _PLACES: dict[str, _Place] = {}
@@ -71,52 +98,77 @@ def _place(path: Path) -> _Place:
 
 
 @contextmanager
-def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Optional[tuple] = None):
-    """`place` copied to `at` for one run, yielded as a path. Where the copy cannot be made (a host that may not make
-    symlinks, WinError 1314; a `cp -a` that failed or outran its time) the run is yielded None and works in the place
-    itself — ALONE among the runs that fell back so: side by side there is the race this module exists to end. An
-    engine error instead would void the batches already paid for, and a cause that does not pass (the host's
-    privilege) would refuse the node's every validation. On leaving, the tracked files the run changed in the copy go
-    into `edits` (paths relative to the place) and the copy is removed.
+def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Optional[tuple] = None,
+             built: Optional[list] = None, unbuilt_ok: bool = False):
+    """A copy of `place` at `at` for one run, yielded as a path. On leaving, the tracked files the run changed in the
+    copy go into `edits` (paths relative to the place) and the copy is removed.
 
-    `delivered`: the (tree, commit) DELIVER recorded. A copy whose tracked files are not that tree is no copy of the
-    delivery — a process its executor left running changed the place after DELIVER — and raises `NotTheDelivery`
-    before anything runs in it: a verdict is about the result as it stood at DELIVER (§11.3). What git does not track
-    (a build) is judged as it stands. A delivery with no recorded commit — no git base, a record from before the
-    commit was kept — is judged as it stands, as before."""
+    `delivered`: the (tree, commit, build) DELIVER recorded. The copy is then that commit checked out (`_checkout`) —
+    what the place holds besides, ignored or changed since, is no part of it: a verdict is about the result as it stood
+    at DELIVER (§11.3) — and built (`_build`), what ran appended to `built`, before the run is handed it. A checkout that
+    the delivery makes impossible raises `NotTheDelivery`, one that fails for any other cause `Uncopied` — never the live
+    place in its stead —, a failed build `BuildFailed`, all before anything runs in it; `unbuilt_ok`: a failed build is
+    said in `built` and the copy yielded unbuilt (an issuer ruling on a FAIL that build made). Whatever the build left
+    running ends with it, and a tracked file it changed is put back as delivered (`_after_build`).
+
+    A delivery with no recorded commit — no git base, a record from before the commit was kept — is copied as it
+    stands, as before. Where that copy cannot be made (a host that may not make symlinks, WinError 1314; a `cp -a` that
+    failed or outran its time) the run is yielded None and works in the place itself — ALONE among the runs that fell
+    back so: side by side there is the race this module exists to end."""
     place, at = Path(place), Path(at)
+    commit = delivered[1] if delivered and delivered[1] else None
     try:
         if at.resolve().is_relative_to(place.resolve()):   # a scratch inside the place (no git base): no copy of a tree into itself
             raise OSError(f"{at} lies inside {place}")
         with _place(place).enter(alone=False):
-            execution.copy_tree(str(place), str(at))
+            if commit:
+                _checkout(place, at, *delivered[:2], execution)
+            else:
+                execution.copy_tree(str(place), str(at))
+        if not commit:
             _own_git(place, at, execution)
     except PlaceUnavailable:
         raise                    # …the place down is its project's stop, not a copy to do without (`PlaceUnavailable`)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        log.warning(f"no snapshot of {place} at {at} ({e}) — this run validates the place itself, alone")
+    except (OSError, subprocess.TimeoutExpired, NotTheDelivery) as e:
         try:
             execution.remove_tree(str(at))
         except (OSError, subprocess.TimeoutExpired) as e2:
             log.warning(f"the partial copy {at} stays for the scratch's rotation ({e2})")
+        if isinstance(e, NotTheDelivery):
+            raise
+        if commit:
+            raise Uncopied(f"no checkout of the delivery {commit[:12]} could be made: {e}") from e
+        log.warning(f"no snapshot of {place} at {at} ({e}) — this run validates the place itself, alone")
         with _place(place).enter(alone=True):
             yield None
         return
     try:
-        if delivered and delivered[1] and (why := _not_delivered(place, at, *delivered, execution)):
-            raise NotTheDelivery(why)
+        if commit:
+            ran = ""
+            for step in (lambda: _build(at, delivered[2], execution),
+                         lambda: _after_build(at, delivered[0], commit, execution)):
+                try:
+                    ran += step()
+                except BuildFailed as e:
+                    if not unbuilt_ok:
+                        raise
+                    ran += f"{'; ' if ran else ''}{e}"
+                finally:
+                    execution.release(str(at))  # …every process the build left: the run starts in a fresh container
+            if built is not None:
+                built.append(ran)
         yield str(at)
         if edits is not None:      # …after a run that ended, not one that raised: its copy is no record
-            edits.extend(_changed_or_unknown(place, at, execution))
+            edits.extend(_changed_or_unknown(place, at, execution, commit))
     finally:
         execution.remove_tree(str(at))
 
 
-def _changed_or_unknown(place, at, execution) -> list[str]:
+def _changed_or_unknown(place, at, execution, commit: Optional[str] = None) -> list[str]:
     """`changed`, or nothing where it could not be read: a fact for the record, never the cause of a finished
     report being lost."""
     try:
-        return changed(place, at, execution)
+        return changed(place, at, execution, commit)
     except Exception as e:            # noqa: BLE001 — informational, whatever went wrong
         log.warning(f"what the run changed in {at} could not be read ({e!r}) — no edits recorded")
         return []
@@ -161,144 +213,258 @@ def _own_git(place: Path, at: Path, execution) -> None:
         raise OSError(f"the copy {at} could not get a git of its own: {(r.stderr or '').strip()[-300:]}")
 
 
-def changed(place, at, execution) -> list[str]:
-    """The place's committed files that differ in the copy — content, kind, link target or presence; a touch is no
-    change. Each side is written as a git tree where the work runs: on the host, a link a container made is no file
+def changed(place, at, execution, commit: Optional[str] = None) -> list[str]:
+    """The committed files that differ in the copy — content, kind, link target or presence; a touch is no change —
+    from `commit`, the delivery the copy is a checkout of, read in the copy's own repository; else from the place as it
+    stands. Each side is written as a git tree where the work runs: on the host, a link a container made is no file
     to read (WinError 1920) — EACH IN ITS OWN REPOSITORY AND CONTAINER (`W.git`): the place's in its executor's, the
     copy's in its round's, which already runs what the executor delivered (its checks); one container holding both ran
     the copy's config over the place's neighbours. The two compared entry by entry: a blob's id is its content's,
     whichever repository wrote it. Empty where either side could not be read: unknown is not "changed"."""
-    head = W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()
+    head = commit or W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()
     if not head:
         return []
-    with execution.scratch("gfso-index-", dir=execution.temp_of(str(place))) as d:   # …the place's own temp
-        a = _tree(place, head, Path(d) / "index", execution)
+    if commit:
+        r = W.git(at, "ls-tree", "-r", "-z", "--full-tree", commit, execution=execution)
+        a = None if r.returncode else _entries(r.stdout)
+    else:
+        with execution.scratch("gfso-index-", dir=execution.temp_of(str(place))) as d:   # …the place's own temp
+            a = _tree(place, head, Path(d) / "index", execution)
     b = _tree(at, head, Path(at) / ".git" / "gfso-index-copy", execution)              # …gone with the copy
     return [] if a is None or b is None else sorted(p for p in a.keys() | b.keys() if a.get(p) != b.get(p))
 
 
-#: `_judges_git`, run in the copy's own container. The copy's `.git` is neutralised where it stands — the system's
-#: config (the base's settings a node's repository is made with, `W.INHERITED`, and the object format), the base's
-#: `info/*` (`W.kept_out`), no hooks, no `commondir` (its objects borrowed instead), a gitfile or a link replaced by a
-#: git of its own — so `.git/modules` stays and nothing of the executor's runs under a judge's git. The tree is
-#: written in a git dir the system makes beside the copy (GIT_DIR, the copy its work tree, its objects borrowed),
-#: staged by the one rule DELIVER staged by (`W.stage`, whose source is handed in). Exit 3: nested repositories.
-#: Run `-I`, as every program the system runs in an agent's tree: `python -c` imports from its cwd first, and a
-#: delivered `json.py` exiting 0 passed a changed copy as the delivery (critic over 4817a32, run)
-_JUDGES_GIT = r'''
-import json, os, shutil, subprocess, sys
+def _entries(listing: str) -> dict:
+    """{path: mode and id} of an `ls-tree -r -z` listing."""
+    return {p: meta for meta, _, p in (e.partition("\t") for e in listing.split("\0") if e)}
+
+
+#: `_checkout`'s source, run in the place's own container (where its agent already works) over (commit, git's own
+#: arguments): the recorded commit and the objects of its tree — the history not — packed to its output. Replace refs
+#: off: one would hand a commit of the agent's choosing under the recorded id
+_PACK = 'set -o pipefail; c=$1; shift; git "$@" rev-list --objects --no-walk "$c" | cut -d" " -f1 | ' \
+        'git "$@" pack-objects -q --stdout'
+
+
+#: `_checkout`'s end in the copy, run IN THE COPY'S OWN CONTAINER: "take" (the new copy, commit, tree) — the pack on
+#: its input taken into a repository the system makes (`git init`, no template, no alternates): no config, hook, filter
+#: driver or excludes of the executor's, nor of the base's, run under it, and the copy's own platform decides its links
+#: and modes. Then EVERY object the commit needs is hashed again against its id — git does not, and an object rewritten
+#: in the executor's store would check out as a delivery nobody made —, history cut at the commit (`shallow`). Exit 3:
+#: nested repositories (their paths printed); exit 4: the tree cannot be read back as recorded. "checkout" (the copy,
+#: commit): the commit checked out from those objects alone, under the system's LFS filter where it runs one (`W.apart`),
+#: over the LFS objects carried into the copy's own store before it (`W.lfs_into_copy`). Run `-I`, as every program the
+#: system runs in an agent's tree: `python -c` imports from its cwd first, and a delivered `json.py` exiting 0 passed a
+#: changed copy as the delivery (critic over 4817a32, run)
+_CHECKOUT = r'''
+import hashlib, os, subprocess, sys, threading
 from pathlib import Path
-at, commit, delivered, base = Path(sys.argv[1]), sys.argv[2], sys.argv[3], Path(sys.argv[4])
-given, apart = json.loads(sys.argv[5]), sys.argv[6:]
-DELIVERED = tuple(given["spec"])
-exec(given["stage"])
+how, at, commit, apart = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[5:]
+algo = "sha256" if len(commit) == 64 else "sha1"
+env = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
+BAD = 6 if how == "kept" else 4
 
 
-def put(path, text):                                     # …LF on any host: a CR ends no path git reads
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(text.encode() if isinstance(text, str) else text)
+def bad(code, why):
+    print(why)
+    sys.exit(code)
 
 
-def objects_of(gitdir):
-    """The object stores a git dir reads: its own, and its `commondir`'s."""
-    out, common = [gitdir / "objects"], gitdir / "commondir"
-    if common.is_file() and not common.is_symlink():
-        out.append(Path(os.path.normpath(gitdir / common.read_text(encoding="utf-8", errors="replace").strip())) / "objects")
-    return out
+def git(*args, **kw):
+    return subprocess.run(["git", *apart, *args], cwd=at, capture_output=True, env=env, **kw)
 
 
-def borrow(gitdir, stores):
-    put(gitdir / "objects/info/alternates",
-        "".join(Path(os.path.relpath(s, gitdir / "objects")).as_posix() + "\n" for s in stores))
+def verify(ids):
+    """Each object of `ids` read and hashed again; the first object's content back."""
+    p = subprocess.Popen(["git", *apart, "cat-file", "--batch"], cwd=at, stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, env=env)
+    threading.Thread(target=lambda: (p.stdin.write(b"".join(i + b"\n" for i in ids)), p.stdin.close()),
+                     daemon=True).start()
+    first = None
+    for i in ids:
+        head = p.stdout.readline().split()
+        if len(head) != 3 or head[0] != i:
+            bad(BAD, f"its object {i.decode()} is missing")
+        h, left, content = hashlib.new(algo, head[1] + b" " + head[2] + b"\0"), int(head[2]), b""
+        while left:
+            chunk = p.stdout.read(min(left, 1 << 20)) or bad(BAD, f"its object {i.decode()} is cut short")
+            h.update(chunk)
+            left -= len(chunk)
+            content = content or chunk
+        p.stdout.read(1)
+        if h.hexdigest().encode() != i:
+            bad(BAD, f"its object {i.decode()} does not hold what its id names: rewritten after DELIVER")
+        first = content if first is None else first
+    p.wait()
+    return first
 
 
-def run(*args, **env):
-    return subprocess.run(["git", *apart, *args], cwd=at, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env={**os.environ, **env})
+def blob_id(data):
+    return hashlib.new(algo, b"blob %d\0" % len(data) + data).hexdigest().encode()
 
 
-dot = at / ".git"
-fmt = ""
-if dot.is_dir() and not dot.is_symlink():
-    fmt = subprocess.run(["git", "config", "-f", str(dot / "config"), "--get", "extensions.objectFormat"],
-                         capture_output=True, text=True).stdout.strip()
-    stores = objects_of(dot)
-    if len(stores) > 1:
-        old = (dot / "objects/info/alternates").read_text(encoding="utf-8", errors="replace") \
-            if (dot / "objects/info/alternates").is_file() else ""
-        put(dot / "objects/info/alternates", old + Path(os.path.relpath(stores[1], dot / "objects")).as_posix() + "\n")
-        (dot / "commondir").unlink()
-    for gone in ("hooks", "info", "config.worktree"):
-        p = dot / gone
-        shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink() if os.path.lexists(p) else None
-else:
-    stores = []
-    if dot.is_file() and not dot.is_symlink():
-        stores = objects_of(Path(os.path.normpath(
-            at / dot.read_text(encoding="utf-8", errors="replace").split("gitdir:", 1)[-1].strip())))
-    if os.path.lexists(dot):
-        dot.unlink()
-    for d in ("objects", "refs/heads"):
-        (dot / d).mkdir(parents=True)
-    borrow(dot, stores)
-    put(dot / "HEAD", commit + "\n")
-config = f"[core]\n\trepositoryformatversion = {1 if fmt else 0}\n\tbare = false\n"
-config += f"[extensions]\n\tobjectFormat = {fmt}\n" if fmt else ""
-for k in given["inherited"]:
-    v = subprocess.run(["git", "config", "-f", str(base / ".git" / "config"), "--get", k], capture_output=True, text=True)
-    if v.returncode == 0 and v.stdout.strip():
-        config += f"[{k.split('.')[0]}]\n\t{k.split('.')[1]} = {v.stdout.strip()}\n"
-own = at.parent / ("gfso-judge-" + os.urandom(4).hex())
-for gitdir in (dot, own):
-    put(gitdir / "config", config)
-    for name, text in given["kept_out"].items():
-        put(gitdir / "info" / name, text.encode("latin-1"))
-for d in ("objects", "refs/heads"):
-    (own / d).mkdir(parents=True, exist_ok=True)
-borrow(own, [dot / "objects"])
-put(own / "HEAD", commit + "\n")
-git = lambda *a: run(*a, GIT_DIR=str(own), GIT_WORK_TREE=str(at))
-if (r := git("read-tree", commit)).returncode or (r := stage(git)).returncode:
+def lfs_content(data):
+    """The LFS object a pointer `data` names, from the copy's own store, only where its sha256 is the pointer's."""
+    head = b"version https://git-lfs.github.com/spec/v1\n"
+    keys = dict(ln.split(b" ", 1) for ln in data[len(head):].splitlines() if b" " in ln) if data.startswith(head) else {}
+    oid = keys.get(b"oid", b"").removeprefix(b"sha256:").decode("ascii", "replace")
+    o = at / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+    raw = o.read_bytes() if len(oid) == 64 and o.is_file() else None
+    return raw if raw is not None and hashlib.sha256(raw).hexdigest() == oid else None
+
+
+def put(path, mode, data):
+    """`path` written as delivered, every directory above it a directory of the copy, not a link a build left."""
+    d = at
+    for part in path.relative_to(at).parts[:-1]:
+        d = d / part
+        if d.is_symlink() or (d.exists() and not d.is_dir()):
+            d.unlink()
+        d.mkdir(exist_ok=True)
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        subprocess.run(["rm", "-rf", "--", str(path)])
+    if mode == b"120000":
+        os.symlink(os.fsdecode(data), path)
+    else:
+        path.write_bytes(data)
+        os.chmod(path, 0o755 if mode == b"100755" else 0o644)
+
+
+if how == "checkout":
+    if (r := git("checkout", "-q", "-f", "--detach", commit)).returncode:
+        sys.exit(r.stderr.decode(errors="replace")[-300:])
+    sys.exit(0)
+tree = sys.argv[4]
+if how == "kept":
+    ls = git("ls-tree", "-r", "-z", "--full-tree", tree)
+    if ls.returncode:
+        bad(6, f"its tree cannot be read: {ls.stderr.decode(errors='replace')[-300:]}")
+    items = [(meta.split(), p) for meta, _, p in (e.partition(b"\t") for e in ls.stdout.split(b"\0") if e)]
+    verify(list(dict.fromkeys([tree.encode(), *(meta[2] for meta, _ in items)])))
+    for (mode, _, oid), rel in items:
+        path = at / rel.decode("utf-8", "surrogateescape")
+        if mode == b"120000":
+            now = os.fsencode(os.readlink(path)) if path.is_symlink() else None
+        else:
+            now = path.read_bytes() if path.is_file() and not path.is_symlink() else None
+            if now is not None and (mode == b"100755") != bool(path.stat().st_mode & 0o100):
+                now = None
+        if now is not None and blob_id(now) == oid:
+            continue
+        data = git("cat-file", "blob", oid.decode()).stdout
+        if blob_id(data) != oid:
+            bad(6, f"its object {oid.decode()} does not hold what its id names")
+        content = lfs_content(data) if mode != b"120000" else None
+        if content is not None and now is not None and hashlib.sha256(now).digest() == hashlib.sha256(content).digest():
+            continue
+        put(path, mode, content if content is not None else data)
+        print(rel.decode("utf-8", "replace"))
+    sys.exit(0)
+r = subprocess.run(["git", *apart, "init", "-q", "--template=", f"--object-format={algo}", str(at)],
+                   capture_output=True, env=env, text=True)
+if r.returncode:
     sys.exit(r.stderr[-300:])
-tree = git("write-tree").stdout.strip()
-nested = [line.split("\t", 1)[1] for line in git("ls-tree", "-r", tree).stdout.splitlines() if line.startswith("160000")]
-if nested:
-    print("\n".join(nested))
-    sys.exit(3)
-if tree != delivered:
-    print("\n".join(git("diff-tree", "-r", "--name-only", delivered, tree).stdout.splitlines()) or tree)
-    sys.exit(4)
+if (r := git("index-pack", "--stdin", stdin=sys.stdin.buffer)).returncode:
+    bad(4, f"its objects cannot be read: {r.stderr.decode(errors='replace')[-300:]}")
+if not (verify([commit.encode()]) or b"").startswith(f"tree {tree}\n".encode()):
+    bad(4, f"its commit {commit} does not carry the tree {tree}")
+ls = git("ls-tree", "-r", "-t", "-z", "--full-tree", tree)
+if ls.returncode:
+    bad(4, f"its tree cannot be read: {ls.stderr.decode(errors='replace')[-300:]}")
+items = [(meta.split(), p) for meta, _, p in (e.partition(b"\t") for e in ls.stdout.split(b"\0") if e)]
+if nested := [p.decode(errors="replace") for meta, p in items if meta[1] == b"commit"]:
+    bad(3, "\n".join(nested))
+verify(list(dict.fromkeys([tree.encode(), *(meta[2] for meta, _ in items)])))
+(at / ".git" / "shallow").write_bytes(commit.encode() + b"\n")
 '''
 
 
-def _not_delivered(place, at, tree: str, commit: str, execution) -> Optional[str]:
-    """Why the copy at `at` is not the delivery — its files staged as DELIVER staged them (`W.stage`) over a git the
-    system made (`_JUDGES_GIT`), written as a tree and held against the `tree` the system recorded — or None where it
-    is. NOTHING OF THE COPY'S `.git` IS READ FOR BEHAVIOUR: its config, hooks, attributes and excludes are its
-    executor's, and a filter they name, run in the copy's container before its judge, could change the copy after this
-    look, or hash a changed file as delivered (critics over cba729f: a `commondir` led to a config of its own). Its
-    objects are borrowed — a forged one can only make the tree differ. The copy keeps its neutralised git: a judge's git
-    runs no filter of the executor's. A nested repository's files are no part of the recorded tree — DELIVER records its
-    commit, whose objects are its agent's to forge — so a delivery holding one is not judged, and that is named. A
-    repository whose executor ran a clean filter of its own at DELIVER is not reproduced and reads as changed."""
-    base = W.base_of(str(place)) or str(place)
-    given = {"inherited": W.INHERITED, "spec": W.DELIVERED, "stage": inspect.getsource(W.stage),
-             "kept_out": {k: v.decode("latin-1") for k, v in W.kept_out(base, execution).items()}}
-    ex = execution.session(str(at))
-    r = ex.run([ex.python, "-I", "-c", _JUDGES_GIT, str(at), commit, tree, str(base), json.dumps(given),
-                *W.apart(execution)],
-               cwd=str(at), timeout=1800, env=subprocess_env(extra=W.NO_CONFIG))
+def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> None:
+    """`at` made the checkout of `commit` (`_CHECKOUT`), its objects STREAMED from the place's container, where `_PACK`
+    packs them, into the copy's, which takes them in — one pipe between the two (`ExecutionPort.pipe`): nothing of the
+    pack is held by the server or laid where the executor's agent writes, and no cap but the disk bounds a delivery
+    (a pack read into the server's memory, capped at 512 MiB, left a larger delivery never judged). The LFS objects its
+    pointers name are carried into the copy's own store the same way, each only where it is its pointer's
+    (`W.lfs_into_copy`), before the checkout writes their content. A judge mounts nothing of the place, the base or the
+    node's temp (`PlaceContainer._mounts`). `NotTheDelivery` where its tree holds nested repositories — their files are
+    no part of the tree DELIVER recorded: it records their commit, whose objects are their agent's to forge — or cannot
+    be read back as recorded; `OSError` where the copy could not be made."""
+    ex, end = execution.session(str(at)), [execution.python, "-I", "-c", _CHECKOUT]
+    src, env = execution.session(str(place)), subprocess_env(extra=W.NO_CONFIG)
+    rc, err, r = src.pipe([src.shell() or "bash", "-c", _PACK, "sh", commit, *W.APART], cwd=str(place),
+                          env=subprocess_env(extra={**W.NO_CONFIG, "GIT_NO_REPLACE_OBJECTS": "1"}), into=ex,
+                          into_args=[*end, "take", str(at), commit, tree, *W.APART], into_cwd=str(at.parent),
+                          into_env=env, timeout=1800)
     said = (r.stdout or "").split()
-    if r.returncode == 0:
-        return None
     if r.returncode == 3:
-        return (f"the delivery holds nested repositories ({', '.join(said[:5])}): their files are no part of the tree "
-                f"DELIVER recorded ({commit[:12]}), so no copy can be held to it — commit their files into the node's "
-                f"own repository instead")
+        raise NotTheDelivery(f"the delivery holds nested repositories ({', '.join(said[:5])}): their files are no part "
+                             f"of the tree DELIVER recorded ({commit[:12]}), so no copy can be made of it — commit their "
+                             f"files into the node's own repository instead")
+    if rc:
+        # …an object of the delivery its own store lacks or holds corrupt is the delivery's, not the machine's: booked as
+        # never copied, it was asked again until a person stepped in (critic over the judged tree, run)
+        if re.search(r"missing \w+ object|bad object|corrupt|invalid object", err or "", re.I):
+            raise NotTheDelivery(f"the delivery's own store cannot give back what DELIVER recorded ({commit[:12]}): "
+                                 f"{err.strip()[-300:]}")
+        raise OSError(f"{place} could not pack {commit[:12]}: {err.strip()[-300:]}")
     if r.returncode == 4:
-        return (f"the place changed after DELIVER ({commit[:12]}): {len(said)} tracked file(s) differ — "
-                f"{', '.join(said[:5])}")
-    return f"the copy could not be held to its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}"
+        raise NotTheDelivery(f"the tree DELIVER recorded ({commit[:12]}) cannot be read back as recorded: "
+                             f"{(r.stdout or '').strip()[-300:]}")
+    if r.returncode:
+        raise OSError(f"the copy {at} could not take its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}")
+    W.lfs_into_copy(W.base_of(str(place)) or str(place), place, at, commit, execution)
+    r = ex.run([*end, "checkout", str(at), commit, tree, *W.apart(execution)], cwd=str(at.parent), timeout=1800,
+               env=env)
+    if r.returncode:
+        raise OSError(f"the copy {at} could not check out its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}")
+
+
+def _after_build(at: Path, tree: str, commit: str, execution) -> str:
+    """The copy's tracked files as DELIVER recorded them once the build has run (`_CHECKOUT` "kept"), each it changed
+    put back from the copy's own objects, hashed again — what is said of it appended to what ran. A build writes its
+    outputs, never the delivered sources: a process it started rewrote `main.c` after it "succeeded", and every check
+    after read a tree never delivered (critic over 909e417). Put back rather than failed: an honest build may regenerate
+    a tracked file (a parser's generated source, a lock file stamped with a time), and its checks then run over the
+    delivered one. Objects of the copy's own repository the build rewrote leave nothing to put back from: `BuildFailed`
+    — the delivered code broke its judge's copy."""
+    ex = execution.session(str(at))
+    r = ex.run([execution.python, "-I", "-c", _CHECKOUT, "kept", str(at), commit, tree, *W.APART], cwd=str(at.parent),
+               timeout=BUILD_S, env=subprocess_env(extra=W.NO_CONFIG))
+    if r.returncode:
+        raise BuildFailed(f"the build changed the copy's own repository, so its delivered files cannot be put back: "
+                          f"{(r.stdout or r.stderr or '').strip()[-300:]}", "the judge's check of the delivered files")
+    put = (r.stdout or "").splitlines()
+    return (f"; it changed {len(put)} delivered file(s), put back as delivered before any check: "
+            f"{', '.join(put[:10])}" if put else "")
+
+
+def _build(at: Path, declared: Optional[str], execution) -> str:
+    """The delivered tree built in its copy `at` where the copy's judge runs — its container, under its way out —
+    before any check: DELIVER's `build` where it gave one (an empty one: nothing to build); else, where the tree has a
+    makefile at its root, its default target (`make`); else nothing. Said back as the executor's next packet says it;
+    a build that fails or outruns `BUILD_S` raises `BuildFailed`, the tail of its output the cause. What it makes stays
+    in this copy."""
+    if declared is None and any(execution.files.exists(str(at / m)) for m in MAKEFILES):
+        declared, which = "make", "the delivered Makefile's default target (`make`: no `build` was declared at DELIVER)"
+    elif (declared or "").strip():
+        which = f"the build declared at DELIVER (`{declared}`)"
+    else:
+        return ("nothing: DELIVER declared nothing to build (`build: \"\"`)" if declared is not None else
+                "nothing: no `build` was declared at DELIVER and the delivered tree has no Makefile at its root")
+    ex = execution.session(str(at))
+    try:
+        r = ex.run([ex.shell() or "sh", "-c", "exec 2>&1\n" + declared], cwd=str(at), timeout=BUILD_S,
+                   env=subprocess_env())
+    except subprocess.TimeoutExpired:
+        raise BuildFailed(f"the judge built with {which}, and it was still running at {BUILD_S} s: ended, and no check "
+                          f"was run", declared) from None
+    if r.returncode:
+        out = f"{r.stdout or ''}{r.stderr or ''}".strip()
+        raise BuildFailed(f"the judge built with {which}, and it exited {r.returncode}, so no check was run — its "
+                          f"output's end: {out[-1500:] or '(nothing)'}", declared)
+    return f"{which}, which succeeded"
 
 
 def _tree(where, head: str, index: Path, execution) -> Optional[dict]:
@@ -311,7 +477,7 @@ def _tree(where, head: str, index: Path, execution) -> Optional[dict]:
     if not (t := W.git(where, "write-tree", execution=execution, env=env).stdout.strip()):
         return None
     r = W.git(where, "ls-tree", "-r", "-z", "--full-tree", t, execution=execution)
-    return None if r.returncode else {p: meta for meta, _, p in (e.partition("\t") for e in r.stdout.split("\0") if e)}
+    return None if r.returncode else _entries(r.stdout)
 
 
 def swap(text: str, frm, to) -> str:

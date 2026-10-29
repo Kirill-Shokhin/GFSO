@@ -182,6 +182,33 @@ session is told which branches did not join, and integrating them is its work. W
 the worktrees whose branches joined are removed; the others stay and are named. A project dir that is
 not a repository is shared by every executor as it stands, and the log says so once.
 
+**What a judge judges.** A delivery's validation — each of its batches, the system's own run of the exact
+checks, an issuer's contact — runs in a copy that is a checkout of the commit DELIVER recorded and nothing else:
+files the executor's `.gitignore` hides, binaries and environments it built, anything changed in its place after
+DELIVER are not in it. Under a container execution the judge's container mounts three directories — its own round
+or batch (holding the copy), a temp of its own, and read-only what the system laid for it from its record — and
+not the project dir, the node's temp or place, another batch, or an earlier round, so a delivered link or build
+step reaches nothing the executor can still change; the container ends when the run does, with whatever the run
+left running. Where each input comes from: the copy's objects are streamed from the executor's container into a
+git the system makes and hashed again against their ids (no size limit but the disk); Git LFS files are checked
+out as their content, from objects streamed from the place's and the base's LFS stores and kept only where their
+sha256 is the pointer's; a standing finding's probe files are recorded by the system as the finding is filed and
+laid from that record for its re-run, which starts from a fresh copy of them in the judge's batch; pinned inputs
+come from the contract. What the result needs built is built there by the system, in the judge's container,
+before any check: DELIVER's `build` when the executor gave one (`""` = nothing to build), else `make` where the
+delivered tree has a Makefile at its root, else nothing; the executor's DELIVER instructions ask it to declare one.
+A build that fails, or still runs after 10 minutes, is the delivery's FAIL with its output as the cause, and no
+check runs; the executor's next packet says which build ran and, where it failed, its output, and an issuer ruling
+on a dispute of that FAIL gets the copy unbuilt with that output; nothing of a failed build stands as a finding — the
+next delivery's own build re-checks it. Whatever the build leaves running ends before any check, and a delivered file
+it changed is put back as delivered (said in the packet line). A checkout the delivery itself makes impossible (an
+object missing or rewritten, a commit not carrying the recorded tree) is the delivery's FAIL too, its cause in the
+executor's next packet, and its issuer rules on that cause; one that fails for another cause (Docker, a timeout, the
+disk) gives no verdict and is asked again — never the live place in its stead. A standing finding whose file the
+record could not keep is shown, not demanded. A delivery with no recorded
+commit (a project dir with no git, a DELIVER an agent sends through the door) is copied as it stands, and nothing
+is built.
+
 Under a container execution (`register_agent(..., execution=<name>)`) none of that is on your disk, and
 nothing of your disk is mounted into a container: the project's own directory — node places, validation
 rounds, temps, the sessions' CLI state — and the project dir's working copy live in the project's Docker

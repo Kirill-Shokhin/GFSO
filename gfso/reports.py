@@ -223,7 +223,8 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             engine.emit_info("delegate", f"{task_id}: {HELD}{why}")
             return
         _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
-                self_validation=_self, artifact=artifact, commit=carried)
+                self_validation=_self, artifact=artifact, commit=carried,
+                build=build if isinstance(build := report.get("build"), str) else None)
         _cb(f"{task_id}: {DELIVERED} · {_stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb, observed)
 

@@ -36,7 +36,7 @@ from typing import Optional
 
 from gfso import tools as _tools
 from gfso.adapters.execution import LocalExecution, scratch_of
-from gfso.adapters.snapshots import NotTheDelivery, snapshot, swap
+from gfso.adapters.snapshots import NotTheDelivery, Uncopied, snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
@@ -46,7 +46,7 @@ from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, materialize_inputs, shows, pinned_files, probe_id,
                                           probes_from as _checks_of, unrerunnable, with_named_files)
-from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
+from gfso.core.types import (LAID, AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, register_of, set_aside_of)
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
@@ -92,8 +92,6 @@ CONTACT_TOOLS = ("Read", "Bash", "Glob", "Grep")
 
 #: The longest one dispute's contact may run, in seconds.
 CONTACT_TIMEOUT_S = 900
-#: an answer's mark: its contact ran in the place as it stands, not a copy held to the delivery (`_ask`)
-UNHELD = "_unheld"
 
 CONTACT = ("# Contact\nYou are in the node's workspace, `{where}`, with a shell.\n{checkout}What this question turns "
            "on — what "
@@ -146,16 +144,25 @@ class Verbs:
 CONTACT_ROUND = "issuer_"
 
 
+@contextlib.contextmanager
 def _contact_place(where: str, ex, project=None):
     """Where an issuer's contact with a node lays its inputs and its copy of the place: a ROUND OF THAT NODE'S
-    VALIDATION SCRATCH, as a validator's run is (`tools_llm`) — so its session reads the probes the node's standing
-    findings name in the earlier rounds and writes only its own, and no other node's session reaches it. A root's too
-    where places stand apart: in the base it worked in its executor's container and could change the delivery. On this
-    host, where no copy is made (the base, a root's place), the temp its session holds. `project`: whose places hold a
-    base's rounds (`scratch_of`)."""
+    VALIDATION SCRATCH, as a validator's run is (`tools_llm`) — its session reads the probes the node's standing
+    findings name as the system laid them from its record (`_standing_findings`), writes only its own round, and no
+    other node's session reaches it. A root's too where places stand apart: in the base it worked in its executor's
+    container and could change the delivery. On this host, where no copy is made (the base, a root's place), the temp
+    its session holds. `project`: whose places hold a base's rounds (`scratch_of`). Gone when the contact ends, with
+    what was laid beside it (`LAID`)."""
     if _NODES not in str(where) and not ex.apart:
-        return ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
-    return ex.scratch(CONTACT_ROUND, dir=str(scratch_of(where, project)))
+        lent = ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
+    else:
+        lent = ex.scratch(CONTACT_ROUND, dir=str(scratch_of(where, project)))
+    with lent as d:
+        try:
+            yield d
+        finally:
+            with contextlib.suppress(OSError):
+                ex.remove_tree(d + LAID)
 
 @contextlib.contextmanager
 def _round(engine, tmp):
@@ -299,15 +306,20 @@ def _what_happened(engine, task) -> list[str]:
     return out
 
 
-def _standing_findings(engine, task_id) -> str:
+def _standing_findings(engine, task_id, lists: "str | None" = None, ex=None) -> str:
     """The node's regression set, a line per finding with its id, as run, as the engine demands it — bounded as the
     executor's packet is (`capped`): the whole set inline, 562k characters, would end the dispute's issuer session
-    `prompt_too_long` (GB_sql_database_tmxu0n436)."""
+    `prompt_too_long` (GB_sql_database_tmxu0n436). `lists`: where its file goes (`list_key`) — the contact's own round,
+    where each finding's files are laid from the system's record and its command shown over them
+    (`Engine.lay_probe_files`, through `ex`): the contact mounts no earlier round."""
     workdir, up = (engine.get_exec_verdict(task_id) or {}).get("workdir"), findings.round_stands(engine.graph)
-    return "".join(f"\n- {c}:" + capped([f"[{p.get('id')}] {p.get('behaviour')}: `{p.get('seen') or p.get('as_run')}` "
-                                         f"(recorded: «{p.get('expect')}»)" + (f" — {why}: shown, not demanded" if (
-                                             why := unrerunnable(p, None, workdir, standing=up)) else "") for p in ps],
-                                        "standing findings", list_key(engine, task_id, c, "issuer"))
+    run = lambda p, why: (engine.lay_probe_files(p["as_run"], lists, ex) if lists and ex and p.get("as_run") and not why
+                          else p.get("seen") or p.get("as_run"))
+    return "".join(f"\n- {c}:" + capped([f"[{p.get('id')}] {p.get('behaviour')}: `{run(p, why)}` "
+                                         f"(recorded: «{p.get('expect')}»)" + (f" — {why}: shown, not demanded" if why
+                                                                               else "")
+                                         for p in ps for why in [unrerunnable(p, None, workdir, standing=up)]],
+                                        "standing findings", list_key(engine, task_id, c, "issuer", at=lists))
                    for c, ps in engine.regression_probes(task_id).items()).lstrip("\n")
 
 
@@ -404,14 +416,16 @@ def _users_sentence(engine, task) -> str:
     return re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0][:160] or "(the goal as written above)"
 
 
-def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", laid: "dict | None" = None) -> str:
+def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", laid: "dict | None" = None,
+                   lists: "str | None" = None, ex=None) -> str:
     """Everything the issuer needs to answer about `task_id`, and nothing twice: the goal, why the node exists,
     its contract, and what the question needs — for the plan and the repair, the split's whole contracts; for the
     plan, the gate's findings with their reasons and nothing of the node's history (a holder asked what its plan
     decision rested on did not use the deadline or the rework count — one decision, 4 forks,
     experiments/e3_specbench/issuer_context_probe.py); for the others, what happened to the node. NOT CARRIED,
     a named residue: the source statement a goal points to and files in the workspace — the issuer has tools
-    only on a dispute (`CONTACT`), and the holder used both."""
+    only on a dispute (`CONTACT`), and the holder used both. `lists`: where a long list's file goes — the contact's
+    own round, which its session holds (`list_key`)."""
     task = engine.graph.get_task(task_id)
     out = _goal_and_why(engine, task)
     plan, split = question == "plan", question in SPLIT_QUESTIONS
@@ -430,7 +444,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
     # saw the hole another child's validator wrote (critic over 5cad9c4)
     holder = task.id if split or task.parent_id is None else task.parent_id
     rows = engine.outside_the_criteria(holder, own=not split and task.parent_id is None)
-    out += [s for s in [outside_text(engine, holder, rows)] if s]
+    out += [s for s in [outside_text(engine, holder, rows, lists)] if s]
     if question == "plan":
         out.append(f"## What the plan gate holds open\n{_gate_findings(engine, task_id)}")
         # …and the issuer's answers to this node's challenges on the version in force: unseen, a rejected challenge was
@@ -453,7 +467,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         # (a `<wchar.h>` program, a sibling's scope, failed root.pp round after round — GB_c_compiler_tmp5cb096); the
         # issuer judged the challenge with the contract alone in view and none of what was demanded under it
         out.append("## The validator's findings standing on this node — every PASS of it must re-run them\n"
-                   + (_standing_findings(engine, task_id) or "- none")
+                   + (_standing_findings(engine, task_id, lists, ex) or "- none")
                    + ("\n\nUnder AUTO this node's criteria are the user's goal: only the user rules a finding of the "
                       "validator outside them — answer without `retire_findings`."
                       if is_auto_root(engine.graph, engine.graph.get_task(task_id)) else
@@ -1556,44 +1570,36 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
-    at_place, text, laid, unheld = ex or LocalExecution(), "", {}, False
+    at_place, text, laid = ex or LocalExecution(), "", {}
     try:
         with (_contact_place(where, at_place, engine.project_name) if where else contextlib.nullcontext()) as tmp,                 _round(engine, tmp):
             laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp, at_place.files) if tmp else {}
-            packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
+            packet = issuer_context(engine, task_id, question, refusal, laid, tmp, at_place) + schema_instruction(schema)
             with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
                 if where:
                     # …IN A COPY OF THE PLACE, as a validator's run is: the issuer rules on that delivery and must not be
                     # able to change it (§10.3); its answer reads as run in the place — and where places stand apart,
                     # never in the executor's place, its container and its CLI state (`ExecutionPort.apart`)
-                    # …a dispute is ruled on the delivery the FAIL judged: held to it as a validator's copy is
-                    held, system = (engine.delivered(task_id) if question == "dispute" else None,
-                                    PROMPT.read_text(encoding="utf-8"))
-
-                    def _contact(held, note=""):
-                        with (snapshot(where, Path(tmp) / "place", at_place, delivered=held)
-                              if _NODES in str(where) or at_place.apart
-                              else contextlib.nullcontext()) as copy:
-                            if not copy and at_place.apart:
-                                raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
-                            at = copy or where
-                            said = llm.run_agent(system, CONTACT.format(where=at, checkout=checkout_note(at))
-                                                 + (swap(packet, where, copy) if copy else packet) + note,
-                                                 allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
-                            return swap(said, copy, where) if copy else said
-                    try:
-                        text = _contact(held)
-                    except NotTheDelivery as e:
-                        if "changed after DELIVER" not in str(e):
-                            raise
-                        # …a rework that changed the place after DELIVER, which nothing restores: asked again, it never
-                        # came back and nothing else ran for 2 h 26 min (series 2 REF 2, root.layout, 2026-10-29). What a
-                        # dispute turns on — what the checks print — the place as it stands answers; only a retirement
-                        # speaks of the delivery itself, so this ruling retires nothing (critic over the on-record cut)
-                        unheld = True
-                        text = _contact(None, f"\n\nThis copy is the place as it stands, NOT the delivery ({e}): run "
-                                              f"what the dispute turns on here, and retire no finding — a retirement "
-                                              f"speaks of the delivery, which this is not.")
+                    # …ruled on the delivery as DELIVER recorded it, held to it as a validator's copy is — a dispute on
+                    # the one the FAIL judged, any other question too: a copy of the live place carried what the
+                    # executor holds now, not what it handed in (critic over the judged tree)
+                    held = engine.delivered(task_id)
+                    # …built as its judge built it; a build that failed is no reason to withhold the ruling on the FAIL
+                    # it made: the copy comes unbuilt, with the build's output (a dispute refused for it waited forever)
+                    built: list = []
+                    with (snapshot(where, Path(tmp) / "place", at_place, delivered=held, built=built, unbuilt_ok=True)
+                          if _NODES in str(where) or at_place.apart
+                          else contextlib.nullcontext()) as copy:
+                        if not copy and at_place.apart:
+                            raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
+                        at = copy or where
+                        text = llm.run_agent(PROMPT.read_text(encoding="utf-8"),
+                                             CONTACT.format(where=at, checkout=checkout_note(at))
+                                             + (swap(packet, where, copy) if copy else packet)
+                                             + (f"\n\nBefore you, the system built this copy as its judge did: "
+                                                f"{built[0]}\n" if built else ""),
+                                             allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
+                        text = swap(text, copy, where) if copy else text
                 else:
                     # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
                     # directory refused every real call, so no machine issuer ever answered (hidden by fakes that
@@ -1601,7 +1607,13 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                     text = llm.complete(packet, context=PROMPT.read_text(encoding="utf-8"))
     except PlaceUnavailable as e:    # …the place down laying the inputs or copying: booked as a call that could not start
         llm.calls.append({"duration_ms": 0, "ended": "unavailable", "place": e.place, "error": str(e), "at": time.time()})
-    except NotTheDelivery as e:      # …a copy that is not the delivery: no ruling on it, as no copy at all (`apart`)
+    except NotTheDelivery as e:
+        # …a delivery no copy can be made of, by its own doing (an object missing or rewritten, a nested repository): a
+        # cause to rule on, not to wait out — asked again it failed again, forever (critic over 909e417)
+        text = llm.complete(packet + f"\n\nNO COPY of this delivery could be made for you, and the delivery itself is "
+                                     f"the cause: {e}. Rule on that: there is no tree to run anything in.",
+                            context=PROMPT.read_text(encoding="utf-8"))
+    except Uncopied as e:            # …no copy for a cause not the delivery's: no ruling yet, asked again
         raise Unavailable(f"no copy of {where} to rule on: {e}") from e
     llm.tag_last(Stage.ISSUER)
     engine.record_llm_usage(Stage.ISSUER, llm, task_id)
@@ -1613,8 +1625,6 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
         raise Unavailable("the contact run was cut before it answered")
     file_tech_reports(engine, answer := parse_structured(text, schema), "issuer", actor, task_id)
     answer = _unlaid(answer, [d.as_posix() for d in laid.values()])
-    if unheld and isinstance(answer, dict):
-        answer[UNHELD] = True                  # …a copy not held to the delivery retires nothing (`answer_the_challenge`)
     return answer, dict(llm.last_tool_calls) if where else None
 
 
@@ -1659,13 +1669,6 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
     said = findings.named(engine.challenge_reason(task_id) or "", [s for ps in engine.regression_probes(task_id).values()
                                                                     for p in ps if (s := p.get("id"))])
     retire = [i for i in retire if i in said]
-    if (answer.pop(UNHELD, False) if isinstance(answer, dict) else False) and retire:
-        # …a ruling on the place as it stands, not the delivery, takes back no observation of the delivery: the work goes
-        # back with the way to its ruling — emptied instead, an acceptance that only retired decided nothing, the node
-        # stayed CHALLENGED and every later ask was unheld again (critic over the unheld cut)
-        decision, retire, ran = "reject", [], None
-        answer["justification"] = ("the place changed after DELIVER, so no copy of the delivery could be ruled on; a "
-                                   "finding is ruled on a delivery — deliver the work and dispute the finding there")
     if answer is None or decision not in ("accept", "reject"):
         # an acceptance names the contract it installs; falling through to a rejection would send the
         # executor back carrying a justification written to mean the issuer AGREED with him

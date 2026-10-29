@@ -22,8 +22,7 @@ import pytest
 
 import gfso.issuer as I
 import gfso.tools as T
-from gfso.adapters.snapshots import NotTheDelivery
-from gfso.core.protocol.procedure import probe_id
+from gfso.adapters.snapshots import BuildFailed, NotTheDelivery
 from gfso.delegate import ISSUER_VERBS
 from gfso.issuer import Unavailable, Verbs, answer_the_challenge, settle
 from gfso.core.types import State, TaskId
@@ -419,63 +418,49 @@ def test_a_dispute_is_ruled_only_on_the_delivery_the_fail_judged(tmp_path, monke
     place.mkdir(parents=True)
     held = []
 
-    @contextlib.contextmanager
-    def _held(where, at, ex, delivered=None):
+    def _held(where, at, ex, delivered=None, **_):
         held.append(delivered)
-        if delivered:
-            raise NotTheDelivery("the place changed after DELIVER (c0ffee): 1 tracked file(s) differ — f")
-        yield str(copy)
+        raise NotTheDelivery("the tree DELIVER recorded (c0ffee) cannot be read back as recorded")
     monkeypatch.setattr(I, "snapshot", _held)
     e = make_engine()
     e.start()
     try:
         _disputed(e)
-        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee"))
-        llm = _ContactLLM({"decision": "reject", "justification": "ran `make check`: it prints ok on the scope's "
-                                                                  "own programs", "retire_findings": ["c#x"]},
-                          ran={"Bash": 1})
+        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee", None))
+        llm = _ContactLLM({"decision": "accept", "justification": "ran it"}, ran={"Bash": 1})
+        # …the delivery itself the cause: told so, the issuer rules on that, in no copy and with no tools — asked
+        # again as `Unavailable`, it failed again forever (critic over 909e417)
         answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
-        e.wait_idle()
-        assert held == [("tree", "c0ffee"), None], "held to the delivery first, then the place as it stands"
-        assert llm.where and llm.where[-1][0] == str(copy) and llm.where[-1][1], "contact, with its tools"
-        assert "NOT the delivery" in llm.packets[-1] and "retire no finding" in llm.packets[-1]
-        assert e.graph.get_state(TaskId("leaf")) == State.EXECUTING, "the dispute is answered"
+        assert held == [("tree", "c0ffee", None)] and [w for w, _ in llm.where] == [None], llm.where
+        assert "NO COPY of this delivery" in llm.packets[-1] and "cannot be read back" in llm.packets[-1]
     finally:
         e.stop()
 
 
-def test_a_finding_is_not_retired_on_the_place_as_it_stands_and_the_work_goes_back(tmp_path, monkeypatch):
-    """An acceptance that only retires a finding, ruled on the place as it stands after a rework changed it, is no
-    ruling on the delivery: the work goes back with the way to that ruling — deliver, then dispute — and the finding
-    stands. Emptied instead, the acceptance decided nothing and the node stayed CHALLENGED, asked again unheld."""
+def test_a_dispute_of_a_fail_its_build_made_is_ruled_on_the_unbuilt_copy_with_the_builds_output(tmp_path, monkeypatch):
+    """A build that failed is the FAIL being disputed: refused for it, the dispute read as no copy, was retried with
+    backoff and never ruled on. The issuer is handed the copy unbuilt, and what the build printed."""
     place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
-    (copy := tmp_path / "copy").mkdir()
     place.mkdir(parents=True)
+    asked = []
 
     @contextlib.contextmanager
-    def _held(where, at, ex, delivered=None):
-        if delivered:
-            raise NotTheDelivery("the place changed after DELIVER (c0ffee): 1 tracked file(s) differ — f")
-        yield str(copy)
-    monkeypatch.setattr(I, "snapshot", _held)
+    def _unbuilt(where, at, ex, delivered=None, built=None, unbuilt_ok=False, **_):
+        asked.append(unbuilt_ok)
+        if not unbuilt_ok:
+            raise BuildFailed("the judge built with `make`, and it exited 2 — cc: not found", "make")
+        built.append("the judge built with `make`, and it exited 2 — cc: not found")
+        Path(at).mkdir(parents=True)
+        yield str(at)
+    monkeypatch.setattr(I, "snapshot", _unbuilt)
     e = make_engine()
     e.start()
     try:
-        T.create_task(e, "leaf", {"description": "a leaf", "criteria": [criterion("c", "C")], "accepted_risks": _RISK},
-                      assignee="worker")
+        _disputed(e)
+        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee", None))
+        llm = _ContactLLM({"decision": "accept", "justification": "ran it: no compiler in the image"}, ran={"Bash": 1})
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
         e.wait_idle()
-        T.signal(e, "leaf", "ACCEPT", "worker")
-        cmd = "./cc wide.c; echo exit=$?"
-        pid = probe_id("c", {"command": cmd})
-        e._graph._storage.store_critique(TaskId("leaf#regression-probes"), json.dumps({"c": [
-            {"id": pid, "behaviour": "b", "command": cmd, "as_run": cmd, "expect": "exit=0"}]}))
-        T.signal(e, "leaf", "CHALLENGE", "worker", reason=f"{pid} is not c's")
-        e.wait_idle()
-        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee"))
-        llm = _ContactLLM({"decision": "accept", "justification": "not c", "retire_findings": [pid]}, ran={})
-        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
-        e.wait_idle()
-        assert e.graph.get_state(TaskId("leaf")) == State.EXECUTING, out
-        assert pid in [p["id"] for ps in e.regression_probes(TaskId("leaf")).values() for p in ps], "the finding stands"
+        assert asked == [True] and llm.where and "cc: not found" in llm.packets[0]
     finally:
         e.stop()

@@ -28,14 +28,14 @@ from typing import Optional, Union
 from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.workspaces import declaring_role, execution_of
-from gfso.adapters.snapshots import NotTheDelivery, snapshot, swap
+from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, left_out,
                                      scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+from gfso.core.types import (BATCH, LAID, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
                              Verdict, passed)
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
-from gfso.core.protocol.procedure import (canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
+from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
                                           with_part_observations)
 from gfso.observe import OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
@@ -56,7 +56,7 @@ from gfso.tools import _agent_id
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, validation_batch,
                          validate_internal, state_bound)
-from gfso.packets import (TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
+from gfso.packets import (BUILT, UNCOPIED, TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
                           owed_probes, snapshot_note)
 from gfso.llm import session_calls
 from gfso.inflight import _inflight, in_flight
@@ -651,9 +651,12 @@ def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, 
         # …but never a round a standing finding runs: gone, its probe would read as unrunnable and stop being
         # demanded with no ruling (a 16-round root, GB_c_compiler — critic 2026-10-11)
         # …nor an issuer's contact running in this scratch beside them (`issuer._contact_place`): it removes itself
-        for old in sorted(d for d in ex.files.listdir(str(root)) if not d.startswith(_CONTACT))[:-20]:
+        # …what was laid for a lone round beside it (`LAID`) going with it
+        for old in sorted(d for d in ex.files.listdir(str(root)) if not d.startswith(_CONTACT)
+                          and not d.endswith(LAID))[:-20]:
             if not any(f"{root.name}/{old}" in str(n).replace("\\", "/") for n in named):
                 with suppress(OSError):
+                    ex.remove_tree(str(root / (old + LAID)))
                     ex.remove_tree(str(root / old))
                     if graph is not None:
                         record_round(graph, str(root / old), False)
@@ -1203,7 +1206,7 @@ def _scope_cap(batch: list, graph) -> Optional[int]:
     return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
 
 
-def _observe_exact(engine: Engine, parts: list, workdir) -> dict:
+def _observe_exact(engine: Engine, parts: list, workdir, built: Optional[list] = None) -> dict:
     """{(node, probe id): {matched, out, note, …}} — every `exact` pinned probe of the criteria left to validate, own and
     parts', run by the system itself ON THE DELIVERY: a fresh copy of it with the inputs laid from the contract
     (`observe.run_checks`), once per validation and before any validator run. The validator's copy was no such run —
@@ -1211,7 +1214,8 @@ def _observe_exact(engine: Engine, parts: list, workdir) -> dict:
     (critic over 38c16f9) — and a lone validator works in the place itself, so after it no copy is the delivery. An
     exact probe builds what it runs and creates what it reads (`procedure.EXACT_TEXT`). A probe the system could not
     run is a row with a `note` and no `matched`, said in the record as not observed. Laid over the report before it is
-    recorded (`procedure.with_engine_observations`); the place itself is never run in."""
+    recorded (`procedure.with_engine_observations`); the place itself is never run in. The copy is built first, what
+    ran appended to `built`; a build that fails raises `BuildFailed`, and nothing here runs."""
     probes = []
     for task, _, crits in parts:
         own = engine.parts_procedure(task.id)
@@ -1229,22 +1233,44 @@ def _observe_exact(engine: Engine, parts: list, workdir) -> dict:
         # (critic 3 over the judges slice)
         with ex.scratch("gfso-exact-", system=True) as tmp:
             ex.files.mkdir(str(at := Path(tmp) / "exact"))
+            # …a copy the delivery makes impossible raises `NotTheDelivery`: its FAIL, as a judge's copy's (`_unjudged`);
+            # one that failed for another cause leaves these not run, said so
             try:
-                with snapshot(workdir, at / "delivery", ex, delivered=engine.delivered(*(t.id for t, *_ in parts))
-                              ) as tree:
+                with snapshot(workdir, at / "delivery", ex, delivered=engine.delivered(*(t.id for t, *_ in parts)),
+                              built=built) as tree:
                     if tree:
-                        # …as it stands, whatever git ignores included: a `git clean` here emptied a shared place's
-                        # copy inside an enclosing repository and took a delivery's ignored `node_modules` (critic over
-                        # the fresh copy). State an executor's own run left is the pin's to start clean of (`EXACT_TEXT`)
+                        # …the tree DELIVER recorded, built, and never `git clean`ed: one emptied a shared place's
+                        # copy inside an enclosing repository (critic over the fresh copy). State an executor's own run
+                        # left in a place with no recorded commit is the pin's to start clean of (`EXACT_TEXT`)
                         why, rows = ("its inputs could not be laid",
                                      dict(run_checks(ex, probes, workdir, tree, at, OBSERVE_S)))
-            except NotTheDelivery as e:
+            except Uncopied as e:
                 why = str(e)
     return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
 
 
+def _unjudged(parts: list, e: Exception) -> tuple:
+    """The reports a validation stands on whose judge's copy could not be made (`NotTheDelivery`) or built
+    (`BuildFailed`), shaped as `_entries_by_node` reads them: every criterion left to validate failed on that one
+    observation — the delivery's FAIL, the cause said, no check run (JOINT judge-on-the-delivered-tree). A copy that
+    cannot be made is no verdict to wait for again and again: a false FAIL is guarantee-safe (§8.4), and its cause
+    reaches the executor's next packet (`packets._last_delivery_text`), whose re-delivery lifts it."""
+    # …each with the step that failed as its probe — a verdict states what it observed (§2), and a FAIL with none was
+    # refused as no verdict —, marked the system's own act: no finding stands on it (`SYSTEMS_ACT`), the next
+    # delivery's own build and copy re-check it
+    built = isinstance(e, BuildFailed)
+    probe = {"command": e.command if built else "the system's checkout of the commit DELIVER recorded",
+             "expect": "exit 0" if built else "the tree DELIVER recorded, read back whole", SYSTEMS_ACT: True}
+    return ({str(t.id): [{"criterion": c.name, "verdict": "fail", "evidence": str(e),
+                          "behaviours": ["the delivered tree builds in the judge's copy" if built else
+                                         "the tree DELIVER recorded is copied whole for its judge"],
+                          "probe": [probe]} for c in crits] for t, _, crits in parts},
+            {str(t.id): {"verdict": Verdict.FAIL, "failed_criteria": [c.name for c in crits], "seams": "",
+                         "outside": [], "contradiction": None} for t, _, crits in parts})
+
+
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
-                     edits: Optional[list] = None) -> list:
+                     edits: Optional[list] = None, built: Optional[list] = None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1252,7 +1278,8 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     batched or partly kept from a refused report. The engine refuses a report that leaves a criterion unspoken (⊥ is
     not a pass, §2.3), and on a rich contract one report did: 44 refused against 57 recorded, two E3 runs stalled at 25
     and 42 root criteria (2026-08-21) — so a long contract is batched, every owed probe carried exactly once.
-    `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size."""
+    `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size. Each copy is built before its run, what ran
+    appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`)."""
     system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     batches = _scope_batches(engine, parts, validation_batch())
     ex, delivered = execution_of(engine), engine.delivered(*(t.id for t, *_ in parts))
@@ -1275,8 +1302,9 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
         # reads as run in the place.
         # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
         # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
+        ran: list = []
         try:
-            with snapshot(workdir, Path(place) / "delivery", ex, edits, delivered) if place else nullcontext() as tree:
+            with snapshot(workdir, Path(place) / "delivery", ex, edits, delivered, ran) if place else nullcontext() as tree:
                 if not tree and ex.apart:
                     # …never in the executor's place where places stand apart: its container, its CLI state, its tree
                     # to change (§10.3). No validator started: not a report it failed to write nor a contract to
@@ -1284,14 +1312,19 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
                     # then of a person (critics over this slice: read as the place down, the project flapped)
                     return _no_start(client or llm, "uncopied", str(workdir), f"no copy of {workdir} to judge in")
                 if tree:
-                    body = swap(body, workdir, tree) + snapshot_note(tree)
+                    body = swap(body, workdir, tree) + snapshot_note(tree, ran[0] if ran else None)
                 text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
                                                  timeout=cap())
                 return swap(text, tree, workdir) if tree else text
         except PlaceUnavailable as e:        # …the place down while copying: the stop a call that could not start makes
             return _no_start(client or llm, "unavailable", e.place, str(e))
-        except NotTheDelivery as e:          # …a copy that is not the delivery is no copy to judge: booked as none made
+        except Uncopied as e:                # …no copy, for a cause not the delivery's: no verdict, asked again
             return _no_start(client or llm, "uncopied", str(workdir), str(e))
+        finally:
+            if built is not None:
+                built.extend(ran)
+            if place:          # …the run's container ended, whatever its processes left running (`release`)
+                ex.release(place)
 
     def _run_again_if_unread(batch, client=None, place=None) -> str:
         """A batch whose report does not parse is run once more, alone, inside this validation, in a fresh place of its
@@ -1333,16 +1366,22 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     scratch, _before = _validation_place(top_id, workdir, execution_of(engine), tuple(
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
         for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph, engine.project_name)
+    edits, built, unbuilt = [], [], None
     try:
-        edits: list = []
         # the system's own run of the exact checks FIRST, on the delivery as delivered (`_observe_exact`)
-        if observed := _observe_exact(engine, parts, workdir):
+        if observed := _observe_exact(engine, parts, workdir, built):
             _cb(f"{top_id}: the system ran {len(observed)} exact pinned check(s) on a fresh copy of the delivery — "
                 f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
                 f"{sum('matched' not in o for o in observed.values())} could not be run")
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits)
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
+    except (BuildFailed, NotTheDelivery) as ex:       # …the delivery's FAIL, nothing checked (`_unjudged`)
+        observed, texts, unbuilt = {}, [], ex
+        _cb(f"{top_id}: {ex}")
+    if said := str(unbuilt) if unbuilt else built[0] if built else None:
+        for t, _ in nodes:          # …said to each node's executor in its next packet (`packets._last_delivery_text`)
+            engine.emit_info("validation", f"{t.id}: {UNCOPIED if isinstance(unbuilt, NotTheDelivery) else BUILT}{said}")
     text = "\n\n".join(x or "" for x in texts)
     out: dict = {"task_id": top_id, "stats": session_calls(llm, Stage.VALIDATE_RESULT)}
     _strays_left_behind(engine, top_id, workdir, _before, out, _cb)   # `.gfso-scratch` is the offered place
@@ -1354,7 +1393,7 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     _schema = _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA
     for x in texts:
         file_tech_reports(engine, parse_structured(x or "", _schema), "validator", validator or "validator", top_id)
-    read = _entries_by_node(texts, parts, _schema, own=inside is None)
+    read = _unjudged(parts, unbuilt) if unbuilt else _entries_by_node(texts, parts, _schema, own=inside is None)
     if read is None:
         # No retry here: an agent run is minutes-long. The report is KEPT, on disk and on the node, as a report the
         # engine refuses is: under delegation the caller is the dispatcher, which reads a verdict and nothing else,
