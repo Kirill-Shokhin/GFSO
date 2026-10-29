@@ -16,6 +16,7 @@ STARTS = {"Popen", "run", "call", "check_output", "check_call"}
 #: file -> why a direct start or a host temp there is the host's, not a project's
 HOSTS_OWN = {
     "adapters/children.py": "the funnel every child goes through: adopted, in its own group, ended with the server",
+    "adapters/lfs.py": "the LFS filter git runs inside a project's container, asking its own git where its store is",
     "adapters/execution.py": "LocalExecution, the host's own start, and the docker client every container call rides",
     "adapters/verifiers/subprocess_verifier.py": "an embedder's verifier adapter, run where the host that wires it is",
     "adapters/verifiers/unittest_verifier.py": "an embedder's verifier adapter, run where the host that wires it is",

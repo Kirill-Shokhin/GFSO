@@ -45,9 +45,17 @@ HOSTS_OWN = {
      "(p := (base / git('rev-parse', '--git-path', f'info/{n}').stdout.strip())).is_file()"):
         "the user's repository, carried in",
     ("adapters/execution.py", "_carried_in", "base.is_dir()"): "the user's repository, carried in",
+    ("adapters/execution.py", "_is_top", "base.is_dir()"): "the user's repository, carried in",
+    ("adapters/execution.py", "_is_top", "shutil.which('git')"): "this host's git",
+    ("adapters/execution.py", "_lfs_of", "(f := Path(lfs.path_in(str(store), oid))).is_file()"):
+        "the user's repository, carried in",
+    ("adapters/execution.py", "_lfs_of", "f.stat()"): "the user's repository, carried in",
+    **{("adapters/execution.py", "stored_on_host", call): "the user's LFS store, the accepted result's objects landing"
+       for call in ("(at := Path(lfs.path_in(str(store), oid))).is_file()", "at.stat()", "os.replace(tmp, at)",
+                    "(tmp := at.with_name(f'{oid}.gfso-{uuid.uuid4().hex}')).write_bytes(data)",
+                    "at.parent.mkdir(parents=True, exist_ok=True)")},
     ("adapters/execution.py", "Volume.land_tree", "shutil.rmtree(to)"): "a host directory of the user's: the result",
     ("adapters/execution.py", "Volume.land_tree", "to.exists()"): "a host directory of the user's: the result",
-    ("adapters/execution.py", "_carried_in", "shutil.which('git')"): "this host's git",
     ("adapters/execution.py", "fetched_on_host", "(f := (Path(d) / 'accepted.bundle')).write_bytes(bundle)"):
         "the accepted result, landing in the user's repository",
     ("adapters/execution.py", "fetched_on_host", "tempfile.TemporaryDirectory(prefix='gfso-land-')"):

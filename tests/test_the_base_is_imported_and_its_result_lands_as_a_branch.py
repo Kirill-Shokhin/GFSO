@@ -221,8 +221,9 @@ def test_live_the_import_says_what_of_the_users_did_not_come_in(tmp_path, monkey
         x.run(["true"], cwd=str(x.base), timeout=120).check_returncode()
         text = next(t for t in e.said if "imported" in t)
         assert _git(base, "rev-parse", "HEAD")[:12] in text
-        assert "not imported: 1 changed or untracked files - commit them" in text
-        assert "1 submodules stand empty inside" in text and "Git LFS are pointers" in text
+        assert "1 changed or untracked files of" in text and "commit them and start again" in text
+        assert "1 submodules of" in text and "stand empty in the agents' copy" in text
+        assert "Git LFS" not in text, "attributes naming LFS, and no LFS file: nothing to say"
         assert x.files.listdir(str(x.base / "sub")) == []
         # …a gitlink the agent moved to a commit of its choosing: landing never fetches the submodule's remote
         _git(base / "sub", "remote", "set-url", "origin", str(tmp_path / "no-such-remote"))

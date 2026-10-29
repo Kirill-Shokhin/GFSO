@@ -28,8 +28,8 @@ from pathlib import Path
 
 from gfso.core.types import BATCH, HOST, MADE, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, executions, executions_path,
-                         host_env)
-from gfso.adapters import door, egress
+                         host_env, subprocess_env)
+from gfso.adapters import door, egress, lfs
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
 log = logging.getLogger(__name__)
@@ -291,12 +291,14 @@ fi
 [ -n "$(ls -A /tmp/x)" ] || { note "nothing to export"; exit 1; }
 tar -c -C /tmp/x .'''
 #: `Volume.import_base` inside, as the image's user, the places volume at /to, what the host carried on stdin (a tar:
-#: `bundle`, `branch`, `exclude`, `attributes` — or `tree`, a base with no git): "$1" the commit (empty: no git), "$2"
-#: the base's directory in the volume, "$3" the project. Its git reads no config but the clone's own, runs no hook;
-#: a node branch that stands in the volume is never overwritten, a base with no git never removed
-_IMPORT = r'''c=$1 d=/to/$2 p=$3
+#: `bundle`, `branch`, `exclude`, `attributes`, `lfs/<oid>` — or `tree`, a base with no git): "$1" the commit (empty: no
+#: git), "$2" the base's directory in the volume, "$3" the project, "$4" "$5" the system's LFS filter (`lfs`), which
+#: writes each LFS file's content from the objects carried, verified — written into the base's own config too, so the
+#: root's agent's own git agrees. Its git reads no config but the clone's own, runs no hook; a node branch that stands in
+#: the volume is never overwritten, a base with no git never removed
+_IMPORT = r'''c=$1 d=/to/$2 p=$3 fc=$4 fs=$5
 g() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
-  -c core.fsmonitor=false -C "$d" "$@" </dev/null; }
+  -c core.fsmonitor=false -c "$fc" -c "$fs" -C "$d" "$@" </dev/null; }
 mkdir -p /tmp/in && tar -x -C /tmp/in || exit 1
 if [ -z "$c" ]; then
   mkdir -p "$d" && { [ ! -d /tmp/in/tree ] || cp -a /tmp/in/tree/. "$d/"; }
@@ -312,6 +314,12 @@ g cat-file -e "$c^{commit}" || { echo "the bundle holds no commit $c" >&2; exit 
 for n in exclude attributes; do
   [ ! -f "/tmp/in/$n" ] || { mkdir -p "$d/.git/info" && cp "/tmp/in/$n" "$d/.git/info/$n"; } || exit 1
 done
+for f in /tmp/in/lfs/*; do
+  [ -f "$f" ] || continue
+  o=${f##*/} a=${f##*/}; a=${a#??}; b=${a#??}; s=$d/.git/lfs/objects/${o%"$a"}/${a%"$b"}
+  mkdir -p "$s" && mv -f "$f" "$s/$o" || exit 1
+done
+for kv in "$fc" "$fs"; do g config "${kv%%=*}" "${kv#*=}" || exit 1; done
 g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx'''
 #: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
 _DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
@@ -810,7 +818,8 @@ class Volume:
                        text=True).stdout.strip()
             with open(carried, "rb") as stream:
                 got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/to"],
-                                     [_IMPORT, "sh", commit or "", BASE_DIR, self.project], "import", user or "0",
+                                     [_IMPORT, "sh", commit or "", BASE_DIR, self.project,
+                                      *lfs.filter_args(ContainerExecution.python)[1::2]], "import", user or "0",
                                      stdin=stream, interactive=True)
         if got.returncode:
             raise OSError(f"{self.name}: the base could not be imported "
@@ -963,23 +972,111 @@ def _untar(data: bytes, to: Path) -> list:
     return notes
 
 
+#: the environment of the user's git the system runs: an object a partial clone lacks is never fetched — its promisor
+#: is the user's network, reached with their credentials, from no thread of the system's
+NO_LAZY_FETCH = {"GIT_NO_LAZY_FETCH": "1"}
+
+
+def _host_git(base: Path):
+    """git over the user's repository at `base`, run on the host by their own git: text out, or bytes fed `input`."""
+    def git(*a, input=None):
+        """One git call over `base`."""
+        return run(["git", "-c", "safe.directory=*", "-C", str(base), *a], timeout=600, input=input,
+                   env=subprocess_env(extra=NO_LAZY_FETCH),
+                   **({} if input is not None else {"text": True, "encoding": "utf-8", "errors": "replace"}))
+    return git
+
+
+def _is_top(base: Path, git) -> bool:
+    """The question `worktrees.is_repo_top` asks: is `base` the top of a work tree with a commit?"""
+    got = git("rev-parse", "--show-toplevel", "--verify", "HEAD") if shutil.which("git") and base.is_dir() else None
+    top = got.stdout.splitlines()[:1] if got and got.returncode == 0 else []
+    return bool(top) and os.path.normcase(os.path.abspath(top[0])) == os.path.normcase(os.path.abspath(base))
+
+
+def _lfs_of(base: Path, git) -> tuple[dict, list]:
+    """({oid: its object in the user's LFS store}, [the paths whose object it lacks]) of the LFS pointers in HEAD's
+    tree — read as git stores them, so no git-lfs runs: a blob short enough to be a pointer and parsed as one
+    (`lfs.parse`). An object counts where its size is the pointer's; its sha256 is checked where it is written (`lfs`).
+    Missing ones are not fetched: that is the user's network and credentials, asked from no thread of the system."""
+    entries = [e.split("\t", 1) for e in git("ls-tree", "-r", "-l", "-z", "HEAD").stdout.split("\0") if "\t" in e]
+    small = [(m[2], path) for meta, path in entries
+             if (m := meta.split())[1] == "blob" and m[3].isdigit() and int(m[3]) <= lfs.LONGEST]
+    if not small:
+        return {}, []
+    out = git("cat-file", "--batch", input="".join(f"{sha}\n" for sha, _ in small).encode()).stdout
+    pointers, at = [], 0
+    for _, path in small:                     # …`<sha> blob <size>\n<content>\n`, in the order asked
+        nl = out.index(b"\n", at)
+        size = int(out[at:nl].split()[2])
+        pointers += [(path, p)] if (p := lfs.parse(out[nl + 1:nl + 1 + size])) else []
+        at = nl + 2 + size
+    if not pointers:
+        return {}, []
+    store = _lfs_store(base, git)
+    held = {oid: f for _, (oid, size) in pointers
+            if (f := Path(lfs.path_in(str(store), oid))).is_file() and f.stat().st_size == size}
+    return held, [path for path, (oid, _) in pointers if oid not in held]
+
+
+def _lfs_store(base: Path, git) -> Path:
+    """The user's LFS store, where their git-lfs keeps objects: `lfs.storage` (in the git dir where relative), else
+    `.git/lfs` — its `objects`."""
+    common = base / git("rev-parse", "--git-common-dir").stdout.strip()
+    return common / (git("config", "--get", "lfs.storage").stdout.strip() or "lfs") / "objects"
+
+
+def _missing(git) -> list:
+    """The objects HEAD's history names that the user's repository does not hold — a partial clone's, never fetched
+    (`NO_LAZY_FETCH`)."""
+    if not git("config", "--get-regexp", r"^(extensions\.partialclone|remote\..*\.promisor)$").stdout.strip():
+        return []
+    return [x[1:] for x in git("rev-list", "--objects", "--missing=print", "HEAD").stdout.splitlines()
+            if x.startswith("?")]
+
+
+def left_out(base: Path) -> list[str]:
+    """What of the user's repository at `base` the import of its HEAD does not bring into the agents' copy, each said
+    with what brings it — asked by their own git on the host, before any import as at one (`_carried_in`)."""
+    git = _host_git(base)
+    return _left_out(base, git, _lfs_of(base, git)[1]) if _is_top(base, git) else []
+
+
+def _left_out(base: Path, git, no_object: list) -> list[str]:
+    changed = [x for x in git("status", "--porcelain", "-z").stdout.split("\0") if x.strip()]
+    links = [e for e in git("ls-tree", "-r", "-z", "HEAD").stdout.split("\0") if e.startswith("160000 ")]
+    missing = _missing(git)
+    return [n for n, on in (
+        (_unfetched(base, missing), missing),
+        (f"{len(changed)} changed or untracked files of {base} are not in the agents' copy - commit them and start "
+         f"again for the agents to see them", changed),
+        (f"{len(links)} submodules of {base} stand empty in the agents' copy: their files are not part of the commit",
+         links),
+        (f"{len(no_object)} files tracked by Git LFS have no object in {base} and stand as pointers in the agents' copy"
+         f" - fetch them (`git lfs fetch`) and start again ({', '.join(no_object[:3])}"
+         f"{', ...' if len(no_object) > 3 else ''})", no_object)) if on]
+
+
+def _unfetched(base: Path, missing: list) -> str:
+    return (f"{len(missing)} objects of the history of {base}'s HEAD are not in it (a partial clone), and the system "
+            f"fetches nothing with your credentials, so HEAD cannot be imported - fetch them "
+            f"(`git rev-list --objects --missing=print HEAD` lists them) and start again")
+
+
 def _carried_in(base: Path, project: str, d: Path) -> tuple:
     """(the commit, a tar under `d`, what of the user's it leaves out) of what the base imports (`_IMPORT`) — made on
     the host by the user's own git, reading their repository and nothing else: a bundle of HEAD and of the project's
-    node branches left from before the base moved in, but `accepted`; else, no git, its tree. Left out, said: the
-    user's changes not committed, a submodule's files, an LFS file's content."""
-    out = d / "in.tar"
-    git = lambda *a: run(["git", "-c", "safe.directory=*", "-C", str(base), *a], timeout=600, text=True,
-                         encoding="utf-8", errors="replace")
-    # …the question `worktrees.is_repo_top` asks: the top of a work tree with a commit
-    got = git("rev-parse", "--show-toplevel", "--verify", "HEAD") if shutil.which("git") and base.is_dir() else None
-    top = got.stdout.splitlines()[:1] if got and got.returncode == 0 else []
+    node branches left from before the base moved in, but `accepted`, with the LFS objects HEAD's pointers name that
+    their store holds (`_lfs_of`); else, no git, its tree. Left out, said (`left_out`)."""
+    out, git = d / "in.tar", _host_git(base)
     with tarfile.open(out, "w") as t:
-        if not top or os.path.normcase(os.path.abspath(top[0])) != os.path.normcase(base):
+        if not _is_top(base, git):
             if base.is_dir():
                 t.add(base, arcname="tree")
             return None, out, []
         commit = git("rev-parse", "--verify", "HEAD^{commit}").stdout.strip()
+        if missing := _missing(git):
+            raise OSError(_unfetched(base, missing))
         (d / "branch").write_text(git("symbolic-ref", "-q", "--short", "HEAD").stdout.strip() or "main")
         if (got := git("bundle", "create", "-q", str(d / "bundle"), "HEAD", f"--exclude=gfso/{project}/accepted",
                        f"--branches=gfso/{project}/*")).returncode:
@@ -989,13 +1086,10 @@ def _carried_in(base: Path, project: str, d: Path) -> tuple:
         for n in ("exclude", "attributes"):
             if (p := base / git("rev-parse", "--git-path", f"info/{n}").stdout.strip()).is_file():
                 t.add(p, arcname=n)
-    changed = [x for x in git("status", "--porcelain", "-z").stdout.split("\0") if x.strip()]
-    links = [e for e in git("ls-tree", "-r", "-z", "HEAD").stdout.split("\0") if e.startswith("160000 ")]
-    lfs = git("grep", "-q", "-e", "filter=lfs", "HEAD", "--", ":(glob)**/.gitattributes").returncode == 0
-    return commit, out, [n for n, on in (
-        (f"not imported: {len(changed)} changed or untracked files - commit them for the agents to see them", changed),
-        (f"{len(links)} submodules stand empty inside: their files are not part of the commit", links),
-        ("files tracked by Git LFS are pointers inside, not their content", lfs)) if on]
+        held, no_object = _lfs_of(base, git)
+        for oid, f in held.items():
+            t.add(f, arcname=f"lfs/{oid}")
+    return commit, out, _left_out(base, git, no_object)
 
 
 def fetched_on_host(base: Path, bundle: bytes) -> str:
@@ -1011,6 +1105,23 @@ def fetched_on_host(base: Path, bundle: bytes) -> str:
                    "HEAD"], timeout=600,
                   text=True, encoding="utf-8", errors="replace")
     return "" if got.returncode == 0 else (got.stderr or "").strip()[-300:] or f"git fetch exited {got.returncode}"
+
+
+def stored_on_host(base: Path, want: dict, read) -> list[str]:
+    """Each LFS object `want` names ({oid: (size, path)}) that the user's LFS store at `base` (`_lfs_store`) lacks, read
+    (`read(oid, size)`: its bytes, verified, or None) and written there whole — by the system, as git-lfs lays it out:
+    no git-lfs runs, nor any filter of the user's config. [The paths whose object could not be carried]."""
+    store, lost = _lfs_store(base, _host_git(base)), []
+    for oid, (size, path) in want.items():
+        if (at := Path(lfs.path_in(str(store), oid))).is_file() and at.stat().st_size == size:
+            continue
+        if (data := read(oid, size)) is None or not lfs.is_object(data, oid, size):
+            lost.append(path)
+            continue
+        at.parent.mkdir(parents=True, exist_ok=True)
+        (tmp := at.with_name(f"{oid}.gfso-{uuid.uuid4().hex}")).write_bytes(data)
+        os.replace(tmp, at)
+    return lost
 
 
 def container_name(execution: str, project: str) -> str:

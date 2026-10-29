@@ -29,10 +29,11 @@ from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.workspaces import declaring_role, execution_of
 from gfso.adapters.snapshots import NotTheDelivery, snapshot, swap
-from gfso.adapters.execution import NODES as _NODES, scratch_of
+from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, left_out,
+                                     scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage, Verdict,
-                             passed)
+from gfso.core.types import (BATCH, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+                             Verdict, passed)
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
                                           with_part_observations)
@@ -1680,7 +1681,24 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
         out["error"] = ("no subtasks were produced and the model completed no call — the LLM "
                         "provider answered nothing (unreachable, or not authenticated; see the "
                         "server log). A fact about the provider, not about the goal.")
-    return out
+    return {**out, **(_not_imported(engine) if fresh else {})}
+
+
+@functools.wraps(_tools.create_task)
+def create_task(*a, **kw):
+    """`gfso.tools.create_task`; the call that makes the root by hand (MANUAL) says what the agents' copy lacks too
+    (`_not_imported`), as `auto_decompose` does where it authors the root."""
+    out = _tools.create_task(*a, **kw)
+    at = inspect.signature(_tools.create_task).bind(*a, **kw).arguments
+    made_root = isinstance(out, dict) and "error" not in out and not at.get("parent_id")
+    return {**out, **_not_imported(at["engine"])} if made_root else out
+
+
+def _not_imported(engine) -> dict:
+    """What of the user's repository the agents' copy lacks (`left_out`), said in the answer of the call that starts
+    the work — the import itself runs at a container's first start or on the root's thread, whose log no agent reads."""
+    ex = execution_of(engine)
+    return {"not_imported": said} if isinstance(ex, ContainerExecution) and (said := left_out(ex.volume.base)) else {}
 
 
 # The COMPLETE transport registry: structural surface + the LLM verbs. Binding layers use THIS.
@@ -1999,7 +2017,7 @@ def start_project(engine: Engine, by: Optional[str] = None) -> dict:
     """RUN the project again after `stop_project`; the time it stood stopped is left off its clocks, so no bound ran out
     in it (`project_now`)."""
     engine.resume(by or _agent_id())
-    return run_state(engine)
+    return {**run_state(engine), **({} if engine.graph.setting(VOLUME + IMPORTED) else _not_imported(engine))}
 
 
 def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[str] = None, wait: float = 0.0) -> dict:
@@ -2186,6 +2204,7 @@ PROJECTLESS_VERBS = _tools.PROJECTLESS_VERBS
 
 _RAW_TOOLS = {
     **_tools.TOOLS,
+    "create_task": create_task,
     "auto_decompose": _tracked("auto_decompose", auto_decompose),
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1

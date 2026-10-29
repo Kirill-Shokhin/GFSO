@@ -187,9 +187,25 @@ nothing of your disk is mounted into a container: the project's own directory �
 rounds, temps, the sessions' CLI state — and the project dir's working copy live in the project's Docker
 volumes, named by the installation, the execution, the project and the base. When the project
 first starts, your repository's HEAD is imported into the volume — committed work only, by your own git as a
-bundle, checked out there with LF line endings and none of your config or hooks; the log names the commit and
-what did not come in (files you changed or did not commit, submodules — empty inside —, Git LFS files — pointers
-inside). That import is the root's: no restart of the server, of Docker or of the container imports again, and
+bundle, checked out there with LF line endings and none of your config or hooks. Files your repository tracks
+by Git LFS come in as their content: the LFS objects HEAD names that your repository holds are carried with the
+bundle, and the system itself writes each file from its object once its size and sha256 match the pointer (no
+git-lfs runs, yours or the image's); inside, every staging writes such a file back as its pointer, so a delivery
+and the accepted branch hold pointers, as your repository expects — the system's own git and an agent's plain `git`
+alike, the filter written into each repository's config there. An LFS object made inside (a file an agent changed)
+travels with the commits that point to it: into the project's base when the change is delivered, so a parent that
+joins it checks out its content, and into your repository's LFS store (`lfs.storage`, else `.git/lfs/objects`) when
+the result lands, written by the system once its sha256 matches — your git-lfs then checks the accepted branch out
+with no remote asked. An object that could not be carried (over 512 MiB, or lost inside) is named by its file in the
+landing's log line, and that file reads as a pointer in your repository. The disk it takes grows with your LFS
+content: the import passes it once through your system's temp folder, and the project's volume holds the base's store
+and checkout plus one checkout per node place — roughly (2 + places) × the LFS content at HEAD. A partial clone is read with nothing fetched:
+the system never reaches your remote with your credentials, so a clone whose history lacks objects is not imported
+until you fetch them. The log names the commit and what did not come
+in — files you changed or did not commit, submodules (empty inside), LFS files whose object your repository lacks
+(pointers inside: `git lfs fetch` first), the objects a partial clone lacks — and the answer of the call that makes
+the root (`auto_decompose`, or `create_task` building it by hand), and of `start_project` before any import, says the
+same as `not_imported`. That import is the root's: no restart of the server, of Docker or of the container imports again, and
 only a new root of the project does, once the earlier root no longer works there. A project dir with no git is
 copied as a tree, once: nothing ever copies over the work done in it. Your working tree and your branches are
 never written: when the root PASSes, its accepted result lands in your repository as the branch

@@ -21,9 +21,9 @@ import threading
 import uuid
 from pathlib import Path
 
-from gfso.adapters import children
+from gfso.adapters import children, lfs
 from gfso.config import subprocess_env
-from gfso.adapters.execution import NODES, LocalExecution, fetched_on_host
+from gfso.adapters.execution import NODES, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
 
 #: the largest bundle `_carry` moves through the server's memory
 BUNDLE_CAP = 512 * 2 ** 20
@@ -59,6 +59,23 @@ APART = ("-c", "safe.directory=*", "-c", "core.hooksPath=/dev/null", "-c", "core
 NO_CONFIG = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
 
 
+def apart(execution) -> tuple:
+    """`APART` where `execution` runs — in a container, with the system's own LFS filter (`lfs`): a checkout there
+    writes an LFS file's content, a staging its pointer. This host's places are the user's repository's worktrees."""
+    return APART + (lfs.filter_args(execution.python) if _lfs_in(execution) else ())
+
+
+def _lfs_in(execution) -> bool:
+    """Does the system run the LFS filter where `execution` runs (a container: not the user's own repository)?"""
+    return isinstance(execution, ContainerExecution)
+
+
+def _env(who: str = "gfso", env: dict | None = None) -> dict:
+    mail = f"{who}@gfso.local"
+    return subprocess_env(extra={"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail, "GIT_COMMITTER_NAME": who,
+                                 "GIT_COMMITTER_EMAIL": mail, "GIT_TERMINAL_PROMPT": "0", **(env or {}), **NO_CONFIG})
+
+
 def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
     """One git call in `cwd`, as `who` — a delivery is its executor's commit, and no identity needs configuring —
     where `execution` runs the project's work (this host when None): IN THE CONTAINER OF THE PLACE THE REPOSITORY
@@ -68,12 +85,10 @@ def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
     nothing it does not hold already; in the project's container, which mounts every place, it read and wrote the
     others' and forged a clone (critics, three times). Asking the config before use was a race."""
     repo = (env or {}).get("GIT_DIR") or (args[1] if args[:1] == ("-C",) else cwd)
-    mail = f"{who}@gfso.local"
-    env = subprocess_env(extra={"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail,
-                                                "GIT_COMMITTER_NAME": who, "GIT_COMMITTER_EMAIL": mail,
-                                                "GIT_TERMINAL_PROMPT": "0", **(env or {}), **NO_CONFIG})
+    env = _env(who, env)
     if execution is not None:
-        return execution.session(str(repo)).run(["git", *APART, *args], cwd=str(cwd), timeout=_SLOW, env=env)
+        return execution.session(str(repo)).run(["git", *apart(execution), *args], cwd=str(cwd), timeout=_SLOW,
+                                                env=env)
     return children.run(["git", *APART, *args], timeout=_SLOW, cwd=str(cwd), text=True, encoding="utf-8",
                         errors="replace", env=env)
 
@@ -125,8 +140,10 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
         if _fs(execution).files.exists(str(place / ".git")):
             _by_registration(base, ["worktree", "lock", str(place)], execution)
             return False
-        # …the base's own settings, as a worktree had them: line endings, links, attributes (a clone reads only its own)
-        own = inherited(base, execution)
+        # …the base's own settings, as a worktree had them: line endings, links, attributes (a clone reads only its own);
+        # and the system's LFS filter, so the agent's own git there agrees with the system's — its config to change
+        # from then on: the system's own calls name the filter by `-c` (`apart`)
+        own = {**inherited(base, execution), **dict(lfs.settings(execution.python) if _lfs_in(execution) else ())}
         _fs(execution).files.mkdir(str(place))           # …a session's container mounts only a place that stands
         try:
             for args in (("init", "-q"), *(("config", k, v) for k, v in own.items())):
@@ -265,7 +282,7 @@ def _carry(base, src, dst, rev: str, execution) -> str:
     objects in its own: a bundle is objects and refs — no config, no hook — so each side runs only its own agent's
     config, where that agent already works. The id is read in the source's container and the bundle's refs are never
     taken: a bundle swapped on the way brings no other commit under it. What the base holds travels not at all — a
-    clone reads its objects."""
+    clone reads its objects. The LFS objects the carried commits' pointers name go with them (`_lfs_carried`)."""
     sha = git(src, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", execution=execution).stdout.strip()
     if not sha:
         raise OSError(f"{src} names no commit {rev} for {dst} to take")
@@ -280,7 +297,72 @@ def _carry(base, src, dst, rev: str, execution) -> str:
             raise OSError(f"{dst} could not take {rev} of {src}: {got.stderr.strip()[-300:]}")
     finally:
         ex.files.remove_matching(str(b.parent), [b.name])
+    _lfs_carried(base, src, dst, [sha, *(["--not", *tips] if tips else [])], execution)
     return sha
+
+
+#: the LFS pointers among the blobs the commits "$1" names (`rev-list` arguments) hold short enough to be one: the
+#: listing (`<blob> <path>`), a blank line, each blob as `cat-file --batch` prints it — by git under "$@" (`apart`)
+_POINTED = r'''r=$1; shift
+l=$(git "$@" rev-list --objects --filter=blob:limit=1025 $r) || exit 1
+printf '%s\n\n' "$l"
+printf '%s\n' "$l" | cut -d' ' -f1 | git "$@" cat-file --batch'''
+_BLOB = re.compile(rf"^(?P<blob>[0-9a-f]{{40,64}}) blob \d+\n{re.escape(lfs.SPEC.decode())}(?:ext-[^\n]*\n)*"
+                   r"oid sha256:(?P<oid>[0-9a-f]{64})\nsize (?P<size>\d+)\n", re.M)
+#: of the object paths on stdin (`<store>/`-relative), those none of the stores "$@" holds
+_LACKING = 'while read -r p; do for s; do [ -f "$s/$p" ] && continue 2; done; echo "$p"; done'
+
+
+def pointed(repo, revs: list, execution) -> dict:
+    """{oid: (size, path)} of the LFS pointers in the commits `revs` names (`rev-list` arguments) in the repository
+    at `repo`, read in its own container as git stores them — no filter runs to read them."""
+    r = execution.session(str(repo)).run(["sh", "-c", _POINTED, "sh", " ".join(revs), *apart(execution)],
+                                         cwd=str(repo), timeout=_SLOW, env=_env())
+    if r.returncode:
+        raise OSError(f"{repo}: its LFS pointers could not be read ({r.stderr.strip()[-300:]})")
+    listing, _, batch = r.stdout.partition("\n\n")
+    paths = dict(ln.split(" ", 1) for ln in listing.splitlines() if " " in ln)
+    return {m["oid"]: (int(m["size"]), paths.get(m["blob"], m["blob"])) for m in _BLOB.finditer(batch)}
+
+
+def _stores(base, repo) -> list:
+    """The LFS stores the repository at `repo` reads (`lfs.stores_of`): its own, then the base's."""
+    return list(dict.fromkeys(str(Path(p) / ".git" / "lfs" / "objects") for p in (repo, base)))
+
+
+def lfs_object(base, repo, oid: str, size: int, execution) -> bytes | None:
+    """The LFS object `oid` from a store the repository at `repo` reads, through the port — read to its pointer's size
+    and returned only where it is the object (`lfs.is_object`): the stores are agents' to write. None past
+    `BUNDLE_CAP`, as a bundle is (`_bundled`)."""
+    if size > BUNDLE_CAP:
+        return None
+    return next((d for s in _stores(base, repo) if (d := execution.files.read_bytes(lfs.path_in(s, oid), size + 1))
+                 is not None and lfs.is_object(d, oid, size)), None)
+
+
+def _lfs_carried(base, src, dst, revs: list, execution) -> None:
+    """The LFS objects the pointers of the commits `revs` names in `src` (`pointed`) name, written into the own store
+    of `dst` where none it reads holds them — a parent that joins a part's change then checks out its content, and a
+    landing finds it in the base (`land_lfs`). Each object only as `lfs_object` reads it; one `src` lacks is not
+    carried, and its pointer reads as a pointer — said where the result lands."""
+    if not _lfs_in(execution) or not (want := pointed(src, revs, execution)):
+        return
+    rel = {"/".join((o[:2], o[2:4], o)): o for o in want}
+    lacking = execution.session(str(dst)).bytes_call(["sh", "-c", _LACKING, "sh", *_stores(base, dst)], cwd=str(dst),
+                                                     input="".join(f"{p}\n" for p in rel).encode())
+    for oid in (rel[p] for p in lacking.stdout.decode().split() if p in rel):
+        if (data := lfs_object(base, src, oid, want[oid][0], execution)) is not None:
+            execution.files.write_bytes(lfs.path_in(_stores(base, dst)[0], oid), data)
+
+
+def land_lfs(base, sha: str, since: str | None, execution) -> list[str]:
+    """The LFS objects the pointers of the landed commits (`sha` but `since`, the imported one) name, written into the
+    user's LFS store by the host (`execution.stored_on_host`) — only what the base holds verified (`lfs_object`); [the
+    paths whose object could not be carried]."""
+    if not _lfs_in(execution):
+        return []
+    want = pointed(base, [sha, *(["--not", since] if since else [])], execution)
+    return stored_on_host(Path(base), want, lambda oid, size: lfs_object(base, base, oid, size, execution))
 
 
 def _bundled(src, rev: str, nots: list, execution) -> bytes:

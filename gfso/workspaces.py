@@ -372,9 +372,10 @@ def root_key_of(root) -> str:
 def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
     """At the root's PASS, its result where the user reads it — why not, else None. Under a container execution the
     base is the project's import, and its HEAD, the root joined, lands in the user's repository as the branch
-    `gfso/<project>/accepted` (`W.land`): never their working tree nor their branches; a base with no git lands its
-    tree in `<parent>/.gfso-accepted-<base>/<project>/` beside it. On this host the base IS the user's repository:
-    nothing to land."""
+    `gfso/<project>/accepted` (`W.land`), the LFS objects its new pointers name written into their LFS store
+    (`W.land_lfs`) — a file whose object could not be carried, said: never their working tree nor their branches; a
+    base with no git lands its tree in `<parent>/.gfso-accepted-<base>/<project>/` beside it. On this host the base
+    IS the user's repository: nothing to land."""
     ex = execution_of(engine, agents)
     if not isinstance(ex, ContainerExecution):
         return None
@@ -393,7 +394,13 @@ def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
         sha = W.land(ex.base, f"refs/heads/{ref}", ex, rec.get("commit"), engine.accepted_delivery(root.id)[0])
     except OSError as e:
         return f"its accepted result did not land in {ex.base} as branch `{ref}`: {e}"
-    engine.emit_info("delegate", f"{root.id}: its accepted result {sha[:12]} is on branch `{ref}` of {ex.base}")
+    try:
+        lost = W.land_lfs(ex.base, sha, rec.get("commit"), ex)
+    except OSError as e:
+        lost = [f"(its LFS pointers could not be read: {e})"]
+    engine.emit_info("delegate", f"{root.id}: its accepted result {sha[:12]} is on branch `{ref}` of {ex.base}" + (
+        f"; {len(lost)} files tracked by Git LFS have no object carried into its LFS store and read as pointers there "
+        f"({', '.join(lost[:5])}{', ...' if len(lost) > 5 else ''})" if lost else ""))
     return None
 
 

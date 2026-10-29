@@ -285,7 +285,8 @@ def _not_delivered(place, at, tree: str, commit: str, execution) -> Optional[str
     given = {"inherited": W.INHERITED, "spec": W.DELIVERED, "stage": inspect.getsource(W.stage),
              "kept_out": {k: v.decode("latin-1") for k, v in W.kept_out(base, execution).items()}}
     ex = execution.session(str(at))
-    r = ex.run([ex.python, "-I", "-c", _JUDGES_GIT, str(at), commit, tree, str(base), json.dumps(given), *W.APART],
+    r = ex.run([ex.python, "-I", "-c", _JUDGES_GIT, str(at), commit, tree, str(base), json.dumps(given),
+                *W.apart(execution)],
                cwd=str(at), timeout=1800, env=subprocess_env(extra=W.NO_CONFIG))
     said = (r.stdout or "").split()
     if r.returncode == 0:
