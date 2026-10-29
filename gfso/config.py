@@ -295,6 +295,28 @@ def max_sessions() -> int:
         return MAX_SESSIONS
 
 
+#: What one container the system makes may hold (`container_limits`): its memory, and its processes.
+CONTAINER_MEMORY, CONTAINER_PIDS = "4g", 4096
+
+
+def container_limits() -> list[str]:
+    """`docker run`'s bounds on every container the system makes for a project, a session, a judge's batch, a check or
+    its own copy — `GFSO_CONTAINER_MEMORY` (default 4g, no swap past it) and `GFSO_CONTAINER_PIDS` (default 4096).
+    Unbounded, one judge's probe held 9 GiB of the Docker VM's 19.5 and starved every project on the machine and the
+    host (series 3, c_compiler, 2026-10-30). Past its memory the kernel ends the container's largest process, the
+    runaway, by SIGKILL: its command exits 137 as its own failure, and the session it ran in goes on."""
+    mem = os.environ.get("GFSO_CONTAINER_MEMORY", "").strip().lower()
+    # …at least 64 MiB: `0` is Docker's "unbounded", and under 6 MiB Docker refuses every start
+    m = re.fullmatch(r"(\d+)([bkmg]?)", mem)
+    mem = mem if m and int(m[1]) * 1024 ** "bkmg".index(m[2] or "b") >= 64 * 2 ** 20 else CONTAINER_MEMORY
+    try:
+        pids = int(os.environ.get("GFSO_CONTAINER_PIDS", CONTAINER_PIDS))
+    except ValueError:
+        pids = CONTAINER_PIDS
+    pids = pids if pids >= 64 else CONTAINER_PIDS        # …0 and -1 are Docker's "unbounded"
+    return ["--memory", mem, "--memory-swap", mem, "--pids-limit", str(pids)]
+
+
 def validator_retry_model() -> str | None:
     """Which tier validates the RETRY after a validator returns no verdict — `GFSO_VALIDATOR_RETRY_MODEL`,
     default none: the retry runs on the node's own tier.

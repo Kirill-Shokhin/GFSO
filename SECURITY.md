@@ -80,6 +80,16 @@ and nothing of your disk is mounted into any of its containers:
   A standing finding whose file the record could not keep (not there when it was filed, or past the
   record's size limit) is shown to the judge, not demanded.
 - A judge's container ends when its run ends, with every process the run left behind.
+- Every container the system makes holds at most 4 GiB of memory, with no swap past it, and 4096 processes
+  (`GFSO_CONTAINER_MEMORY`, `GFSO_CONTAINER_PIDS`; the door and the gateway hold 256 MiB and 256). Past its memory
+  the kernel ends the container's largest process: a runaway that is one program fails alone, exit 137, as its own
+  failure, and the session or check it ran in goes on; one made of many smaller processes (a parallel build) can make
+  the session's own model client the largest, and that session then ends with no answer and is asked again. Past its
+  processes a new one is refused until some end. Nothing else runs in a judge's copy while it is made and its files
+  checked, so a copy whose reading its bound ended is the delivery's FAIL, the bound named as the cause. The bounds
+  are each container's: they keep one container from taking the machine, not many together. Up to
+  `GFSO_MAX_SESSIONS` sessions run at once, and each of a validation's batches in a container of its own at the same
+  time, with no bound on their number — a delivery that runs away in every batch can still hold their sum.
 - What the delivery needs built is built in that copy, in the judge's container under its network
   switch, before any check: the command the delivery declares (`build`), else `make` where the
   delivered tree has a Makefile at its root, else nothing — the delivered code, run by the judge's

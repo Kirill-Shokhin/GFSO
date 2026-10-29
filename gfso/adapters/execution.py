@@ -28,8 +28,8 @@ from pathlib import Path
 
 from gfso.core.types import (BATCH, HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, ExecutionPort, FilesPort,
                              PlaceUnavailable)
-from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, executions, executions_path,
-                         host_env, subprocess_env)
+from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits,
+                         executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
@@ -177,7 +177,7 @@ def _unavailable(ex, storage: bool):
         return None                          # …not made yet: its making is `Volume.ready`'s
     try:
         got = run(["docker", "run", "--rm", *labelled(p.name, p.project_name), "--network", "none", "--cap-drop", "ALL",
-                   "--security-opt", "no-new-privileges", *places, p.image,
+                   "--security-opt", "no-new-privileges", *container_limits(), *places, p.image,
                    "sh", "-c", 'f=/p/.gfso-probe-$$ && echo ok > "$f" && cat "$f" >/dev/null && rm -f "$f" && '
                    '{ [ ! -d "$1" ] || ' + _BASE_READ + "; } && echo ok", "sh", f"/p/{BASE_DIR}"],
                   timeout=120, text=True)
@@ -191,7 +191,10 @@ def _system_run(name: str, image: str, flags: list, script: Path, args: list, mi
     """A system container (a door, a gateway) running `script` with `args`: started waiting for it, the script laid
     whole into its `OWN` through one `docker exec`, so nothing of the host is mounted into it. Its `OWN` holds its log
     well past the log's cap on refusals, room left for what it passes; the log's host `mirror` named on it, so any
-    removal of it keeps the log first (`_keep_logs`)."""
+    removal of it keeps the log first (`_keep_logs`). Bounded in memory and processes by its `flags`, or it does not
+    start: one unbounded container can starve every project on the machine (`container_limits`)."""
+    if not {"--memory", "--pids-limit"} <= set(flags):
+        raise ValueError(f"{name}: a system container starts bounded in memory and processes")
     run(["docker", "run", "-d", "--init", "--name", name, *flags, "--label", f"gfso.log={mirror}",
          "--tmpfs", f"{OWN}:size={3 * door.LOG_CAP // 2 ** 20}m,mode=1777", image,
          "sh", "-c", f'until [ -f {OWN}/run.py ]; do sleep 0.1; done; exec python3 {OWN}/run.py "$@"', "sh", *args],
@@ -869,7 +872,8 @@ class Volume:
             got = run(["docker", "run", "--rm", *(["-i"] if interactive else []), "--name", one,
                        *labelled(self.execution, self.project), "--network", "none", "--cap-drop", "ALL",
                        *[a for c in SYSTEM_CAPS if user == "0" for a in ("--cap-add", c)],
-                       "--security-opt", "no-new-privileges", "-u", user, *mounts, image, "sh", "-c", *script],
+                       "--security-opt", "no-new-privileges", *container_limits(), "-u", user, *mounts, image,
+                       "sh", "-c", *script],
                       timeout=self.copy_time, **kw)
         except subprocess.TimeoutExpired:
             run(["docker", "rm", "-f", one], timeout=60)        # …a copy cut by its time must not go on writing
@@ -1238,12 +1242,13 @@ class ContainerExecution(ExecutionPort):
 
     def run_args(self) -> list[str]:
         """`docker run` for this project's container: sealed (`--init`, its own mounts only, no new privileges, its way
-        out as switched), sleeping until the server calls into it."""
+        out as switched), bounded in memory and processes (`container_limits`), sleeping until the server calls into
+        it."""
         mounts = [a for src, ro in self._mounts() for a in self._mount(src, ro)]
         return ["docker", "run", "-d", "--init", "--name", self.container, *labelled(self.name, self.project_name),
                 *self._labels(), *self.way.run_args(),
                 *([] if self.holds_sessions else [a for c in SYSTEM_CAPS for a in ("--cap-add", c)]),
-                "--security-opt", "no-new-privileges",
+                "--security-opt", "no-new-privileges", *container_limits(),
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,
                 *(self._mount(self.state, False) + self._mount(self.state, False, STATE_INSIDE)
                   if self.holds_sessions and self.state else []),

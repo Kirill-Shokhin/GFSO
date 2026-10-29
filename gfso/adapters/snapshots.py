@@ -263,6 +263,9 @@ how, at, commit, apart = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[5
 algo = "sha256" if len(commit) == 64 else "sha1"
 env = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
 BAD = 6 if how == "kept" else 4
+# …nothing else runs in the copy's container while it is made: a reader ended past its memory's bound was ended by what
+# the delivery holds, every time it is asked — its FAIL, the cause said, never a copy to wait for again
+BOUND = "ended past the copy's memory bound (GFSO_CONTAINER_MEMORY)"
 
 
 def bad(code, why):
@@ -271,7 +274,18 @@ def bad(code, why):
 
 
 def git(*args, **kw):
-    return subprocess.run(["git", *apart, *args], cwd=at, capture_output=True, env=env, **kw)
+    r = subprocess.run(["git", *apart, *args], cwd=at, capture_output=True, env=env, **kw)
+    if r.returncode == -9:
+        bad(BAD, f"git {args[0]} reading it was {BOUND}")
+    return r
+
+
+def lost(p, why):
+    try:
+        why += f" (git cat-file reading it was {BOUND})" if p.wait(timeout=5) == -9 else ""
+    except subprocess.TimeoutExpired:
+        pass
+    bad(BAD, why)
 
 
 def verify(ids):
@@ -284,10 +298,10 @@ def verify(ids):
     for i in ids:
         head = p.stdout.readline().split()
         if len(head) != 3 or head[0] != i:
-            bad(BAD, f"its object {i.decode()} is missing")
+            lost(p, f"its object {i.decode()} is missing")
         h, left, content = hashlib.new(algo, head[1] + b" " + head[2] + b"\0"), int(head[2]), b""
         while left:
-            chunk = p.stdout.read(min(left, 1 << 20)) or bad(BAD, f"its object {i.decode()} is cut short")
+            chunk = p.stdout.read(min(left, 1 << 20)) or lost(p, f"its object {i.decode()} is cut short")
             h.update(chunk)
             left -= len(chunk)
             content = content or chunk
@@ -301,6 +315,15 @@ def verify(ids):
 
 def blob_id(data):
     return hashlib.new(algo, b"blob %d\0" % len(data) + data).hexdigest().encode()
+
+
+def file_blob_id(path):
+    """`blob_id` of a file read in chunks: a delivered file twice the copy's memory over is no longer its FAIL."""
+    h = hashlib.new(algo, b"blob %d\0" % path.stat().st_size)
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest().encode()
 
 
 def lfs_content(data):
@@ -346,18 +369,17 @@ if how == "kept":
     for (mode, _, oid), rel in items:
         path = at / rel.decode("utf-8", "surrogateescape")
         if mode == b"120000":
-            now = os.fsencode(os.readlink(path)) if path.is_symlink() else None
-        else:
-            now = path.read_bytes() if path.is_file() and not path.is_symlink() else None
-            if now is not None and (mode == b"100755") != bool(path.stat().st_mode & 0o100):
-                now = None
-        if now is not None and blob_id(now) == oid:
-            continue
+            if path.is_symlink() and blob_id(os.fsencode(os.readlink(path))) == oid:
+                continue
+        elif path.is_file() and not path.is_symlink() and (mode == b"100755") == bool(path.stat().st_mode & 0o100):
+            if file_blob_id(path) == oid:
+                continue
         data = git("cat-file", "blob", oid.decode()).stdout
         if blob_id(data) != oid:
             bad(6, f"its object {oid.decode()} does not hold what its id names")
         content = lfs_content(data) if mode != b"120000" else None
-        if content is not None and now is not None and hashlib.sha256(now).digest() == hashlib.sha256(content).digest():
+        if content is not None and path.is_file() and not path.is_symlink() and path.stat().st_size == len(content) \
+                and path.read_bytes() == content:
             continue
         put(path, mode, content if content is not None else data)
         print(rel.decode("utf-8", "replace"))
@@ -433,8 +455,10 @@ def _after_build(at: Path, tree: str, commit: str, execution) -> str:
     r = ex.run([execution.python, "-I", "-c", _CHECKOUT, "kept", str(at), commit, tree, *W.APART], cwd=str(at.parent),
                timeout=BUILD_S, env=subprocess_env(extra=W.NO_CONFIG))
     if r.returncode:
+        why = ("putting them back was ended past the copy's memory bound (GFSO_CONTAINER_MEMORY)" if r.returncode == 137
+               else (r.stdout or r.stderr or "").strip()[-300:])
         raise BuildFailed(f"the build changed the copy's own repository, so its delivered files cannot be put back: "
-                          f"{(r.stdout or r.stderr or '').strip()[-300:]}", "the judge's check of the delivered files")
+                          f"{why}", "the judge's check of the delivered files")
     put = (r.stdout or "").splitlines()
     return (f"; it changed {len(put)} delivered file(s), put back as delivered before any check: "
             f"{', '.join(put[:10])}" if put else "")
