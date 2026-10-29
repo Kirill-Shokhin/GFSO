@@ -199,7 +199,8 @@ def crit_block(c, laid: "dict | None" = None) -> str:
     id: the directory its pinned inputs were written to} — renders a probe runnable as shown, as a validator's is."""
     def _line(p):
         d = (laid or {}).get(probe_id(c.name, p))
-        return (f"    - decided by — {p.behaviour}: `{p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command}`"
+        return (f"    - decided by `{probe_id(c.name, p)}` — {p.behaviour}: "
+                f"`{p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command}`"
                 f" → must show: {as_shown(p.expect)}"
                 + (f" (its {len(p.inputs)} pinned input file(s) are laid down in {d.as_posix()}; in an answer write "
                    f"`{INPUTS_TOKEN}` for that directory)" if d else
@@ -398,6 +399,9 @@ def _gate_findings(engine, task_id) -> str:
     own = sum(str(k).startswith("undecided: ") for k in open_)
     return (f"Syntactic holes:\n{holes}\n\nLevel-2 findings (a `dispute` names one EXACTLY as written between "
             f"the backticks):\n" + ("\n".join(lines) or "- none")
+            + ("\n\nA finding that no child carries one of this node's own pinned probes is closed by giving a child "
+               "a criterion whose probe `carry`s that probe's id (shown after `decided by`) — the system copies it "
+               "exactly, its pinned inputs included." if lines else "")
             + (f"\n\n{own} of them (`undecided: …`) are requirements of this node's OWN goal that none of its OWN "
                f"criteria writes: no move on a child closes one — the next review names it again word for word. "
                f"`add_criterion` on this node closes them — one criterion listing the requirements of one component "
@@ -555,6 +559,10 @@ _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
     "check": {"type": "array", "items": {"type": "object", "properties": {
         "behaviour": {"type": "string"}, "command": {"type": "string"}, "expect": {"type": "string"},
         "exact": {"type": "boolean", "description": EXACT_TEXT},
+        "carry": {"type": "string", "description": "the id of one of THIS node's own pinned probes, as shown after "
+                  "`decided by` (`criterion#hex`): the system copies that probe into this criterion exactly — command, "
+                  "expect and its pinned inputs with their content; the other fields of this probe are then ignored. "
+                  "Use it when the plan gate says a child does not carry the parent's probe."},
         "inputs": {"type": "array", "items": {"type": "object", "properties": {
             "path": {"type": "string"}, "content": {"type": "string"}},
             "required": ["path", "content"]}}},
@@ -668,6 +676,9 @@ def spec_with(task, criteria: list, additions_only: bool = False, repin: frozens
     procedure is the issuer side's instrument, not the user's word: a probe its own criterion's text refutes was
     re-written eight times and dropped each time until the root closed by count (AUTO haiku sql_database, root
     «Comment handling», 2026-10-14); and the same answers restated every other criterion, one of them 3 probes → 1."""
+    criteria, why = _carry(task, criteria)   # a probe kept by its id is the stored one, never the placeholder beside it
+    if why:
+        raise ValueError(why)
     stored = {c.name: c for c in task.spec.criteria}
     if additions_only:
         answered = {str(c.get("name", "")): _checks_of(c) for c in criteria}
@@ -920,6 +931,8 @@ def _changes_what_failed(task, spec, to, budget) -> bool:
 
 
 def _reassign(engine, task, actor, answer, why, verbs):
+    if (bad := _carry(task, answer.get("criteria"))[1]):
+        return False, bad
     spec = spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task)) \
         if answer.get("criteria") else task.spec
     if bad := narrowing_at_the_root(engine, task, spec):
@@ -970,7 +983,10 @@ def _revise_child(engine, task, actor, answer, why, verbs):
     if not (answer.get("criteria") or covers):
         return False, ("a revised child names its criteria as they will stand (`criteria`), or which of this "
                        "node's criteria it carries (`covers`)")
-    spec = spec_with(child, answer["criteria"]) if answer.get("criteria") else child.spec
+    crits, why = _carry(task, answer.get("criteria"))
+    if why:
+        return False, why
+    spec = spec_with(child, crits) if crits else child.spec
     if {c.name: c for c in spec.criteria} == {c.name: c for c in child.spec.criteria} and not covers:
         return False, (f"{child.id} restated unchanged — a fix changes what the child carries (its criteria, or "
                        f"`covers`: which of this node's criteria it carries); a child's dependency criteria are "
@@ -1076,14 +1092,38 @@ def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -
     reads = [_in_act(engine, task, r, ids, standing) for r in c.get("reads") or []]
     if bad := [r for r in reads if r not in standing and r not in set(ids.values())]:
         return None, f"`reads` names {', '.join(bad)} — not an active child of {task.id}, nor one this act adds"
+    crits, why = _carry(task, c["criteria"])
+    if why:
+        return None, why
     return {"task_id": cid, "covers": covers,
             "deps": list(c.get("deps") or ()) + [{"from": r, "glue": f"reads {r}'s result"} for r in reads],
             "spec": {
         "name": c.get("name", ""), "description": c.get("description", ""),
         "criteria": [with_named_files(_with_corpora(x, _corpora(engine, task)), _files_of(engine, task))
-                     for x in c["criteria"]],
+                     for x in crits],
         **({"accepted_risks": c["accepted_risks"]} if c.get("accepted_risks") else {})},
         **{k: c[k] for k in ("deadline", "max_iterations") if c.get(k)}}, ""
+
+
+def _carry(task, criteria: list) -> tuple[list, str]:
+    """The answer's criteria with each probe that names one of `task`'s own pinned probes by id (`carry`) replaced by
+    that probe EXACTLY — command, expect, its inputs with their content — copied by the system. The plan gate asks a
+    child to carry the parent's very probe (its inputs judged by content), and the issuer, shown inputs by name and
+    count only, could not write it: a same-named file another child already pinned made the content ambiguous
+    (own-plan row 3: 5–8 of 18 root criteria open on it). ([], why) when an id names no probe of `task`."""
+    own = {probe_id(c.name, p): p.to_dict() for c in task.spec.criteria for p in (c.check or ())}
+    out = []
+    for c in criteria or ():
+        if not isinstance(c, dict):
+            out.append(c)
+            continue
+        if bad := [str(p["carry"]) for p in c.get("check") or () if isinstance(p, dict) and p.get("carry")
+                   and str(p["carry"]) not in own]:
+            return [], (f"`carry` names {', '.join(bad)} — not a pinned probe of {task.id}; its probes are: "
+                        + ", ".join(sorted(own)))
+        out.append({**c, "check": [dict(own[str(p["carry"])]) if isinstance(p, dict) and p.get("carry") else p
+                                   for p in c.get("check") or ()]})
+    return out, ""
 
 
 def _corpora(engine, task) -> dict:
@@ -1398,7 +1438,10 @@ def _add_criterion(engine, task, actor, answer, why, verbs):
                        f"its criteria do not write (FM-1.f, §9.4) is reported to him: `challenge`")
     if not answer.get("criteria"):
         return False, "name the criterion to add (`criteria`), with its pinned check"
-    new = [c for c in answer["criteria"] if c.get("name") not in {k.name for k in task.spec.criteria}]
+    carried, bad = _carry(task, answer["criteria"])
+    if bad:
+        return False, bad
+    new = [c for c in carried if c.get("name") not in {k.name for k in task.spec.criteria}]
     if not new:
         return False, "every criterion named already stands; adding means a NEW name"
     spec = dataclasses.replace(task.spec, criteria=task.spec.criteria + tuple(

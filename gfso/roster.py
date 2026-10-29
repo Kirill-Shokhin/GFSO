@@ -87,7 +87,7 @@ class AgentRegistry:
     def __init__(self, path: str | None = None):
         self._path = Path(path) if path else agents_path()   # one derivation, `gfso.config` (S4)
         self._agents: dict[str, dict] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()   # re-entered: `register` holds it while `_load` takes it
         self._mtime: float | None = None
         self._load()
 
@@ -106,27 +106,40 @@ class AgentRegistry:
         belonged to a different experiment. Nothing said so; the graph looked healthy and the verdicts
         validated the wrong tree. One `stat` per access is the price of the promise being true.
         """
+        with self._lock:              # one reload at a time, and never between another thread's write and its answer
+            return self._load_locked()
+
+    def _load_locked(self) -> bool:
         try:
             mtime = self._path.stat().st_mtime
         except OSError:
             return True                # no roster yet is the normal first-run state
         if self._mtime == mtime:
             return True
-        try:
-            self._agents = json.loads(self._path.read_text(encoding="utf-8"))
-            self._mtime = mtime
-            return True
-        except FileNotFoundError:
-            return True               # no roster yet is the normal first-run state
-        except Exception as ex:
-            # An unreadable roster is not an empty roster. Silent, it disabled delegation whole:
-            # every node assigned to an executor simply waited, with no line anywhere — the exact
-            # shape that reads as "the agent is not working".
-            # stderr, not stdout: `gfso mcp` speaks JSON-RPC on stdout, and a diagnostic printed
-            # there corrupts the very door it is diagnosing.
-            print(f"gfso: agent registry {self._path} is unreadable ({ex}) — delegation is OFF "
-                  f"until it is fixed or removed", file=sys.stderr, flush=True)
-            return False
+        # a FEW tries: the replace window is milliseconds, and the lock is held — a roster another program keeps locked
+        # cost every read half a second at 25 (critic over a233215)
+        for _ in range(5):
+            try:
+                self._agents = json.loads(self._path.read_text(encoding="utf-8"))
+                self._mtime = mtime
+                return True
+            except FileNotFoundError:
+                return True           # no roster yet is the normal first-run state
+            except PermissionError:
+                time.sleep(0.02)      # Windows: the file is being replaced this instant (`_put`) — transient
+            except Exception as ex:
+                return self._unreadable(ex)
+        return self._unreadable(PermissionError("the roster stayed locked through every retry"))
+
+    def _unreadable(self, ex) -> bool:
+        # An unreadable roster is not an empty roster. Silent, it disabled delegation whole:
+        # every node assigned to an executor simply waited, with no line anywhere — the exact
+        # shape that reads as "the agent is not working".
+        # stderr, not stdout: `gfso mcp` speaks JSON-RPC on stdout, and a diagnostic printed
+        # there corrupts the very door it is diagnosing.
+        print(f"gfso: agent registry {self._path} is unreadable ({ex}) — delegation is OFF "
+              f"until it is fixed or removed", file=sys.stderr, flush=True)
+        return False
 
     def register(self, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                  workdir: str | None = None, validator: str | None = None,
@@ -242,7 +255,10 @@ class AgentRegistry:
                 # it or on doors that carry no lease.
                 self._agents[agent_id]["client"] = str(client)
             self._write()
-        return {"registered": agent_id, **self._agents[agent_id]}
+            # …ANSWERED UNDER THE LOCK: read after it, another thread's reload had replaced the dict with a file read before
+            # this write, and the role just registered raised KeyError — a 422 to the second of two runs staffing at once
+            # (series 3 REF 2, 2026-10-30; 75 of 180 concurrent registrations in a probe)
+            return {"registered": agent_id, **self._agents[agent_id]}
 
     def _refuse_execution(self, agent_id: str, execution: str, workdir: str | None, project: str | None) -> None:
         """WHERE a role's sessions run is the project's, declared once: an undeclared name runs nowhere, two executions
