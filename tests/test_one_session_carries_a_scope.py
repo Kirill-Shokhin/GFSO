@@ -174,7 +174,11 @@ def test_a_part_that_fails_is_reworked_with_its_whole_in_one_session_as_a_leaf_w
     d = _dispatcher(e, agents, executor, validator, per_node)
     _drive(e, d, lambda: e.graph.get_state(TaskId("root.a")) == State.REWORKING
            and e.graph.get_state(TaskId("root")) == State.REWORKING)
-    assert _states(e) == {"root": "REWORKING", "root.a": "REWORKING", "root.b": "OFFERED"}
+    # …root.b re-presented, never left in VALIDATING: OFFERED, or already taken back into the work by the dispatcher,
+    # which hears the transition on its own thread (a full suite under load saw EXECUTING here)
+    states = _states(e)
+    assert {k: states[k] for k in ("root", "root.a")} == {"root": "REWORKING", "root.a": "REWORKING"}
+    assert states["root.b"] in ("OFFERED", "EXECUTING"), states
     b = e.graph.get_task(TaskId("root.b"))
     assert b.revisions == 1 and not any(a.signal == Signal.FAIL for a in e.audit_log(b.id)),         "re-presented by its issuer, no FAIL and no round of its budget spent"
     fail = next(a for a in reversed(e.audit_log(TaskId("root"))) if a.signal == Signal.FAIL)

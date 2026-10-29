@@ -328,6 +328,13 @@ _VALIDATOR_SCHEMA = {
                                    "for a PART'S PINNED CHECK: did it show what it must on this delivery. "
                                    "false fails every criterion resting on it; left out, it counts as "
                                    "holding only under a criterion you pass"},
+                               # …and whether it RAN: a probe whose own setup failed (a cd, a file it writes, a
+                               # build) printed whatever its fallback prints, which can be the line it expects
+                               "ran": {"type": "boolean", "description":
+                                   "false when the command could not run as written — its own setup failed (a cd, "
+                                   "a file it writes, a build it needs) and the artifact was never exercised; say "
+                                   "why in `expect`. It then observed nothing: it meets no demand, so a criterion "
+                                   "whose pinned check or regression line did not run cannot pass"},
                                # Re-runnable BY SOMEONE ELSE, against the artifact as delivered.
                                # Measured: validators copy the delivery into a scratch directory
                                # under a new name and then cite that name (`from md_real import …`)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import subprocess
 import sys
 import threading
@@ -476,7 +477,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         # validation stood 340 minutes with no answer across a sleep of the machine, AUTO json_parser, 2026-09-28).
         timer = threading.Timer(max(0.0, cap - (time.monotonic() - t0)), self._exec.end, args=(proc,))
         timer.daemon = True
-        timer.start()
+        # …and no cap, none: a timer over an unbounded wait overflowed in its own thread (OverflowError, time_t)
+        timer.start() if math.isfinite(cap) else None
         try:
             return self._read_lines(proc, t0, cap, envelope, text_acc, out_tokens, last_tick, trace)
         finally:

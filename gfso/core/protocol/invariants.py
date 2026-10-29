@@ -62,10 +62,13 @@ def fail_names_this_contract(failed_criteria: Sequence[str],
 
 def probes_of(entry: Mapping) -> list:
     """A report entry's probes, as mappings — THE one reading of its `probe` field (a list, or one probe written bare);
-    seven readers spelled it by hand (ortho audit, D-F6)."""
+    seven readers spelled it by hand (ortho audit, D-F6). A probe its validator says it did NOT run (`ran: false`) is no
+    probe of the entry: it observed nothing (§2.3), so it meets no demand and refutes nothing — counted, a regression line
+    whose own setup failed in a later round met its demand with nothing judged (series 2 REF 2, 2026-10-29)."""
     raw = entry.get("probe")
-    return ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
-            else [raw] if isinstance(raw, Mapping) else [])
+    return [p for p in ([q for q in raw if isinstance(q, Mapping)] if isinstance(raw, (list, tuple))
+                        else [raw] if isinstance(raw, Mapping) else [])
+            if probe_held(p.get("ran")) is not False]
 
 
 def good_probes(entry: Mapping) -> list:
