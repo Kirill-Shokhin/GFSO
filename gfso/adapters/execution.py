@@ -26,7 +26,8 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import BATCH, HOST, LAID, MADE, NODES, SCRATCH, VOLUME, ExecutionPort, FilesPort, PlaceUnavailable
+from gfso.core.types import (BATCH, HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, ExecutionPort, FilesPort,
+                             PlaceUnavailable)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, executions, executions_path,
                          host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs
@@ -103,6 +104,8 @@ LABEL = "gfso.execution"
 #: the other labels the system sets: whose installation, which project — every making (`identity`); who works in a
 #: session's container, on which node, as what (`PlaceContainer`)
 HOME, PROJECT, ROLE, NODE, AGENT = "gfso.home", "gfso.project", "gfso.role", "gfso.node", "gfso.agent"
+#: the project's id (`PROJECT_ID` of its record) on each volume made for it — what an orphan is known by (`resources`)
+ID = "gfso.project_id"
 #: the project's directory of its sessions' CLI state — a volume of its own (`Volume`), which only its keeper mounts
 #: whole and each session its own place's of (`PlaceContainer`)
 STATE_DIR = ".gfso-state"
@@ -775,9 +778,12 @@ class Volume:
                 return self._consume(host, old)
         except LookupError:                  # …not made yet: made below
             pass
+        # …and the project's id from its record: Docker relabels no volume, so one made before the project had an id
+        # carries none for its life, and no removal of an orphan's volumes ever takes it (`resources.remove_orphan`)
+        labels = {**self.labels, **({ID: i} if (i := self.record[0](PROJECT_ID)) else {})}
         for v in (self.name, self.state):
             if self._labels(v) is None:
-                run(["docker", "volume", "create", *[a for k, x in self.labels.items() for a in ("--label", f"{k}={x}")],
+                run(["docker", "volume", "create", *[a for k, x in labels.items() for a in ("--label", f"{k}={x}")],
                      v], timeout=60).check_returncode()
         self.require(both)
         user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()

@@ -491,6 +491,9 @@ LAID = ".laid"
 #: record that its places moved into them — from there on no place nor round is looked for on this host
 #: …and beside them the base and the image they were made over (`base`, `image`): what an export reads them by
 VOLUME = "volume:"
+#: what keys, in a project's settings, its id — random, made once at the record's first opening (`runtime`) and set on
+#: every volume made for it (`execution.ID`): what no other project carries under any spelling of its name
+PROJECT_ID = "project_id"
 #: what keys a place in the record of the places made, by its path (`workspaces.made`)
 MADE = "place-made:"
 #: a system directory as it stood directly beside a base before each named its project

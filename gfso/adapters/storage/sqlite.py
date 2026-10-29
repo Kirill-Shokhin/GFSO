@@ -80,11 +80,13 @@ def _looked_at(db_path: str):
 
 def settings_of(db_path: str) -> Optional[dict]:
     """A project's own settings — the system's record of it that outlives the server — read from its file without
-    opening it as a store; None where no file stands or none reads."""
+    opening it as a store; None where no file stands or none reads, {} where a file older than settings holds none."""
     if not os.path.exists(db_path):
         return None
     try:
         with _looked_at(db_path) as c:
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone():
+                return {}
             return dict(c.execute("SELECT key, value FROM settings").fetchall())
     except sqlite3.Error:
         return None

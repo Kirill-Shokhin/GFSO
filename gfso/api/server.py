@@ -754,8 +754,8 @@ def _mount_projects(app, _e) -> None:
             raise HTTPException(422, str(ex))
 
 def _mount_resources(app) -> None:
-    """What this installation holds in Docker — read only: a node's work is stopped by the protocol's verbs, a project's
-    volumes removed with the project (`DELETE /api/projects/{name}`)."""
+    """What this installation holds in Docker: a node's work is stopped by the protocol's verbs, a project's volumes
+    removed with the project (`DELETE /api/projects/{name}`) — and an orphan's, by its id, here."""
     @app.get("/api/resources")
     def get_resources():
         """SERVER-WIDE, every project of this installation: its containers per node — role, agent, busy, CPU, memory —
@@ -763,6 +763,22 @@ def _mount_resources(app) -> None:
         from Docker alone: no project is woken."""
         reg = app.state.registry
         return _resources.held(reg.names() if reg else None)
+
+    @app.delete("/api/resources/orphans/{project_id}")
+    def remove_orphan(project_id: str):
+        """Remove the volumes carrying `project_id` (a volume's `project_id` in the reading) where no project the
+        registry holds carries it — every record read now — and no container mounts them (`resources.remove_orphan`):
+        what was removed, what was refused and why. 409 where it is held, a record does not read or Docker does not
+        answer — nothing removed; 404 where no volume carries it."""
+        reg = app.state.registry
+        if reg is None:
+            raise HTTPException(400, "single-project server (no registry)")
+        try:
+            return _resources.remove_orphan(project_id, reg.ids)
+        except LookupError as ex:
+            raise HTTPException(404, str(ex))
+        except (OSError, ValueError) as ex:
+            raise HTTPException(409, f"nothing removed: {ex}")
 
 
 def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:

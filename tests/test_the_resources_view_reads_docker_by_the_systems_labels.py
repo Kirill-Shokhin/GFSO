@@ -1,6 +1,6 @@
 """What this installation holds in Docker is read by the labels the system sets at every making (`execution.identity`):
 per project and node, with a number Docker did not give left None; a server's sweep of leftovers removes its own
-installation's containers alone; the view acts on nothing."""
+installation's containers alone."""
 import json
 import subprocess
 
@@ -146,9 +146,9 @@ def test_docker_not_installed_is_no_answer_not_an_error(monkeypatch):
     assert R._docker("ps") is None
 
 
-def test_the_view_acts_on_nothing_and_any_spelling_of_a_held_project_is_known(tmp_path, monkeypatch):
-    """No route removes anything: an orphan named by its project's NAME matched a held project under another spelling
-    (critics over 4d4aeed, 8f6dfae, run) — removal waits for an identity no spelling shares."""
+def test_any_spelling_of_a_held_project_is_known_and_no_removal_takes_a_name(tmp_path, monkeypatch):
+    """An orphan named by its project's NAME matched a held project under another spelling (critics over 4d4aeed,
+    8f6dfae, run): removal takes an id alone (`resources.remove_orphan`), and a name is no id."""
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     (tmp_path / "Alpha.db").write_bytes(b"")
     monkeypatch.setattr(R, "_read", {})
@@ -158,4 +158,4 @@ def test_the_view_acts_on_nothing_and_any_spelling_of_a_held_project_is_known(tm
     reg = ProjectRegistry()
     c = TestClient(create_app(reg.engine(), registry=reg), base_url="http://127.0.0.1:8000")
     assert [(p["project"], p["known"]) for p in c.get("/api/resources").json()["projects"]] == [("alpha", True)]
-    assert c.delete("/api/resources/orphans/alpha").status_code in (404, 405)
+    assert c.delete("/api/resources/orphans/alpha").status_code == 404

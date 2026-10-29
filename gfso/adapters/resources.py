@@ -1,10 +1,15 @@
 """What this installation holds in Docker, per project and node: its containers — by role, node and agent, standing or
 running, busy where a call runs in them, their CPU and memory — and its volumes' sizes on disk. Read from Docker alone,
 by the labels the system sets at every making (`execution.identity`, `execution.ROLE`): no project's engine is woken,
-nothing an agent wrote is read. What it shows, any part of the page draws; it acts on nothing — a node's work is ended by the protocol
-(CANCEL, `stop_project`), never under it. NOT YET: removing an orphan's volumes — named by a project's NAME against the
-registry's files, a held project matched under another spelling or an unlistable directory (critics over 4d4aeed,
-8f6dfae, run); it waits for an identity no spelling shares (an id the project's record and its volumes both carry).
+nothing an agent wrote is read. What it shows, any part of the page draws. A node's work is ended by the protocol
+(CANCEL, `stop_project`), never under it; the one act here removes an ORPHAN's volumes (`remove_orphan`).
+
+An orphan is known by its project's ID (`execution.ID`, made once in the project's record), never by its name: named
+by the project's NAME against the registry's files, a held project matched under another spelling (Windows: `Alpha.db`
+held, volumes labelled `alpha`) or every project looked nobody's where the data dir could not be listed (critics over
+4d4aeed, 8f6dfae, run). So `known` stays a reading for the eye, and removal asks every held record's id at the moment
+it removes. A volume made before its project had an id carries none (Docker relabels nothing): shown, its `project_id`
+None, never removed here — it goes with its project (`execution.drop_volumes`).
 
 A number Docker did not give is None, never 0: a sum says how many it summed (`…_counted`), a read Docker failed says so
 (`read`) — the reading before it served —, and counts no read ever answered are None."""
@@ -15,7 +20,7 @@ import threading
 import time
 
 from gfso.adapters.children import run
-from gfso.adapters.execution import AGENT, HOME, LABEL, NODE, PROJECT, ROLE, installation
+from gfso.adapters.execution import AGENT, HOME, ID, LABEL, NODE, PROJECT, ROLE, installation
 
 #: the processes a container that hosts calls holds while none runs: `--init` and the `sleep` it waits in — a door's
 #: or a gateway's own server is its work, never "busy" (measured: an idle door at 3, a judge's `claude -p` at 21)
@@ -74,7 +79,7 @@ def _stats() -> dict | None:
 
 
 def _volumes() -> list[dict] | None:
-    """This installation's volumes: name, project, size."""
+    """This installation's volumes: name, project, its id (None: made before ids — never removable here), size."""
     if not (lines := _docker("system", "df", "-v", "--format", "{{json .}}")):
         return None
     try:
@@ -85,7 +90,7 @@ def _volumes() -> list[dict] | None:
     for v in vols:
         labels = dict(kv.split("=", 1) for kv in (v.get("Labels") or "").split(",") if "=" in kv)
         if labels.get(HOME) == installation():
-            out.append({"name": v.get("Name"), "project": labels.get(PROJECT),
+            out.append({"name": v.get("Name"), "project": labels.get(PROJECT), "project_id": labels.get(ID),
                         "role": "state" if str(v.get("Name")).endswith("-state") else "places",
                         "bytes": size(v.get("Size"))})
     return out
@@ -159,3 +164,40 @@ def _project(name: str, rows: list | None, volumes: list, held_as) -> dict:
             "nodes": [{"node": n, **_totals(of), "containers": of}
                       for n in sorted({r["node"] for r in rows} - {None}) if (of := [r for r in rows if r["node"] == n])],
             "system": [r for r in rows if r["node"] is None]}
+
+
+def remove_orphan(project_id: str, held) -> dict:
+    """{removed: [volume], refused: {volume: why}} — the volumes of this installation carrying `project_id`, each removed
+    by its exact name where it is still an orphan's at its removal: no project of `held()` ([(name, id or None)], every
+    record the registry holds, read whole at each call — `ProjectRegistry.ids`; read again before each volume, so a
+    project opened meanwhile under the volume's name keeps it — critic over the act, a hook opening it mid-loop) carries
+    the id, and none is held under the name the volume is labelled with (a held project mounts its volumes by NAME,
+    `Volume.require`: a project made again under an old name took the old one's volumes, its id another). Docker itself
+    refuses to remove a volume any container uses, started or not. Held are the projects of this data dir and this
+    process: a memory store of another process is none of them. ValueError where the id is held or Docker did not
+    answer; LookupError where no volume of ours carries it."""
+    if not re.fullmatch(r"[0-9a-f]{32}", project_id):
+        raise LookupError(f"{project_id!r} is no project's id")
+    if owner := [n for n, i in held() if i == project_id]:
+        raise ValueError(f"{project_id} is the project {owner[0]}'s: its volumes are held")
+    lines = _docker("volume", "ls", "--filter", f"label={HOME}={installation()}", "--filter", f"label={ID}={project_id}",
+                    "--format", f"{{{{.Name}}}}\t{{{{.Label \"{PROJECT}\"}}}}")
+    if lines is None:
+        raise ValueError("Docker did not answer: nothing removed")
+    if not lines:
+        raise LookupError(f"no volume of this installation carries {project_id}")
+    removed, refused = [], {}
+    for name, project in ((line.split("\t") + [""])[:2] for line in lines):
+        try:
+            now = held()
+        except OSError as e:
+            refused[name] = f"the registry did not read: {e}"
+            continue
+        if owner := [n for n, i in now if i == project_id or n.casefold() == project.casefold()]:
+            refused[name] = f"labelled {project!r}: the project {owner[0]} is held under that name now and mounts its volumes by it"
+        elif _docker("volume", "rm", name) is None:
+            refused[name] = "mounted by a container: Docker refused its removal"
+        else:
+            removed.append(name)
+    _read.pop("volumes", None)          # …the sizes' reading shows what stands now
+    return {"project_id": project_id, "removed": removed, "refused": refused}

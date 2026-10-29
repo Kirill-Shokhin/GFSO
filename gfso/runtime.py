@@ -10,13 +10,15 @@ import os
 import re
 import sys
 import threading
+import uuid
 
 from gfso.engine import Engine
 from gfso.core.graph.model import root_of
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.storage.sqlite import SqliteStorage, peek_project
+from gfso.adapters.storage.sqlite import SqliteStorage, peek_project, settings_of
+from gfso.core.types import PROJECT_ID
 from gfso.demo import seed_demo
 from gfso import config as _config
 from gfso.config import (data_dir as _config_data_dir, active_project,
@@ -63,6 +65,8 @@ def build_engine_from_env(*, validate_signals: bool = True, default_storage: str
 
     engine = Engine(storage, HumanAgent(), llm=llm, validate_signals=validate_signals)
     engine.start()
+    if not engine.graph.setting(PROJECT_ID):         # …once, at the record's first opening since ids exist
+        engine.graph.store_setting(PROJECT_ID, uuid.uuid4().hex)
     if seed and not engine.all_tasks():
         seed_demo(engine)
     return engine
@@ -235,6 +239,20 @@ class ProjectRegistry:
             pass
         names.discard("gfso")  # the default project's own file — not a separate project
         return names
+
+    def ids(self) -> list:
+        """[(name, its id (`PROJECT_ID`) or None)] of every project held — every record in the data dir, whatever its
+        name, the default's and the loaded ones' (a memory store has no file) — read without opening any engine.
+        OSError, its cause said, where the dir cannot be listed or a record standing in it cannot be read: unlike
+        `names`, nothing is left out — nor merged by name: an id unread is a project whose volumes look nobody's."""
+        files = {os.path.join(self._dir, f): f[:-3] for f in os.listdir(self._dir) if f.endswith(".db")}
+        files[str(_config.db_path())] = DEFAULT_PROJECT
+        out = []
+        for path, name in files.items():
+            if (got := settings_of(path)) is None and os.path.exists(path):
+                raise OSError(f"the record {path} does not read")
+            out.append((name, (got or {}).get(PROJECT_ID)))
+        return out + [(name, eng.graph.setting(PROJECT_ID)) for name, eng in list(self._engines.items())]
 
     def list(self) -> dict:
         """{active, projects}: every project held (`names`), the last worked in first."""
