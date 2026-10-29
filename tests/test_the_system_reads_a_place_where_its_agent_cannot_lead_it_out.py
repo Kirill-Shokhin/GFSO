@@ -39,8 +39,11 @@ def project(tmp_path, monkeypatch):
     ex.container = ex.way.container = f"vol-v1-files-{time.time_ns()}"
     ex.way.net, ex.way.gateway = f"{ex.container}-net", f"{ex.container}-gw"
     ex.volume.name, ex.volume.state = f"{ex.container}-v", f"{ex.container}-state"
-    yield ex
-    ex.stop()
+    try:
+        yield ex
+    finally:
+        ex.stop()
+        ex.volume.remove()                      # …every run left its two volumes on the machine (104 by 2026-10-29)
     assert not ex.own.exists(), "the places stand in the project's volume alone"
 
 
