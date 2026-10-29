@@ -23,7 +23,7 @@ from tests.support import make_engine
 
 def _p(name, **settings):
     """An engine as `execution_of` reads it: its project's name and its own settings, which it may write."""
-    return SimpleNamespace(project_name=name, graph=SimpleNamespace(setting=settings.get, store_setting=settings.__setitem__))
+    return SimpleNamespace(project_name=name, all_tasks=list, emit_info=lambda who, text: None, graph=SimpleNamespace(setting=settings.get, store_setting=settings.__setitem__))
 
 
 @pytest.fixture
@@ -97,13 +97,12 @@ def test_one_project_runs_in_one_execution(declared):
     agents.register("p-val", "llm-validator", workdir=str(base), project="p", execution="e3-linux")
 
 
-def test_a_base_that_checks_out_crlf_is_refused(declared):
+def test_a_base_that_checks_out_crlf_is_registered_its_import_is_lf(declared):
+    """A container works on the base's import, checked out LF by git under none of the user's config
+    (`Volume.import_base`): the user's CRLF checkout is theirs, no refusal."""
     agents, base = declared
     for cmd in (["init", "-q"], ["config", "core.autocrlf", "true"], ["commit", "-q", "--allow-empty", "-m", "s"]):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *cmd], cwd=base, check=True)
-    with pytest.raises(ValueError, match="autocrlf"):
-        agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
-    subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=base, check=True)
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
 
 

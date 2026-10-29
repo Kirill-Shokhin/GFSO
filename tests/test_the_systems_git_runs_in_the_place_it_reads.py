@@ -5,7 +5,6 @@ others' at `git add -A` and forged a clone in the export (critics, three times);
 race. Each scenario plants a filter that writes a mark into the places it must not reach, and the work still moves:
 the delivery taken back into the base, a judge's copy compared, a child started from its parent's place, a part
 joined into the base whose config the root's agent wrote. Live: containers of e3-linux-agent:2, named `gfso-sg3…`."""
-import subprocess
 import time
 
 import pytest
@@ -65,7 +64,7 @@ def test_live_a_delivery_and_a_judges_copy_run_their_agents_filter_in_their_own_
     _sh(x, a, "echo w > w.txt")
     W.commit_all(base, a, "gfso: a delivery", "exec-a", execution=x, branch="gfso/p/a")
     _unmarked(x, b, base)
-    shown = subprocess.run(["git", "show", "gfso/p/a:w.txt"], cwd=base, capture_output=True, text=True)
+    shown = W.git(base, "show", "gfso/p/a:w.txt", execution=x)
     assert shown.stdout == "w\n", "the delivery is taken back into the base, whole"
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
     edits = []
@@ -87,7 +86,7 @@ def test_live_a_child_starts_from_its_parents_place_and_a_part_joins_the_base_th
     W.commit_all(base, a, "gfso: a delivery", "exec-a", execution=x, branch="gfso/p/a")
     _plant(x, base, a, b, c)                                                         # …by the root's agent
     assert W.merge(base, base, "gfso/p/a", "gfso: a joins the base", execution=x) is None
-    assert (base / "p.txt").read_text() == "parent\n"
+    assert x.files.read_bytes(str(base / "p.txt")) == b"parent\n"
     _unmarked(x, a, b, c)
 
 

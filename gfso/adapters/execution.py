@@ -103,6 +103,11 @@ LABEL = "gfso.execution"
 #: the project's directory of its sessions' CLI state — a volume of its own (`Volume`), which only its keeper mounts
 #: whole and each session its own place's of (`PlaceContainer`)
 STATE_DIR = ".gfso-state"
+#: the base inside the project's places volume — mounted wherever the system names the base, at the same inside path
+#: the user's repository was: a clone of the user's HEAD imported for the project's root (`Volume.import_base`)
+BASE_DIR = ".gfso-base"
+#: what keys, in a project's settings, the record of its base's import: {"for": the root, commit, at}
+IMPORTED = "imported"
 #: a system container's own memory-backed directory — its script laid there by the system, its log written there:
 #: nothing of the host is mounted, and `docker cp` writes no read-only root nor sees a tmpfs
 OWN = "/gfso-own"
@@ -116,8 +121,8 @@ def grouped(project_container: str, role: str) -> list[str]:
             "--label", f"com.docker.compose.service={role}"]
 
 
-#: the base read as the running project's container reads it — through its own mount, nothing written into the user's
-#: repository: its listing, and its git's HEAD and objects where it has a git
+#: the base read as a container reads it — through its own mount, nothing written into it: its listing, and its git's
+#: HEAD and objects where it has a git
 _BASE_READ = ('ls "$1" >/dev/null && { [ ! -e "$1/.git/HEAD" ] || { cat "$1/.git/HEAD" >/dev/null && '
               'ls "$1/.git/objects" >/dev/null; }; }')
 
@@ -127,8 +132,8 @@ def _unavailable(ex, storage: bool):
     Docker Desktop not running reads "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
     …" — else, with `storage`, the storage's: the base read through the running project container's OWN mount (a fresh
     mount of it passed while the standing ones threw I/O errors, engineering 2026-10-28, row 2: the daemon answering,
-    every session dying, the probe saying "up" for 35 min), or by a container of its own where none runs; and a file
-    written, read and removed in the project's places volume where it is made — else None."""
+    every session dying, the probe saying "up" for 35 min); and, by a container of its own, a file written, read and
+    removed in the project's places volume where it is made, its base read there — else None."""
     try:
         got = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=60, text=True)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -138,13 +143,12 @@ def _unavailable(ex, storage: bool):
     if not storage:
         return None
     p = ex.project if isinstance(ex, PlaceContainer) else ex
-    base, read = p.to_inside(str(p.base)), True
     try:
         if p.container in _STARTED:
-            got = run(["docker", "exec", p.container, "sh", "-c", _BASE_READ, "sh", base], timeout=120, text=True)
+            got = run(["docker", "exec", p.container, "sh", "-c", _BASE_READ, "sh", p.to_inside(str(p.base))],
+                      timeout=120, text=True)
             if got.returncode and not _GONE.search(got.stderr or ""):
                 return f"its storage does not answer: {(got.stderr or got.stdout or '').strip()[-300:]}"
-            read = bool(got.returncode)                  # …its container gone: a container of its own reads it
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"its storage does not answer ({e})"
     try:                                     # …its volume asked first, never made by the probe (`Volume.require`)
@@ -152,15 +156,13 @@ def _unavailable(ex, storage: bool):
     except PlaceUnavailable as e:
         return e.why
     except LookupError:
-        places = []                          # …not made yet: its making is `Volume.ready`'s
-    if not places and not read:
-        return None
+        return None                          # …not made yet: its making is `Volume.ready`'s
     try:
         got = run(["docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt",
-                   "no-new-privileges", *places, *(p.volume.mount(p.base, True, base) if read else []), p.image,
-                   "sh", "-c", '{ [ ! -d /p ] || { f=/p/.gfso-probe-$$ && echo ok > "$f" && cat "$f" >/dev/null && '
-                   'rm -f "$f"; }; } && { [ -z "$1" ] || ' + _BASE_READ + "; } && echo ok",
-                   "sh", base if read else ""], timeout=120, text=True)
+                   "no-new-privileges", *places, p.image,
+                   "sh", "-c", 'f=/p/.gfso-probe-$$ && echo ok > "$f" && cat "$f" >/dev/null && rm -f "$f" && '
+                   '{ [ ! -d "$1" ] || ' + _BASE_READ + "; } && echo ok", "sh", f"/p/{BASE_DIR}"],
+                  timeout=120, text=True)
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"its storage does not answer ({e})"
     return None if got.returncode == 0 and got.stdout.strip() == "ok" else \
@@ -240,8 +242,9 @@ chown -R "$u" /to /state'''
 #: `Volume.export` inside, as the image's user — never root — over the places at /from: a copy in the container's own
 #: file system; in it every repository made inert — the agent's config and hooks dropped for a config of the format
 #: alone, so nothing it wrote runs, here nor on the host that reads the export — and each node's clone dissociated
-#: from the base ("$1", mounted at its own path): its borrowed objects repacked in, by git under no config but its
-#: own, its alternates gone. What could not be done is said on stderr ("NOTE: …"), the rest exported
+#: from the base ("$1", its directory in the volume): its borrowed objects repacked in, by git under no config but its
+#: own, its alternates gone; the base's HEAD and its `gfso/*` branches bundled beside them (`gfso-refs.bundle`, for
+#: the user's `git fetch`). What could not be done is said on stderr ("NOTE: …"), the rest exported
 _EXPORT = r'''b=$1
 note() { printf 'NOTE: %s\n' "$*" >&2; }
 mkdir -p /tmp/x || exit 1
@@ -266,8 +269,35 @@ while read -r g; do
     cp /tmp/alternates "$a" && note "${r#/tmp/x/}: not repacked — exported as it stands, its objects still the base's"
   fi
 done < /tmp/repos
+if [ -d /tmp/x/.gfso-base/.git ]; then
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C /tmp/x/.gfso-base bundle create -q /tmp/x/gfso-refs.bundle \
+    HEAD --branches='gfso/*' </dev/null || note "the base's branches could not be bundled"
+fi
 [ -n "$(ls -A /tmp/x)" ] || { note "nothing to export"; exit 1; }
 tar -c -C /tmp/x .'''
+#: `Volume.import_base` inside, as the image's user, the places volume at /to, what the host carried on stdin (a tar:
+#: `bundle`, `branch`, `exclude`, `attributes` — or `tree`, a base with no git): "$1" the commit (empty: no git), "$2"
+#: the base's directory in the volume, "$3" the project. Its git reads no config but the clone's own, runs no hook;
+#: a node branch that stands in the volume is never overwritten, a base with no git never removed
+_IMPORT = r'''c=$1 d=/to/$2 p=$3
+g() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
+  -c core.fsmonitor=false -C "$d" "$@" </dev/null; }
+mkdir -p /tmp/in && tar -x -C /tmp/in || exit 1
+if [ -z "$c" ]; then
+  mkdir -p "$d" && { [ ! -d /tmp/in/tree ] || cp -a /tmp/in/tree/. "$d/"; }
+  exit
+fi
+[ -d "$d/.git" ] || { rm -rf "$d" && mkdir -p "$d" && g init -q; } || exit 1
+g fetch -q --update-head-ok /tmp/in/bundle HEAD "+refs/heads/gfso/$p/*:refs/gfso-import/*" || exit 1
+g for-each-ref --format='%(refname:lstrip=2) %(objectname)' refs/gfso-import/ | while read -r n s; do
+  g update-ref "refs/heads/gfso/$p/$n" "$s" "" 2>/dev/null
+  g update-ref -d "refs/gfso-import/$n" || exit 1
+done
+g cat-file -e "$c^{commit}" || { echo "the bundle holds no commit $c" >&2; exit 1; }
+for n in exclude attributes; do
+  [ ! -f "/tmp/in/$n" ] || { mkdir -p "$d/.git/info" && cp "/tmp/in/$n" "$d/.git/info/$n"; } || exit 1
+done
+g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx'''
 #: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
 _DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
 #: …and where the container is gone or stopped under a live server — started again, once
@@ -637,19 +667,22 @@ class Volume:
         #: the project (`workspaces.execution_of`), with what a copy-in `carried` (the places and rounds it moved in);
         #: none held, this process's alone
         self.record, self.carried = (made.get, made.__setitem__), lambda dirs: None
+        #: the project's root as its base's import is keyed (`import_base`) — set by whoever holds the project; None
+        #: before it has one
+        self.root = lambda: None
+        #: where what the system says of the volume goes — the project's log, set by whoever holds it
+        self.said = lambda text: None
         self.copy_time = 1800                            # seconds a copy-in may take
 
     def mount(self, src: Path, ro: bool, dst: str) -> list[str]:
         """`--mount` of the directory the system names `src` at `dst`: its CLI state's volume under `.gfso-state`, the
-        places' under the rest of the project's own directory (`own`), whole or a subpath; else (the base) the host's.
-        A spec, nothing asked: whoever starts a container on it asks `require`."""
+        places' under the rest of the project's own directory (`own`), whole or a subpath, and under the base (its
+        `BASE_DIR`). Nothing of the host. A spec, nothing asked: whoever starts a container on it asks `require`."""
         states = self.own / STATE_DIR
-        if src.is_relative_to(self.own):
-            vol, sub = (self.state, src.relative_to(states)) if src.is_relative_to(states) else (
-                self.name, src.relative_to(self.own))
-            spec = f"type=volume,src={vol},dst={dst}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
-        else:
-            spec = f"type=bind,src={src},dst={dst}"
+        vol, sub = ((self.state, src.relative_to(states)) if src.is_relative_to(states) else
+                    (self.name, src.relative_to(self.own)) if src.is_relative_to(self.own) else
+                    (self.name, BASE_DIR / src.relative_to(self.base)))
+        spec = f"type=volume,src={vol},dst={dst}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
         return ["--mount", spec + (",readonly" if ro else "")]
 
     def _roles(self) -> dict:
@@ -703,6 +736,7 @@ class Volume:
             self.require(both)
             if all(self.record[0](VOLUME + r) for r in self._roles()):
                 self._keep(image)
+                self.import_base(image)
                 return self._consume(host, old)
         except LookupError:                  # …not made yet: made below
             pass
@@ -720,11 +754,60 @@ class Volume:
                              "bring-in", text=True)
         if got.returncode:
             raise OSError(f"{self.name}: the volume could not take its places ({(got.stderr or '').strip()[-300:]})")
+        self.import_base(image, made=True)
         self.carried(dirs)
         for role, v in self._roles().items():
             self.record[1](VOLUME + role, v)
         self._keep(image)
         self._consume(host, old)
+
+    def import_base(self, image: str, made: bool = False, again: bool = False) -> bool:
+        """The base in the volume (`BASE_DIR`) as the user's repository stands — imported where nothing of it stands
+        yet: by the project's first container start (`made`: its volumes made now), or, `again`, by THE CREATION OF A
+        NEW ROOT of the project (`workspaces.root_created`). NEVER BY A START OVER A RECORD: a restart, a switch turned,
+        Docker restarted keep what the root's work made there. Recorded `IMPORTED` — the root it serves (`root`, None
+        before the project has one: the first root adopts it), the commit — and said (`said`): which commit, what of
+        the user's did not come in. On the host only the user's own git runs: `git bundle` of their HEAD and of the
+        project's node branches left from before (`gfso/<p>/*` but `accepted`), carried in through the port (a
+        container's stdin), fetched inside by git under no config but its own — checked out LF, Linux modes and links,
+        none of the user's hooks or config, a branch that stands in the volume never overwritten; their `info/exclude`
+        and `info/attributes` with it. A base with no git: a tar of its tree, imported ONCE — a root's work there is
+        never written over. True where it imported."""
+        rec = json.loads(self.record[0](VOLUME + IMPORTED) or "{}")
+        if rec and not made and (not again or rec.get("commit") == "tree"):
+            return False
+        root = self.root()
+        with tempfile.TemporaryDirectory(prefix="gfso-import-") as d:
+            commit, carried, notes = _carried_in(self.base, self.project, Path(d))
+            user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60,
+                       text=True).stdout.strip()
+            with open(carried, "rb") as stream:
+                got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/to"],
+                                     [_IMPORT, "sh", commit or "", BASE_DIR, self.project], "import", user or "0",
+                                     stdin=stream, interactive=True)
+        if got.returncode:
+            raise OSError(f"{self.name}: the base could not be imported "
+                          f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
+        self.record[1](VOLUME + IMPORTED, json.dumps({"for": root, "commit": commit or "tree",
+                                                       "at": time.strftime("%Y-%m-%dT%H:%M:%S")}))
+        self.said(f"the base is imported into the project's volume from {self.base}: "
+                  + (f"its commit {commit[:12]}" if commit else "its tree (no git: imported once)")
+                  + "".join(f"; {n}" for n in notes))
+        return True
+
+    def land_tree(self, image: str, to: Path) -> list:
+        """A base with no git as it stands in the volume, written to the host directory `to` in place of what stood
+        there — a root's accepted result, where its user reads it; what could not be written as it stood
+        (`_untar`)."""
+        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
+        got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly"],
+                             [f"tar -c -C /from/{BASE_DIR} ."], "land", user or "0")
+        if got.returncode:
+            raise OSError(f"{self.name}: its base could not be read out "
+                          f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
+        if to.exists():
+            shutil.rmtree(to)
+        return _untar(got.stdout, to)
 
     def _keep(self, image: str) -> None:
         """Beside the volumes in the record, what an export reads them by: the base and the image they stand over."""
@@ -732,16 +815,17 @@ class Volume:
             if self.record[0](VOLUME + k) != v:
                 self.record[1](VOLUME + k, v)
 
-    def _one_shot(self, image: str, mounts: list, script: list, role: str, user: str = "0",
+    def _one_shot(self, image: str, mounts: list, script: list, role: str, user: str = "0", interactive: bool = False,
                   **kw) -> subprocess.CompletedProcess:
         """`script` in a container of the system's own over `mounts` — no network, its volumes asked first; as root with
-        the system's capabilities, or as `user` with none — named by its `role`, so a cut one is removed with the cut
-        and a server's next start sweeps one left (`end_leftovers`)."""
+        the system's capabilities, or as `user` with none; fed its stdin where `interactive` — named by its `role`, so a
+        cut one is removed with the cut and a server's next start sweeps one left (`end_leftovers`)."""
         self.require(mounts)
         one = f"{self.name}-{role}"
         run(["docker", "rm", "-f", one], timeout=60)
         try:
-            got = run(["docker", "run", "--rm", "--name", one, "--label", f"{LABEL}={self.execution}",
+            got = run(["docker", "run", "--rm", *(["-i"] if interactive else []), "--name", one,
+                       "--label", f"{LABEL}={self.execution}",
                        "--network", "none", "--cap-drop", "ALL",
                        *[a for c in SYSTEM_CAPS if user == "0" for a in ("--cap-add", c)],
                        "--security-opt", "no-new-privileges", "-u", user, *mounts, image, "sh", "-c", *script],
@@ -764,7 +848,7 @@ class Volume:
                 except OSError as e:
                     log.warning(f"{p} was copied in and could not be moved aside now ({e}): tried again at the next start")
 
-    def export(self, image: str, base: Path, inside_base: str, to: Path) -> list:
+    def export(self, image: str, to: Path) -> list:
         """The places as they stand, written to the host directory `to`, INERT — no repository carries its agent's
         config or hooks, so nothing an agent wrote runs where the export is read — each node's clone made whole on the
         way (`_EXPORT`), in a copy and never in the place, so it reads with the volume and the base both gone. What
@@ -772,9 +856,8 @@ class Volume:
         `to`, kept as a file naming its target — is said in `.gfso-export-notes` beside `to`, and returned; nothing
         exported at all is an `OSError`. Its CLI state is not exported."""
         user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
-        got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly",
-                                     "--mount", f"type=bind,src={base},dst={inside_base},readonly"],
-                             [_EXPORT, "sh", inside_base], "export", user or "0")
+        got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly"],
+                             [_EXPORT, "sh", f"/from/{BASE_DIR}"], "export", user or "0")
         said = [x[6:] for x in (got.stderr or b"").decode(errors="replace").splitlines() if x.startswith("NOTE: ")]
         if got.returncode:
             raise OSError(f"{self.name}: its places could not be exported ({'; '.join(said) or got.returncode})")
@@ -812,7 +895,7 @@ def export_places(project: str, record: dict, to: str) -> list:
     by the roster or declarations of whoever asks, which may be another server's or none (measured: a project with a
     volume exported "nothing"). No volume recorded, none was made (`LookupError`); the recorded one gone, the place down."""
     v, image = Volume.of_record(project, record)
-    return v.export(image, v.base, f"{INSIDE}/{v.base.name}", Path(to) / v.project)
+    return v.export(image, Path(to) / v.project)
 
 
 def _base_of_places(record: dict) -> str | None:
@@ -854,6 +937,56 @@ def _untar(data: bytes, to: Path) -> list:
     return notes
 
 
+def _carried_in(base: Path, project: str, d: Path) -> tuple:
+    """(the commit, a tar under `d`, what of the user's it leaves out) of what the base imports (`_IMPORT`) — made on
+    the host by the user's own git, reading their repository and nothing else: a bundle of HEAD and of the project's
+    node branches left from before the base moved in, but `accepted`; else, no git, its tree. Left out, said: the
+    user's changes not committed, a submodule's files, an LFS file's content."""
+    out = d / "in.tar"
+    git = lambda *a: run(["git", "-c", "safe.directory=*", "-C", str(base), *a], timeout=600, text=True,
+                         encoding="utf-8", errors="replace")
+    # …the question `worktrees.is_repo_top` asks: the top of a work tree with a commit
+    got = git("rev-parse", "--show-toplevel", "--verify", "HEAD") if shutil.which("git") and base.is_dir() else None
+    top = got.stdout.splitlines()[:1] if got and got.returncode == 0 else []
+    with tarfile.open(out, "w") as t:
+        if not top or os.path.normcase(os.path.abspath(top[0])) != os.path.normcase(base):
+            if base.is_dir():
+                t.add(base, arcname="tree")
+            return None, out, []
+        commit = git("rev-parse", "--verify", "HEAD^{commit}").stdout.strip()
+        (d / "branch").write_text(git("symbolic-ref", "-q", "--short", "HEAD").stdout.strip() or "main")
+        if (got := git("bundle", "create", "-q", str(d / "bundle"), "HEAD", f"--exclude=gfso/{project}/accepted",
+                       f"--branches=gfso/{project}/*")).returncode:
+            raise OSError(f"{base}: its HEAD could not be bundled ({got.stderr.strip()[-300:]})")
+        for n in ("bundle", "branch"):
+            t.add(d / n, arcname=n)
+        for n in ("exclude", "attributes"):
+            if (p := base / git("rev-parse", "--git-path", f"info/{n}").stdout.strip()).is_file():
+                t.add(p, arcname=n)
+    changed = [x for x in git("status", "--porcelain", "-z").stdout.split("\0") if x.strip()]
+    links = [e for e in git("ls-tree", "-r", "-z", "HEAD").stdout.split("\0") if e.startswith("160000 ")]
+    lfs = git("grep", "-q", "-e", "filter=lfs", "HEAD", "--", ":(glob)**/.gitattributes").returncode == 0
+    return commit, out, [n for n, on in (
+        (f"not imported: {len(changed)} changed or untracked files - commit them for the agents to see them", changed),
+        (f"{len(links)} submodules stand empty inside: their files are not part of the commit", links),
+        ("files tracked by Git LFS are pointers inside, not their content", lfs)) if on]
+
+
+def fetched_on_host(base: Path, bundle: bytes) -> str:
+    """The objects of `bundle` taken into the user's repository at `base` by their own git — `fetch` of it alone, no
+    ref written, no `FETCH_HEAD` —; git's words where it refused, else ''. Only a bundle: the bytes come out of a temp
+    the base's sessions write, and handed anything else the host's git takes it for a repository it names and opens it,
+    a network path too (critic over a99ea34)."""
+    if not bundle.startswith((b"# v2 git bundle\n", b"# v3 git bundle\n")):
+        return "what came out is no git bundle"
+    with tempfile.TemporaryDirectory(prefix="gfso-land-") as d:
+        (f := Path(d) / "accepted.bundle").write_bytes(bundle)
+        got = run(["git", "-C", str(base), "fetch", "-q", "--no-recurse-submodules", "--no-write-fetch-head", str(f),
+                   "HEAD"], timeout=600,
+                  text=True, encoding="utf-8", errors="replace")
+    return "" if got.returncode == 0 else (got.stderr or "").strip()[-300:] or f"git fetch exited {got.returncode}"
+
+
 def container_name(execution: str, project: str) -> str:
     """The project's container under `execution` — the stem its volumes are named by."""
     return re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{execution}-{project}").lower()
@@ -885,13 +1018,14 @@ class ContainerExecution(ExecutionPort):
 
     """`image` with an optional `env_file` (settings of the image, never a credential: the provider gives its own to its
     process, `_exec_argv`) and a host `state` dir (the mirrors of its door's and gateway's logs), holding the
-    directories of THIS project beside `base`, at `/gfso-place/<path under base's parent>`: the base, bind-mounted, and
-    the project's own directory beside it — its node places, every validation's rounds, its temp (`.gfso-tmp`), its
-    system copies (`.gfso-sys`), its sessions' CLI state (`.gfso-state`) — which is the project's Docker volume
-    (`volume`), on no host file system, so two projects on one base hold none of each other's and no host file sharing
-    stands between a session and its files. `base`'s parent is any absolute directory, a POSIX one or a Windows
-    drive's; a network share is refused, since a container cannot bind-mount it (until the base moves into the volume
-    too). Nothing else of the host is mounted, the host's network is shut at start, and the rest of the way out is as
+    directories of THIS project beside `base`, at `/gfso-place/<path under base's parent>`: the base and the project's
+    own directory beside it — its node places, every validation's rounds, its temp (`.gfso-tmp`), its system copies
+    (`.gfso-sys`), its sessions' CLI state (`.gfso-state`) — both the project's Docker volume (`volume`), on no host
+    file system: the base a clone of the user's repository imported for the project's root (`Volume.import_base`), its
+    accepted result landed back there as a branch at the root's PASS (`land_accepted`) — so two projects on one base
+    hold none of each other's and no host file sharing stands between a session and its files. `base`'s parent is any
+    absolute directory, a POSIX one or a Windows drive's; a network share is refused as it was when the base was
+    bind-mounted (nothing mounts it now: lifting that is a check of the paths' mapping over a share, not made). Nothing else of the host is mounted, the host's network is shut at start, and the rest of the way out is as
     `network` switches it (`{"mode": one of NETWORK, "hosts": [...]}`: the container's switch, kept by its name; open
     where none was given)."""
 

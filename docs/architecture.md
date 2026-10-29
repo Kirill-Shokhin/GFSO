@@ -482,8 +482,11 @@ WHERE its processes and the commands over a project's work run is the `Execution
 that the one server calls into with `docker exec`. A project chooses it on the existing doors: a role registered with
 `execution=<name>` names an execution the server declares in `data/executions.json`, one per project. Then every call
 of the project runs there: its sessions, the plan's author and reviewer, the issuer's derivations, a delivery's snapshot
-and join. The project's container holds the base, bind-mounted, and the project's own directory — node places, scratch,
-its temp, its system copies — as the project's places volume, both at `/gfso-place` under the host paths' names, the
+and join. The project's container holds the base and the project's own directory — node places, scratch, its temp, its
+system copies — both in the project's places volume (nothing of the host is mounted: the base is the user's HEAD
+imported for the project's root (at its first start, never again by a start) by the user's own git as a bundle and cloned inside under no config or hook of theirs,
+recorded `volume:imported`; the root's PASS lands its accepted result back in the user's repository as the branch
+`gfso/<project>/accepted` by `git fetch` of a bundle alone), both at `/gfso-place` under the host paths' names, the
 host loopback forward shut; paths are mapped both ways so the graph keeps host paths, while nothing under the project's
 own directory stands on the host. Each session runs in a container of its own place, which mounts the subpaths of that
 volume its role holds, and its CLI state from a second volume the project's container never mounts. Both volumes are

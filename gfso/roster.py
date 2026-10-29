@@ -11,7 +11,6 @@ import threading
 import time
 from pathlib import Path
 from gfso.config import MODEL_DEFAULT, agents_path, executions
-from gfso.adapters.worktrees import checks_out_crlf
 from gfso.places import cheap_to_ask, disk_place, same_place, text_place
 
 
@@ -247,8 +246,8 @@ class AgentRegistry:
 
     def _refuse_execution(self, agent_id: str, execution: str, workdir: str | None, project: str | None) -> None:
         """WHERE a role's sessions run is the project's, declared once: an undeclared name runs nowhere, two executions
-        in one project would put one node's place in two machines, and a base that checks out CRLF reads as modified
-        inside a Linux container (probe P3)."""
+        in one project would put one node's place in two machines. A base that checks out CRLF is no refusal: what a
+        container works on is its import, checked out LF by git under no config of the user's (`Volume.import_base`)."""
         if execution not in executions():
             raise ValueError(f"registering {agent_id!r}: execution {execution!r} is not declared "
                              f"({', '.join(executions()) or 'none is'}); declare it in the server's executions.json")
@@ -258,10 +257,6 @@ class AgentRegistry:
         if other:
             raise ValueError(f"registering {agent_id!r}: project {project!r} already runs in {sorted(other)[0]!r} - "
                              f"one project runs in one execution")
-        if workdir and checks_out_crlf(workdir):
-            raise ValueError(f"registering {agent_id!r}: '{workdir}' checks out with core.autocrlf=true, which a "
-                             f"Linux container reads as every file modified - set `git config core.autocrlf false` "
-                             f"and `core.eol lf` there and check it out again")
 
     def unregister(self, agent_id: str, workdir: str | None = None) -> dict:
         """Take a role OUT of the roster — the operation that did not exist.

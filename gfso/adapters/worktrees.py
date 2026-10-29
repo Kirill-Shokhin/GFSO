@@ -23,8 +23,7 @@ from pathlib import Path
 
 from gfso.adapters import children
 from gfso.config import subprocess_env
-from gfso.adapters.execution import NODES, LocalExecution
-from gfso.core.types import HOST
+from gfso.adapters.execution import NODES, LocalExecution, fetched_on_host
 
 #: the largest bundle `_carry` moves through the server's memory
 BUNDLE_CAP = 512 * 2 ** 20
@@ -82,13 +81,6 @@ def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
 def _fs(execution):
     """Where a place's files are reached: its execution, this host where none is named."""
     return execution if execution is not None else LocalExecution()
-
-
-def checks_out_crlf(base) -> bool:
-    """Does the repository at `base` check its files out with CRLF (`core.autocrlf=true`, any level that applies)? The
-    user's checkout read on the host at registration, its own config and the user's — a read that runs nothing."""
-    return is_repo_top(base) and children.run(["git", "config", "--get", "core.autocrlf"], timeout=60, cwd=str(base),
-                                              text=True).stdout.strip().lower() == "true"
 
 
 def is_repo_top(base) -> bool:
@@ -156,18 +148,18 @@ def inherited(base, execution) -> dict:
     return {k: v for k in INHERITED if (v := git(base, "config", "--local", "--get", k, execution=execution).stdout.strip())}
 
 
-def kept_out(base) -> dict:
-    """{name: bytes} of the base's `info/exclude` and `info/attributes` — what every node's own repository is made with:
-    what the base keeps out of its commits stays out of the node's."""
-    return {n: b for n in ("exclude", "attributes") if (b := HOST.read_bytes(str(Path(base) / ".git" / "info" / n)))
-            is not None}
+def kept_out(base, execution=None) -> dict:
+    """{name: bytes} of the base's `info/exclude` and `info/attributes`, read where it stands — what every node's own
+    repository is made with: what the base keeps out of its commits stays out of the node's."""
+    return {n: b for n in ("exclude", "attributes")
+            if (b := _fs(execution).files.read_bytes(str(Path(base) / ".git" / "info" / n))) is not None}
 
 
 def _start(base, place: Path, branch: str, start_from, execution) -> None:
     """The new clone on `branch`: the base's commit of that name where it has one, else the HEAD of `start_from` — a
     parent's place, whose commit comes over by bundle (`_carry`): no container holds both places."""
     relative_alternates(place / ".git" / "objects", Path(base) / ".git" / "objects", execution)
-    for name, kept in kept_out(base).items():
+    for name, kept in kept_out(base, execution).items():
         _fs(execution).files.write_bytes(str(place / ".git" / "info" / name), kept)
     if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0:
         start = git(base, "rev-parse", f"refs/heads/{branch}", execution=execution).stdout.strip()
@@ -279,23 +271,65 @@ def _carry(base, src, dst, rev: str, execution) -> str:
         raise OSError(f"{src} names no commit {rev} for {dst} to take")
     if git(dst, "cat-file", "-e", f"{sha}^{{commit}}", execution=execution).returncode == 0:
         return sha
-    ex, name = _fs(execution), f"gfso-{uuid.uuid4().hex}.bundle"
-    a, b = (Path(ex.temp_of(str(p))) / name for p in (src, dst))
+    ex, b = _fs(execution), Path(_fs(execution).temp_of(str(dst))) / f"gfso-{uuid.uuid4().hex}.bundle"
     tips = git(base, "for-each-ref", "--format=%(objectname)", "refs/heads/", execution=execution).stdout.split()
     try:
-        got = git(src, "bundle", "create", "-q", str(a), rev, "--not", *tips, execution=execution)
-        # …read to a cap, not whole: the source's agent holds its temp, and a bundle swapped for a huge sparse file
-        # filled the server's memory, every project's with it (critic over 61bf915) — past the cap the carry fails
-        if got.returncode == 0 and (data := ex.files.read_bytes(str(a), BUNDLE_CAP + 1)) is not None:
-            if len(data) > BUNDLE_CAP:
-                raise OSError(f"{src}'s bundle of {rev} passes {BUNDLE_CAP >> 20} MiB: not carried")
-            ex.files.write_bytes(str(b), data)
-            got = git(dst, "bundle", "unbundle", str(b), execution=execution)
+        ex.files.write_bytes(str(b), _bundled(src, rev, tips, execution))
+        got = git(dst, "bundle", "unbundle", str(b), execution=execution)
         if got.returncode or git(dst, "cat-file", "-e", f"{sha}^{{commit}}", execution=execution).returncode:
             raise OSError(f"{dst} could not take {rev} of {src}: {got.stderr.strip()[-300:]}")
     finally:
-        for p in {a, b}:
-            ex.files.remove_matching(str(p.parent), [name])
+        ex.files.remove_matching(str(b.parent), [b.name])
+    return sha
+
+
+def _bundled(src, rev: str, nots: list, execution) -> bytes:
+    """A bundle of `rev` of the repository at `src` but what `nots` hold, made in its own container and read out of its
+    temp — to a cap, not whole: the source's agent holds its temp, and a bundle swapped for a huge sparse file filled
+    the server's memory, every project's with it (critic over 61bf915) — past the cap, an `OSError`."""
+    ex, name = _fs(execution), f"gfso-{uuid.uuid4().hex}.bundle"
+    a = Path(ex.temp_of(str(src))) / name
+    try:
+        got = git(src, "bundle", "create", "-q", str(a), rev, *(["--not", *nots] if nots else []), execution=execution)
+        if got.returncode or (data := ex.files.read_bytes(str(a), BUNDLE_CAP + 1)) is None:
+            raise OSError(f"{src} could not bundle {rev}: {got.stderr.strip()[-300:]}")
+        if len(data) > BUNDLE_CAP:
+            raise OSError(f"{src}'s bundle of {rev} passes {BUNDLE_CAP >> 20} MiB: not carried")
+        return data
+    finally:
+        ex.files.remove_matching(str(a.parent), [name])
+
+
+def land(base, ref: str, execution, since: str | None, tree: str | None = None) -> str:
+    """The HEAD of the base in the project's volume, as `ref` of the user's repository on the host — which the system
+    names by the same path —; the commit's id. Bundled in the base's own container of what `since` (the commit the base
+    was imported from) lacks — whole where the user's repository lacks that too —, carried out through the port, and
+    taken there by the user's own git: `fetch` from the bundle and `update-ref` of `ref` alone — no config nor hook of
+    the place, never their working tree nor any branch of theirs; `ref` checked out in any worktree of theirs is
+    refused. `ref` standing is moved to the new commit (its reflog keeps where it stood)."""
+    sha = git(base, "rev-parse", "--verify", "--quiet", "HEAD^{commit}", execution=execution).stdout.strip()
+    host = lambda *a: children.run(["git", "-C", str(base), *a], timeout=_SLOW, text=True, encoding="utf-8",
+                                   errors="replace")
+    if not sha:
+        raise OSError("the base names no commit")
+    if f"branch {ref}" in host("worktree", "list", "--porcelain").stdout.splitlines():
+        raise OSError(f"`{ref}` is checked out there (in a worktree of it), and the system lands only on a branch "
+                      f"nobody works on: check out another branch")
+    why = ""
+    for nots in ([since] if since and since != sha else [], []):
+        if host("cat-file", "-e", f"{sha}^{{commit}}").returncode == 0:
+            break
+        if not (why := fetched_on_host(base, _bundled(base, "HEAD", nots, execution))):
+            break
+    # …a fetch that said an error is no landing, whatever it took in: it went past the bundle (a submodule's remote)
+    if why or host("cat-file", "-e", f"{sha}^{{commit}}").returncode:
+        raise OSError(f"its commit {sha[:12]} could not be fetched: {why or 'not in the bundle'}")
+    # …the tree the root's PASS accepted, read on the host: the base's HEAD is read in a container a session's leftover
+    # may still run in, and what lands is the issuer's PASS, never what stood there at landing (critic over a99ea34)
+    if tree and (got := host("rev-parse", f"{sha}^{{tree}}").stdout.strip()) != tree:
+        raise OSError(f"its HEAD {sha[:12]} holds tree {got[:12]}, not the {tree[:12]} its PASS accepted")
+    if (got := host("update-ref", "-m", "gfso: a root's accepted result", ref, sha)).returncode:
+        raise OSError(f"`{ref}` could not be set to {sha[:12]}: {got.stderr.strip()[-300:]}")
     return sha
 
 

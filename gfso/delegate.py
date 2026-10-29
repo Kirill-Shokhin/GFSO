@@ -39,7 +39,8 @@ from gfso.adapters.llm.chat import answers, is_address
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what_stopped
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, clear_workspaces, execution_of,
-                             join_whole, made, node_workspace, session_scope, stands)
+                             join_whole, land_accepted, made, node_workspace, root_created, session_scope,
+                             stands)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
 from gfso.sessions import run_consent, run_executor, run_scope_executor
 
@@ -1803,6 +1804,10 @@ class Dispatcher:
             if t is not None:
                 self._seen.discard(self._round_key(t))
                 self._seen.discard(self._round_key(t, "consent"))
+        if signal == Signal.ASSIGN and tid is not None and (t := self._engine.graph.get_task(tid)) is not None \
+                and t.parent_id is None:
+            # a root made (or handed on): its base's import is its own — off the signal path, docker work
+            threading.Thread(target=self._root_made, args=(t,), daemon=True).start()
         if new == State.DONE and tid is not None:
             # git work, so off the signal path; a parent's session merges its DONE parts itself on entry, so the
             # order of this thread and that session decides nothing. A node whose place was made is marked joining
@@ -1813,6 +1818,12 @@ class Dispatcher:
                 self._engine.joins.mark_joining(tid, True)
             threading.Thread(target=self._join, args=(tid,), daemon=True).start()
         self._dirty.set()
+
+    def _root_made(self, root) -> None:
+        try:
+            root_created(self._engine, self._agents, root)
+        except Exception as e:                          # noqa: BLE001 — said, never raised into a thread
+            self._engine.emit_info("execution", f"{root.id}: its base could not be imported - {e}")
 
     def _will_join(self, tid) -> bool:
         """Has this passed node a place of its own whose result must still land somewhere — so it is joining now?"""
@@ -1831,6 +1842,8 @@ class Dispatcher:
         try:
             with _inflight("join_whole", self._engine, tid):
                 why = join_whole(self._engine, self._agents, tid)
+                if is_root and why is None and t.state == State.DONE:   # …and lands where its user reads it
+                    why = land_accepted(self._engine, self._agents, t)
         except Exception as e:                          # noqa: BLE001 — a join that failed is said, not raised
             why = f"{type(e).__name__}: {e}"
             log.warning(f"delegate: {tid} did not join its whole: {e}")

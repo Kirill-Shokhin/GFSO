@@ -1832,6 +1832,9 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
                 f"its kind would attach to whoever simply omitted a name. Register the role under "
                 f"its own id (`{agent_id}-val`, `{agent_id}-exec`, or anything else) and assign "
                 f"nodes to THAT id — which is also what makes the delegation visible in the graph."}
+    if execution and (engine.mode() or {}).get("perform") == "in_chat":
+        return {"refused": True, "error": _IN_CHAT_APART.format(execution)
+                + " Set the mode again with `perform=\"dispatch\"` first."}
     agents = _roster(engine)
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
                           oracle_map=oracle_map, max_turns=max_turns, client=client, context_budget=context_budget,
@@ -1926,6 +1929,14 @@ def unregister_agent(engine: Engine, agent_id: str, workdir: Optional[str] = Non
 _MODE_STAFF = {Mode.AUTO: 2, Mode.SEMI: 1, Mode.SOLO: 0}
 
 
+#: why `in_chat` is refused under a container execution
+_IN_CHAT_APART = ("this project's work runs in the container execution {!r}, where every place and the base "
+                  "stand in the project's volume and only what stands there is judged; in_chat work is done on this "
+                  "host, in none of them. Set `perform=\"dispatch\"` (a session of this project's executor performs "
+                  "your nodes in its own place), or run the project on this host (its roles registered with no "
+                  "`execution`).")
+
+
 def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
     """What a mode needs registered in this project, and whether it has it — the one rule `set_mode`
     enforces, readable before anyone asks for the mode (the page shows it; a copy of the rule in the
@@ -1943,6 +1954,9 @@ def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
                   and c.get("project") in (engine.project_name, None)]
     dispatch = perform == "dispatch" and m != Mode.AUTO          # under AUTO the user-agent holds nothing
     need = max(_MODE_STAFF[m], int(dispatch))
+    if perform == "in_chat" and m != Mode.AUTO and (role := declaring_role(engine)) is not None:
+        return {"mode": m.value, "perform": perform, "dispatch": False, "needs_executors": need, "executors": pool,
+                "validators": validators, "ready": False, "missing": _IN_CHAT_APART.format(role["execution"])}
     ready = len(pool) >= need and bool(validators)
     missing = "" if ready else (
         f"{m.value} needs {need} registered executor(s) of this project and a validator; it "

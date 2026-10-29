@@ -2,8 +2,8 @@
 state — is its Docker volume, on no host file system: the system reaches it through its port alone, each session's
 container mounts exactly the subpaths it held before with the same rights, and nothing of the host is mounted into a
 door or a gateway (the author, 2026-10-28: «изоляция значит изоляция … бесшовно и одинаково в любой системе»; measured:
-a Windows host directory bind-mounted through Docker Desktop's file sharing threw I/O errors for 35 min). The base stays
-the host's, bind-mounted, until it moves in too."""
+a Windows host directory bind-mounted through Docker Desktop's file sharing threw I/O errors for 35 min). The base too:
+the user's repository imported at the root's start, its accepted result landed back as a branch."""
 import hashlib
 import io
 import json
@@ -74,19 +74,19 @@ def _held(container: str) -> set:
 @live
 def test_live_a_sessions_container_mounts_its_own_subpaths_with_their_rights(project):
     """Exactly what `_mounts` gives, each a subpath of the volume — the whole volume nowhere, a read-only one nowhere
-    writable — its CLI state at the CLI's own path too, the base the host's, read-only."""
+    writable — its CLI state at the CLI's own path too, the base the volume's, read-only: nothing of the host."""
     made(project, "a")
     a = project.session(str(project.own / "a"))
     v = project.volume.name
     try:
         a.run(["true"], cwd=str(project.own / "a"), timeout=120).check_returncode()
-        sub = lambda d: (v, d.relative_to(project.own).as_posix())
-        want = {(a.to_inside(str(d)), str(d) if d == project.base else sub(d), ro) for d, ro in a._mounts()}
+        sub = lambda d: (v, ".gfso-base" if d == project.base else d.relative_to(project.own).as_posix())
+        want = {(a.to_inside(str(d)), sub(d), ro) for d, ro in a._mounts()}
         want |= {(at, (project.volume.state, "+a"), False) for at in (a.to_inside(str(a.state)), STATE_INSIDE)}
         held = _held(a.container)
         assert all(m[1][1] for m in held if isinstance(m[1], tuple)), "a session mounts no whole volume"
         assert held == want, "its own subpaths, with their rights"
-        assert _held(project.container) == {(project.to_inside(str(project.base)), str(project.base), False),
+        assert _held(project.container) == {(project.to_inside(str(project.base)), (v, ".gfso-base"), False),
                                             (project.to_inside(str(project.own)), (v, None), False)}
     finally:
         project.stop()
@@ -627,7 +627,7 @@ def test_export_places_exports_the_volume_the_projects_own_record_names_whatever
     got = []
     monkeypatch.setattr(E.Volume, "export", lambda self, *a: got.append((self.name, *a)) or [])
     assert _exported(tmp_path, capsys)[0] == 0
-    assert got == [(v.name, "img:1", base, f"{E.INSIDE}/ws", tmp_path / "out" / "p")]
+    assert got == [(v.name, "img:1", tmp_path / "out" / "p")], "the volume of the base the record names"
 
 
 def test_export_places_of_a_recorded_volume_that_is_gone_is_said_and_fails(tmp_path, monkeypatch, capsys):

@@ -10,12 +10,12 @@ import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import NODES as _NODES, base_of
-from gfso.adapters.execution import (ContainerExecution, LocalExecution, component, drop_volumes, network_of,
-                                     stricter)
+from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecution, component, drop_volumes,
+                                     network_of, stricter)
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
-from gfso.core.graph.model import generation_of_task
+from gfso.core.graph.model import generation_of_task, root_of
 from gfso.core.types import HOST, MADE, VOLUME, Signal, TaskId, State, hold_places
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
@@ -322,6 +322,8 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
         return LocalExecution()
     ex.volume.record = (engine.graph.setting, engine.graph.store_setting)
     ex.volume.carried = lambda dirs: _carried(engine, dirs)
+    ex.volume.root = lambda: root_key(engine)
+    ex.volume.said = lambda text: engine.emit_info("execution", text)
     # the switch as set NOW — the more closed of its execution's declaration and the project's own (`set_mode`), the
     # declaration a ceiling — kept by the container: every holder of any object of it starts it under this one
     own = engine.graph.setting("network")
@@ -332,6 +334,67 @@ def execution_of(engine, agents: "AgentRegistry | None" = None):
         network = {"mode": "unreadable"}   # either one unreadable shuts the way out, as an unreadable declaration does
     ex.switch(network)
     return ex
+
+
+def root_key(engine) -> str | None:
+    """The project's root as its base's import is keyed (`Volume.import_base`): its id and its making — a root made
+    again under the id is another."""
+    return root_key_of(r) if (r := root_of(engine.all_tasks())) is not None else None
+
+
+def root_created(engine, agents: "AgentRegistry", root) -> None:
+    """A root of the project was made: its base's import is ITS — the act of the system at the root's creation, never
+    of a container's start (`Volume.import_base`). One made before any root (the project's first start) is adopted
+    as it stands; one of an earlier root is made again from the user's HEAD — unless that root still works there,
+    which is refused and said, or the base has no git, whose import is never written over (said)."""
+    ex = execution_of(engine, agents)
+    rec = json.loads(engine.graph.setting(VOLUME + IMPORTED) or "{}")
+    if not isinstance(ex, ContainerExecution) or not rec or rec.get("for") == (key := root_key(engine)):
+        return
+    if rec.get("for") is not None:
+        old = engine.graph.get_task(TaskId(rec["for"].rsplit("@", 1)[0]))
+        if old is not None and root_key_of(old) == rec["for"] and old.state not in (State.DONE, State.ABANDONED):
+            engine.emit_info("execution", f"{root.id}: its base was not imported again - the root {old.id} still "
+                                          f"works there ({old.state.name})")
+            return
+        if ex.volume.import_base(ex.image, again=True):
+            return
+        engine.emit_info("execution", f"{root.id}: its base has no git and was imported once - it works on that base "
+                                      f"as the earlier root left it")
+    engine.graph.store_setting(VOLUME + IMPORTED, json.dumps({**rec, "for": key}))
+
+
+def root_key_of(root) -> str:
+    """A root as its base's import is keyed: its id and its making — a root made again under the id is another."""
+    return f"{root.id}@{root.created_at.isoformat()}"
+
+
+def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
+    """At the root's PASS, its result where the user reads it — why not, else None. Under a container execution the
+    base is the project's import, and its HEAD, the root joined, lands in the user's repository as the branch
+    `gfso/<project>/accepted` (`W.land`): never their working tree nor their branches; a base with no git lands its
+    tree in `<parent>/.gfso-accepted-<base>/<project>/` beside it. On this host the base IS the user's repository:
+    nothing to land."""
+    ex = execution_of(engine, agents)
+    if not isinstance(ex, ContainerExecution):
+        return None
+    rec = json.loads(engine.graph.setting(VOLUME + IMPORTED) or "{}")
+    if rec.get("commit") == "tree":
+        to = ex.parent / f".gfso-accepted-{ex.base.name}" / ex.project_name
+        try:
+            notes = ex.volume.land_tree(ex.image, to)
+        except OSError as e:
+            return f"its accepted result did not land in {to}: {e}"
+        engine.emit_info("delegate", f"{root.id}: its accepted result is in {to}"
+                                     + (f" (not written as it stood: {'; '.join(notes[:5])})" if notes else ""))
+        return None
+    ref = f"gfso/{ex.project_name}/accepted"
+    try:
+        sha = W.land(ex.base, f"refs/heads/{ref}", ex, rec.get("commit"), engine.accepted_delivery(root.id)[0])
+    except OSError as e:
+        return f"its accepted result did not land in {ex.base} as branch `{ref}`: {e}"
+    engine.emit_info("delegate", f"{root.id}: its accepted result {sha[:12]} is on branch `{ref}` of {ex.base}")
+    return None
 
 
 def node_temp(engine, task) -> str:

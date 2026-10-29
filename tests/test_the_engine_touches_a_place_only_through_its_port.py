@@ -35,7 +35,23 @@ HOSTS_OWN = {
     ("core/protocol/procedure.py", "_gone", "HOST.exists(str(Path(path).parent))"): "a path in no round, as above",
     ("adapters/worktrees.py", "is_repo_top", "shutil.which('git')"): "this host's git",
     ("adapters/worktrees.py", "is_repo_top", "Path(base).is_dir()"): "the base",
-    ("adapters/worktrees.py", "kept_out", "HOST.read_bytes(str(Path(base) / '.git' / 'info' / n))"): "the base",
+    ("adapters/execution.py", "Volume.import_base", "open(carried, 'rb')"): "the user's repository, carried in",
+    ("adapters/execution.py", "Volume.import_base", "tempfile.TemporaryDirectory(prefix='gfso-import-')"):
+        "the user's repository, carried in",
+    ("adapters/execution.py", "_carried_in",
+     "(d / 'branch').write_text(git('symbolic-ref', '-q', '--short', 'HEAD').stdout.strip() or 'main')"):
+        "the user's repository, carried in",
+    ("adapters/execution.py", "_carried_in",
+     "(p := (base / git('rev-parse', '--git-path', f'info/{n}').stdout.strip())).is_file()"):
+        "the user's repository, carried in",
+    ("adapters/execution.py", "_carried_in", "base.is_dir()"): "the user's repository, carried in",
+    ("adapters/execution.py", "Volume.land_tree", "shutil.rmtree(to)"): "a host directory of the user's: the result",
+    ("adapters/execution.py", "Volume.land_tree", "to.exists()"): "a host directory of the user's: the result",
+    ("adapters/execution.py", "_carried_in", "shutil.which('git')"): "this host's git",
+    ("adapters/execution.py", "fetched_on_host", "(f := (Path(d) / 'accepted.bundle')).write_bytes(bundle)"):
+        "the accepted result, landing in the user's repository",
+    ("adapters/execution.py", "fetched_on_host", "tempfile.TemporaryDirectory(prefix='gfso-land-')"):
+        "the accepted result, landing in the user's repository",
     ("tools_llm.py", "_keep_rejected_report", "d.mkdir(parents=True, exist_ok=True)"): "the server's state",
     ("tools_llm.py", "_keep_rejected_report",
      "f.write_text('# refused as a verdict: ' + defects + '\\n\\n' + text, encoding='utf-8')"): "the server's state",

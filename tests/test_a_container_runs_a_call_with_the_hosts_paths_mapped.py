@@ -133,7 +133,9 @@ def test_the_container_holds_only_the_projects_own_directories_and_no_cli_state(
     are the agents' own: the CLI state, every place's under it, is not mounted."""
     a = _ex(place, tmp_path).run_args()
     mounts = [a[i + 1] for i, v in enumerate(a) if v == "--mount"]
-    assert [m.split("dst=")[1] for m in mounts] == ["/gfso-place/base", "/gfso-place/.gfso-nodes-base/GB_proj"]
+    assert [m.split("dst=")[1] for m in mounts] == ["/gfso-place/base,volume-subpath=.gfso-base",
+                                                    "/gfso-place/.gfso-nodes-base/GB_proj"], "nothing of the host"
+    assert all(m.startswith("type=volume,") for m in mounts)
     assert "-v" not in a and "--privileged" not in a and ["--cap-add", "NET_ADMIN"] == a[a.index("--cap-add"):][:2]
     assert a[a.index("--name") + 1] == "gfso-e3-linux-gb-proj"
 

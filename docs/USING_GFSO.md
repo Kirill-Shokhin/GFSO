@@ -182,15 +182,29 @@ session is told which branches did not join, and integrating them is its work. W
 the worktrees whose branches joined are removed; the others stay and are named. A project dir that is
 not a repository is shared by every executor as it stands, and the log says so once.
 
-Under a container execution (`register_agent(..., execution=<name>)`) those places are not on your disk:
-the project's own directory — node places, validation rounds, temps, the sessions' CLI state — lives in
-the project's Docker volumes, named by the installation, the execution, the project and the base, and
-only the project dir itself stays a directory of yours. To read the places, write them out:
+Under a container execution (`register_agent(..., execution=<name>)`) none of that is on your disk, and
+nothing of your disk is mounted into a container: the project's own directory — node places, validation
+rounds, temps, the sessions' CLI state — and the project dir's working copy live in the project's Docker
+volumes, named by the installation, the execution, the project and the base. When the project
+first starts, your repository's HEAD is imported into the volume — committed work only, by your own git as a
+bundle, checked out there with LF line endings and none of your config or hooks; the log names the commit and
+what did not come in (files you changed or did not commit, submodules — empty inside —, Git LFS files — pointers
+inside). That import is the root's: no restart of the server, of Docker or of the container imports again, and
+only a new root of the project does, once the earlier root no longer works there. A project dir with no git is
+copied as a tree, once: nothing ever copies over the work done in it. Your working tree and your branches are
+never written: when the root PASSes, its accepted result lands in your repository as the branch
+`gfso/<project>/accepted` (a `git fetch` of a bundle, without submodules, nothing else), to read, diff and merge
+when you choose; a later root's PASS moves that branch (its reflog keeps where it stood), and the landing is
+refused while the branch is checked out in any worktree of yours. A project dir with no git lands its result
+beside it, in `../.gfso-accepted-<dir>/<project>/`. So two projects on one project dir no longer see each other's
+accepted work until you merge their branches. `perform="in_chat"` is refused under a container execution: work your own agent does
+on this host is not in the volume, and only what stands there is judged. To read the places, write them out:
 `gfso export-places <project> <dir>` puts them under `<dir>/<project>/` — the volume found by the project's
 own record in the installation's data directory, whatever roster the shell points at —, each node's repository whole
 (it no longer borrows objects from the project dir) and inert: no repository carries the config or hooks
-an agent gave it, so reading the export runs nothing an agent wrote; what could not be exported as it
-stood is listed in `<dir>/.gfso-export-notes`. A project whose places stood beside the project dir
+an agent gave it, so reading the export runs nothing an agent wrote; the project's working copy is there as
+`.gfso-base`, and its HEAD and `gfso/*` branches as `gfso-refs.bundle`, which your repository can `git fetch`;
+what could not be exported as it stood is listed in `<dir>/.gfso-export-notes`. A project whose places stood beside the project dir
 before it moved into volumes is copied in on its first start, and the host directory is renamed
 `<dir>.copied-in-<time>`. To go back to host directories, export the places first — what the project did
 since the copy-in exists only in the volumes — then remove the two volumes and the project's `volume:`
