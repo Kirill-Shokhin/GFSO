@@ -92,6 +92,8 @@ CONTACT_TOOLS = ("Read", "Bash", "Glob", "Grep")
 
 #: The longest one dispute's contact may run, in seconds.
 CONTACT_TIMEOUT_S = 900
+#: an answer's mark: its contact ran in the place as it stands, not a copy held to the delivery (`_ask`)
+UNHELD = "_unheld"
 
 CONTACT = ("# Contact\nYou are in the node's workspace, `{where}`, with a shell.\n{checkout}What this question turns "
            "on — what "
@@ -1554,7 +1556,7 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
-    at_place, text, laid = ex or LocalExecution(), "", {}
+    at_place, text, laid, unheld = ex or LocalExecution(), "", {}, False
     try:
         with (_contact_place(where, at_place, engine.project_name) if where else contextlib.nullcontext()) as tmp,                 _round(engine, tmp):
             laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp, at_place.files) if tmp else {}
@@ -1565,18 +1567,33 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                     # able to change it (§10.3); its answer reads as run in the place — and where places stand apart,
                     # never in the executor's place, its container and its CLI state (`ExecutionPort.apart`)
                     # …a dispute is ruled on the delivery the FAIL judged: held to it as a validator's copy is
-                    held = engine.delivered(task_id) if question == "dispute" else None
-                    with (snapshot(where, Path(tmp) / "place", at_place, delivered=held)
-                          if _NODES in str(where) or at_place.apart
-                          else contextlib.nullcontext()) as copy:
-                        if not copy and at_place.apart:
-                            raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
-                        at = copy or where
-                        text = llm.run_agent(PROMPT.read_text(encoding="utf-8"),
-                                             CONTACT.format(where=at, checkout=checkout_note(at))
-                                             + (swap(packet, where, copy) if copy else packet),
-                                             allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
-                        text = swap(text, copy, where) if copy else text
+                    held, system = (engine.delivered(task_id) if question == "dispute" else None,
+                                    PROMPT.read_text(encoding="utf-8"))
+
+                    def _contact(held, note=""):
+                        with (snapshot(where, Path(tmp) / "place", at_place, delivered=held)
+                              if _NODES in str(where) or at_place.apart
+                              else contextlib.nullcontext()) as copy:
+                            if not copy and at_place.apart:
+                                raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
+                            at = copy or where
+                            said = llm.run_agent(system, CONTACT.format(where=at, checkout=checkout_note(at))
+                                                 + (swap(packet, where, copy) if copy else packet) + note,
+                                                 allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
+                            return swap(said, copy, where) if copy else said
+                    try:
+                        text = _contact(held)
+                    except NotTheDelivery as e:
+                        if "changed after DELIVER" not in str(e):
+                            raise
+                        # …a rework that changed the place after DELIVER, which nothing restores: asked again, it never
+                        # came back and nothing else ran for 2 h 26 min (series 2 REF 2, root.layout, 2026-10-29). What a
+                        # dispute turns on — what the checks print — the place as it stands answers; only a retirement
+                        # speaks of the delivery itself, so this ruling retires nothing (critic over the on-record cut)
+                        unheld = True
+                        text = _contact(None, f"\n\nThis copy is the place as it stands, NOT the delivery ({e}): run "
+                                              f"what the dispute turns on here, and retire no finding — a retirement "
+                                              f"speaks of the delivery, which this is not.")
                 else:
                     # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
                     # directory refused every real call, so no machine issuer ever answered (hidden by fakes that
@@ -1595,7 +1612,10 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     if where and the_call_was_cut(llm, str(text)):   # an agent run of minutes is where calls are severed (critic 8)
         raise Unavailable("the contact run was cut before it answered")
     file_tech_reports(engine, answer := parse_structured(text, schema), "issuer", actor, task_id)
-    return _unlaid(answer, [d.as_posix() for d in laid.values()]), dict(llm.last_tool_calls) if where else None
+    answer = _unlaid(answer, [d.as_posix() for d in laid.values()])
+    if unheld and isinstance(answer, dict):
+        answer[UNHELD] = True                  # …a copy not held to the delivery retires nothing (`answer_the_challenge`)
+    return answer, dict(llm.last_tool_calls) if where else None
 
 
 def _unlaid(x, dirs: list):
@@ -1639,6 +1659,13 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
     said = findings.named(engine.challenge_reason(task_id) or "", [s for ps in engine.regression_probes(task_id).values()
                                                                     for p in ps if (s := p.get("id"))])
     retire = [i for i in retire if i in said]
+    if (answer.pop(UNHELD, False) if isinstance(answer, dict) else False) and retire:
+        # …a ruling on the place as it stands, not the delivery, takes back no observation of the delivery: the work goes
+        # back with the way to its ruling — emptied instead, an acceptance that only retired decided nothing, the node
+        # stayed CHALLENGED and every later ask was unheld again (critic over the unheld cut)
+        decision, retire, ran = "reject", [], None
+        answer["justification"] = ("the place changed after DELIVER, so no copy of the delivery could be ruled on; a "
+                                   "finding is ruled on a delivery — deliver the work and dispute the finding there")
     if answer is None or decision not in ("accept", "reject"):
         # an acceptance names the contract it installs; falling through to a rejection would send the
         # executor back carrying a justification written to mean the issuer AGREED with him

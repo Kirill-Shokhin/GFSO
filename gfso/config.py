@@ -152,6 +152,21 @@ def project_by_env() -> str:
     return os.environ.get("GFSO_PROJECT", "")
 
 
+#: Set by `gfso serve` alone: this process is THE server of its data dir, and the projects that stood when it started
+#: stay stopped until their Start (`runtime.ProjectRegistry`); a reload worker inherits it, a stdio MCP process does not.
+SERVES_ENV = "GFSO_SERVES"
+
+
+def serves() -> bool:
+    """Is this process the server of its data dir (`mark_the_server`)? Not inherited by anything it runs."""
+    return os.environ.get(SERVES_ENV) == "1"
+
+
+def mark_the_server() -> None:
+    """This process is the server of its data dir — `gfso serve`, before the app and its registry are built."""
+    os.environ[SERVES_ENV] = "1"
+
+
 def active_project() -> str:
     """The project a session starts in when it names none.
 
@@ -359,7 +374,7 @@ SECRET_ENV = re.compile(r"(API_KEY|AUTH_TOKEN|_SECRET|_PASSWORD)$")
 def env_without_secrets() -> dict:
     """This process's environment less every key and token (`SECRET_ENV`) and the server's mark (`subprocess_env`) —
     what an agent run's commands start with."""
-    return {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and k != "GFSO_SERVING"}
+    return {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and k not in ("GFSO_SERVING", SERVES_ENV)}
 
 
 def storage_kind(default: str = "sqlite") -> str:

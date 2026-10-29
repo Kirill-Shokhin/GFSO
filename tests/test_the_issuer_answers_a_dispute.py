@@ -23,6 +23,7 @@ import pytest
 import gfso.issuer as I
 import gfso.tools as T
 from gfso.adapters.snapshots import NotTheDelivery
+from gfso.core.protocol.procedure import probe_id
 from gfso.delegate import ISSUER_VERBS
 from gfso.issuer import Unavailable, Verbs, answer_the_challenge, settle
 from gfso.core.types import State, TaskId
@@ -409,24 +410,72 @@ def test_in_a_nodes_own_place_the_issuer_runs_in_a_copy_of_it(tmp_path):
 
 
 def test_a_dispute_is_ruled_only_on_the_delivery_the_fail_judged(tmp_path, monkeypatch):
-    """The ruling can retire findings: on a copy that is not what DELIVER recorded — the place changed after it — no
-    contact runs (`snapshots.NotTheDelivery`), as where no copy could be made."""
+    """The ruling can retire findings, so it is held to the delivery the FAIL judged. When the place changed after
+    DELIVER — a rework edited it, which nothing restores — the dispute is still ruled by contact, in a copy of the place
+    as it stands, but that ruling retires nothing: asked again instead, the place never came back and series 2 REF 2
+    (2026-10-29) ran nothing for 2 h 26 min; ruled with no tools, the executor would choose whether its judge runs."""
     place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
+    (copy := tmp_path / "copy").mkdir()
     place.mkdir(parents=True)
     held = []
 
+    @contextlib.contextmanager
     def _held(where, at, ex, delivered=None):
         held.append(delivered)
-        raise NotTheDelivery("the place changed after DELIVER (c0ffee): 1 tracked file(s) differ — f")
+        if delivered:
+            raise NotTheDelivery("the place changed after DELIVER (c0ffee): 1 tracked file(s) differ — f")
+        yield str(copy)
     monkeypatch.setattr(I, "snapshot", _held)
     e = make_engine()
     e.start()
     try:
         _disputed(e)
         monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee"))
-        llm = _ContactLLM({"decision": "accept", "justification": "ran it"}, ran={"Bash": 1})
-        with pytest.raises(Unavailable, match="changed after DELIVER"):
-            answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
-        assert held == [("tree", "c0ffee")] and not llm.where
+        llm = _ContactLLM({"decision": "reject", "justification": "ran `make check`: it prints ok on the scope's "
+                                                                  "own programs", "retire_findings": ["c#x"]},
+                          ran={"Bash": 1})
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        e.wait_idle()
+        assert held == [("tree", "c0ffee"), None], "held to the delivery first, then the place as it stands"
+        assert llm.where and llm.where[-1][0] == str(copy) and llm.where[-1][1], "contact, with its tools"
+        assert "NOT the delivery" in llm.packets[-1] and "retire no finding" in llm.packets[-1]
+        assert e.graph.get_state(TaskId("leaf")) == State.EXECUTING, "the dispute is answered"
+    finally:
+        e.stop()
+
+
+def test_a_finding_is_not_retired_on_the_place_as_it_stands_and_the_work_goes_back(tmp_path, monkeypatch):
+    """An acceptance that only retires a finding, ruled on the place as it stands after a rework changed it, is no
+    ruling on the delivery: the work goes back with the way to that ruling — deliver, then dispute — and the finding
+    stands. Emptied instead, the acceptance decided nothing and the node stayed CHALLENGED, asked again unheld."""
+    place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
+    (copy := tmp_path / "copy").mkdir()
+    place.mkdir(parents=True)
+
+    @contextlib.contextmanager
+    def _held(where, at, ex, delivered=None):
+        if delivered:
+            raise NotTheDelivery("the place changed after DELIVER (c0ffee): 1 tracked file(s) differ — f")
+        yield str(copy)
+    monkeypatch.setattr(I, "snapshot", _held)
+    e = make_engine()
+    e.start()
+    try:
+        T.create_task(e, "leaf", {"description": "a leaf", "criteria": [criterion("c", "C")], "accepted_risks": _RISK},
+                      assignee="worker")
+        e.wait_idle()
+        T.signal(e, "leaf", "ACCEPT", "worker")
+        cmd = "./cc wide.c; echo exit=$?"
+        pid = probe_id("c", {"command": cmd})
+        e._graph._storage.store_critique(TaskId("leaf#regression-probes"), json.dumps({"c": [
+            {"id": pid, "behaviour": "b", "command": cmd, "as_run": cmd, "expect": "exit=0"}]}))
+        T.signal(e, "leaf", "CHALLENGE", "worker", reason=f"{pid} is not c's")
+        e.wait_idle()
+        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee"))
+        llm = _ContactLLM({"decision": "accept", "justification": "not c", "retire_findings": [pid]}, ran={})
+        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        e.wait_idle()
+        assert e.graph.get_state(TaskId("leaf")) == State.EXECUTING, out
+        assert pid in [p["id"] for ps in e.regression_probes(TaskId("leaf")).values() for p in ps], "the finding stands"
     finally:
         e.stop()

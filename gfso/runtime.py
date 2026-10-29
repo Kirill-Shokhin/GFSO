@@ -87,6 +87,14 @@ class ProjectRegistry:
         # 500 "duplicate column name" and the page drew no graph until reloaded (2026-10-25)
         self._creating = threading.RLock()
         self._active = active_project()
+        # THE PROJECTS THAT STOOD WHEN THE SERVER STARTED stay stopped until their Start (the author, 2026-10-29: «разве
+        # они не должны все в стопед переводиться автоматически»; PROJECT_CLOCK.md case 16) — read by the serving
+        # process alone: a stdio MCP process builds engines on the same files and would stop a live server's projects
+        self._held = set()
+        if _config.serves():
+            self._held = {n[:-3] for n in (os.listdir(self._dir) if os.path.isdir(self._dir) else ()) if n.endswith(".db")}
+            if os.path.exists(str(_config.db_path())):
+                self._held.add(DEFAULT_PROJECT)
         ProjectRegistry._NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
     @property
@@ -120,6 +128,14 @@ class ProjectRegistry:
                 self._engines[name] = build_engine_from_env(**kw)
                 self._engines[name].project_name = name    # per-project instruments key off it
                 self._engines[name]._project_name = name    # (the older spelling, still read downstream)
+                if name in self._held:       # …before its dispatcher: a project that stood is opened stopped, once —
+                    self._held.discard(name)  # one deleted and made again after the start runs
+                    try:
+                        self._engines[name].pause("system", "the server started: a project stays stopped until its "
+                                                            "Start")
+                    except Exception as ex:
+                        print(f"gfso: project {name!r} could not be stopped at the server's start ({ex}) — it runs",
+                              file=sys.stderr, flush=True)
                 try:  # delegation autostart rides with the engine (works under every entry point)
                     # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm →
                     # gfso.runtime), so delegation is reached from here only at call time.

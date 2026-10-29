@@ -23,7 +23,7 @@ from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.conformance import assess, report
 from gfso import __version__, serverctl
-from gfso.config import LOOPBACK, admit_host, db_path, install_mcp_env, install_serve_env
+from gfso.config import LOOPBACK, admit_host, db_path, install_mcp_env, install_serve_env, mark_the_server
 from gfso import serverctl
 from gfso.doctor import claude_cli, doctor, setup
 from gfso.examples import DEMOS, NEEDS_MODEL
@@ -478,6 +478,8 @@ def _serve(args):
     # The server's descendants — executors, validators, their probes — die with it, however it ends.
     bind_this_process()
     end_leftovers()              # …and the project containers of the server that stood here before
+    # …and its projects that stood stay stopped until their Start; a reload worker inherits it, a stdio MCP process not
+    mark_the_server()
 
     # Store config in env for reload mode
     # Whatever raises the server — `gfso up`, a session's connect.py, or this command typed by hand
