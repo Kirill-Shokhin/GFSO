@@ -8,6 +8,7 @@ from __future__ import annotations
 import subprocess
 
 from gfso.adapters import worktrees as W
+from gfso.workspaces import _unjoined_text
 from tests.test_a_node_works_in_its_own_place import _git, _repo
 
 
@@ -28,8 +29,6 @@ def test_a_join_does_not_abort_the_merge_the_executor_left_unfinished(tmp_path):
 
 def test_the_packet_tells_the_agent_its_merge_stands_not_that_one_was_aborted():
     """Told "the merge was aborted", an agent whose own merge the join left alone would abort it itself."""
-    from gfso.adapters import worktrees as W
-    from gfso.workspaces import _unjoined_text
     said = _unjoined_text([("root.p", "gfso/root.p", W.MERGE_STANDS, "gfso/root.p")])
     assert "do NOT abort" in said and "was aborted" not in said
     assert "was aborted" in _unjoined_text([("root.p", "gfso/root.p", "CONFLICT (content)", "gfso/root.p")])
