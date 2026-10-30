@@ -9,6 +9,7 @@ import {S, procs} from './state.js';
 import {notice, askInPage, act} from './overlays.js';
 import {modelName, goalWord, terminal} from './vocab.js';
 import {hm, day as date, dayLong, usd} from './fmt.js';
+import {readResources, machine, ofProject} from './resources.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
 export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (m[w.project] || 0) + 1, m), {});
@@ -94,7 +95,7 @@ function row(p, busy, active) {
         + `<span class="pl-time">${t ? clock(t) : ''}</span>`
         + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(x => `<span>${esc(x)}</span>`).join(' · ')}</i></span>`
         + `<span class="pl-where ${cls}"${TIP.where(why)}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
-        + `<span class="pl-mode">${esc(p.mode || '')}</span>`
+        + `<span class="pl-mode">${esc(p.mode || '')}</span><span class="pl-res">${ofProject(p.n)}</span>`
         + `<span class="pl-cost">${p.cost ? usd(p.cost) : ''}</span></a>`;
 }
 
@@ -116,7 +117,7 @@ function draw() {
         last = d;
         html += row(p, busy[p.n], on);
     });
-    $('pl-list').innerHTML = html || '<div class="pn-meta">no project matches</div>';
+    $('pl-list').innerHTML = machine() + (html || '<div class="pn-meta">no project matches</div>');
     $('pl-count').textContent = `${hits.length} of ${(all || []).length}`;
     $('pl-more').hidden = hits.length <= shown;
     $('pl-more').textContent = `show ${Math.min(SHOWN, hits.length - shown)} more`;
@@ -129,6 +130,7 @@ export async function toggleProjects() {
     shown = SHOWN;
     await refreshProjects();
     draw();
+    readResources(() => { if (!panel().hidden) draw(); });
     $('pl-search').focus();
 }
 export const closeProjects = () => { panel().hidden = true; };

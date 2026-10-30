@@ -14,10 +14,11 @@ import * as progress from './progress.js';
 import * as cost from './cost.js';
 import * as work from './work.js';
 import * as events from './events.js';
+import * as resources from './resources.js';
 
 // Each tab is named by the question it answers, so two views that both show money are not read as one:
 // `spend` is where the money and time went (by node, level, role), `models` is who did the work.
-const VIEWS = {timeline, progress, spend: cost, models: work, events}, KEY = 'gfso.deck';
+const VIEWS = {timeline, progress, spend: cost, models: work, events, resources}, KEY = 'gfso.deck';
 const isTick = m => / tokens · \d+s$/.test(m);         // live token ticks: shown in place, never persisted
 const pref = kept(KEY, JSON.parse) || {}, save = () => keep(KEY, JSON.stringify(pref));
 let view = VIEWS[pref.view] ? pref.view : 'timeline';

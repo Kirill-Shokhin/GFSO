@@ -126,6 +126,21 @@ export const TAB = {
     spend: hover('Where the money and session time went', 'By node, by level of the plan, by role'),
     models: hover('Who did the work', 'Each model in each role: sessions, what the cost went to, how full its contexts got'),
     events: hover('The log, grouped by node and kind', 'Newest first; a node\'s group opens its trail'),
+    resources: hover("What this project's containers take now", 'Memory, CPU and disk by node, read from Docker'),
+};
+
+// ── resources: what Docker holds for this installation (`GET /api/resources`) ──
+export const RES = {
+    // a figure Docker gave for some of the containers only is a lower bound, and says of how many
+    counted: c => c && c.split('/')[0] !== c.split('/')[1] ? hover(`Counted\t${c} containers`, 'Docker gave no figure for the rest') : '',
+    busy: hover('Busy', 'A model call runs in it now'),
+    full: name => hover(name),
+    unread: 'Docker did not answer — the reading before it is shown',
+    older: n => `${n} containers started by an older build carry no project: the counts here leave them out`,
+    none: 'No container or volume of this project',
+    orphan: size => hover(`Orphans\t${size}`, "Volumes of a project this installation no longer holds"),
+    volumes: vs => hover('On disk', vs.map(([role, size]) => `${size} ${role}`)),
+    machine: hover('This machine', "What GFSO's containers take of it now — every project of this installation"),
 };
 
 // ── the header ──

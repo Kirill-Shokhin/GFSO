@@ -1195,12 +1195,19 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pl-bar .list-add { margin: 0; white-space: nowrap; }
 .pl-day { font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: var(--tr-mono);
           color: var(--ink-faint); padding: 14px 0 4px; border-bottom: 1px solid var(--hair); }
-.pl-row { display: grid; grid-template-columns: 44px 1fr 150px 40px 64px; gap: 10px; align-items: baseline;
+.pl-row { display: grid; grid-template-columns: 44px 1fr 150px 40px 120px 64px; gap: 10px; align-items: baseline;
           padding: 7px 6px; border-bottom: 1px solid var(--hair-soft); color: var(--ink); text-decoration: none; }
 .pl-row:hover { background: var(--hair-soft); }
 .pl-row.cur { box-shadow: inset 2px 0 0 var(--acc); }
-.pl-time, .pl-mode, .pl-cost { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
+.pl-time, .pl-mode, .pl-cost, .pl-res { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .pl-cost { text-align: right; }
+.pl-res { text-align: right; white-space: nowrap; }
+.pl-res i { font-style: normal; color: var(--ink-faint); margin: 0 6px 0 3px; }
+/* what Docker holds: the machine over the project list, a project's own in its deck view — counts as marks */
+.rs-machine, .rs-tallies { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 6px; }
+.rs-machine { border-bottom: 1px solid var(--hair); }
+.rs-tallies { padding: 0 0 10px; }
+.rs-busy { color: var(--ink); }
 .pl-what { min-width: 0; }
 .pl-what b { display: block; font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-what i { display: block; font-style: normal; font-family: var(--font-mono); font-size: 10px; color: var(--ink-faint); }   /* wraps between its parts, never cut */
@@ -1278,6 +1285,9 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .sidebar:not(.hidden) { position: absolute; inset: 0; width: auto; z-index: 25; padding: 18px 16px; border-left: none; }
     .reader { left: 0; right: 0; width: auto; z-index: 26; padding: 0 16px 16px; }
     .goal-panel, .project-panel { width: 100%; }
+    .pl-row { grid-template-columns: 40px 1fr 64px; row-gap: 2px; }
+    .pl-where, .pl-mode, .pl-res { grid-column: 2; text-align: left; }
+    .pl-cost { grid-column: 3; grid-row: 1; }
     .dk-grip { top: -10px; height: 20px; }
     .dk-head { overflow-x: auto; overflow-y: hidden; gap: 10px; padding: 0 8px; }
     .dk-head nav, .dk-head > * { flex-shrink: 0; }
