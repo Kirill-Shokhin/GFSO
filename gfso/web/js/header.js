@@ -33,8 +33,9 @@ function standing(root) {
         ESCALATED: 'escalated, the issuer decides',
         CANCELLING: 'being cancelled',
     }[root.state] || said(root.state);
-    return `<span class="hd-phrase">${cap(phrase)}</span>`
-        + (parts.length ? tally(`${k}/${parts.length}`, 'parts done') : '');
+    // …the phrase and its count read as one group, close together, apart from what needs a person
+    return `<span class="hd-standing"><span class="hd-phrase">${cap(phrase)}</span>`
+        + (parts.length ? tally(`${k}/${parts.length}`, 'parts done') : '') + '</span>';
 }
 
 let status = '';                   // the root's standing, set by goal(), shown in the middle

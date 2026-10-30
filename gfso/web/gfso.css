@@ -134,7 +134,7 @@ body {
 .need b { font-weight: 600; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
 .need:hover { filter: brightness(1.15); }
-.hd-quiet { font-size: 12px; font-style: italic; color: var(--ui-on-chrome); opacity: 0.45; white-space: nowrap; }
+.hd-quiet { font-size: 12.5px; font-style: italic; color: var(--ui-on-chrome); opacity: 0.45; white-space: nowrap; }
 .hd-quality { position: relative; flex: 0 0 auto; }
 .hd-q { cursor: pointer; opacity: 0.75; }
 .hd-q.acc { background: var(--acc); border-color: var(--acc); color: var(--bg); opacity: 1; }
@@ -1197,8 +1197,14 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
          font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); }
 .tally b { font-family: var(--font-display); font-size: 17px; font-weight: 650; letter-spacing: 0; text-transform: none; }
 .tally i { font-style: normal; opacity: 0.7; }
-.hd-needs .tally b { font-size: 14px; }
-.hd-needs .tally i { font-family: var(--font-body); font-size: 12px; text-transform: none; letter-spacing: 0; }
+/* ONE FACE, ONE SIZE, ONE BASELINE: the goal's standing is a short phrase and its count set together in the body face —
+   the figure set apart by weight alone, never by a larger or another face, which lifted it half a head above the line
+   (the author, 2026-10-30: «8/11 на пол головы выше строки … как минимум 3 шрифта … слишком далеко отстоит») */
+.hd-standing { display: inline-flex; align-items: baseline; gap: 7px; white-space: nowrap; font-size: 12.5px; }
+.hd-standing .hd-phrase { font-size: inherit; }
+.hd-standing .tally { font-family: var(--font-body); font-size: inherit; text-transform: none; letter-spacing: 0; gap: 4px; }
+.hd-standing .tally b { font-family: inherit; font-size: inherit; font-weight: 700; }
+.hd-standing .tally i { opacity: 0.75; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
 .dk-head .tally b { font-size: 13px; color: var(--ink); }
 .pn-meta .tally { margin-left: 12px; }
