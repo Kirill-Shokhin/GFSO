@@ -952,8 +952,12 @@ def laid(command: str, dirs: Mapping[str, object]) -> str:
 def shows(printed: str, expect: str) -> bool:
     """Does `printed` show exactly what a check must, as a check reads a printed output: written `\\t`/`\\n` escapes as
     the characters, whitespace runs as one."""
-    u = lambda s: " ".join(s.replace("\\t", "\t").replace("\\n", "\n").split())
-    return u(printed) == u(expect)
+    return as_read(printed) == as_read(expect)
+
+
+def as_read(s: str) -> str:
+    """A printed text as a check reads it: written `\\t`/`\\n` escapes as the characters, whitespace runs as one."""
+    return " ".join(str(s or "").replace("\\t", "\t").replace("\\n", "\n").split())
 
 
 #: What an author is told `exact` means — one text for every schema that pins a probe (`Probe.exact`).

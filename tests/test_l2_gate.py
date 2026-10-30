@@ -801,7 +801,8 @@ def test_a_rechecked_carry_over_says_the_fix_is_what_closes_it(engine, monkeypat
     out = R._still_undecided(engine, task, _LLM(), prior)
 
     assert out[0]["rechecked"] is True
-    assert "RE-CHECKED" in out[0]["admits"] and "fixing the criteria IS what closes it" in out[0]["admits"]
+    # the exit is a NEW pinned check of what is still admitted — a criterion over checks already pinned closes nothing
+    assert "RE-CHECKED" in out[0]["admits"] and "a NEW pinned check of what is still admitted closes it" in out[0]["admits"]
 
 
 
@@ -886,3 +887,20 @@ def test_a_split_one_session_carries_still_answers_to_the_syntactic_level(engine
         pytest.skip("the revision left no Level-0 hole on this fixture")
     assert e.execution_blocked_by(TaskId("kid")) is not None
     assert _accept(e) != State.EXECUTING
+
+
+def test_an_obligation_the_answer_gives_a_counter_example_for_stays_open(engine, monkeypatch):
+    """`decided: [1]` beside `open: [{n: 1, admits: …}]` — the answer's own evidence keeps it open (critic over 076abfb).
+    CONTROL: drop the `done -=` line and it is closed."""
+    _plan(engine)
+    task = engine.graph.get_task(TaskId("root"))
+    prior = ({"obligation": "diagnostics go to stderr", "admits": "first reading"},)
+    monkeypatch.setattr(R, "parse_structured", lambda *a, **k: {
+        "decided": ["1"], "open": [{"n": "1", "admits": "every pin sends stderr to /dev/null"}]})
+
+    class _LLM:
+        def complete(self, prompt, context=""):
+            return "{}"
+
+    out = R._still_undecided(engine, task, _LLM(), prior)
+    assert len(out) == 1 and "stderr to /dev/null" in out[0]["admits"]

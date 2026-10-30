@@ -45,8 +45,9 @@ from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, materialize_inputs, shows, pinned_files, probe_id,
-                                          probes_from as _checks_of, unrerunnable, with_named_files)
+from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, materialize_inputs, same_probe, shows,
+                                          pinned_files, probe_id, probes_from as _checks_of, unrerunnable,
+                                          with_named_files)
 from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of)
 from gfso.decompose.extract import extract_spec
@@ -400,9 +401,10 @@ def _gate_findings(engine, task_id) -> str:
                "a criterion whose probe `carry`s that probe's id (shown after `decided by`) — the system copies it "
                "exactly, its pinned inputs included." if lines else "")
             + (f"\n\n{own} of them (`undecided: …`) are requirements of this node's OWN goal that none of its OWN "
-               f"criteria writes: no move on a child closes one — the next review names it again word for word. "
-               f"`add_criterion` on this node closes them — one criterion listing the requirements of one component "
-               f"closes every one it lists — and `reshape` with `map` then gives it the child that delivers them."
+               f"criteria's PINNED CHECKS decides: no move on a child closes one — the next review names it again. "
+               f"What closes one is a NEW pinned check of what its finding says is still admitted — `add_criterion` "
+               f"on this node with that check (a criterion over checks already pinned here decides nothing new and is "
+               f"refused), then `reshape` with `map` gives it the child that delivers it."
                if own else ""))
 
 
@@ -668,7 +670,7 @@ def _probes(stored, answered: tuple) -> tuple:
                  else named(pr) if pr.inputs else pr for pr in answered)
 
 
-def spec_with(task, criteria: list, additions_only: bool = False, repin: frozenset = frozenset()) -> Spec:
+def spec_with(task, criteria: list, additions_only: bool = False, repin: frozenset = frozenset(), split=()) -> Spec:
     """The node's contract with its criteria as the answer states them — merged BY NAME onto the stored
     ones, so what the answer does not speak to (Dep glue, composition, pinned inputs) is carried, not
     silently dropped. A criterion the answer leaves out is dropped, except one whose check reads a producer's result
@@ -678,7 +680,7 @@ def spec_with(task, criteria: list, additions_only: bool = False, repin: frozens
     procedure is the issuer side's instrument, not the user's word: a probe its own criterion's text refutes was
     re-written eight times and dropped each time until the root closed by count (AUTO haiku sql_database, root
     «Comment handling», 2026-10-14); and the same answers restated every other criterion, one of them 3 probes → 1."""
-    criteria, why = _carry(task, criteria)   # a probe kept by its id is the stored one, never the placeholder beside it
+    criteria, why = _carry(task, criteria, split)   # a probe kept by its id is the stored one, never the placeholder beside it
     if why:
         raise ValueError(why)
     stored = {c.name: c for c in task.spec.criteria}
@@ -933,10 +935,10 @@ def _changes_what_failed(task, spec, to, budget) -> bool:
 
 
 def _reassign(engine, task, actor, answer, why, verbs):
-    if (bad := _carry(task, answer.get("criteria"))[1]):
+    if (bad := _carry(task, answer.get("criteria"), _split_of(engine, task))[1]):
         return False, bad
-    spec = spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task)) \
-        if answer.get("criteria") else task.spec
+    spec = spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task),
+                     split=_split_of(engine, task)) if answer.get("criteria") else task.spec
     if bad := narrowing_at_the_root(engine, task, spec):
         return False, bad
     to = seam_keeping_executor(engine, task, bool(answer.get("another_executor")))
@@ -985,7 +987,7 @@ def _revise_child(engine, task, actor, answer, why, verbs):
     if not (answer.get("criteria") or covers):
         return False, ("a revised child names its criteria as they will stand (`criteria`), or which of this "
                        "node's criteria it carries (`covers`)")
-    crits, why = _carry(task, answer.get("criteria"))
+    crits, why = _carry(task, answer.get("criteria"), _split_of(engine, task))
     if why:
         return False, why
     spec = spec_with(child, crits) if crits else child.spec
@@ -1094,7 +1096,7 @@ def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -
     reads = [_in_act(engine, task, r, ids, standing) for r in c.get("reads") or []]
     if bad := [r for r in reads if r not in standing and r not in set(ids.values())]:
         return None, f"`reads` names {', '.join(bad)} — not an active child of {task.id}, nor one this act adds"
-    crits, why = _carry(task, c["criteria"])
+    crits, why = _carry(task, c["criteria"], _split_of(engine, task))
     if why:
         return None, why
     return {"task_id": cid, "covers": covers,
@@ -1107,23 +1109,49 @@ def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -
         **{k: c[k] for k in ("deadline", "max_iterations") if c.get(k)}}, ""
 
 
-def _carry(task, criteria: list) -> tuple[list, str]:
+def _split_of(engine, task) -> list:
+    """The children of the node's split — whose probes an answer may `carry` by id, as the node's own."""
+    return list(engine.graph.get_children(task.id))
+
+
+def _observation(p) -> tuple:
+    """What running a pinned probe observes, as a check reads its output — one key for every copy of one probe."""
+    cmd, _, inputs = same_probe(p)
+    return cmd, as_read(p.expect), inputs, bool(p.exact)   # who decides the output is part of the probe carried
+
+
+def _carry(task, criteria: list, split=()) -> tuple[list, str]:
     """The answer's criteria with each probe that names one of `task`'s own pinned probes by id (`carry`) replaced by
     that probe EXACTLY — command, expect, its inputs with their content — copied by the system. The plan gate asks a
     child to carry the parent's very probe (its inputs judged by content), and the issuer, shown inputs by name and
     count only, could not write it: a same-named file another child already pinned made the content ambiguous
-    (own-plan row 3: 5–8 of 18 root criteria open on it). ([], why) when an id names no probe of `task`."""
-    own = {probe_id(c.name, p): p.to_dict() for c in task.spec.criteria for p in (c.check or ())}
+    (own-plan row 3: 5–8 of 18 root criteria open on it). ([], why) when an id names no probe of `task`.
+    …or of a child of its split (`split`): the issuer wrote those too, and a reshape moving `root.head`'s probes onto
+    the child replacing it by their ids was refused as "not a probe of root" (GB_coreutils_tnqh4a016)."""
+    pinned = {probe_id(c.name, p): p for k in (task, *split) for c in k.spec.criteria for p in (c.check or ())}
+    own = {k: p.to_dict() for k, p in pinned.items()}
+
+    def found(ref: str) -> dict | None:
+        """The probe `ref` names: by its id, or — the id's identity being its command's hash — by that hash alone where
+        every probe carrying it is one observation. A haiku issuer wrote the hash bare (`#6e78ee3b`) or under a sibling
+        criterion's name the same command is pinned under (its prose and line breaks apart), and was refused 7 times in
+        62 min, the plan held at admission (GB_coreutils_tnq9d1176)."""
+        if ref in own:
+            return own[ref]
+        h = re.search(r"([0-9a-f]{8})\s*$", ref)
+        hits = [k for k in pinned if h and k.endswith("#" + h.group(1))]
+        return own[hits[0]] if hits and len({_observation(pinned[k]) for k in hits}) == 1 else None
+
     out = []
     for c in criteria or ():
         if not isinstance(c, dict):
             out.append(c)
             continue
-        if bad := [str(p["carry"]) for p in c.get("check") or () if isinstance(p, dict) and p.get("carry")
-                   and str(p["carry"]) not in own]:
-            return [], (f"`carry` names {', '.join(bad)} — not a pinned probe of {task.id}; its probes are: "
+        carried = [str(p["carry"]) for p in c.get("check") or () if isinstance(p, dict) and p.get("carry")]
+        if bad := [r for r in carried if found(r) is None]:
+            return [], (f"`carry` names {', '.join(bad)} — not one pinned probe of {task.id} or of its split; they are: "
                         + ", ".join(sorted(own)))
-        out.append({**c, "check": [dict(own[str(p["carry"])]) if isinstance(p, dict) and p.get("carry") else p
+        out.append({**c, "check": [dict(found(str(p["carry"]))) if isinstance(p, dict) and p.get("carry") else p
                                    for p in c.get("check") or ()]})
     return out, ""
 
@@ -1440,12 +1468,19 @@ def _add_criterion(engine, task, actor, answer, why, verbs):
                        f"its criteria do not write (FM-1.f, §9.4) is reported to him: `challenge`")
     if not answer.get("criteria"):
         return False, "name the criterion to add (`criteria`), with its pinned check"
-    carried, bad = _carry(task, answer["criteria"])
+    carried, bad = _carry(task, answer["criteria"], _split_of(engine, task))
     if bad:
         return False, bad
     new = [c for c in carried if c.get("name") not in {k.name for k in task.spec.criteria}]
     if not new:
         return False, "every criterion named already stands; adding means a NEW name"
+    # …AND A NEW NAME OVER CHECKS ALREADY PINNED DECIDES NOTHING NEW: the obligation stayed undecided, the root grew from
+    # 5 to 40 criteria, ten of them one obligation over the same probes, each a fresh coverage hole (GB_coreutils_tnq9d1176)
+    standing = {_observation(p) for k in task.spec.criteria for p in (k.check or ())}
+    if (checks := [p for c in new for p in _checks_of(c)]) and all(_observation(p) in standing for p in checks):
+        return False, (f"every check of {', '.join(c.get('name', '') for c in new)} is already pinned on {task.id} — "
+                       f"the same checks decide nothing new; what the open finding says is still admitted is what a "
+                       f"NEW check must probe")
     spec = dataclasses.replace(task.spec, criteria=task.spec.criteria + tuple(
         Criteria(c.get("name", ""), c.get("description", ""), check=_checks_of(c)) for c in new))
     # an obligation of the goal no criterion decided is the contract's own defect, unless the issuer says the goal grew
@@ -1742,7 +1777,8 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         # …below an AUTO root, a node of the user's plan takes additions only — no re-pin: its expected outputs are the
         # user's, and one re-pinned to what the build printed contradicted the root's own (GB_sql_database_tne9fg736)
         spec = (spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task),
-                          repin=questioned(engine, task) if is_auto_root(engine.graph, task) else frozenset())
+                          repin=questioned(engine, task) if is_auto_root(engine.graph, task) else frozenset(),
+                          split=_split_of(engine, task))
                 if answer.get("criteria") else task.spec)
     except Exception as e:                              # noqa: BLE001 — a malformed contract is refused
         return {"task_id": str(task_id), "status": "refused", "why": f"the corrected contract is malformed: {e}"}

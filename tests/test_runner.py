@@ -128,6 +128,76 @@ def test_checker_incomplete_verdict_is_no_verdict():
     assert "INCOMPLETE" in crit.semantic_findings and "c2" in crit.semantic_findings
 
 
+def test_criteria_labelled_and_glossed_by_the_checker_are_read_by_their_text():
+    """`V1 c1` / `V2 c2 (gloss)` / `c1: x`: a haiku checker labelled all 40 of a root's criteria so, every one read as
+    unchecked, two reviews gave no verdict (GB_coreutils_tnq9d1176). A bare number names nothing by text.
+    CONTROL: `_named` as an exact match only."""
+    from gfso.critic.runner import _named
+    got = [_named(s, ["c1", "c2"]) for s in ("V1 c1", "V2 c2 (b carries it)", "c1: x", "V2", "V3")]
+    assert got == ["c1", "c2", "c1", "V2", "V3"]
+
+
+def test_a_reading_is_keyed_by_its_numbers_only_where_its_own_text_bears_them_out():
+    """Paraphrased, cut short or bare entries take their number when at least three entries' text is their n-th name
+    and none carries ANOTHER criterion's exact name; one that does sends the whole reading back to its text — a number
+    beating an exact name credited a doubt on one criterion to another and the gate passed (critic over e9e19d4).
+    CONTROL: drop the `against` condition and the second case is credited by number."""
+    from gfso.critic.runner import _numbered
+    names = ["c1", "c2", "c3", "c4: the long one", "c4"]
+    rows = [{"criterion": "V1 c1"}, {"criterion": "V2 c2 (gloss)"}, {"criterion": "V3 c3"},
+            {"criterion": "V4 c4: the long"}, {"criterion": "V5"}]
+    assert [r["criterion"] for r in _numbered(rows, names)] == names
+    swapped = [{"criterion": "V1 c1"}, {"criterion": "V2 c2"}, {"criterion": "V3 c3"},
+               {"criterion": "V4 c4", "why": "DOUBT about c4"}, {"criterion": "V5 c4: the long one"}]
+    assert [r["criterion"] for r in _numbered(swapped, names)][3:] == ["c4", "c4: the long one"]
+    assert [r["criterion"] for r in _numbered([{"criterion": "V1 c1"}, {"criterion": "V2 something else"}],
+                                              names)] == ["c1", "V2 something else"]      # two agree: not borne out
+
+
+def test_a_glossed_name_under_another_number_sends_the_reading_back_to_its_text():
+    """`V1 beta (stderr)` insufficient under alpha's number, alpha settled: the doubt was keyed to alpha, skipped as
+    decided, and the gate passed over beta (critic over 076abfb). CONTROL: `against` on exact names only."""
+    from gfso.critic.runner import _numbered
+    names = ["alpha", "beta", "gamma", "delta", "eps"]
+    rows = [{"criterion": "V1 beta (stderr)"}, {"criterion": "V2 alpha (build)"}, {"criterion": "V3 gamma"},
+            {"criterion": "V4 delta"}, {"criterion": "V5 eps"}]
+    assert [r["criterion"] for r in _numbered(rows, names)][:2] == ["beta", "alpha"]
+
+
+def test_an_entry_naming_a_criterion_in_another_word_form_is_that_criterion():
+    """`invalid option or count exit 1` for `invalid option or count exits 1`, in every reading: INCOMPLETE round after
+    round (GB_coreutils_tnqh4a016). Only where one name reads so and no other entry answered it.
+    CONTROL: drop the word-form pass and the first case stays unmapped."""
+    from gfso.critic.runner import _numbered
+    names = ["build works", "invalid option or count exits 1"]
+    got = _numbered([{"criterion": "build works"}, {"criterion": "Invalid option or count exit 1."}], names)
+    assert [r["criterion"] for r in got] == names
+    twice = _numbered([{"criterion": "invalid option or count exits 1"}, {"criterion": "invalid option or count exit 1"}],
+                      names)
+    assert [r["criterion"] for r in twice] == ["invalid option or count exits 1", "invalid option or count exit 1"]
+
+
+def test_a_doubt_a_later_reading_raised_on_a_criterion_the_first_left_out_stands():
+    """Reading 1 leaves c2 out, readings 2–3 doubt it: the doubt is a finding — the verdict is folded over every reading,
+    not reading 1's list (critic over 184dff5)."""
+    e = _engine()
+    _decompose_clean(e)
+    one = _verdict_json([{"criterion": "c1", "verdict": "sufficient", "why": "a"}])
+    two = _verdict_json([{"criterion": "c1", "verdict": "sufficient", "why": "a"},
+                         {"criterion": "c2", "verdict": "insufficient", "why": "REAL DOUBT"}])
+
+    class _Readings(_CheckerLLM):
+        n = 0
+        def complete(self, prompt: str, context: str = "") -> str:
+            if '"gaps"' in prompt:
+                return '{"gaps": []}'
+            self.n += 1
+            return one if self.n == 1 else two
+
+    crit = critique_node(e, TaskId("p"), llm=_Readings(""))
+    assert crit.semantic_covered is False and "REAL DOUBT" in crit.semantic_findings, crit.semantic_findings
+
+
 def test_checker_unparseable_is_no_verdict():
     e = _engine()
     _decompose_clean(e)

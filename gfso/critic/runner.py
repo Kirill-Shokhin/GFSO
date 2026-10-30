@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -320,8 +321,8 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
                                                  names=[c.name for c in task.spec.criteria])
     if parsed is None:
         return NodeCritique(nid, gate_passed=True)  # no verdict — never read as clean
-    missing = ({c.name for c in task.spec.criteria}
-               - {v.get("criterion", "") for v in verdicts})
+    names = [c.name for c in task.spec.criteria]
+    missing = set(names) - {v.get("criterion", "") for v in verdicts}
     if missing:  # incomplete per-criterion coverage of the verdict itself
         return NodeCritique(nid, gate_passed=True, criteria_verdicts=verdicts, conflicts=conflicts,
                             semantic_findings=f"checker verdict INCOMPLETE — unchecked criteria: "
@@ -450,14 +451,63 @@ def _still_entailed(then, now) -> bool:
     return True
 
 
+_LABEL = re.compile(r"\s*V(\d+)[.:)]?(?:\s+(.*))?$", re.S)
+
+
 def _named(said: str, names) -> str:
-    """The node's criterion a checker's entry is about. The projection lists `name: description`, and a model that
-    copied the whole line keyed every verdict by it: all eight criteria then read as unchecked, a complete verdict was
-    stored as "no verdict", and those rounds counted toward closing the goal (AUTO haiku coreutils, 2026-10-11)."""
-    if said in names:
-        return said
-    hit = [n for n in names if said.startswith(f"{n}:")]
-    return hit[0] if len(hit) == 1 else said
+    """The node's criterion a checker's entry is about, BY ITS TEXT. The projection lists `name: description`, and a model
+    that copied the whole line keyed every verdict by it: all eight criteria then read as unchecked, a complete verdict
+    was stored as "no verdict", and those rounds counted toward closing the goal (AUTO haiku coreutils, 2026-10-11). A
+    `V<n>` label in front of the text is read past here; what the number says is `_numbered`'s, over the whole reading."""
+    names = list(names)
+    m = _LABEL.match(said)
+    for s in filter(None, (said, (m.group(2) or "").strip() if m else "")):
+        if s in names:
+            return s
+        hit = [n for n in names if s.startswith(f"{n}:") or s.startswith(f"{n} (")]
+        if len(hit) == 1:
+            return hit[0]
+    return said
+
+
+def _numbered(entries, names: list) -> list:
+    """A reading's entries keyed by the node's criteria. A reading that labels its entries `V<n>` is keyed by its numbers
+    when its numbering is BORNE OUT BY ITS OWN TEXT — at least three entries whose text is the n-th name (alone, glossed or
+    `name: …`), and none whose text is EXACTLY another criterion's name — else by the text alone (`_named`).
+    A haiku checker labelled all 40 criteria of a root `V<n>`, glossing, cutting short and paraphrasing some: read by text,
+    the verdict stood INCOMPLETE and the gate shut for two 4-minute rounds (GB_coreutils_tnq9d1176). Read by a number that
+    beat an exact name, a doubt written on one criterion's name was credited to another and the gate passed over it
+    (critic over e9e19d4) — so the numbering is trusted whole or not at all, never against the text."""
+    names = list(names)
+    labels = [_LABEL.match(str(v.get("criterion"))) for v in entries]
+    nth = lambda m: names[int(m.group(1)) - 1] if m and 0 < int(m.group(1)) <= len(names) else None
+    text = lambda m: (m.group(2) or "").strip()
+    agree = [m for m in labels if (n := nth(m)) and (text(m) == n or text(m).startswith((f"{n}:", f"{n} (")))]
+    # …another criterion named by its text, glossed or `name: …` too — save a cut-short n-th name, which reads as a longer
+    # name's gloss (V35 of the row read as name40 + gloss): a glossed `V1 beta (stderr)` doubt keyed to alpha, alpha
+    # settled, passed the gate over beta (critic over 076abfb)
+    against = [m for m in labels if m and (t := _named(text(m), names)) in names and t != nth(m)
+               and not (nth(m) or "").startswith(text(m))]
+    if len(agree) >= 3 and not against and all(nth(m) for m in labels if m):
+        out = [{**v, "criterion": nth(m)} if m else {**v, "criterion": _named(str(v.get("criterion")), names)}
+               for v, m in zip(entries, labels)]
+    else:
+        out = [{**v, "criterion": _named(str(v.get("criterion")), names)} for v in entries]
+    # …and an entry naming no criterion takes the ONE criterion whose name reads the same word for word (case,
+    # punctuation and a plural `s` apart) and that no other entry answered: `invalid option or count exit 1` for
+    # `… exits 1`, written so every reading, left the verdict INCOMPLETE round after round (GB_coreutils_tnqh4a016)
+    answered = {o["criterion"] for o in out}
+    form = lambda t: tuple(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in re.findall(r"[a-z0-9]+", t.lower()))
+    by_form = {}
+    for n in names:
+        by_form.setdefault(form(n), []).append(n)
+    def same(o):
+        t = str(o["criterion"])
+        if t in names:
+            return o
+        hit = by_form.get(form((m.group(2) or "") if (m := _LABEL.match(t)) else t), [])
+        return {**o, "criterion": hit[0]} if len(hit) == 1 and hit[0] not in answered else o
+    return [same(o) for o in out]
 
 
 def _read_the_plan(llm, user: str, system: str, first_pass: bool, decided: Optional[dict] = None, names=()):
@@ -471,7 +521,7 @@ def _read_the_plan(llm, user: str, system: str, first_pass: bool, decided: Optio
 
     Returns (first parsed answer, per-criterion verdicts with every reading's doubts folded in,
     conflicts)."""
-    parsed, conflicts, gaps = None, (), {}
+    parsed, conflicts, gaps, answered = None, (), {}, {}
     decided = decided or {}
     texts = readings(llm, max(1, CHECKER_READINGS) if first_pass else 1,
                      lambda: llm.complete(prompt=user + schema_instruction(CHECKER_SCHEMA), context=system),
@@ -480,11 +530,11 @@ def _read_the_plan(llm, user: str, system: str, first_pass: bool, decided: Optio
         one = parse_structured(text or "", CHECKER_SCHEMA)
         if one is None:
             continue
-        one = {**one, "criteria": [{**v, "criterion": _named(str(v.get("criterion")), names)}
-                                   for v in one.get("criteria") or ()]}
+        one = {**one, "criteria": _numbered(one.get("criteria") or (), list(names))}
         parsed = parsed or one
         for v in one.get("criteria") or ():
             name = str(v.get("criterion"))
+            answered.setdefault(name, v)
             if name in decided:
                 continue          # settled against this same plan; a re-reading does not reopen it
             if v.get("verdict") != CriticVerdict.SUFFICIENT and name not in gaps:
@@ -492,10 +542,10 @@ def _read_the_plan(llm, user: str, system: str, first_pass: bool, decided: Optio
         conflicts += tuple(c for c in (one.get("conflicts") or ()) if c not in conflicts)
     if parsed is None:
         return None, (), ()
-    return (parsed,
-            tuple(decided.get(str(v.get("criterion")),
-                              gaps.get(str(v.get("criterion")), v)) for v in parsed["criteria"]),
-            conflicts)
+    # …OVER EVERY CRITERION ANY READING ANSWERED, not the first reading's list: a doubt reading 2 raised on a criterion
+    # reading 1 left out was dropped, and once the criterion left out is asked for by name, one "sufficient" opened the
+    # gate over it (critic over 184dff5)
+    return (parsed, tuple(decided.get(n, gaps.get(n, v)) for n, v in answered.items()), conflicts)
 
 
 def _prior_review(engine, task) -> Optional[dict]:
@@ -538,7 +588,11 @@ def _goal_read_in(rec: dict) -> Optional[str]:
 #: One assessment over a FIXED list — the later rounds of a node whose goal has not changed.
 STILL_SCHEMA = {
     "type": "object",
-    "properties": {"decided": {"type": "array", "items": {"type": "string"}}},
+    "properties": {"decided": {"type": "array", "items": {"type": "string"}},
+                   "open": {"type": "array", "items": {"type": "object", "properties": {
+                       "n": {"type": "string"}, "admits": {"type": "string"}}, "required": ["n", "admits"]}}},
+    # `open` is asked for, not required: an answer naming only what is decided still re-checks the list (a required field
+    # turned it into "not re-checked"), and the stale first reading is then said to be stale
     "required": ["decided"],
 }
 
@@ -561,8 +615,10 @@ def _still_undecided(engine, task, llm, prior: tuple, *,
             f"# OBLIGATIONS NAMED EARLIER AS UNDECIDED BY THEM\n{listed}\n\n"
             f"For EACH numbered obligation decide one thing only: do the criteria as they now stand "
             f"DECIDE it — would a result satisfying every criterion necessarily have it? {PINS_DECIDE} Answer "
-            f"with the numbers of the obligations that are now decided. Name nothing new: what the goal "
-            f"carries was enumerated when it was read, and this round is about what the criteria "
+            f"with the numbers of the obligations that are now decided (`decided`), and for each one still "
+            f"undecided (`open`) its number and what a result could do that passes every criterion AS IT NOW "
+            f"STANDS and still breaks the obligation — the part no pinned check probes. Name nothing new: what "
+            f"the goal carries was enumerated when it was read, and this round is about what the criteria "
             f"have since covered.")
     def _not_rechecked(why: str) -> tuple:
         """⊥ IS NOT "STILL OPEN". The list stands — a check that could not run closes nothing — but
@@ -595,13 +651,24 @@ def _still_undecided(engine, task, llm, prior: tuple, *,
     # told "No criterion mentions tests at all" while a criterion named `pytest_suite_runs_green` was
     # in the set, because the argument enumerated the pre-edit contract (CLI door, 2026-09-02). The
     # user acts on the text, so the text may not assert a state of the graph it has not re-read.
-    _kept = tuple(g for i, g in enumerate(prior, 1) if str(i) not in done)
+    # an obligation the same answer gives a counter-example for stays open, whatever its `decided` says (critic over 076abfb)
+    done -= {str(o.get("n", "")).strip() for o in (parsed.get("open") or ())
+             if isinstance(o, dict) and str(o.get("admits", "")).strip()}
+    _kept = tuple((i, g) for i, g in enumerate(prior, 1) if str(i) not in done)
+    # …AND WHAT IS STILL MISSING, READ NOW. Told only "still undecided" over the first reading's argument — written
+    # against criteria long since added — a haiku issuer restated the same root criterion ten times under ten names
+    # while the one clause no pin probed (the diagnostic on stderr: every pin sent stderr to /dev/null) was never named
+    # to it (GB_coreutils_tnq9d1176). The current counter-example is the finding; the first reading rides behind it.
+    now = {str(o.get("n", "")).strip(): str(o.get("admits", "")).strip()
+           for o in (parsed.get("open") or ()) if isinstance(o, dict)}
     return tuple({**g, "carried": True, "rechecked": True, "first_reading": _first_reading(g),
-                  "admits": ("(RE-CHECKED against the criteria as they stand now and still not "
-                             "decided by them — so fixing the criteria IS what closes it, and the "
-                             "next review will drop it; the argument below is the FIRST reading of "
-                             "the goal and does not describe the contract as it stands) "
-                             + _first_reading(g))} for g in _kept)
+                  # …and with a current counter-example, the first reading is not shown at all: "only cat and sort are
+                  # pinned", false for an hour, was what the issuer kept answering (critic over e9e19d4)
+                  "admits": (f"(RE-CHECKED against the criteria as they stand now and still not decided by them — "
+                             f"a NEW pinned check of what is still admitted closes it.) "
+                             + (f"Still admitted now: {now[str(i)]}" if now.get(str(i))
+                                else "The argument below is the FIRST reading of the goal and does not describe "
+                                     "the contract as it stands: " + _first_reading(g)))} for i, g in _kept)
 
 
 def _first_reading(g: dict) -> str:
