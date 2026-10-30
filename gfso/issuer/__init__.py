@@ -1610,8 +1610,12 @@ def _resplit(engine, task, actor, answer, why, verbs):
         return False, f"re-issuing {task.id} is its issuer's move ({issuer}), not the system's"
     live = {str(k.id) for k in engine.graph.get_active_children(task.id)}
     if not any(str(m.child_id) not in live for m in task.criterion_mappings):
-        return False, ("no mapping points at a child that is gone — a re-issue would prune nothing; to reshape "
-                       "the split, `drop_child` the child that is wrongly cut first")
+        # …and the move for a split that as a whole does not carry the goal is named too: three answers in a row asked
+        # `resplit` to rebuild the split and were sent only to `drop_child` (GB_c_compiler_tnqqhf184)
+        return False, ("`resplit` only re-issues the node to prune mappings to children that are gone, and none is — it "
+                       "would change nothing. To rebuild the split as a whole, `refine` (the decomposer re-cuts it over "
+                       "the gate's findings, while no child is at work); to reshape one part, `drop_child` the child "
+                       "that is wrongly cut and add the one that replaces it")
     engine.revise(task.id, task.spec, AgentId(issuer), reason=RevisionReason.OTHER)
     return True, ""
 
