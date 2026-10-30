@@ -129,7 +129,7 @@ body {
 .hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 /* ONE EVEN LINE: where the goal stands, its count, what needs a person — each on the same baseline, one gap apart, the
    count's figure only a step above the words (the author, 2026-10-30: «стоит неровно и вразнобой») */
-.hd-needs { display: flex; align-items: baseline; gap: 16px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
+.hd-needs { display: flex; align-items: baseline; gap: 24px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
 .need b { font-weight: 600; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
@@ -1207,14 +1207,14 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
          font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); }
 .tally b { font-family: var(--font-display); font-size: 17px; font-weight: 650; letter-spacing: 0; text-transform: none; }
 .tally i { font-style: normal; opacity: 0.7; }
-/* ONE FACE, ONE SIZE, ONE BASELINE: the goal's standing is a short phrase and its count set together in the body face —
-   the figure set apart by weight alone, never by a larger or another face, which lifted it half a head above the line
-   (the author, 2026-10-30: «8/11 на пол головы выше строки … как минимум 3 шрифта … слишком далеко отстоит») */
-.hd-standing { display: inline-flex; align-items: baseline; gap: 7px; white-space: nowrap; font-size: 12.5px; }
-.hd-standing .hd-phrase { font-size: inherit; }
-.hd-standing .tally { font-family: var(--font-body); font-size: inherit; text-transform: none; letter-spacing: 0; gap: 4px; }
-.hd-standing .tally b { font-family: inherit; font-size: inherit; font-weight: 700; }
-.hd-standing .tally i { opacity: 0.75; }
+/* THREE MARKS, EACH ITS OWN — where the goal stands, how many parts are done, what needs a person — one face and size on
+   one baseline, apart by a gap and a hairline (the author, 2026-10-30: «8/11 на пол головы выше … как минимум 3 шрифта»;
+   «статус и количество это два разных поинта … там что мало место их разнести?»); the figure set apart by weight alone */
+.hd-needs > .hd-phrase, .hd-needs > .tally, .hd-needs > .hd-quiet { font-size: 12.5px; white-space: nowrap; }
+.hd-needs > .tally, .hd-needs > .hd-quiet { border-left: 1px solid var(--hair-on-chrome); padding-left: 24px; }
+.hd-needs > .tally { font-family: var(--font-body); text-transform: none; letter-spacing: 0; gap: 5px; }
+.hd-needs > .tally b { font-family: inherit; font-size: inherit; font-weight: 700; }
+.hd-needs > .tally i { opacity: 0.75; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
 .dk-head .tally b { font-size: 13px; color: var(--ink); }
 .pn-meta .tally { margin-left: 12px; }
