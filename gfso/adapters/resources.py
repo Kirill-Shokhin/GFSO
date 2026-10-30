@@ -56,14 +56,15 @@ def _docker(*args) -> list[str] | None:
 
 
 def _cached(key: str, fresh: float, read) -> tuple:
-    """(`read()`, did Docker answer) — asked at most once every `fresh` seconds, whoever asks; a failed read keeps the
-    reading before it."""
-    at, value, ok = _read.get(key, (0.0, None, False))
+    """(`read()`, did Docker answer, when the reading given was taken — epoch seconds, None before any) — asked at most
+    once every `fresh` seconds, whoever asks; a failed read keeps the reading before it, and its time."""
+    at, value, ok, taken = _read.get(key, (0.0, None, False, None))
     if time.monotonic() - at > fresh:
         got = read()
         ok = got is not None
-        _read[key] = (time.monotonic(), value := got if ok else value, ok)
-    return value, ok
+        value, taken = (got, time.time()) if ok else (value, taken)
+        _read[key] = (time.monotonic(), value, ok, taken)
+    return value, ok, taken
 
 
 def _stats() -> dict | None:
@@ -127,10 +128,11 @@ def held(known: set | None = None) -> dict:
     """What this installation holds now, per project — each said `known` where the registry holds it (`known`, None:
     not asked) — what containers of a build that set no home hold, unattributed, and which reads Docker answered."""
     with _lock:
-        stats, stats_ok = _cached("stats", FRESH, _stats)
-        lines, ps_ok = _cached("ps", FRESH, lambda: _docker("ps", "-a", "--filter", f"label={LABEL}", "--format", _PS))
-        volumes, disk_ok = _cached("volumes", DISK_FRESH, _volumes)
-        machine, _ = _cached("machine", DISK_FRESH, _machine)
+        stats, stats_ok, stats_at = _cached("stats", FRESH, _stats)
+        lines, ps_ok, ps_at = _cached("ps", FRESH, lambda: _docker("ps", "-a", "--filter", f"label={LABEL}",
+                                                                   "--format", _PS))
+        volumes, disk_ok, disk_at = _cached("volumes", DISK_FRESH, _volumes)
+        machine, _, _ = _cached("machine", DISK_FRESH, _machine)
     rows = [_container(line.split("\t"), stats or {}) for line in lines or []]
     volumes = volumes or []
     ours, older = [r for r in rows if r["home"] == installation()], [r for r in rows if not r["home"]]
@@ -138,6 +140,8 @@ def held(known: set | None = None) -> dict:
     held_as = None if known is None else {k.casefold() for k in known}     # …the registry's files: any spelling
     return {"home": installation(), "machine": machine,
             "read": {"containers": ps_ok, "stats": stats_ok, "disk": disk_ok},
+            # …and when each reading given was taken (epoch seconds; None: none yet), so a reader can say its age
+            "read_at": {"containers": ps_at, "stats": stats_at, "disk": disk_at},
             "projects": [_project(p, [r for r in ours if r["project"] == p] if lines is not None else None,
                                   [v for v in volumes if v["project"] == p], held_as) for p in projects],
             "older_build": {"containers": len(older) if lines is not None else None, **_totals(older)}}
@@ -154,6 +158,8 @@ def _project(name: str, rows: list | None, volumes: list, held_as) -> dict:
     sized = [v["bytes"] for v in volumes if v["bytes"] is not None]
     disk = {"project": name, "known": None if held_as is None else name.casefold() in held_as,
             "disk_bytes": sum(sized) if sized else None, "disk_counted": f"{len(sized)}/{len(volumes)}",
+            # …the ids its volumes carry: what `remove_orphan` takes, for a project no record holds
+            "project_ids": sorted({v["project_id"] for v in volumes if v.get("project_id")}),
             "volumes": volumes}
     if rows is None:
         return {**disk, "containers": None, "by_role": None, "nodes": None, "system": None}

@@ -2,6 +2,7 @@
 per project and node, with a number Docker did not give left None; a server's sweep of leftovers removes its own
 installation's containers alone."""
 import json
+import time
 import subprocess
 
 import pytest
@@ -122,19 +123,25 @@ def test_a_read_docker_did_not_answer_is_said_and_the_one_before_it_serves(docke
     said["ps"] = [_ps("a", "executor.n-1", h, "p", "executor", "n")]
     said["stats"] = []
     said["system"] = [json.dumps({"Volumes": []})]
-    assert R.held(set())["read"] == {"containers": True, "stats": True, "disk": True}
+    first = R.held(set())
+    assert first["read"] == {"containers": True, "stats": True, "disk": True}
+    taken = first["read_at"]
+    assert all(isinstance(t, float) and abs(t - time.time()) < 60 for t in taken.values()), taken
     monkeypatch.setattr(R, "_docker", lambda *a: None)                # …the daemon gone
     monkeypatch.setattr(R, "FRESH", -1.0)
     monkeypatch.setattr(R, "DISK_FRESH", -1.0)
     got = R.held(set())
     assert got["read"] == {"containers": False, "stats": False, "disk": False}
     assert got["projects"][0]["containers"]["standing"] == 1, "the reading before it, said as not fresh"
+    assert got["read_at"] == taken, "a kept reading keeps the time it was taken, not the failed read's"
     R._read.clear()
     said["system"] = [json.dumps({"Volumes": [
-        {"Name": "v", "Labels": f"gfso.home={h},gfso.project=p", "Size": "1MB"}]})]
+        {"Name": "v", "Labels": f"gfso.home={h},gfso.project=p,gfso.project_id={'a' * 32}", "Size": "1MB"}]})]
     monkeypatch.setattr(R, "_docker", lambda *a: said.get(a[0]) if a[0] == "system" else None)
     got = R.held(set())
     assert got["read"]["containers"] is False and got["projects"][0]["containers"] is None, "never listed: no 0"
+    assert got["projects"][0]["project_ids"] == ["a" * 32], "the id DELETE /api/resources/orphans/{id} takes"
+    assert got["read_at"]["containers"] is None and isinstance(got["read_at"]["disk"], float)
 
 
 def test_docker_not_installed_is_no_answer_not_an_error(monkeypatch):
