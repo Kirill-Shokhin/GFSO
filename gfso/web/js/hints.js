@@ -148,6 +148,7 @@ export const RES = {
     older: n => `${n} containers started by an older build carry no project: the counts here leave them out`,
     none: 'No container or volume of this project',
     unserved: 'No reading of Docker: this server does not serve one',
+    first: 'No reading of Docker yet: the server takes its first in a few seconds',
     orphan: size => hover(`Orphans\t${size}`, "Volumes of a project this installation no longer holds"),
     volumes: vs => hover('On disk', vs.map(([role, size]) => `${size} ${role}`)),
     machine: hover('This machine', "What GFSO's containers take of it now — every project of this installation"),

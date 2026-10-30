@@ -32,7 +32,9 @@ const roles = cs => {
 const ago = t => t == null ? 'never' : dur(Math.max(0, Date.now() - t * 1e3));
 const age = d => { const r = d.read_at || {}, ts = Object.values(r).filter(t => t != null);
     return ts.length ? tally(ago(Math.min(...ts)), 'ago', RES.ages(Object.entries(r).map(([k, t]) => [k, ago(t)]))) : ''; };
-const notes = d => [!(d.read.containers && d.read.stats && d.read.disk) && RES.unread,
+// …the server's poller keeps the last reading (security 8746d6a): before its first, nothing is read yet — no failure
+const notes = d => [!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
+    : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread,
     d.older_build?.containers && RES.older(d.older_build.containers)].filter(Boolean)
     .map(n => `<div class="pn-meta">${esc(n)}</div>`).join('');
 
