@@ -42,6 +42,7 @@ export function bringSelected(el, find) {
 
 // Any element carrying `data-node` inside `el` takes part: hovering it points, clicking selects, and
 // it wears `is-hover` / `is-select` while it is the one pointed at. `onMove(e)` adds the view's own tip.
+const TOUCH = matchMedia('(hover: none)');      // a screen with no pointer that hovers
 export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     el.classList.add('pickable');           // every [data-node] in it selects its node on a click: gfso.css gives it the pointer
     const paint = st => {
@@ -53,7 +54,20 @@ export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     };
     el.onmousemove = e => (point('hover', e.target.closest('[data-node]')?.dataset.node || null), onMove(e));
     el.onmouseleave = () => (point('hover', null), onLeave());
-    el.onclick = e => { const n = e.target.closest('[data-node]'); if (n) point('select', n.dataset.node); };
+    // …and where nothing hovers (a finger), the first tap on a row shows what a pointer's hover would — its tip — and a second
+    // tap on the same row selects it: a tap selected at once and the node's panel covered the screen, so no row's tip could
+    // ever be read on a phone (the author, 2026-10-31)
+    el.onclick = e => {
+        const n = e.target.closest('[data-node]');
+        if (!n) return void (el._tapped = null);
+        if (TOUCH.matches && el._tapped !== n.dataset.node) {
+            el._tapped = n.dataset.node;
+            return void (point('hover', n.dataset.node), onMove(e));
+        }
+        el._tapped = null;
+        if (TOUCH.matches) onLeave();          // the tip a tap showed does not stay over the panel it opens
+        point('select', n.dataset.node);
+    };
     watch(paint, el);
     paint(state);
     return paint;

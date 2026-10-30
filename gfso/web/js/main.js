@@ -90,6 +90,21 @@ $('pl-search').addEventListener('input', searchProjects);
 // …AND THE BAR IS ASKED AGAIN: the frontier's `mine` is computed FOR the identity in the box.
 $('current-role').addEventListener('input', () => { rememberRole(myRole()); if (S.mineOnly) applyMineDim(); refreshHeader(); });
 watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : closeSidebar(); });
+// ON A PHONE A NODE'S PANEL COVERS THE SCREEN, and the browser's Back is the way out a hand reaches for: opening it adds a step
+// to the history, Back closes the reader first, then the panel — never leaves the page (the author, 2026-10-31: «интуитивно
+// жмешь кнопку назад а не крестик»). A panel closed by its × takes its step back out.
+const PHONE = matchMedia('(max-width: 720px)');
+let opened = false;
+watch((st, key) => {
+    if (key !== 'select' || !PHONE.matches) return;
+    if (st.select && !opened) opened = true, history.pushState({gfso: 'node'}, '');
+    else if (!st.select && opened) { opened = false; if (history.state?.gfso === 'node') history.back(); }
+});
+addEventListener('popstate', () => {
+    if (!opened) return;
+    if (!$('reader')?.hidden && $('reader')) { closeReader(); history.pushState({gfso: 'node'}, ''); return; }
+    opened = false; point('select', null);
+});
 
 const LIVE = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run

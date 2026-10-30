@@ -54,7 +54,7 @@ export function render(el, run) {
         <div class="cs-tiles">${models.map(([m, x]) =>
             `<div class="cs-tile"><b>${esc(modelName(m))}${x.window ? ` <em${MODELS.window}>${fmtTok(x.window)}</em>` : ''}</b><span>${esc(x.roles.join(' · '))}</span>`
             // its share of the run on a line of its own, and only beside another model — one model's 100% says nothing
-            + `<i>${price(x.cost, x.booked, x.unpriced)}</i>${models.length > 1 && x.priced && total ? `<i>${pct(x.cost / total)} of the run</i>` : ''}<i>${x.calls} sessions</i></div>`).join('')}</div>
+            + `<i>${tally(price(x.cost, x.booked, x.unpriced), 'spent')}</i>${models.length > 1 && x.priced && total ? `<i>${tally(pct(x.cost / total), 'of the run')}</i>` : ''}<i>${tally(x.calls, 'sessions')}</i></div>`).join('')}</div>
         <table class="wk-table"><thead><tr><th>model</th><th>role</th><th${MODELS.sessions}>sessions</th><th>turns</th><th>cost</th><th>share</th>
             <th${MODELS.cost}>cost split</th>
             <th${MODELS.fill}>context filled</th></tr></thead><tbody>
