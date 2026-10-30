@@ -62,3 +62,18 @@ def test_a_project_made_again_after_the_start_runs(monkeypatch, tmp_path):
     assert reg.engine("old").paused() is not None
     reg.delete("old")
     assert reg.engine("old").paused() is None
+
+
+def test_the_list_says_a_project_that_stood_is_stopped_before_it_is_opened(monkeypatch, tmp_path):
+    """Its file says nothing of the stop until its first opening makes it, and the project list read it running."""
+    make_engine(storage=SqliteStorage(str(tmp_path / "old.db"))).stop()
+    e = make_engine(storage=SqliteStorage(str(tmp_path / "held.db")))
+    e.pause("someone", "reading it")
+    e.stop()
+    reg = _registry(monkeypatch, tmp_path)
+    about = reg.about(["old", "held"])
+    assert about["old"]["stopped"]["by"] == "system", "a project that stood is listed stopped before it is opened"
+    assert about["held"]["stopped"]["by"] == "someone", "a stop already on file is said as it stands"
+    reg.engine("old").resume("someone")
+    assert reg.about(["old"])["old"]["stopped"] is None, "opened and started, it is listed running"
+    assert _registry(monkeypatch, tmp_path, serving=False).about(["held", "old"])["old"]["stopped"] is None

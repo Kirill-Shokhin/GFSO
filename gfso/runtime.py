@@ -11,6 +11,7 @@ import re
 import sys
 import threading
 import uuid
+from datetime import datetime
 
 from gfso.engine import Engine
 from gfso.core.graph.model import root_of
@@ -27,6 +28,9 @@ from gfso.llm import llm_factory
 from gfso.workspaces import drop_execution
 
 log = logging.getLogger(__name__)
+
+#: why a project that stood when the server started is stopped (PROJECT_CLOCK.md case 16)
+HELD_AT_START = "the server started: a project stays stopped until its Start"
 
 
 def data_dir():
@@ -95,6 +99,7 @@ class ProjectRegistry:
         # они не должны все в стопед переводиться автоматически»; PROJECT_CLOCK.md case 16) — read by the serving
         # process alone: a stdio MCP process builds engines on the same files and would stop a live server's projects
         self._held = set()
+        self._started = datetime.now().isoformat(timespec="seconds")
         if _config.serves():
             self._held = {n[:-3] for n in (os.listdir(self._dir) if os.path.isdir(self._dir) else ()) if n.endswith(".db")}
             if os.path.exists(str(_config.db_path())):
@@ -135,8 +140,7 @@ class ProjectRegistry:
                 if name in self._held:       # …before its dispatcher: a project that stood is opened stopped, once —
                     self._held.discard(name)  # one deleted and made again after the start runs
                     try:
-                        self._engines[name].pause("system", "the server started: a project stays stopped until its "
-                                                            "Start")
+                        self._engines[name].pause("system", HELD_AT_START)
                     except Exception as ex:
                         print(f"gfso: project {name!r} could not be stopped at the server's start ({ex}) — it runs",
                               file=sys.stderr, flush=True)
@@ -314,6 +318,10 @@ class ProjectRegistry:
         running."""
         def _about(name: str):
             p = self._peek(name)[1]
+            # …a project that stood at the server's start and is not opened yet is stopped as its first opening will
+            # stop it — its file does not say so until then (PROJECT_CLOCK.md case 16), and the list read it running
+            if p is not None and name in self._held and not p["stopped"]:
+                p = {**p, "stopped": {"by": "system", "at": self._started, "why": HELD_AT_START}}
             eng = self._engines.get(name)
             if p is None or eng is None or p["goal"] is None:
                 return p
