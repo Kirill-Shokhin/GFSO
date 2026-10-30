@@ -410,7 +410,7 @@ body {
 /* THE DECK'S HEAD SCROLLS, NEVER SQUEEZES — beside a node's panel the wait lines were cut to «9 WA» and the spend pushed
    out (the author, 2026-10-30: «при открытии ноды нижняя панель сжимается и прокрутки влево вправо не появляется»); every
    item keeps its whole text, and the fold stays at the right edge */
-.dk-head { display: flex; align-items: center; gap: 18px; padding: 0 16px; height: 34px; flex-shrink: 0; border-bottom: 1px solid var(--hair-soft);
+.dk-head { display: flex; align-items: center; gap: 18px; padding: 0 0 0 16px; height: 34px; flex-shrink: 0; border-bottom: 1px solid var(--hair-soft);
            overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .dk-head > *, .dk-head nav { flex-shrink: 0; }
 .deck.closed .dk-head { border-bottom: none; }
@@ -430,8 +430,9 @@ body {
 .dk-live em { font-style: normal; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .dk-live i, .dk-live span { flex-shrink: 0; }
 .dk-wait { color: var(--ink-soft); border-left: 1px solid var(--hair); padding-left: 10px; }
-.dk-sum { margin-left: auto; flex: 0 0 auto; display: flex; overflow: hidden; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
-.dk-fold { background: var(--ui-page); border: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; position: sticky; right: 0; padding: 0 4px; }
+/* the spend held at the head's right edge beside the fold: the waits scroll under it, the money never leaves sight */
+.dk-sum { margin-left: auto; flex: 0 0 auto; display: flex; overflow: hidden; position: sticky; right: 32px; background: var(--ui-page); padding-left: 10px; box-shadow: -10px 0 10px -6px var(--ui-page); font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
+.dk-fold { background: var(--ui-page); border: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; position: sticky; right: 0; width: 32px; height: 100%; padding: 0; }
 .deck.closed .dk-fold { transform: rotate(180deg); }
 .dk-body { flex: 1; overflow: auto; padding: 12px 16px 16px; min-height: 0; }
 /* Badges over the graph — a pulse on what runs now, a count of rounds on what took more than one. */
