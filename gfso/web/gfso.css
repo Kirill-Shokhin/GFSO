@@ -450,10 +450,8 @@ body {
 .cy-plan { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); min-width: 340px; padding: 18px 22px;
            background: var(--paper); border: 1px solid var(--hair); border-radius: var(--radius); z-index: 3; }
 .cp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; margin-bottom: 10px; font-size: 13px; }
-.cp-head .tally b { font-size: 15px; }
 .cp-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; border-top: 1px solid var(--hair-soft); font-size: 12px; color: var(--ink-soft); }
 .cp-row > span:not(.tally) { flex: 1; }
-.cp-row .tally b { font-size: 13px; color: var(--ink); }
 .cp-now { color: var(--ink); }
 .cp-now > i { width: 6px; height: 6px; border-radius: 50%; background: var(--acc); align-self: center; animation: tl-pulse var(--pulse) ease-in-out infinite; }   /* the badges end where the canvas ends — never over the deck */
 .cy-badges { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
@@ -1210,7 +1208,9 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
    sentence (the author, 2026-10-29): the header's parts done, the panel's parts passing */
 .tally { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
          font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); }
-.tally b { font-family: var(--font-display); font-size: 17px; font-weight: 650; letter-spacing: 0; text-transform: none; }
+/* …the figure in the size of the line it stands in, set apart by weight alone: a figure a size or a face larger than its
+   words read as shouting across every menu (the author, 2026-10-30: «все цифры просто стали больше … глаз режет») */
+.tally b { font-family: var(--font-body); font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--ink); }
 .tally i { font-style: normal; opacity: 0.7; }
 /* THREE MARKS, EACH ITS OWN — where the goal stands, how many parts are done, what needs a person — one face and size on
    one baseline, apart by a gap and a hairline (the author, 2026-10-30: «8/11 на пол головы выше … как минимум 3 шрифта»;
@@ -1218,12 +1218,10 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .hd-needs > .hd-phrase, .hd-needs > .tally, .hd-needs > .hd-quiet { font-size: 12.5px; white-space: nowrap; }
 .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: 1px solid var(--hair-on-chrome); padding-left: 24px; }
 .hd-needs > .tally { font-family: var(--font-body); text-transform: none; letter-spacing: 0; gap: 5px; }
-.hd-needs > .tally b { font-family: inherit; font-size: inherit; font-weight: 700; }
+.hd-needs > .tally b { font-family: inherit; font-size: inherit; font-weight: 700; color: inherit; }
 .hd-needs > .tally i { opacity: 0.75; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
-.dk-head .tally b { font-size: 13px; color: var(--ink); }
 .pn-meta .tally { margin-left: 12px; }
-.pn-meta .tally b { font-size: 13px; color: var(--ui-text); }
 
 /* ============ The project list — the goal constructor's slide-over, a run found by what and when ============ */
 .project-panel { width: min(760px, 70vw); z-index: 31; }
@@ -1240,9 +1238,8 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pl-cost { text-align: right; }
 .pl-res { text-align: right; white-space: nowrap; }
 .pl-res .tally { margin-left: 8px; }
-.pl-res .tally b { font-size: 12.5px; color: var(--ink); }
 .pn-round { margin-left: 12px; }
-.pn-round b { font-size: 13px; color: var(--ui-text); }
+.pn-round b { color: var(--ui-text); }
 /* what Docker holds: the machine over the project list, a project's own in its deck view — counts as marks */
 .rs-machine, .rs-tallies { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 6px; }
 .rs-machine { border-bottom: 1px solid var(--hair); }
@@ -1312,7 +1309,6 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .tb-help i.lg-split, .tb-help i.lg-dep { display: inline-block; width: 26px; border-top: 1px solid var(--ui-text-soft); align-self: center; }
 .tb-help i.lg-dep { border-top: 1px dashed var(--acc); }
 .section-title .tally { float: right; }
-.section-title .tally b, .wk-table .tally b { font-size: 13px; color: var(--ui-text); }
 
 /* ============ A phone — ONE page, laid out for the width (the author, 2026-10-29: «что с мобильной версией в целом»):
    the header in two rows, the node's panel and reader over the graph whole, the deck's head and its views
