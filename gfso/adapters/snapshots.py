@@ -27,7 +27,7 @@ from typing import Optional
 
 from gfso.adapters import worktrees as W
 from gfso.config import subprocess_env
-from gfso.core.types import PlaceUnavailable
+from gfso.core.types import LAID, PlaceUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
             raise OSError(f"{at} lies inside {place}")
         with _place(place).enter(alone=False):
             if commit:
-                _checkout(place, at, *delivered[:2], execution)
+                smudged = _checkout(place, at, *delivered[:2], execution)
             else:
                 execution.copy_tree(str(place), str(at))
         if not commit:
@@ -146,7 +146,7 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
         if commit:
             ran = ""
             for step in (lambda: _build(at, delivered[2], execution),
-                         lambda: _after_build(at, delivered[0], commit, execution)):
+                         lambda: _after_build(at, delivered[0], commit, execution, smudged)):
                 try:
                     ran += step()
                 except BuildFailed as e:
@@ -260,6 +260,10 @@ _CHECKOUT = r'''
 import hashlib, os, subprocess, sys, threading
 from pathlib import Path
 how, at, commit, apart = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[5:]
+# …the paths its checkout wrote as their Git LFS content ("smudged"), read before any build ran (`_checkout`) and laid
+# beside the copy where its judge's container reads only (`LAID`)
+_listed = at.parent.with_name(at.parent.name + ".laid") / "smudged"
+SMUDGED = {bytes.fromhex(h) for h in _listed.read_text().split()} if how == "kept" and _listed.is_file() else set()
 algo = "sha256" if len(commit) == 64 else "sha1"
 env = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
 BAD = 6 if how == "kept" else 4
@@ -329,13 +333,18 @@ def file_blob_id(path):
     return hashed(path, hashlib.new(algo, b"blob %d\0" % path.stat().st_size)).encode()
 
 
-def lfs_object(data):
-    """The copy's own store's file of the LFS object a pointer `data` names, only where its sha256 is the pointer's."""
+def pointed_oid(data):
+    """The oid an LFS pointer `data` names, '' for none."""
     head = b"version https://git-lfs.github.com/spec/v1\n"
     keys = dict(ln.split(b" ", 1) for ln in data[len(head):].splitlines() if b" " in ln) if data.startswith(head) else {}
     oid = keys.get(b"oid", b"").removeprefix(b"sha256:").decode("ascii", "replace")
-    o = at / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
-    return o if len(oid) == 64 and o.is_file() and hashed(o, hashlib.sha256()) == oid else None
+    return oid if len(oid) == 64 else ""
+
+
+def lfs_object(data):
+    """The copy's own store's file of the LFS object a pointer `data` names, only where its sha256 is the pointer's."""
+    o = at / ".git" / "lfs" / "objects" / (oid := pointed_oid(data))[:2] / oid[2:4] / oid
+    return o if oid and o.is_file() and hashed(o, hashlib.sha256()) == oid else None
 
 
 def written(path, source, h, want):
@@ -370,6 +379,26 @@ if how == "checkout":
         sys.exit(r.stderr.decode(errors="replace")[-300:])
     sys.exit(0)
 tree = sys.argv[4]
+if how == "smudged":                # …right after the checkout, before any build: each path written as its LFS content
+    # its sizes in one listing and its small blobs in one read — a call per file outran the copy's time on large trees —
+    # and each path in hex, which no text decoding on the way out changes (critic over the LFS check)
+    ls = git("ls-tree", "-r", "-l", "-z", "--full-tree", tree)
+    small = [(rel, meta.split()[2]) for meta, _, rel in (e.partition(b"\t") for e in ls.stdout.split(b"\0") if e)
+             if meta.split()[0] != b"120000" and meta.split()[3].isdigit() and int(meta.split()[3]) <= 1024]
+    batch = git("cat-file", "--batch", input=b"".join(oid + b"\n" for _, oid in small))
+    if ls.returncode or batch.returncode:   # …an empty list would put pointers back unflagged: fail closed
+        sys.exit("its tree or its small blobs could not be read")
+    got = batch.stdout
+    for rel, oid in small:
+        head, _, got = got.partition(b"\n")
+        if len(head.split()) != 3:            # …"<oid> missing": no body follows
+            continue
+        data, got = got[:int(head.split()[2])], got[int(head.split()[2]) + 1:]
+        path = at / rel.decode("utf-8", "surrogateescape")
+        if (named := pointed_oid(data)) and path.is_file() and not path.is_symlink() and \
+                hashed(path, hashlib.sha256()) == named:
+            print(rel.hex())
+    sys.exit(0)
 if how == "kept":
     ls = git("ls-tree", "-r", "-z", "--full-tree", tree)
     if ls.returncode:
@@ -382,7 +411,9 @@ if how == "kept":
             if path.is_symlink() and blob_id(os.fsencode(os.readlink(path))) == oid:
                 continue
         elif path.is_file() and not path.is_symlink() and (mode == b"100755") == bool(path.stat().st_mode & 0o100):
-            if file_blob_id(path) == oid:
+            # …save the pointer of a file its checkout wrote as content: the build wrote the pointer back, and the
+            # checks would read it (critic over the LFS check)
+            if file_blob_id(path) == oid and rel not in SMUDGED:
                 continue
         o, wrong = oid.decode(), f"its object {oid.decode()} does not hold what its id names"
         size = int(git("cat-file", "-s", o).stdout or b"-1")
@@ -391,6 +422,14 @@ if how == "kept":
         if data is not None and blob_id(data) != oid:
             bad(6, wrong)
         obj = lfs_object(data) if data is not None and mode != b"120000" else None
+        if obj is None and rel in SMUDGED:
+            # …its checkout wrote its content: as it stands, it is kept; else the build took the object it is put back
+            # from — the delivery broke its judge's copy, and put back as its pointer every check read the pointer
+            # (critic over the bounds)
+            if path.is_file() and not path.is_symlink() and (mode == b"100755") == bool(path.stat().st_mode & 0o100) \
+                    and hashed(path, hashlib.sha256()) == pointed_oid(data):
+                continue
+            bad(6, f"the build removed the Git LFS object of {rel.decode('utf-8', 'replace')} from the copy")
         if mode == b"120000":
             put(path, mode, lambda p: os.symlink(os.fsdecode(data), p))
         elif obj is not None:
@@ -425,7 +464,7 @@ verify(list(dict.fromkeys([tree.encode(), *(meta[2] for meta, _ in items)])))
 '''
 
 
-def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> None:
+def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[str]:
     """`at` made the checkout of `commit` (`_CHECKOUT`), its objects STREAMED from the place's container, where `_PACK`
     packs them, into the copy's, which takes them in — one pipe between the two (`ExecutionPort.pipe`): nothing of the
     pack is held by the server or laid where the executor's agent writes, and no cap but the disk bounds a delivery
@@ -470,9 +509,15 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> None:
                              f"{(r.stdout or '').strip()[-300:]}")
     if r.returncode:
         raise OSError(f"the copy {at} could not check out its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}")
+    # …the paths it wrote as their LFS content, read now, before any build: by the attributes it checked out under,
+    # not by what a blob looks like — a pointer-shaped file outside the filter stays its text (critic over the LFS check)
+    r = ex.run([*end, "smudged", str(at), commit, tree, *W.APART], cwd=str(at.parent), timeout=1800, env=env)
+    if r.returncode:
+        raise OSError(f"the copy {at} could not say which of its files hold LFS content: {r.stderr.strip()[-300:]}")
+    return set(r.stdout.split())
 
 
-def _after_build(at: Path, tree: str, commit: str, execution) -> str:
+def _after_build(at: Path, tree: str, commit: str, execution, smudged: set = frozenset()) -> str:
     """The copy's tracked files as DELIVER recorded them once the build has run (`_CHECKOUT` "kept"), each it changed
     put back from the copy's own objects, hashed again — what is said of it appended to what ran. A build writes its
     outputs, never the delivered sources: a process it started rewrote `main.c` after it "succeeded", and every check
@@ -480,6 +525,16 @@ def _after_build(at: Path, tree: str, commit: str, execution) -> str:
     a tracked file (a parser's generated source, a lock file stamped with a time), and its checks then run over the
     delivered one. Objects of the copy's own repository the build rewrote leave nothing to put back from: `BuildFailed`
     — the delivered code broke its judge's copy."""
+    # …which the checkout smudged, laid where the copy's container reads only: no build reaches it, and a list on the
+    # command line passed Windows' 32K at some 500 files (critic over the LFS check)
+    try:
+        execution.files.mkdir(laid := str(at.parent) + LAID)
+        execution.files.write_files(laid, {"smudged": "\n".join(sorted(smudged)).encode()})
+    except OSError as e:          # …where it lies in the build's own root (a system check's copy), the build broke it
+        raise BuildFailed(f"the build broke the directory the system lays beside its copy: {e}",
+                          "the judge's check of the delivered files") from e
+    finally:
+        execution.release(laid)
     ex = execution.session(str(at))
     r = ex.run([execution.python, "-I", "-c", _CHECKOUT, "kept", str(at), commit, tree, *W.APART], cwd=str(at.parent),
                timeout=BUILD_S, env=subprocess_env(extra=W.NO_CONFIG))

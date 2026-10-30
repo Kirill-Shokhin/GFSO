@@ -84,7 +84,8 @@ def test_a_judges_copy_its_bound_ended_is_the_deliverys_fail_with_its_cause(rc, 
     made, every time it is asked; its FAIL, the cause said, never a copy to wait for again (critic over the bounds:
     read as no verdict, a delivery repeated its build on each ask and ended with a person)."""
     ran = SimpleNamespace(returncode=rc, stdout="" if rc == 137 else said, stderr="Killed")
-    ex = SimpleNamespace(python="python3", session=lambda at: SimpleNamespace(run=lambda *a, **kw: ran))
+    ex = SimpleNamespace(python="python3", session=lambda at: SimpleNamespace(run=lambda *a, **kw: ran),
+                         files=SimpleNamespace(mkdir=lambda *a: None, write_files=lambda *a: None), release=lambda *a: None)
     with pytest.raises(S.BuildFailed, match=said):
         S._after_build(tmp_path, "t" * 40, "c" * 40, ex)
 

@@ -583,6 +583,70 @@ def test_live_an_lfs_file_reads_as_its_content_in_the_judges_copy_and_a_forged_o
 
 
 @live
+@pytest.mark.parametrize("gone", ["rm -rf .git/lfs/objects",
+                                  "rm -rf .git/lfs/objects && echo x > .git/lfs/objects",
+                                  "rm -rf .git/lfs/objects && e=$(git commit-tree $(git mktree </dev/null) -m x) && "
+                                  "git update-ref refs/replace/$(git rev-parse HEAD) $e"])
+def test_live_a_build_that_takes_the_copys_lfs_objects_fails_rather_than_leave_their_pointers(project, gone):
+    """A delivered build that took the copy's LFS objects and changed an LFS file had the file put back as its POINTER,
+    and every check read the pointer (critics over the bounds: removed, the store made a file, a replace ref hiding the
+    pointers). Which files the checkout wrote as content is read before any build runs; one whose object is gone after
+    it is the delivery breaking its judge's copy — its FAIL, never a pointer judged as the delivery."""
+    x, a = project, project.own / "a"
+    tree, commit, _ = _lfs_delivery(x, b"\x00lfs content\r\n" * 4096)
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
+    with pytest.raises(BuildFailed, match="removed the Git LFS object of big.bin"):
+        with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+                      delivered=(tree, commit, f"{gone} && printf changed > big.bin")):
+            pass
+
+
+@live
+def test_live_a_build_that_cleans_the_lfs_store_but_leaves_the_files_is_judged_on_them(project):
+    """A build that cleans the copy's LFS store (`git lfs prune`, `rm -rf .git/lfs`) and leaves its files as the
+    checkout wrote them took nothing the checks read: judged on the content (critic over the LFS check — failed)."""
+    x, a = project, project.own / "a"
+    content = b"\x00lfs content\r\n" * 4096
+    tree, commit, _ = _lfs_delivery(x, content)
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
+    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+                  delivered=(tree, commit, "rm -rf .git/lfs")) as at:
+        assert x.files.read_bytes(str(Path(at) / "big.bin")) == content
+
+
+@live
+@pytest.mark.parametrize("build", ["", "rm -rf .git/lfs"])
+def test_live_a_pointer_shaped_file_outside_the_lfs_filter_stays_its_text(project, build):
+    """A file that holds an LFS pointer's text but no LFS attribute (a fixture) is checked out as its text: read as
+    smudged by its blob alone, it was overwritten with the object's content, or failed once the store was cleaned
+    (critic over the LFS check). Which files were smudged is what the checkout wrote, path by path."""
+    x, a = project, project.own / "a"
+    content = b"\x00lfs content\r\n" * 4096
+    _lfs_delivery(x, content)
+    pointer = x.session(str(a)).run(["git", *W.APART, "cat-file", "blob", "HEAD:big.bin"], cwd=str(a), timeout=60).stdout
+    x.files.write_bytes(str(a / "fixture.txt"), pointer.encode())
+    tree = W.commit_all(x.base, a, "gfso: a fixture", "exec-a", execution=x, branch="gfso/p/a")
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
+    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+                  delivered=(tree, W.head(a, execution=x), build)) as at:
+        assert x.files.read_bytes(str(Path(at) / "fixture.txt")) == pointer.encode()
+        assert x.files.read_bytes(str(Path(at) / "big.bin")) == content
+
+
+@live
+def test_live_a_build_that_writes_an_lfs_files_pointer_back_has_its_content_put_back(project):
+    """The pointer is the blob a smudged LFS file is committed as: written back by the build it matched the tree, was
+    kept, and the checks read it (critic over the LFS check). A file its checkout wrote as content is put back as it."""
+    x, a = project, project.own / "a"
+    content = b"\x00lfs content\r\n" * 4096
+    tree, commit, _ = _lfs_delivery(x, content)
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
+    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+                  delivered=(tree, commit, "git cat-file blob HEAD:big.bin > big.bin")) as at:
+        assert x.files.read_bytes(str(Path(at) / "big.bin")) == content, "the checks read the pointer"
+
+
+@live
 def test_live_a_delivery_past_the_old_cap_is_judged_and_never_held_in_the_servers_memory(project, monkeypatch):
     """`_packed` read the whole pack into the server's memory, capped at 512 MiB, and above it the delivery was never
     judged. The pack streams from the place's container into the copy's: with the cap lowered to 1 MiB, a 48 MiB
