@@ -118,6 +118,8 @@ const LIVE = {
 };
 
 async function init() {
+    // the figures' face to compare by eye on the live page (gfso.css `data-fig`), to drop with the author's choice
+    const fig = new URLSearchParams(location.search).get('fig'); if (fig) document.body.dataset.fig = fig;
     mountHints();
     // THE PAGE MUST FAIL LOUDLY, NOT BLANKLY: the graph library is a remote script, and with the CDN
     // unreachable a first-time user saw a toolbar over an empty page and no error (2026-09-02).
