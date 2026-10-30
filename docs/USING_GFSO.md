@@ -166,10 +166,13 @@ register_agent("val-1",  "llm-validator", workdir="<a scratch dir>")
 reassign("parser", "exec-1")      # …and then just watch the graph
 ```
 
-Those executors work with nobody watching their commands, so they run in a container: register the
-roles with `execution=<name>` (below). On your machine they start only with `"GFSO_LOCAL_AGENTS":
-"allow"` in `data/serve.json` (then `gfso up`); without it the first round stops the project with
-that cause, nothing of the node run, until the word is given or an execution is declared. A validator
+Those executors work with nobody watching their commands, so they run in a container. `gfso setup`
+builds the agents' image and declares it as the execution `default` (Docker is part of the installation;
+`gfso doctor` names what is missing), and `set_mode` places a project's executors that name no execution
+into it; `execution=<name>` on `register_agent` picks another one you declared (below). The project's base
+must be a git repository with a commit. On your machine instead, they start only with
+`"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (then `gfso up`); without it or a container the first
+round stops the project with that cause, nothing of the node run. A validator
 judging work you do in your own chat runs on your machine either way.
 
 The roster is the server's, shared by every session on it, so take your roles off when you are done:
