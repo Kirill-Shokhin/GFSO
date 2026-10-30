@@ -26,6 +26,27 @@ export const data = o => Object.entries(o).filter(([, v]) => v).map(([k, v]) => 
 
 // Redraw `box` keeping what the reader unfolded (`details[data-key]`) and, on the same `key`, its scroll —
 // the panel is rebuilt on every transition, and a reader mid-text must not be thrown to the top.
+// A VIEW REDRAWN EVERY SECOND changes only what changed: the new markup is laid over the old node by node — a text or an
+// attribute that differs is set, a node of another shape replaced — so the element under the pointer, its tip and the
+// scroll stay as they are while the figures move (a live reading pushed once a second, resources.js)
+export function morph(box, html) {
+    const t = document.createElement('template');
+    t.innerHTML = html;
+    const lay = (a, b) => {
+        if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName) return a.replaceWith(b.cloneNode(true));
+        if (a.nodeType === Node.TEXT_NODE) { if (a.data !== b.data) a.data = b.data; return; }
+        if (a.nodeType !== Node.ELEMENT_NODE) return;
+        for (const {name} of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
+        for (const {name, value} of [...b.attributes]) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+        const ac = [...a.childNodes], bc = [...b.childNodes];
+        bc.forEach((n, i) => ac[i] ? lay(ac[i], n) : a.appendChild(n.cloneNode(true)));
+        ac.slice(bc.length).forEach(n => n.remove());
+    };
+    const ac = [...box.childNodes], bc = [...t.content.childNodes];
+    bc.forEach((n, i) => ac[i] ? lay(ac[i], n) : box.appendChild(n.cloneNode(true)));
+    ac.slice(bc.length).forEach(n => n.remove());
+}
+
 export function rebuild(box, key, html) {
     const open = new Set([...box.querySelectorAll('details[open][data-key]')].map(x => x.dataset.key));
     const top = box.dataset.key === key ? box.scrollTop : 0;

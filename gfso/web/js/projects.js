@@ -2,7 +2,7 @@
 // stands, what it cost — and how a new one comes into being: by name, in the URL, made by its first
 // creating verb. Everything here is read from the files on disk by the server: listing a project never
 // builds its engine, so a look sets nothing running.
-import {$, esc} from './dom.js';
+import {$, esc, morph} from './dom.js';
 import {TIP} from './hints.js';
 import {PROJECT, getJSON, api, leave} from './api.js';
 import {S, procs} from './state.js';
@@ -120,7 +120,7 @@ function draw() {
         last = d;
         html += row(p, busy[p.n], on);
     });
-    $('pl-list').innerHTML = machine() + (html || '<div class="pn-meta">no project matches</div>');
+    morph($('pl-list'), machine() + (html || '<div class="pn-meta">no project matches</div>'));
     $('pl-count').textContent = `${hits.length}/${(all || []).length}`;
     $('pl-more').hidden = hits.length <= shown;
     $('pl-more').textContent = `show ${Math.min(SHOWN, hits.length - shown)} more`;

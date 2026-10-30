@@ -4,7 +4,7 @@
 // колво агентов, проекты». One reading serves every view: a view asks again when it is drawn, and shares a read in flight.
 // What Docker did not answer is null in the reading and says so here — never a 0 (no `docker info`: no machine; no
 // container listing: no containers, nodes or system rows).
-import {esc, tally} from './dom.js';
+import {esc, tally, morph} from './dom.js';
 import {getJSON} from './api.js';
 import {RES} from './hints.js';
 import {S} from './state.js';
@@ -56,22 +56,22 @@ export function render(el) {
 }
 function draw(el) {
     const d = last, p = d?.projects.find(x => x.project === S.project);
-    if (!d) return void (el.innerHTML = `<div class="pn-meta">${asked ? RES.unserved : 'reading Docker…'}</div>`);
+    if (!d) return void morph(el, `<div class="pn-meta">${asked ? RES.unserved : 'reading Docker…'}</div>`);
     // …nothing of the project where Docker listed nothing says nothing of the project
-    if (!p) return void (el.innerHTML = `${d.read.containers ? `<div class="pn-meta">${RES.none}</div>` : ''}${notes(d)}`);
+    if (!p) return void morph(el, `${d.read.containers ? `<div class="pn-meta">${RES.none}</div>` : ''}${notes(d)}`);
     const c = p.containers, disk = `<span${RES.volumes((p.volumes || []).map(v => [v.role, bytes(v.bytes, '—')]))}>`
         + `${mark(bytes(p.disk_bytes, '—'), 'disk', p.disk_counted)}</span>`;
-    if (!c) return void (el.innerHTML = `<div class="wk"><div class="rs-tallies">${disk}</div>${notes(d)}</div>`);
+    if (!c) return void morph(el, `<div class="wk"><div class="rs-tallies">${disk}</div>${notes(d)}</div>`);
     const rows = [...(p.nodes || []).map(n => [nameOf(S.tasks.find(t => t.id === n.node) || {id: n.node}), n.containers, n]),
         ['the project itself', p.system || [], null]].filter(([, cs]) => cs.length);
-    el.innerHTML = `<div class="wk"><div class="rs-tallies">${age(d)}${mark(c.running, 'containers running')}`
+    morph(el, `<div class="wk"><div class="rs-tallies">${age(d)}${mark(c.running, 'containers running')}`
         + `${c.busy != null ? mark(c.busy, 'busy', c.busy_counted) : ''}${mark(bytes(p.memory_bytes, '—'), 'memory', p.memory_bytes_counted)}`
         + `${mark(cpu(p.cpu_percent), 'CPU', p.cpu_percent_counted)}${disk}</div>`
         + (!rows.length ? '' : `<table class="wk-table"><thead><tr><th>node</th><th>containers</th><th>memory</th><th>CPU</th></tr></thead><tbody>`
         + rows.map(([name, cs, n]) => `<tr><td${RES.full(name)}><b>${esc(trim(name, 56))}</b></td><td class="rs-roles">${roles(cs)}</td>`
             + `<td>${bytes(n ? n.memory_bytes : total(cs, x => x.memory_bytes), '—')}</td>`
             + `<td>${cpu(n ? n.cpu_percent : total(cs, x => x.cpu_percent))}</td></tr>`).join('')
-        + `</tbody></table>`) + `${notes(d)}</div>`;
+        + `</tbody></table>`) + `${notes(d)}</div>`);
 }
 
 // THE PROJECT LIST'S HEAD: the whole machine — what GFSO's containers take of it, and the orphans
