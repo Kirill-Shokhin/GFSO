@@ -65,10 +65,8 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   a layout for phone width; a project that never ran can be deleted from its page.
 
 ### Fixed
-- `auto_decompose` hands over the system's own plan already judged by the admission's Level-2 check: it reviews the
-  split by that check, repairs what it names with the checker's reasons, and reviews again while the open findings
-  fall; the gate then reads that same review. The machine issuer answers no question in a subtree the authoring is
-  still writing.
+- The machine issuer answers no question in a subtree `auto_decompose` is still writing: two writers on one split had
+  ended the authoring.
 - A part waits for the producers its whole reads, not only for its own: a node with declared dependencies no longer
   has its parts start before those producers pass. A declared dependency that would close a cycle — through a parent's
   wait on its parts, or on one's own ancestor — is refused where it is written, naming the cycle; an inferred wait that
