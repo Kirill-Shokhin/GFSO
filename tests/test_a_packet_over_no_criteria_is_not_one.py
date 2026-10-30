@@ -138,11 +138,6 @@ class _Model:
         if "Name the obligations of the GOAL" in prompt:
             return "```json\n" + json.dumps({"gaps": [{"obligation": g, "admits": "a result that ignores it"}
                                                       for g in self.gaps]}) + "\n```"
-        if "DECOMPOSITION LEVEL UNDER CHECK" in prompt:      # the gate's checker: the split carries the root
-            return json.dumps({"criteria": [{"criterion": "rc", "verdict": "sufficient", "why": "ok"}],
-                               "conflicts": []})
-        if "GOAL DECLARED ATOMIC" in prompt:
-            return json.dumps({"verdict": "atomic", "why": "one unit"})
         return "ALREADY-COVERED" if "CURRENT DECOMPOSITION" in prompt else "holes"
 
     def complete_structured(self, system, user, schema):
@@ -194,7 +189,6 @@ def test_the_reply_promises_no_refusal_over_a_root_no_gate_holds(monkeypatch):
     assert e.execution_blocked_by(TaskId("root")) is None
     assert "refuse" not in out["holes_note"], out["holes_note"]
     assert "no split" in out["holes_note"], out["holes_note"]
-    assert "no plan gate holds it" in out["note"] and "holds the children" not in out["note"], out["note"]
     e.stop()
 
 

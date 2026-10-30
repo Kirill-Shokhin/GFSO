@@ -214,31 +214,31 @@ def test_a_record_from_a_round_that_read_nothing_before_the_flag_does_not_count_
     assert e.open_l2_findings(ROOT) == ["undecided: reports missing keys"]
 
 
-class _GoalOnceThenNothing(_Checker):
-    """Reads the plan; the first reading of the goal names a gap, and every re-check after the repair is unreadable."""
+class _GoalOnceThenNothing:
+    """The first reading of the goal names a gap; the one after the repair round is unreadable."""
+    _model, stage_hint = "x", ""
 
     def __init__(self):
-        super().__init__(True)
+        self.n, self.calls = 0, []
 
     def complete(self, prompt=None, context=None, **k):
-        return "sorry" if '"decided"' in (prompt or "") else super().complete(prompt, context, **k)
+        if '"gaps"' in (prompt or ""):
+            self.n += 1
+            if self.n == 1:
+                return json.dumps({"gaps": [{"obligation": "reports missing keys", "admits": "x"}]})
+        return "sorry"
+
+    def __getattr__(self, n):
+        return lambda *a, **k: None
 
 
-def test_an_unreadable_reading_after_the_authoring_repair_leaves_the_obligation_standing(monkeypatch):
-    """⊥ from the re-reading crashed the decomposition verb after the graph was built (critic round 10). An
-    unreadable re-check closes nothing: the obligation stands, the count stops falling, the loop ends, and the gate
-    holds the children on the very review the authoring ran."""
+def test_an_unreadable_reading_after_the_authoring_repair_leaves_the_obligations_standing(monkeypatch):
+    """⊥ from the re-reading crashed the decomposition verb after the graph was built (critic round 10);
+    nothing measured closed, so every obligation named stands."""
     e = _auto_plan()
-
-    def repair(engine, *a, **k):
-        root = engine._graph.get_task(ROOT)
-        root.verified = False
-        engine._graph.save_task(root)
-        return True, {}, []
-    monkeypatch.setattr(D, "_refine_round", repair)
-    _, _, found, said = D._converge_on_the_gate(e, "req", ROOT, "agent", _GoalOnceThenNothing(), {}, [], None)
-    assert found == e.open_l2_findings(ROOT) == ["undecided: reports missing keys"] and not said
-    assert e.execution_blocked_by(KID)
+    monkeypatch.setattr(D, "_refine_round", lambda *a, **k: (True, {}, []))
+    _, _, residue = D._close_the_goals_obligations(e, "req", ROOT, "agent", _GoalOnceThenNothing(), {}, [], None)
+    assert residue == ("reports missing keys",)
 
 
 @pytest.mark.parametrize("record", [

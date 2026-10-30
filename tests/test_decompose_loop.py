@@ -22,13 +22,6 @@ from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, AGREE_SCHEMA, _fold
 from tests.support import criterion, make_engine, pinned, procedure_under
 
 
-@pytest.fixture(autouse=True)
-def _no_gate_convergence(monkeypatch):
-    """This file asserts the decomposer's own search/fold shape call by call; the convergence on the Level-2 gate
-    that follows it is the subject of test_the_plan_answers_its_own_goal_before_it_is_handed_over."""
-    monkeypatch.setenv("GFSO_SUFFICIENCY_AT_AUTHORING", "0")
-
-
 class FakeLLM:
     """Queues per channel; records (kind, user) per call so the loop shape is assertable."""
     def __init__(self, texts, specs):
