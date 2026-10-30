@@ -1206,20 +1206,18 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .hd-needs .hd-phrase { opacity: 0.85; }
 /* A COUNT IS ITS OWN MARK — the figure large, its label small beside it (as Progress counts), never threaded into a
    sentence (the author, 2026-10-29): the header's parts done, the panel's parts passing */
-.tally { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
-         font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); }
-/* …the figure in the size of the line it stands in, set apart by weight alone: a figure a size or a face larger than its
-   words read as shouting across every menu (the author, 2026-10-30: «все цифры просто стали больше … глаз режет») */
-.tally b { font-family: var(--font-body); font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--ink); }
-.tally i { font-style: normal; opacity: 0.7; }
+/* …and A COUNT TAKES ITS LINE'S FACE AND SIZE: the figure set apart by weight alone, its words as the line's words — no face,
+   size or capitals of its own, which put two or three faces in one mark (the author, 2026-10-30: «все цифры просто стали
+   больше … глаз режет»; «кажется ты еще и шрифт заменил») */
+.tally { display: inline-flex; align-items: baseline; gap: 0.4em; white-space: nowrap; }
+.tally b { font-weight: 700; color: var(--ink); }
+.tally i { font-style: normal; opacity: 0.75; }
 /* THREE MARKS, EACH ITS OWN — where the goal stands, how many parts are done, what needs a person — one face and size on
    one baseline, apart by a gap and a hairline (the author, 2026-10-30: «8/11 на пол головы выше … как минимум 3 шрифта»;
    «статус и количество это два разных поинта … там что мало место их разнести?»); the figure set apart by weight alone */
 .hd-needs > .hd-phrase, .hd-needs > .tally, .hd-needs > .hd-quiet { font-size: 12.5px; white-space: nowrap; }
+.hd-needs > .tally b { color: inherit; }
 .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: 1px solid var(--hair-on-chrome); padding-left: 24px; }
-.hd-needs > .tally { font-family: var(--font-body); text-transform: none; letter-spacing: 0; gap: 5px; }
-.hd-needs > .tally b { font-family: inherit; font-size: inherit; font-weight: 700; color: inherit; }
-.hd-needs > .tally i { opacity: 0.75; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
 .pn-meta .tally { margin-left: 12px; }
 
