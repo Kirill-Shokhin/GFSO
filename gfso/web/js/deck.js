@@ -1,13 +1,13 @@
 // The run deck under the graph: a strip that always says what is running now and what it has cost,
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
-import {$, esc} from './dom.js';
+import {$, esc, tally} from './dom.js';
 import {frame, TAB, STRIP, doing} from './hints.js';
 import {S, procs, kept, keep} from './state.js';
 import {nameOf} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
 import {said, blockers, runNow, failingNow, PROC_KIND, byRole} from './run.js';
-import {dur, trim, money, NOT_REPORTED, plural} from './fmt.js';
+import {dur, trim, money, plural} from './fmt.js';
 import {beat} from './draw.js';
 import * as timeline from './timeline.js';
 import * as progress from './progress.js';
@@ -56,11 +56,11 @@ function strip() {
     // …under AUTO only, where the system holds every node: a stop pauses the system, never a person's own work (critic)
     const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
-        ? `<span class="dk-now dk-idle"${STRIP.held}>stopped · ${live.length} held mid-work</span>`
+        ? `<span class="dk-now dk-idle"${STRIP.held}>stopped${tally(live.length, 'held mid-work')}</span>`
           + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}"${STRIP.live(nameOf(t))}><i${beat()}></i><em>${esc(name(t))}</em><span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
         // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
         // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
-        : live.length ? `<span class="dk-now">${live.length} at work${mine.length && mine.length !== live.length ? ` · ${plural(mine.length, 'session')}` : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
+        : live.length ? `<span class="dk-now">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
         : '<span class="dk-now dk-idle">nothing at work</span>';
     // …and what waits on what is said whether the run runs or is held
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
@@ -72,16 +72,16 @@ function strip() {
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
             const users = Object.entries(run.waits).filter(([, w]) => w.deps.includes(id)).map(([u]) => run.name(u));
-            return `<button class="dk-block" data-node="${esc(id)}"${STRIP.block(n, run.name(id), users)}>${n} wait on <b>${esc(trim(run.name(id), 24))}</b>`
+            return `<button class="dk-block" data-node="${esc(id)}"${STRIP.block(n, run.name(id), users)}>${tally(n, 'wait on')}<b>${esc(trim(run.name(id), 24))}</b>`
                 + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '')
-        + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${STRIP.onIssuer(issuer.length)}</span>` : '')
+        + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
         // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
         // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
-        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${STRIP.sentBack(back.length)}${back.length === 1 ? `: ${esc(trim(run.name(back[0][0]), 20))}` : ''}</button>` : '')
+        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `: ${esc(trim(run.name(back[0][0]), 20))}` : ''}</button>` : '')
         // a session's cost is booked when it ENDS (the CLI reports it then): a running one is said, not guessed
         + (run ? `<span class="dk-sum"${STRIP.spend(byRole(run.cost.byKind), mine.length)}>`
-                 + `${(m => m === NOT_REPORTED ? `spend ${m}` : m)(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced))}`
-                 + `${mine.length ? ` + ${mine.length} running` : ''} in ${dur(run.clock.span)}</span>` : '');
+                 + tally(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced), 'spent')
+                 + `${mine.length ? tally(`+${mine.length}`, 'running') : ''}${tally(dur(run.clock.span), 'run')}</span>` : '');
 }
 
 // The strip drawn, then its chips fitted: those the line holds are shown, the rest counted with their names on hover —
@@ -89,6 +89,9 @@ function strip() {
 function drawStrip() {
     const box = $('deck').querySelector('.dk-strip');
     box.innerHTML = strip();
+    // …from scratch each time: a `.fit` left by a line that had chips held the wait lines at full width once the chips
+    // were gone, and pushed the spend out of the strip (1280 px beside the panel)
+    box.classList.remove('fit');
     const chips = box.querySelector('.dk-chips'), more = chips?.querySelector('.dk-more');
     if (!chips) return;
     // fitted while only the chips give way, each down to a name still read (`.fit`): shrunk without a floor, five

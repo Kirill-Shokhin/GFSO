@@ -426,7 +426,7 @@ body {
 .dk-live em { font-style: normal; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .dk-live i, .dk-live span { flex-shrink: 0; }
 .dk-wait { color: var(--ink-soft); border-left: 1px solid var(--hair); padding-left: 10px; }
-.dk-sum { margin-left: auto; flex: 0 2 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
+.dk-sum { margin-left: auto; flex: 0 0 auto; display: flex; overflow: hidden; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .dk-fold { background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; }
 .deck.closed .dk-fold { transform: rotate(180deg); }
 .dk-body { flex: 1; overflow: auto; padding: 12px 16px 16px; min-height: 0; }
@@ -1027,7 +1027,9 @@ body.manual .toolbar .tb-help { margin-left: 0; }
     text-overflow: ellipsis;
 }
 .pn-meta b { font-weight: 500; color: var(--ui-text-soft); }
-.pn-meta.pn-by { white-space: normal; }   /* who ran it, whole: «validated by …» is said last and was the part cut */
+.pn-meta.pn-by { white-space: normal; }
+.pn-by > span { margin-right: 14px; white-space: nowrap; display: inline-block; }
+.pn-by sup { font-size: 9px; margin-left: 2px; color: var(--ui-text-soft); }   /* who ran it, whole: «validated by …» is said last and was the part cut */
 .pn-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .pn-note { font-size: 11.5px; margin: -2px 0 8px; }
 .pn-verdict { display: flex; align-items: center; gap: 6px; font-size: 11.5px; margin: 14px 0 6px; min-width: 0; }
@@ -1130,7 +1132,7 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .dk-strip.fit .dk-live em { min-width: 12ch; }
 .dk-more { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); align-self: center; }
 /* what is at work keeps its chips; the wait lines give way first, shortened, their whole text on hover */
-.dk-block, .dk-wait { flex: 0 3 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; }
+.dk-block, .dk-wait { flex: 0 3 auto; min-width: 3.5em; overflow: hidden; text-overflow: ellipsis; }
 
 /* ============ The goal constructor — the reader's slide-over, from the left ============ */
 .goal-panel { left: 0; right: auto; z-index: 30; border-left: none; box-shadow: 16px 0 32px -20px color-mix(in srgb, var(--ink) 30%, transparent); }
@@ -1184,9 +1186,11 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
    sentence (the author, 2026-10-29): the header's parts done, the panel's parts passing */
 .tally { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
          font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); }
-.tally b { font-family: var(--font-display); font-size: 17px; font-weight: 650; letter-spacing: 0; }
+.tally b { font-family: var(--font-display); font-size: 17px; font-weight: 650; letter-spacing: 0; text-transform: none; }
 .tally i { font-style: normal; opacity: 0.7; }
 .hd-needs .tally { margin-right: 14px; }
+.dk-head .tally { gap: 5px; margin-right: 8px; }
+.dk-head .tally b { font-size: 13px; color: var(--ink); }
 .pn-meta .tally { margin-left: 12px; }
 .pn-meta .tally b { font-size: 13px; color: var(--ui-text); }
 

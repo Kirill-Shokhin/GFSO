@@ -118,7 +118,7 @@ function draw() {
         html += row(p, busy[p.n], on);
     });
     $('pl-list').innerHTML = machine() + (html || '<div class="pn-meta">no project matches</div>');
-    $('pl-count').textContent = `${hits.length} of ${(all || []).length}`;
+    $('pl-count').textContent = `${hits.length}/${(all || []).length}`;
     $('pl-more').hidden = hits.length <= shown;
     $('pl-more').textContent = `show ${Math.min(SHOWN, hits.length - shown)} more`;
 }

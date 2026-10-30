@@ -17,7 +17,8 @@ const money = ps => { const calls = ps.reduce((s, p) => s + p.calls, 0), un = ps
     const procs = ps.reduce((s, p) => s + (p.procs ?? p.calls), 0);
     const m = reported(ps.reduce((s, p) => s + p.cost, 0), calls && procs, un);
     return m === NOT_REPORTED || !un ? m : `${m} + ${un} not priced`; };
-const tile = (v, label, note = '') => `<div class="cs-tile"><b>${v}</b><span>${label}</span>${note ? `<i>${note}</i>` : ''}</div>`;
+// a tile's notes each on a line of its own, never joined to one another by a dot
+const tile = (v, label, ...notes) => `<div class="cs-tile"><b>${v}</b><span>${label}</span>${notes.filter(Boolean).map(n => `<i>${n}</i>`).join('')}</div>`;
 
 // One bar chart: rows of [key, label, parts{exec,val,…}], the bar split by role so the cost of
 // checking stands beside the cost of doing. Roles keep their place in every row.
@@ -47,7 +48,7 @@ export function render(el, run, nodes) {
     el.innerHTML = `<div class="cs">
         <div class="cs-tiles">
             ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced ? `${plural(c.unpriced, 'call')} with no cost recorded` : '')}
-            ${tile(tok(c.tokens), 'tokens', c.untold && c.tokens != null ? `cache included · ${plural(c.untold, 'session')} reported none` : 'cache included')}
+            ${tile(tok(c.tokens), 'tokens', 'cache included', c.untold && c.tokens != null && `${plural(c.untold, 'session')} reported none`)}
             ${tile(dur(run.clock.span), 'run time', run.clock.folds.length ? `idle ${dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0))} folded` : '')}
             ${tile(dur(c.busy), 'session time', `${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}× the run`)}
             ${tile(run.exec.peak, 'executors at once', `validators ${run.val.peak}`)}
