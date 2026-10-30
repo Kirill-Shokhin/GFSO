@@ -49,7 +49,9 @@ export async function deleteProject() {
 // and every way of NOT being delivered is marked — the runs looked for are often the ones that did not make it.
 function where(p, busy) {
     const r = p.goal;
-    if (!r) return ['empty', 'no goal yet'];
+    // a project with no goal yet but work on it is the system authoring its plan — at work, never «no goal yet» as if idle
+    // (the author, 2026-10-30: «инфу о том что 7 докеров идут вижу … а самой строки в проектах нет»)
+    if (!r) return busy ? ['live', 'the plan being authored'] : ['empty', 'no goal yet'];
     // a closed goal in the header's word; the list's row says what an abandoned one lacks
     // …and an open goal a FAIL left on the issuer's decision is marked failed too: the run looked for did not make it
     const word = goalWord(r) || (r.done_reason === 'FAIL' ? 'failed' : '');
@@ -107,10 +109,10 @@ function draw() {
     // and what each run was, by when it was launched (author, 2026-10-24: «мои текущие или последние прогоны …
     // хотя бы от какой даты»). By the last act alone, old runs a read woke buried the day's launches; by the
     // launch alone, the runs acting today sank under September. A project with no goal is no run: it goes last.
-    const active = hits.filter(p => p.goal && recent(p));
+    const active = hits.filter(p => (p.goal && recent(p)) || (!p.goal && busy[p.n]));
     const runs = hits.filter(p => p.goal && !recent(p)).sort((a, b) => b.goal.started - a.goal.started);
     let last = null, html = '';
-    [...active, ...runs, ...hits.filter(p => !p.goal)].slice(0, shown).forEach(p => {
+    [...active, ...runs, ...hits.filter(p => !p.goal && !busy[p.n])].slice(0, shown).forEach(p => {
         const on = active.includes(p), d = on ? 'active' : p.goal ? day(p.goal.started) : 0;
         if (d !== last) html += `<div class="pl-day">${on ? 'acted in the last 24 hours'
             : d ? 'launched ' + dayName(d).toLowerCase() : 'no goal'}</div>`;

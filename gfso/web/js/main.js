@@ -17,6 +17,7 @@ import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight} fr
 import {connectWS} from './live.js';
 import {askProjectName} from './overlays.js';
 import {mountHints} from './hints.js';
+import {drawPlanning} from './planning.js';
 
 // THE REFRESHES, each a read of the page's model (model.js) and then the drawing of what it read. SERIALISED (api.js
 // singleFlight): a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each other.
@@ -30,9 +31,9 @@ S.reload = async () => { await refreshAll(); if (focus().select) await selectTas
 const projects = () => refreshProjects().then(onInflight);
 // news on the narration re-reads the run, once a burst of it has settled
 let soon = null;
-const later = () => (clearTimeout(soon), soon = setTimeout(refreshDeck, 1500));
+const later = () => (clearTimeout(soon), soon = setTimeout(() => refreshDeck().then(drawPlanning), 1500));
 // what reads the run once the deck has rebuilt it
-const afterDeck = () => { annotate(); refreshHeader(); if (focus().select) resign(focus().select); };
+const afterDeck = () => { annotate(); refreshHeader(); drawPlanning(); if (focus().select) resign(focus().select); };
 
 // THE COUNT OF WORK IN FLIGHT IS THE SERVER'S registry, not inferred from token ticks (an executor running
 // tools sends none; author, 2026-09-24). A run starting or ending elsewhere changes the picker's line.
@@ -139,7 +140,7 @@ async function init() {
     // with time and with nothing pushed — a session busy with tools streams no tokens. Minutes are the coarsest unit
     // shown, so 30 s keeps every figure within half its own step; no server read. A call booked in the ledger arrives
     // as the engine's `usage` line, which re-reads the run.
-    setInterval(() => { if (runIsOpen()) { rebuildRun(); paintDeck(); } }, 30e3);
+    setInterval(() => { if (runIsOpen()) { rebuildRun(); paintDeck(); } drawPlanning(); }, 30e3);
     await initGraph();
     await refreshAll();
     suggestHeight(graphNeeds());

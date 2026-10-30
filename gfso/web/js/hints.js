@@ -129,6 +129,13 @@ export const TAB = {
     resources: hover("What this project's containers take now", 'Memory, CPU and disk by node, read from Docker'),
 };
 
+// ── the plan being authored, on the canvas while there is no graph yet (planning.js) ──
+export const PLAN = {
+    title: 'The plan is being authored',
+    starting: 'starting',
+    since: t => hover(`Since\t${t}`),
+};
+
 // ── resources: what Docker holds for this installation (`GET /api/resources`) ──
 export const RES = {
     // a figure Docker gave for some of the containers only is a lower bound, and says of how many
