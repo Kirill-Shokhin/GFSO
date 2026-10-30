@@ -295,7 +295,12 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
     e.wait_idle()
     _pass(e, d, 10)
     revised.set()
-    _pass(e, d, 60)
+    # …and read once v2 HAS DELIVERED: v1's superseded commit and v2's observation are git on the host's clock (1.5 s
+    # measured on Windows), so a fixed count of passes ended the test before v2's session or its delivery commit
+    until = time.monotonic() + 60
+    while _state(e) == State.EXECUTING and time.monotonic() < until:
+        _pass(e, d, 1)
+    assert _state(e) in (State.VALIDATING, State.DONE), _signals(e)
     assert len(places) == 2 and overlap == [[], []], f"sessions overlapped: {overlap}"
     git = lambda *a: subprocess.run(["git", "-C", places[1], *a], capture_output=True, text=True).stdout
     assert "stale_v1.txt" not in git("show", "--stat", "--format=%s", "HEAD"), "v1's writes in v2's delivery"
