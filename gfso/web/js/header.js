@@ -86,8 +86,10 @@ const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id
 // running · stopping (who is still at work, on hover) · stopped (by whom, when, why) — author, 2026-10-25.
 // the stop's `at` is an ISO stamp, a working session's `since` epoch seconds (the in-flight registry's)
 const ago = t => dur(Date.now() - (typeof t === 'number' ? t * 1e3 : at(t)));
+// …and none on a closed goal with nothing at work: there is nothing to stop or start (the author, 2026-10-30: «на done
+// проекте незачем висит кнопка stop») — nor the system's stop a server's start puts on every project that stood
 function runSwitch(r) {
-    if (!r || !begun()) return '';
+    if (!r || !begun() || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return '';
     if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
     const who = `stopped by ${r.by} ${ago(r.at)} ago${r.why ? ` — ${r.why}` : ''}`;
     const text = r.state === 'stopping' ? `stopping · ${r.working.length} still at work` : 'stopped';
