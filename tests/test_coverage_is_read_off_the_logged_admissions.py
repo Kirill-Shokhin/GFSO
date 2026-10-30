@@ -96,9 +96,10 @@ def test_a_refuted_criterion_remapped_onto_a_finished_child_is_a_repair(engine):
     assert engine.graph.get_state(TaskId("root")) == State.VALIDATING
 
 
-def test_a_rebuild_round_that_only_remaps_is_admitted():
+def test_a_rebuild_round_that_only_remaps_is_admitted(monkeypatch):
     """A refine whose fold only remaps changes the split, so it is its re-admission: the mapping lands and the child
     keeps its work — no child having changed, the round was dropped in silence (critic r17)."""
+    monkeypatch.setenv("GFSO_SUFFICIENCY_AT_AUTHORING", "0")     # FakeLLM answers the fold only, not the gate
     res = decompose_into(_eng(), "task", root_id="root", llm=FakeLLM(texts=["holes1"], specs=[_init_patch()]))
     e = res.engine
     signals_b = len(e.audit_log(TaskId("root.b")))

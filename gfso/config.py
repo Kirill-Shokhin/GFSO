@@ -565,10 +565,11 @@ VALIDATION_CLAIM_TTL = 1800.0
 
 
 def sufficiency_at_authoring() -> bool:
-    """Does the decomposer close its own goal's undecided obligations before handing the plan over?
+    """Does the decomposer converge its own plan against the Level-2 gate before handing it over?
 
-    ON by default. The check is the same one the Level-2 review runs; asking it at authoring costs
-    one call and saves the caller the review rounds that repair what the previous call just wrote.
+    ON by default. The review is the admission's own (`review_decomposition`), run and repaired by
+    the author until clean or no longer improving, so the gate reads it instead of the issuer
+    repairing what the previous call just wrote.
     `GFSO_SUFFICIENCY_AT_AUTHORING=0` turns it off — the measurement arm needs to be able to author a
     plan the gate has NOT already pre-repaired, or the two halves of the experiment collapse.
     """

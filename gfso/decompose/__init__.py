@@ -38,7 +38,7 @@ from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search
 from .build import build_graph_live, held_contract
 from .extract import extract_spec
 from gfso.config import ROOT_ID, MODEL_DEFAULT, sufficiency_at_authoring
-from gfso.critic.runner import _undecided_obligations
+from gfso.critic.runner import review_decomposition
 
 REPAIR_ROUNDS = 2
 
@@ -516,47 +516,67 @@ def decompose(request: str, depth: int = 1, model: str = MODEL_DEFAULT,
                           llm=llm, fast=fast)
 
 
-def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, holes, progress, executor="",
-                                 agree: "_Agreement | None" = None):
-    """Ask the sufficiency question about the ROOT, fold what it names once, and MEASURE the residue.
+def _converge_on_the_gate(engine, request, rid, assignee, llm, spec, holes, progress, executor="",
+                          agree: "_Agreement | None" = None):
+    """Review the root's split by the admission gate's own Level-2 check, repair what it names, review again —
+    until the gate is clean or stops improving. Returns (spec, holes, open, said) — `open` the gate's findings on
+    the plan as handed over (`[]` clean, None no verdict of this authoring's), `said` why there is none.
 
-    Returns (spec, holes, residue) — the obligations still undecided after the repair round, or `()`.
-    A bottom from the check names nothing and changes nothing: "the check could not run" is not "the
-    goal is covered" (§11.2).
+    The same check, not a second instrument: `review_decomposition` stores its critique as the record of THIS
+    version of the plan, and the gate (`open_l2_findings`) reads that record — so the plan reaches admission
+    already judged, and an unchanged plan is not asked the identical question twice. The authoring used to
+    converge by its own instruments (the fold's "empty — converged" and ONE round over the goal's undecided
+    obligations) and hand over a plan the gate then opened 37 findings on, repaired one issuer answer at a time
+    (gb-coreutils, 2026-10-30; ~25 min on c_compiler) — a Semantic flag is discharged by the decomposer before
+    admission (§9.7, §11.5).
 
-    The first version announced "closing them before the plan is handed over" and then handed over a
-    plan with the same seven open, because it never asked again (CLI door, 2026-09-02). A claim about
-    a result, made before the result exists, is the thing this whole product refuses; the round is
-    worth one extra call precisely so the answer can be a measurement instead.
-    """
-    task = engine.graph.get_task(rid)
-    if task is None:
-        return spec, holes, ()
-    gaps = _undecided_obligations(engine, task, llm, stage=Stage.AUTHORING_OBLIGATIONS)
-    if not gaps:
-        return spec, holes, ()
-    _progress(f"{rid}: the goal has {len(gaps)} obligation(s) no criterion decides — one repair "
-              f"round over them", progress)
-    listed = "\n".join(f"- {g.get('obligation', '')}" for g in gaps)
-    changed, spec2, holes2 = _refine_round(
-        engine, request, str(rid), assignee, llm, progress=progress, label="sufficiency", executor=executor, agree=agree,
-        findings=f"# OBLIGATIONS OF THIS GOAL THAT NO CRITERION OF THE ROOT DECIDES\n"
-                 f"Each line is something the goal text requires and the plan does not yet make checkable. "
-                 f"Add or sharpen the ROOT's criteria so each becomes decidable — most belong in the criterion "
-                 f"of the component they name — and give the children the criteria that entail them. Do not "
-                 f"restate an obligation as a criterion — write the observable that settles it.\n{listed}")
-    if not changed:
-        return spec, holes, tuple(g.get("obligation", "") for g in gaps)
-    # …AND ASK AGAIN, because the repair is a model's answer and not a fact until it is checked.
-    _after = _undecided_obligations(engine, engine.graph.get_task(rid), llm)
-    if _after is None:   # ⊥: the goal could not be re-read, so nothing is measured closed — all stand
-        _progress(f"{rid}: the goal could not be re-read after the repair — its {len(gaps)} obligation(s) "
-                  f"stand as named", progress)
-        return spec2, holes2, tuple(g.get("obligation", "") for g in gaps)
-    residue = tuple(g.get("obligation", "") for g in _after)
-    _progress(f"{rid}: {len(gaps) - len(residue)} of {len(gaps)} closed"
-              + (f"; still open: {'; '.join(residue)}" if residue else ""), progress)
-    return spec2, holes2, residue
+    Stops when no finding is open, when the gate gives no verdict (⊥ is not clean — admission asks again), when
+    the fold changes nothing, or when the open count has set no new minimum for two rounds. The last rule is the
+    bound: a count of n0 findings sets a new minimum at most n0 times, with at most two reviews between them and
+    after the last, so at most 3·n0 + 3 reviews run — the unbounded loop that cost twenty-six rounds on the E3 arm
+    lacked a progress rule, not a smaller round count."""
+    best, stale, k = None, 0, 0
+    while True:
+        slot = engine.claims.begin_review(rid)
+        if slot is None:
+            return spec, holes, None, (f"a Level-2 check over '{rid}' was already running when the authoring "
+                                       f"reached its review — its verdict, not this one, is what the gate reads")
+        n0 = len(calls_of(llm))
+        try:
+            crit = review_decomposition(engine, rid, llm=llm)
+        finally:
+            engine.claims.end_review(slot)
+            # …PRICED AS AUTHORING: the same question, a different payer than the gate's later reviews (E3 columns)
+            for c in calls_of(llm)[n0:]:
+                c["stage"] = _AUTHORING_STAGE.get(c.get("stage"), Stage.AUTHORING_GATE)
+        found = engine.open_l2_findings(rid)
+        if found is None:
+            return spec, holes, None, (f"the Level-2 check gave no verdict on '{rid}' after round {k} — "
+                                       f"admission asks it again")
+        _progress(f"{rid}: {len(found)} finding(s) open after round {k}", progress)
+        stale = 0 if best is None or len(found) < best else stale + 1
+        best = len(found) if best is None else min(best, len(found))
+        if not found or stale >= 2:
+            return spec, holes, found, ""
+        k += 1
+        # THE REASONS, NOT THE KEYS: "- g" names a criterion and says nothing of the gap, and a repair handed only
+        # names guesses — the blind repair the issuer ran 37→3→3 (the keys ride in the state view regardless)
+        changed, spec2, holes2 = _refine_round(
+            engine, request, str(rid), assignee, llm, progress=progress, label=f"gate {k}", executor=executor,
+            agree=agree,
+            findings="# OPEN LEVEL-2 FINDINGS — what the admission gate refuses this plan for, with the checker's "
+                     "reasons\nEach is a criterion the children's criteria do not entail, a conflict between them, or "
+                     "an obligation of the goal that no criterion of the ROOT decides. Repair each: sharpen or add "
+                     "the root's criteria so every obligation becomes decidable — write the observable that settles "
+                     "it, not the obligation restated — and give the children the criteria that entail the root's.\n"
+                     + (crit.semantic_findings or "\n".join(f"- {f}" for f in found)))
+        if not changed:
+            return spec, holes, found, ""
+        spec, holes = spec2, holes2
+
+
+#: the authoring-time labels of the gate's calls: the obligation question keeps its own column, the rest is one
+_AUTHORING_STAGE = {str(Stage.UNDECIDED_OBLIGATIONS): Stage.AUTHORING_OBLIGATIONS}
 
 
 
@@ -610,6 +630,29 @@ def _refuse_what_cannot_be_built(engine: Engine, root_id: str, existing, request
     if plan is not None and existing is not None and engine.graph.get_active_children(TaskId(root_id)):
         raise ValueError(f"auto_decompose: {root_id!r} is already decomposed — a given plan builds only "
                          f"an undecomposed target.")
+
+
+def _handed_over(engine, request, rid, assignee, llm, spec, holes, progress, executor, agree, note):
+    """The plan converged on the gate (`_converge_on_the_gate`), and what stays open said to the caller: the note, and
+    the root's obligations still undecided. Returns (spec, holes, note, residue)."""
+    residue: tuple = ()
+    spec, holes, _open, said = _converge_on_the_gate(engine, request, rid, assignee, llm, spec, holes, progress,
+                                                     executor, agree)
+    if said:
+        _progress(said, progress)
+        note = ((note + " ") if note else "") + f"NOTE: {said}."
+    elif _open:
+        # …AND THE CALLER LEARNS IT HERE, by what this review holds: a split's children, or — unsplit — nothing
+        # until contact, since no plan gate stands before a childless root (`_what_the_gate_does`)
+        residue = tuple(str(g.get("obligation", "")) for g in
+                        (engine.get_critique(rid) or {}).get("undecided_obligations") or ())
+        note = ((note + " ") if note else "") + (
+            f"NOTE: {len(_open)} Level-2 finding(s) stay open on the plan as handed over — "
+            + ("the gate reads this same review and holds the children on them: "
+               if engine.graph.get_active_children(rid) else
+               "the root is unsplit, so no plan gate holds it; its issuer revises the criteria or contact "
+               "reads them: ") + "; ".join(_open))
+    return spec, holes, note, residue
 
 
 def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assignee: str = "human",
@@ -674,25 +717,13 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
                                                  agree=agree)
             if not changed:
                 break
-    # THE QUESTION THE GATE WILL ASK, ASKED BY WHOEVER WRITES THE ANSWER. The sufficiency check —
-    # "what does this goal require that no criterion of this node decides" (FM-1.f) — ran only at
-    # review time, so the verb that AUTHORS the criteria never heard it: two testers watched
-    # `auto_decompose` produce a root whose own gate then named five to twelve undecided obligations
-    # a minute later, and paid two full review rounds to repair what the previous call had just
-    # written (2026-09-02, both agent doors). It is the same question either way; asking it here
-    # costs one call and the repair rides on the fold that already exists. ONCE, never in a loop —
-    # the loop is what cost twenty-six rounds and $19.44 on the E3 arm before it was bounded.
+    # THE QUESTION THE GATE WILL ASK, ASKED BY WHOEVER WRITES THE ANSWER: the system's own plan is handed over
+    # converged against the admission's Level-2 check, its review on record (`_converge_on_the_gate`). A plan the
+    # user handed in, or one whose contract its author does not hold, is not rewritten here.
     _residue: tuple = ()
     if sufficiency_at_authoring() and given is None and not held:
-        spec, holes, _residue = _close_the_goals_obligations(engine, request, rid, assignee, llm,
-                                                             spec, holes, progress, executor, agree)
-        if _residue:
-            # …AND THE CALLER LEARNS IT HERE, not one paid review round later. The gate will name
-            # these again; what it must not do is name them for the first time.
-            note = ((note + " ") if note else "") + (
-                f"NOTE: {len(_residue)} obligation(s) of this goal are still decided by no criterion "
-                f"after the repair round — the Level-2 review will name them again: "
-                + "; ".join(_residue))
+        spec, holes, note, _residue = _handed_over(engine, request, rid, assignee, llm, spec, holes, progress,
+                                                   executor, agree, note)
     # …AND WHAT THE AGREEMENT FOUND OUTLIVES THE ROUND THAT FOUND IT: each later round returns its own holes, and a
     # criterion its checks deny — or one the TASK demands both ways (§9.7) — would otherwise end the authoring unsaid
     agree.forget_gone(spec)

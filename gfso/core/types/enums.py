@@ -178,6 +178,9 @@ class Stage(StrEnum):
     # which made the authoring pass unmeasurable: it was justified as the most expensive open item
     # and its cost was indistinguishable in the ledger from the gate's own check.
     AUTHORING_OBLIGATIONS = "authoring-obligations"
+    # …and the rest of the gate's own review run by the authoring before the plan is handed over (the checker, the
+    # atomicity reading): the gate's later reviews keep `l2-checker` / `l2-atomicity`, so the two payers price apart.
+    AUTHORING_GATE = "authoring-gate"
     # Whether a criterion the system just wrote says what its own checks deny — asked before the build.
     AUTHORING_AGREE = "authoring-agree"
     VALIDATE_RESULT = "validate_result"
