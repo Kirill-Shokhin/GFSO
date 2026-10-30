@@ -177,6 +177,26 @@ def test_an_entry_naming_a_criterion_in_another_word_form_is_that_criterion():
     assert [r["criterion"] for r in twice] == ["invalid option or count exits 1", "invalid option or count exit 1"]
 
 
+def test_a_conflict_with_a_settled_child_is_reported_not_gated():
+    """A new child contradicting a DONE one: no move of the decomposer drops or revises the DONE child, and a
+    re-admission does not re-check what is settled (§11.5) — gated, the plan sat shut to the row's ceiling
+    (GB_coreutils_tnql66996). The same conflict between two live children still gates.
+    CONTROL: gate on every conflict and the first case stays shut."""
+    import dataclasses
+    from gfso.core.types import State
+    conflict = [{"between": ["a (a1)", "b (b1)"], "why": "a counts 4, b pins 3"}]
+    reply = _verdict_json([{"criterion": "c1", "verdict": "sufficient", "why": "a"},
+                           {"criterion": "c2", "verdict": "sufficient", "why": "b"}], conflict)
+    e = _engine()
+    _decompose_clean(e)
+    crit = critique_node(e, TaskId("p"), llm=_CheckerLLM(reply))
+    assert crit.semantic_covered is False                                  # two live children: gated
+    a = e.graph.get_task(TaskId("a"))
+    e.graph.save_task(dataclasses.replace(a, state=State.DONE))
+    crit = critique_node(e, TaskId("p"), llm=_CheckerLLM(reply))
+    assert crit.semantic_covered is True and "reported, not gating" in crit.semantic_findings, crit.semantic_findings
+
+
 def test_a_doubt_a_later_reading_raised_on_a_criterion_the_first_left_out_stands():
     """Reading 1 leaves c2 out, readings 2–3 doubt it: the doubt is a finding — the verdict is folded over every reading,
     not reading 1's list (critic over 184dff5)."""

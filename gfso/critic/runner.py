@@ -28,7 +28,7 @@ from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import CHECKER_READINGS, SUFFICIENCY_READINGS
 from gfso.core.graph.projection import pinned_lines, probe_view
 from gfso.core.graph.review import progress_baseline
-from gfso.core.types import CriticVerdict, Stage, TaskId
+from gfso.core.types import CriticVerdict, Stage, State, TaskId
 from gfso.engine.validation import _EXEC_GATING_CHECKS
 from gfso.adapters.llm.stats import calls_of, readings, refused_by_limit, tag_stage
 from .types import NodeCritique
@@ -334,15 +334,30 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
                             semantic_findings="the goal's obligations could not be read this round — no "
                                               "verdict; run the review again")
     gaps = [v for v in verdicts if v.get("verdict") != CriticVerdict.SUFFICIENT]
+    # A CONFLICT WITH A SETTLED CHILD IS REPORTED, NOT GATED: a re-admission does not re-check what is settled (§11.5),
+    # and no move of the decomposer drops or revises a DONE child (§12.14) — a split whose new child contradicts a DONE
+    # one is contact refuting the settled child's claim, which the new child's own check decides. Gated, every honest
+    # `add_child` added one more such conflict and the plan sat shut to the row's ceiling (GB_coreutils_tnql66996).
+    reported = [c for c in conflicts if any(_settled(engine, b) for b in c.get("between", ()))]
+    conflicts = tuple(c for c in conflicts if c not in reported)
     covered = not gaps and not conflicts and not short
-    findings = "" if covered else "\n".join(
-        [f"[{v.get('verdict')}] {v.get('criterion')} — {v.get('why')}" for v in gaps]
-        + [f"[conflict] {', '.join(c.get('between', ()))} — {c.get('why')}" for c in conflicts]
-        + [f"[undecided on {nid}'s OWN criteria] {g.get('obligation')} — "
-           f"admits: {g.get('admits')}" for g in short])
+    findings = "\n".join(
+        ([] if covered else
+         [f"[{v.get('verdict')}] {v.get('criterion')} — {v.get('why')}" for v in gaps]
+         + [f"[conflict] {', '.join(c.get('between', ()))} — {c.get('why')}" for c in conflicts]
+         + [f"[undecided on {nid}'s OWN criteria] {g.get('obligation')} — "
+            f"admits: {g.get('admits')}" for g in short])
+        + [f"[reported, not gating — one side is settled] {', '.join(c.get('between', ()))} — {c.get('why')}"
+           for c in reported])
     return NodeCritique(nid, gate_passed=True, semantic_covered=covered,
                         semantic_findings=findings, criteria_verdicts=verdicts, conflicts=conflicts,
                         undecided_obligations=short, goal_read=True)
+
+
+def _settled(engine, said) -> bool:
+    """Does a conflict's side name a settled node — `root.wc (wc-counts)`: the id before its criterion's gloss."""
+    task = engine.graph.get_task(TaskId(str(said).split()[0])) if str(said).split() else None
+    return task is not None and task.state in (State.DONE, State.ABANDONED)
 
 
 def _plan_generation(task) -> tuple:
