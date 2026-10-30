@@ -54,11 +54,11 @@ function draw(el) {
     el.innerHTML = `<div class="wk"><div class="rs-tallies">${age(d)}${mark(c.running, 'containers running')}`
         + `${c.busy != null ? mark(c.busy, 'busy', c.busy_counted) : ''}${mark(bytes(p.memory_bytes, '—'), 'memory', p.memory_bytes_counted)}`
         + `${mark(cpu(p.cpu_percent), 'CPU', p.cpu_percent_counted)}${disk}</div>`
-        + `<table class="wk-table"><thead><tr><th>node</th><th>containers</th><th>memory</th><th>CPU</th></tr></thead><tbody>`
+        + (!rows.length ? '' : `<table class="wk-table"><thead><tr><th>node</th><th>containers</th><th>memory</th><th>CPU</th></tr></thead><tbody>`
         + rows.map(([name, cs, n]) => `<tr><td${RES.full(name)}><b>${esc(trim(name, 56))}</b></td><td class="rs-roles">${roles(cs)}</td>`
             + `<td>${bytes(n ? n.memory_bytes : total(cs, x => x.memory_bytes), '—')}</td>`
             + `<td>${cpu(n ? n.cpu_percent : total(cs, x => x.cpu_percent))}</td></tr>`).join('')
-        + `</tbody></table>${notes(d)}</div>`;
+        + `</tbody></table>`) + `${notes(d)}</div>`;
 }
 
 // THE PROJECT LIST'S HEAD: the whole machine — what GFSO's containers take of it, and the orphans
