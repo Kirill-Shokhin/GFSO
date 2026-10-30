@@ -3,9 +3,9 @@
 // executor, so the run is signed by it (author, 2026-10-25). From the run model only.
 // A model is named once — its tile says its window, its rows are grouped under it — and a row's figures are bars whose
 // numbers are on hover: the same «median 27% of 200k» on every row was noise (the author, 2026-10-27).
-import {esc} from './dom.js';
+import {esc, tally} from './dom.js';
 import {modelName, TOKENS} from './vocab.js';
-import {usd, tok as fmtTok, pct, money, plural, NOT_REPORTED} from './fmt.js';
+import {usd, tok as fmtTok, pct, money, NOT_REPORTED} from './fmt.js';
 import {median} from './run.js';
 import {MODELS, COST_CLS, KIND} from './hints.js';
 
@@ -59,8 +59,7 @@ export function render(el, run) {
             <th${MODELS.cost}>cost split</th>
             <th${MODELS.fill}>context filled</th></tr></thead><tbody>
         ${models.map(([m, x]) => x.rows.map((r, i) => row(r, i, m)).join('')).join('')}
-        </tbody></table>${unansweredLine(unanswered)}${moved ? `<div class="pn-meta wk-note">not counted above — `
-            + `${plural(moved, 'attempt')} an account's limit refused, run again on the provider's next credential</div>` : ''}</div>`;
+        </tbody></table>${unansweredLine(unanswered)}${moved ? `<div class="pn-meta wk-note">${tally(moved, 'moved to the next credential', MODELS.moved)}</div>` : ''}</div>`;
 }
 
 // sessions no model answered, said once under the table rather than counted as anyone's work

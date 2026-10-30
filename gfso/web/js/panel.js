@@ -3,7 +3,7 @@
 // facet per tab, in a slide-over left of the panel. One unit: the reader renders what the panel read and fetches
 // nothing (they were two modules with seven names across the cut). Buttons carry `data-action` (dispatched in main.js);
 // nothing here sends anything.
-import {$, el, esc, data, section, ul, rebuild} from './dom.js';
+import {$, el, esc, data, section, ul, rebuild, tally} from './dom.js';
 import {PANEL, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
 import {S, hasKids, taskOf, myRole} from './state.js';
@@ -93,7 +93,7 @@ function criteria({d, vr, rounds}) {
             + pinned(c, key + '|check') + `</div></details>`;
     };
     const SHOWN = 8, head_ = sorted.slice(0, SHOWN).map(row).join(''), rest = sorted.slice(SHOWN);
-    return section(`Criteria${vr?.verdict ? `<span class="tally"><b>${k}/${cs.length}</b><i>pass</i></span>` : ''}`, head_
+    return section(`Criteria${vr?.verdict ? tally(`${k}/${cs.length}`, 'pass') : ''}`, head_
         + (rest.length ? `<details class="cr-rest"><summary>${rest.length} more${rest.every(c => pc[c.name]?.verdict === 'pass') ? ', all passing' : ''}</summary>${rest.map(row).join('')}</details>` : ''));
 }
 
@@ -289,7 +289,7 @@ function review({cr}) {
 const kids = d => d.children || [], vPart = c => vNow(c, S.run?.audit.filter(a => a.task_id === c.id));
 const passing = d => kids(d).filter(c => vPart(c) === 'pass').length;
 const composition = ({d}) => section('Composition — the parts', `<div class="composition-panel">`
-    + `<span class="tally"><b>${passing(d)}/${kids(d).length}</b><i>parts pass</i></span><div class="composition-formula">`
+    + tally(`${passing(d)}/${kids(d).length}`, 'parts pass') + `<div class="composition-formula">`
     + `A forecast: V(parent) = AND(parts) holds under a correct decomposition (Th. 1), and the parent's V is its own `
     + `verdict over the result (§12.8)</div>`
     + kids(d).map(c => { const v = vPart(c);
@@ -335,8 +335,7 @@ function render() {
     const budget = `${d.id}: rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN, reopened ${d.reopens || 0}×`;
     rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2${PANEL.full(nameOf(d))}>${esc(nameOf(d))}</h2>`
         + `<button class="sidebar-close" data-action="read"${frame('close')}>&times;</button></div>`
-        + meta(`${esc(d.id)}<span class="tally"><b>${d.iteration}/${d.max_iterations}</b><i>rework rounds</i></span>`
-            + `<span class="tally"><b>${d.reopens || 0}</b><i>reopens</i></span>`, budget)
+        + meta(esc(d.id) + tally(`${d.iteration}/${d.max_iterations}`, 'rework rounds') + tally(d.reopens || 0, 'reopens'), budget)
         + `<div class="rd-tabs">${FACETS.map(x => chip(x, cur, x === f)).join('')}</div></div>${f.body(cur)}`);
 }
 

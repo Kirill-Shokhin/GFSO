@@ -1,7 +1,7 @@
 // The header, by significance: the project's goal and where it stands, then ONLY what needs a person
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
-import {$, esc, data} from './dom.js';
+import {$, esc, data, tally} from './dom.js';
 import {H, QUALITY} from './hints.js';
 import {post, GOAL} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
@@ -34,7 +34,7 @@ function standing(root) {
         CANCELLING: 'being cancelled',
     }[root.state] || said(root.state);
     return `<span class="hd-phrase">${cap(phrase)}</span>`
-        + (parts.length ? `<span class="tally"><b>${k}/${parts.length}</b><i>parts done</i></span>` : '');
+        + (parts.length ? tally(`${k}/${parts.length}`, 'parts done') : '');
 }
 
 let status = '';                   // the root's standing, set by goal(), shown in the middle

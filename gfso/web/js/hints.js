@@ -135,7 +135,8 @@ export const RES = {
     counted: c => c && c.split('/')[0] !== c.split('/')[1] ? hover(`Counted\t${c} containers`, 'Docker gave no figure for the rest') : '',
     busy: hover('Busy', 'A model call runs in it now'),
     full: name => hover(name),
-    unread: 'Docker did not answer — the reading before it is shown',
+    unread: 'Docker did not answer: what it gave last is shown, nothing where it never did',
+    ofMachine: size => hover(`The machine's memory\t${size}`),
     older: n => `${n} containers started by an older build carry no project: the counts here leave them out`,
     none: 'No container or volume of this project',
     orphan: size => hover(`Orphans\t${size}`, "Volumes of a project this installation no longer holds"),
@@ -295,6 +296,8 @@ export const MODELS = {
     // author 2026-10-27: «чем это не обычные сессии? почему отдельный счёт?») — the processes are a hover at most
     processes: n => hover(`Run in ${n} processes`, 'A session resumed in its own conversation is one session'),
     handed: n => hover(`${n} handed over`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
+    moved: hover('Moved to the next credential', "Attempts an account's limit refused; the call ran again on the provider's next credential",
+        'Not counted as sessions above; what they cost is in the run total'),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
     turns: (turned, calls) => hover(`Turns recorded\t${turned}/${calls} sessions`, 'The rest were recorded before turns were kept'),
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The share is of what was priced'),

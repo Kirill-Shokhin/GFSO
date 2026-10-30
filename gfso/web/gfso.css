@@ -1272,7 +1272,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .tb-help i.lg-split, .tb-help i.lg-dep { display: inline-block; width: 26px; border-top: 1px solid var(--ui-text-soft); align-self: center; }
 .tb-help i.lg-dep { border-top: 1px dashed var(--acc); }
 .section-title .tally { float: right; }
-.section-title .tally b, .pn-meta .tally b { font-size: 13px; color: var(--ui-text); }
+.section-title .tally b, .wk-table .tally b { font-size: 13px; color: var(--ui-text); }
 
 /* ============ A phone — ONE page, laid out for the width (the author, 2026-10-29: «что с мобильной версией в целом»):
    the header in two rows, the node's panel and reader over the graph whole, the deck taller, its head and its views
@@ -1293,3 +1293,4 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .dk-head nav, .dk-head > * { flex-shrink: 0; }
     .dk-strip { flex: 0 0 auto; overflow: visible; }
 }
+.rs-roles .tally { margin-right: 12px; }

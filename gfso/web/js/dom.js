@@ -17,6 +17,9 @@ export const el = (tag, props = {}, ...kids) => {
 
 export const section = (title, body) =>
     `<div class="section"><div class="section-title">${title}</div>${body}</div>`;
+// A COUNT IS ITS OWN MARK — the figure large, its label small beside it, never threaded into a sentence nor joined to
+// another figure by a dot or a dash (the author, 2026-10-29: «цифры опять спрятаны между букв … статус стоит через тире»)
+export const tally = (figure, label, attrs = '') => `<span class="tally"${attrs}><b>${figure}</b><i>${label}</i></span>`;
 export const ul = (cls, items) => `<ul class="${cls}">${items.join('')}</ul>`;
 // `data-*` attributes for a delegated control (main.js dispatches `data-action`); empty values are left out.
 export const data = o => Object.entries(o).filter(([, v]) => v).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
