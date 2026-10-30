@@ -17,21 +17,24 @@ const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 // person opening a finished project looks for; an open goal is a sentence of where it stands, which caps would not carry
 // (the author, 2026-10-27: «это ключевой вердикт … разные статусы можно и отображать по-разному»).
 // …in the project list's words (vocab.js `goalWord`): done, failed, abandoned
-// The open root in one phrase, in vocab's words where it has them. A cancelled part is not owed, so it leaves N:
-// counted, a finished goal read "11 of 12" forever.
-function phrase(root) {
+// The open root: where it stands in one phrase, in vocab's words where it has them, and — a mark of its own, never
+// threaded into the phrase — how many of its parts are done, the figure large (the author, 2026-10-29: «цифры опять
+// спрятаны между букв … статус стоит через тире»). A cancelled part is not owed, so it leaves N: counted, a finished
+// goal read "11 of 12" forever.
+function standing(root) {
     const parts = S.tasks.filter(t => !isRoot(t) && !cancelled(t)), k = parts.filter(t => t.state === 'DONE').length;
-    const done = parts.length ? `${k} of ${parts.length} parts done` : 'not split yet', said = s => label(s).toLowerCase();
-    return {
+    const said = s => label(s).toLowerCase();
+    const phrase = {
         // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)
-        OFFERED: parts.length ? `${done} · the goal itself ${said('OFFERED')}` : said('OFFERED'), IDLE: said('OFFERED'),
-        EXECUTING: `${said('EXECUTING')} — ${done}`,
-        REWORKING: `the goal's validation failed — reworking (${done})`,
-        VALIDATING: 'delivered — awaiting the verdict',
-        CHALLENGED: `waiting on the issuer — ${said('CHALLENGED')}`, BLOCKED: `waiting on the issuer — ${said('BLOCKED')}`,
-        ESCALATED: 'escalated — the issuer decides',
+        OFFERED: parts.length ? `the goal itself ${said('OFFERED')}` : said('OFFERED'), IDLE: said('OFFERED'),
+        REWORKING: "reworking: the goal's validation failed",
+        VALIDATING: 'delivered, awaiting the verdict',
+        CHALLENGED: `${said('CHALLENGED')}, waiting on the issuer`, BLOCKED: `${said('BLOCKED')}, waiting on the issuer`,
+        ESCALATED: 'escalated, the issuer decides',
         CANCELLING: 'being cancelled',
     }[root.state] || said(root.state);
+    return `<span class="hd-phrase">${cap(phrase)}</span>`
+        + (parts.length ? `<span class="tally"><b>${k}/${parts.length}</b><i>parts done</i></span>` : '');
 }
 
 let status = '';                   // the root's standing, set by goal(), shown in the middle
@@ -58,7 +61,7 @@ async function goal() {
     // the brand's dot marking the one real done: the goal delivered
     const word = goalWord(root);
     status = word ? `<span class="hd-verdict${word === 'failed' ? ' bad' : ''}">${word}${done ? '<i class="brand-dot"></i>' : ''}</span>`
-        : `<span class="hd-phrase">${cap(phrase(root))}</span>`;
+        : standing(root);
     return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full)}>${esc(short)}</button>`
         + (mode ? `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode)}</button>${H.mode(doc, mode, set)}</span>` : '');
 }

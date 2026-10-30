@@ -288,9 +288,10 @@ function review({cr}) {
 // a part's V read off the same log as its own panel's (the run's), else what its state carries
 const kids = d => d.children || [], vPart = c => vNow(c, S.run?.audit.filter(a => a.task_id === c.id));
 const passing = d => kids(d).filter(c => vPart(c) === 'pass').length;
-const composition = ({d}) => section('Composition — the parts', `<div class="composition-panel"><div class="composition-formula">`
-    + `${passing(d)} of ${kids(d).length} parts pass — a forecast: V(parent) = AND(parts) holds `
-    + `under a correct decomposition (Th. 1), and the parent's V is its own verdict over the result (§12.8)</div>`
+const composition = ({d}) => section('Composition — the parts', `<div class="composition-panel">`
+    + `<span class="tally"><b>${passing(d)}/${kids(d).length}</b><i>parts pass</i></span><div class="composition-formula">`
+    + `A forecast: V(parent) = AND(parts) holds under a correct decomposition (Th. 1), and the parent's V is its own `
+    + `verdict over the result (§12.8)</div>`
     + kids(d).map(c => { const v = vPart(c);
         return `<div class="composition-row v-${v}"><span class="v-sym">${V_SYMBOL[v]}</span>`
             + `<span class="child-name" data-action="select" data-id="${esc(c.id)}">${esc(nameOf(c))}</span></div>`; }).join('')
@@ -331,10 +332,11 @@ function render() {
     const f = FACETS.find(x => x.id === tab && x.n(cur)) || FACETS.find(x => x.n(cur)), {d} = cur;
     tab = f.id;
     box().hidden = false;
-    const budget = `${d.id} · rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN · reopens ${d.reopens || 0}`;
+    const budget = `${d.id}: rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN, reopened ${d.reopens || 0}×`;
     rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2${PANEL.full(nameOf(d))}>${esc(nameOf(d))}</h2>`
         + `<button class="sidebar-close" data-action="read"${frame('close')}>&times;</button></div>`
-        + meta(esc(budget), budget)
+        + meta(`${esc(d.id)}<span class="tally"><b>${d.iteration}/${d.max_iterations}</b><i>rework rounds</i></span>`
+            + `<span class="tally"><b>${d.reopens || 0}</b><i>reopens</i></span>`, budget)
         + `<div class="rd-tabs">${FACETS.map(x => chip(x, cur, x === f)).join('')}</div></div>${f.body(cur)}`);
 }
 

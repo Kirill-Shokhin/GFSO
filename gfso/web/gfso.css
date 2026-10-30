@@ -127,7 +127,7 @@ body {
 .hd-run:hover { opacity: 1; border-color: var(--ui-on-chrome); }
 .hd-run-state { border-color: var(--ui-on-chrome); }
 .hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
-.hd-needs { display: flex; gap: 8px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
+.hd-needs { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
 .need b { font-weight: 600; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
@@ -1178,6 +1178,15 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .brand-dot { display: inline-block; width: 0.55em; height: 0.55em; margin-left: 0.3em; border-radius: 50%; background: var(--acc); vertical-align: 0.05em; }
 
 .hd-needs .hd-phrase { margin-right: 14px; opacity: 0.85; }
+/* A COUNT IS ITS OWN MARK — the figure large, its label small beside it (as Progress counts), never threaded into a
+   sentence (the author, 2026-10-29): the header's parts done, the panel's parts passing */
+.tally { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
+         font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); }
+.tally b { font-family: var(--font-display); font-size: 17px; font-weight: 650; letter-spacing: 0; }
+.tally i { font-style: normal; opacity: 0.7; }
+.hd-needs .tally { margin-right: 14px; }
+.pn-meta .tally { margin-left: 12px; }
+.pn-meta .tally b { font-size: 13px; color: var(--ui-text); }
 
 /* ============ The project list — the goal constructor's slide-over, a run found by what and when ============ */
 .project-panel { width: min(760px, 70vw); z-index: 31; }

@@ -241,7 +241,7 @@ export const PANEL = {
 
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
-const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k} of ${total} pass`;
+const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
     node: (t, badge, waits, rs, criteria, failing) => card(nameOf(t),
@@ -281,7 +281,7 @@ export const MODELS = {
     processes: n => hover(`Run in ${n} processes`, 'A session resumed in its own conversation is one session'),
     handed: n => hover(`${n} handed over`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
-    turns: (turned, calls) => hover(`Turns of ${turned} of ${calls} sessions`, 'The rest were recorded before turns were kept'),
+    turns: (turned, calls) => hover(`Turns recorded\t${turned}/${calls} sessions`, 'The rest were recorded before turns were kept'),
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The share is of what was priced'),
     unrecorded: hover('Not recorded', 'Kept only for sessions run on a build that records it'),
     // the cost split: what each kind of token cost, and how many; or why it cannot be split
@@ -296,5 +296,5 @@ export const MODELS = {
     // each part of the context bar says itself, in the cost split's form: what was hovered and its figure, its share as a
     // filled line — the median session's peak (the dark part) or the fullest session's (the light one)
     fillOf: (which, [share, at], w, n, calls) => hover(`${which === 'median' ? 'Median session' : 'Fullest session'}${at ? `\t${at}` : ''}`,
-        meter(w ? `of ${w} window` : 'of its window', share), n < calls && `${n} of ${calls} sessions recorded`),
+        meter(w ? `of ${w} window` : 'of its window', share), n < calls && `Recorded for ${n}/${calls} sessions`),
 };
