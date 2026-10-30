@@ -187,8 +187,8 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
         return why
     why = W.merge(w[0], into, ref, f"gfso: {t.id} joins {parent.id if parent else 'the base'}", execution=ex)
     if why and engine.say_once(f"unjoined:{t.id}:{generation_of_task(t)}"):
-        engine.emit_info("delegate", f"{t.id}: PASSED, and its branch `{w[2]}` did not join {into} ({why}) - the "
-                                     f"merge was aborted and the branch stands unmerged; integrating it is the work "
+        engine.emit_info("delegate", f"{t.id}: PASSED, and its branch `{w[2]}` did not join {into} ({why}) - "
+                                     f"{'' if why == W.MERGE_STANDS else 'the merge was aborted and '}the branch stands unmerged; integrating it is the work "
                                      f"of {'`' + str(parent.id) + '`, whose packet names it' if parent else 'its owner'}")
     return why
 
@@ -270,7 +270,10 @@ def _unjoined_text(unjoined: list) -> str:
         return ""
     return ("\n## Parts NOT joined into your workspace — integrating them is this whole's work\n"
             "Each stands on its own branch — a part that PASSed, or a node this one replaces, whose work it carries "
-            "on — and did not merge here cleanly (the merge was aborted, your tree is as it was). Merge each "
+            "on — and did not merge here: " + ("a merge you began stands unfinished in your tree, kept as it stands — "
+            "resolve and commit it first (do NOT abort it: it holds your resolutions), then merge each below. "
+            if any(why == W.MERGE_STANDS for _, _, why, _ in unjoined) else
+            "the system's merge was aborted, your tree is as it was. ") + "Merge each "
             "(`git merge <the commit named, else the branch>`), resolve, and deliver the integrated result. A delivery whose tree does not "
             "contain every branch below is not handed in: your result is the integration of its parts' work, and "
             "rewriting what a part already built in place of merging it loses what its seam passed.\n"

@@ -470,6 +470,10 @@ def head(place, execution=None) -> str | None:
     return git(place, "rev-parse", "HEAD", execution=execution).stdout.strip() or None
 
 
+#: why a join is skipped: the agent's own merge stands unfinished in the place — nothing of it is touched
+MERGE_STANDS = "a merge stands unfinished in the tree, begun by its agent: left as it stands, this branch with it"
+
+
 def merge(base, into, branch: str, message: str, execution=None) -> str | None:
     """Join `branch` into the tree at `into`. None when joined (or already in); else why not, with the tree
     returned to where it stood — a half-merged tree would be the torn read this module exists against. Written where the
@@ -481,7 +485,7 @@ def merge(base, into, branch: str, message: str, execution=None) -> str | None:
         # …A MERGE ALREADY STANDING THERE IS THE AGENT'S WORK: git refuses to start another, and the abort below then
         # undid its merge — MERGE_HEAD and every resolution gone between two rounds (GB_c_compiler_ctx3b1285)
         if merging(base, into, execution=execution):
-            return "a merge stands unfinished in the tree, begun by its agent: left as it stands, this branch with it"
+            return MERGE_STANDS
         r = git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, _commit_in(base, branch, execution),
                 execution=execution)
         if r.returncode == 0:
