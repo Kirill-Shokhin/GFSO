@@ -403,6 +403,31 @@ finding is wrong because …, dispute it"*.
 One graph per project. `use_project(name)` switches the project for your session only; a dependency
 across projects is deliberately unrepresentable, so related goals belong in one.
 
+### Who holds which nodes: the mode
+
+Asked once per project, before the plan, and set with `set_mode`:
+
+| mode | who holds the nodes | your session |
+|---|---|---|
+| `solo` | your session holds every node | performs each one; the root is the seam |
+| `semi` | your session holds the top (the root, or depths 0…k−1 with `boundary=k`), registered executors the rest | authors the plan and makes the issuer's moves over what it holds |
+| `auto` | the system holds every node, the root included | states the goal (`auto_decompose` on an empty project) and reads the status |
+
+Every mode needs a validator registered for the project; `semi` and `auto` need executors too — `set_mode`
+says what is missing. A node your session holds is performed by `perform="dispatch"` (the default: your
+session consents, a clean executor session of the project does the work in the node's own place) or
+`perform="in_chat"` (your session does it with its own tools). A set mode is a lock: once the project has
+work in it, changing it takes your own words as `user_said`.
+
+### Which model runs a role, and on whose account
+
+Each role names its model as `provider/model` — `register_agent("exec-1", "llm-executor", model="ollama/qwen3:32b")`;
+a bare model name is Claude's, through the Claude Code CLI. `gfso provider-check <spec>` says which roles a
+provider can hold. A provider's credentials live in one place: `gfso credential claude --kind token` (or
+`--kind api`) reads the value from stdin and never prints it; a provider holds several named ones (`--name`),
+one in use (`--use NAME`), the rest tried in order (`--order A,B`) when the one in force hits its limit — the
+project stops only when every one is spent. Every recorded model call names the credential it ran on.
+
 ---
 
 ## The commands
@@ -414,6 +439,8 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 | `gfso setup [--desktop]` | Register the agent door, bring the server up, open the UI, report. Idempotent. |
 | `gfso doctor` | What this installation is and what blocks it: version, state home, who holds the address, whether the Claude Code CLI answers, whether the assets are present. Paste it into a bug report. |
 | `gfso demo [name]` | Run a shipped example; no name lists them. |
+| `gfso credential <provider> […]` | Set, name, choose or order a model provider's credentials (value on stdin, never shown). |
+| `gfso provider-check <spec>` | Whether a model provider can run on gfso, and in which roles. |
 | `gfso run <tool> …` | The same verbs as the MCP tools, headless from a shell — through the running server, so its writes are live in the UI, and straight against the database when none is up. `project=<name>` selects the graph. This is the door where you name the actor yourself. |
 | `gfso up [--force]` | Start-or-reconcile the one server: start it if down, restart it if it serves stale code or the wrong switches, do nothing if it is already correct — and leave it alone rather than end someone else's run. `--force` restarts anyway. |
 | `gfso down` | Stop the one server. |
