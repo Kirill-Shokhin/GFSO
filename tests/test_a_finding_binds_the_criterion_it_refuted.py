@@ -340,6 +340,10 @@ def test_the_issuer_judging_a_challenge_sees_the_findings_standing_under_it():
     e.wait_idle()
     said = I.issuer_context(e, TaskId("kid"), "dispute")
     assert "standing on this node" in said and _OWN in said, said
+    assert ".laid" not in said, "no round, nothing laid: nothing to say where it lies"
+    said = I.issuer_context(e, TaskId("kid"), "dispute", lists="/w/.gfso-scratch-kid/issuer_1")
+    assert "`/w/.gfso-scratch-kid/issuer_1.laid`" in said and "beside your round" in said, \
+        "an issuer looked for the laid files inside its round and ruled the finding unrunnable"
     e.stop()
 
 

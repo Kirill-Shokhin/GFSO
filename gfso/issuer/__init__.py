@@ -471,6 +471,11 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         # (a `<wchar.h>` program, a sibling's scope, failed root.pp round after round — GB_c_compiler_tmp5cb096); the
         # issuer judged the challenge with the contract alone in view and none of what was demanded under it
         out.append("## The validator's findings standing on this node — every PASS of it must re-run them\n"
+                   # …a command copying out of `<round>.laid` reads a directory BESIDE the round, read-only: an issuer
+                   # looked for it inside its round and ruled the finding unrunnable (row 4, c_compiler, 2026-10-30)
+                   + (f"(A command that starts by copying out of `{Path(str(lists) + LAID).as_posix()}` reads the "
+                      f"files the system recorded when the finding was filed, laid there beside your round, read-only: "
+                      f"run it as shown.)\n" if lists else "")
                    + (_standing_findings(engine, task_id, lists, ex) or "- none")
                    + ("\n\nUnder AUTO this node's criteria are the user's goal: only the user rules a finding of the "
                       "validator outside them — answer without `retire_findings`."
