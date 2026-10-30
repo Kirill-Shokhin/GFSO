@@ -47,8 +47,8 @@ from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, materialize_inputs, shows, pinned_files, probe_id,
                                           probes_from as _checks_of, unrerunnable, with_named_files)
-from gfso.core.types import (LAID, AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
-                             Signal, SignalData, Spec, Stage, State, TaskId, register_of, set_aside_of)
+from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
+                             Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of)
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
@@ -153,17 +153,13 @@ def _contact_place(where: str, ex, project=None):
     other node's session reaches it. A root's too where places stand apart: in the base it worked in its executor's
     container and could change the delivery. On this host, where no copy is made (the base, a root's place), the temp
     its session holds. `project`: whose places hold a base's rounds (`scratch_of`). Gone when the contact ends, with
-    what was laid beside it (`LAID`)."""
+    what was laid beside it (`laid_beside`)."""
     if _NODES not in str(where) and not ex.apart:
         lent = ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
     else:
         lent = ex.scratch(CONTACT_ROUND, dir=str(scratch_of(where, project)))
     with lent as d:
-        try:
-            yield d
-        finally:
-            with contextlib.suppress(OSError):
-                ex.remove_tree(d + LAID)
+        yield d
 
 @contextlib.contextmanager
 def _round(engine, tmp):
@@ -474,7 +470,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         out.append("## The validator's findings standing on this node — every PASS of it must re-run them\n"
                    # …a command copying out of `<round>.laid` reads a directory BESIDE the round, read-only: an issuer
                    # looked for it inside its round and ruled the finding unrunnable (row 4, c_compiler, 2026-10-30)
-                   + (f"(A command that starts by copying out of `{Path(str(lists) + LAID).as_posix()}` reads the "
+                   + (f"(A command that starts by copying out of `{laid_beside(lists).as_posix()}` reads the "
                       f"files the system recorded when the finding was filed, laid there beside your round, read-only: "
                       f"run it as shown.)\n" if lists else "")
                    + (_standing_findings(engine, task_id, lists, ex) or "- none")

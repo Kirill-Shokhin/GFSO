@@ -24,7 +24,7 @@ from gfso.adapters.llm import headless as H
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution, PlaceContainer
 import gfso.issuer as I
-from gfso.core.types import LAID, TaskId
+from gfso.core.types import LAID, TaskId, laid_beside
 from gfso.issuer import CONTACT_ROUND, _contact_place
 from gfso.observe import _run
 from gfso.tools_llm import _observe_exact
@@ -93,6 +93,19 @@ def test_a_validation_writes_its_round_and_reads_only_what_was_laid_for_it(proje
     assert b.rw == scratch / "root_1700000000" / "batch2" and b.temp_root() != v.temp_root()
     assert b._mounts() == [(b.rw, False), (b.rw.with_name("batch2" + LAID), True), (Path(b.temp_root()), False)], \
         "one batch writes itself alone and sees no other batch of its round, no earlier round, no base"
+
+
+@pytest.mark.parametrize("at", [".gfso-scratch-a/root_1/run", ".gfso-scratch-a/root_1/batch2/run",
+                                ".gfso-scratch-a/root_1/batch2/a.1", ".gfso-scratch-a/root_1/a.1",
+                                ".gfso-scratch-.ws/issuer_x", ".gfso-sys/gfso-exact-x/exact"])
+def test_what_the_system_lays_for_a_judge_lies_outside_what_its_run_writes(project, at):
+    """A standing finding's files are laid beside the judge's writable root, mounted read-only: laid under it — a scope's
+    node under its batch — the delivered code the judge runs renamed them away and laid its own before the re-run read
+    them."""
+    at = project.own / at
+    s = project.session(str(at))
+    assert not laid_beside(at).is_relative_to(s.rw), "laid where the judged code writes"
+    assert any(laid_beside(at).is_relative_to(src) and ro for src, ro in s._mounts()), "not mounted read-only to it"
 
 
 def test_the_systems_commands_stay_in_the_projects_container(project):

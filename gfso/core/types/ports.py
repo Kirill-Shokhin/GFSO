@@ -367,6 +367,8 @@ class ExecutionPort(ABC):
         finally:
             with suppress(OSError):
                 self.remove_tree(d)
+            with suppress(OSError):
+                self.remove_tree(d + LAID)              # …and what the system laid beside it (`laid_beside`)
 
     def _scratch_root(self, system: bool) -> str:
         """Where `scratch` lends its directories."""
@@ -447,6 +449,11 @@ class ExecutionPort(ABC):
         if (s := self.session(path)) is not self:
             s.stop()
 
+    @contextmanager
+    def without_state(self):
+        """What runs in this session meanwhile reaches no model client's state. This host keeps none apart."""
+        yield
+
     def session(self, cwd: str, agent: Optional[str] = None) -> "ExecutionPort":
         """Where an agent's session working in `cwd` runs, as opposed to the system's own commands: an isolated place
         may give each session a boundary of its own, shown as `agent`'s. This host is one place for both."""
@@ -506,9 +513,21 @@ SCRATCH = ".gfso-scratch-"
 #: own, so a process one batch's validator left behind reaches no other batch's copy of the delivery
 BATCH = "batch"
 #: what names, beside a judge's round or batch (`<root>.laid`), the directory the system lays what that judge reads from
-#: the system's record — a standing finding's files (`engine.findings.lay_files`): written by the system alone, mounted
-#: read-only to the judge, so nothing the delivered code it runs does rewrites them
+#: the system's record — a standing finding's files (`engine.findings.lay_files`), a pinned probe's inputs: written by
+#: the system alone, mounted read-only to the judge, so nothing the delivered code it runs does rewrites them
 LAID = ".laid"
+
+
+def laid_beside(at) -> Path:
+    """Where the system lays what a judge working at `at` reads from its record: beside the writable root `at` lies in —
+    one entry of a project's system directory (a validation's or a contact's round, the system's own checks' directory),
+    or a round's batch (`<scratch>/<round>/batch<N>`); off a project's directories, `at` itself — as `<root>.laid`, at
+    `at`'s path under it. Never under the root: a delivered program run there renames a read-only directory away as
+    easily as it writes a file (a scope's nodes stand under their batch, the system's copy under its directory)."""
+    at = Path(at)
+    root = next((a for a in (at, *at.parents) if a.name.startswith(BATCH) and a.parent.parent.name.startswith(SCRATCH)
+                 or a.parent.name.startswith(".") and a.parent.parent.parent.name.startswith(NODES)), at)
+    return Path(str(root) + LAID) / at.relative_to(root)
 #: what keys, in a project's settings, the name of each of its volumes by its role (`places`, `state`): the system's
 #: record that its places moved into them — from there on no place nor round is looked for on this host
 #: …and beside them the base and the image they were made over (`base`, `image`): what an export reads them by

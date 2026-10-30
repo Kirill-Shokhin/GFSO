@@ -31,6 +31,7 @@ from gfso.core.types import (BATCH, HOST, THIS_HOST, LAID, MADE, NODES, PROJECT_
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
                          memory_ceiling, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
+from gfso.places import same_place
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
 log = logging.getLogger(__name__)
@@ -1187,12 +1188,12 @@ def _untar(data: bytes, to: Path) -> list:
 NO_LAZY_FETCH = {"GIT_NO_LAZY_FETCH": "1"}
 
 
-def _host_git(base: Path):
+def _host_git(base: Path, **env):
     """git over the user's repository at `base`, run on the host by their own git: text out, or bytes fed `input`."""
     def git(*a, input=None):
         """One git call over `base`."""
         return run(["git", "-c", "safe.directory=*", "-C", str(base), *a], timeout=600, input=input,
-                   env=subprocess_env(extra=NO_LAZY_FETCH),
+                   env=subprocess_env(extra={**NO_LAZY_FETCH, **env}),
                    **({} if input is not None else {"text": True, "encoding": "utf-8", "errors": "replace"}))
     return git
 
@@ -1201,7 +1202,7 @@ def _is_top(base: Path, git) -> bool:
     """The question `worktrees.is_repo_top` asks: is `base` the top of a work tree with a commit?"""
     got = git("rev-parse", "--show-toplevel", "--verify", "HEAD") if shutil.which("git") and base.is_dir() else None
     top = got.stdout.splitlines()[:1] if got and got.returncode == 0 else []
-    return bool(top) and os.path.normcase(os.path.abspath(top[0])) == os.path.normcase(os.path.abspath(base))
+    return bool(top) and same_place(top[0], base)          # …as places: git names a junction's or 8.3 name's target
 
 
 def _no_places(base: Path) -> str | None:
@@ -1213,9 +1214,14 @@ def _no_places(base: Path) -> str | None:
         return None
     why = (f"{base} is not the top of a git repository with a commit, so its nodes have no places of their "
            f"own: every session would share one tree and read the others' conversations. ")
+    # …walking up no further than the user's home: a home kept as a repository of its dotfiles is no work's top, and
+    # naming it told the user's agent to import the home (critic)
+    git = _host_git(base, GIT_CEILING_DIRECTORIES=str(Path.home()))
     top = git("rev-parse", "--show-toplevel") if shutil.which("git") and base.is_dir() else None
+    if top is not None and top.returncode != 0 and git("rev-parse", "--is-inside-git-dir").stdout.strip() == "true":
+        return why + "It lies inside a repository's own `.git` directory: register that repository's top as the workdir"
     if top is not None and top.returncode == 0 and (at := top.stdout.strip()):
-        if os.path.normcase(os.path.abspath(at)) == os.path.normcase(os.path.abspath(base)):
+        if same_place(at, base):
             return why + "It has no commit yet: `git add -A` and `git commit -m start` there"
         return why + (f"It lies inside the repository {at}: register that top as the workdir if the work is "
                       f"that repository's, else make this directory one of its own (`git init`, `git add -A`, "
@@ -1385,6 +1391,8 @@ class ContainerExecution(ExecutionPort):
     #: place's (`session`), and the project's runs the plan's probes, written by agents — with the state mounted they
     #: read every place's conversations under it (critic over the CLI state per place)
     holds_sessions = False
+    #: a session container started with no model client's state (`PlaceContainer.without_state`)
+    bare = False
     apart = True
 
     """`image` with an optional `env_file` (settings of the image, never a credential: the provider gives its own to its
@@ -1471,7 +1479,7 @@ class ContainerExecution(ExecutionPort):
                 "--security-opt", "no-new-privileges", *container_limits(), *ceiling(),
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,
                 *(self._mount(self.state, False) + self._mount(self.state, False, STATE_INSIDE)
-                  if self.holds_sessions and self.state else []),
+                  if self.holds_sessions and self.state and not self.bare else []),
                 "--add-host", "host.docker.internal:0.0.0.0", self.image, "sleep", "infinity"]
 
     def _labels(self) -> list[str]:
@@ -1902,6 +1910,8 @@ class PlaceContainer(ContainerExecution):
         # conversations, the system's notes on them and the CLI's own memory of another place are in no session's reach
         self.state = None if rw == project.state else project.state / ("+" + "+".join(rel))
         self.holds_sessions = True
+        #: started meanwhile with no model client's state mounted (`ContainerExecution.bare`)
+        self.bare = False
         self.commands = Commands(self)
         #: the model clients' calls running in this place now — its commands are ended whole when the last one ends
         self.clients: set = set()
@@ -1913,10 +1923,10 @@ class PlaceContainer(ContainerExecution):
 
     def _mounts(self) -> list:
         """(directory, read-only?) for each directory the container holds. A judge's round or batch writable with a
-        temp of its own, and what the system laid for it from its record read-only beside it (`LAID`): a standing
-        finding's files — never an earlier round, whose files the delivered code run there could rewrite after its
+        temp of its own, and what the system laid for it from its record read-only beside it (`laid_beside`): a standing
+        finding's files, a pinned probe's inputs — never an earlier round, whose files the delivered code run there could rewrite after its
         judge ran them, and whose container outlived its run (critic over the judged tree: a forged `../probe.sh`
-        re-run, rc 0); a directory of the system's checks, writable with a temp of its own. Nothing else: no base, no
+        re-run, rc 0); a directory of the system's checks, writable with a temp of its own and the inputs laid beside it read-only. Nothing else: no base, no
         node's temp, no place, no other round or batch. A judge runs the delivered tree it was handed, and anything more
         it mounts is a way for that tree to read what the executor holds now — a delivered link into the node's temp, a
         root's base (the root's executor's live place), a sibling batch's copy (critic over the judged tree). A temp of
@@ -1925,11 +1935,9 @@ class PlaceContainer(ContainerExecution):
         tmp, own_temp = self.tmp, (Path(self.temp_root()), False)
         if self.state is None:
             return [(self.rw, False)]                    # the keeper of the CLI state: it alone, nothing of a place
-        if _scratch_above(self.rw):
-            laid = self.rw.with_name(self.rw.name + LAID)
-            return [(self.rw, False), *([] if self.rw.name.endswith(LAID) else [(laid, True)]), own_temp]
-        if self.rw.is_relative_to(self.sys):
-            return [(self.rw, False), own_temp]
+        laid = [] if self.rw.name.endswith(LAID) else [(self.rw.with_name(self.rw.name + LAID), True)]
+        if _scratch_above(self.rw) or self.rw.is_relative_to(self.sys):
+            return [(self.rw, False), *laid, own_temp]
         if self.rw.is_relative_to(tmp):
             return [*([] if self.rw == self.base else [(self.base, True)]), (self.rw, False)]
         # its validations' scratch read-only beside its place, a root's base as a node's clone: its rounds hold the
@@ -1937,6 +1945,20 @@ class PlaceContainer(ContainerExecution):
         # session slice); no judge works here (`apart`)
         own = [(self.rw, False), (scratch_of(self.rw, self.project_name), True)]
         return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
+
+    @contextlib.contextmanager
+    def without_state(self):
+        """What runs here meanwhile runs in a container of its own that mounts no model client's state: the delivered
+        code a judge's copy is built with ran as the client's uid where its CLI state was mounted, and wrote the
+        instructions its judge's client then started on (live: a delivered build's CLAUDE.md stood in the judge's
+        state). Ended on both sides: the judge's client starts in a fresh one, its state mounted."""
+        self.stop()
+        self.bare = True
+        try:
+            yield
+        finally:
+            self.stop()
+            self.bare = False
 
     def temp_root(self):
         """Its node's own temp (`ContainerExecution.temp_of`), not the project's."""

@@ -211,7 +211,7 @@ def test_the_copy_is_made_and_removed_where_the_work_runs(monkeypatch, place):
     monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
     _, at = place
     e, out, _ = _validate(monkeypatch, at)
-    assert out["verdict"] == "PASS" and sorted(ex.ops) == ["copy"] * 2 + ["remove"] * 4, ex.ops   # …each copy, and its place's index
+    assert out["verdict"] == "PASS" and sorted(ex.ops) == ["copy"] * 2 + ["remove"] * 6, ex.ops   # …each copy, its place's index, each scratch's laid beside
     e.stop()
 
 

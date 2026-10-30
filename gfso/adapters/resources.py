@@ -197,8 +197,12 @@ class Live:
         self.spawn = spawn or _spawn
         self.procs: list = []
         self.started = self.again = float("-inf")
+        #: when a stream was first seen ended — how long it lived, not how long it then waited, decides the backoff
+        self.ended: float | None = None
         self.wait = 1.0
         self.stale = {"ps", "volumes"}
+        #: this installation's home, as its containers' label and its volumes' names carry it
+        self.home = installation()
         self.told: dict = {}
 
     def tick(self) -> None:
@@ -207,12 +211,14 @@ class Live:
         if not _wanted():
             self.again = float("-inf")                # …stopped for want of a reader, not for failing: next start at once
             return self.stop()
-        if (not self.procs or any(p.poll() is not None for p in self.procs)) and time.perf_counter() >= self.again:
+        if not self.procs or any(p.poll() is not None for p in self.procs):
+            self.ended = time.perf_counter() if self.ended is None else self.ended
+        if self.ended is not None and time.perf_counter() >= self.again:
             # …a stream that ended soon after its start (Docker down) is tried again later each time, up to a minute
-            self.wait = min(2 * self.wait, 60.0) if self.procs and time.perf_counter() - self.started < 10 else 1.0
+            self.wait = min(2 * self.wait, 60.0) if self.procs and self.ended - self.started < 10 else 1.0
             self.stop()
             self.start()
-            self.started, self.again = time.perf_counter(), time.perf_counter() + self.wait
+            self.started, self.again, self.ended = time.perf_counter(), time.perf_counter() + self.wait, None
         stale, self.stale = self.stale, set()
         if "ps" in stale:
             _cached("ps", -1.0, _ps)
@@ -232,12 +238,11 @@ class Live:
     def start(self) -> None:
         """Docker's event and stats streams started, each read by a thread of its own; everything read anew."""
         self.stale |= {"ps", "volumes"}
-        # …the system's own, by the label every installation's container and volume carries: another program's volume
-        # made on the machine re-read the disk each second (critic)
-        events = self.spawn(["docker", "events", "--filter", f"label={HOME}", "--filter", "type=container",
-                             "--filter", "type=volume",
+        # …the system's own, told apart here: a container's event carries its labels, a volume's none — filtered by the
+        # label, no volume's event was ever heard (critic, live); unfiltered, another program's volume re-read the disk
+        events = self.spawn(["docker", "events", "--filter", "type=container", "--filter", "type=volume",
                              *[a for e in ("create", "start", "die", "destroy") for a in ("--filter", f"event={e}")],
-                             "--format", "{{.Type}}"])
+                             "--format", "{{.Type}}\t{{.Actor.ID}}\t{{index .Actor.Attributes \"" + HOME + "\"}}"])
         stats = self.spawn(["docker", "stats", "--format", _STATS])
         self.procs = [events, stats]
         threading.Thread(target=self.events, args=(events.stdout,), daemon=True).start()
@@ -252,9 +257,14 @@ class Live:
         self.procs = []
 
     def events(self, lines) -> None:
-        """Each event makes the list stale; a volume's, the disk too."""
-        for kind in lines:
-            self.stale |= {"ps", "volumes"} if kind.strip() == "volume" else {"ps"}
+        """Each event of this installation's makes the list stale; a volume's, the disk too — a container by its label, a
+        volume by its name, which carries the installation's home (`execution.Volume`)."""
+        for line in lines:
+            kind, actor, home = (line.rstrip("\n").split("\t") + ["", ""])[:3]
+            if kind == "volume" and f"-{self.home}-" in actor:
+                self.stale |= {"ps", "volumes"}
+            elif kind == "container" and home == self.home:
+                self.stale |= {"ps"}
 
     def stats(self, lines) -> None:
         """Frames as Docker draws them for a terminal, each opening with the cursor sent home: one reading each."""

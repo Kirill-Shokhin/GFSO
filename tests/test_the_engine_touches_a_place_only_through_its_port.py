@@ -29,6 +29,7 @@ MODULE_CALLS = {"shutil": None, "tempfile": None,
 
 #: (module, function, call) -> why it touches no place
 HOSTS_OWN = {
+    ("tools_llm.py", "_in_the_default", "os.path.isdir(c.get('workdir') or '')"): "a registered workdir on this host, as the roster checks it at registration",
     ("adapters/execution.py", "_no_places", "base.is_dir()"): "the user's own repository on the host, read as its import is",
     ("adapters/execution.py", "_no_places", "shutil.which('git')"): "the user's own git on the host, as its import uses",
     ("workspaces.py", "stands", "Path(where).is_dir()"): "a directory that is no node's place is a base",

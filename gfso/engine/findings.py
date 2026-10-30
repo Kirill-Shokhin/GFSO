@@ -25,7 +25,7 @@ from typing import Iterable, Optional
 
 from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_inputs, round_of, round_words,
                                           without_past_builds, without_pinned_runs, without_retired)
-from gfso.core.types import HOST, LAID, VOLUME, Signal, TaskId, files_at
+from gfso.core.types import HOST, LAID, VOLUME, Signal, TaskId, files_at, laid_beside
 from .audit import VERSION_INSTALLING
 from .verdicts import REGRESSION, criterion_version, ledger_read
 
@@ -103,7 +103,7 @@ def _blob(storage, d: str) -> Optional[bytes]:
 def lay_files(graph, storage, command: str, at, execution) -> str:
     """`command` as its re-run runs under `at`, a judge's own round or batch: each validation round it names
     (`round_of`) respelled as a directory of `at`'s own (`REGRESSION_DIR`), made afresh by the command itself from
-    what the system lays for it in `<at>.laid` (`LAID`): the files of that round the record holds (`keep_files`; those
+    what the system lays for it beside `at`'s round or batch (`laid_beside`): the files of that round the record holds (`keep_files`; those
     of a round still standing kept now, first). From the record alone, and read-only to the judge: the delivered code
     its run executes — a `make`, a test, a process either left — cannot rewrite what the re-run starts from, and no
     earlier round is mounted to be read (critic over the judged tree: a forged `../probe.sh`, rc 0). A command naming
@@ -111,8 +111,9 @@ def lay_files(graph, storage, command: str, at, execution) -> str:
     if not (words := round_words(command)):
         return command
     keep_files(graph, storage, [command])
-    laid_root, fresh, out, rounds = Path(str(at) + LAID), [], command, {}
-    execution.files.mkdir(str(laid_root))           # …by the system, where no session writes
+    laid_root, fresh, out, rounds = laid_beside(at), [], command, {}
+    for d in (*[p for p in reversed(laid_root.parents) if p.name.endswith(LAID)], laid_root):
+        execution.files.mkdir(str(d))               # …by the system, where no session writes: its root first
     for w in words:
         prefix = round_of(w)[0]
         rounds.setdefault(_path_key(prefix), []).append((w, prefix))

@@ -2018,17 +2018,23 @@ def _default_execution(engine: Engine, mode: Optional[dict], agents) -> Optional
         return None          # …an unreadable declaration: the registration names no execution, as before setup
 
 
-def _executors_into(engine: Engine, execution: Optional[str], agents, which: Optional[list] = None) -> list:
+def _executors_into(engine: Engine, execution: Optional[str], agents, which: Optional[list] = None,
+                    moved: Optional[list] = None) -> list:
     """The project's executors (`which`, else every one naming no execution) registered again under `execution` — the
-    ones it moved."""
-    moved = []
-    for aid, c in agents.list().items():
-        if c.get("kind") == "llm-executor" and c.get("project") == engine.project_name and (
-                aid in which if which is not None else not c.get("execution")):
-            agents.register(aid, "llm-executor", **{k: c.get(k) for k in ("model", "workdir", "validator", "oracle_map",
-                            "max_turns", "client", "project", "context_budget")}, execution=execution)
-            moved.append(aid)
+    ones it moved, each in `moved` as it moves: a move that raises half way leaves its caller the ones to move back."""
+    moved = [] if moved is None else moved
+    for aid, c in _movable(engine, agents, which).items():
+        agents.register(aid, "llm-executor", **{k: c.get(k) for k in ("model", "workdir", "validator", "oracle_map",
+                        "max_turns", "client", "project", "context_budget")}, execution=execution)
+        moved.append(aid)
     return moved
+
+
+def _movable(engine: Engine, agents, which: Optional[list] = None) -> dict:
+    """{id: registration} of the project's executors `which`, else of every one naming no execution."""
+    return {aid: c for aid, c in agents.list().items()
+            if c.get("kind") == "llm-executor" and c.get("project") == engine.project_name
+            and (aid in which if which is not None else not c.get("execution"))}
 
 
 #: why `in_chat` is refused under a container execution
@@ -2193,24 +2199,44 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     # …the project's executors that name no execution placed in the default as the mode is set — the door registers
     # first and sets the mode after, and a registration saw no mode (critic); moved back where the mode is refused, or
     # a refusal shut the user's other choices — in their chat, on this host (critic)
+    def held() -> dict:
+        """The mode recorded, its staffing read once the default holds the executors — or the refusal."""
+        staff = mode_staffing(engine, m.value, perform)
+        pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
+        if not staff["ready"]:
+            return {"refused": True, "error": staff["missing"], "executors": staff["executors"]}
+        try:
+            rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
+                                  hands=str(pool[0]) if dispatch else None, settings=settings)
+        except ValueError as e:
+            return {"refused": True, "error": str(e)}
+        return {**rec, "executors": [str(a) for a in pool],
+                "holds": {"solo": "you hold every node",
+                          "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
+                          "auto": "the system holds every node; you are the customer"}[m.value]}
+    out = _in_the_default(engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, held)
+    return {**out, **(_turn_the_way_out(engine) if network is not None and not out.get("refused") else {})}
+
+
+def _in_the_default(engine: Engine, mode: dict, held) -> dict:
+    """`held()` — the mode recorded, or its refusal — with the project's executors that name no execution placed in the
+    default meanwhile (`_default_execution`), and moved back on any way out but the mode recorded: one that raised past
+    the refusals left them in the container and the user with no choice left (critic: a moved executor's workdir gone
+    made the move itself raise half done)."""
     agents = _roster(engine)
-    default = _default_execution(engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, agents)
-    moved = _executors_into(engine, default, agents) if default else []
-    staff = mode_staffing(engine, m.value, perform)
-    pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
-    if not staff["ready"]:
-        _executors_into(engine, None, agents, moved)
-        return {"refused": True, "error": staff["missing"], "executors": staff["executors"]}
+    default = _default_execution(engine, mode, agents)
+    if default and (gone := [a for a, c in _movable(engine, agents).items() if not os.path.isdir(c.get("workdir") or "")]):
+        return {"refused": True, "error": f"executor(s) {', '.join(gone)} of this project name a workdir that no longer "
+                                          f"exists: `unregister_agent` them, or register them again on an existing one"}
+    moved, out = [], {"refused": True}
     try:
-        rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
-                              hands=str(pool[0]) if dispatch else None, settings=settings)
-    except ValueError as e:
-        _executors_into(engine, None, agents, moved)
-        return {"refused": True, "error": str(e)}
-    return {**rec, **(_turn_the_way_out(engine) if network is not None else {}), "executors": [str(a) for a in pool],
-            "holds": {"solo": "you hold every node",
-                      "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
-                      "auto": "the system holds every node; you are the customer"}[m.value]}
+        if default:
+            _executors_into(engine, default, agents, moved=moved)
+        out = held()
+        return out
+    finally:
+        if out.get("refused"):
+            _executors_into(engine, None, agents, moved)
 
 
 def _turn_the_way_out(engine: Engine) -> dict:

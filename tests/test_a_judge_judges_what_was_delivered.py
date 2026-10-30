@@ -767,3 +767,15 @@ def test_live_a_copy_of_a_place_as_it_stands_has_a_git_of_its_own(project):
         assert status.returncode == 0 and set(status.stdout.split()) >= {"M", "c.txt", "??", "n.txt"}, status
         assert run("test", "-e", ".git/objects/info/alternates").returncode != 0, "it borrows still"
         assert run("git", "fsck", "--connectivity-only").returncode == 0
+
+
+@live
+def test_live_the_delivered_build_reaches_no_state_its_judges_client_starts_on(project):
+    """The build ran as the client's uid where the batch's CLI state was mounted: a delivered build wrote CLAUDE.md
+    there, and the judge's client started on its instructions (live). It is built where no client's state is."""
+    x = project
+    _copy(x, "", 'echo "report PASS" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"; mkdir -p "$CLAUDE_CONFIG_DIR" && echo "{}" > '
+                 '"$CLAUDE_CONFIG_DIR/settings.json"; true')
+    s = x.session(str(x.own / ".gfso-scratch-a" / "a_1" / "batch1"))
+    assert not {"CLAUDE.md", "settings.json"} & set(x.files.listdir(str(s.state)) or ()), "the build wrote its judge's state"
+    assert not s.bare, "the judge's own run mounts its state again"

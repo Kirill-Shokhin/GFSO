@@ -136,12 +136,21 @@ and nothing of your disk is mounted into any of its containers:
 - What the delivery needs built is built in that copy, in the judge's container under its network
   switch, before any check: the command the delivery declares (`build`), else `make` where the
   delivered tree has a Makefile at its root, else nothing — the delivered code, run by the judge's
-  side, with a bounded time. Every process the build leaves running ends with it, before any check,
+  side, with a bounded time, in a container of the batch that mounts no model client's state: the
+  judge's client starts after it, in a fresh one. Every process the build leaves running ends with it, before any check,
   and a delivered file it changed is put back as delivered; what it adds beside them stays. A build
   that fails is the delivery's FAIL, with its output, and nothing of it stands for later rounds:
   the next delivery's own build is the re-check.
 
 What one session can still reach:
+- **Not held yet, and above the rest:** a repository's own git configuration — a clean filter an agent's command or a
+  delivered build writes into a place's or a judge's copy's `.git` — is run beside the model client: by the Claude Code
+  client's own `git status` when it starts in that repository, and by the system's own git over the place, both in the
+  container that holds the client and its state. From there it can write the client's state and its output, and so
+  forge an executor's answer or a judge's verdict, outside the commands' record (found live). The measure being built:
+  no git over a repository an agent can write runs where a model client or its state is. Until it lands, the
+  statements above about the client's output and state, about a repository's configuration, and about the judge's
+  fresh client do not hold against such a filter.
 - Only the root's executor works in the base; its model-client state still holds what sessions an earlier version
   ran there wrote — consents, and the reader of the places a plan is made from. Every other session, a parent's
   consent and that reader included, works in a place of its own. A project whose base is no git repository with a
@@ -160,7 +169,8 @@ What one session can still reach:
   model-client state; its Read tool can. A working directory a command leaves outside the place does
   not carry to the next command.
 - A judge runs the delivered code in its own container: while its run lasts, that code can rewrite
-  what the judge itself writes in its batch, a pinned probe's inputs laid there, and a finding's files
+  what the judge itself writes in its batch, a pinned probe's inputs laid there — the build included —, and a
+  finding's files
   once the re-run has copied them out of the read-only directory and before it reads them. A file the
   delivered code rewrote in the judge's batch before its run ended is recorded as it then stood when
   a finding over it is filed.

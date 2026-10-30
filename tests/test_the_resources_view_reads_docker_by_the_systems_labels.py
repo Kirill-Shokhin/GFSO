@@ -75,7 +75,7 @@ def test_docker_tells_what_changed_the_server_reads_that_and_tells_the_open_page
     n = len(asked)
     live.tick()
     assert len(asked) == n and len(told) == 1, "no event, no read; nothing new, nothing pushed"
-    live.events(iter(["container\n"]))
+    live.events(iter([f"container\tab\t{E._home()}\n"]))
     live.tick()
     assert [a[0] for a in asked[n:]] == ["ps"] and len(told) == 2, "a container's event: its list read again, told"
     live.stats(iter(["\x1b[Hab\t1.5%\t10MiB / 4GiB\t3\x1b[K\n", "\x1b[Hab\t2.0%\t11MiB / 4GiB\t3\x1b[K\n"]))
@@ -251,3 +251,33 @@ def test_a_reader_never_waits_on_docker_while_the_server_reads_it(docker, monkey
     assert time.perf_counter() - t0 < 1.0, "a read of the reading waited on Docker"
     gate.set()
     reading.join(10)
+
+
+def test_this_installations_volume_is_heard_by_its_name_and_no_one_elses_event_is(docker):
+    """A volume's event carries no label (Docker 29, live): filtered by the label, none was ever heard, and a dropped
+    project's volumes stood in the view up to a minute (critic). Another program's, or another home's, reads nothing."""
+    live, h = _streams(), E._home()
+    live.events(iter([f"volume\tgfso-e-p-{h}-abc123-v\t\n"]))
+    assert live.stale == {"ps", "volumes"}
+    live.stale = set()
+    live.events(iter(["volume\ttheirs\t\n", f"volume\tgfso-e-p-otherhom-abc123-v\t\n", "container\tab\totherhom\n",
+                      "container\tab\t\n"]))
+    assert live.stale == set()
+
+
+def test_a_stream_dying_at_once_is_tried_again_ever_later_up_to_a_minute(docker, monkeypatch):
+    """Its lifetime decides, not the wait it then stood: measured so, the wait fell back to 1 s once it reached 16
+    (critic, simulated)."""
+    clock = [1000.0]
+    monkeypatch.setattr(R.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(R, "LISTENERS", [lambda: None])
+    dead = type("D", (_Proc,), {"poll": lambda s: 1})
+    live, starts = R.Live(spawn=lambda argv: dead()), []
+    for _ in range(600):
+        n = len(live.procs) and live.started
+        live.tick()
+        if live.started != n:
+            starts.append(clock[0])
+        clock[0] += 1.0
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    assert max(gaps) == 60 and gaps[-1] == 60, gaps

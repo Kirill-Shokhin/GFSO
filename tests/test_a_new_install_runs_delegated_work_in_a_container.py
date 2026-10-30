@@ -150,6 +150,25 @@ def test_a_refused_mode_leaves_the_executors_where_they_were(home):
     assert not TL.set_mode(e, "solo", perform="in_chat").get("refused"), "the user's own chat still open to them"
 
 
+def test_a_mode_that_raises_or_cannot_move_every_executor_leaves_them_where_they_were(home, monkeypatch):
+    """Past the refusals too: a moved executor whose workdir is gone made the move raise half done, and anything raising
+    after it (a git timeout, the staffing read) left the project in the container (critic, reproduced)."""
+    _declare(home)
+    (home / "w2").mkdir()
+    e = make_engine()
+    _registered(e, home, "p-exec"), _registered(e, home, "p-val", "llm-validator")
+    assert not TL.register_agent(e, "p-exec2", "llm-executor", workdir=str(home / "w2")).get("refused")
+    (home / "w2").rmdir()
+    got = TL.set_mode(e, "solo")
+    assert got.get("refused") and "p-exec2" in got["error"], got
+    assert {a: TL._roster().get(a).get("execution") for a in ("p-exec", "p-exec2")} == {"p-exec": None, "p-exec2": None}
+    TL.unregister_agent(e, "p-exec2")
+    monkeypatch.setattr(TL, "mode_staffing", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("git")))
+    with pytest.raises(TimeoutError):
+        TL.set_mode(e, "solo")
+    assert TL._roster().get("p-exec").get("execution") is None
+
+
 def test_a_container_with_no_login_is_a_sign_in_to_name_not_an_empty_session():
     said = {"is_error": True, "result": "Not logged in · Please run /login", "terminal_reason": "api_error"}
     assert H._ended(said, False) == "unauthorized"

@@ -8,6 +8,7 @@ declared. Work a person does in their own chat, and the validator that judges it
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 
 import pytest
@@ -134,3 +135,33 @@ def test_a_container_runs_no_dispatched_work_over_a_base_that_is_no_repository(t
     (base / "sub").mkdir()
     inside = E.ContainerExecution("t", "img", None, str(tmp_path / "state"), str(base / "sub"), "p").agents_refused()
     assert str(base) in inside and "if the work is that repository's" in inside,         "the repository it lies in is named as one choice, never as the only one: it may be the user's home (critic)"
+
+
+def _repo(at):
+    at.mkdir(parents=True, exist_ok=True)
+    for args in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "s"]):
+        subprocess.run(["git", "-C", str(at), *args], check=True, capture_output=True)
+    return at
+
+
+def _refused(tmp_path, base):
+    return E.ContainerExecution("t", "img", None, str(tmp_path / "state"), str(base), "p").agents_refused()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a junction is Windows'")
+def test_a_top_reached_through_a_junction_is_the_top(tmp_path):
+    """git names the junction's target, and a top compared as text was refused as "inside" itself (critic)."""
+    top = _repo(tmp_path / "repo")
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(tmp_path / "junc"), str(top)], check=True, capture_output=True)
+    assert E._no_places(tmp_path / "junc") is None, "the gate resolves its base; the reason itself must not misread one"
+
+
+def test_the_remedy_never_names_the_users_home_nor_inits_inside_a_git_directory(tmp_path, monkeypatch):
+    """A home kept as a dotfiles repository is no work's top: naming it told the agent to import the home (critic)."""
+    home = _repo(tmp_path / "home")
+    monkeypatch.setenv("USERPROFILE", str(home)), monkeypatch.setenv("HOME", str(home))
+    (work := home / "tmp" / "work").mkdir(parents=True)
+    said = _refused(tmp_path, work)
+    assert "git init" in said and str(home) not in said.replace(str(work), ""), said
+    said = _refused(tmp_path, home / ".git")
+    assert "`.git` directory" in said and "git init" not in said, said
