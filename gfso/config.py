@@ -299,18 +299,34 @@ def max_sessions() -> int:
 CONTAINER_MEMORY, CONTAINER_PIDS = "4g", 4096
 
 
+def _size(name: str) -> int:
+    """The environment's `name` read as Docker reads a size (`8g`, `8GB`, `8GiB`, `1.5g`, `8 g`, `1t`), in bytes; 0 where
+    it is unset, unread, or under 64 MiB — `0` is Docker's "unbounded", and under 6 MiB Docker refuses every start."""
+    m = re.fullmatch(r"(\d+(?:\.\d+)?) ?([kmgtp]?)i?b?", os.environ.get(name, "").strip().lower())
+    size = int(float(m[1]) * 1024 ** " kmgtp".index(m[2] or " ")) if m else 0
+    return size if size >= 64 * 2 ** 20 else 0
+
+
+#: The share of Docker's memory the system's containers may hold together, by default (`memory_ceiling`).
+CEILING_SHARE = 0.75
+
+
+def memory_ceiling(total: int) -> int:
+    """How much memory the system's containers may hold together, of Docker's `total` — every installation's on that
+    Docker, in one group (`execution.ceiling`): three quarters, the rest staying for Docker itself and whatever else runs
+    there. No installation's dial: the group is shared, and a limit two installations wrote differently would be lowered
+    under the other's running containers at every turn, the kernel ending them as it went."""
+    return int(total * CEILING_SHARE)
+
+
 def container_limits() -> list[str]:
     """`docker run`'s bounds on every container the system makes for a project, a session, a judge's batch, a check or
     its own copy — `GFSO_CONTAINER_MEMORY` (default 4g, no swap past it) and `GFSO_CONTAINER_PIDS` (default 4096).
     Unbounded, one judge's probe held 9 GiB of the Docker VM's 19.5 and starved every project on the machine and the
     host (series 3, c_compiler, 2026-10-30). Past its memory the kernel ends the container's largest process, the
     runaway, by SIGKILL: its command exits 137 as its own failure, and the session it ran in goes on."""
-    mem = os.environ.get("GFSO_CONTAINER_MEMORY", "").strip().lower()
-    # …read as Docker reads a size (`8g`, `8GB`, `8GiB`, `1.5g`, `8 g`, `1t`), at least 64 MiB: `0` is Docker's
-    # "unbounded", and under 6 MiB Docker refuses every start
-    m = re.fullmatch(r"(\d+(?:\.\d+)?) ?([kmgtp]?)i?b?", mem)
-    size = float(m[1]) * 1024 ** " kmgtp".index(m[2] or " ") if m else 0
-    mem = f"{int(size) // 2 ** 20}m" if size >= 64 * 2 ** 20 else CONTAINER_MEMORY
+    size = _size("GFSO_CONTAINER_MEMORY")
+    mem = f"{size // 2 ** 20}m" if size else CONTAINER_MEMORY
     try:
         pids = int(os.environ.get("GFSO_CONTAINER_PIDS", CONTAINER_PIDS))
     except ValueError:

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from gfso.core.types import (BATCH, HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, ExecutionPort, FilesPort,
                              PlaceUnavailable)
-from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits,
+from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, memory_ceiling,
                          executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
@@ -177,7 +177,7 @@ def _unavailable(ex, storage: bool):
         return None                          # …not made yet: its making is `Volume.ready`'s
     try:
         got = run(["docker", "run", "--rm", *labelled(p.name, p.project_name), "--network", "none", "--cap-drop", "ALL",
-                   "--security-opt", "no-new-privileges", *container_limits(), *places, p.image,
+                   "--security-opt", "no-new-privileges", *container_limits(), *ceiling(), *places, p.image,
                    "sh", "-c", 'f=/p/.gfso-probe-$$ && echo ok > "$f" && cat "$f" >/dev/null && rm -f "$f" && '
                    '{ [ ! -d "$1" ] || ' + _BASE_READ + "; } && echo ok", "sh", f"/p/{BASE_DIR}"],
                   timeout=120, text=True)
@@ -190,6 +190,74 @@ def _unavailable(ex, storage: bool):
 #: the bounds of a door or a gateway: a few small processes of the system's own, no swap past them
 _SMALL = ("--memory", "256m", "--memory-swap", "256m", "--pids-limit", "256")
 
+#: the one cgroup of Docker's VM every installation's containers stand in, its memory the machine's ceiling (`ceiling`)
+CEILING_GROUP = "gfso"
+#: what writes its limit: a shell of an image pinned by digest — not an execution's image, which is trusted only to run
+#: agents' code confined, while this container can set or end any cgroup of the VM
+CEILING_IMAGE = "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+#: a start re-writes the limit at most this often: a Docker restarted under the server made the group anew, unlimited
+CEILING_RELAY_S = 300.0
+_CEILING: dict = {}
+_CEILING_LOCK = threading.Lock()
+
+
+def ceiling() -> list[str]:
+    """`--cgroup-parent` of every container the system makes: one cgroup of Docker's VM, shared by every installation on
+    it, whose memory bounds their SUM (`memory_ceiling`, written by `lay_ceiling`), where each container alone is bounded
+    by `container_limits` — so many runaways at once, a delivery's in every batch of its validation, of any number of
+    installations, end inside that share. Decided once per server process by Docker's cgroups and never changed by
+    laying the limit, so no running container is ever restarted over it: cgroupfs v2 (Docker Desktop's) takes the
+    group; anything else — a systemd driver, cgroup v1 — takes none, said in the log, and each container is bounded
+    alone. Docker not answering decides nothing yet: then nothing starts either."""
+    with _CEILING_LOCK:
+        if "flags" not in _CEILING:
+            try:
+                info = run(["docker", "info", "--format", "{{.CgroupDriver}} {{.CgroupVersion}} {{.MemTotal}}"],
+                           timeout=60, text=True)
+            except (OSError, subprocess.TimeoutExpired):
+                return []
+            if info.returncode:
+                return []
+            driver, version, total = (info.stdout.split() + ["", "", ""])[:3]
+            if (driver, version) == ("cgroupfs", "2"):
+                _CEILING["flags"] = ["--cgroup-parent", f"/{CEILING_GROUP}"]
+            else:
+                log.warning(f"no memory ceiling over the system's containers: Docker's cgroups are {driver} v{version};"
+                            f" each container is bounded alone")
+                _CEILING["flags"] = []
+        return _CEILING["flags"]
+
+
+def lay_ceiling() -> None:
+    """The ceiling's limit written into its group, made where it is not — at a start, at most every `CEILING_RELAY_S`
+    while it holds. By a container of the system's own on `CEILING_IMAGE`, its own shell: as root with one capability
+    (to write the cgroup's files), no network, its root read-only, mounting Docker's cgroup tree, which no other container
+    mounts. Every failure is said in the log: until a later one holds, the group stands with no limit of its own."""
+    if not ceiling():
+        return
+    with _CEILING_LOCK:
+        if time.monotonic() - _CEILING.get("laid", float("-inf")) < CEILING_RELAY_S:
+            return
+        try:
+            # …of Docker's memory as it is NOW: a Docker given less memory and restarted under the server took it
+            info = run(["docker", "info", "--format", "{{.MemTotal}}"], timeout=60, text=True)
+            size = memory_ceiling(int(info.stdout.strip()))
+            got = run(["docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "DAC_OVERRIDE",
+                       "--security-opt", "no-new-privileges", "--read-only", *_SMALL,
+                       "--mount", "type=bind,src=/sys/fs/cgroup,dst=/cg", "-u", "0", "--entrypoint", "sh",
+                       CEILING_IMAGE, "-c",
+                       'mkdir -p "/cg/$1" && echo "$2" > "/cg/$1/memory.max" && echo 0 > "/cg/$1/memory.swap.max"',
+                       "sh", CEILING_GROUP, str(size)], timeout=120, text=True)
+            why = (got.stderr or "").strip()[-200:] if got.returncode else None
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            why = str(e)
+        if why is None:
+            _CEILING["laid"] = time.monotonic()
+        else:
+            log.warning(f"the memory ceiling over the system's containers was not written ({why}): their sum stands "
+                        f"unbounded until a later start writes it")
+
+
 def _system_run(name: str, image: str, flags: list, script: Path, args: list, mirror: Path, mode: str = "1777") -> None:
     """A system container (a door, a gateway, a session's commands) running `script` with `args`: started waiting for
     it, the script laid whole into its `OWN` through one `docker exec`, so nothing of the host is mounted into it. Its
@@ -199,7 +267,7 @@ def _system_run(name: str, image: str, flags: list, script: Path, args: list, mi
     (`container_limits`)."""
     if not {"--memory", "--pids-limit"} <= set(flags):
         raise ValueError(f"{name}: a system container starts bounded in memory and processes")
-    run(["docker", "run", "-d", "--init", "--name", name, *flags, "--label", f"gfso.log={mirror}",
+    run(["docker", "run", "-d", "--init", "--name", name, *flags, *ceiling(), "--label", f"gfso.log={mirror}",
          "--tmpfs", f"{OWN}:size={3 * door.LOG_CAP // 2 ** 20}m,mode={mode}", image,
          "sh", "-c", f'until [ -f {OWN}/run.py ]; do sleep 0.1; done; exec python3 {OWN}/run.py "$@"', "sh", *args],
         timeout=120).check_returncode()
@@ -967,7 +1035,7 @@ class Volume:
             got = run(["docker", "run", "--rm", *(["-i"] if interactive else []), "--name", one,
                        *labelled(self.execution, self.project), "--network", "none", "--cap-drop", "ALL",
                        *[a for c in SYSTEM_CAPS if user == "0" for a in ("--cap-add", c)],
-                       "--security-opt", "no-new-privileges", *container_limits(), "-u", user, *mounts, image,
+                       "--security-opt", "no-new-privileges", *container_limits(), *ceiling(), "-u", user, *mounts, image,
                        "sh", "-c", *script],
                       timeout=self.copy_time, **kw)
         except subprocess.TimeoutExpired:
@@ -1343,7 +1411,7 @@ class ContainerExecution(ExecutionPort):
         return ["docker", "run", "-d", "--init", "--name", self.container, *labelled(self.name, self.project_name),
                 *self._labels(), *self.way.run_args(),
                 *([] if self.holds_sessions else [a for c in SYSTEM_CAPS for a in ("--cap-add", c)]),
-                "--security-opt", "no-new-privileges", *container_limits(),
+                "--security-opt", "no-new-privileges", *container_limits(), *ceiling(),
                 *(["--env-file", self.env_file] if self.env_file else []), *mounts,
                 *(self._mount(self.state, False) + self._mount(self.state, False, STATE_INSIDE)
                   if self.holds_sessions and self.state else []),
@@ -1382,6 +1450,7 @@ class ContainerExecution(ExecutionPort):
                 return
             if why := self.unavailable():
                 raise PlaceUnavailable(self.name, why)
+            lay_ceiling()
             self.stop()                                                  # what a server that is gone left
             try:
                 self.volume.require(self.run_args())              # …before Docker makes a missing one, empty

@@ -30,11 +30,18 @@ def _own_state_home():
     prior = os.environ.get("GFSO_HOME")
     os.environ["GFSO_HOME"] = tempfile.mkdtemp(prefix="gfso-suite-")
     os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
+    E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
     yield
     if prior is None:
         os.environ.pop("GFSO_HOME", None)
     else:
         os.environ["GFSO_HOME"] = prior
+
+
+@pytest.fixture(autouse=True)
+def _the_ceiling_decided_per_test():
+    """What a test's fake Docker answered decides nothing for the next: `execution.ceiling` asks again."""
+    E._CEILING.clear()
 
 
 @pytest.fixture(autouse=True, scope="session")

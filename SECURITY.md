@@ -100,10 +100,21 @@ and nothing of your disk is mounted into any of its containers:
   checked, so a copy whose reading its bound ended is the delivery's FAIL, the bound named as the cause. A build that
   takes the Git LFS objects its checkout wrote as content fails the delivery the same way: which they were is read
   before any build runs. The copy writes files a chunk at a time, save a Git LFS file at its checkout, which git reads
-  whole: one about the bound's size fails an honest delivery until the bound is raised. The bounds are each
-  container's: they keep one container from taking the machine, not many together. Up to
-  `GFSO_MAX_SESSIONS` sessions run at once, and each of a validation's batches in a container of its own at the same
-  time, with no bound on their number — a delivery that runs away in every batch can still hold their sum.
+  whole: one about the bound's size fails an honest delivery until the bound is raised. Their sum is bounded
+  too: every container the system makes, of every installation on that Docker, stands in one cgroup of Docker's
+  (`gfso`) whose memory is at most three quarters of Docker's as it is when the limit is written — no installation
+  dials it, so none lowers it under another's running containers. Past it the kernel ends the largest process among
+  all of them: what the ceiling keeps is the quarter left to Docker itself and to containers that are not the system's.
+  It does not choose the runaway: a runaway made of many small processes can outlast the largest honest one, a
+  session's or another installation's, which then ends with no answer and is asked again. A judge's copy the ceiling ended reads as ended by its own bound, and
+  its delivery FAILs with that cause. The limit is written at a
+  start, and again at a later one past five minutes, by a container of the system's own that runs no agent's code: a
+  shell of an image pinned by its digest (busybox), as root with one capability, to write the cgroup's files, no
+  network, a read-only root, mounting Docker's cgroup tree — which lets it limit, freeze or end any container on that
+  Docker; no other container mounts the tree. Until a write holds (a Docker restarted under the server makes the group
+  anew with no limit) the sum stands unbounded, and each failed write is said in the server's log. It needs Docker's
+  cgroups as cgroupfs v2 (Docker Desktop's); under a systemd cgroup driver no group is used, the log says so, and each
+  container is bounded alone.
 - What the delivery needs built is built in that copy, in the judge's container under its network
   switch, before any check: the command the delivery declares (`build`), else `make` where the
   delivered tree has a Makefile at its root, else nothing — the delivered code, run by the judge's
