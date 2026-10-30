@@ -256,6 +256,18 @@ def test_a_path_under_pinned_inputs_or_an_escape_is_never_gone():
     assert unrerunnable({"as_run": "./cc /nowhere/at/all/a.c"}, None, standing=_STANDS)
 
 
+def test_the_environments_system_tree_is_never_gone():
+    """`printf … | $T/c -f /dev/stdin`, `>/dev/null`: asked of a Windows engine, /dev was "gone", and a finding whose
+    round file was kept and laid went out raw — its round path missing in every later round, the line unrunnable, the
+    criterion failing (gb-c-compiler-tnpe08584 root.parser.core, 1bcfeb97, 2026-10-30)."""
+    for cmd in ("printf 'x' | ./c -f /dev/stdin; echo exit=$?", "./cc a.c >/dev/null 2>&1", "/usr/bin/env cc a.c",
+                "cc -I/usr/include a.c"):
+        assert unrerunnable({"as_run": cmd}, None, standing=_STANDS) == "", cmd
+    assert unrerunnable({"as_run": "./cc /tmp/gone/a.c /dev/null"}, None, standing=_STANDS), \
+        "a file of a container's /tmp is not the environment's"
+    assert unrerunnable({"as_run": "./cc /devices/a.c"}, None, standing=_STANDS), "only the tree itself"
+
+
 def test_a_finding_that_enters_the_delivery_itself_is_rerun():
     """`cd <place> && ./cc …`: the place itself, not only what lies under it, is the delivery a judge's copy stands for —
     with places in volumes it is on no host, and read as gone, 30 of 67 findings on c_compiler's root.types were shown

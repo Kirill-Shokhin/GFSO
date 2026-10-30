@@ -270,7 +270,7 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
     e, agents = _project(tmp_path)
     assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
     e.wait_idle()
-    revised, live, overlap, places = threading.Event(), [], [], []
+    entered, revised, live, overlap, places = threading.Event(), threading.Event(), [], [], []
 
     class _Slow(_LLM):
         def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
@@ -279,6 +279,7 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
             overlap.append(list(live))
             live.append(n)
             if n == 0:                        # the first version's session outlives its version
+                entered.set()
                 revised.wait(10)
                 Path(cwd, "stale_v1.txt").write_text("written after v1 was superseded")
             out = super().run_agent(system, user, allowed_tools, cwd, timeout)
@@ -286,7 +287,8 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
             return out
     d = _dispatcher(e, agents, [], _Slow())
     d.dispatch_once()
-    time.sleep(0.3)
+    # the revision lands INSIDE v1's session: a sleep did not hold once the place is observed before the session (ab2e147)
+    assert entered.wait(30), "v1's session never started"
     T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="agent", reason="other")
     e.wait_idle()
     assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")

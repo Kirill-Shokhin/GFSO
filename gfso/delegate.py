@@ -686,6 +686,7 @@ class Dispatcher:
         self._consent = consent_runner or run_consent
         self._running: set[str] = set()   # nodes whose executor round is running right now
         self._issuer_attempts: dict = {}   # (node generation, question) → (unproductive settles, not before)
+        self._issuer_owed: dict = {}       # (node, question) → (owed since, versions reported stuck)
         self._validate = validator_runner or _auto_validate
         self._retry_model: dict = {}   # round key → the tier its RETRY should use
         self._seen: set[str] = set()      # "{task}#{iter}" / "v:{task}#{iter}" — one run per round
@@ -1356,7 +1357,7 @@ class Dispatcher:
         publish_the_workforce(self._engine, _roster)
         self._resolve_ready_blocks()
         answer_open_questions(self._engine, self._agents, self._claim, self._release_after_answer,
-                              self._cap.closing, ISSUER_VERBS, self._issuer_attempts)
+                              self._cap.closing, ISSUER_VERBS, self._issuer_attempts, self._issuer_owed)
         if self._engine.mode() is not None:
             confirm_system_cancellations(self._engine, self._agents, lambda t: str(t.id) in self._running)
         started = []

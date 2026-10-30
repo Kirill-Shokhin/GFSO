@@ -1005,6 +1005,8 @@ def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
 #: A word of a command that names a file by an absolute path — POSIX, or a Windows drive. A bare backslash begins no
 #: path: `\n#endif` in a printf is an escape, and read as a rooted path it was "gone" on a Windows engine.
 _ABSOLUTE = re.compile(r"^(?:/|[A-Za-z]:[\\/])")
+#: The system tree every container of an execution carries (FHS): what a command reads there is the environment's.
+_ENVIRONMENT = re.compile(r"^/(?:dev|proc|sys|usr|bin|sbin|lib|lib32|lib64|libx32|etc)(?:/|$)")
 
 
 def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path | None = None, *, standing) -> str:
@@ -1047,6 +1049,11 @@ def _gone(path: str, standing) -> bool:
         return True
     if (r := round_of(path)) is not None:
         return not standing((*r, path))
+    # …the system tree of the environment a command runs in is never gone: asked of a Windows engine, `/dev/stdin` and
+    # `/dev/null` did not exist, and a finding kept and laid whole went out raw to judge and executor alike — 429 of
+    # one day's findings, c_compiler rows looping on lines no one could run (2026-10-30)
+    if _ENVIRONMENT.match(Path(path).as_posix()):
+        return False
     return not HOST.exists(path) and not HOST.exists(str(Path(path).parent))
 
 

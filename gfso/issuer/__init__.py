@@ -1834,6 +1834,47 @@ def backoff(waits: int) -> float:
     return min(BACKOFF_S * 2 ** waits, MAX_BACKOFF_S)
 
 
+#: How long a question the system owes may stay owed, and how many answers in a row may leave it standing, before the
+#: system says it is stuck on it. Inv-8 promises that a move exists, not that it is made or moves anything (§12.13); for
+#: the system's own moves that is the implementation's promise: a dispute it failed to rule froze a row 2 h 26 m (series
+#: 2 REF 2), and disputes over findings shown without their inputs looped 5 h (series 3) — both found by a human.
+STUCK_S, STUCK_ANSWERS = 1800, FREE_ANSWERS
+
+
+def report_stuck(engine, questions, ledger: dict, owed: dict, now: float) -> list[str]:
+    """Each question the system has owed past STUCK_S, or answered STUCK_ANSWERS times in a row without moving it, said
+    ONCE per node version as a TECH REPORT — the system reporting itself as an executor does; nothing else changes (the
+    clock still owns the lapse, no verdict is invented). `owed` — (node, question) → (since, versions said) — is the
+    caller's across sweeps; a question that closes leaves it."""
+    for k in set(owed) - set(questions):
+        del owed[k]
+    said = []
+    for task_id, question in questions:
+        task = engine.graph.get_task(task_id)
+        since, done = owed.setdefault((task_id, question), (now, frozenset()))
+        if task is None or engine.paused():
+            continue
+        gen = f"{task_id}#{task.iteration}#{task.reopens}#{question}"
+        waits, _, answers = ledger.get(gen, (0, 0.0, 0))
+        if gen in done or (now - since < STUCK_S and answers < STUCK_ANSWERS):
+            continue
+        owed[(task_id, question)] = (since, done | {gen})
+        engine.tech_report(f"the system is stuck on its own move: it owes the {question} question on {task_id} for "
+                           f"{now - since:.0f}s; {answers} answer(s) in a row left it standing, {waits} turn(s) went "
+                           f"unanswered", role="system", actor="liveness", task_id=task_id)
+        said.append(str(task_id))
+    return said
+
+
+def _watched(engine, ledger: dict, owed: Optional[dict], now: float) -> list:
+    """The questions the system owes now, each one it is stuck on said first (`report_stuck`) where the caller keeps
+    `owed`."""
+    questions = open_questions(engine)
+    if owed is not None:
+        report_stuck(engine, questions, ledger, owed, now)
+    return questions
+
+
 def open_questions(engine) -> list[tuple[TaskId, str]]:
     """Every node the graph waits on an issuer for, with its most pressing question — a read only."""
     found: dict = {}
@@ -2037,7 +2078,8 @@ def refused_on_this_version(engine, task_id: TaskId, actor: str) -> str:
     return ""
 
 
-def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, ledger: dict) -> list[str]:
+def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, ledger: dict,
+                          owed: Optional[dict] = None) -> list[str]:
     """One sweep: each node's open question the SYSTEM answers is taken by ONE thread at a time (a claim
     on the node, released when the answer is in). The ledger keeps, per node generation, how many settles
     moved nothing, how many applied answers in a row left the same question open, and when the node may be asked
@@ -2048,7 +2090,7 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
     engine's own refusals of a correct move, GB_sql_database 2026-10-14/15)."""
     started = []
     now = time.monotonic()
-    for task_id, question in open_questions(engine):
+    for task_id, question in _watched(engine, ledger, owed, now):
         task = engine.graph.get_task(task_id)
         actor = system_mover(engine, agents, task_id, question)
         # a revision the machine makes itself must not reset its own backoff — and a new question on the same version
