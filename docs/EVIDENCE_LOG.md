@@ -3735,3 +3735,9 @@ of 28 executor sessions passed 128k (peak 337k), executors 0.91 of the row's cos
   ruling was asked again with a doubling wait. An implementation defect, not the models' variance; since fixed (a
   dispute after such a rework is ruled by contact in the place as it stands, retiring no finding there).
 - What remains to show: whether a budget pays where sessions grow long — the series is re-run on the fixed build.
+- **The re-run (2026-10-30) did not measure it either.** Its first attempt was voided by its pre-registered load rule:
+  one judge's container took 9 GiB of the machine, containers then having no memory bound (since bounded per
+  container). Its second attempt's two references were stopped short of their root: both looped on a validator's
+  standing finding whose command entered the node's own place, read as a gone past round and shown without its pinned
+  inputs (since fixed). No budget cell ran. The budget reading still waits; and a fresh pair of references was not
+  needed for it — the plan-given references already on record serve, their build named.
