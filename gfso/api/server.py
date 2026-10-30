@@ -628,6 +628,17 @@ def _page_file(path, media_type=None):
     return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
+def _told_resources(app, loop, q):
+    """What an open page is told of each new reading of what the installation holds in Docker: the body
+    `GET /api/resources` answers — so it shows it without asking (the author: «интерфейс не должен тригерить новый
+    опрос»); while the page is open, the server's reading goes on."""
+    def on_resources():
+        """The reading as it stands, put on this page's queue from the reading's own thread."""
+        reg = app.state.registry
+        loop.call_soon_threadsafe(q.put_nowait, {"type": "resources", **_resources.held(reg.names() if reg else None)})
+    return on_resources
+
+
 def _mount_events(app) -> None:
     """The live WS feed — every write, pushed to whoever is watching.
 
@@ -687,10 +698,12 @@ def _mount_events(app) -> None:
             its own and marks the busy ones in its project list) — it had polled `/api/runtime` every 5 s for this."""
             loop.call_soon_threadsafe(q.put_nowait, {"type": "inflight", "in_flight": now})
 
+        on_resources = _told_resources(app, loop, q)
         eng.on_transition(on_transition)
         eng.on_reject(on_reject)
         eng.on_info(on_info)
         INFLIGHT_LISTENERS.append(on_inflight)
+        _resources.LISTENERS.append(on_resources)
         try:
             await websocket.accept()
             while True:
@@ -700,7 +713,8 @@ def _mount_events(app) -> None:
             pass
         finally:
             app.state.ws_clients.discard(q)
-            for subs, cb in ((INFLIGHT_LISTENERS, on_inflight), (eng._events._on_transition, on_transition),
+            for subs, cb in ((INFLIGHT_LISTENERS, on_inflight), (_resources.LISTENERS, on_resources),
+                             (eng._events._on_transition, on_transition),
                              (eng._events._on_reject, on_reject), (eng._events._on_info, on_info)):
                 if cb in subs:
                     subs.remove(cb)

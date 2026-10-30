@@ -13,13 +13,15 @@ None, never removed here — it goes with its project (`execution.drop_volumes`)
 
 A number Docker did not give is None, never 0: a sum says how many it summed (`…_counted`), a read Docker failed says so
 (`read`) — the reading before it served —, and counts no read ever answered are None."""
+import atexit
 import json
+import os
 import re
 import subprocess
 import threading
 import time
 
-from gfso.adapters.children import run
+from gfso.adapters.children import adopt, release, run, spawn_kw
 from gfso.adapters.execution import AGENT, HOME, ID, LABEL, NODE, PROJECT, ROLE, installation
 
 #: the processes a container that hosts calls holds while none runs: `--init` and the `sleep` it waits in — a door's
@@ -35,8 +37,14 @@ _UNITS = {"b": 1, "kb": 10 ** 3, "mb": 10 ** 6, "gb": 10 ** 9, "tb": 10 ** 12,
 _SIZE = re.compile(r"([\d.]+)\s*([a-z]*)", re.I)
 _PS = "\t".join(["{{.ID}}", "{{.Names}}", "{{.State}}", *(f"{{{{.Label \"{k}\"}}}}" for k in (
     HOME, PROJECT, ROLE, NODE, AGENT, "com.docker.compose.service"))])
+#: seconds Docker's streams go on after the last reader asked
+WATCHED = 300.0
 _read: dict = {}
 _lock = threading.Lock()
+_watch = threading.Event()
+_asked = [float("-inf")]
+#: who is told each new reading the poller stores — an open page's socket (`/ws/events`, type `resources`)
+LISTENERS: list = []
 
 
 def size(text) -> int | None:
@@ -57,20 +65,36 @@ def _docker(*args) -> list[str] | None:
 
 def _cached(key: str, fresh: float, read) -> tuple:
     """(`read()`, did Docker answer, when the reading given was taken — epoch seconds, None before any) — asked at most
-    once every `fresh` seconds, whoever asks; a failed read keeps the reading before it, and its time."""
+    once every `fresh` seconds, whoever asks; a failed read keeps the reading before it, and its time. Docker is asked
+    outside the lock, which guards the store alone: a reader of the reading never waits on Docker (critic: a page waited
+    8.8 s behind a slow `system df`)."""
     at, value, ok, taken = _read.get(key, (0.0, None, False, None))
-    if time.monotonic() - at > fresh:
+    if time.perf_counter() - at > fresh:
         got = read()
-        ok = got is not None
-        value, taken = (got, time.time()) if ok else (value, taken)
-        _read[key] = (time.monotonic(), value, ok, taken)
+        with _lock:
+            at, value, ok, taken = _read.get(key, (0.0, None, False, None))
+            ok = got is not None
+            value, taken = (got, time.time()) if ok else (value, taken)
+            _read[key] = (time.perf_counter(), value, ok, taken)
     return value, ok, taken
 
 
+#: one row of `docker stats` per running container
+_STATS = "{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}"
+
+
 def _stats() -> dict | None:
-    """{id: (cpu %, memory bytes, pids)} of every running container."""
-    if (lines := _docker("stats", "--no-stream", "--format", "{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}")) is None:
+    """{id: (cpu %, memory bytes, pids)} of every running container — asked once."""
+    if (lines := _docker("stats", "--no-stream", "--format", _STATS)) is None:
         return None
+    return _parse_stats(lines)
+
+
+def _ps() -> list[str] | None:
+    return _docker("ps", "-a", "--filter", f"label={LABEL}", "--format", _PS)
+
+
+def _parse_stats(lines: list) -> dict:
     out = {}
     for line in lines:
         i, cpu, mem, pids = (line.split("\t") + [""] * 4)[:4]
@@ -124,15 +148,157 @@ def _container(fields: list, stats: dict) -> dict:
             (False if role in HOSTS else None), "cpu_percent": cpu, "memory_bytes": mem}
 
 
-def held(known: set | None = None) -> dict:
-    """What this installation holds now, per project — each said `known` where the registry holds it (`known`, None:
-    not asked) — what containers of a build that set no home hold, unattributed, and which reads Docker answered."""
+def refresh() -> None:
+    """Every reading asked of Docker once, each at most once every its freshness — the streams' first reading, and a
+    test's; never a page's (the author, 2026-10-30: «интерфейс должен подгружать то что есть в бэке а не что то
+    тригерить самим чтением»)."""
+    _cached("stats", FRESH, _stats)
+    _cached("ps", FRESH, _ps)
+    _cached("volumes", DISK_FRESH, _volumes)
+    _cached("machine", DISK_FRESH, _machine)
+
+
+def watch() -> None:
+    """THE SERVER'S OWN READING OF DOCKER, started once: Docker tells what changes, nobody polls it (the author,
+    2026-10-30: «это же сам докер должен отдавать … обновления от него вообще хуком можно сделать»). Its event stream
+    says a container or a volume was made, started, ended or removed, and the list is read again then; its stats stream
+    sends every running container's figures about once a second, kept as they come; the disk, of which Docker tells
+    nothing, is read after a volume's event and otherwise every `DISK_FRESH`. Whatever is new is told to whoever listens
+    — an open page — once a second, every container's figures in one message: Docker's own rate, never thinned (the
+    author: «зачем слать с уменьшенной частотой что само идет чаще?»). The streams run while somebody reads (a page open, or a read in the
+    last `WATCHED` seconds) and stop after: an idle server asks Docker nothing, and a page opened then gets the last
+    reading at once, its age said, the streams starting behind it."""
+    if _watch.is_set():
+        return
+    _watch.set()
+    live = Live()
+    atexit.register(live.stop)                        # …Docker's streams end with the server, on Windows too
+
+    def supervise():
+        """Once a second, for the server's life."""
+        while True:
+            try:
+                live.tick()
+            except Exception:                         # noqa: BLE001 — a reading not taken is said by its own flags
+                pass
+            time.sleep(1.0)
+    threading.Thread(target=supervise, name="gfso-resources", daemon=True).start()
+
+
+def _wanted() -> bool:
+    return not _read or bool(LISTENERS) or time.perf_counter() - _asked[0] < WATCHED
+
+
+class Live:
+    """Docker's two streams while somebody reads, and what their events made stale."""
+
+    def __init__(self, spawn=None):
+        #: what starts one of Docker's streams (argv → a process with `stdout` and `poll`) — Docker's client by default
+        self.spawn = spawn or _spawn
+        self.procs: list = []
+        self.started = self.again = float("-inf")
+        self.wait = 1.0
+        self.stale = {"ps", "volumes"}
+        self.told: dict = {}
+
+    def tick(self) -> None:
+        """One second of the server's reading: the streams kept up while wanted, what an event made stale read again,
+        the disk on its timer, a new reading told."""
+        if not _wanted():
+            self.again = float("-inf")                # …stopped for want of a reader, not for failing: next start at once
+            return self.stop()
+        if (not self.procs or any(p.poll() is not None for p in self.procs)) and time.perf_counter() >= self.again:
+            # …a stream that ended soon after its start (Docker down) is tried again later each time, up to a minute
+            self.wait = min(2 * self.wait, 60.0) if self.procs and time.perf_counter() - self.started < 10 else 1.0
+            self.stop()
+            self.start()
+            self.started, self.again = time.perf_counter(), time.perf_counter() + self.wait
+        stale, self.stale = self.stale, set()
+        if "ps" in stale:
+            _cached("ps", -1.0, _ps)
+        if "volumes" in stale or time.perf_counter() - _read.get("volumes", (float("-inf"),))[0] > DISK_FRESH:
+            _cached("volumes", -1.0, _volumes)
+        _cached("machine", DISK_FRESH, _machine)
+        self.tell()
+
+    def tell(self) -> None:
+        """What is new since the last tick, told to the listeners."""
+        now = {k: v[0] for k, v in _read.items()}       # …each read's own moment, on a clock fine enough that two differ
+        if now != self.told:
+            self.told = now
+            for tell in list(LISTENERS):
+                tell()
+
+    def start(self) -> None:
+        """Docker's event and stats streams started, each read by a thread of its own; everything read anew."""
+        self.stale |= {"ps", "volumes"}
+        # …the system's own, by the label every installation's container and volume carries: another program's volume
+        # made on the machine re-read the disk each second (critic)
+        events = self.spawn(["docker", "events", "--filter", f"label={HOME}", "--filter", "type=container",
+                             "--filter", "type=volume",
+                             *[a for e in ("create", "start", "die", "destroy") for a in ("--filter", f"event={e}")],
+                             "--format", "{{.Type}}"])
+        stats = self.spawn(["docker", "stats", "--format", _STATS])
+        self.procs = [events, stats]
+        threading.Thread(target=self.events, args=(events.stdout,), daemon=True).start()
+        threading.Thread(target=self.stats, args=(stats.stdout,), daemon=True).start()
+
+    def stop(self) -> None:
+        """Both streams ended — Docker's client, a process of its own with none under it."""
+        for p in self.procs:
+            p.kill()
+            p.wait()
+            release(p)                                # …reaped and forgotten: a restart leaks no process nor its pipe
+        self.procs = []
+
+    def events(self, lines) -> None:
+        """Each event makes the list stale; a volume's, the disk too."""
+        for kind in lines:
+            self.stale |= {"ps", "volumes"} if kind.strip() == "volume" else {"ps"}
+
+    def stats(self, lines) -> None:
+        """Frames as Docker draws them for a terminal, each opening with the cursor sent home: one reading each."""
+        frame: list = []
+        for line in lines:
+            if "\x1b[H" in line and frame:
+                _store("stats", _parse_stats(frame))
+                frame = []
+            if row := re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).strip():
+                frame.append(row)
+        with _lock:                                   # …the stream ended: the last reading stands, said as not fresh
+            at, value, _, taken = _read.get("stats", (0.0, None, False, None))
+            _read["stats"] = (at, value, False, taken)
+
+
+def _spawn(argv: list):
+    """One of Docker's streams, its lines as text, no console window, ended with the server."""
+    return adopt(subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                                  errors="replace", **spawn_kw(),
+                                  **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {})))
+
+
+def _store(key: str, value) -> None:
     with _lock:
-        stats, stats_ok, stats_at = _cached("stats", FRESH, _stats)
-        lines, ps_ok, ps_at = _cached("ps", FRESH, lambda: _docker("ps", "-a", "--filter", f"label={LABEL}",
-                                                                   "--format", _PS))
-        volumes, disk_ok, disk_at = _cached("volumes", DISK_FRESH, _volumes)
-        machine, _, _ = _cached("machine", DISK_FRESH, _machine)
+        _read[key] = (time.perf_counter(), value, True, time.time())
+
+
+def _stored(key: str) -> tuple:
+    """(the reading, did Docker answer its last ask, when the reading was taken) as it stands — None before any."""
+    _, value, ok, taken = _read.get(key, (0.0, None, False, None))
+    return value, ok, taken
+
+
+def held(known: set | None = None) -> dict:
+    """What this installation holds, per project, as the last reading has it — each said `known` where the registry
+    holds it (`known`, None: not asked) —, what containers of a build that set no home hold, unattributed, which reads
+    Docker answered and when each was taken. Docker is never asked here (`watch`)."""
+    _asked[0] = time.perf_counter()
+    watch()
+    with _lock:
+        stats, stats_ok, stats_at = _stored("stats")
+        lines, ps_ok, ps_at = _stored("ps")
+        volumes, disk_ok, disk_at = _stored("volumes")
+        machine, _, _ = _stored("machine")
     rows = [_container(line.split("\t"), stats or {}) for line in lines or []]
     volumes = volumes or []
     ours, older = [r for r in rows if r["home"] == installation()], [r for r in rows if not r["home"]]
@@ -205,5 +371,5 @@ def remove_orphan(project_id: str, held) -> dict:
             refused[name] = "mounted by a container: Docker refused its removal"
         else:
             removed.append(name)
-    _read.pop("volumes", None)          # …the sizes' reading shows what stands now
+    _cached("volumes", -1.0, _volumes)              # …the sizes' reading shows what stands now: the act asks, not a read
     return {"project_id": project_id, "removed": removed, "refused": refused}

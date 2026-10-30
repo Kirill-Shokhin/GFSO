@@ -2,6 +2,7 @@
 per project and node, with a number Docker did not give left None; a server's sweep of leftovers removes its own
 installation's containers alone."""
 import json
+import threading
 import time
 import subprocess
 
@@ -23,8 +24,76 @@ def docker(monkeypatch):
     """Docker as the view asks it, answered from `said` — the cache emptied before and after."""
     said, asked = {}, []
     monkeypatch.setattr(R, "_read", {})
+    monkeypatch.setattr(R, "watch", lambda: None)              # …the poller is the server's, not a test's
     monkeypatch.setattr(R, "_docker", lambda *a: asked.append(a) or said.get(a[0], []))
     return said, asked
+
+
+def _held(*a):
+    """The reading as a page gets it, after the poller's turn (`resources.refresh`)."""
+    R.refresh()
+    return R.held(*a)
+
+
+def test_a_page_never_asks_docker_it_gets_the_last_reading(docker, monkeypatch):
+    """The author: «интерфейс должен подгружать то что есть в бэке а не что то тригерить самим чтением»."""
+    _, asked = docker
+    monkeypatch.setattr(R, "watch", lambda: None)
+    got = R.held(set())
+    assert not asked and got["read_at"] == {"containers": None, "stats": None, "disk": None}, "a read asked Docker"
+    R.refresh()
+    n = len(asked)
+    assert R.held(set())["read_at"]["containers"] and len(asked) == n, "the stored reading, at once"
+
+
+class _Proc:
+    """A stream of Docker's stood in for: running, saying nothing."""
+    stdout = ()
+
+    def poll(self):
+        return None
+
+    def kill(self):
+        pass
+
+    def wait(self):
+        return 0
+
+
+def _streams():
+    return R.Live(spawn=lambda argv: _Proc())
+
+
+def test_docker_tells_what_changed_the_server_reads_that_and_tells_the_open_page(docker, monkeypatch):
+    """The author: «это же сам докер должен отдавать … обновления от него вообще хуком можно сделать»."""
+    said, asked = docker
+    told = []
+    monkeypatch.setattr(R, "LISTENERS", [lambda: told.append(R.held(set())["read_at"]["containers"])])
+    live = _streams()
+    live.tick()
+    assert live.procs and len(told) == 1 and told[0], "the first reading, pushed"
+    n = len(asked)
+    live.tick()
+    assert len(asked) == n and len(told) == 1, "no event, no read; nothing new, nothing pushed"
+    live.events(iter(["container\n"]))
+    live.tick()
+    assert [a[0] for a in asked[n:]] == ["ps"] and len(told) == 2, "a container's event: its list read again, told"
+    live.stats(iter(["\x1b[Hab\t1.5%\t10MiB / 4GiB\t3\x1b[K\n", "\x1b[Hab\t2.0%\t11MiB / 4GiB\t3\x1b[K\n"]))
+    assert R._read["stats"][1] == {"ab": (1.5, 10 * 2 ** 20, 3)} and R._read["stats"][2] is False, \
+        "a frame per home of the cursor; the stream's end said as a read not fresh"
+
+
+def test_an_idle_server_keeps_no_stream_of_docker(docker, monkeypatch):
+    monkeypatch.setattr(R, "LISTENERS", [])
+    live = _streams()
+    live.tick()
+    assert live.procs, "nothing read yet: the streams start"
+    monkeypatch.setattr(R, "_asked", [float("-inf")])
+    live.tick()
+    assert not live.procs, "nobody reads: Docker is asked nothing"
+    monkeypatch.setattr(R, "LISTENERS", [lambda: None])
+    live.tick()
+    assert live.procs, "an open page keeps them"
 
 
 def test_sizes_read_as_docker_prints_them():
@@ -49,7 +118,7 @@ def test_a_project_is_read_per_node_by_its_labels_and_a_missing_number_stays_non
         {"Name": "gfso-e-gone-k-v", "Labels": f"gfso.execution=e,gfso.home={h},gfso.project=gone", "Size": "3MB"},
         {"Name": "theirs-v", "Labels": "gfso.home=otherhome,gfso.project=p", "Size": "9GB"}]})]
     said["info"] = ["24 20973101056"]
-    got = R.held({"p"})
+    got = _held({"p"})
     assert got["read"] == {"containers": True, "stats": True, "disk": True}
     assert got["machine"] == {"cpus": 24, "memory_bytes": 20973101056}
     assert [p["project"] for p in got["projects"]] == ["gone", "p"], "another installation's holds are not ours"
@@ -70,8 +139,8 @@ def test_a_project_is_read_per_node_by_its_labels_and_a_missing_number_stays_non
 
 def test_docker_is_asked_once_while_a_reading_stands(docker):
     _, asked = docker
-    R.held(set())
-    R.held(set())
+    _held(set())
+    _held(set())
     assert sum(a[0] == "stats" for a in asked) == 1 and sum(a[0] == "system" for a in asked) == 1
 
 
@@ -108,7 +177,7 @@ def test_a_door_its_server_running_is_never_busy_a_stopped_container_holds_nothi
                   _ps("x", "executor.n-3", h, "p", "executor", "n", "", "executors", state="exited")]
     said["stats"] = ["d	0.16%	20MiB / 19GiB	3", "s	0.00%	1MiB / 19GiB	2"]
     said["system"] = [json.dumps({"Volumes": []})]
-    [p] = R.held({"p"})["projects"]
+    [p] = _held({"p"})["projects"]
     door = next(c for c in p["system"] if c["role"] == "door")
     assert door["busy"] is None, "a door's own server is its work, not a call (measured idle at 3 PIDs)"
     assert {c["name"] for c in p["system"]} == {"door-1", "system.state-2"} and [n["node"] for n in p["nodes"]] == ["n"]
@@ -123,14 +192,14 @@ def test_a_read_docker_did_not_answer_is_said_and_the_one_before_it_serves(docke
     said["ps"] = [_ps("a", "executor.n-1", h, "p", "executor", "n")]
     said["stats"] = []
     said["system"] = [json.dumps({"Volumes": []})]
-    first = R.held(set())
+    first = _held(set())
     assert first["read"] == {"containers": True, "stats": True, "disk": True}
     taken = first["read_at"]
     assert all(isinstance(t, float) and abs(t - time.time()) < 60 for t in taken.values()), taken
     monkeypatch.setattr(R, "_docker", lambda *a: None)                # …the daemon gone
     monkeypatch.setattr(R, "FRESH", -1.0)
     monkeypatch.setattr(R, "DISK_FRESH", -1.0)
-    got = R.held(set())
+    got = _held(set())
     assert got["read"] == {"containers": False, "stats": False, "disk": False}
     assert got["projects"][0]["containers"]["standing"] == 1, "the reading before it, said as not fresh"
     assert got["read_at"] == taken, "a kept reading keeps the time it was taken, not the failed read's"
@@ -138,7 +207,7 @@ def test_a_read_docker_did_not_answer_is_said_and_the_one_before_it_serves(docke
     said["system"] = [json.dumps({"Volumes": [
         {"Name": "v", "Labels": f"gfso.home={h},gfso.project=p,gfso.project_id={'a' * 32}", "Size": "1MB"}]})]
     monkeypatch.setattr(R, "_docker", lambda *a: said.get(a[0]) if a[0] == "system" else None)
-    got = R.held(set())
+    got = _held(set())
     assert got["read"]["containers"] is False and got["projects"][0]["containers"] is None, "never listed: no 0"
     assert got["projects"][0]["project_ids"] == ["a" * 32], "the id DELETE /api/resources/orphans/{id} takes"
     assert got["read_at"]["containers"] is None and isinstance(got["read_at"]["disk"], float)
@@ -164,5 +233,21 @@ def test_any_spelling_of_a_held_project_is_known_and_no_removal_takes_a_name(tmp
         else [])
     reg = ProjectRegistry()
     c = TestClient(create_app(reg.engine(), registry=reg), base_url="http://127.0.0.1:8000")
+    monkeypatch.setattr(R, "watch", lambda: None)              # …the server's reading, taken by the test's own turn
+    R.refresh()
     assert [(p["project"], p["known"]) for p in c.get("/api/resources").json()["projects"]] == [("alpha", True)]
     assert c.delete("/api/resources/orphans/alpha").status_code == 404
+
+
+def test_a_reader_never_waits_on_docker_while_the_server_reads_it(docker, monkeypatch):
+    """The lock guards the store, not Docker's answer: a page waited 8.8 s behind a slow `system df` (critic)."""
+
+    gate = threading.Event()
+    monkeypatch.setattr(R, "_docker", lambda *a: gate.wait(10) and [])
+    reading = threading.Thread(target=R.refresh, daemon=True)
+    reading.start()
+    t0 = time.perf_counter()
+    R.held(set())
+    assert time.perf_counter() - t0 < 1.0, "a read of the reading waited on Docker"
+    gate.set()
+    reading.join(10)

@@ -31,6 +31,7 @@ def home(tmp_path, monkeypatch):
     — recorded by name and removed by those names alone."""
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(R, "_read", {})
+    monkeypatch.setattr(R, "watch", lambda: None)              # …the poller is the server's: the test takes its turn
     reg = ProjectRegistry()
     made = {"volumes": [], "containers": []}
 
@@ -84,6 +85,7 @@ def test_live_a_true_orphans_volumes_go_by_their_names_and_a_held_projects_stand
     reg, c, volume, _ = home
     held = volume("p", reg.engine("p").graph.setting(PROJECT_ID))
     gone = [volume("gone", DEAD), volume("gone", DEAD)]
+    R.refresh()
     assert {v["name"]: v["project_id"] for p in c.get("/api/resources").json()["projects"] for v in p["volumes"]}[
         gone[0]] == DEAD
     got = c.delete(f"/api/resources/orphans/{DEAD}")

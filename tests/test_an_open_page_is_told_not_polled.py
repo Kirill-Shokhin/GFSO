@@ -4,6 +4,7 @@ nothing justified (the author, 2026-10-25: «где то 5 секунд где �
 from fastapi.testclient import TestClient
 
 from gfso import inflight
+from gfso.adapters import resources as R
 from gfso.api.server import create_app
 from gfso.runtime import ProjectRegistry
 
@@ -35,3 +36,18 @@ def test_a_booked_call_reaches_the_open_page(monkeypatch, tmp_path):
         said = ws.receive_json()
         assert said["type"] == "pipeline" and said["source"] == "usage"
     assert all(p["source"] != "usage" for p in eng.pipeline_log()), "the push is not a line of the run's history"
+
+
+def test_a_new_reading_of_docker_reaches_the_open_page(monkeypatch, tmp_path):
+    """The author: «интерфейс не должен тригерить новый опрос … отобразить текущее число» — the server's poller tells
+    each open page the reading it stored, the body `GET /api/resources` answers."""
+    monkeypatch.setattr(R, "_read", {})
+    monkeypatch.setattr(R, "watch", lambda: None)
+    monkeypatch.setattr(R, "_docker", lambda *a: [])
+    _, client = _client(monkeypatch, tmp_path)
+    live = R.Live(spawn=lambda argv: type("P", (), {"stdout": (), "poll": lambda s: None, "kill": lambda s: None, "wait": lambda s: 0})())
+    with client.websocket_connect("/ws/events") as ws:
+        live.tick()
+        said = ws.receive_json()
+        assert said["type"] == "resources" and said["read_at"]["containers"] and "projects" in said
+    assert not R.LISTENERS, "a closed page left its listener behind"
