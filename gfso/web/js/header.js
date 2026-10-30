@@ -123,7 +123,7 @@ function drawReports() {
     const seen = `${reports.length}|${reports.at(-1)?.at || ''}`;
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
-    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports"><b>${reports.length}</b> ${reports.length > 1 ? 'tech reports' : 'tech report'}</button>`
+    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${tally(reports.length, reports.length > 1 ? 'tech reports' : 'tech report')}</button>`
         + H.reports([...reports].reverse().map(r => ({head: r.role || 'the system',
             val: `<span class="hq-when"><span data-at="${esc(r.at)}">${esc(ago(r.at))}</span> ago</span>`,
             link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text})));

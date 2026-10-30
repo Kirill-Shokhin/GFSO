@@ -129,7 +129,7 @@ body {
 .hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 /* ONE EVEN LINE: where the goal stands, its count, what needs a person — each on the same baseline, one gap apart, the
    count's figure only a step above the words (the author, 2026-10-30: «стоит неровно и вразнобой») */
-.hd-needs { display: flex; align-items: baseline; gap: 24px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
+.hd-needs { display: flex; align-items: baseline; gap: 16px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
 .need b { font-weight: 600; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
@@ -350,6 +350,9 @@ body {
 .cs-tile b { font-family: var(--font-display); font-size: 26px; font-weight: 650; letter-spacing: var(--tr-heading); color: var(--ink); line-height: 1.1; }
 .cs-tile span { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); }
 .cs-tile i { font-style: normal; font-size: 11px; color: var(--ink-faint); }
+/* a count in a tile's note is the note's size and face — not the tile's figure (26 px) nor its label (9 px caps) */
+.cs-tile i .tally { font: inherit; text-transform: none; letter-spacing: 0; color: inherit; }
+.cs-tile i .tally b { font-family: var(--font-display); font-size: inherit; letter-spacing: 0; line-height: inherit; }
 .cs-legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 12px; }
 .cs-legend em { display: block; margin-left: 16px; font-style: normal; font-size: 10.5px; color: var(--ink-faint); }
 /* a figure the eye looks for is the brand's display face, as every count's (`.tally b`); a table's figures are mono */
@@ -416,14 +419,15 @@ body {
    out (the author, 2026-10-30: «при открытии ноды нижняя панель сжимается и прокрутки влево вправо не появляется»); every
    item keeps its whole text, and the fold stays at the right edge */
 .dk-head { display: flex; align-items: center; gap: 18px; padding: 0 0 0 16px; height: 34px; flex-shrink: 0; border-bottom: 1px solid var(--hair-soft);
-           overflow: hidden; }
+           overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }   /* the line's floor not met (a node open on 1024): the head scrolls */
+.dk-head::-webkit-scrollbar { display: none; }
 .dk-head > :not(.dk-strip), .dk-head nav { flex-shrink: 0; }
 .deck.closed .dk-head { border-bottom: none; }
 .dk-head nav { display: flex; gap: 2px; }
 .dk-tab { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: var(--tr-mono); text-transform: uppercase; background: none; border: none; color: var(--ink-faint); padding: 10px 8px 8px; cursor: pointer; border-bottom: 2px solid transparent; }
 .dk-tab:hover { color: var(--ink-soft); }
 .deck:not(.closed) .dk-tab.on { color: var(--ink); border-bottom-color: var(--ink); }
-.dk-strip { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; font-size: 11.5px; white-space: nowrap;
+.dk-strip { flex: 1 1 auto; min-width: min(300px, 40vw); display: flex; align-items: center; gap: 10px; font-size: 11.5px; white-space: nowrap;
              overflow-x: auto; overflow-y: hidden; scrollbar-width: none; align-self: stretch; }
 .dk-strip::-webkit-scrollbar { display: none; }
 .dk-strip.more-r { mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); }
@@ -446,7 +450,7 @@ body {
 .deck.closed .dk-fold { transform: rotate(180deg); }
 .dk-body { flex: 1; overflow: auto; padding: 12px 16px 16px; min-height: 0; }
 /* Badges over the graph — a pulse on what runs now, a count of rounds on what took more than one. */
-#cy { position: relative; overflow: hidden; }
+#cy { position: relative; overflow: hidden; }   /* the badges end where the canvas ends — never over the deck */
 /* the plan being authored, on the canvas while there is no graph (planning.js) */
 .cy-plan { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); min-width: 340px; padding: 18px 22px;
            background: var(--paper); border: 1px solid var(--hair); border-radius: var(--radius); z-index: 3; }
@@ -454,7 +458,7 @@ body {
 .cp-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; border-top: 1px solid var(--hair-soft); font-size: 12px; color: var(--ink-soft); }
 .cp-row > span:not(.tally) { flex: 1; }
 .cp-now { color: var(--ink); }
-.cp-now > i { width: 6px; height: 6px; border-radius: 50%; background: var(--acc); align-self: center; animation: tl-pulse var(--pulse) ease-in-out infinite; }   /* the badges end where the canvas ends — never over the deck */
+.cp-now > i { width: 6px; height: 6px; border-radius: 50%; background: var(--acc); align-self: center; animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .cy-badges { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .cy-badge { position: absolute; display: flex; gap: 3px; align-items: center; }
 .cy-badge span { font-family: var(--font-mono); font-size: 9.5px; line-height: 1; padding: 3px 5px; border-radius: 8px; background: var(--bg); color: var(--ink); border: 1px solid var(--ink-soft); }
@@ -1220,7 +1224,8 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
    «статус и количество это два разных поинта … там что мало место их разнести?»); the figure set apart by weight alone */
 .hd-needs > .hd-phrase, .hd-needs > .tally, .hd-needs > .hd-quiet { font-size: 12.5px; white-space: nowrap; }
 .hd-needs > .tally b { color: inherit; }
-.hd-needs > .tally, .hd-needs > .hd-quiet { border-left: 1px solid var(--hair-on-chrome); padding-left: 24px; }
+.hd-needs > .tally, .hd-needs > .hd-quiet { border-left: 1px solid var(--hair-on-chrome); padding-left: 16px; }
+.hd-needs > .hd-quiet:first-child { border-left: none; padding-left: 0; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
 .pn-meta .tally { margin-left: 12px; }
 
@@ -1240,7 +1245,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pl-res { text-align: right; white-space: nowrap; }
 .pl-res .tally { margin-left: 8px; }
 .pn-round { margin-left: 12px; }
-.pn-round b { color: var(--ui-text); }
+.pn-round b { font-family: var(--font-display); font-weight: 650; color: var(--ui-text); }
 /* what Docker holds: the machine over the project list, a project's own in its deck view — counts as marks */
 .rs-machine, .rs-tallies { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 6px; }
 .rs-machine { border-bottom: 1px solid var(--hair); }
@@ -1334,4 +1339,3 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .dk-strip { flex: 0 0 auto; overflow: visible; mask-image: none; }
 }
 .rs-roles .tally { margin-right: 12px; }
-.hd-q b { font-size: 12px; font-weight: 650; margin-right: 2px; }

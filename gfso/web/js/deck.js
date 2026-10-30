@@ -69,15 +69,16 @@ function strip() {
     const back = run ? Object.entries(run.rounds).filter(([id, rs]) => failingNow(rs, state(id)))
         .map(([id, rs]) => [id, rs.filter(r => r.verdict === 'FAIL').length]).sort((x, y) => y[1] - x[1]) : [];
     return now_
+        // what is red comes first after what is at work: the line scrolls, and the last of it is the first behind its fade (critic)
+        // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
+        // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
+        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '')
+        + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
             const users = Object.entries(run.waits).filter(([, w]) => w.deps.includes(id)).map(([u]) => run.name(u));
             return `<button class="dk-block" data-node="${esc(id)}"${STRIP.block(n, run.name(id), users)}>${tally(n, 'wait on')}<b>${esc(trim(run.name(id), 24))}</b>`
-                + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '')
-        + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
-        // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
-        // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
-        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '');
+                + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '');
 }
 // THE RUN'S SUM, in a place of its own at the head's right — never laid over the line, which scrolls beside it. A session's
 // cost is booked when it ENDS: the running ones are said on its hover, not as «+N running» beside «N at work», which

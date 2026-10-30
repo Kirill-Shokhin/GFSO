@@ -21,7 +21,8 @@ export function drawPlanning() {
         const m = p.source === 'decompose' && STEP.exec(p.message);
         if (m) steps.set(m[1], {took: m[2] ? +m[2] * 1e3 : null, t: at(p.ts)});
     }
-    box.innerHTML = `<div class="cp-head"><b>${PLAN.title}</b>${tally(dur(Date.now() - w.since * 1e3), 'so far', PLAN.since(hm(w.since * 1e3)))}</div>`
+    // …how long so far is the strip's chip and the sum's: said here too, two clocks drifted apart (critic)
+    box.innerHTML = `<div class="cp-head"${PLAN.since(hm(w.since * 1e3))}><b>${PLAN.title}</b></div>`
         + (!steps.size ? `<div class="cp-row cp-now">${PLAN.starting}</div>` : [...steps].map(([name, s]) => s.took != null
             ? `<div class="cp-row"><span>${esc(name)}</span>${tally(dur(s.took), 'took')}</div>`
             : `<div class="cp-row cp-now"><i></i><span>${esc(name)}</span>${tally(dur(Date.now() - s.t), 'running', PLAN.since(hm(s.t)))}</div>`).join(''));
