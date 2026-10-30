@@ -7,7 +7,7 @@ import {post, GOAL} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
 import {label, closureNote, contested, modeDoc, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow} from './run.js';
-import {dur, trim, cap, pct, stamp, plural} from './fmt.js';
+import {dur, trim, cap, pct, stamp} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
 import {askInPage, act} from './overlays.js';
 
@@ -120,7 +120,7 @@ function drawReports() {
     const seen = `${reports.length}|${reports.at(-1)?.at || ''}`;
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
-    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${plural(reports.length, 'tech report')}</button>`
+    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports"><b>${reports.length}</b> ${reports.length > 1 ? 'tech reports' : 'tech report'}</button>`
         + H.reports([...reports].reverse().map(r => ({head: r.role || 'the system',
             val: `<span class="hq-when"><span data-at="${esc(r.at)}">${esc(ago(r.at))}</span> ago</span>`,
             link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text})));

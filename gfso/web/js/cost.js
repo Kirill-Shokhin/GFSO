@@ -1,10 +1,10 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
-import {esc} from './dom.js';
+import {esc, tally} from './dom.js';
 import {TIP, meter, sessionsOf, KIND, levelName} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
-import {dur, trim, money as reported, NOT_REPORTED, tok, plural} from './fmt.js';
+import {dur, trim, money as reported, NOT_REPORTED, tok} from './fmt.js';
 import {concurrency, byRole} from './run.js';
 
 
@@ -47,8 +47,8 @@ export function render(el, run, nodes) {
     const kinds = Object.keys(KIND).filter(k => c.byKind[k]);
     el.innerHTML = `<div class="cs">
         <div class="cs-tiles">
-            ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced ? `${plural(c.unpriced, 'call')} with no cost recorded` : '')}
-            ${tile(tok(c.tokens), 'tokens', 'cache included', c.untold && c.tokens != null && `${plural(c.untold, 'session')} reported none`)}
+            ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced && tally(c.unpriced, 'with no cost recorded'))}
+            ${tile(tok(c.tokens), 'tokens', 'cache included', c.untold && c.tokens != null && tally(c.untold, 'reported none'))}
             ${tile(dur(run.clock.span), 'run time', run.clock.folds.length ? `idle ${dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0))} folded` : '')}
             ${tile(dur(c.busy), 'session time', `${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}× the run`)}
             ${tile(run.exec.peak, 'executors at once', `validators ${run.val.peak}`)}

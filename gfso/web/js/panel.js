@@ -18,8 +18,10 @@ const link = (facet, label) => `<button class="pn-link" data-action="read" data-
 
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
-    const words = waitWords(waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], id => nameOf(taskOf(id)) || id);
-    return words === '—' ? ['', ''] : [`<span>waiting on <b>${esc(words)}</b></span>`, `waiting on ${words}, `];
+    const w = waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], words = waitWords(w, id => nameOf(taskOf(id)) || id);
+    // …its own parts as a count of its own, never «its 1 part» threaded into the words
+    const what = !w?.deps.length && w?.parts.length ? tally(w.parts.length, w.parts.length > 1 ? 'parts' : 'part') : `<b>${esc(words)}</b>`;
+    return words === '—' ? ['', ''] : [`<span>waiting on ${what}</span>`, `waiting on ${words}, `];
 }
 // a meta line is one line, cut at its end: the whole of it on hover
 const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</div>`;
