@@ -77,18 +77,30 @@ function strip() {
         + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
         // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
         // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
-        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '')
-        // a session's cost is booked when it ENDS (the CLI reports it then): a running one is said, not guessed
-        + (run ? `<span class="dk-sum"${STRIP.spend(byRole(run.cost.byKind), mine.length)}>`
-                 + tally(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced), 'spent')
-                 + `${mine.length ? tally(`+${mine.length}`, 'running') : ''}${tally(dur(run.clock.span), 'run')}</span>` : '');
+        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '');
 }
+// THE RUN'S SUM, in a place of its own at the head's right — never laid over the line, which scrolls beside it. A session's
+// cost is booked when it ENDS: the running ones are said on its hover, not as «+N running» beside «N at work», which
+// counted the same sessions twice (the author, 2026-10-30)
+const sum = () => { const run = S.run; if (!run) return '';
+    return `<span${STRIP.spend(byRole(run.cost.byKind), (run.now ?? runNow(S.tasks, procs())).procs.length)}>`
+        + tally(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced), 'spent')
+        + tally(dur(run.clock.span), 'run') + '</span>'; };
+
+// THE LINE SCROLLS IN ITS OWN PLACE, its bar hidden: a soft fade at the edge where more of it lies says there is more, and
+// a mouse's wheel moves it sideways (the author, 2026-10-30: «подписи … даже не все влезают и не понятно что там дальше»)
+const fades = box => {
+    box.classList.toggle('more-r', box.scrollLeft + box.clientWidth < box.scrollWidth - 1);
+    box.classList.toggle('more-l', box.scrollLeft > 1);
+};
 
 // The strip drawn, then its chips fitted: those the line holds are shown, the rest counted with their names on hover —
 // three at a fixed cap were cut mid-word, their state with them, on 1280 px beside the panel.
 function drawStrip() {
     const box = $('deck').querySelector('.dk-strip');
     box.innerHTML = strip();
+    $('deck').querySelector('.dk-sum').innerHTML = sum();
+    requestAnimationFrame(() => fades(box));
     // …from scratch each time: a `.fit` left by a line that had chips held the wait lines at full width once the chips
     // were gone, and pushed the spend out of the strip (1280 px beside the panel)
     box.classList.remove('fit');
@@ -98,7 +110,7 @@ function drawStrip() {
     // processes read «S…», «the …», a node lost to its verb (1440 px, a live moment); at full width one chip stood beside
     // 250 px of nothing (critic). One chip left that still does not fit is cut like the rest of the line.
     const all = [...chips.querySelectorAll('.dk-live')], gone = [];
-    const over = () => [chips, box, ...chips.querySelectorAll('.dk-live')].some(e => e.scrollWidth > e.clientWidth + 1);
+    const over = () => [chips, ...chips.querySelectorAll('.dk-live')].some(e => e.scrollWidth > e.clientWidth + 1);
     box.classList.add('fit');
     while (all.length > 1 && over()) gone.unshift(all.pop()), gone[0].remove(), more.textContent = `+${gone.length}`;
     if (over()) box.classList.remove('fit');
@@ -139,7 +151,7 @@ export function mountDeck() {
     const d = $('deck');
     d.innerHTML = `<div class="dk-grip"${frame('grip')}></div><div class="dk-head">
         <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}"${TAB[k]}>${k}</button>`).join('')}</nav>
-        <div class="dk-strip"></div><button class="dk-fold"${frame('fold')}>▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
+        <div class="dk-strip"></div><div class="dk-sum"></div><button class="dk-fold"${frame('fold')}>▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
     if (pref.h) d.style.height = `${pref.h}px`;
     d.querySelector('nav').onclick = e => {
         const v = e.target.dataset.view;
@@ -149,7 +161,10 @@ export function mountDeck() {
         view = pref.view = v; save(); paint();
     };
     d.querySelector('.dk-fold').onclick = () => { pref.closed = !pref.closed; save(); paint(); };
-    d.querySelector('.dk-strip').onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n) point('select', n); };
+    const line = d.querySelector('.dk-strip');
+    line.onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n) point('select', n); };
+    line.onscroll = () => fades(line);
+    line.onwheel = e => { if (!e.deltaY || line.scrollWidth <= line.clientWidth) return; line.scrollLeft += e.deltaY; e.preventDefault(); };
     // …by a pointer of any kind: a finger on a phone drags it as a mouse does on a desk (it took a mouse only)
     d.querySelector('.dk-grip').onpointerdown = e => {
         const y0 = e.clientY, h0 = d.offsetHeight;
