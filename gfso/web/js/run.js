@@ -340,6 +340,10 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
     // has it — the panel's criterion histories too, not only Progress (critic: the panel drew ⊥ for a criterion kept as pass)
     const per = joinHistory(audit.filter(isVerdict), verdicts);
     audit = audit.map(a => per.has(a) && !a.per_criterion ? {...a, per_criterion: per.get(a)} : a);
+    // AN ATTEMPT AN ACCOUNT'S LIMIT REFUSED AND THE NEXT CREDENTIAL CARRIED (`ended: moved`, engineering 2026-10-29) is no
+    // session and no ending: the call ran on, so it draws no bar and counts in no sessions — only Models says how many
+    const moved = calls.filter(c => c.ended === 'moved').length;
+    calls = calls.filter(c => c.ended !== 'moved');
     const ss = sessions(calls, audit, pipeline), open = openSessions(procs, pipeline, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, nameOf(n)]));
     return {
@@ -347,7 +351,7 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
         sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting, steps),
         clock: clock(all, audit.map(a => a.t), open.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
-        criteria: criteria(audit, tasks, verdicts), work: work(calls),
+        criteria: criteria(audit, tasks, verdicts), work: {...work(calls), moved},
         cost: {total: sum(ss, s => s.cost), tokens: total(ss, s => s.tokens), untold: ss.filter(s => s.tokens == null).length, busy: sum(ss, s => s.ms ?? s.end - s.start),
                unpriced: ss.filter(s => !s.priced).length,
                byKind: rollup(ss, () => 'all').all || {}, byNode: rollup(ss, s => s.node), byDepth: rollup(ss, s => depth[s.node] ?? 0), byAgent: rollup(ss, s => s.agent || '—')},

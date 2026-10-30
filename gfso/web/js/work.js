@@ -5,7 +5,7 @@
 // numbers are on hover: the same «median 27% of 200k» on every row was noise (the author, 2026-10-27).
 import {esc} from './dom.js';
 import {modelName, TOKENS} from './vocab.js';
-import {usd, tok as fmtTok, pct, money, NOT_REPORTED} from './fmt.js';
+import {usd, tok as fmtTok, pct, money, plural, NOT_REPORTED} from './fmt.js';
 import {median} from './run.js';
 import {MODELS, COST_CLS, KIND} from './hints.js';
 
@@ -35,7 +35,7 @@ function where(r) {
 }
 
 export function render(el, run) {
-    const {rows, total, unanswered} = run.work;
+    const {rows, total, unanswered, moved} = run.work;
     if (!rows.length) return void (el.innerHTML = '<div class="pn-meta">no model call recorded yet</div>');
     const byModel = {};
     rows.forEach(r => { const m = byModel[r.model] ??= {cost: 0, calls: 0, priced: 0, booked: 0, unpriced: 0, roles: [], rows: [], window: null};
@@ -59,7 +59,8 @@ export function render(el, run) {
             <th${MODELS.cost}>cost split</th>
             <th${MODELS.fill}>context filled</th></tr></thead><tbody>
         ${models.map(([m, x]) => x.rows.map((r, i) => row(r, i, m)).join('')).join('')}
-        </tbody></table>${unansweredLine(unanswered)}</div>`;
+        </tbody></table>${unansweredLine(unanswered)}${moved ? `<div class="pn-meta wk-note">not counted above — `
+            + `${plural(moved, 'attempt')} an account's limit refused, run again on the provider's next credential</div>` : ''}</div>`;
 }
 
 // sessions no model answered, said once under the table rather than counted as anyone's work
