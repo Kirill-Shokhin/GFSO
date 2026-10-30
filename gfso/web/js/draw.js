@@ -16,6 +16,10 @@ export const mark = (v, x, y, r = 4) => v === 'PASS' ? `<circle class="mk-pass" 
 // the same glyph standing alone in text or a table cell
 export const glyph = (v, r = 4) => `<svg class="glyph" width="${2 * r + 4}" height="${2 * r + 4}" viewBox="${-r - 2} ${-r - 2} ${2 * r + 4} ${2 * r + 4}">${mark(v, 0, 0, r)}</svg>`;
 
+// A time axis keeps the room to be read: narrower than this, the deck scrolls it sideways rather than squeezing a run's
+// hours into a phone's width (the author, 2026-10-29: «почему нижнюю панель можно скроллить вверх но нельзя вбок»)
+export const axisWidth = el => Math.max(el.clientWidth, 720);
+
 export function frame(run, W, left, right = 16) {
     const span = Math.max(run.clock.span, 60e3), k = (W - left - right) / span;
     const X = t => left + run.clock.x(t) * k;

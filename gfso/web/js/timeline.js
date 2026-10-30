@@ -4,7 +4,7 @@
 import {esc} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
-import {frame, mark} from './draw.js';
+import {frame, axisWidth, mark} from './draw.js';
 import {trim} from './fmt.js';
 import {failedOf} from './run.js';
 import {TIP, KIND, waitWords} from './hints.js';
@@ -48,7 +48,7 @@ function stretches(run) {
 
 export function render(el, run, nodes) {
     const ids = rows(run, nodes), name = run.name, work = stretches(run);
-    const W = Math.max(el.clientWidth, 480), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
+    const W = axisWidth(el), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
     const Y = id => TOP + ids.indexOf(id) * ROW + ROW / 2 + 4;
     // a session handed over to a fresh one is a cut across its bar at the moment it wrote its note; the cut takes no
     // pointer, so the bar's tip stays on under it (the author: a hover on the cut lost the tip)

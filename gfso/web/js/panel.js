@@ -93,7 +93,7 @@ function criteria({d, vr, rounds}) {
             + pinned(c, key + '|check') + `</div></details>`;
     };
     const SHOWN = 8, head_ = sorted.slice(0, SHOWN).map(row).join(''), rest = sorted.slice(SHOWN);
-    return section(`Criteria${vr?.verdict ? ` · ${k}/${cs.length} pass` : ''}`, head_
+    return section(`Criteria${vr?.verdict ? `<span class="tally"><b>${k}/${cs.length}</b><i>pass</i></span>` : ''}`, head_
         + (rest.length ? `<details class="cr-rest"><summary>${rest.length} more${rest.every(c => pc[c.name]?.verdict === 'pass') ? ', all passing' : ''}</summary>${rest.map(row).join('')}</details>` : ''));
 }
 

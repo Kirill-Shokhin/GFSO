@@ -146,11 +146,12 @@ export function mountDeck() {
     };
     d.querySelector('.dk-fold').onclick = () => { pref.closed = !pref.closed; save(); paint(); };
     d.querySelector('.dk-strip').onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n) point('select', n); };
-    d.querySelector('.dk-grip').onmousedown = e => {
+    // …by a pointer of any kind: a finger on a phone drags it as a mouse does on a desk (it took a mouse only)
+    d.querySelector('.dk-grip').onpointerdown = e => {
         const y0 = e.clientY, h0 = d.offsetHeight;
         const move = m => { d.style.height = `${Math.max(120, Math.min(innerHeight * 0.8, h0 + y0 - m.clientY))}px`; };
-        const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); pref.h = d.offsetHeight; save(); paint(); };
-        addEventListener('mousemove', move); addEventListener('mouseup', up);
+        const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); pref.h = d.offsetHeight; save(); paint(); };
+        addEventListener('pointermove', move); addEventListener('pointerup', up);
     };
     let w = 0;
     new ResizeObserver(([e]) => { if (Math.abs(e.contentRect.width - w) > 4) { w = e.contentRect.width; if (S.run) paint(); } }).observe(d);
