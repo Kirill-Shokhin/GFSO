@@ -65,6 +65,20 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   a layout for phone width; a project that never ran can be deleted from its page.
 
 ### Fixed
+- `auto_decompose` hands over the system's own plan already judged by the admission's Level-2 check: it reviews the
+  split by that check, repairs what it names with the checker's reasons, and reviews again while the open findings
+  fall; the gate then reads that same review. The machine issuer answers no question in a subtree the authoring is
+  still writing.
+- A part waits for the producers its whole reads, not only for its own: a node with declared dependencies no longer
+  has its parts start before those producers pass. A declared dependency that would close a cycle — through a parent's
+  wait on its parts, or on one's own ancestor — is refused where it is written, naming the cycle; an inferred wait that
+  would close one is not taken, and says so in `waiting`.
+- Every model session that ran is booked in `llm_usage`, whatever fails after it; a handover note quoting a phrase
+  before a colon no longer crashes the session path (its cost had been lost and its chain restarted).
+- A retried round no longer aborts its agent's own merge in progress: a join into a place where the agent's merge
+  stands is left for later, and the agent is told its merge stands and not to abort it.
+- A plan whose open findings keep falling is not reported stuck: both the time owed and the answers count from the
+  question's last move.
 - A plan's Level-2 review runs as soon as the machine issuer's fix changes the split; the issuer's answers stay rate
   limited after it. A promoted producer is read under the move's own key, a probe's files written as `{path, content}`
   keep their content, and a new probe naming a file its split already pins carries it — each had refused a correct move
