@@ -141,13 +141,17 @@ def _spawn(engine, node_id, executor_id: str, cfg: dict, _llm, role: str, prompt
         llm.reads_as_report = lambda text: parse_structured(text, schema) is not None
     llm.stage_hint = f"{node_id} {role}({executor_id})"
     system, user = (_PROMPTS / prompt).read_text(encoding="utf-8"), packet + schema_instruction(schema)
-    with _inflight(verb, engine, node_id):
-        text = (_run_session(llm, system, user, cfg, cap, cwd, conversation_of(engine, node_id, executor_id, role))
-                if work else
-                llm.run_agent(system, user, allowed_tools=("Read", "Glob", "Grep"), cwd=cwd))
     stage = Stage.CONSENT if role == "consent" else Stage.EXECUTOR      # a consent reads; it is not the work
-    stats = session_calls(llm, stage)
-    engine.record_llm_usage(stage, llm, node_id)      # the session's spend, booked once to its node
+    with _inflight(verb, engine, node_id):
+        try:
+            text = (_run_session(llm, system, user, cfg, cap, cwd, conversation_of(engine, node_id, executor_id, role))
+                    if work else
+                    llm.run_agent(system, user, allowed_tools=("Read", "Glob", "Grep"), cwd=cwd))
+        finally:
+            # …booked once to its node, whatever the run raised after its sessions: a raise between two sessions of a
+            # handover chain left eight paid sessions off the ledger (GB_c_compiler_ctx3b1285_10301332)
+            stats = session_calls(llm, stage)
+            engine.record_llm_usage(stage, llm, node_id)
     file_tech_reports(engine, report := parse_structured(text, schema), role, executor_id, node_id)
     return report, text, stats, llm, _cb
 

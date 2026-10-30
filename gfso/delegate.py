@@ -1588,7 +1588,7 @@ class Dispatcher:
                 # Into the OBSERVATION FIELD, not only a log record. This handler catches the whole
                 # spawn path, and a node whose dispatch raised is never retried — its key stays in
                 # `_seen` until a re-ASSIGN. Logged alone, that is a graph which simply stops.
-                log.warning(f"delegate run failed on {task_id}: {e}")
+                log.exception(f"delegate run failed on {task_id}: {e}")   # …with where: str(e) alone named no line
                 try:
                     # …AND THE ROUND IS GIVEN BACK. This handler catches the whole spawn path — the
                     # transport, the model factory, the usage record, reading the prompt file — and

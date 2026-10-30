@@ -245,6 +245,10 @@ def _misplaced(raw: str, schema: dict):
     """(where, the closers) for the first key its object's schema does not declare while an enclosing level's does —
     the object's first key belongs to a list's next item, any other key to an enclosing object — or None."""
     for _, _, key, comma, frames in _keys(raw):
+        # …a quoted phrase before a colon outside any container is prose, not a key: a handover note's `- "x": refuted`
+        # raised here and took the session's booking with it (GB_c_compiler_ctx3b1285_10301332)
+        if not frames:
+            continue
         schemas = _frame_schemas(frames, schema)
         props = schemas[-1].get("properties") if schemas else None
         if props is None or key in props:
