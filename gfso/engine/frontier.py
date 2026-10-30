@@ -622,7 +622,7 @@ class Frontier:
         return [k for k in self.engine.graph.get_active_children(task_id)
                 if not settled_positive(k) and k.state in TERMINAL_STATES]
 
-    def _nothing_to_take(self, tasks, deps, _deps_ready) -> dict:
+    def _nothing_to_take(self, tasks, waits, _deps_ready) -> dict:
         """The answer when no node is takeable: working, blocked by dep order, or stuck.
 
         Three different facts share one silence — an instrument is running, a producer has
@@ -709,7 +709,7 @@ class Frontier:
                           for t in stranded)
         _held_up = [t for t in tasks if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
                     and not _deps_ready(t.id)]
-        waiting = [f"'{t.id}' waits on " + ", ".join(f"'{p}'" for p in self._open_producers(t.id, deps))
+        waiting = [f"'{t.id}' waits on " + ", ".join(f"'{p}'" for p in self._open_producers(t.id, waits))
                    for t in _held_up]
         _redo = [f"for '{t.id}', " + self._around(t) for t in stranded if t.state != State.ESCALATED]
         return {"complete": False, "stuck": True,
@@ -731,7 +731,7 @@ class Frontier:
                     (f"Stuck: no actionable node, and the root is not DONE/PASS. What is waiting "
                      f"is the dependency order: " + "; ".join(waiting) + ". Those producers are "
                      f"not PASSED, and nothing else can run meanwhile. "
-                     + "; ".join(self.engine.offer(*self._edges_into(t, deps), lead=f"For '{t.id}': drive them, or ")
+                     + "; ".join(self.engine.offer(*self._edges_into(t), lead=f"For '{t.id}': drive them, or ")
                                  for t in _held_up) + "."
                      if waiting else
                      self._why_nothing_is_open()))}
@@ -1009,10 +1009,10 @@ class Frontier:
         if terminal is not None:
             return terminal
 
-        deps = self.engine.graph.dep_edges(adopted=True)
+        waits = self.engine.start_waits()     # read once per walk (`Engine.producers_awaited`)
         def _deps_ready(tid: TaskId) -> bool:
             """A consumer is executable only once every producer it depends on has PASSED (dep order)."""
-            return not self._open_producers(tid, deps)
+            return not self._open_producers(tid, waits)
 
         cands = []  # (priority, task, action, directive); lower priority acts first
         for t in tasks:
@@ -1031,7 +1031,7 @@ class Frontier:
                 cands.append(_c)
 
         if not cands:
-            return self._nothing_to_take(tasks, deps, _deps_ready)
+            return self._nothing_to_take(tasks, waits, _deps_ready)
         cands.sort(key=lambda c: (c[0], str(c[1].id)))
         return cands
 
@@ -1189,12 +1189,12 @@ class Frontier:
         """`waiting`: the nodes not on the frontier because a producer of theirs has not passed, and what the last
         walk's plan gate held back."""
         shown = {s["task_id"] for s in steps}
-        deps = self.engine.graph.dep_edges(adopted=True)
+        waits = self.engine.start_waits()
         out = []
         for t in self.engine.graph._storage.get_all_tasks():
             if str(t.id) in shown or t.state.name in ("DONE", "ABANDONED", "ESCALATED"):
                 continue
-            if open_prod := self._open_producers(t.id, deps):
+            if open_prod := self._open_producers(t.id, waits):
                 # The SAME shape as a plan-gated wait, because the two sat side by side in one answer
                 # with only one of them explaining itself (measured on the human door 2026-08-21).
                 out.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
@@ -1211,22 +1211,33 @@ class Frontier:
                                     f"finish {', '.join(open_prod)} — or, if this node's contract "
                                     f"does not really need what they produce, "
                                     + self.engine.offer(*self._edges_into(
-                                        t, deps, "its ISSUER can `remove_dependency('{p}', '{t}')` and revise it")))
+                                        t, "its ISSUER can `remove_dependency('{p}', '{t}')` and revise it")))
+                                ).as_dict())
+        # …AND THE WAIT NOT TAKEN, said where waits are: a node starting before a producer its whole reads
+        for (tid, p), cycle in sorted(self.engine.waits_not_taken().items()):
+            if (t := self.engine.graph.get_task(TaskId(tid))) is not None:
+                out.append(Wait(task_id=tid, state=t.state.name, assignee=t.assignee, kind="dependency",
+                                waits_on=(p,), why=(f"not waited: would close a cycle with {' → '.join(cycle)} → {tid} "
+                                                    f"— its whole reads {p}, and no order ends that wait"),
+                                opens_with=f"nothing to wait for: if '{tid}' needs '{p}''s result, its BLOCK says so"
                                 ).as_dict())
         out += self._held_by_plan
         return {"waiting": out} if out else {}
 
-    def _open_producers(self, tid, deps) -> list[str]:
-        """The producers `tid` consumes (over `deps`) that have not landed (`joins.landed`) — a producer not yet
+    def _open_producers(self, tid, waits) -> list[str]:
+        """The producers `tid` waits on (`Engine.producers_awaited`, over the walk's `waits`) that have not landed (`joins.landed`) — a producer not yet
         created counts as open. ONE reading for the dep gate and every wait reported over it: the gate read the join,
         the waits the bare pass, so a consumer whose producer was being joined was neither a step nor a wait."""
-        return sorted({str(e.from_id) for e in deps if str(e.to_id) == str(tid)
-                       and not ((p := self.engine.graph.get_task(e.from_id)) is not None and self.engine.joins.landed(p))})
+        return [f for f in self.engine.producers_awaited(tid, waits)
+                if not ((p := self.engine.graph.get_task(TaskId(f))) is not None and self.engine.joins.landed(p))]
 
-    def _edges_into(self, t, deps, say: str = "drop the edge (`remove_dependency('{p}', '{t}')`) if it was declared "
+    def _edges_into(self, t, say: str = "drop the edge (`remove_dependency('{p}', '{t}')`) if it was declared "
                                                 "in error") -> list:
-        """Dropping each edge `t` waits on: a move of the consumer's issuer (`remove_dependency`, keyed on `to_id`)."""
-        return [Move("remove_dependency", str(t.id), say.format(p=p, t=t.id)) for p in self._open_producers(t.id, deps)]
+        """Dropping each edge of its own `t` waits on: a move of the consumer's issuer (`remove_dependency`, keyed on
+        `to_id`). A wait taken from its whole is lifted on the whole's edge, not here."""
+        return [Move("remove_dependency", str(t.id), say.format(p=p, t=t.id))
+                for p in self._open_producers(t.id, {str(t.id): {str(e.from_id) for e in self.engine.adopted_dependencies()
+                                                                 if str(e.to_id) == str(t.id)}})]
 
     def _parent_of(self, tid) -> str:
         p = self.engine.graph.get_parent(TaskId(tid))

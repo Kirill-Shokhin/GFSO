@@ -729,19 +729,15 @@ class Dispatcher:
             return _the_place_is_down(self._engine, e)
         return False
 
-    def _deps_ready(self, task_id: TaskId) -> bool:
+    def _deps_ready(self, task_id: TaskId, waits: "dict | None" = None) -> bool:
         """An executor spawn is useless before the node's Dep PRODUCERS deliver — it hits a missing
         input and BLOCKs (observed live). Gate accept-step spawns on producer DONE. A producer node
         that does not EXIST yet counts as NOT ready: during a build the consumer's ASSIGN can land
         milliseconds before its producer's (observed live — the consumer slipped the gate and burned
-        a doomed run); the producer's own ASSIGN wakes the loop, so no liveness is lost."""
-        tid = str(task_id)
-        for e in self._engine.adopted_dependencies():
-            if str(e.to_id) == tid:
-                prod = self._engine.graph.get_task(TaskId(e.from_id))
-                if prod is None or prod.state.name != "DONE":
-                    return False
-        return True
+        a doomed run); the producer's own ASSIGN wakes the loop, so no liveness is lost. Those it takes from its whole
+        too (`Engine.producers_awaited`)."""
+        return all((p := self._engine.graph.get_task(TaskId(f))) is not None and p.state == State.DONE
+                   for f in self._engine.producers_awaited(task_id, waits))
 
     def _resolve_ready_blocks(self) -> None:
         """Auto BLOCK resolution: BLOCKED-on-nodes resolves once every EXISTING producer is DONE.
@@ -1034,6 +1030,7 @@ class Dispatcher:
         `dispatch_once` is one poll ROUND — publish the roster, resolve ready blocks, then
         act — and the acting had grown to a hundred and thirty statements inside it, so the
         round's own shape was invisible. This is the acting; the round is what calls it."""
+        waits = self._engine.start_waits()
         for s in out.get("steps", []):
             task = self._engine.graph.get_task(TaskId(s["task_id"]))
             # THE WHOLE GENERATION, not the iteration: it is what `_round_key` keys the round on,
@@ -1046,7 +1043,7 @@ class Dispatcher:
                 continue
             if s.get("action") not in SPAWNABLE_ACTIONS or (task is not None and self._split_owed_said(task)):
                 continue
-            if not self._deps_ready(TaskId(s["task_id"])) or self._being_rewritten(s["task_id"]):
+            if not self._deps_ready(TaskId(s["task_id"]), waits) or self._being_rewritten(s["task_id"]):
                 continue                   # spawning before the producers deliver ⇒ instant BLOCK; mid-rewrite ⇒ waste
                                            # EVERY executor spawn, not the first one only: the gate
                                            # asked its question on `accept` alone, so a node already
@@ -1219,12 +1216,10 @@ class Dispatcher:
                        for m in open_ if self._engine.graph.get_active_children(m.id))
                 or any(self._split_owed_said(m) for m in open_)):
             return False
-        inside, opened = {str(m.id) for m in members}, {str(m.id) for m in open_}
-        for e in self._engine.adopted_dependencies():
-            if str(e.to_id) in opened and str(e.from_id) not in inside:
-                p = self._engine.graph.get_task(TaskId(e.from_id))
-                if p is None or p.state != State.DONE:
-                    return False                # spawned before its producer delivers, it can only BLOCK
+        inside, waits = {str(m.id) for m in members}, self._engine.start_waits()
+        for f in {f for m in open_ for f in self._engine.producers_awaited(m.id, waits)} - inside:
+            if (p := self._engine.graph.get_task(TaskId(f))) is None or p.state != State.DONE:
+                return False                    # spawned before its producer delivers, it can only BLOCK
         held = [(m, why) for m in open_ if (why := self._engine.execution_blocked_by(m.id))]
         for m, why in held[:1]:
             self._say_once(f"gate:{m.id}", f"{top.id}: its scope's session not started — '{m.id}' is not "

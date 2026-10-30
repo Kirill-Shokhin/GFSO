@@ -138,7 +138,8 @@ Reduce everything to a canonical, non-redundant **BASIS**:
     - **Decidable when its own child delivers.** A child's criterion must be checkable on that child's own
       output plus the outputs of its PRODUCERS — the subtasks that are the SOURCE of a Dep whose TARGET is
       this child, and so land before it (the `from_id` side of `add_dependency(from_id, to_id)` where
-      `to_id` is this child) — nothing else will exist yet. A criterion
+      `to_id` is this child), and of the producers of the node being split, which a child carrying its
+      criteria waits for as that node does — nothing else will exist yet. A criterion
       that needs a sibling's work ("every builtin uses …", "the interpreter handles every node kind") is
       that sibling's criterion, or the parent's integration criterion, or it needs the Dep that orders the
       two. Left on the earlier child, it fails for work that is not its own. Choose by the WORK, not by

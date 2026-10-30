@@ -13,7 +13,8 @@ from datetime import datetime
 from typing import Optional
 
 from gfso.core.graph import Graph
-from gfso.core.graph.model import admission_key, dep_scope, drops_key, non_leaf_ids, on_the_wall, project_now, register_log_key
+from gfso.core.graph.model import (admission_key, dep_scope, drops_key, non_leaf_ids, on_the_wall, parent_waits, project_now,
+                                   register_log_key)
 from gfso.core.graph.mutations import InvariantViolation, Schedule, declare, one_per_pair, producers_of
 from gfso.core.protocol.procedure import admission_defects
 from gfso.core.handlers.structural import run_structural
@@ -369,14 +370,16 @@ def _refuse_before_writing(graph: Graph, parent, children: list[tuple], reopen_r
     # …the node's own contract among them, where it is re-authored with the split: its edges are this act's too
     node = [(parent.id, contract)] if carried else []
     refuse_a_dep_cycle(graph, changed + moved + node, drops,
-                       {**declared, **({str(parent.id): tuple(graph.declared_edges(parent.id)) + carried} if carried else {})})
+                       {**declared, **({str(parent.id): tuple(graph.declared_edges(parent.id)) + carried} if carried else {})},
+                       parent.id)
     # …and a standing child whose edges alone move is in the act whose deadlines it orders (§2.7): re-issued where the
     # deadline the engine supplied it no longer fits, as any version whose packet field moves (`admit`)
     live = [c for c in moved if graph.get_state(TaskId(str(c[0]))) not in TERMINAL_STATES]
     return deadlines_the_act_sets(graph, parent, changed + live, declared)
 
 
-def refuse_a_dep_cycle(graph: Graph, children: list[tuple], drops: tuple = (), declared: Optional[dict] = None) -> None:
+def refuse_a_dep_cycle(graph: Graph, children: list[tuple], drops: tuple = (), declared: Optional[dict] = None,
+                       parent_id=None) -> None:
     """CHECK-2's Dep clause over the WHOLE graph as the act will leave it (§9.5: "CHECK-2 holds of the whole graph"):
     every adopted edge, a named child's declared ones as the act declares them, a dropped child's gone. Read inside
     the parent's subtree alone, a re-issued child closing a cycle through another branch passed the battery and was
@@ -387,23 +390,34 @@ def refuse_a_dep_cycle(graph: Graph, children: list[tuple], drops: tuple = (), d
     below: dict = {}
     for a, b in ({(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True)
                   if str(e.to_id) not in out and (e.discovered or str(e.to_id) not in named)}
-                 | {(p, cid) for cid, ps in named.items() for p in ps}):
+                 | {(p, cid) for cid, ps in named.items() for p in ps}
+                 # …and a parent's wait on its parts: a Dep closing a ring through it is a wait no order ends
+                 | {(str(e.from_id), str(e.to_id)) for e in parent_waits(graph) if str(e.from_id) not in out}
+                 | ({(cid, str(parent_id)) for cid in named if cid != str(parent_id)} if parent_id is not None else set())):
         below.setdefault(a, set()).add(b)
 
-    def returns(x) -> bool:
-        """Does following the edges out of x come back to x?"""
-        seen, todo = set(), list(below.get(x, ()))
+    def ring(x) -> str:
+        """The shortest ring following the edges out of x back to x ("x → … → x"), or ""."""
+        prev, todo = {}, sorted(below.get(x, ()))
+        prev.update({y: x for y in todo})
         while todo:
-            y = todo.pop()
+            y = todo.pop(0)
             if y == x:
-                return True
-            if y not in seen:
-                seen.add(y)
-                todo += below.get(y, ())
-        return False
-    if cyc := sorted(x for x in named if returns(x)):
-        raise AdmissionRefused(f"{', '.join(cyc)} would close a Dep cycle (CHECK-2, §9.5): a consumer waits for its "
-                               f"producer, so one edge on the ring is backwards", tuple(f"CHECK-2: {x} would close a Dep cycle — one edge on the ring is backwards" for x in cyc))
+                path = [x]
+                while (y := prev[y]) != x:
+                    path.append(y)
+                return " → ".join([x] + path[:0:-1] + [x]) if len(path) > 1 else f"{x} → {x}"
+            for z in sorted(below.get(y, ())):
+                if z not in prev:
+                    prev[z] = y
+                    todo.append(z)
+        return ""
+    if cyc := {x: r for x in sorted(named) if (r := ring(x))}:
+        raise AdmissionRefused("; ".join(f"{x} would close a Dep cycle ({r})" for x, r in cyc.items())
+                               + " (CHECK-2, §9.5): a consumer waits for its producer and a parent for its parts, so "
+                                 "one edge on the ring is backwards",
+                               tuple(f"CHECK-2: {x} would close a Dep cycle ({r}) — one edge on the ring is backwards"
+                                     for x, r in cyc.items()))
 
 
 def _settled(task_id) -> str:

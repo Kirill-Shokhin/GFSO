@@ -6,7 +6,7 @@ import dataclasses
 import json
 import time
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 from gfso.config import default_deadline_s
 
@@ -281,8 +281,9 @@ class Graph:
         live = {str(t.id) for t in self._storage.get_all_tasks()
                 if t.state not in (State.CANCELLING, State.ABANDONED)}
         out = list(declared)
+        waits = parent_waits(self)     # …a cycle through a parent's wait on its parts too (CHECK-2)
         for e in stored:
-            if not e.provisional and str(e.to_id) in live and not _closes_cycle(out, e):
+            if not e.provisional and str(e.to_id) in live and not _closes_cycle(out + waits, e):
                 out.append(e)
         return out
 
@@ -604,6 +605,96 @@ def _live_waits(graph: Graph) -> tuple[list, list]:
     return asking, [e for e in adopted + asking if str(e.from_id) in unfinished] + [
         DepEdge(from_id=t.id, to_id=t.parent_id) for i, t in live.items()
         if i in unfinished and t.parent_id is not None]
+
+
+def parent_waits(graph: Graph) -> list:
+    """(child → parent) for every live node under a parent: a parent waits on its parts, its PASS being their AND
+    (Thm 1). Read beside E_Dep wherever a cycle of waits is asked — a Dep closing one through it is a wait no order
+    ends (CHECK-2, §9.5)."""
+    live = {str(t.id): t for t in graph.subtree(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
+    return [DepEdge(from_id=t.id, to_id=t.parent_id) for t in live.values()
+            if t.parent_id is not None and str(t.parent_id) in live]
+
+
+def start_waits(graph: Graph, unit: Callable[[Task], str]) -> tuple[dict, dict]:
+    """({node: the producers whose pass its start waits on}, {(node, producer): the cycle that wait would close}),
+    read over START UNITS: `unit(t)` is what starts with t — the top of the one session that carries it, else t.
+
+    DECLARED waits are E_Dep (§11.3): a node always waits for its own adopted sources — CHECK-2 refuses at declaration
+    an edge closing a cycle with them and the parents' waits, and a session is not formed over a subtree a declared
+    edge leaves and re-enters (`validation.scope_top`), so they close none. INFERRED waits are what a part takes from
+    a whole through φ (§2.7): an adopted edge p → a says a's criteria read p's result, and the part φ maps the
+    criterion carrying it to carries that reference, so it waits for p as a does — the carrying criteria a's on p
+    (`depends_on`), or all of a's where none names p (always under AUTO, whose plans write none: every mapped part
+    then waits for every producer of its whole, no stricter than the unsplit node); below the first part, every
+    criterion of the part. Not a part φ maps nothing of it to, nor one below an edge from a's own subtree or from its
+    ancestor (the whole reading its own part).
+
+    An inferred wait is not taken where it lies on a cycle of live unit waits — declared, parents', inferred, each
+    while its producer is unfinished — since no order ends it. Every such wait is left out at once, not one chosen by
+    an order, and returned with its cycle for the readers to say."""
+    live = {str(t.id): t for t in graph.subtree(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
+    u = {i: unit(t) for i, t in live.items()}
+
+    def chain(i: str) -> list[str]:
+        """The live node `i` and its live ancestors, nearest first."""
+        out = []
+        while i in live:
+            out.append(i)
+            i = str(live[i].parent_id) if live[i].parent_id else ""
+        return out
+    adopted = graph.dep_edges(adopted=True)
+    declared = {(str(e.from_id), str(e.to_id)) for e in adopted if str(e.to_id) in live}
+    inferred: set = set()
+    for e in adopted:
+        p, a = str(e.from_id), live.get(str(e.to_id))
+        if a is None or str(a.id) in chain(p) or p in chain(str(a.id)):
+            continue
+        stack = [(a, {c.name for c in a.spec.criteria if str(c.depends_on or "") == p}
+                  or {c.name for c in a.spec.criteria})]
+        while stack:
+            n, carrying = stack.pop()
+            for k in sorted({str(m.child_id) for m in n.criterion_mappings if m.criterion_name in carrying}):
+                if ((part := live.get(k)) is not None and str(part.parent_id) == str(n.id)
+                        and (p, k) not in declared | inferred):
+                    inferred.add((p, k))
+                    stack.append((part, {c.name for c in part.spec.criteria}))
+
+    def waiting(p: str, t: str) -> bool:
+        """Does `t`'s start unit still wait on `p` — live, unfinished, in another unit?"""
+        return p in live and live[p].state != State.DONE and u[p] != u[t]
+    adj: dict[str, set] = {}
+    for p, t in declared | inferred | {(str(e.from_id), str(e.to_id)) for e in parent_waits(graph)}:
+        if waiting(p, t):
+            adj.setdefault(u[p], set()).add(u[t])
+    out: dict[str, set] = {}
+    for p, t in declared:
+        out.setdefault(t, set()).add(p)
+    dropped = {}
+    for p, t in inferred:
+        if waiting(p, t) and (path := _path(adj, u[t], u[p])):
+            dropped[(t, p)] = path
+        else:
+            out.setdefault(t, set()).add(p)
+    return out, dropped
+
+
+def _path(adj: dict, start: str, goal: str) -> list:
+    """The shortest path `adj` leads along from `start` to `goal` (ties by id), or []."""
+    prev, todo = {start: None}, [start]
+    while todo:
+        n = todo.pop(0)
+        if n == goal:
+            out = []
+            while n is not None:
+                out.append(n)
+                n = prev[n]
+            return out[::-1]
+        for m in sorted(adj.get(n, ())):
+            if m not in prev:
+                prev[m] = n
+                todo.append(m)
+    return []
 
 
 def _reach(adj: dict, start: str) -> set:

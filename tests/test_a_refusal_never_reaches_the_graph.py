@@ -74,10 +74,17 @@ def test_taking_a_node_says_what_it_still_waits_for():
     EXECUTING for nodes that provably could not start, and their executor found out by hitting a
     missing input and BLOCKing (2026-09-02, CLI and HTTP doors).
     """
-    e = _graph()
-    T.add_dependency(e, "root", "kid", glue="kid reads what root writes")
+    # …on a sibling: a node waiting on its own ancestor waits on its own parent's pass, which no order ends, and that
+    # wait is not taken (`start_waits`)
+    e = make_engine(check_interval=10_000)
+    e.start()
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")], "accepted_risks": REGISTER},
+                  assignee="agent")
+    T.decompose(e, "root", [{"task_id": k, "spec": {"description": k, "criteria": [criterion(k, k.upper())]},
+                             "assignee": "agent", "covers": ["c"]} for k in ("prod", "kid")], accepted_risks=REGISTER)
+    T.add_dependency(e, "prod", "kid", glue="kid reads what prod writes")
     out = T.signal(e, "kid", "ACCEPT", "agent")
     assert out["accepted"] and out["state"] == "EXECUTING"      # taking it is allowed
-    assert out["cannot_start_yet"] == ["root"]
+    assert out["cannot_start_yet"] == ["prod"]
     assert "BLOCK" in out["cannot_start_note"]
     e.stop()

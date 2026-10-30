@@ -19,6 +19,7 @@ from gfso.core.types import (
 )
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutations, dep_scope, generation_of_task,
+                                   start_waits,
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
@@ -2146,6 +2147,36 @@ class Engine:
         """E_Dep — what the execution order reads: declared edges and confirmed discoveries (§11.3)."""
         return self._graph.dep_edges(adopted=True)
 
+    def start_unit(self, task: Task, edges: "list | None" = None) -> str:
+        """What starts with this node: the top of the one session that carries it (`scope_top`), else the node."""
+        return str((_scope_top(self._graph, task, edges) or task).id)
+
+    def start_waits(self) -> dict:
+        """{node: the producers its start waits on} (`model.start_waits` over `start_unit`) — computed once by a reader
+        that asks `producers_awaited` of many nodes. A wait through φ left out for the cycle it would close is said
+        once per node, producer and version of the node (`waits_not_taken`)."""
+        waits, dropped = self._start_waits()
+        for (t, p), cycle in sorted(dropped.items()):
+            if (task := self._graph.get_task(TaskId(t))) is not None and self.say_once(
+                    f"not-waited:{t}:{p}:{generation_of_task(task)}"):
+                self.emit_info("delegate", f"{t}: not waiting for {p}, which its whole reads — that wait would close a "
+                                           f"cycle with {' → '.join(cycle)} → {t}, which no order ends; if {t} needs "
+                                           f"{p}'s result, its BLOCK says so")
+        return waits
+
+    def waits_not_taken(self) -> dict:
+        """{(node, producer): the cycle} of the waits through φ `start_waits` leaves out."""
+        return self._start_waits()[1]
+
+    def _start_waits(self) -> tuple[dict, dict]:
+        edges = self._graph.dep_edges(adopted=True)
+        return start_waits(self._graph, lambda t: self.start_unit(t, edges))
+
+    def producers_awaited(self, task_id: TaskId, waits: "dict | None" = None) -> list[str]:
+        """The producers whose pass this node's start waits on (`start_waits`). The one answer every reader of "may it
+        start" asks — spawn, scope session, frontier, ACCEPT reply, the place its session is made in."""
+        return sorted((self.start_waits() if waits is None else waits).get(str(task_id), ()))
+
     @staticmethod
     def _refutation_line(e) -> str:
         return (f"`{e.to_id}` needs `{e.from_id}` ({'its BLOCK, not yet answered' if e.provisional else 'confirmed'}), "
@@ -2737,9 +2768,7 @@ class Engine:
         # The id is compared and looked up as a STRING: a malformed edge that carried a list once
         # reached the DAG check and raised `unhashable type` inside the protocol step (2026-09-02).
         # The door refuses that value now, and a read is still not the place to fall over it.
-        return sorted({str(e.from_id) for e in self._graph.dep_edges(adopted=True)
-                       if str(e.to_id) == str(task_id)
-                       and not settled_positive(self._graph.get_task(TaskId(str(e.from_id))))})
+        return [f for f in self.producers_awaited(task_id) if not settled_positive(self._graph.get_task(TaskId(f)))]
 
     def say_once(self, key: str) -> bool:
         """True the FIRST time this key is asked about, False afterwards — for a line that must be

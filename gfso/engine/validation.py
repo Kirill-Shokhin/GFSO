@@ -26,7 +26,7 @@ from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
 from gfso.core.graph.model import (PAUSE_KEY, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
-                                   recorded_by_an_appointed_observer, logged_criteria)
+                                   recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING
 
 
@@ -210,16 +210,37 @@ def within_a_scope(graph: Graph, task) -> bool:
     return parent is not None and fits_one_session(graph, parent.id)
 
 
-def scope_top(graph: Graph, task):
+def scope_top(graph: Graph, task, edges: "list | None" = None):
     """The top of the one-session scope `task` lies in — the highest node above it, through nodes of the same
-    Del, whose whole subtree one session of that executor carries — or None where `task` is in no such scope
-    of more than one node. Within κ — what one executor session realizes and checks (§3.7) — the executor
-    absorbs the structure and presents one result (§10.3); a Del change is a seam and ends the walk."""
-    t = task
-    while ((p := graph.get_parent(t.id)) is not None and str(p.assignee) == str(t.assignee)
+    Del, whose whole subtree one session of that executor carries and no declared Dep leaves and re-enters — or None
+    where `task` is in no such scope of more than one node. Within κ — what one executor session realizes and checks
+    (§3.7) — the executor absorbs the structure and presents one result (§10.3); a Del change is a seam and ends the
+    walk. A session starts whole, so over a subtree a Dep leaves and re-enters (a member feeding a producer another
+    member waits on) it would wait on itself: its nodes start as their own. `edges`: E_Dep, when asked of many."""
+    up = [task]
+    while ((p := graph.get_parent(up[-1].id)) is not None and str(p.assignee) == str(up[-1].assignee)
            and fits_one_session(graph, p.id)):
-        t = p
-    return t if graph.get_active_children(t.id) and fits_one_session(graph, t.id) else None
+        up.append(p)
+    return next((t for t in reversed(up) if graph.get_active_children(t.id) and fits_one_session(graph, t.id)
+                 and _closed_under_dep(graph, t, graph.dep_edges(adopted=True) if edges is None else edges)), None)
+
+
+def _closed_under_dep(graph: Graph, top, edges: list) -> bool:
+    """Does no Dep path out of `top`'s subtree come back into it?"""
+    inside = {str(m.id) for m in scope_members(graph, top)}
+    below: dict = {}
+    for e in edges:
+        below.setdefault(str(e.from_id), set()).add(str(e.to_id))
+    todo = [y for x in inside for y in below.get(x, ()) if y not in inside]
+    seen = set(todo)
+    while todo:
+        for z in below.get(todo.pop(), ()):
+            if z in inside:
+                return False
+            if z not in seen:
+                seen.add(z)
+                todo.append(z)
+    return True
 
 
 def scope_members(graph: Graph, top) -> list:
@@ -1299,7 +1320,8 @@ def dep_cycle_closed(graph: Graph, task_id, producers) -> Optional[str]:
     read it; a revision closing a cycle used to be admitted wherever it did not come through `add_dependency` (sync
     audit, A-F4)."""
     tid = str(task_id)
-    rest = [(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True)]
+    # …with a parent's wait on its parts: a Dep on one's own ancestor, or through it, is a wait no order ends
+    rest = [(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True) + parent_waits(graph)]
     new = [(str(p), tid) for p in producers]
     if not new:
         return None

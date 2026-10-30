@@ -245,8 +245,9 @@ def parts_of(engine, members: list) -> tuple[dict, dict]:
     work they carry on — , {id: node} of the last alone)."""
     inside = {str(m.id) for m in members}
     parts = {str(k.id): k for m in members for k in engine.graph.get_active_children(m.id)}
-    parts.update({str(e.from_id): engine.graph.get_task(TaskId(e.from_id)) for e in engine.adopted_dependencies()
-                  if str(e.to_id) in inside})
+    waits = engine.start_waits()   # …and those a member waits on through its whole: a cousin's work it reads
+    parts.update({f: engine.graph.get_task(TaskId(f)) for m in members for f in engine.producers_awaited(m.id, waits)
+                  if f not in inside})
     # …AND THE WORK OF WHAT IT REPLACES, PASSed or not: a child merged out of a cycle, or cut again, started from the
     # base and redid what its dropped predecessors had committed (§12.16 (ii): the issuer's move keeps the work)
     kept = {str(x.id): x for m in members for x in engine.carried_work(m.id)}
