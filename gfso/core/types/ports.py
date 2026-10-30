@@ -192,6 +192,10 @@ class StoragePort(ABC):
         return []
 
 
+#: the place a stop names where this host refused what it was asked to start (`ExecutionPort.agents_refused`)
+THIS_HOST = "this host"
+
+
 class PlaceUnavailable(OSError):
     """The execution place cannot start anything now (its container daemon does not answer): a state of the
     environment that stops the whole project, not a call that was cut nor a report that did not parse
@@ -322,6 +326,11 @@ class ExecutionPort(ABC):
     def unavailable(self, storage: bool = False) -> Optional[str]:
         """Why this place cannot start a call now, or None where it can — a cheap health check; with `storage`, its
         storage asked too (a probe that costs a call: while the place stands stopped). This host always can."""
+        return None
+
+    def agents_refused(self) -> Optional[str]:
+        """Why the work the system dispatches — an executor's session, a model with tools whose commands nobody watches —
+        may not run here, or None where it may: a place isolated from the host holds it."""
         return None
 
     @abstractmethod

@@ -31,6 +31,7 @@ def _own_state_home():
     os.environ["GFSO_HOME"] = tempfile.mkdtemp(prefix="gfso-suite-")
     os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
     E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
+    os.environ["GFSO_LOCAL_AGENTS"] = "allow"           # the suite's sessions are fakes on this host, by its own word
     yield
     if prior is None:
         os.environ.pop("GFSO_HOME", None)

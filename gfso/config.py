@@ -280,6 +280,14 @@ def validation_batch() -> int:
         return VALIDATION_BATCH
 
 
+def local_agents(declared: str = "") -> bool:
+    """May this host run the work the system dispatches — executors' sessions, nobody watching their commands
+    (`LocalExecution.agents_refused`)? Only on its user's word, `GFSO_LOCAL_AGENTS=allow`: unattended work runs in a
+    container (the author, 2026-10-27: autonomous runs only in a container, Local only with a person).
+    `declared`: the value a server spawned from here takes where none is exported (`install_spawned_server_env`)."""
+    return (os.environ.get("GFSO_LOCAL_AGENTS") or declared).strip().lower() == "allow"
+
+
 #: Model sessions one server runs at once (`max_sessions`).
 MAX_SESSIONS = 8
 

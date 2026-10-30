@@ -2021,8 +2021,10 @@ def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
     if perform == "in_chat" and m != Mode.AUTO and (role := declaring_role(engine)) is not None:
         return {"mode": m.value, "perform": perform, "dispatch": False, "needs_executors": need, "executors": pool,
                 "validators": validators, "ready": False, "missing": _IN_CHAT_APART.format(role["execution"])}
-    ready = len(pool) >= need and bool(validators)
-    missing = "" if ready else (
+    # …and work dispatched runs unattended: where the project runs refuses it, no count of roles makes the mode ready
+    refused = execution_of(engine).agents_refused() if need else None
+    ready = len(pool) >= need and bool(validators) and not refused
+    missing = "" if ready else refused or (
         f"{m.value} needs {need} registered executor(s) of this project and a validator; it "
         f"has {len(pool)} executor(s) ({', '.join(pool) or 'none'}) and {len(validators)} validator(s)"
         + (" — dispatch performs your nodes in a session of this project's executor" if dispatch else "")

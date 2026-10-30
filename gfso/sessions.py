@@ -11,7 +11,7 @@ from gfso.llm import session_calls
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import schema_instruction, parse_structured
 from gfso.core.graph.model import generation_of_task, project_now
-from gfso.core.types import TaskId, Signal, Stage, State, Verdict
+from gfso.core.types import THIS_HOST, PlaceUnavailable, TaskId, Signal, Stage, State, Verdict
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
@@ -152,6 +152,14 @@ def _spawn(engine, node_id, executor_id: str, cfg: dict, _llm, role: str, prompt
     return report, text, stats, llm, _cb
 
 
+def unattended_here(engine, agents) -> None:
+    """THE WORK THE SYSTEM DISPATCHES IS DONE WITH NOBODY WATCHING — so it runs where its place allows it
+    (`ExecutionPort.agents_refused`): refused before anything of it runs, the plan's checks of its place included; the
+    refusal is its project's stop (`delegate._the_place_is_down`)."""
+    if why := execution_of(engine, agents).agents_refused():
+        raise PlaceUnavailable(THIS_HOST, why)
+
+
 def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistry,
                  _llm=None) -> dict:
     """ONE delegated execution round: spawn the headless executor with the packet, translate its report
@@ -186,6 +194,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
                                      f"('{_wd}') - not spawned")
         return {"task_id": str(task_id), "status": "no_workdir", "workdir": _wd,
                 "error": f"the registered workdir of {executor_id!r} is not an existing directory"}
+    unattended_here(engine, agents)
     cap = _session_cap(engine, [task])
     if late := _too_late(engine, task_id, cap):
         return late
@@ -245,6 +254,7 @@ def run_consent(engine, task_id: TaskId, executor_id: str, agents: "AgentRegistr
     task = engine.graph.get_task(task_id)
     if task is None or task.state != State.OFFERED:
         return {"task_id": str(task_id), "status": "not_offered"}
+    unattended_here(engine, agents)
     kids = "\n".join(f"- `{k.id}` ({k.label()}) — {k.state.name}; "
                      f"Del={k.assignee}" for k in engine.graph.get_active_children(task_id)) or "- none"
     # …IN ITS OWN PLACE, made now as its first session would make it (`_enter_workspace`): asked in the base, before
@@ -299,6 +309,7 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
         return {"task_id": str(top_id), "status": "nothing_open"}
     if agents.get(executor_id) is None and any(t.state.name == "OFFERED" for t in todo):
         return {"task_id": str(top_id), "status": "not_consented"}
+    unattended_here(engine, agents)
     _cb = emit_cb(engine, "delegate")
     cap = _session_cap(engine, todo)
     if late := _too_late(engine, top_id, cap):

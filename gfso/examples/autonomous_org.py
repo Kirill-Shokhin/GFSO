@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 from gfso.examples import scratch
+from gfso.adapters.execution import LocalExecution
 from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.agents.human import HumanAgent
@@ -26,8 +27,11 @@ def main() -> None:
     Refuses to start without the executor transport on PATH, because a demo that silently does
     nothing is worse than one that says what it needs. SPAWNS REAL MODEL RUNS.
     """
-    if not shutil.which("claude"):
-        sys.exit("needs the Claude Code CLI on PATH (the executor/validator transport)")
+    # …and its executors run on this host, in this process: only on the word that lets them (`agents_refused`)
+    if why := ("needs the Claude Code CLI on PATH (the executor/validator transport)" if not shutil.which("claude")
+               else LocalExecution().agents_refused() and "its executors would run unattended on this host: export "
+                                                          "GFSO_LOCAL_AGENTS=allow to let them"):
+        sys.exit(why)
 
 
     work = tempfile.mkdtemp(prefix="gfso_company_")

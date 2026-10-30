@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 from gfso.examples import scratch
+from gfso.adapters.execution import LocalExecution
 from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.agents.human import HumanAgent
@@ -24,8 +25,11 @@ def main() -> None:
     Shows that assignment IS delegation — nothing beyond Del tells the dispatcher to pick it up.
     SPAWNS A REAL MODEL RUN.
     """
-    if not shutil.which("claude"):
-        sys.exit("needs the Claude Code CLI on PATH (the executor/validator transport)")
+    # …and its executors run on this host, in this process: only on the word that lets them (`agents_refused`)
+    if why := ("needs the Claude Code CLI on PATH (the executor/validator transport)" if not shutil.which("claude")
+               else LocalExecution().agents_refused() and "its executors would run unattended on this host: export "
+                                                          "GFSO_LOCAL_AGENTS=allow to let them"):
+        sys.exit(why)
 
 
     work = tempfile.mkdtemp(prefix="gfso_mixed_")

@@ -42,7 +42,7 @@ from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, 
                              join_whole, land_accepted, made, node_workspace, root_created, session_scope,
                              stands)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
-from gfso.sessions import run_consent, run_executor, run_scope_executor
+from gfso.sessions import unattended_here, run_consent, run_executor, run_scope_executor
 
 log = logging.getLogger(__name__)
 
@@ -718,6 +718,16 @@ class Dispatcher:
         # whether this dispatcher's poll loop was ever started.
         self._engine.on_transition(self._on_bus)
 
+    def _refused_here(self) -> bool:
+        """Is the work this round would dispatch refused where the project runs (`sessions.unattended_here`)? Asked
+        BEFORE its executor's ACCEPT, as the workdir is: then nothing is signalled — no obligation the executor never
+        consented to — and the refusal is the project's stop; the round, freed, runs once the stop lifts."""
+        try:
+            unattended_here(self._engine, self._agents)
+        except PlaceUnavailable as e:
+            return _the_place_is_down(self._engine, e)
+        return False
+
     def _deps_ready(self, task_id: TaskId) -> bool:
         """An executor spawn is useless before the node's Dep PRODUCERS deliver — it hits a missing
         input and BLOCKs (observed live). Gate accept-step spawns on producer DONE. A producer node
@@ -1245,6 +1255,9 @@ class Dispatcher:
             self._say_once(f"nowd:{top_id}:{executor_id}", f"{top_id}: scope session not started - the workdir "
                                                           f"registered for '{executor_id}' ('{gone}') is not a directory")
             return
+        if self._refused_here():
+            self._seen.discard(key)
+            return
         self._engine.parking.unpark_execution(top_id)
         for m in members:
             if m.state == State.OFFERED and self._agents.get(executor_id) is not None:
@@ -1525,6 +1538,10 @@ class Dispatcher:
                     f"('{_gone}') is not a directory{_resolution_note(_gone)}. Nothing was "
                     f"signalled and the node is where it was; re-register the role against the "
                     f"directory the work is really in, and the next pass dispatches it.")
+                return
+            if self._refused_here():
+                if (_t0 := self._engine.graph.get_task(task_id)) is not None:
+                    self._seen.discard(self._round_key(_t0))
                 return
             # …AND THE ONCE IS RELEASED WHEN THE PLACE COMES BACK. Kept forever, "once" means once
             # per server lifetime: a directory that goes away, returns, and goes away again is held

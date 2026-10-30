@@ -22,7 +22,17 @@ run the criteria of a delivery against the artifact. Both run with your user's p
 them at a directory you are willing to lose, and treat a task graph from an untrusted source as
 untrusted input: its criteria are instructions that will reach a model with a shell.
 
-Run unattended work in a container. A role registered with an execution (`register_agent(execution=)`,
+Unattended work runs in a container. The work the system dispatches — an executor's session, a
+scope's, a system-held parent's consent — is a model with tools whose commands nobody watches, and
+before it the plan's checks of its place run; on your machine none of it starts unless the server
+was started with `GFSO_LOCAL_AGENTS=allow` (declared in `data/serve.json`, so `gfso up` keeps it, and
+a server started without it is restarted). Without that, the first such round stops its project with
+the cause named, nothing of the node having run or been consented to, and the project stays
+stopped until the word is given or an execution is declared; a mode that would dispatch such work
+is not set as ready. Work your own agent does in its chat, and the validator that
+judges it, run on your machine as before: a person is there. With the word, dispatched work runs on
+your machine unattended, with what is said below for a session with no execution.
+A role registered with an execution (`register_agent(execution=)`,
 declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut,
 and nothing of your disk is mounted into any of its containers:
 - The project's work lives in Docker volumes of its own: the agents' places, the judges' copies, the
@@ -149,7 +159,7 @@ What one session can still reach:
 Under a container execution a node performed in your own chat (`perform="in_chat"`) is refused: its
 work stands on your disk, where no container reads it.
 
-Without an execution, sessions run as you, on your machine, with nothing between them and the rest
+Without an execution, and with `GFSO_LOCAL_AGENTS=allow`, sessions run as you, on your machine, with nothing between them and the rest
 of it: a judge's copy is still the recorded commit where a scratch for it can be made, but nothing
 is read-only to it, no container ends with its run, and a validation with no scratch runs in the
 place itself.

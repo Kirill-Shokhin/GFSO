@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 from gfso import __version__
 from gfso.config import agents_path as _roster
 from gfso.config import home as _config_home
-from gfso.config import LOOPBACK, shared_url
+from gfso.config import LOOPBACK, local_agents, shared_url
 
 def _address() -> tuple[str, int]:
     """THE address of the one server. `GFSO_SHARED_URL` is the single knob — `gfso connect`, `gfso
@@ -249,6 +249,10 @@ def drift(rt: dict, env: dict, fingerprint: str) -> list[str]:
         want = str(env.get(key, "")) not in ("", "0")
         if bool(rt.get(field)) != want:
             out.append(f"{field}={bool(rt.get(field))} != {want}")
+    # …the word as the server it would spawn takes it: exported here, else declared (`install_spawned_server_env`)
+    word = local_agents(str(env.get("GFSO_LOCAL_AGENTS", "")))
+    if "local_agents" in rt and bool(rt["local_agents"]) != word:
+        out.append(f"local_agents={bool(rt['local_agents'])} != {not rt['local_agents']}")
     if (rt.get("agents_path") or "") != env.get("GFSO_AGENTS_PATH", ""):
         out.append("agent registry differs")
     # …and its CONTENT, not just its path. The registry is loaded once at startup, so an edited

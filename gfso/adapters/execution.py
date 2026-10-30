@@ -26,10 +26,10 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import (BATCH, HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, ExecutionPort, FilesPort,
+from gfso.core.types import (BATCH, HOST, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, ExecutionPort, FilesPort,
                              PlaceUnavailable)
-from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, memory_ceiling,
-                         executions, executions_path, host_env, subprocess_env)
+from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
+                         memory_ceiling, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
 
@@ -492,6 +492,21 @@ def scrubs(execution: ExecutionPort) -> bool:
 
 class LocalExecution(ExecutionPort):
     files = HOST
+
+    def agents_refused(self):
+        """Unattended work runs in a container; this host runs it only on its user's word, given where the server
+        starts (`config.local_agents`) — no session can give it. Work a person does in their own chat, and what judges
+        it, runs here as before: it is attended."""
+        if local_agents():
+            return None
+        return ("this host runs no dispatched work unattended: an executor's commands would run as you, on your "
+                "machine, with nothing between them and the rest of it. Declare a container execution for the project "
+                "(register_agent(execution=...), data/executions.json), or allow it on this host: "
+                "\"GFSO_LOCAL_AGENTS\": \"allow\" in data/serve.json, then `gfso up`")
+
+    def unavailable(self, storage: bool = False):
+        # …so a project this refusal stopped stays stopped until the word is given or an execution is declared
+        return self.agents_refused()
 
     def which(self, program: str):
         return shutil.which(program)

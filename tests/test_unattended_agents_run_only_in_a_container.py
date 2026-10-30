@@ -1,0 +1,118 @@
+"""Unattended work runs in a container; on this host the work the system dispatches runs only on its user's word (the
+author, 2026-10-27: autonomous runs only in a container, Local only with a person). An executor's session, a scope's,
+a system-held parent's consent: a model with tools whose commands nobody watches, and before it the plan's checks of its
+place — on this host all of it runs as the user, with nothing between it and the rest of the machine. Without the word
+(`GFSO_LOCAL_AGENTS=allow`, declared in `data/serve.json`) none of it starts here: the round is its project's stop with
+the cause named, nothing of the node runs first, and the stop holds until the word is given or an execution is
+declared. Work a person does in their own chat, and the validator that judges it, run here as before."""
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from gfso import serverctl, sessions as S, tools_llm as TL
+from gfso.adapters import execution as E
+from gfso.core.types import THIS_HOST, PlaceUnavailable
+from gfso.delegate import Dispatcher
+from tests.support import make_engine
+from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _an_offer
+from tests.test_delegate import _agents
+
+
+@pytest.fixture
+def no_word(monkeypatch):
+    monkeypatch.delenv("GFSO_LOCAL_AGENTS", raising=False)
+
+
+def _nothing_runs(monkeypatch):
+    """Every step of a round that would run something of the node on this host, recorded."""
+    ran = []
+    monkeypatch.setattr(S, "_enter_workspace", lambda *a, **k: ran.append("place") or ("ws", [], None))
+    monkeypatch.setattr(S, "_observed", lambda *a, **k: ran.append("checks") or ({}, None))
+    monkeypatch.setattr(S, "_spawn", lambda *a, **k: ran.append("session") or (_ for _ in ()).throw(RuntimeError("spawned")))
+    return ran
+
+
+@pytest.mark.parametrize("runner", ["run_executor", "run_scope_executor", "run_consent"])
+def test_dispatched_work_does_not_start_on_this_host_without_the_word(no_word, monkeypatch, tmp_path, runner):
+    ran = _nothing_runs(monkeypatch)
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    _an_offer(e)
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    with pytest.raises(PlaceUnavailable) as got:
+        getattr(S, runner)(e, S.TaskId("kid"), "exec-1", agents)
+    assert got.value.place == THIS_HOST and "GFSO_LOCAL_AGENTS" in got.value.why
+    assert ran == [], f"{ran} ran on this host before the refusal"
+    e.stop()
+
+
+def test_the_word_lets_it_start(monkeypatch, tmp_path):
+    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    ran = _nothing_runs(monkeypatch)
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    _an_offer(e)
+    with pytest.raises(RuntimeError, match="spawned"):
+        S.run_consent(e, S.TaskId("kid"), "exec-1", _agents(tmp_path, ("exec-1", "llm-executor")))
+    assert ran == ["place", "session"], ran
+    e.stop()
+
+
+def test_the_refusal_is_the_projects_stop_until_the_word_is_given(no_word, monkeypatch, tmp_path):
+    """Through the dispatcher's own round: the project stopped as the system with the cause, nothing parked, and the
+    stop lifts only once the word is there."""
+    ran = _nothing_runs(monkeypatch)
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    _an_offer(e)
+    said = []
+    e.emit_info = lambda src, msg, _s=said: _s.append(msg)
+    d = Dispatcher(e, _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator")))
+    for _ in range(4):
+        d.dispatch_once()
+        time.sleep(0.3)
+    stop = e.paused()
+    assert stop and stop["by"] == "system" and stop["place"] == THIS_HOST and "unattended" in stop["why"], (stop, said)
+    assert ran == [] and "kid" not in {str(x) for x in e.parking.parked_executions()}, (ran, said)
+    assert e.graph.get_task(S.TaskId("kid")).state.name == "OFFERED", "consented in its executor's name, then refused"
+    e.lift_the_system_stop(time.time())
+    assert e.paused(), "the stop lifted with nothing changed"
+    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    e.lift_the_system_stop(time.time())
+    assert e.paused() is None
+    e.stop()
+
+
+def test_a_mode_that_dispatches_is_not_ready_where_its_work_would_be_refused(no_word, monkeypatch, tmp_path):
+    e = make_engine(validate_signals=True, state_timeout=0)
+    monkeypatch.setattr(TL, "_roster", lambda engine: _agents(tmp_path, ("exec-1", "llm-executor"),
+                                                              ("exec-2", "llm-executor"), ("val-1", "llm-validator")))
+    for mode, perform in (("solo", "dispatch"), ("semi", "dispatch"), ("auto", "dispatch")):
+        got = TL.mode_staffing(e, mode, perform)
+        assert not got["ready"] and "GFSO_LOCAL_AGENTS" in got["missing"], (mode, got)
+    assert TL.mode_staffing(e, "solo", "in_chat")["ready"], "work done in the chat is attended"
+    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    assert TL.mode_staffing(e, "auto", "dispatch")["ready"]
+
+
+def test_a_container_execution_is_never_refused(no_word, tmp_path):
+    ex = E.ContainerExecution("x", "img", str(tmp_path / "env"), str(tmp_path / "state"), str(tmp_path), "p")
+    assert ex.agents_refused() is None
+    assert E.LocalExecution().agents_refused()
+
+
+def test_a_server_without_the_declared_word_is_not_the_declared_one(monkeypatch):
+    monkeypatch.delenv("GFSO_LOCAL_AGENTS", raising=False)
+    said = lambda rt, env: [w for w in serverctl.drift(rt, env, "fp") if "local_agents" in w]
+    rt = {"code_version": "fp", "local_agents": False}
+    assert said(rt, {"GFSO_LOCAL_AGENTS": "allow"}), "a restart that lost the word reads as correct"
+    assert not said(rt, {})
+    assert said({"code_version": "fp", "local_agents": True}, {})
+    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    assert not said({"code_version": "fp", "local_agents": True}, {}), "an exported word is the spawned server's too"
+    assert not said({"code_version": "fp"}, {"GFSO_LOCAL_AGENTS": "allow"}), "a server that says nothing of it"
+    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "no")
+    assert not said({"code_version": "fp", "local_agents": False}, {"GFSO_LOCAL_AGENTS": "allow"}), (
+        "an exported value wins in the spawned server: drift by the declared one would restart it for ever")

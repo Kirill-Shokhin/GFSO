@@ -925,6 +925,9 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 # inseparable by construction.
                 "validate_internal": _validate_internal_on(),
                 "l2_gate": _l2_gate_on(),
+                # …and whether this host runs the work the system dispatches (`config.local_agents`): a restart that lost
+                # the word stopped every project with no container execution
+                "local_agents": _config.local_agents(),
                 # …AND HOW MUCH OF ONE VERDICT RUNS AT ONCE. Acceptance is 65-70% of a run's spend on
                 # every measurement taken, and this dial is what decides how much of it happens in
                 # parallel — so a cost measured without it recorded is a cost measured against an

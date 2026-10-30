@@ -21,6 +21,6 @@ from .primitives import (
 from .effects import (
     MutateGraph, RunChecks, Recommend, Dispatch, EmitSignal, Effect,
 )
-from .ports import (StoragePort, LLMProviderPort, ExecutionPort, PlaceUnavailable, AgentPort, VerifierPort,
+from .ports import (StoragePort, LLMProviderPort, ExecutionPort, PlaceUnavailable, THIS_HOST, AgentPort, VerifierPort,
                     BATCH, LAID, FilesPort, HOST, HostFiles, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, files_at, hold_places, unprojected,
                     ClockPort, SystemClock, RunnerPort, ThreadRunner)
