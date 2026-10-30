@@ -26,8 +26,6 @@ export function readResources(then) {
 }
 export const onReading = take;                        // main.js: the live feed's `resources`
 export const whileShown = f => shown.add(f);
-// the age of what is shown counts on by itself, a display, not a read — «4s ago» stood a minute
-setInterval(() => document.querySelectorAll('[data-ago]').forEach(e => { e.textContent = ago(+e.dataset.ago); }), 1000);
 
 const mark = (figure, label, counted) => tally(figure, label, RES.counted(counted));
 // each role's containers as their own marks, the busy ones beside them
@@ -36,12 +34,12 @@ const roles = cs => {
     for (const x of cs) { const r = by[x.role] ??= {n: 0, busy: 0}; r.n++; r.busy += x.busy ? 1 : 0; }
     return Object.entries(by).map(([k, r]) => tally(r.n, k) + (r.busy ? tally(r.busy, 'busy', RES.busy) : '')).join('');
 };
-// HOW OLD THE READING IS — Docker's figures stand a while server-side (`read_at`, security 0c63f5a): the oldest of what is
-// shown, each reading's age on hover, so an old picture is not taken for now
+// HOW OLD THE READING IS, said only when it is old: the server pushes each fresh reading, so a figure on screen is now — but
+// where Docker did not answer, the reading shown is the last it gave, and its age says so (`read_at`); no clock of the
+// page's own (the author, 2026-10-30: «зачем он сам обновляет таймер по своим часам … опять костыли»)
 const ago = t => t == null ? 'never' : dur(Math.max(0, Date.now() - t * 1e3));
-// …said by the containers' and their figures' reading, the one taken every few seconds; the disk's, a minute apart, on hover
-const age = d => { const r = d.read_at || {}, ts = [r.containers, r.stats].filter(t => t != null);
-    return ts.length ? tally(`<span data-ago="${Math.min(...ts)}">${ago(Math.min(...ts))}</span>`, 'ago', RES.ages(Object.entries(r).map(([k, t]) => [k, ago(t)]))) : ''; };
+const age = d => { const r = d.read_at || {}, stale = Object.keys(r).filter(k => r[k] != null && !d.read[k]);
+    return stale.length ? tally(ago(Math.min(...stale.map(k => r[k]))), 'ago', RES.ages(stale.map(k => [k, ago(r[k])]))) : ''; };
 // …the server's poller keeps the last reading (security 8746d6a): before its first, nothing is read yet — no failure
 const notes = d => [!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
     : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread,
