@@ -686,7 +686,7 @@ class Dispatcher:
         self._consent = consent_runner or run_consent
         self._running: set[str] = set()   # nodes whose executor round is running right now
         self._issuer_attempts: dict = {}   # (node generation, question) → (unproductive settles, not before)
-        self._issuer_owed: dict = {}       # (node, question) → (owed since, versions reported stuck)
+        self._issuer_owed: dict = {}       # (node, question) → (owed since, versions reported stuck, last move)
         self._validate = validator_runner or _auto_validate
         self._retry_model: dict = {}   # round key → the tier its RETRY should use
         self._seen: set[str] = set()      # "{task}#{iter}" / "v:{task}#{iter}" — one run per round

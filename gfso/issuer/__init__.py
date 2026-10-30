@@ -1844,26 +1844,48 @@ STUCK_S, STUCK_ANSWERS = 1800, FREE_ANSWERS
 def report_stuck(engine, questions, ledger: dict, owed: dict, now: float) -> list[str]:
     """Each question the system has owed past STUCK_S, or answered STUCK_ANSWERS times in a row without moving it, said
     ONCE per node version as a TECH REPORT — the system reporting itself as an executor does; nothing else changes (the
-    clock still owns the lapse, no verdict is invented). `owed` — (node, question) → (since, versions said) — is the
-    caller's across sweeps; a question that closes leaves it."""
+    clock still owns the lapse, no verdict is invented). `owed` — (node, question) → (since, versions said, last move)
+    — is the caller's across sweeps; a question that closes leaves it. A question MOVES when its node takes a new
+    version or, where it moves by degrees (`_left_open`), when what it leaves open falls below the least seen on that
+    version; both counts — the time owed and the answers that left it standing — run from its last move."""
     for k in set(owed) - set(questions):
         del owed[k]
     said = []
     for task_id, question in questions:
         task = engine.graph.get_task(task_id)
-        since, done = owed.setdefault((task_id, question), (now, frozenset()))
+        since, done, move = owed.setdefault((task_id, question), (now, frozenset(), None))
         if task is None or engine.paused():
             continue
         gen = f"{task_id}#{task.iteration}#{task.reopens}#{question}"
         waits, _, answers = ledger.get(gen, (0, 0.0, 0))
-        if gen in done or (now - since < STUCK_S and answers < STUCK_ANSWERS):
+        left = _left_open(engine, task_id, question)
+        if move is None or move[0] != gen:        # first seen, or a new version: the version is the move
+            since = since if move is None else now
+            move = (gen, left, answers if move is None else 0)
+        elif left is not None and (move[1] is None or left < move[1]):
+            since, move = (now, (gen, left, answers)) if move[1] is not None else (since, (gen, left, move[2]))
+        if answers < move[2]:                     # the ledger closed and reopened it between sweeps
+            move = (move[0], move[1], answers)
+        stood = answers - move[2]
+        owed[(task_id, question)] = (since, done, move)
+        if gen in done or (now - since < STUCK_S and stood < STUCK_ANSWERS):
             continue
-        owed[(task_id, question)] = (since, done | {gen})
+        owed[(task_id, question)] = (since, done | {gen}, move)
         engine.tech_report(f"the system is stuck on its own move: it owes the {question} question on {task_id} for "
-                           f"{now - since:.0f}s; {answers} answer(s) in a row left it standing, {waits} turn(s) went "
+                           f"{now - since:.0f}s; {stood} answer(s) in a row left it standing, {waits} turn(s) went "
                            f"unanswered", role="system", actor="liveness", task_id=task_id)
         said.append(str(task_id))
     return said
+
+
+def _left_open(engine, task_id: TaskId, question: str) -> Optional[int]:
+    """How much of a question is left open, where answering it moves by degrees: the plan gate's holes and Level-2
+    findings — a plan converging 44 → 8 findings over 27 min, each answer changing it, was said stuck at 1814 s
+    (gb-c-compiler-tnpji8716, 2026-10-30). None where a question only closes, and while the plan's review is stale (an
+    answer changed the plan and no review has run on it): no reading then, not zero."""
+    if question != "plan" or (found := engine.open_l2_findings(task_id)) is None:
+        return None
+    return len(engine.split_holes(task_id)) + len(found)
 
 
 def _watched(engine, ledger: dict, owed: Optional[dict], now: float) -> list:
