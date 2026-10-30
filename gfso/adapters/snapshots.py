@@ -200,6 +200,42 @@ elif dot.is_file():
 
 
 def _own_git(place: Path, at: Path, execution) -> None:
+    """The copy's git, its own (`_shared_git`, `_standalone_git`)."""
+    (_standalone_git if execution.apart else _shared_git)(place, at, execution)
+
+
+def _standalone_git(place: Path, at: Path, execution) -> None:
+    """WHERE PLACES STAND APART the copy's container mounts its round alone, so a git borrowing the base's objects by a
+    relative path read nothing there: an issuer asked about a node not yet delivered met "alternate object path errors"
+    and no git at all (row 4, c_compiler, 2026-10-30). The copy's files stay as they stood; its git is made anew in its
+    own container as a judge's checkout is (`_checkout`'s "take": the place's HEAD streamed out of its container, hashed
+    again, history cut there), and its index read from HEAD, so status and diff show the work not yet committed. A place
+    with no commit, or one whose HEAD holds nested repositories, gets an empty repository: its files, no history."""
+    ex, src, env = execution.session(str(at)), execution.session(str(place)), subprocess_env(extra=W.NO_CONFIG)
+    execution.remove_tree(str(at / ".git"))
+    rev = W.git(place, "rev-parse", "HEAD", "HEAD^{tree}", execution=execution)
+    head = rev.stdout.split() if rev.returncode == 0 else []
+    end = [execution.python, "-I", "-c", _CHECKOUT]
+    if len(head) == 2:
+        rc, err, r = src.pipe([src.shell() or "bash", "-c", _PACK, "sh", head[0], *W.APART], cwd=str(place),
+                              env=subprocess_env(extra={**W.NO_CONFIG, "GIT_NO_REPLACE_OBJECTS": "1"}), into=ex,
+                              into_args=[*end, "take", str(at), *head, *W.APART], into_cwd=str(at.parent),
+                              into_env=env, timeout=1800)
+        if not rc and r.returncode == 0:
+            if (r := ex.run(["git", *W.APART, "reset", "-q", head[0]], cwd=str(at), timeout=600, env=env)).returncode:
+                raise OSError(f"the copy {at} could not read its index: {(r.stderr or '').strip()[-300:]}")
+            return
+        # …only nested repositories leave it with no history; anything else failing is no copy — an empty git there
+        # read as "nothing committed" to the judge (critic over the standalone git, run)
+        if rc or r.returncode != 3:
+            raise OSError(f"the copy {at} could not take {head[0][:12]}: {(err or r.stdout or r.stderr or '').strip()[-300:]}")
+        execution.remove_tree(str(at / ".git"))
+    if (r := ex.run(["git", *W.APART, "init", "-q", "--template=", str(at)], cwd=str(at), timeout=600,
+                    env=env)).returncode:
+        raise OSError(f"the copy {at} could not get a git of its own: {(r.stderr or '').strip()[-300:]}")
+
+
+def _shared_git(place: Path, at: Path, execution) -> None:
     """A node's place is a worktree whose `.git` names its gitdir relatively: copied, it names nothing — and pointed
     back, every run would share one index (its lock: concurrent `git status` fail) and HEAD (a run's commit would move
     the delivery's branch). The copy gets a gitdir of its own: the worktree's files, HEAD detached at the place's

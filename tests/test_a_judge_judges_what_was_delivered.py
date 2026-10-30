@@ -747,3 +747,23 @@ def test_live_an_issuer_rules_on_a_delivery_no_copy_can_be_made_of(project, monk
         assert "NO COPY of this delivery" in llm.packets[-1] and "nested repositories (dep)" in llm.packets[-1]
     finally:
         e.stop()
+
+
+@live
+def test_live_a_copy_of_a_place_as_it_stands_has_a_git_of_its_own(project):
+    """An issuer asked about a node not yet delivered rules on its place as it stands: in the copy's container, which
+    mounts its round alone, the copy's git reads its history and shows the work not yet committed — a git borrowing
+    the base's objects by a relative path read nothing there (row 4, c_compiler, 2026-10-30)."""
+    x, a = project, project.own / "a"
+    _sh(x, a, "echo one > c.txt && git add c.txt && git -c user.name=t -c user.email=t@t commit -qm committed"
+              " && echo uncommitted >> c.txt && echo new > n.txt")
+    round_ = x.own / ".gfso-scratch-a" / "issuer_1"
+    x.files.mkdir(str(round_))
+    with snapshot(a, round_ / "place", x) as at:
+        s = x.session(at)
+        run = lambda *cmd: s.run(list(cmd), cwd=at, timeout=60)
+        log, status = run("git", "log", "--format=%s"), run("git", "status", "--porcelain")
+        assert log.returncode == 0 and log.stdout.split() == ["committed"], (log.stdout, log.stderr)
+        assert status.returncode == 0 and set(status.stdout.split()) >= {"M", "c.txt", "??", "n.txt"}, status
+        assert run("test", "-e", ".git/objects/info/alternates").returncode != 0, "it borrows still"
+        assert run("git", "fsck", "--connectivity-only").returncode == 0
