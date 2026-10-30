@@ -127,7 +127,9 @@ body {
 .hd-run:hover { opacity: 1; border-color: var(--ui-on-chrome); }
 .hd-run-state { border-color: var(--ui-on-chrome); }
 .hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
-.hd-needs { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
+/* ONE EVEN LINE: where the goal stands, its count, what needs a person — each on the same baseline, one gap apart, the
+   count's figure only a step above the words (the author, 2026-10-30: «стоит неровно и вразнобой») */
+.hd-needs { display: flex; align-items: baseline; gap: 16px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
 .need b { font-weight: 600; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
@@ -292,14 +294,16 @@ body {
 .ax-fold path { stroke: var(--ink-faint); stroke-dasharray: 2 3; }
 .ax-fold text { fill: var(--ink-faint); font-size: 9px; }
 /* Progress — one track per node along the split, in the shared selection; the goal's coverage beside it. */
-/* ONE LAYOUT WHATEVER IS OPEN BESIDE IT, ONE SCROLLER: the tracks (their 480 floor, progress.js) and the coverage stand side
+/* ONE LAYOUT WHATEVER IS OPEN BESIDE IT, ONE SCROLLER: the tracks (their floor, draw.js `axisWidth`) and the coverage stand side
    by side always — opening a node used to send the coverage above and the tracks below the deck's fold (the author,
    2026-10-30: «при открытии ноды нижняя панель сжимается и прокрутки влево вправо не появляется»). Short of room the deck
    itself scrolls sideways, its bar at its own edge — a second scroller inside the coverage hid its bar below the fold
    (critic); a column held at the deck's edge lay over the criteria's names, so the root's own column is reached by the
    same scroll as the rest. */
 .pg-wrap { display: flex; gap: 28px; align-items: flex-start; }
-.pg-tracks { flex: 1 1 480px; min-width: 480px; }
+/* …the tracks no narrower than the time axis's floor (draw.js `axisWidth`, 720): beside a node's panel their rows were
+   squeezed (the author, 2026-10-30: «progress пролистывается но строки левые сжимаются») — now the deck scrolls instead */
+.pg-tracks { flex: 1 1 720px; min-width: 720px; }
 .pg-side { flex: 0 0 auto; }
 .pg { display: block; font-family: var(--font-mono); }
 .pg text { font-size: 10px; fill: var(--ink-soft); }
@@ -1186,14 +1190,15 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 /* The K·S signature dot after the one real done: the goal delivered. */
 .brand-dot { display: inline-block; width: 0.55em; height: 0.55em; margin-left: 0.3em; border-radius: 50%; background: var(--acc); vertical-align: 0.05em; }
 
-.hd-needs .hd-phrase { margin-right: 14px; opacity: 0.85; }
+.hd-needs .hd-phrase { opacity: 0.85; }
 /* A COUNT IS ITS OWN MARK — the figure large, its label small beside it (as Progress counts), never threaded into a
    sentence (the author, 2026-10-29): the header's parts done, the panel's parts passing */
 .tally { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
          font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); }
 .tally b { font-family: var(--font-display); font-size: 17px; font-weight: 650; letter-spacing: 0; text-transform: none; }
 .tally i { font-style: normal; opacity: 0.7; }
-.hd-needs .tally { margin-right: 14px; }
+.hd-needs .tally b { font-size: 14px; }
+.hd-needs .tally i { font-family: var(--font-body); font-size: 12px; text-transform: none; letter-spacing: 0; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
 .dk-head .tally b { font-size: 13px; color: var(--ink); }
 .pn-meta .tally { margin-left: 12px; }
