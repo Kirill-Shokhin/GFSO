@@ -1663,8 +1663,9 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                             context=PROMPT.read_text(encoding="utf-8"))
     except Uncopied as e:            # …no copy for a cause not the delivery's: no ruling yet, asked again
         raise Unavailable(f"no copy of {where} to rule on: {e}") from e
-    llm.tag_last(Stage.ISSUER)
-    engine.record_llm_usage(Stage.ISSUER, llm, task_id)
+    finally:                         # …booked whatever raises after the model ran (leaving the copy, the swap)
+        llm.tag_last(Stage.ISSUER)
+        engine.record_llm_usage(Stage.ISSUER, llm, task_id)
     if failed := unanswered(llm.calls[-1:]):
         raise failed
     if not str(text or "").strip():

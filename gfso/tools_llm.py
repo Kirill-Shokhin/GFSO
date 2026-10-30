@@ -174,6 +174,7 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
                         "reads it when it does). If nothing lands, the plan has changed under it "
                         "or its runner died: `revise` moves the node to a new version and the "
                         "check can be asked again."}
+    llm = None
     try:
         llm = llm_factory(model or engine.system_model(), execution=execution_of(engine))
         llm.on_tick = _cb
@@ -194,6 +195,8 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
         # storage reads. `llm_factory` raises on an ordinary misconfiguration, and the claim then
         # leaked with no model ever having run: no kill, no hang, no thread teardown needed.
         engine.claims.end_review(_slot)
+        if llm is not None:   # what the check cost, on the record — a raise after the model ran loses none of it
+            engine.record_llm_usage(Stage.L2_CHECK_PLAN, llm, TaskId(task_id))
     out["stats"] = list(llm.calls)
     # …AND HOW TO READ IT AGAIN FOR FREE. This verb SPENDS a model run every call, and it is also
     # the only place the review is rendered — so a reader whose first answer scrolled past re-ran it
@@ -203,7 +206,6 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
     out["reread_free"] = (f"this ran the checker ({len(llm.calls)} model call(s)) — `get_review("
                           f"'{task_id}')` reads the SAME record again for free; re-run this verb "
                           f"only after the plan changed.")
-    engine.record_llm_usage(Stage.L2_CHECK_PLAN, llm, TaskId(task_id))   # what the check cost, on the record
     # WHAT IT MEANS FOR EXECUTION, said in the reply. `gate_passed` is about Level 0/1 only, and a
     # reader took `gate_passed: true` for "the plan is good" while the checker was saying a criterion
     # is not carried (measured 2026-08-20). The question anyone actually has is whether the children
