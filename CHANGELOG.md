@@ -29,6 +29,40 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   `set_mode` without a mode changes only the project's settings. `/api/metrics` serves each metric's grade (canon §15.8)
   and which of them call a person. A project's containers carry Docker Compose labels, so Docker Desktop shows them as
   one stack subgrouped by role.
+- A project's run has one state — running, stopping while its sessions finish, stopped — set by `stop_project` /
+  `start_project` on every door and by the page's Stop / Start; `next_steps` carries `run`. While stopped no session
+  starts, no timeout fires and the project's clocks do not run. A server's start leaves every project that stood stopped
+  by the system until its own Start, and the project list says so before it is opened.
+- Tech reports: a system role may report a defect of the system itself, outside the twelve signals, read by
+  `tech_reports`. A question the system owes (a dispute, a decision, the plan) that stays owed past 30 min or past its
+  free answer count is reported once per node version.
+- Container execution: a role may name a declared execution (`register_agent(..., execution=)`, the server's
+  `executions.json`), and the project's work then runs in Linux containers; the declaration's `network` is `open`, an
+  `allowlist` (TCP 443 to the named hosts through one gateway) or `off`, held by the kernel. `gfso export-places` writes a
+  project's places out of its volumes whole.
+- `GET /api/resources` reads what this installation holds in Docker per project and node — containers by role, node and
+  agent, standing or busy, their CPU and memory, the volumes' sizes, each reading's `read_at`, the `gfso.project_id` its
+  volumes carry; `DELETE /api/resources/orphans/{id}` removes the volumes of an id no project record carries. The page
+  shows it in the deck's resources view and in the project list's head, and says so when Docker does not answer.
+- An executor's session is handed over before its context outgrows the window: at the ceiling always, at the role's
+  budget at a point it has checked. The Claude Code CLI runs the system's `PostToolUse` hook, which reads the context
+  after each tool call; the fresh session opens on the packet, the session's own note and the place's machine state.
+  Before a session the system runs the node's pinned checks once in a copy of its place and hands it what they printed,
+  as an observation (a project may switch it off).
+- A pinned probe marked `exact` is run by the system on a fresh copy of the delivery before any validator; an output
+  that differs fails every criterion resting on it.
+- `auto_decompose(spec, open_plan=true)` hands a plan in open. The machine issuer can give a child the parent's own
+  probe by its id (`criterion#hex`), copied whole with its inputs.
+- A validator records what it saw beyond the criteria as `outside`: it fails nothing, and is asked once of the issuer
+  who holds the split, answered by a split move or `decline`. An executor is told from its first round when a defect of
+  its contract is a CHALLENGE and what one buys.
+- `GET /api/tasks/{id}/verdicts` serves every verdict a node received with each criterion's value; `llm_usage` rows
+  name the session note a handed-over round wrote.
+- The web UI: a run deck under the graph (what runs and what waits, timeline, Progress along the plan's split, Spend,
+  Models with cost by token kind and context fill, Quality with each metric's grade, Events, resources); a live feed
+  in place of polling; a key under «?»; a node panel with criterion histories, the signals the engine admits to this
+  person under a mode, and a challenge's acceptance that can retire findings with its why; counts as marks of their own;
+  a layout for phone width; a project that never ran can be deleted from its page.
 
 ### Fixed
 - A plan's Level-2 review runs as soon as the machine issuer's fix changes the split; the issuer's answers stay rate
@@ -43,6 +77,20 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   had read as "no handover armed" and let the session run on unasked.
 - The page served over https opens its live feed over `wss` and names its project on load (it stayed blank, with no live
   updates); a long name with no spaces wraps where it would overflow, its whole text on hover wherever a line is cut.
+- The plan's Level-2 checker judges a criterion by what its pinned checks decide, on the parent and the children alike.
+- A probe a validator reports as not run (`ran: false`) observes nothing: it meets no demand and refutes nothing.
+- A delivery whose tree holds a nested repository or a submodule, or whose files cannot be staged, is held at DELIVER
+  with its cause, which the executor's next packet names; it had gone in without those files.
+- Repeated FAILs over the same delivered tree no longer read as a node larger than one session.
+- An executor's dispute after a rework that changed its place is ruled in a copy of the place as it stands, instead of
+  waiting for a copy of the delivered commit that could never be made.
+- A standing finding whose command enters the delivery (`cd <place> && …`) or reads `/dev/stdin` is re-run over the
+  judge's copy, not shown as gone or raw; an issuer shown standing findings is told where their files are laid.
+- A pinned input is laid down byte for byte; a multi-line expectation reads as one line, joined by ⏎.
+- A chat-wire provider keeps a conversation the next round can send, learns a local model's window once loaded, reads
+  llama.cpp's overflow as one and never takes a `<think>` draft for the answer.
+- An attempt that a limit moved to the next credential counts as no session and no ending anywhere on the page.
+- A project opened by many reads at once gets one engine.
 
 ### Changed
 - No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,
@@ -66,6 +114,35 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   consumer (unless its supplied deadline must move). A `depends_on` entry with no check is still read on the wire, as
   the edge it declares. A database written before is migrated when it is opened — each such entry becomes its declared
   edge record, logged as a migration; no conjunct of V changes.
+- No count of answers cancels a node any more: a contract version ends by its deadline, a node by its issuer's act.
+- Under AUTO a plan the user handed in (`auto_decompose` with `spec`) is theirs: the system adds to it and never
+  re-splits, re-pins or cancels it; where contact refutes it the run stops with the reason and the user's way out. The
+  system never cancels the user's goal.
+- A node's place is a repository of its own (a clone sharing the base's objects), its delivery fetched back by name; a
+  DELIVER records its commit, and what joins is the commit the PASS accepted.
+- With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
+
+### Security
+- Unattended work — an executor's session, a scope's, a system-held parent's consent — runs on the user's own machine
+  only with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`; without it the project stops with the cause named. Work
+  the person does in their own chat runs as before.
+- In a container execution nothing of the host disk is mounted: places, judges' copies, temps and the sessions' CLI state
+  live in per-project Docker volumes, the base is the user's HEAD imported into them, and the root's accepted result
+  lands as the branch `gfso/<project>/accepted`, a whole verified commit, the user's working tree untouched. The answer
+  that starts the work says what of the repository the copy lacks; Git LFS files travel as content and land as pointers.
+- Each session runs in a container of its own place: it writes there alone, reads the base, and sees no other place.
+  Its commands run in a separate commands container of its own, apart from the model client, whose state they cannot
+  write; the system's checks and git run in their own copy's or place's container. Containers are named role first.
+- A provider's credential is held by the project's model door, never by a session's process; the door reads no request
+  body before its key or past the provider's cap.
+- A judge checks out the commit the delivery recorded from objects hashed again on its own side, every other input laid
+  from the system's record; Git LFS files are judged on their content; a copy of a place not yet delivered has a git of
+  its own. Every program the system hands Python by `-c` in an agent's tree runs with `-I`.
+- Every container is bounded in memory and processes (4 GiB, 4096 by default; `GFSO_CONTAINER_MEMORY`,
+  `GFSO_CONTAINER_PIDS`), and all of the system's containers on a Docker together in three quarters of its memory.
+- The server answers only its own host names (`gfso serve --host`, `GFSO_ALLOWED_HOSTS`), refuses cross-site writes,
+  gives a foreign origin reads only, and pins its CDN scripts by subresource integrity. `SECURITY.md` says what a
+  container execution holds apart and what it does not.
 
 ## [0.2.0] — 2026-10-15
 
