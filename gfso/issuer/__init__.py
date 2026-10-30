@@ -1455,7 +1455,13 @@ def _promote(engine, task, actor, answer, why, verbs):
                                                            **({"deadline": made_by} if made_by else {})}},   # a datetime on the project's clock, not a typed date
                          why, verbs)
     if not ok:
-        return False, bad
+        # …and where the producer already stands in the split — two parts that need each other — `promote` is not the
+        # move, and a refusal naming only the missing criteria sent the issuer back to it twice (GB_c_compiler_tnqqhf184)
+        return False, bad + ("" if made_of.get("criteria") else
+                             f"; if what {task.id} waits for is a sibling already in {parent.id}'s split, nothing new is "
+                             f"promoted: two parts that need each other are reshaped by {parent.id}'s issuer (merged, or "
+                             f"split along an interface each can build against) — answer the BLOCK with resolve_block, "
+                             f"or report it")
     made = next(str(k.id) for k in engine.graph.get_active_children(parent.id) if str(k.id) not in before)
     engine.add_dependency(TaskId(made), task.id, glue=f"{task.id} was blocked on what {made} produces: {why}")
     # …and its BLOCK answered by a re-ASSIGN under the contract it has (§11.3): the edge is no part of the contract
