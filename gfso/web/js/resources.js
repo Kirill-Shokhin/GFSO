@@ -76,5 +76,5 @@ export function machine() {
 // …and each row's own: memory while it runs, disk always
 export const ofProject = name => {
     const p = last?.projects.find(x => x.project === name);
-    return !p ? '' : `${p.containers?.running ? `<b>${bytes(p.memory_bytes, '—')}</b><i>memory</i>` : ''}<b>${bytes(p.disk_bytes, '—')}</b><i>disk</i>`;
+    return !p ? '' : `${p.containers?.running ? tally(bytes(p.memory_bytes, '—'), 'memory') : ''}${tally(bytes(p.disk_bytes, '—'), 'disk')}`;
 };

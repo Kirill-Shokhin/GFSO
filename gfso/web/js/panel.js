@@ -27,7 +27,7 @@ const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</d
 function head({d, rounds}) {
     const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure);
     const live = !terminal(d.state), mode = S.graph.mode?.mode;
-    // the round a count of its own (the author's rule for every count, 2026-10-29), whether it is in work beside it
+    // the round is an ordinal — «round 6», its figure standing out — never a count «6 rounds»; whether it is in work beside it
     const [wait, waitText] = waiting(d), inWork = consented(d.state) && (!rounds.length || rounds.at(-1).verdict),
           n = rounds.length + (inWork ? 1 : 0), round = `round ${n}${inWork ? ', in work' : ''}`;
     const ids = [d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).join(' · ');
@@ -37,7 +37,7 @@ function head({d, rounds}) {
         + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
         + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? PANEL.deadline(at(d.deadline), Date.now()) : ''}>⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
-        + '</div>' + meta(wait + tally(n, inWork ? 'round, in work' : 'round'), waitText + round)
+        + '</div>' + meta(`${wait}<span class="pn-round">round <b>${n}</b>${inWork ? ', in work' : ''}</span>`, waitText + round)
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-meta pn-by" id="pn-by">${signedBy(S.run, d.id)}</div>`
         + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip"${PANEL.escalated}>issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
