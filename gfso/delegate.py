@@ -26,7 +26,7 @@ from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agents_path, max_session
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask
 from gfso.tools import _agent_id
-from gfso.inflight import _inflight, in_flight
+from gfso.inflight import _inflight, being_rewritten, in_flight
 from gfso.adapters.verifiers import evaluate_unittest
 from gfso.core.graph.model import generation_of_task
 from gfso.core.protocol.procedure import criterionless, probes_from as _checks_of
@@ -1380,17 +1380,8 @@ class Dispatcher:
         return started
 
     def _being_rewritten(self, task_id) -> bool:
-        """Is `task_id` inside a subtree a decomposition is writing now (`auto_decompose` in flight on it or above)? A
-        scope session started on round 1's nodes while round 2 rebuilt them, and the rebuild re-offered every node —
-        the session, its validation and their spend thrown away (GB_coreutils_tn5lhw152, 2026-10-19)."""
-        here = self._engine.project_name or DEFAULT_PROJECT
-        roots = {w["task_id"] for w in in_flight() if w["verb"] == "auto_decompose" and w["project"] == here}
-        t = self._engine.graph.get_task(TaskId(task_id)) if roots else None
-        while t is not None:
-            if str(t.id) in roots:
-                return True
-            t = self._engine.graph.get_task(t.parent_id) if t.parent_id else None
-        return False
+        """`being_rewritten` for this dispatcher's engine."""
+        return being_rewritten(self._engine, TaskId(task_id))
 
     _EXECUTOR_STATES = _EXECUTOR_STATES
 

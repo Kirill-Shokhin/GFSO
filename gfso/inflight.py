@@ -69,3 +69,18 @@ def _snapshot() -> list[dict]:
 
 
 _INFLIGHT_LOCK = __import__("threading").Lock()
+
+
+def being_rewritten(engine, task_id) -> bool:
+    """Is `task_id` inside a subtree a decomposition is writing now (`auto_decompose` in flight on it or above)? Nothing
+    else may move there meanwhile: a scope session started on round 1's nodes while round 2 rebuilt them
+    (GB_coreutils_tn5lhw152, 2026-10-19), and the machine issuer answered the plan question on a root the authoring was
+    still converging on the gate — two writers on one split, the authoring died (gb-coreutils-tnq7tv040, 2026-10-30)."""
+    here = engine.project_name or DEFAULT_PROJECT
+    roots = {w["task_id"] for w in in_flight() if w["verb"] == "auto_decompose" and w["project"] == here}
+    t = engine.graph.get_task(task_id) if roots else None
+    while t is not None:
+        if str(t.id) in roots:
+            return True
+        t = engine.graph.get_task(t.parent_id) if t.parent_id else None
+    return False

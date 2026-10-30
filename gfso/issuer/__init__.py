@@ -40,6 +40,7 @@ from gfso.adapters.snapshots import NotTheDelivery, Uncopied, snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
+from gfso.inflight import being_rewritten
 from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
@@ -2121,7 +2122,8 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
         # for 2 h (series 2 REF 2)
         gen = f"{task_id}#{task.iteration}#{task.reopens}#{question}" if task else ""
         waits, not_before, answers = ledger.get(gen, (0, 0.0, 0))
-        if actor is None or task is None or now < not_before or not claim(f"q:{task_id}"):
+        if (actor is None or task is None or now < not_before or being_rewritten(engine, task_id)
+                or not claim(f"q:{task_id}")):
             continue
         started.append(str(task_id))
 
