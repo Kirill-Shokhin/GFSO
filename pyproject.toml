@@ -86,7 +86,7 @@ include = ["gfso*"]
 # builds a wheel with no stylesheet. tests/test_packaging.py fails on the first file they stop
 # covering, and tests/test_distribution.py opens the built wheel to check they did their job.
 [tool.setuptools.package-data]
-"*" = ["*.html", "*.css", "*.svg", "*.md", "js/*.js", "prompts/*.md", "py.typed"]
+"*" = ["*.html", "*.css", "*.svg", "*.md", "*.Dockerfile", "js/*.js", "prompts/*.md", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

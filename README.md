@@ -95,15 +95,17 @@ A reference implementation exercises the protocol end-to-end — a way to run th
 
 ```bash
 pipx install gfso        # or: uv tool install gfso — pip install gfso also works
-gfso setup               # registers the agent door, brings the one server up, opens the UI
+gfso setup               # registers the agent door, builds the agents' container, brings the one server up, opens the UI
 ```
 
 <sub>Working on GFSO itself, rather than with it: `git clone https://github.com/Kirill-Shokhin/GFSO
 && cd GFSO && pip install -e .`, then the same `gfso setup`.</sub>
 
+[Docker](https://docs.docker.com/get-docker/) is part of the installation: delegated work runs unattended, and unattended work runs only in a container. `gfso setup` builds the agents' image from the file the package ships and declares it as the execution `default`, which a project's executors registered without one of their own work in once its mode dispatches work.
+
 `gfso setup` is idempotent. It registers the door with Claude Code for your user — by the console script's absolute path, so it resolves from every directory and survives your leaving a virtualenv — and `--desktop` also writes the entry into Claude Desktop's configuration, keeping a backup. When something is wrong later, `gfso doctor` says what — and its output is what a bug report should carry.
 
-The engine, the UI and the gate cost nothing to run: no API key, no model. The four verbs that do call one — `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, so they need no key of their own and spend the usage of whatever account that CLI is signed in to — or of the token or API key set by `gfso credential claude`. Without it on your `PATH` they report that the provider answered nothing, and everything else still works. Delegation runs unattended, so its executors run in a container you declare (`register_agent(execution=)`, [`SECURITY.md`](SECURITY.md)); on your own machine only with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`.
+The engine, the UI and the gate cost nothing to run: no API key, no model. The four verbs that do call one — `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, so they need no key of their own and spend the usage of whatever account that CLI is signed in to — or of the token or API key set by `gfso credential claude`. Without it on your `PATH` they report that the provider answered nothing, and everything else still works. Delegation runs unattended, so its executors run in that container ([`SECURITY.md`](SECURITY.md)), which holds no login of your machine: its model is reached on a credential set by `gfso credential claude` (`claude setup-token` gives one). On your own machine they run only with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` — the explicit opt-out of isolation.
 
 The gate, in one second and with no AI involved:
 

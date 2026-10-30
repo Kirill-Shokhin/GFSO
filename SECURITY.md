@@ -18,21 +18,29 @@ any further name is added by hand in `GFSO_ALLOWED_HOSTS` (comma-separated).
 
 **The engine executes code it did not write.** In the delegated regime it spawns Claude Code CLI
 subprocesses — executors that write and run code in a working directory you name, and validators that
-run the criteria of a delivery against the artifact. Both run with your user's permissions. Point
-them at a directory you are willing to lose, and treat a task graph from an untrusted source as
-untrusted input: its criteria are instructions that will reach a model with a shell.
+run the criteria of a delivery against the artifact. Where they run is said below: unattended work
+in a container, work your own agent does in its chat on your machine with your user's permissions.
+Treat a task graph from an untrusted source as untrusted input: its criteria are instructions that
+will reach a model with a shell.
 
 Unattended work runs in a container. The work the system dispatches — an executor's session, a
 scope's, a system-held parent's consent — is a model with tools whose commands nobody watches, and
 before it the plan's checks of its place run; on your machine none of it starts unless the server
-was started with `GFSO_LOCAL_AGENTS=allow` (declared in `data/serve.json`, so `gfso up` keeps it, and
+was started with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (so `gfso up` keeps it, and
 a server started without it is restarted). Without that, the first such round stops its project with
 the cause named, nothing of the node having run or been consented to, and the project stays
 stopped until the word is given or an execution is declared; a mode that would dispatch such work
 is not set as ready. Work your own agent does in its chat, and the validator that
 judges it, run on your machine as before: a person is there. With the word, dispatched work runs on
 your machine unattended, with what is said below for a session with no execution.
-A role registered with an execution (`register_agent(execution=)`,
+Docker is part of the installation: `gfso setup` builds the agents' image from the file the package
+ships (no credential and no agent state in it) and declares it in `data/executions.json` as the
+execution `default`, moving it to the new image on an upgrade and keeping one you declared under that
+name. A project's executors registered with no execution of their own take it when a mode that dispatches
+its work is set — not where the project already runs in another, its work is done in your own chat, or the
+server has the word above. `gfso doctor`, `gfso setup` and every container execution hold a Docker Desktop older than 4.44.3 not usable: before it a
+container reached Docker's own API unauthenticated (CVE-2025-9074), and every boundary below stands on Docker
+holding; no container of the system's mounts Docker's socket. A role registered with an execution (`register_agent(execution=)`,
 declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut,
 and nothing of your disk is mounted into any of its containers:
 - The project's work lives in Docker volumes of its own: the agents' places, the judges' copies, the
@@ -134,15 +142,18 @@ and nothing of your disk is mounted into any of its containers:
   the next delivery's own build is the re-check.
 
 What one session can still reach:
-- The sessions working in the base share it and its model-client state, and can read each other's conversations
-  there: in a project whose base is no git repository, every session; in one that is, the reader of the places a
-  plan is made from, whose state also holds what consents asked in the base wrote before they had places of their
-  own. Every other session, a parent's consent included, works in a place of its own.
+- Only the root's executor works in the base; its model-client state still holds what sessions an earlier version
+  ran there wrote — consents, and the reader of the places a plan is made from. Every other session, a parent's
+  consent and that reader included, works in a place of its own. A project whose base is no git repository with a
+  commit has no places, so a container runs none of its dispatched work: it stops with the cause, `git init` and a
+  first commit named. On your machine, with the word, such a project's sessions all work in the base and can read
+  each other's conversations.
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
   agent through the door rather than by the system's executor — is copied as it stands, ignored files
   and builds included, and nothing is built.
-- A process an executor starts may outlive its session in its place's containers, which stand
-  until the place goes.
+- A process a session starts runs until its call ends; one that left its call's group and dropped its mark runs on
+  while another model client of the same place still works there, and ends with the place's last one — or, where the
+  server died first, when the place's containers go: at its project's next start, or its place's removal.
 - The Claude Code client's own tools — Read, Edit, Write — still run in its process, beside its
   output: the settings above keep them off it, as far as the client holds to them (NotebookEdit onto
   a pipe was not measured). A command cannot read the client's task-output files nor its
@@ -159,7 +170,7 @@ What one session can still reach:
 Under a container execution a node performed in your own chat (`perform="in_chat"`) is refused: its
 work stands on your disk, where no container reads it.
 
-Without an execution, and with `GFSO_LOCAL_AGENTS=allow`, sessions run as you, on your machine, with nothing between them and the rest
+Without an execution, and with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`, sessions run as you, on your machine, with nothing between them and the rest
 of it: a judge's copy is still the recorded commit where a scratch for it can be made, but nothing
 is read-only to it, no container ends with its run, and a validation with no scratch runs in the
 place itself.

@@ -35,7 +35,7 @@ REQUIRED = (
     "gfso/web/index.html", "gfso/web/gfso.css", "gfso/web/tokens.css", "gfso/web/icon.svg", "gfso/web/js/main.js",
     "gfso/mcp/ORCHESTRATOR.md", "gfso/mcp/prompts/executor.md", "gfso/mcp/prompts/validator.md",
     "gfso/decompose/prompts/search.md", "gfso/decompose/prompts/audit.md",
-    "gfso/critic/prompts/atomicity.md", "gfso/critic/prompts/checker.md",
+    "gfso/critic/prompts/atomicity.md", "gfso/critic/prompts/checker.md", "gfso/adapters/agent.Dockerfile",
     "gfso/examples/human_only.py", "gfso/examples/async_precompute.py",
 )
 

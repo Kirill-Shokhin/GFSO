@@ -5,17 +5,12 @@ spawns a registered executor per free leaf (dep-gated), an independent validator
 delivery, and the root completes only when the whole tree is DONE/PASS — nothing completes by
 impression. SPAWNS REAL MODEL RUNS (several executors + validators, ~5-10 min) — needs the
 Claude Code CLI (`claude`) on PATH."""
-import shutil
-import sys
-import tempfile
 import time
-from gfso.examples import scratch
-from gfso.adapters.execution import LocalExecution
+from gfso.examples import delegation, scratch
 from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.delegate import Dispatcher
-from gfso.roster import AgentRegistry
+from gfso.delegate import Dispatcher, default_agents
 from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.config import MODEL_DEFAULT
@@ -27,26 +22,20 @@ def main() -> None:
     Refuses to start without the executor transport on PATH, because a demo that silently does
     nothing is worse than one that says what it needs. SPAWNS REAL MODEL RUNS.
     """
-    # …and its executors run on this host, in this process: only on the word that lets them (`agents_refused`)
-    if why := ("needs the Claude Code CLI on PATH (the executor/validator transport)" if not shutil.which("claude")
-               else LocalExecution().agents_refused() and "its executors would run unattended on this host: export "
-                                                          "GFSO_LOCAL_AGENTS=allow to let them"):
-        sys.exit(why)
-
-
-    work = tempfile.mkdtemp(prefix="gfso_company_")
+    work, execution = delegation("gfso_company_")
     e = Engine(store := SqliteStorage(scratch("demo.db")), HumanAgent(), llm=None,
                validate_signals=True, state_timeout=0)
     e.start()
 
-    agents = AgentRegistry(path=scratch("agents.json"))
+    agents = default_agents()
     # TWO executors, and that is the point rather than a detail. A subtree delegated entirely to ONE
     # role has no SEAM in it: every child's Del equals its parent's, which §10.3 calls an internal
     # node — it self-verifies, no independent validator fires, and the node then waits for its issuer
     # to sign. Measured 2026-08-20 with a single role: the delivery landed in 57 seconds and the
     # graph stood still for half an hour. An org with one worker is a degenerate org; this one has
     # a second, so the children are public and the verifier ≠ executor gate has something to hold.
-    agents.register("exec-1", "llm-executor", model=MODEL_DEFAULT, workdir=work)
+    agents.register("exec-1", "llm-executor", model=MODEL_DEFAULT, workdir=work, project=e.project_name,
+                    execution=execution)
     agents.register("exec-2", "llm-executor", model=MODEL_DEFAULT, workdir=work)
     agents.register("val-1", "llm-validator", workdir=work, model=MODEL_DEFAULT)
     d = Dispatcher(e, agents)

@@ -145,6 +145,20 @@ _BASE_READ = ('ls "$1" >/dev/null && { [ ! -e "$1/.git/HEAD" ] || { cat "$1/.git
               'ls "$1/.git/objects" >/dev/null; }; }')
 
 
+#: the image a delegated session works in when the installation declares none of its own (`gfso setup` builds it)
+AGENT_DOCKERFILE = Path(__file__).parent / "agent.Dockerfile"
+#: the oldest Docker Desktop whose containers cannot reach its Engine API (CVE-2025-9074, fixed in 4.44.3)
+DESKTOP_FLOOR = (4, 44, 3)
+
+
+def below_floor(platform: str) -> "str | None":
+    """The floor `platform` (`docker version`'s server platform name) stands below, or None: a Docker Desktop older than
+    `DESKTOP_FLOOR`; an engine that is no Desktop has no such API in its containers' reach."""
+    if not (m := re.match(r"Docker Desktop (\d+)\.(\d+)\.(\d+)", platform or "")):
+        return None
+    return None if tuple(map(int, m.groups())) >= DESKTOP_FLOOR else "Docker Desktop " + ".".join(map(str, DESKTOP_FLOOR))
+
+
 def _unavailable(ex, storage: bool):
     """Why `ex` cannot start a call (`ExecutionPort.unavailable`): the daemon's own words where it does not answer —
     Docker Desktop not running reads "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
@@ -153,11 +167,15 @@ def _unavailable(ex, storage: bool):
     every session dying, the probe saying "up" for 35 min); and, by a container of its own, a file written, read and
     removed in the project's places volume where it is made, its base read there — else None."""
     try:
-        got = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=60, text=True)
+        got = run(["docker", "version", "--format", "{{.Server.Platform.Name}}"], timeout=60, text=True)
     except (OSError, subprocess.TimeoutExpired) as e:
         return str(e)
     if got.returncode:
-        return (got.stderr or "").strip() or f"docker info exited {got.returncode}"
+        return (got.stderr or "").strip() or f"docker version exited {got.returncode}"
+    # …and a Docker whose containers reach its own API holds none of the boundaries drawn with them
+    if below := below_floor(got.stdout.strip()):
+        return (f"{got.stdout.strip()} is older than {below}: a container there reaches Docker's own API "
+                f"unauthenticated (CVE-2025-9074) — update Docker Desktop")
     if not storage:
         return None
     p = ex.project if isinstance(ex, PlaceContainer) else ex
@@ -500,8 +518,9 @@ class LocalExecution(ExecutionPort):
         if local_agents():
             return None
         return ("this host runs no dispatched work unattended: an executor's commands would run as you, on your "
-                "machine, with nothing between them and the rest of it. Declare a container execution for the project "
-                "(register_agent(execution=...), data/executions.json), or allow it on this host: "
+                "machine, with nothing between them and the rest of it. Run the project in a container (its executor "
+                "registered with `execution=\"default\"`, which `gfso setup` declares, or another of "
+                "data/executions.json), or allow it on this host: "
                 "\"GFSO_LOCAL_AGENTS\": \"allow\" in data/serve.json, then `gfso up`")
 
     def unavailable(self, storage: bool = False):
@@ -836,10 +855,13 @@ class Commands:
         lines = _log_out([self.name] if self.name in _STARTED else [], self.log()).splitlines()
         return [r for r in map(_json_or_none, lines) if isinstance(r, dict)]
 
-    def end(self, call: str) -> None:
-        """What the client's call `call` left running here, ended as its user: the listener holds no command's uid."""
+    def end(self, call: str, every: bool = False) -> None:
+        """What the client's call `call` left running here, ended as its user: the listener holds no command's uid.
+        `every`: the place's last client gone — every command's process ends, one that left its call's group and
+        dropped its mark (`setsid`, `env -u`) with them: nothing an agent started outlives the session it ran in."""
         if self.name in _STARTED and self.user:
-            run(["docker", "exec", "-u", self.user, self.name, "sh", "-c", _ending(call)], timeout=60)
+            run(["docker", "exec", "-u", self.user, self.name, "sh", "-c",
+                 _ending(call) + ("; kill -KILL -1" if every else "")], timeout=60)
 
     def log(self) -> Path:
         """The host's mirror of the record, beside the door's log."""
@@ -1182,6 +1204,26 @@ def _is_top(base: Path, git) -> bool:
     return bool(top) and os.path.normcase(os.path.abspath(top[0])) == os.path.normcase(os.path.abspath(base))
 
 
+def _no_places(base: Path) -> str | None:
+    """Why a container runs no dispatched work over `base`: one that is no repository's top with a commit has no
+    places — every session of the project would work in it, sharing one tree and one model client's state, no node's
+    work its own and each reading the others'. Asked of the user's own repository on the host, as its import is."""
+    git = _host_git(base)
+    if _is_top(base, git):
+        return None
+    why = (f"{base} is not the top of a git repository with a commit, so its nodes have no places of their "
+           f"own: every session would share one tree and read the others' conversations. ")
+    top = git("rev-parse", "--show-toplevel") if shutil.which("git") and base.is_dir() else None
+    if top is not None and top.returncode == 0 and (at := top.stdout.strip()):
+        if os.path.normcase(os.path.abspath(at)) == os.path.normcase(os.path.abspath(base)):
+            return why + "It has no commit yet: `git add -A` and `git commit -m start` there"
+        return why + (f"It lies inside the repository {at}: register that top as the workdir if the work is "
+                      f"that repository's, else make this directory one of its own (`git init`, `git add -A`, "
+                      f"`git commit -m start` there)")
+    return why + "Make it one (`git init`, `git add -A`, `git commit -m start` there), then start the project again"
+
+
+
 def _lfs_of(base: Path, git) -> tuple[dict, list]:
     """({oid: its object in the user's LFS store}, [the paths whose object it lacks]) of the LFS pointers in HEAD's
     tree — read as git stores them, so no git-lfs runs: a blob short enough to be a pointer and parsed as one
@@ -1509,6 +1551,9 @@ class ContainerExecution(ExecutionPort):
 
     def unavailable(self, storage: bool = False):
         return _unavailable(self, storage)
+
+    #: dispatched work refused over a base that has no places (`_no_places`)
+    agents_refused = lambda self: _no_places(self.base)  # noqa: E731
 
     def _storage_down(self, why: str):
         """`why` an I/O error AND the system's own probe of the storage failing: a place down — never the words alone,
@@ -1858,6 +1903,8 @@ class PlaceContainer(ContainerExecution):
         self.state = None if rw == project.state else project.state / ("+" + "+".join(rel))
         self.holds_sessions = True
         self.commands = Commands(self)
+        #: the model clients' calls running in this place now — its commands are ended whole when the last one ends
+        self.clients: set = set()
 
     def _labels(self) -> list[str]:
         """Its project's stack, subgrouped by role (`grouped`); who works here, which node, as what."""
@@ -1921,9 +1968,17 @@ class PlaceContainer(ContainerExecution):
     def commands_of(self, proc) -> list:
         return [r for r in self.commands.record() if r.get("run") == proc.call]
 
+    def popen(self, args, *, env, cwd, **pipes):
+        proc = super().popen(args, env=env, cwd=cwd, **pipes)
+        if "CLAUDE_CODE_SHELL" in (env or {}):            # …a model client's, its shell the system's (`commands_env`)
+            self.clients.add(proc.call)
+        return proc
+
     def _end_inside(self, call: str) -> None:
         run(["docker", "exec", self.container, "sh", "-c", _ending(call)], timeout=60)
-        self.commands.end(call)
+        last = call in self.clients and self.clients <= {call}
+        self.clients.discard(call)
+        self.commands.end(call, every=last)
 
     def _open_the_way(self) -> None:
         self.project.start()                              # the project's network and gateway stand before any session

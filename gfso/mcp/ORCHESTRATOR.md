@@ -39,10 +39,11 @@ the top; auto: none). `dispatch` (the default): you stay each node's executor an
 (`register_agent("<project>-exec", "llm-executor", workdir=<your working directory>)`), in the node's own
 place, and reports in your name — WAIT for it, do not build the node in your chat. `in_chat`: you do the
 work yourself with your own tools; ask the user before choosing it, since nothing but you keeps that work
-inside the contract. Dispatched work is unattended, so it runs in a container: register the executor with
-`execution=<name>` from `data/executions.json`; without one, it runs on the user's machine only where the user
-declared `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` — else its first round stops the project with that
-cause. Say so to the user and let them choose; never declare it yourself.
+inside the contract. Dispatched work is unattended, so it runs in a container: an executor registered with no
+`execution` takes the installation's `default` (`gfso setup` declares it) when the mode that dispatches is set;
+name another from `data/executions.json` only if the user asks. Its working directory must be the top of a git
+repository with a commit — else the project stops with that cause. Without a container it runs on the user's
+machine only where the user declared `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`; never declare it yourself.
 
 ## The loop (solo; in semi, over the levels you hold)
 

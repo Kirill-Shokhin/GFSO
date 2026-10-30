@@ -14,9 +14,11 @@ because a setup that cannot say what it achieved is the same silence one layer u
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -27,8 +29,10 @@ from pathlib import Path
 from gfso import __version__
 from gfso import serverctl
 from gfso.serverctl import port_state
+from gfso.adapters.execution import AGENT_DOCKERFILE, below_floor
+from gfso.adapters.llm import credentials
 from gfso import config as _config
-from gfso.config import db_path as _config_db_path
+from gfso.config import DEFAULT_EXECUTION, db_path as _config_db_path
 
 
 def claude_cli() -> tuple[bool, str]:
@@ -87,9 +91,110 @@ def _assets_ok() -> tuple[bool, str]:
     required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg", "web/js/main.js",
                 "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md",
                 "decompose/prompts/search.md", "decompose/prompts/audit.md",
-                "critic/prompts/atomicity.md", "critic/prompts/checker.md")
+                "critic/prompts/atomicity.md", "critic/prompts/checker.md", "adapters/agent.Dockerfile")
     missing = [r for r in required if not (pkg / r).exists()]
     return (not missing), ("all present" if not missing else f"MISSING {missing} — reinstall gfso")
+
+
+#: the image a delegated session works in when the installation declares none of its own, and the execution naming it
+AGENT_IMAGE_FILE = AGENT_DOCKERFILE
+AGENT_IMAGE = "gfso-agent"
+
+
+def agent_image() -> str:
+    """The tag of the image this installation's file builds — named by the file, so an upgrade that changes it builds
+    anew and never runs the image of an older one."""
+    return f"{AGENT_IMAGE}:" + hashlib.sha256(AGENT_IMAGE_FILE.read_bytes()).hexdigest()[:12]
+
+
+def docker_state() -> tuple[bool, str]:
+    """Can this machine run a container? Unattended work runs only in one (`LocalExecution.agents_refused`)."""
+    exe = shutil.which("docker")
+    if exe is None:
+        return False, "not on PATH — install Docker (https://docs.docker.com/get-docker/): delegated work runs in a container"
+    try:
+        out = subprocess.run([exe, "version", "--format", "{{.Server.Version}}|{{.Server.Platform.Name}}"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except Exception as ex:
+        return False, f"found at {exe} but did not answer ({type(ex).__name__})"
+    if out.returncode != 0:
+        return False, f"installed, its daemon does not answer — start Docker ({exe})"
+    engine, _, desktop = out.stdout.strip().partition("|")
+    if (below := below_floor(desktop)) is not None:
+        return False, (f"{desktop} is older than {below}: a container there reaches Docker's own API unauthenticated "
+                       f"(CVE-2025-9074) — update Docker Desktop")
+    return True, f"engine {engine}" + (f" ({desktop})" if desktop else "")
+
+
+
+
+def image_present(tag: str) -> bool:
+    """Does this Docker hold the image `tag`?"""
+    return subprocess.run(["docker", "image", "inspect", tag], capture_output=True, timeout=60).returncode == 0
+
+
+def build_image(tag: str) -> tuple[bool, str]:
+    """Build the agent image from the shipped file, no context sent: it copies nothing of this machine."""
+    out = subprocess.run(["docker", "build", "-t", tag, "-"], input=AGENT_IMAGE_FILE.read_bytes(),
+                         capture_output=True, timeout=1800)
+    tail = out.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
+    return out.returncode == 0, ("built" if out.returncode == 0 else f"build failed: {tail[0][:300]}")
+
+
+def declare_default(tag: str) -> str:
+    """Declare the execution "default" on `tag` — over one of that name only where setup declared it (its image one
+    of setup's own): an upgrade that changed the image moves to it; a user's own declaration is theirs. Roles
+    registered with no execution of their own take it (`tools_llm.register_agent`)."""
+    path = _config.executions_path()
+    got = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if (was := (got.get(DEFAULT_EXECUTION) or {}).get("image")) == tag:
+        return f"execution {DEFAULT_EXECUTION!r} declared on {tag}"
+    if DEFAULT_EXECUTION in got and not str(was).startswith(AGENT_IMAGE + ":"):
+        return f"execution {DEFAULT_EXECUTION!r} is your own ({was}): left as it is"
+    got[DEFAULT_EXECUTION] = {"image": tag}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(got, indent=1), encoding="utf-8")
+    return f"execution {DEFAULT_EXECUTION!r} declared on {tag} ({path})"
+
+
+def local_word() -> bool:
+    """Has the user said unattended work may run on this host (`config.local_agents`), as the server would take it?"""
+    return _config.local_agents(str(serverctl.declared().get("GFSO_LOCAL_AGENTS", "")))
+
+
+def _execution_report() -> tuple[list[tuple[str, str]], list[str]]:
+    """Where delegated work would run here: (rows, blocking). Without a container nothing unattended runs — unless
+    the user has opted out of isolation, which is named, not blocked."""
+    word = local_word()
+    ok, line = docker_state()
+    rows = [("docker", line if ok else ("NOT USABLE — " + line))]
+    blocking = [] if ok or word else ["Docker is not usable, and delegated work runs only in a container"]
+    try:
+        declared = _config.executions()
+    except ValueError as ex:
+        declared = {}
+        blocking.append(f"executions.json does not read ({ex})")
+    if word:
+        rows.append(("execution", "THIS HOST — GFSO_LOCAL_AGENTS=allow: delegated sessions run as you, unisolated"))
+    elif DEFAULT_EXECUTION in declared:
+        tag = declared[DEFAULT_EXECUTION].get("image", "")
+        present = ok and image_present(tag)
+        rows.append(("execution", f"{DEFAULT_EXECUTION!r} on {tag}" + ("" if present or not ok else
+                                                                      "   IMAGE ABSENT — run `gfso setup`")))
+        if ok and not present:
+            blocking.append(f"the default execution's image {tag} is absent")
+    else:
+        rows.append(("execution", (f"declared: {', '.join(declared)} (none is the default; a role names one)"
+                                   if declared else "NONE DECLARED — run `gfso setup`")))
+        if not declared:
+            blocking.append("no container execution is declared for delegated work")
+    if not word:
+        # …and a container holds no login of this machine: its model is reached only on a credential of the one store
+        has = bool(credentials.held())
+        rows.append(("credential", "set (`gfso credential` names them)" if has else
+                     "none — work in a container reaches a model only on one: `claude setup-token`, then `gfso credential claude` "
+                     "(work in your own chat uses your CLI's login)"))
+    return rows, blocking
 
 
 def _database_path() -> str:
@@ -119,7 +224,7 @@ def _home_report() -> tuple[bool, str, Path]:
 
 
 def _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg_line,
-                  live_notes, live, has_claude, home, script) -> None:
+                  live_notes, live, has_claude, home, script, where=()) -> None:
     """Print what this installation IS — one aligned row per fact.
 
     `doctor` does two things: it establishes the facts (home, assets, port, CLI, registration,
@@ -138,6 +243,7 @@ def _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg
         ("assets", assets_line),
         ("claude CLI", claude_line if has_claude else f"NOT USABLE — {claude_line}"),
         ("agent door", reg_line),
+        *where,
     ]
     width = max(len(k) for k, _ in rows)
     print("gfso doctor")
@@ -202,11 +308,14 @@ def doctor() -> int:
     if not script.exists():
         blocking.append("the gfso executable is not where this installation says it is")
 
+    where, unrun = _execution_report()
+    blocking += unrun
+
     live, live_notes, live_drift = _live_server_report(serverctl, home)
     drift += live_drift
 
     _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg_line,
-                  live_notes, live, has_claude, home, script)
+                  live_notes, live, has_claude, home, script, where)
 
     if not has_claude:
         print("\nThe engine, the UI, the gate and `gfso demo human_only` work without any model.")
@@ -303,6 +412,22 @@ def install_desktop() -> str:
             f"claude_desktop_config.json.gfso-backup). Restart Desktop to load it.")
 
 
+def install_execution() -> str:
+    """The container delegated work runs in: Docker required, the agent image built, the execution "default" declared.
+    Docker is part of the installation (the author, 2026-10-30): without it nothing unattended runs."""
+    ok, line = docker_state()
+    if not ok:
+        return (f"Docker: {line}. Delegated work will not start until it runs; then `gfso setup` again. "
+                "(GFSO_LOCAL_AGENTS=allow in data/serve.json runs it on this host instead, unisolated.)")
+    tag = agent_image()
+    if not image_present(tag):
+        print(f"agent image: building {tag} (once per version; a few minutes)…", flush=True)
+        built, said = build_image(tag)
+        if not built:
+            return f"agent image: {said}"
+    return f"agent image: {tag}; " + declare_default(tag)
+
+
 def setup(desktop: bool = False) -> int:
     """Register the agent door, bring the one server up, open the UI, then report. Idempotent."""
     try:
@@ -351,6 +476,8 @@ def setup(desktop: bool = False) -> int:
         print("\nClaude Desktop is installed here. `gfso setup --desktop` adds this to its"
               "\nclaude_desktop_config.json (keeping a backup), or paste it yourself:")
         print(json.dumps({"mcpServers": {"gfso": desktop_entry()}}, indent=2))
+
+    print("\n" + install_execution())
 
     # LEFT: `gfso.mcp.connect` imports the third-party `mcp` SDK at module level, and doctor is
     # the command that must still run on an installation where that dependency is missing.

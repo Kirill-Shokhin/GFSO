@@ -4,17 +4,15 @@ Assignment IS delegation: the dispatcher picks up the node whose Del is a regist
 llm-executor, spawns a headless Claude executor with the packet, wraps its report into FSM
 signals, and the registered llm-validator signs the verdict. The human keeps every other node.
 SPAWNS REAL MODEL RUNS — needs the Claude Code CLI (`claude`) on PATH."""
-import shutil
 import sys
-import tempfile
-from gfso.examples import scratch
-from gfso.adapters.execution import LocalExecution
+from gfso.examples import delegation, scratch
 from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.delegate import Dispatcher
-from gfso.roster import AgentRegistry
+from gfso.delegate import Dispatcher, default_agents
 from gfso import tools as T
+from gfso.core.types import Signal
+from gfso import tools_llm as TL
 import time
 from gfso.config import MODEL_DEFAULT
 
@@ -25,20 +23,14 @@ def main() -> None:
     Shows that assignment IS delegation — nothing beyond Del tells the dispatcher to pick it up.
     SPAWNS A REAL MODEL RUN.
     """
-    # …and its executors run on this host, in this process: only on the word that lets them (`agents_refused`)
-    if why := ("needs the Claude Code CLI on PATH (the executor/validator transport)" if not shutil.which("claude")
-               else LocalExecution().agents_refused() and "its executors would run unattended on this host: export "
-                                                          "GFSO_LOCAL_AGENTS=allow to let them"):
-        sys.exit(why)
-
-
-    work = tempfile.mkdtemp(prefix="gfso_mixed_")
+    work, execution = delegation("gfso_mixed_")
     e = Engine(store := SqliteStorage(scratch("demo.db")), HumanAgent(), llm=None,
                validate_signals=True, state_timeout=0)
     e.start()
 
-    agents = AgentRegistry(path=scratch("agents.json"))
-    agents.register("worker-1", "llm-executor", model=MODEL_DEFAULT, workdir=work)
+    agents = default_agents()
+    agents.register("worker-1", "llm-executor", model=MODEL_DEFAULT, workdir=work, project=e.project_name,
+                    execution=execution)
     agents.register("checker-1", "llm-validator", workdir=work, model=MODEL_DEFAULT)
 
     # THE goal. A project has exactly one root — the node that carries the goal's criteria, so that
@@ -47,7 +39,7 @@ def main() -> None:
     # rule composing them.
     # Every criterion carries the procedure that will decide it (A1): a contract pins its checks before the work.
     check = lambda behaviour, command, expect: [{"behaviour": behaviour, "command": command, "expect": expect}]
-    T.create_task(e, "goal", {"description": "Ship the greeting, with a brief to go with it",
+    T.create_task(e, "goal", {"description": "A program hello.py that prints 'hello, graph', and a non-empty brief.txt beside it",
                               "criteria": [{"name": "brief", "description": "the brief is written",
                                             "check": check("the brief exists", "test -s brief.txt", "exit 0")},
                                            {"name": "code", "description": "the program runs",
@@ -58,7 +50,7 @@ def main() -> None:
     T.decompose(e, "goal", [
         # the human's own node — the system stays passive on it (unregistered id = human)
         {"task_id": "brief", "assignee": "me", "covers": ["brief"],
-         "spec": {"description": "Write the one-line brief", "criteria": [
+         "spec": {"description": "Write a non-empty brief.txt", "criteria": [
              {"name": "b", "description": "brief.txt exists",
               "check": check("the brief exists", "test -s brief.txt", "exit 0")}]}},
         # the delegated node — naming a registered executor IS the delegation
@@ -73,12 +65,25 @@ def main() -> None:
                          "justification": "a stock machine ships python", "invalidation_condition": "it does not"},
                         {"denial": True, "p": 0.05, "justification": "a two-part split this small rarely fails"}])
 
+    # …and nothing of a split starts before its plan's Level-2 check (§9.1): the coordinator's step, asked once
+    print("checking the plan (Level 2) before any child may start…")
+    rev = TL.review_decomposition(e, "goal")
+    print("plan check:", rev.get("what_this_means"))
+    if not rev.get("execution_admitted"):
+        sys.exit(1)
+
     d = Dispatcher(e, agents)
     print("dispatching (a real executor + validator run, ~1-2 min)…")
     d.dispatch_once()
     # ESCALATED is NOT an end — it is the issuer waiting (§12.5), and this loop used to stop
     # there and never stop on ABANDONED. The ends are the settlements.
     while e.graph.get_state(T.TaskId("impl")).name not in ("DONE", "ABANDONED"):
+        # …and the signature is the issuer's — here the human's: the validator's verdict waits for it (§10.2)
+        if (v := T.get_verdict(e, "impl")).get("state") == "VALIDATING" and v.get("verdict"):
+            print(f"the validator says {v['verdict']}; the human issuer signs it")
+            if v["verdict"] != Signal.PASS.name:
+                sys.exit("`get_verdict('impl')` names the failed criteria")
+            T.signal(e, "impl", Signal.PASS.name, "me")
         time.sleep(5)
         d.dispatch_once()
     print("delegated node:", e.graph.get_state(T.TaskId("impl")).name)

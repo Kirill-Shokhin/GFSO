@@ -288,3 +288,19 @@ def test_live_no_session_writes_its_cli_state_at_either_mount(monkeypatch, proje
     at = f"{a.to_inside(str(a.state)) if second else '/home/agent/.claude'}/planted"
     _session(monkeypatch, project, [["Write", {"file_path": at, "content": "x"}]], tools=("Bash", "Write"))
     assert subprocess.run(["docker", "exec", a.container, "test", "-e", at]).returncode != 0, f"written: {at}"
+
+
+@live
+def test_live_nothing_a_session_started_outlives_its_places_last_client(project):
+    """A process that left its call's group and dropped its call's mark escaped the call's ending: it ran on in the
+    place's containers until the place went. The place's last client gone, every command's process goes with it."""
+    s = _place(project)
+    s.commands_env()
+    alive = lambda: subprocess.run(["docker", "exec", s.commands.name, "sh", "-c", "pgrep -c -f '^sleep 302' || true"],
+                                   capture_output=True, text=True).stdout.strip()
+    s.clients |= {"t", "u"}
+    _client(s, f"{shell.CLIENT} -c 'env -u GFSO_CALL setsid sleep 302 >/dev/null 2>&1 &'")
+    s._end_inside("t")
+    assert alive() == "1", "another client of the place still runs: its commands are its own"
+    s._end_inside("u")
+    assert alive() == "0", "a process that dropped its call's mark outlived its place's last client"

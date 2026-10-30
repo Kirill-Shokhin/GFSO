@@ -123,9 +123,14 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
 
 ### Security
+- Docker is part of the installation: `gfso setup` builds the agents' image from the file the package ships and
+  declares it as the execution `default`, which an executor registered without one takes once its project's mode
+  dispatches work; `gfso doctor` says in one line each what of it is missing — Docker, a Docker Desktop of at least
+  4.44.3 (CVE-2025-9074), the image, a model credential for a container.
 - Unattended work — an executor's session, a scope's, a system-held parent's consent — runs on the user's own machine
   only with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`; without it the project stops with the cause named. Work
-  the person does in their own chat runs as before.
+  the person does in their own chat runs as before. A container runs none over a base that is no git repository with a
+  commit, which has no places of its own.
 - In a container execution nothing of the host disk is mounted: places, judges' copies, temps and the sessions' CLI state
   live in per-project Docker volumes, the base is the user's HEAD imported into them, and the root's accepted result
   lands as the branch `gfso/<project>/accepted`, a whole verified commit, the user's working tree untouched. The answer
@@ -140,6 +145,7 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   its own. Every program the system hands Python by `-c` in an agent's tree runs with `-I`.
 - Every container is bounded in memory and processes (4 GiB, 4096 by default; `GFSO_CONTAINER_MEMORY`,
   `GFSO_CONTAINER_PIDS`), and all of the system's containers on a Docker together in three quarters of its memory.
+- The reader of the places a plan is made from works beside the base with a model-client state of its own.
 - The server answers only its own host names (`gfso serve --host`, `GFSO_ALLOWED_HOSTS`), refuses cross-site writes,
   gives a foreign origin reads only, and pins its CDN scripts by subresource integrity. `SECURITY.md` says what a
   container execution holds apart and what it does not.

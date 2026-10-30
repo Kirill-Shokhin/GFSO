@@ -54,8 +54,8 @@ from gfso.engine import Engine
 from gfso import tools as _tools
 from gfso.tools import _agent_id
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
-from gfso.config import (DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, validation_batch,
-                         validate_internal, state_bound)
+from gfso.config import (DEFAULT_EXECUTION, DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, executions, local_agents,
+                         validation_batch, validate_internal, state_bound)
 from gfso.packets import (BUILT, UNCOPIED, TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
                           owed_probes, snapshot_note)
 from gfso.llm import session_calls
@@ -1524,7 +1524,7 @@ _PLACE_SYSTEM = ("You read the place where a goal's work will be done, before it
                  "text defines the work the request asks for: its statement or specification, the interface the "
                  "delivery must meet (how it is built and invoked, what it reads and what it prints), the stubs and "
                  "build files it starts from. Read them to judge; write nothing. Return their paths relative to "
-                 "this directory.")
+                 "the place named in the request.")
 
 
 def _work_place_documents(engine: Engine, request: str, model: str) -> str:
@@ -1534,12 +1534,20 @@ def _work_place_documents(engine: Engine, request: str, model: str) -> str:
     interface that does not exist and, out of budget, `echo` in their place (AUTO haiku 4.5 sql_database,
     GB_sql_database_tmu9cb784, 0.09 held-out). Criteria take their content from contact with the work (d6, §4.1)."""
     named: list = []
+    ex = execution_of(engine)
     for base in _work_places(engine):
-        llm = llm_factory(model, execution=execution_of(engine))
+        llm = llm_factory(model, execution=ex)
         llm.stage_hint = f"root place-reader({engine.project_name})"   # named like every role's trace, so it is read
         try:
-            text = llm.run_agent(_PLACE_SYSTEM, (request or "") + schema_instruction(_PLACE_SCHEMA),
-                                 allowed_tools=("Read", "Glob", "Grep"), cwd=str(base), timeout=600, max_turns=30)
+            # …from a temp of its own where the places stand apart, reading the base read-only: in the base it shared the
+            # model client's state of the root's executor, and read the conversations that state holds
+            if ex.files.holds(str(base)):
+                ex.files.mkdir(here := os.path.join(ex.temp_root(), "plan-reader"))
+            else:
+                here = str(base)
+            text = llm.run_agent(_PLACE_SYSTEM, f"The work's place: {base.as_posix()}\n\n" + (request or "")
+                                 + schema_instruction(_PLACE_SCHEMA),
+                                 allowed_tools=("Read", "Glob", "Grep"), cwd=here, timeout=600, max_turns=30)
         except Exception:                                   # noqa: BLE001 — the goal is set from the request alone
             log.warning("reading the work's place failed", exc_info=True)
             continue
@@ -1902,6 +1910,7 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
         return {"refused": True, "error": _IN_CHAT_APART.format(execution)
                 + " Set the mode again with `perform=\"dispatch\"` first."}
     agents = _roster(engine)
+    execution = execution or (_default_execution(engine, engine.mode(), agents) if kind == "llm-executor" else None)
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
                           oracle_map=oracle_map, max_turns=max_turns, client=client, context_budget=context_budget,
                           project=engine.project_name, execution=execution)
@@ -1995,12 +2004,39 @@ def unregister_agent(engine: Engine, agent_id: str, workdir: Optional[str] = Non
 _MODE_STAFF = {Mode.AUTO: 2, Mode.SEMI: 1, Mode.SOLO: 0}
 
 
+def _default_execution(engine: Engine, mode: Optional[dict], agents) -> Optional[str]:
+    """WHERE A PROJECT'S EXECUTORS NAMING NO EXECUTION WORK: the installation's "default" (`gfso setup` declares it), so
+    delegation on a new install runs in a container with no hand step — once the project's `mode` dispatches its work (a
+    mode set, not `in_chat`): with none set, the user's agent builds nodes in its own chat beside delegated ones, and
+    the whole project moved into a volume that does not hold that work (critic). Not where the project already runs
+    somewhere, nor where the user said unattended work may run on this host."""
+    if not mode or mode.get("perform") == "in_chat" or local_agents() or declaring_role(engine, agents) is not None:
+        return None
+    try:
+        return DEFAULT_EXECUTION if DEFAULT_EXECUTION in executions() else None
+    except ValueError:
+        return None          # …an unreadable declaration: the registration names no execution, as before setup
+
+
+def _executors_into(engine: Engine, execution: Optional[str], agents, which: Optional[list] = None) -> list:
+    """The project's executors (`which`, else every one naming no execution) registered again under `execution` — the
+    ones it moved."""
+    moved = []
+    for aid, c in agents.list().items():
+        if c.get("kind") == "llm-executor" and c.get("project") == engine.project_name and (
+                aid in which if which is not None else not c.get("execution")):
+            agents.register(aid, "llm-executor", **{k: c.get(k) for k in ("model", "workdir", "validator", "oracle_map",
+                            "max_turns", "client", "project", "context_budget")}, execution=execution)
+            moved.append(aid)
+    return moved
+
+
 #: why `in_chat` is refused under a container execution
 _IN_CHAT_APART = ("this project's work runs in the container execution {!r}, where every place and the base "
                   "stand in the project's volume and only what stands there is judged; in_chat work is done on this "
                   "host, in none of them. Set `perform=\"dispatch\"` (a session of this project's executor performs "
                   "your nodes in its own place), or run the project on this host (its roles registered with no "
-                  "`execution`).")
+                  "`execution`: `unregister_agent` the ones that name one, and register them again without it).")
 
 
 def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
@@ -2154,14 +2190,22 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
             return {"refused": True, "error": "name a mode, or a setting of this project to change"}
         rec = engine.set_settings(settings, AgentId(agent or _agent_id()), said=str(user_said).strip())
         return {**rec, **(_turn_the_way_out(engine) if network is not None else {})}
+    # …the project's executors that name no execution placed in the default as the mode is set — the door registers
+    # first and sets the mode after, and a registration saw no mode (critic); moved back where the mode is refused, or
+    # a refusal shut the user's other choices — in their chat, on this host (critic)
+    agents = _roster(engine)
+    default = _default_execution(engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, agents)
+    moved = _executors_into(engine, default, agents) if default else []
     staff = mode_staffing(engine, m.value, perform)
     pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
     if not staff["ready"]:
+        _executors_into(engine, None, agents, moved)
         return {"refused": True, "error": staff["missing"], "executors": staff["executors"]}
     try:
         rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
                               hands=str(pool[0]) if dispatch else None, settings=settings)
     except ValueError as e:
+        _executors_into(engine, None, agents, moved)
         return {"refused": True, "error": str(e)}
     return {**rec, **(_turn_the_way_out(engine) if network is not None else {}), "executors": [str(a) for a in pool],
             "holds": {"solo": "you hold every node",

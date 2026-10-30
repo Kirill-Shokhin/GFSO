@@ -55,6 +55,11 @@ def agents_path() -> Path:
     return Path(os.environ.get("GFSO_AGENTS_PATH") or (data_dir() / "agents.json"))
 
 
+def use_agents_path(path: str) -> None:
+    """This process's roster at `path` from now on — one a demo keeps apart from the installation's."""
+    os.environ["GFSO_AGENTS_PATH"] = str(path)
+
+
 def executions_path() -> Path:
     """Where a project's sessions may run besides this host — a DECLARATION, read, never written by a door:
     `{name: {"image", "env_file", "state"?, "network"?}}` (`state` defaults to `<data_dir>/executions/<name>/claude`;
@@ -69,6 +74,10 @@ def executions() -> dict:
     p = executions_path()
     got = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
     return {n: {**d, "state": d.get("state") or str(data_dir() / "executions" / n / "claude")} for n, d in got.items()}
+
+
+#: the execution `gfso setup` declares on the shipped agent image, which an executor naming none takes
+DEFAULT_EXECUTION = "default"
 
 
 # ── The names two or more modules have to agree about ───────────────────────────────────────────

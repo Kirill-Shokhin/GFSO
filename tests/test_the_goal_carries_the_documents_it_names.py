@@ -6,6 +6,9 @@ workdir (spreadsheet_engine, AUTO haiku — EVIDENCE_LOG §13.38).
 """
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import gfso.tools_llm as TL
 from gfso.core.graph.model import USERS_PLAN_KEY
 from gfso.core.types import TaskId
@@ -96,3 +99,28 @@ def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):
     TL.auto_decompose(e, "the goal", spec=dict(_PLAN))
     assert e._storage.get_setting(USERS_PLAN_KEY) == "root"
     e.stop()
+
+
+def test_where_places_stand_apart_the_reader_works_beside_the_base_not_in_it(tmp_path, monkeypatch):
+    """In the base it shared the model client's state of the root's executor and could read its conversations
+    (measured: a consent's Read of a root executor's conversation there leaked): it reads the base from a temp of its own."""
+    reg = AgentRegistry(str(tmp_path / "roster.json"))
+    (tmp_path / "base").mkdir()
+    reg.register("exec-1", "llm-executor", workdir=str(tmp_path / "base"), project="p")
+    seen, made = {}, []
+
+    class Reader(_Reader):
+        def run_agent(self, system, user, allowed_tools, cwd=None, **kw):
+            seen.update(cwd=cwd, user=user)
+            return super().run_agent(system, user, allowed_tools, cwd=cwd, **kw)
+    apart = SimpleNamespace(files=SimpleNamespace(holds=lambda p: True, mkdir=made.append),
+                            temp_root=lambda: str(tmp_path / "tmp"))
+    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "llm_factory", lambda model=None, **_: Reader())
+    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: apart)
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.project_name = "p"
+    e.record_llm_usage = lambda *a, **k: None
+    named = TL._work_place_documents(e, "a summary", "m")
+    assert seen["cwd"] == made[0] and Path(seen["cwd"]).parent == tmp_path / "tmp"
+    assert (tmp_path / "base").as_posix() in seen["user"] and (tmp_path / "base" / "prompt.md").as_posix() in named

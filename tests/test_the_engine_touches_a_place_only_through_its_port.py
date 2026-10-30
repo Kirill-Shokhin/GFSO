@@ -29,6 +29,8 @@ MODULE_CALLS = {"shutil": None, "tempfile": None,
 
 #: (module, function, call) -> why it touches no place
 HOSTS_OWN = {
+    ("adapters/execution.py", "_no_places", "base.is_dir()"): "the user's own repository on the host, read as its import is",
+    ("adapters/execution.py", "_no_places", "shutil.which('git')"): "the user's own git on the host, as its import uses",
     ("workspaces.py", "stands", "Path(where).is_dir()"): "a directory that is no node's place is a base",
     ("workspaces.py", "made", "HOST.is_dir(place)"): "the legacy record's fallback, a host directory until V2",
     ("core/protocol/procedure.py", "_gone", "HOST.exists(path)"): "a path in no round: the base or outside the places",

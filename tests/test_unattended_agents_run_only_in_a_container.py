@@ -7,6 +7,7 @@ the cause named, nothing of the node runs first, and the stop holds until the wo
 declared. Work a person does in their own chat, and the validator that judges it, run here as before."""
 from __future__ import annotations
 
+import subprocess
 import time
 
 import pytest
@@ -97,7 +98,9 @@ def test_a_mode_that_dispatches_is_not_ready_where_its_work_would_be_refused(no_
     assert TL.mode_staffing(e, "auto", "dispatch")["ready"]
 
 
-def test_a_container_execution_is_never_refused(no_word, tmp_path):
+def test_a_container_execution_over_a_repository_needs_no_word(no_word, tmp_path):
+    for args in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "s"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
     ex = E.ContainerExecution("x", "img", str(tmp_path / "env"), str(tmp_path / "state"), str(tmp_path), "p")
     assert ex.agents_refused() is None
     assert E.LocalExecution().agents_refused()
@@ -116,3 +119,18 @@ def test_a_server_without_the_declared_word_is_not_the_declared_one(monkeypatch)
     monkeypatch.setenv("GFSO_LOCAL_AGENTS", "no")
     assert not said({"code_version": "fp", "local_agents": False}, {"GFSO_LOCAL_AGENTS": "allow"}), (
         "an exported value wins in the spawned server: drift by the declared one would restart it for ever")
+
+
+def test_a_container_runs_no_dispatched_work_over_a_base_that_is_no_repository(tmp_path):
+    """A base with no commit has no places: every session of the project would share one tree and one model client's
+    state. Refused with the cause and its remedy; a repository with a commit runs."""
+    base = tmp_path / "base"
+    base.mkdir()
+    ex = E.ContainerExecution("t", "img", None, str(tmp_path / "state"), str(base), "p")
+    assert "git init" in ex.agents_refused()
+    for args in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "s"]):
+        subprocess.run(["git", "-C", str(base), *args], check=True, capture_output=True)
+    assert E.ContainerExecution("t", "img", None, str(tmp_path / "state"), str(base), "p").agents_refused() is None
+    (base / "sub").mkdir()
+    inside = E.ContainerExecution("t", "img", None, str(tmp_path / "state"), str(base / "sub"), "p").agents_refused()
+    assert str(base) in inside and "if the work is that repository's" in inside,         "the repository it lies in is named as one choice, never as the only one: it may be the user's home (critic)"
