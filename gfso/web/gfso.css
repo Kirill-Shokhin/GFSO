@@ -292,14 +292,16 @@ body {
 .ax-fold path { stroke: var(--ink-faint); stroke-dasharray: 2 3; }
 .ax-fold text { fill: var(--ink-faint); font-size: 9px; }
 /* Progress — one track per node along the split, in the shared selection; the goal's coverage beside it. */
-/* The tracks keep their 480 floor (progress.js draws them no narrower); the coverage, one column per part — 42 on an own
-   plan's root — goes ABOVE them whole when it does not fit beside: a grid let the tracks' column fall below the floor and
-   the coverage ran over them (the author, 2026-10-29); a scroll would cut the root's own column out of sight, and under
-   one track per part it left the view. `wrap-reverse` lays the wrapped line on top, so its start is the bottom and
-   `flex-end` keeps both tops aligned when they share a line. */
-.pg-wrap { display: flex; flex-wrap: wrap-reverse; gap: 28px; align-items: flex-end; }
+/* ONE LAYOUT WHATEVER IS OPEN BESIDE IT: the tracks (their 480 floor, progress.js) and the coverage stand side by side
+   always — opening a node used to send the coverage above and the tracks below the deck's fold (the author, 2026-10-30:
+   «при открытии ноды нижняя панель сжимается и прокрутки влево вправо не появляется»). Short of room, the coverage — one
+   column per part, 42 on an own plan's root — scrolls sideways in its own box with its criteria and the root's own column
+   held in place, so neither is ever out of sight; shorter still, the deck itself scrolls sideways. */
+.pg-wrap { display: flex; gap: 28px; align-items: flex-start; }
 .pg-tracks { flex: 1 1 480px; min-width: 480px; }
-.pg-side { flex: 0 0 auto; }
+.pg-side { flex: 0 1 auto; min-width: 280px; overflow-x: auto; }
+.pg-cov tbody th, .pg-cov thead th.sec { position: sticky; left: 0; background: var(--ui-page); z-index: 1; }
+.pg-cov td.cv-self, .pg-cov thead th.kid:last-child { position: sticky; right: 0; background: var(--ui-page); z-index: 1; }
 .pg { display: block; font-family: var(--font-mono); }
 .pg text { font-size: 10px; fill: var(--ink-soft); }
 .pg .pg-level { text-anchor: start; text-transform: uppercase; letter-spacing: var(--tr-mono); font-size: 9px; fill: var(--ink-faint); }
