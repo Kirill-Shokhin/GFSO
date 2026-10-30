@@ -7,7 +7,7 @@ import {TIP, CELLS} from './hints.js';
 import {label} from './vocab.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip} from './tip.js';
-import {frame, axisWidth, mark, glyph} from './draw.js';
+import {frame, mark, glyph} from './draw.js';
 import {hm, trim} from './fmt.js';
 import {rootOf, isRoot, childrenOf, ancestorsIn} from './tree.js';
 
@@ -32,7 +32,7 @@ function rows(tasks, track) {
 
 function tracks(el, run, name, tasks) {
     const tr = run.criteria.track, rs = rows(tasks, tr), h = r => r.d ? PART : GOAL;
-    const W = axisWidth(el), f = frame(run, W, LEFT);
+    const W = Math.max(el.clientWidth, 480), f = frame(run, W, LEFT);
     let y = TOP;
     const body = rs.map(r => {
         const T = tr[r.id], y0 = (y += h(r)), top = y0 - h(r), at = k => y0 - (k / T.total) * h(r), lm = T.marks.at(-1);

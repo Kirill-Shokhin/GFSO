@@ -297,7 +297,7 @@ export const MODELS = {
     processes: n => hover(`Run in ${n} processes`, 'A session resumed in its own conversation is one session'),
     handed: n => hover(`${n} handed over`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
     moved: hover('Moved to the next credential', "Attempts an account's limit refused; the call ran again on the provider's next credential",
-        'Not counted as sessions above; what they cost is in the run total'),
+        'Not counted as sessions above'),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
     turns: (turned, calls) => hover(`Turns recorded\t${turned}/${calls} sessions`, 'The rest were recorded before turns were kept'),
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The share is of what was priced'),

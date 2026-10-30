@@ -18,6 +18,8 @@ export const NOT_REPORTED = 'not reported';
 export const money = (cost, procs, unpriced) => procs > 0 && unpriced === procs ? NOT_REPORTED : usd(cost);
 export const tok = (x, none = NOT_REPORTED) => x == null ? none : !x ? '0' : x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : `${x}`;
 export const pct = x => `${Math.round(x * 100)}%`;
+// a share of the CPUs Docker counts, one decimal
+export const cpu = x => x == null ? '—' : `${x.toFixed(1)}%`;
 // a size in memory or on disk; one Docker did not give says so
 export const bytes = (x, none = NOT_REPORTED) => x == null ? none : x >= 1e9 ? `${(x / 1e9).toFixed(1)} GB`
     : x >= 1e6 ? `${Math.round(x / 1e6)} MB` : `${Math.round(x / 1e3)} kB`;

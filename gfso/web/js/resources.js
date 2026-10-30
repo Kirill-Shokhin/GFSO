@@ -9,7 +9,8 @@ import {getJSON} from './api.js';
 import {RES} from './hints.js';
 import {S} from './state.js';
 import {nameOf} from './vocab.js';
-import {bytes, pct, trim} from './fmt.js';
+import {bytes, pct, trim, cpu} from './fmt.js';
+import {total} from './run.js';
 
 let last = null, pending = null;
 export function readResources(then) {
@@ -17,9 +18,6 @@ export function readResources(then) {
     pending.then(then);
 }
 
-// a sum over figures none of which Docker gave is none, not 0
-const total = (xs, f) => xs.some(x => f(x) != null) ? xs.reduce((s, x) => s + (f(x) || 0), 0) : null;
-const cpu = x => x == null ? '—' : `${x.toFixed(1)}%`;
 const mark = (figure, label, counted) => tally(figure, label, RES.counted(counted));
 // each role's containers as their own marks, the busy ones beside them
 const roles = cs => {
@@ -39,7 +37,8 @@ export function render(el) {
 function draw(el) {
     const d = last, p = d?.projects.find(x => x.project === S.project);
     if (!d) return void (el.innerHTML = '<div class="pn-meta">reading Docker…</div>');
-    if (!p) return void (el.innerHTML = `<div class="pn-meta">${RES.none}</div>${notes(d)}`);
+    // …nothing of the project where Docker listed nothing says nothing of the project
+    if (!p) return void (el.innerHTML = `${d.read.containers ? `<div class="pn-meta">${RES.none}</div>` : ''}${notes(d)}`);
     const c = p.containers, disk = `<span${RES.volumes((p.volumes || []).map(v => [v.role, bytes(v.bytes, '—')]))}>`
         + `${mark(bytes(p.disk_bytes, '—'), 'disk', p.disk_counted)}</span>`;
     if (!c) return void (el.innerHTML = `<div class="wk"><div class="rs-tallies">${disk}</div>${notes(d)}</div>`);
@@ -70,5 +69,5 @@ export function machine() {
 // …and each row's own: memory while it runs, disk always
 export const ofProject = name => {
     const p = last?.projects.find(x => x.project === name);
-    return !p ? '' : `${p.containers?.running ? `${bytes(p.memory_bytes, '—')}<i>memory</i>` : ''}${bytes(p.disk_bytes, '—')}<i>disk</i>`;
+    return !p ? '' : `${p.containers?.running ? `<b>${bytes(p.memory_bytes, '—')}</b><i>memory</i>` : ''}<b>${bytes(p.disk_bytes, '—')}</b><i>disk</i>`;
 };

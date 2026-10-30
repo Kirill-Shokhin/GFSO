@@ -1203,6 +1203,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pl-cost { text-align: right; }
 .pl-res { text-align: right; white-space: nowrap; }
 .pl-res i { font-style: normal; color: var(--ink-faint); margin: 0 6px 0 3px; }
+.pl-res b { font-family: var(--font-display); font-size: 12.5px; font-weight: 650; color: var(--ink); }
 /* what Docker holds: the machine over the project list, a project's own in its deck view — counts as marks */
 .rs-machine, .rs-tallies { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 6px; }
 .rs-machine { border-bottom: 1px solid var(--hair); }
@@ -1275,7 +1276,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .section-title .tally b, .wk-table .tally b { font-size: 13px; color: var(--ui-text); }
 
 /* ============ A phone — ONE page, laid out for the width (the author, 2026-10-29: «что с мобильной версией в целом»):
-   the header in two rows, the node's panel and reader over the graph whole, the deck taller, its head and its views
+   the header in two rows, the node's panel and reader over the graph whole, the deck's head and its views
    scrolled sideways rather than squeezed. Every view is the same module as on a desk: one owner per rule ============ */
 @media (max-width: 720px) {
     .header { flex-wrap: wrap; gap: 6px 14px; padding: 8px 14px; }
