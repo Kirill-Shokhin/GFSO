@@ -338,7 +338,11 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
     # and no move of the decomposer drops or revises a DONE child (§12.14) — a split whose new child contradicts a DONE
     # one is contact refuting the settled child's claim, which the new child's own check decides. Gated, every honest
     # `add_child` added one more such conflict and the plan sat shut to the row's ceiling (GB_coreutils_tnql66996).
-    reported = [c for c in conflicts if any(_settled(engine, b) for b in c.get("between", ()))]
+    # …only where a side is a settled CHILD of this node and no side is the node itself: a conflict with the node's own
+    # criterion its issuer lifts (CHALLENGE, the node's own contract), and a settled side elsewhere in the graph is no
+    # part of this split (critic over 2f8ddcc)
+    reported = [c for c in conflicts if any(_settled(engine, x, nid) for x in c.get("between", ()))
+                and not any(_side(x) == str(nid) for x in c.get("between", ()))]
     conflicts = tuple(c for c in conflicts if c not in reported)
     covered = not gaps and not conflicts and not short
     findings = "\n".join(
@@ -354,10 +358,15 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
                         undecided_obligations=short, goal_read=True)
 
 
-def _settled(engine, said) -> bool:
-    """Does a conflict's side name a settled node — `root.wc (wc-counts)`: the id before its criterion's gloss."""
-    task = engine.graph.get_task(TaskId(str(said).split()[0])) if str(said).split() else None
-    return task is not None and task.state in (State.DONE, State.ABANDONED)
+def _side(said) -> str:
+    """The node a conflict's side names — `root.wc (wc-counts)`: the id before its criterion's gloss."""
+    return str(said).split()[0] if str(said).split() else ""
+
+
+def _settled(engine, said, nid) -> bool:
+    """Does a conflict's side name a settled child of `nid`'s split?"""
+    task = engine.graph.get_task(TaskId(_side(said))) if _side(said) else None
+    return task is not None and str(task.parent_id) == str(nid) and task.state in (State.DONE, State.ABANDONED)
 
 
 def _plan_generation(task) -> tuple:

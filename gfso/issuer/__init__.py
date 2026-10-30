@@ -395,6 +395,11 @@ def _gate_findings(engine, task_id) -> str:
                                                    and " ".join(w.split())[:60] in k), ""))
              for k in open_]
     own = sum(str(k).startswith("undecided: ") for k in open_)
+    # …and what the review reported without gating — a conflict with a settled child — to the party whose move lifts it:
+    # kept only in the stored record, no issuer saw it (critic over 2f8ddcc)
+    if told := [l for l in str(rec.get("semantic_findings") or "").splitlines() if l.startswith("[reported, not gating")]:
+        holes += ("\n\nReported, not gating (a settled child's criterion against a live one — a new pinned check of the "
+                  "contested behaviour on the live child decides which holds):\n" + "\n".join(f"- {l}" for l in told))
     return (f"Syntactic holes:\n{holes}\n\nLevel-2 findings (a `dispute` names one EXACTLY as written between "
             f"the backticks):\n" + ("\n".join(lines) or "- none")
             + ("\n\nA finding that no child carries one of this node's own pinned probes is closed by giving a child "

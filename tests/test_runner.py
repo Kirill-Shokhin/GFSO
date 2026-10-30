@@ -195,6 +195,16 @@ def test_a_conflict_with_a_settled_child_is_reported_not_gated():
     e.graph.save_task(dataclasses.replace(a, state=State.DONE))
     crit = critique_node(e, TaskId("p"), llm=_CheckerLLM(reply))
     assert crit.semantic_covered is True and "reported, not gating" in crit.semantic_findings, crit.semantic_findings
+    # …but not where the node's own criterion is a side: that conflict its issuer lifts (critic over 2f8ddcc)
+    own = _verdict_json([{"criterion": "c1", "verdict": "sufficient", "why": "a"},
+                         {"criterion": "c2", "verdict": "sufficient", "why": "b"}],
+                        [{"between": ["a (a1)", "b (b1)", "p (c2)"], "why": "b pins 3, p's c2 says 4"}])
+    assert critique_node(e, TaskId("p"), llm=_CheckerLLM(own)).semantic_covered is False
+    # …nor where the settled side lies outside this split
+    alien = _verdict_json([{"criterion": "c1", "verdict": "sufficient", "why": "a"},
+                           {"criterion": "c2", "verdict": "sufficient", "why": "b"}],
+                          [{"between": ["p (c1)", "b (b1)"], "why": "x"}])
+    assert critique_node(e, TaskId("p"), llm=_CheckerLLM(alien)).semantic_covered is False
 
 
 def test_a_doubt_a_later_reading_raised_on_a_criterion_the_first_left_out_stands():

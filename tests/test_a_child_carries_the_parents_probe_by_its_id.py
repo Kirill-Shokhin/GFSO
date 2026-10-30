@@ -124,3 +124,15 @@ def test_a_probe_of_a_child_of_the_split_is_carried_by_its_id():
     got = out[0]["check"][0] if not why else {}
     assert got.get("command") == kid.check[0].command and dict(got.get("inputs") or {}) == dict(kid.check[0].inputs), why
     e.stop()
+
+
+def test_the_issuer_is_told_a_conflict_reported_without_gating(monkeypatch):
+    """A conflict with a settled child the review reports beside its verdict reaches the issuer's findings — kept only
+    in the stored record, no issuer saw it (critic over 2f8ddcc). CONTROL: drop the section and it is absent."""
+    class _E:
+        def split_holes(self, t): return []
+        def open_l2_findings(self, t): return []
+        def get_critique(self, t):
+            return {"semantic_findings": "[reported, not gating — one side is settled] root.wc (w), root.x (y) — 4 vs 3"}
+    monkeypatch.setattr(I, "seam_findings", lambda e, t: [])
+    assert "root.wc (w), root.x (y) — 4 vs 3" in I._gate_findings(_E(), "root")
