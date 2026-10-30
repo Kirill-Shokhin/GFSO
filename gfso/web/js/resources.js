@@ -13,12 +13,21 @@ import {bytes, pct, trim, cpu, dur} from './fmt.js';
 import {total} from './run.js';
 
 let last = null, pending = null, asked = false;
-// …a reading is taken only in its shape: a server without the door answers no reading, and the views say so
+const shown = new Set();      // the views drawing the reading now: each redraws itself when a new one arrives
+const take = d => { if (Array.isArray(d?.projects)) { last = d; shown.forEach(f => f()); } };
+// …a reading is taken only in its shape: a server without the door answers no reading, and the views say so. The page
+// ASKS once, for what the server holds; every reading after that the server PUSHES as it takes it (`resources` on the
+// live feed) — a look never makes the server read Docker (the author, 2026-10-30: «интерфейс не должен тригерить новый
+// опрос докера. он должен отобразить текущее число»)
 export function readResources(then) {
-    pending ??= getJSON('/api/resources').then(d => { if (Array.isArray(d?.projects)) last = d; }, () => {})
-        .finally(() => { pending = null; asked = true; });
+    if (last) return void then?.();
+    pending ??= getJSON('/api/resources').then(take, () => {}).finally(() => { pending = null; asked = true; });
     pending.then(then);
 }
+export const onReading = take;                        // main.js: the live feed's `resources`
+export const whileShown = f => shown.add(f);
+// the age of what is shown counts on by itself, a display, not a read — «4s ago» stood a minute
+setInterval(() => document.querySelectorAll('[data-ago]').forEach(e => { e.textContent = ago(+e.dataset.ago); }), 1000);
 
 const mark = (figure, label, counted) => tally(figure, label, RES.counted(counted));
 // each role's containers as their own marks, the busy ones beside them
@@ -30,8 +39,9 @@ const roles = cs => {
 // HOW OLD THE READING IS — Docker's figures stand a while server-side (`read_at`, security 0c63f5a): the oldest of what is
 // shown, each reading's age on hover, so an old picture is not taken for now
 const ago = t => t == null ? 'never' : dur(Math.max(0, Date.now() - t * 1e3));
-const age = d => { const r = d.read_at || {}, ts = Object.values(r).filter(t => t != null);
-    return ts.length ? tally(ago(Math.min(...ts)), 'ago', RES.ages(Object.entries(r).map(([k, t]) => [k, ago(t)]))) : ''; };
+// …said by the containers' and their figures' reading, the one taken every few seconds; the disk's, a minute apart, on hover
+const age = d => { const r = d.read_at || {}, ts = [r.containers, r.stats].filter(t => t != null);
+    return ts.length ? tally(`<span data-ago="${Math.min(...ts)}">${ago(Math.min(...ts))}</span>`, 'ago', RES.ages(Object.entries(r).map(([k, t]) => [k, ago(t)]))) : ''; };
 // …the server's poller keeps the last reading (security 8746d6a): before its first, nothing is read yet — no failure
 const notes = d => [!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
     : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread,
@@ -40,7 +50,8 @@ const notes = d => [!Object.values(d.read_at || {}).some(t => t != null) ? RES.f
 
 // THE DECK'S VIEW: this project, node by node, then the project's own containers
 export function render(el) {
-    readResources(() => { if (el.isConnected && el._drawn === 'resources') draw(el); });
+    if (!el._reading) el._reading = true, whileShown(() => { if (el.isConnected && el._drawn === 'resources') draw(el); });
+    readResources();
     draw(el);
 }
 function draw(el) {

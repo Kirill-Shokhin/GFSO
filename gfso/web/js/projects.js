@@ -9,7 +9,7 @@ import {S, procs} from './state.js';
 import {notice, askInPage, act} from './overlays.js';
 import {modelName, goalWord, terminal} from './vocab.js';
 import {hm, day as date, dayLong, usd} from './fmt.js';
-import {readResources, machine, ofProject} from './resources.js';
+import {readResources, machine, ofProject, whileShown} from './resources.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
 export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (m[w.project] || 0) + 1, m), {});
@@ -17,6 +17,7 @@ export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (
 const SHOWN = 40;           // rows before "more": the newest runs are the ones looked for
 let all = null, shown = SHOWN;
 const panel = () => $('project-panel');
+whileShown(() => { if (!panel().hidden) draw(); });   // a new reading redraws the list while it is open
 
 export async function refreshProjects() {
     let d;
@@ -132,7 +133,7 @@ export async function toggleProjects() {
     shown = SHOWN;
     await refreshProjects();
     draw();
-    readResources(() => { if (!panel().hidden) draw(); });
+    readResources();
     $('pl-search').focus();
 }
 export const closeProjects = () => { panel().hidden = true; };

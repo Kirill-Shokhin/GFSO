@@ -18,6 +18,7 @@ import {connectWS} from './live.js';
 import {askProjectName} from './overlays.js';
 import {mountHints} from './hints.js';
 import {drawPlanning} from './planning.js';
+import {onReading} from './resources.js';
 
 // THE REFRESHES, each a read of the page's model (model.js) and then the drawing of what it read. SERIALISED (api.js
 // singleFlight): a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each other.
@@ -94,6 +95,7 @@ const LIVE = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
     pipeline: d => { if (onPipeline(d)) later(); if (d.source === 'pause') { refreshHeader(); projects(); } },
     projects,                                          // a project appeared
+    resources: onReading,                              // the server took a new reading of Docker
     // this tab's own project came to exist while the feed was refused: nothing of it was pushed here, so read it all
     async reopened() { await S.reload(); await readInFlight(); refreshDeck().then(afterDeck); },
     inflight: d => applyInFlight(d.in_flight),         // a process of the server started or ended
