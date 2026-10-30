@@ -1210,12 +1210,9 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
    size or capitals of its own, which put two or three faces in one mark (the author, 2026-10-30: «все цифры просто стали
    больше … глаз режет»; «кажется ты еще и шрифт заменил») */
 .tally { display: inline-flex; align-items: baseline; gap: 0.4em; white-space: nowrap; }
-.tally b { font-family: var(--font-display); font-weight: 650; font-size: 1.15em; color: var(--ink); }
-/* …the brand's face for the figure, a step larger so its small x-height reads the height of the words beside it (C). TO THE
-   AUTHOR'S EYE, 2026-10-30, one restart: `&fig=a` the line's face, `&fig=b` the brand face at the line's size — to drop
-   with the choice */
-body[data-fig="a"] .tally b { font-family: inherit; font-weight: 700; font-size: 1em; }
-body[data-fig="b"] .tally b { font-size: 1em; }
+.tally b { font-family: var(--font-display); font-weight: 650; color: var(--ink); }
+/* …the brand's face for the figure at its line's size — chosen by the author's eye on the live page over the line's own face
+   and over the brand face a step larger (2026-10-31: «b вариант все таки больше нравится») */
 .tally i { font-style: normal; opacity: 0.75; }
 /* THREE MARKS, EACH ITS OWN — where the goal stands, how many parts are done, what needs a person — one face and size on
    one baseline, apart by a gap and a hairline (the author, 2026-10-30: «8/11 на пол головы выше … как минимум 3 шрифта»;
