@@ -132,7 +132,7 @@ BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
               # a private NAME imported from another module (`from gfso.x import _y`): the layering gate reads it as an
               # ordinary import, and nothing counted it (sync audit, D-F17, 2026-10-05) — measured, to fall from here;
               # 39 read as written, 53 resolved (relative imports: a package's own re-exports, gfso.engine's siblings)
-              "private_import": 49,   # ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
+              "private_import": 50,   # ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
               "monkey_patch": 0, "foreign_path": 0,
               "duck_private": 0,
               # 2 (2026-09-03, S7): a `getattr` with a default over a DECLARED field says the
