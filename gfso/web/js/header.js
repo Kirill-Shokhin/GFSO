@@ -16,7 +16,7 @@ const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 // A CLOSED GOAL IS A VERDICT, said as one word in the header's own voice — DONE, FAILED, CANCELLED — the one thing a
 // person opening a finished project looks for; an open goal is a sentence of where it stands, which caps would not carry
 // (the author, 2026-10-27: «это ключевой вердикт … разные статусы можно и отображать по-разному»).
-// …in the project list's words (vocab.js `goalWord`): done, failed, abandoned
+// …in the project list's words (vocab.js `goalWord`): done, failed, cancelled
 // The open root: where it stands in one phrase, in vocab's words where it has them, and — a mark of its own, never
 // threaded into the phrase — how many of its parts are done, the figure large (the author, 2026-10-29: «цифры опять
 // спрятаны между букв … статус стоит через тире»). A cancelled part is not owed, so it leaves N: counted, a finished

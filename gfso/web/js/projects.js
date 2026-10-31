@@ -53,10 +53,10 @@ function where(p, busy) {
     // a project with no goal yet but work on it is the system authoring its plan — at work, never «no goal yet» as if idle
     // (the author, 2026-10-30: «инфу о том что 7 докеров идут вижу … а самой строки в проектах нет»)
     if (!r) return busy ? ['live', 'the plan being authored'] : ['empty', 'no goal yet'];
-    // a closed goal in the header's word; the list's row says what an abandoned one lacks
+    // a closed goal in the header's word; the list's row says what a cancelled one lacks
     // …and an open goal a FAIL left on the issuer's decision is marked failed too: the run looked for did not make it
     const word = goalWord(r) || (r.done_reason === 'FAIL' ? 'failed' : '');
-    if (word) return [word === 'done' ? 'done' : 'bad', word === 'abandoned' ? 'abandoned · not delivered' : word];
+    if (word) return [word === 'done' ? 'done' : 'bad', word === 'cancelled' ? 'cancelled · not delivered' : word];
     // a stop is the person's act on the run, not a failure: said as theirs, with why — and while sessions it let
     // finish still run, as stopping (the engine's three states, `run_state`)
     const stop = p.stopped;

@@ -4,7 +4,7 @@
 // of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
 import {esc} from './dom.js';
 import {TIP, CELLS} from './hints.js';
-import {label} from './vocab.js';
+import {label, cancelled} from './vocab.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, axisWidth, mark, glyph} from './draw.js';
@@ -43,11 +43,14 @@ function tracks(el, run, name, tasks) {
         const lx = 8 + Math.max(r.d - 1, 0) * INDENT;
         const caret = r.kids && r.d ? `<tspan class="pg-caret">${unfolded.has(r.id) ? '▾' : '▸'} </tspan>` : '';
         // a name cut to the track's width: the whole of it on hover (the caret makes the text differ, so only when cut)
-        const label = r.d ? name(r.id) : "the goal's criteria", fits = 34 - Math.max(r.d - 1, 0) * 2;
-        return `<g class="pg-track${r.d ? ' pg-part' : ''}" data-node="${esc(r.id)}">
+        const title = r.d ? name(r.id) : "the goal's criteria", fits = 34 - Math.max(r.d - 1, 0) * 2;
+        // A CANCELLED PART owes nothing: its track is kept for its history, faint as its tombstone on the graph, and says
+        // the word where a count would read as work left undone («0 of 1» on a DONE parent — the author, 2026-10-31)
+        const gone = cancelled(tasks.find(t => t.id === r.id));
+        return `<g class="pg-track${r.d ? ' pg-part' : ''}${gone ? ' pg-gone' : ''}" data-node="${esc(r.id)}">
             <rect class="pg-band" x="0" y="${top - GAP / 2}" width="${W}" height="${h(r) + GAP}"/>
-            <text class="pg-level" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}${label.length > fits ? TIP.cell(label) : ''}>${caret}${esc(trim(label, fits))}</text>
-            <text class="pg-count" x="${LEFT - 10}" y="${top + (r.d ? 24 : 28)}">${last}<tspan> of ${T.total}</tspan></text>
+            <text class="pg-level" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}${title.length > fits ? TIP.cell(title) : ''}>${caret}${esc(trim(title, fits))}</text>
+            <text class="pg-count" x="${LEFT - 10}" y="${top + (r.d ? 24 : 28)}">${gone ? `<tspan>${label('ABANDONED').toLowerCase()}</tspan>` : `${last}<tspan> of ${T.total}</tspan>`}</text>
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>
             <path class="pg-area" d="${f.area(T.steps, y0, h(r), T.total)}"/>
@@ -68,7 +71,7 @@ function coverage(run, nodes, tasks) {
     const maps = root.criterion_mappings || [], st = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const kids = [...new Set(maps.map(m => m.child_id))], self = run.criteria.status[root.id] || {}, name = run.name;
     const cell = (c, k) => !maps.some(m => m.criterion_name === c && m.child_id === k) ? '<td></td>'
-        : `<td data-node="${esc(k)}"${TIP.cell(name(k), c)}><i class="cv cv-${st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : 'open'}"></i></td>`;
+        : `<td data-node="${esc(k)}"${TIP.cell(name(k), c)}><i class="cv cv-${st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : st[k] === 'ABANDONED' ? 'gone' : 'open'}"></i></td>`;
     const rows = run.criteria.names[root.id].map(c => `<tr><th${c.length > 30 ? TIP.cell(c) : ''}>${esc(trim(c, 30))}</th>
         ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase()) : '⊥'}</td></tr>`).join('');
     return `<table class="pg-cov"><thead><tr><th class="sec">the goal's criteria</th>

@@ -49,7 +49,9 @@ export const consented = s => s === 'EXECUTING' || s === 'REWORKING';
 // cancelled: ABANDONED, or the legacy DoneReason of pre-v3.7 rows
 export const cancelled = t => t?.state === 'ABANDONED' || t?.done_reason === 'CANCELLED';
 // a closed goal in one word: done only when delivered, failed by a FAIL, else abandoned; '' while it is open
-export const goalWord = root => !terminal(root?.state) ? '' : delivered(root) ? 'done' : root.done_reason === 'FAIL' ? 'failed' : 'abandoned';
+// ONE WORD for the state the engine calls ABANDONED: «cancelled», as its label, its key row and the Cancel that reaches it
+// say — the timeline wrote the engine's name and the list «abandoned» beside «Cancelled» (the author, 2026-10-31)
+export const goalWord = root => !terminal(root?.state) ? '' : delivered(root) ? 'done' : root.done_reason === 'FAIL' ? 'failed' : 'cancelled';
 // a node the plan left unnamed is said by its id, never as nothing
 export const nameOf = t => t?.name || t?.id;
 // A Dep edge's bare declaration (`dep__…` with no check) is no criterion of its consumer — V leaves it out (Spec.conjuncts);

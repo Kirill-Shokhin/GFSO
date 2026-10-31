@@ -338,6 +338,9 @@ body {
 .cv-done { background: var(--ink); }
 .cv-open { border: 1.5px solid var(--ink-soft); }
 .cv-rework { border: 2px solid var(--acc); }
+.cv-gone { border: 1.5px dashed var(--ink-faint); }
+/* a cancelled part's track: kept for its history, faint as its tombstone on the graph */
+.pg .pg-gone { opacity: 0.45; }
 .pg-legend { font-size: 10.5px; color: var(--ink-faint); margin-top: 8px; max-width: 520px; line-height: 1.5; }
 .pg-legend .cv { width: 8px; height: 8px; margin: 0 3px 0 8px; }
 .dk-block { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; font-size: 11.5px; background: none; border: none; border-left: 1px solid var(--hair); padding: 0 0 0 10px; color: var(--ink-soft); cursor: pointer; white-space: nowrap; }

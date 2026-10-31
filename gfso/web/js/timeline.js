@@ -7,6 +7,7 @@ import {tip, untip} from './tip.js';
 import {frame, axisWidth, mark} from './draw.js';
 import {trim} from './fmt.js';
 import {failedOf} from './run.js';
+import {label} from './vocab.js';
 import {TIP, KIND, waitWords} from './hints.js';
 
 // an outlined bar (an issuer's turn, a consent) is drawn over the filled ones: it can run beside an execution or a
@@ -65,7 +66,7 @@ export function render(el, run, nodes) {
     // the names it waits on cut to fit: the whole of them on hover
     const waitsOn = (id, cut) => `waits on ${waitWords(run.waits[id], d => cut ? trim(name(d), 24) : name(d))}`;
     const idle = id => run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : !run.waits[id]?.deps.length
-        ? `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${esc(state[id].toLowerCase())}</text>`
+        ? `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${esc(label(state[id]).toLowerCase())}</text>`
         : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}"${TIP.cell(waitsOn(id))}>${esc(waitsOn(id, true))}</text>`;
     // the bar kinds are a LABEL (hints.js): read each time, so drawn beside the bars; PASS and FAIL are the key's
     // consent shown only where a run has it: rows recorded before it was booked apart have none

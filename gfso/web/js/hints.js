@@ -96,7 +96,7 @@ const KEY = [
 export const keyPop = () => pop('How to read the page', 'Each mark means one thing in every view.', KEY.map(it => it.group ? it : {...it, key: true}));
 
 // ── LABELS drawn beside a thing ──
-export const CELLS = [['done', 'part done'], ['open', 'part open'], ['rework', 'part in rework']];
+export const CELLS = [['done', 'part done'], ['open', 'part open'], ['rework', 'part in rework'], ['gone', 'part cancelled']];
 
 // ── the page's frame: index.html names these by `data-hint`, `mountHints()` writes them; the views use `frame()` ──
 const FRAME = {
