@@ -1,7 +1,7 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
 import {esc, tally, lasting} from './dom.js';
-import {TIP, KIND, levelName} from './hints.js';
+import {TIP, KIND, levelName, sessionsOf} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
 import {dur, trim, money as reported, NOT_REPORTED, tok} from './fmt.js';
 import {concurrency} from './run.js';
@@ -30,7 +30,7 @@ function bars(title, rows, measure, fmt, attr, part, says) {
         const total = Object.values(r.parts).reduce((s, p) => s + measure(p), 0);
         return `<div class="cs-row" ${attr(r)}><span class="cs-label"${r.label.length > 22 ? TIP.cell(r.label) : ''}>${esc(trim(r.label, 22))}</span>
             <span class="cs-bar">${Object.entries(r.parts).filter(([, p]) => measure(p) > 0).map(([k, p]) => `<i class="cs-${k}" style="width:${(measure(p) / max) * 100}%"`
-                + `${TIP.part(k, part(p), measure(p) / (total || 1), p, says)}></i>`).join('')}</span>
+                + `${TIP.part(k, part(p, k), measure(p) / (total || 1), p, says)}></i>`).join('')}</span>
             <span class="cs-num">${fmt(total, r)}</span></div>`; }).join('')}</section>`;
 }
 
@@ -62,7 +62,7 @@ export function render(el, run, nodes) {
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`, p => dur(p.busy), 'busy')}
             ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '', p => money([p]), 'cost')}
             ${bars(`sessions by assignee${cut ? ` <span${TIP.prefix(ids[0].slice(0, cut))}>(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
-                   (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, () => '', p => p.calls, 'calls')}
+                   (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, () => '', (p, k) => sessionsOf(k, p.calls), 'calls')}
         </div></div>`;
     bindFocus(el);
     bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));

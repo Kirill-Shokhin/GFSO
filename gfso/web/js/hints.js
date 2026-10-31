@@ -69,7 +69,7 @@ const KEY = [
     // one mark, the round count; its accent is a state of it, not a second mark (the author: «почему это две разные и одинаковой иконкой»)
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
-     head: 'Session handed over', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
+     head: 'Session passed on', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
     {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it with its parts · the background shows the whole graph'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
@@ -267,16 +267,18 @@ export const PANEL = {
 
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
-// THE HANDOVERS of a stretch: how full its context stood when it handed over, a share of the model's whole window (the
-// author, 2026-10-31: «информации о например размере контекста на обрезанной нет … относительно полного доступного
-// контекста») — one cut its moment and fill; many, how many and the fullest, the range beside it (51 cuts made a tip
-// 2000 px tall). The budget a session ran under is not recorded per session yet, so it is not said.
+// THE CUTS of a stretch — a session passing its work on to a fresh one: how full its context stood then, its share of the
+// model's whole window said as the figure (the author, 2026-10-31: «информации о например размере контекста на обрезанной
+// нет … относительно полного доступного контекста») — each cut its moment, its tokens and its share, up to CUTS; past
+// that, how many and the range, the fullest as the share (51 rows made a tip 2000 px tall). «Passed on», never «handed
+// over», which the key keeps for a node offered. The budget a session ran under is not recorded per session yet.
+const CUTS = 5;
 const cuts = cs => { const seen = cs.filter(c => c.peak && c.window), w = seen[0]?.window;
     if (!cs.length) return [];
-    if (!seen.length) return [`${plural(cs.length, 'handover')}, context not recorded`];
+    if (!seen.length) return [`Passed on ${plural(cs.length, 'time')}, its context not recorded`];
     const lo = Math.min(...seen.map(c => c.peak)), hi = Math.max(...seen.map(c => c.peak));
-    return cs.length === 1 ? [meter(`Handed over ${hm(cs[0].t)}, of the ${tok(w)} window`, hi / w, tok(hi))]
-        : [meter(`${cs.length} handed over, the fullest of the ${tok(w)} window`, hi / w, tok(hi)), `Each at ${tok(lo)}–${tok(hi)}`]; };
+    return cs.length <= CUTS ? [`Passed on: context, of the ${tok(w)} window`, ...seen.map(c => meter(`${hm(c.t)}, ${tok(c.peak)}`, c.peak / w))]
+        : [`Passed on ${cs.length} times: context ${tok(lo)}–${tok(hi)} of the ${tok(w)} window`, meter('the fullest', hi / w)]; };
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
@@ -319,7 +321,7 @@ export const MODELS = {
     // a session resumed in its own conversation is ONE session, however many processes the CLI ran it in (engineering, the
     // author 2026-10-27: «чем это не обычные сессии? почему отдельный счёт?») — the processes are a hover at most
     processes: n => hover(`Run in ${n} processes`, 'A session resumed in its own conversation is one session'),
-    handed: n => hover(`${n} handed over`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
+    handed: n => hover(`Passed on ${plural(n, 'time')}`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
     moved: hover('Moved to the next credential', "Attempts an account's limit refused; the call ran again on the provider's next credential",
         'Not counted as sessions above'),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
