@@ -59,8 +59,9 @@ export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     el.onclick = e => {
         const n = e.target.closest('[data-node]');
         if (!n) return;
-        // …a finger: an Events group's head unfolds it, as its own tap — it does not also open the node (critic 11)
-        if (TOUCH.matches && e.target.closest('summary')) return;
+        // …a finger: an Events group's head unfolds it, as its own tap — it does not also open the node (critic 11) — and by the
+        // one rule: a cut name's first tap shows its whole, the second unfolds, as a Progress part name does (critic 16)
+        if (TOUCH.matches && e.target.closest('summary')) return void (firstTap(e) && e.preventDefault());
         if (TOUCH.matches) point('hover', n.dataset.node), onMove(e);
         if (firstTap(e)) return;               // a finger's first tap: the tip (tip.js); its second, or a mouse: select
         if (TOUCH.matches) onLeave();

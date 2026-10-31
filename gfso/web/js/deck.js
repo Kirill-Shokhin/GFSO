@@ -73,7 +73,7 @@ function strip() {
         // what is red comes first after what is at work: the line scrolls, and the last of it is the first behind its fade (critic)
         // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
         // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
-        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" data-k="back"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '')
+        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" data-k="back|${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '')
         + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
