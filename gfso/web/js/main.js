@@ -35,7 +35,7 @@ const projects = () => refreshProjects().then(onInflight);
 // header; the open node's panel when a line names it (a dispute, a verdict, a validation change it with no transition);
 // all of it — plan, header, panel, the goal form — for a mode or a plan changed. Each line read at once read the panel
 // twice and the plan ten times over a burst of ten (critic 6)
-let soon = null;
+let soon = null, paneled = 0;
 const want = {header: false, panel: false, all: false};
 const later = (o = {}) => {
     for (const k in o) want[k] ||= o[k];
@@ -44,7 +44,9 @@ const later = (o = {}) => {
         const w = {...want};
         for (const k in want) want[k] = false;
         if (w.all) { await S.reload(); goal.recheckHolds(); }
-        else { if (w.header) await refreshHeader(); if (w.panel && focus().select) await selectTask(focus().select); }
+        if (!w.all && w.header) await refreshHeader();
+        // …a transition read the panel just now: the line narrating it adds nothing
+        if (!w.all && w.panel && focus().select && Date.now() - paneled > 3e3) await selectTask(focus().select);
         refreshDeck().then(drawPlanning);
     }, 1500);
 };
@@ -155,7 +157,7 @@ const LIVE = {
         if (!restyle(d.task_id, d.new_state) || terminal(d.new_state) || d.new_state === 'ESCALATED') await refreshGraph();
         await refreshQuality(); await refreshHeader();
         // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION: its checks are computed from the CHILDREN.
-        if (focus().select) await selectTask(focus().select);
+        if (focus().select) { await selectTask(focus().select); paneled = Date.now(); }
         refreshDeck().then(afterDeck);
     },
 };

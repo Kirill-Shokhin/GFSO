@@ -4,7 +4,7 @@
 // колво агентов, проекты». One reading serves every view: a view asks again when it is drawn, and shares a read in flight.
 // What Docker did not answer is null in the reading and says so here — never a 0 (no `docker info`: no machine; no
 // container listing: no containers, nodes or system rows).
-import {esc, tally, morph} from './dom.js';
+import {esc, tally, morph, daily} from './dom.js';
 import {getJSON} from './api.js';
 import {RES} from './hints.js';
 import {S} from './state.js';
@@ -28,6 +28,7 @@ export const onReading = take;                        // main.js: the live feed'
 // …and after the feed was lost a reading may have been missed: the server pushes only a CHANGED one, so ask once more
 export const rereadResources = () => { last = null; if (shown.size) readResources(() => shown.forEach(f => f())); };
 export const whileShown = f => shown.add(f);
+daily(() => shown.forEach(f => f()));   // «last read» said without its day gains it at midnight
 
 const mark = (figure, label, counted) => tally(figure, label, RES.counted(counted));
 // each role's containers as their own marks, the busy ones beside them

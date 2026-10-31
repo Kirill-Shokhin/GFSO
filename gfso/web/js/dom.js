@@ -27,6 +27,9 @@ export const tally = (figure, label, attrs = '') => `<span class="tally"${attrs}
 export const since = t => `<span data-since="${t}">${dur(Date.now() - t)}</span>`;
 // a span that grows while its run is open (`from` its moment) and stands when it is closed — one figure for every view
 export const lasting = (from, ms) => from ? since(from) : dur(ms);
+// a view saying today's moments without their day draws again once the day turns
+export const daily = f => { let t; const arm = () => { clearTimeout(t); const m = new Date(); m.setHours(24, 0, 1, 0);
+    t = setTimeout(() => { f(); arm(); }, m - Date.now()); }; arm(); };
 export const due = t => ` data-due="${t}"`;
 export function ages() {
     const now = Date.now();

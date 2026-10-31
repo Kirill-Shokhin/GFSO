@@ -1,7 +1,7 @@
 // The header, by significance: the project's goal and where it stands, then ONLY what needs a person
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
-import {$, esc, data, tally} from './dom.js';
+import {$, esc, data, tally, daily} from './dom.js';
 import {H, QUALITY} from './hints.js';
 import {post, GOAL} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
@@ -146,12 +146,9 @@ function stalled(calls) {
     return need(1, `stalled since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled');
 }
 let wake;
+daily(() => drawHeader());   // a moment said without its day (today's) gains it at midnight
 
-// …a moment said without its day (today's) needs it once the day turns: the header is drawn again at midnight
-let night;
-const atMidnight = () => { clearTimeout(night); const t = new Date(); t.setHours(24, 0, 1, 0); night = setTimeout(drawHeader, t - Date.now()); };
 export async function drawHeader() {
-    atMidnight();
     // the left side is written ONCE, after every read: written first and the switch added after the frontier's
     // answer, the Stop button was missing for the length of each read — a blinking button on a live run
     const left = await goal();

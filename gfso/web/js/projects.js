@@ -8,7 +8,7 @@ import {PROJECT, getJSON, api, leave} from './api.js';
 import {S, procs} from './state.js';
 import {notice, askInPage, act} from './overlays.js';
 import {modelName, goalWord, terminal} from './vocab.js';
-import {hm, day as date, dayLong, usd} from './fmt.js';
+import {hm, dayLong, usd, clockAt} from './fmt.js';
 import {readResources, machine, ofProject, whileShown} from './resources.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
@@ -80,10 +80,9 @@ function dayName(ms) {
     return ms === today ? 'Today' : ms === today - DAY ? 'Yesterday'
         : dayLong(ms);
 }
-const clock = t => hm(t * 1e3);
 const recent = p => p.t && Date.now() / 1e3 - p.t < DAY / 1e3;
-// a time said against a day the reader already has (today, the launch's): the clock alone on that day
-const when = (t, ref = Date.now() / 1e3) => day(t) === day(ref) ? clock(t) : `${date(t * 1e3)} ${clock(t)}`;
+// the server's epoch seconds, said as fmt.js says a moment
+const when = (t, ref) => clockAt(t * 1e3, ref && ref * 1e3);
 
 // A row is timed by what its group is about, one rule a group: the last day's band by the last act, the launch beside
 // it (an old run woken today reads as woken); a launch group by the launch, a finished or stopped run's last act beside
@@ -95,7 +94,7 @@ function row(p, busy, active) {
         : (terminal(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t, r.started)}`;
     const t = active ? p.t : r?.started;
     return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}"${TIP.project(r?.name || p.n, r?.name && p.n)}>`
-        + `<span class="pl-time">${t ? clock(t) : ''}</span>`
+        + `<span class="pl-time">${t ? hm(t * 1e3) : ''}</span>`
         + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(x => `<span>${esc(x)}</span>`).join(' · ')}</i></span>`
         + `<span class="pl-where ${cls}"${TIP.where(why)}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
         + `<span class="pl-mode">${esc(p.mode || '')}</span><span class="pl-res">${ofProject(p.n)}</span>`

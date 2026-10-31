@@ -8,7 +8,8 @@ export const day = t => new Date(t).toLocaleDateString(LOCALE, {day: 'numeric', 
 export const moment = t => new Date(t).toLocaleString(LOCALE);
 // WHEN SOMETHING HAPPENED is said as the moment, never as an age: «13s ago» stood frozen until a reload, the moment stays
 // true (the author, 2026-10-31: «висит эта цифра до тех пор пока не обновишь страницу»); the day only when not today's
-export const clockAt = t => new Date(t).toDateString() === new Date().toDateString() ? hm(t) : `${day(t)} ${hm(t)}`;
+// …against a day the reader already has (today by default; a launch's, in the project list)
+export const clockAt = (t, ref = Date.now()) => new Date(t).toDateString() === new Date(ref).toDateString() ? hm(t) : `${day(t)} ${hm(t)}`;
 export const when = t => new Date(t).toLocaleString(LOCALE, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
 // an ISO stamp as written, to the minute (`from` 5 drops the year, `to` 19 keeps the seconds)
 export const stamp = (iso, from = 0, to = 16) => String(iso).slice(from, to).replace('T', ' ');
