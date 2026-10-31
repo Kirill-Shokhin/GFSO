@@ -81,7 +81,7 @@ export function render(el, run, nodes) {
     el.innerHTML = `<svg class="tl" width="${W}" height="${H}">
         ${f.ticks(30, H - AXIS, 22)}${f.folds(30, H - AXIS, H - 6)}
         <g class="tl-legend" transform="translate(${W - legendW},0)">${legend}</g>
-        <text class="tl-peak" x="${LEFT - 10}" y="${cy(peak) + 3}">${run.exec.peak} at once</text>
+        <text class="tl-peak" x="${LEFT - 10}" y="${cy(peak) + 3}"><tspan class="tl-fig">${run.exec.peak}</tspan> at once</text>
         <text class="tl-peak tl-sub" x="${LEFT - 10}" y="${c0}">executors</text>
         <line class="tl-base" x1="${LEFT}" x2="${W - 16}" y1="${c0}" y2="${c0}"/>
         <line class="tl-base dash" x1="${LEFT}" x2="${W - 16}" y1="${cy(peak)}" y2="${cy(peak)}"/>

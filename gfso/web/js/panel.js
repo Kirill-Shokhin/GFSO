@@ -328,7 +328,7 @@ export const FACETS = [
     {id: 'history', label: 'History', n: ({d}) => d.audit.length, body: history},
 ];
 export const chip = (f, ctx, on = false) => { const n = f.n(ctx);
-    return !n ? '' : `<button class="fchip${on ? ' on' : ''}" data-action="read" data-facet="${f.id}">${f.label}${n === true ? '' : ` <i>${esc(n)}</i>`}</button>`; };
+    return !n ? '' : `<button class="fchip${on ? ' on' : ''}" data-action="read" data-facet="${f.id}">${f.label}${n === true ? '' : ` <i>${esc(n).replace(/(\d+(?:\/\d+)?)/, '<b>$1</b>')}</i>`}</button>`; };
 
 const box = () => $('reader') || $('sidebar').insertAdjacentElement('beforebegin', el('div', {id: 'reader', className: 'reader', hidden: true}));
 

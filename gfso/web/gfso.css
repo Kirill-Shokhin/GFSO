@@ -288,6 +288,7 @@ body {
 .tl .tl-sub { fill: var(--ink-faint); font-size: 8.5px; }
 .tl .tl-stem { stroke: var(--ink-faint); stroke-width: 1; }
 .tl .tl-peak { text-anchor: end; letter-spacing: var(--tr-mono); text-transform: uppercase; font-size: 9px; }
+.tl .tl-fig, .fchip i b { font-family: var(--font-display); font-weight: 650; fill: var(--ink); color: var(--ui-text); }
 .tl .tl-split { stroke: var(--hair); }
 .ax-tick line { stroke: var(--hair-soft); }
 .ax-tick text { text-anchor: middle; fill: var(--ink-faint); }
