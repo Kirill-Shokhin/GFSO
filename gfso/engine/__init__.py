@@ -15,7 +15,7 @@ from gfso.core.types import (
     Spec, Criteria, Probe, AcceptedRiskItem, Register, register_of, Task, CheckResult, CriterionMapping, DepEdge, seams_apart,
     LLMProviderPort, AgentPort, StoragePort,
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
-    TERMINAL_STATES, DoneReason, DEFAULT_MAX_ITERATIONS, Mode,
+    TERMINAL_STATES, DoneReason, DEFAULT_MAX_ITERATIONS, Mode, RevisionReason,
 )
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutations, dep_scope, generation_of_task,
@@ -68,7 +68,7 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          redelivery_refusal, execution_admitted as _execution_admitted,
                          hole_kind, project_mode as _project_mode, depth_of as _depth_of,
                          holder_boundary as _holder_boundary, held_plan_node_refusal, hands_of as _hands_of)
-from .events import EventBus, TransitionCallback, ErrorCallback, RejectCallback
+from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, refresh_checks, timeout_monitor
 
 log = logging.getLogger(__name__)
@@ -101,6 +101,13 @@ def loose_finding_key(text: str) -> str:
     return " ".join("".join(out).split())
 
 
+def _typed_cause(reason):
+    """A revision's cause as the loop reads it — a RevisionReason, or none."""
+    if reason is not None and not isinstance(reason, RevisionReason):
+        raise TypeError(f"a revision's reason is a RevisionReason, not {type(reason).__name__} {reason!r}")
+    return reason
+
+
 class Engine:
     """GFSO Engine — single entry point for building systems on the protocol.
 
@@ -124,6 +131,9 @@ class Engine:
         clock: Optional[ClockPort] = None,
         runner: Optional[RunnerPort] = None,
     ):
+        self._events = EventBus()
+        # …every write of the plan passes one watch, which tells an open page the plan moved (`PlanWatch`)
+        storage = PlanWatch(storage, self._events)
         self._graph = Graph(storage)
         self._storage = storage           # the port this engine was given — its own, not reached for under the graph
         self._stop_lock = threading.Lock()  # a person's stop and the system's start of its own stop never cross
@@ -156,7 +166,6 @@ class Engine:
         self._stop = threading.Event()
         self._audit = AuditLog(storage)   # persists + hydrates when the storage carries audit methods
         self._graph.audit = self._audit   # R′'s finality reads consumption off the log (`Graph.is_consumed`)
-        self._events = EventBus()
         self._started = False
         self.frontier = Frontier(self)    # what the graph owes next, and to whom (`next_step(s)`)
         # WHICH PROJECT THIS ENGINE IS. Set by the registry that builds it; the roster is one
@@ -2026,6 +2035,8 @@ class Engine:
         old = self._graph.get_task(task_id)
         if old is None:
             raise ValueError(f"task {task_id} not found")
+        # …its cause typed at the call: a string from a door dropped the re-ASSIGN in the loop, unrefused (edit_scope)
+        reason = _typed_cause(reason)
         # …A ROOT HANDED ON KEEPS ITS ISSUER: a self-assigned root's issuer is its holder (§10.1), read off its Del
         # while nothing is recorded — so a Del change made its new executor its own issuer, and the system answered
         # that executor's dispute of the user's goal in its name (§10.3, §16.13; critic over 05c6903). Recorded as it

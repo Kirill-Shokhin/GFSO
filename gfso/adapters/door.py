@@ -32,9 +32,13 @@ RUN = "/gfso-door-run"
 LOG_CAP = 20 * 2 ** 20
 #: the header each kind of credential travels in, as the provider reads it
 HEADER = {"token": ("authorization", "Bearer {}"), "api": ("x-api-key", "{}")}
-#: what the client's request does not carry upstream: its key, and what is the hop's own
-DROPPED = {"host", "authorization", "x-api-key", "connection", "keep-alive", "proxy-authorization", "proxy-connection",
-           "te", "trailer", "transfer-encoding", "upgrade", "content-length", "content-encoding"}
+#: what is the hop's own, in either direction
+HOP = {"connection", "keep-alive", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding",
+       "upgrade", "content-length"}
+#: …and what the client's request does not carry upstream besides: its key, and an encoding — the door sends on its own
+#: re-serialization, never compressed. The ANSWER keeps its encoding: stripped, the provider's compressed stream reached
+#: the CLI as bytes it parsed as JSON (a JSON parse error on the first byte), every model call through a door (2026-10-31)
+DROPPED = HOP | {"host", "authorization", "x-api-key", "content-encoding"}
 #: the only requests a door passes, under every switch: the model's answer and its token count
 MODEL_PATHS = ("/v1/messages", "/v1/messages/count_tokens")
 #: the tools a closed switch's door passes: the client's own, which it runs itself — any other kind the provider runs
@@ -140,7 +144,7 @@ def _relay(h, r) -> None:
     """The provider's answer `r` back through the handler `h`, as it comes: the client reads a stream of events."""
     h.send_response(r.status)
     for k, v in r.getheaders():
-        if k.lower() not in DROPPED:
+        if k.lower() not in HOP:
             h.send_header(k, v)
     h.send_header("transfer-encoding", "chunked")
     h.end_headers()

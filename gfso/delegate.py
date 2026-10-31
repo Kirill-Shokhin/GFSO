@@ -124,7 +124,11 @@ def publish_the_workforce(engine, roster: dict) -> None:
     registered id is. Called by every round of the dispatcher and by the verbs that change the roster or read the pool
     before a round has run (registering, setting a mode): published only by the round, a root created right after its
     executor was registered kept or lost its creator as issuer by which thread ran first."""
-    engine.workforce.publish_roster({aid: cfg.get("kind") for aid, cfg in roster.items()})
+    kinds = {aid: cfg.get("kind") for aid, cfg in roster.items()}
+    if engine.workforce.publish_roster(kinds):
+        # …a role on or off the roster is news to an open page (its goal form's mode readiness), told where every roster
+        # change is published — the roster lives in its own file, beside the store the plan's watch sees (`PlanWatch`)
+        engine.emit_info("graph", "the roster changed")
     engine.workforce.publish_executor_pool({aid: cfg.get("project") for aid, cfg in roster.items()
                                   if cfg.get("kind") == "llm-executor"},
                                  {aid: (cfg.get("model") or MODEL_DEFAULT)

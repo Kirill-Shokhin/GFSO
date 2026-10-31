@@ -404,6 +404,13 @@ _HELD = ("\n\n# THE NODE'S CRITERIA ARE FIXED — they are its issuer's contract
          "the issuer, not written into the plan.")
 
 
+def refine_with(engine: Engine, request: str, root_id: str, assignee: str, llm, findings: str, progress=None,
+                executor: str = "") -> tuple[bool, dict, list[str]]:
+    """One refine round over the built graph with `findings` in hand — a customer's note, a review's list — folded
+    instead of searched for (`_refine_round`)."""
+    return _refine_round(engine, request, root_id, assignee, llm, progress=progress, executor=executor, findings=findings)
+
+
 def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm,
                   progress=None, label: str = "1/1", executor: str = "",
                   contract_fixed: bool = False, findings: str = "",

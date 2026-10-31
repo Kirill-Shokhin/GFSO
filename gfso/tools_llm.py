@@ -42,7 +42,7 @@ from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
 from gfso.adapters.execution import network_of
-from gfso.decompose import NoPlan, decompose_into
+from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planning as _planning
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
 from gfso.engine.moves import DOOR_KEYS, door_holder
@@ -1589,7 +1589,8 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    assignee: Optional[str] = None, executor: Optional[str] = None,
                    depth: int = 1, model: Optional[str] = None, fast: bool = False,
                    max_iterations: Optional[int] = None, spec: Optional[dict] = None,
-                   _progress=None, author: Optional[str] = None, open_plan: bool = False) -> dict:
+                   _progress=None, author: Optional[str] = None, open_plan: bool = False,
+                   plan: Optional[str] = None) -> dict:
     """THE one decomposition verb — dispatched by the target's state (one operation over graph state):
     (a) empty project / undecomposed node → authors a real GFSO subtree from `request` (the root node
     itself is created from the request — no hand create_task needed), builds INTO the live CORE through
@@ -1622,7 +1623,11 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     stands, with no search: the way to execute ONE plan twice and compare the executions. A plan handed in is the
     user's (append-only, never re-split; refuted at contact, the run stops for the user); `open_plan=true` hands it in
     as a DRAFT the system may repair and re-split like its own — the run that polishes a plan, whose final graph
-    `export_plan` then reads back as the plan to hand in closed."""
+    `export_plan` then reads back as the plan to hand in closed.
+
+    `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
+    and the plan the file holds, as they stand — the customer's from then on, as any plan handed in."""
+    request, spec = _the_go(plan, request, spec) if plan is not None else (request, spec)
     model = model or engine.system_model()
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
@@ -1666,7 +1671,8 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     if fresh := engine.graph.get_task(TaskId(root_id)) is None:
         # the place is read for the plan's author; a plan handed in (`spec`) has none
         found = "" if spec is not None else _work_place_documents(engine, request, model)
-        request = (request or "") + _named_documents(engine, f"{request} {found}")
+        # …a plan file's goal already carries the documents it names (`plan`)
+        request = (request or "") + ("" if plan is not None else _named_documents(engine, f"{request} {found}"))
     planner = _decompose.default_llm(model, execution=execution_of(engine))   # the one door to the plan's transport
     try:
         res = decompose_into(engine, request, root_id=root_id, assignee=assignee or _agent_id(),
@@ -1727,11 +1733,73 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # as a clean, confident, "verified" empty decomposition — which reads as a statement about the
     # GOAL ("nothing to split") rather than about the installation. It is what a fresh install
     # without credentials hits, on the one verb it is told to start with.
-    if not out["subtasks"] and not res.stats:
-        out["error"] = ("no subtasks were produced and the model completed no call — the LLM "
-                        "provider answered nothing (unreachable, or not authenticated; see the "
-                        "server log). A fact about the provider, not about the goal.")
+    out.update(_no_provider_answer(out["subtasks"], res.stats, spec))
     return {**out, **(_not_imported(engine) if fresh else {})}
+
+
+def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Optional[str] = None,
+         depth: int = 1, review_model: Optional[str] = None, _progress=None) -> dict:
+    """Author a plan for `request` WITHOUT a project: the plan file (`.gfso`) — the goal, the split with its criteria,
+    pinned checks, mappings, dependencies and register, the Level-2 review over it — for the customer to read whole.
+    Nothing executes and no project is made. Send a note with `refine_plan`; give the go with
+    `auto_decompose(plan=<path>)`, which builds the project from the file as it stands. `executor` names the registered
+    executor whose session the fit of each part is judged against."""
+    model = model or engine.system_model()
+    # …the goal as the project's root will hold it — with the documents it names written under it, as the go would add
+    # them — so the plan and its review are written against the contract the work will run on (critic)
+    request = (request or "") + _named_documents(engine, request or "")
+    try:
+        text = _planning.author(request, model, engine.workforce.executor_session(executor) if executor else "",
+                                depth, review_model or "", emit_cb(engine, "plan", _progress),
+                                execution=execution_of(engine))
+    except NoPlan as no:
+        return {"error": _no_plan(no)}
+    return _plan_written(text)
+
+
+def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = None,
+                review_model: Optional[str] = None, _progress=None) -> dict:
+    """The customer's note on a plan file (a path or the text): one refine round with the note as its finding, by
+    `model` (an older one may be named), and the review run again. The new file carries the note with its answer —
+    what the round changed in the plan, read off the plan itself. The old file stays as it was."""
+    model = model or engine.system_model()
+    try:
+        text = _planning.refine(_planning.text_of(plan), note, model, review_model or "", emit_cb(engine, "plan", _progress),
+                                execution=execution_of(engine))
+    except (NoPlan, ValueError, OSError) as e:
+        return {"error": str(e)}
+    return _plan_written(text)
+
+
+def _no_provider_answer(subtasks, stats, spec) -> dict:
+    """The `error` of a decomposition that built nothing while no model answered — the provider's, not the goal's; a
+    plan handed in calls no model by design."""
+    return ({"error": "no subtasks were produced and the model completed no call — the LLM provider answered nothing "
+                      "(unreachable, or not authenticated; see the server log). A fact about the provider, not about "
+                      "the goal."} if not subtasks and not stats and spec is None else {})
+
+
+def _the_go(plan: str, request: str, spec) -> tuple[str, dict]:
+    """The goal and the plan a plan file holds, for the go — refused beside a second plan or another goal."""
+    if spec is not None:
+        raise ValueError("auto_decompose: pass the plan file (`plan`) or a spec (`spec`), not both")
+    p = _artifact.parse(_planning.text_of(plan))
+    if (request or "").strip() and request.strip() != p["goal"].strip():
+        raise ValueError("auto_decompose: `request` differs from the goal the plan file answers — the go builds "
+                         "the plan for its own goal; leave `request` out, or plan the new goal anew")
+    return p["goal"], p["spec"]
+
+
+def _plan_written(text: str) -> dict:
+    """The plan file kept under the state directory by its content, with what the customer reads first."""
+    path = _planning.kept(text)
+    p = _artifact.parse(text)
+    r = p["review"]
+    return {"path": str(path), "chars": len(text), "parts": [s["id"] for s in p["spec"].get("subtasks") or ()],
+            "undecided_obligations": len(r.get("undecided_obligations") or ()),
+            "covered": r.get("semantic_covered"), "notes": len(p["notes"]),
+            "how_to_read": "read the file whole (the [inputs] at its end are the checks' files, named by hash); "
+                           "a note → refine_plan(path, note); the go → auto_decompose(plan=path)"}
 
 
 @functools.wraps(_tools.create_task)
@@ -2320,6 +2388,7 @@ _RAW_TOOLS = {
     **_tools.TOOLS,
     "create_task": create_task,
     "auto_decompose": _tracked("auto_decompose", auto_decompose),
+    "plan": _tracked("plan", plan), "refine_plan": _tracked("refine_plan", refine_plan),   # a plan with no project
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1
     "register_agent": register_agent, "unregister_agent": unregister_agent, "list_agents": list_agents,                     # the roster

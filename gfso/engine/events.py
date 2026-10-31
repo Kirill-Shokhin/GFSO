@@ -93,3 +93,43 @@ class EventBus:
                 cb(source, message)
             except Exception:
                 log.exception(f"callback error in on_info from {source}")
+
+
+#: the fields of a node that are its plan — the contract, its holder, its split's mapping and register — and not its
+#: progress (state, rounds, verdict flags), which the transition already tells
+_PLAN_FIELDS = ("spec", "parent_id", "assignee", "deadline", "max_iterations", "register", "criterion_mappings")
+
+
+def _plan_of(task) -> str | None:
+    return None if task is None else repr(tuple(getattr(task, f, None) for f in _PLAN_FIELDS))
+
+
+class PlanWatch:
+    """The storage the engine writes through, telling open pages when the PLAN's record moved — the one place every
+    change to it passes, whichever verb or loop step made it: a node's plan fields differ from what was last written,
+    or a Dep edge was written or dropped. A state change alone says nothing here (its transition does), and a write
+    that leaves the plan as it was says nothing either. The line is broadcast, not logged: it is a cue to re-read."""
+
+    def __init__(self, storage, bus: EventBus):
+        self._s, self._bus, self._seen = storage, bus, {}
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+    def save_task(self, task) -> None:
+        key = str(task.id)
+        if key not in self._seen:          # first write this process sees: what the store held is the baseline
+            self._seen[key] = _plan_of(self._s.get_task(task.id))
+        self._s.save_task(task)
+        now = _plan_of(task)
+        if self._seen[key] != now:
+            self._seen[key] = now
+            self._bus.emit_info("graph", f"{key}: the plan changed")
+
+    def add_dep_edge(self, edge) -> None:
+        self._s.add_dep_edge(edge)
+        self._bus.emit_info("graph", f"{edge.to_id}: a dependency record changed")
+
+    def remove_dep_edge(self, edge) -> None:
+        self._s.remove_dep_edge(edge)
+        self._bus.emit_info("graph", f"{edge.to_id}: a dependency record changed")

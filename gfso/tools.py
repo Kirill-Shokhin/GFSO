@@ -46,7 +46,7 @@ PROJECT_CREATING_VERBS = frozenset({"create_task", "auto_decompose", "decompose"
 # name a project made `register_agent` refuse for a project that did not exist yet — while its own
 # help says the roster is server-wide. A newcomer hit that as a chicken-and-egg on their first
 # command (measured 2026-08-21).
-PROJECTLESS_VERBS = frozenset({"register_agent", "unregister_agent", "list_agents"})
+PROJECTLESS_VERBS = frozenset({"register_agent", "unregister_agent", "list_agents", "plan", "refine_plan"})
 
 
 # ── serialization helpers ────────────────────────────────────────────────────
@@ -1877,7 +1877,7 @@ def edit_scope(engine: Engine, task_id: str, scope: list, agent: str = "") -> Op
     out = task_out(engine.revise(
         TaskId(task_id),
         dataclasses.replace(spec, scope=items),
-        AgentId(agent), reason="scope_expansion"), engine, plan=False)
+        AgentId(agent), reason=_reason_from("scope_expansion")), engine, plan=False)
     if isinstance(out, dict):
         t = engine.graph.get_task(TaskId(task_id))
         out["scope_recorded"] = list(t.spec.scope) if t is not None else []

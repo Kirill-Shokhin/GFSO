@@ -219,6 +219,26 @@ def kept(execution: ExecutionPort, sid: str, what: str) -> Path:
     return Path(execution.state_dir()) / "gfso-sessions" / f"{sid}.{what}"
 
 
+
+def _dropped_by_the_api(calls: list) -> bool:
+    """The last of these calls errored on the API's side — not refused by a limit, not cut at its turn cap. Such a
+    one-shot is asked once more: with no tools it changes nothing, and its "" was read as an answer — a plan's search
+    that ended in "API Error: JSON Parse error" was folded as "no findings" (gb-coreutils-tnrqbl588, 2026-10-31). The
+    caller passes the call's OWN record: readings run in parallel on one provider (critic)."""
+    last = next((c for c in reversed(calls) if isinstance(c, dict)), None)
+    return bool(last and last.get("error") and not refused_by_limit(calls) and last.get("stop_reason") != "max_turns"
+                and not last.get("refused"))
+
+
+def _once_more(one_shot: bool, call, last_record) -> str:
+    """`call()`, and once more where it was a tool-less one-shot the API dropped (`_dropped_by_the_api`)."""
+    text = call()
+    if one_shot and not text and _dropped_by_the_api([last_record()]):
+        log.warning("headless claude one-shot ended in an API error — asked once more")
+        text = call()
+    return text
+
+
 class _Hooks:
     """THE HANDOVER HOOK of one execution's CLI (`budget.hooked`): the script copied beside the CLI's state, a session's
     state written there before it runs and read back after, and the flags that let the CLI run it."""
@@ -614,7 +634,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         if not cwd:
             with self._exec.scratch("gfso-noplace-") as empty:
                 return self._call(system, user, tools_args, empty, timeout, session)
-        return self._on_credentials(lambda cred: self._attempt(cred, system, user, tools_args, cwd, timeout, session))
+        return _once_more(tools_args is None, lambda: self._on_credentials(
+            lambda cred: self._attempt(cred, system, user, tools_args, cwd, timeout, session)), lambda: self._mine.last)
 
     def _attempt(self, credential, system: str, user: str, tools_args, cwd: str, timeout, session) -> str:
         try:

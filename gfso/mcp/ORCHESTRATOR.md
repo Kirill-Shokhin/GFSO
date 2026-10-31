@@ -45,6 +45,14 @@ name another from `data/executions.json` only if the user asks. Its working dire
 repository with a commit — else the project stops with that cause. Without a container it runs on the user's
 machine only where the user declared `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`; never declare it yourself.
 
+**The plan before any project** — when the user wants to see the plan before anything runs (in `auto` you are its
+customer, and you answer to the user for the result): `plan(request, model=...)` authors and reviews it with no
+project and returns a `.gfso` file. READ IT WHOLE — the goal, every part, its criteria and pinned checks, the
+dependencies, the register, the Level-2 review's open obligations. Then either `refine_plan(path, note, model=...)` —
+your note, written as what the plan must change, by any model (a stronger one may be named); the new file carries
+the note with its answer, what the round changed — or give the go: `auto_decompose(plan=path)` on the empty project
+builds it as it stands, the user's plan from then on. Your note is checked like any input; the plan is not bent to it.
+
 ## The loop (solo; in semi, over the levels you hold)
 
 1. **Structure — the verb by default; MANUAL where context must be studied (below).**

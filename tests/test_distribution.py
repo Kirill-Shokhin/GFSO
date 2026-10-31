@@ -65,7 +65,9 @@ def built(tmp_path_factory) -> tuple[pathlib.Path, pathlib.Path]:
     # running run's workspace), which makes the test slow and, worse, races with files being written
     # while it copies.
     shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(
-        *BUILD_CACHES, "data", "results", "runs", "*.db", "*.db-wal", "*.db-shm", ".git"))
+        *BUILD_CACHES, "data", "results", "runs", "*.db", "*.db-wal", "*.db-shm", ".git",
+        # …and the local, untracked workspaces: sessions' worktrees and scratch copies (dozens of trees) timed the copy out
+        ".claude", "scratchpad"))
     out = tmp_path_factory.mktemp("dist")
     proc = subprocess.run([sys.executable, "-m", "build", "--outdir", str(out), str(src)],
                           capture_output=True, text=True, timeout=900)

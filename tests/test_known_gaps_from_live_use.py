@@ -1731,7 +1731,7 @@ def test_the_roster_verbs_do_not_ask_for_a_project_that_has_no_graph_yet(tmp_pat
     graph existing, so registering a role before authoring anything answered "no such project"
     (measured on a cold start 2026-08-21). The roster verbs are about the roster."""
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
-    assert {"register_agent", "unregister_agent", "list_agents"} == set(T.PROJECTLESS_VERBS)
+    assert {"register_agent", "unregister_agent", "list_agents"} <= set(T.PROJECTLESS_VERBS)
     e = _engine()
     out = TL.TOOLS["register_agent"](e, "w-val-1", "llm-validator", workdir=str(tmp_path))
     assert out["registered"] == "w-val-1"
