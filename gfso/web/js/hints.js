@@ -268,14 +268,6 @@ export const PANEL = {
 
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
-// A SESSION PASSING ITS WORK ON to a fresh one — «passed on», never «handed over», which the key keeps for a node offered.
-// The bar says how many times and the range; each cut says itself on its own hover (timeline.js `.tl-cut`).
-const cuts = cs => { const seen = cs.filter(c => c.peak && c.window);
-    if (!cs.length) return [];
-    if (!seen.length) return [`Passed on ${plural(cs.length, 'time')}, its context not recorded`];
-    const lo = Math.min(...seen.map(c => c.peak)), hi = Math.max(...seen.map(c => c.peak));
-    const w = seen[0].window, at = (a, b, f) => a === b ? f(a) : `${f(a)}–${f(b)}`;
-    return [`Passed on ${plural(cs.length, 'time')}, at ${at(lo, hi, tok)}: ${at(lo / w, hi / w, pct)} of the ${tok(w)} window`]; };
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
@@ -283,15 +275,18 @@ export const TIP = {
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`, waits && `Waits on ${waits}`,
          criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
-    // ONE CUT, itself: when the session passed its work on, and how full its context stood then — the share of the model's
-    // whole window as the figure (the author, 2026-10-31: «информации о например размере контекста на обрезанной нет …
-    // относительно полного доступного контекста»): where it stopped and the budget it ran under, both on the one scale of
-    // its window («есть точка бюджета есть фактическая остановка»), the budget as the call recorded it (`context_budget`)
-    cut: (c, n, j, name) => card(`Passed on ${hm(c.t)}${c.peak && c.window ? `\t${pct(c.peak / c.window)}` : ''}`, [name,
-        ...(c.peak && c.window ? [meter('stopped at', c.peak / c.window, tok(c.peak)),
-            c.budget ? meter('its budget', c.budget / c.window, tok(c.budget)) : 'Its budget not recorded (an older build)',
-            `Of the ${tok(c.window)} window`] : ['Its context not recorded']),
-        n > 1 && `${j + 1} of ${n} on this bar`, 'A fresh session went on from its note']),
+    // ONE SESSION of a stretch passed on from session to session — its own piece of the bar between the cuts, saying itself:
+    // its time, cost, tokens, round, and, where it passed its work on («passed on», never «handed over», the key's word for
+    // a node offered), how full its context stood then and the budget it ran under, both on the one scale of its model's
+    // window (the author, 2026-10-31: «есть точка бюджета есть фактическая остановка и все это относительно полного
+    // доступного контекста»; «вместо того чтобы показывать инфу на самом исполнении, она отображается между ними»)
+    session: (m, n, p, r, name, who) => card(`${cap(KIND[m.kind].name)}, ${dur(m.end - m.start)}${m.cost ? `\t${usd(m.cost)}` : ''}`, [
+        name, `Session ${p + 1} of ${n}, ${hm(m.start)}–${m.open ? 'now' : hm(m.end)}`, m.tokens && `${tok(m.tokens)} tokens`, who,
+        r && `Round ${r.n}`, m.resumed && 'Continued the session before it',
+        ...(!m.handover ? [] : m.peak && m.window ? [`Passed on at ${hm(m.end)}, of the ${tok(m.window)} window:`,
+            meter('stopped at', m.peak / m.window, tok(m.peak)),
+            m.budget ? meter('its budget', m.budget / m.window, tok(m.budget)) : 'Its budget not recorded (an older build)']
+            : [`Passed on at ${hm(m.end)}, its context not recorded`])]),
     // a stretch of work on the timeline
     // …its row's name only where that row's label is off the screen (a phone's deck scrolled sideways — critic 8)
     // …ITS OWN only: a node's sessions read the same line after line — one executor's long id, a round's verdict and its
@@ -305,7 +300,6 @@ export const TIP = {
         x.parts > 1 && [`${x.parts} processes, ${dur(x.busy)} busy`, x.kind === 'val' ? 'the validator works in batches of probes'
             : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.retried > 0 && `${x.retried} retried`]
                 .filter(Boolean).join(', ')].filter(Boolean).join(': '),
-        ...cuts(x.handed || []),
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
     verdict: (signal, r, t, f, m, total, name) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [

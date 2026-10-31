@@ -43,7 +43,8 @@ function stretches(run) {
                                  continued: (last.continued || 0) + (s.resumed ? 1 : 0)});
             if (s.agent && !last.agents.includes(s.agent)) last.agents.push(s.agent);
             if (s.handover) last.handed.push(cut(s));
-        } else out.push({...s, parts: 1, busy: s.ms ?? s.end - s.start, agents: s.agent ? [s.agent] : [], handed: s.handover ? [cut(s)] : []});
+            last.members.push(s);
+        } else out.push({...s, parts: 1, busy: s.ms ?? s.end - s.start, agents: s.agent ? [s.agent] : [], handed: s.handover ? [cut(s)] : [], members: [s]});
     }
     // what is left of its processes once those that continued or were handed over are counted: retries
     for (const x of out) x.retried = x.parts - 1 - (x.continued || 0) - x.handed.length;
@@ -54,13 +55,15 @@ export function render(el, run, nodes) {
     const ids = rows(run, nodes), name = run.name, work = stretches(run);
     const W = axisWidth(el), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
     const Y = id => TOP + ids.indexOf(id) * ROW + ROW / 2 + 4;
-    // a session passed on to a fresh one is a cut across its bar at the moment it wrote its note; the cut says ITSELF on a
-    // narrow band of its own — its moment, its context against the window — as a part of a bar does (the author, 2026-10-31:
-    // «не вижу чтобы на разрезах были свои попапы»), and the bar's tip stays on either side of it (10-28)
-    const bar = (s, i) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}" data-k="b|${esc(s.node)}|${s.kind}|${s.start}" x="${f.X(s.start)}"
-        y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(s.end) - f.X(s.start), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`
-        + (s.handed || []).map(({t}, j) => { const x = f.X(t), y1 = Y(s.node) - BAR[s.kind] / 2 - 2, y2 = Y(s.node) + BAR[s.kind] / 2 + 2;
-            return `<g data-c="${i}:${j}" data-k="c|${esc(s.node)}|${t}"><line class="tl-hand" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/><line class="tl-cut" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/></g>`; }).join('');
+    // A STRETCH PASSED ON from session to session is drawn as its sessions, each its own piece of the bar between the cuts and
+    // its own tip — its time, cost, tokens, its round, and where it stood when it passed on, against its budget and window
+    // (the author, 2026-10-31: «вместо того чтобы показывать инфу на самом исполнении, она отображается между ними в
+    // разделении, а на самом исполнении одна и та же длинная инфа»); the cut is only the line between two pieces
+    const rect = (s, i, a, b, p) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}"${p == null ? '' : ` data-p="${p}"`}`
+        + ` data-k="b|${esc(s.node)}|${s.kind}|${a}" x="${f.X(a)}" y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(b) - f.X(a), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`;
+    const bar = (s, i) => !s.handed.length ? rect(s, i, s.start, s.end)
+        : s.members.map((m, p) => rect(s, i, m.start, s.members[p + 1]?.start ?? s.end, p)).join('')
+          + s.handed.map(({t}) => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${Y(s.node) - BAR[s.kind] / 2 - 2}" y2="${Y(s.node) + BAR[s.kind] / 2 + 2}"/>`).join('');
     // a verdict: a hairline stem up from the bar line, the glyph on top — a mark, not a piece of the work
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
         return `<g class="tl-v" data-v="${r.n}" data-k="v|${esc(id)}|${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
@@ -108,13 +111,13 @@ export function render(el, run, nodes) {
             const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), f = failedOf(run, id, r.failed);
             return tip(TIP.verdict(r.verdict, r, r.at, f, m, T?.total, named(id)), e);
         }
-        const c = e.target.closest('[data-c]');
-        if (c) { const [i, j] = c.dataset.c.split(':').map(Number), x = work[i]; return tip(TIP.cut(x.handed[j], x.handed.length, j, named(x.node)), e); }
         const s = e.target.closest('.tl-s');
         if (!s) return untip();
         // the round a stretch belongs to: the delivery an execution ended in, the verdict a validation gave
-        const x = work[+s.dataset.i], key = x.kind === 'val' ? 'at' : 'delivered';
-        const r = (run.rounds[x.node] || []).find(r => r[key] >= x.end - 1e3);
+        const x = work[+s.dataset.i], key = x.kind === 'val' ? 'at' : 'delivered', round = end => (run.rounds[x.node] || []).find(r => r[key] >= end - 1e3);
+        if (s.dataset.p != null) { const p = +s.dataset.p, m = x.members[p];      // one session of a stretch passed on
+            return tip(TIP.session(m, x.members.length, p, round(m.end), named(x.node), who(x)), e); }
+        const r = round(x.end);
         tip(TIP.bar(x, r, r?.failed?.length ? failedOf(run, x.node, r.failed) : null, named(x.node), who(x)), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`));
