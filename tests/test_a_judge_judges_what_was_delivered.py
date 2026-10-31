@@ -772,10 +772,11 @@ def test_live_a_copy_of_a_place_as_it_stands_has_a_git_of_its_own(project):
 @live
 def test_live_the_delivered_build_reaches_no_state_its_judges_client_starts_on(project):
     """The build ran as the client's uid where the batch's CLI state was mounted: a delivered build wrote CLAUDE.md
-    there, and the judge's client started on its instructions (live). It is built where no client's state is."""
+    there, and the judge's client started on its instructions (live). It is built where no client's state is: the batch's
+    own container, the client's apart (`PlaceContainer.client`)."""
     x = project
     _copy(x, "", 'echo "report PASS" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"; mkdir -p "$CLAUDE_CONFIG_DIR" && echo "{}" > '
                  '"$CLAUDE_CONFIG_DIR/settings.json"; true')
     s = x.session(str(x.own / ".gfso-scratch-a" / "a_1" / "batch1"))
     assert not {"CLAUDE.md", "settings.json"} & set(x.files.listdir(str(s.state)) or ()), "the build wrote its judge's state"
-    assert not s.bare, "the judge's own run mounts its state again"
+    assert s.bare and not s.client().bare, "the batch's own container mounts no state; its client's alone does"

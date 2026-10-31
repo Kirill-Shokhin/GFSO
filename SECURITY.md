@@ -54,7 +54,13 @@ and nothing of your disk is mounted into any of its containers:
   beside it. `gfso export-places` writes the places out for reading, with every agent repository's
   configuration and hooks replaced.
 - Each agent session runs in a container of its own place. It writes there alone, reads the project's
-  base read-only, and holds its node's own temp and its place's own model-client state. It does not
+  base read-only, and holds its node's own temp and its place's own model-client state. Its client runs in a
+  container of the place apart from the one the system runs its own commands over the place in: only the client's
+  mounts that state. What the client's own start reads from the place is kept from running beside it: it has no git —
+  its `git status` there finds none, so no clean filter its agent or a delivered build wrote runs —, it loads no
+  setting source — no `.claude/settings.json` a delivered tree carries (a key helper, hooks, environment) —, and its
+  own file tools may not write under the home it runs from, where a program laid on its PATH would run at its next
+  start. It does not
   see another node's place, conversations or inputs, nor the system's own checks; what it receives
   of other nodes' work comes by the joins the system makes into its place and the base.
 - The commands a session's Claude Code client runs (its Bash tool) do not run beside the client. The
@@ -67,14 +73,16 @@ and nothing of your disk is mounted into any of its containers:
   for anything; the record is kept beside the door's log. A client that runs a shell beside itself
   instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
   is refused with that cause: the project stops. The client's own file tools may not write through
-  `/proc` or `/dev`, nor into its own state.
+  `/proc` or `/dev`, nor into its own state. What the client's shell writes back into the client's container is the
+  CLI's own working-directory file and shell snapshot alone, by their shapes and never through a link — not a path a
+  command's text names.
 - The checks the system runs over a delivery run what the agents wrote (the plan's probes, the
   delivery's own scripts), so each runs in a container of its own copy of the delivery, mounting
   that copy and a temp of its own and nothing else.
 - The system's own commands over an agent's repository — git, reading and writing its files — run in
   the container of the place that repository stands in, chosen by the system's own record of the
-  place, never by what stands there: what that repository's configuration tells git to run reaches
-  nothing its agent did not already reach. Commits move between repositories as bundles.
+  place, never by what stands there, which mounts no model client's state: what that repository's configuration
+  tells git to run reaches nothing its agent did not already reach. Commits move between repositories as bundles.
 - No one who judges a delivery works in its executor's place: a validation and an issuer's
   contact, a root's included, each run in a container of their own copy of it, each batch of a
   validation in its own, and the place's validation scratch is read-only to its executor. A judge's
@@ -136,21 +144,12 @@ and nothing of your disk is mounted into any of its containers:
 - What the delivery needs built is built in that copy, in the judge's container under its network
   switch, before any check: the command the delivery declares (`build`), else `make` where the
   delivered tree has a Makefile at its root, else nothing — the delivered code, run by the judge's
-  side, with a bounded time, in a container of the batch that mounts no model client's state: the
-  judge's client starts after it, in a fresh one. Every process the build leaves running ends with it, before any check,
+  side, with a bounded time, in the batch's own container, which mounts no model client's state. Every process the build leaves running ends with it, before any check,
   and a delivered file it changed is put back as delivered; what it adds beside them stays. A build
   that fails is the delivery's FAIL, with its output, and nothing of it stands for later rounds:
   the next delivery's own build is the re-check.
 
 What one session can still reach:
-- **Not held yet, and above the rest:** a repository's own git configuration — a clean filter an agent's command or a
-  delivered build writes into a place's or a judge's copy's `.git` — is run beside the model client: by the Claude Code
-  client's own `git status` when it starts in that repository, and by the system's own git over the place, both in the
-  container that holds the client and its state. From there it can write the client's state and its output, and so
-  forge an executor's answer or a judge's verdict, outside the commands' record (found live). The measure being built:
-  no git over a repository an agent can write runs where a model client or its state is. Until it lands, the
-  statements above about the client's output and state, about a repository's configuration, and about the judge's
-  fresh client do not hold against such a filter.
 - Only the root's executor works in the base; its model-client state still holds what sessions an earlier version
   ran there wrote — consents, and the reader of the places a plan is made from. Every other session, a parent's
   consent and that reader included, works in a place of its own. A project whose base is no git repository with a

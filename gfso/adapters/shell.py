@@ -39,6 +39,10 @@ REFUSED = "refused: the agent CLI ran this command beside itself, not through th
 #: `BESIDE`, the `BASH_ENV` of the client's CLI: a bash it starts there — its own fallback where it did not take
 #: `CLIENT`, which it does silently — tells the listener so and runs nothing
 GUARD = f'{CLIENT} --beside; echo "{REFUSED}" >&2; exit 126\n'
+#: the client's `git`, first on its PATH: none. Its CLI's own `git status` ran the repository's clean filter beside it, in
+#: reach of its output and its state (critic, live); its commands keep their git, in their own container
+NO_GIT = "/usr/local/bin/git"
+NONE = '#!/bin/sh\necho "fatal: not a git repository (no git beside the model client)" >&2\nexit 128\n'
 REQ, SIG, OUT, ERR, FILE, RC = range(6)
 CHUNK = 65536
 #: a record past this many bytes keeps a command's head alone and no refusal — a flood of them cannot crowd out the
@@ -48,6 +52,12 @@ LOG_CAP, ARG, SHORT = 20 * 2 ** 20, 4096, 200
 FILE_CAP = 2 ** 20
 #: the files a client names from its own argv to be written back: the CLI's cwd file and its shell snapshot
 NAMED = (re.compile(r"pwd -P >\| ?'?([^'\s]+)"), re.compile(r"SNAPSHOT_FILE='?([^'\s;]+)"))
+#: the client's CLI state inside its container — the image's `CLAUDE_CONFIG_DIR`, where no command reaches
+STATE = "/home/agent/.claude"
+#: …and only of their own shapes: the names are read off the whole argv, the model's command in it, and any path a
+#: command named was laid in the client's container as its user — its home, its CLI state, its output through a link
+#: (critic, live: a forged hook and a forged stream)
+OWN = re.compile(r"/tmp/claude-[0-9a-f]+-cwd|(?P<state>/[\w./-]+)/shell-snapshots/snapshot-[\w.-]+\.sh")
 
 
 def _frame(s, kind: int, data: bytes = b"") -> None:
@@ -79,8 +89,11 @@ def _peer(s) -> tuple:
 
 
 def named(argv: list) -> list:
-    """The files the CLI's own invocation names for its shell to leave behind."""
-    return list(dict.fromkeys(m[1] for a in argv for r in NAMED for m in r.finditer(a)))
+    """The files the CLI's own invocation names for its shell to leave behind — its cwd file in its own `/tmp` and its
+    shell snapshot in its own state (`STATE`), never a directory of the place a command could
+    swap under the write (critic), no `..` in them."""
+    return [p for p in dict.fromkeys(m[1] for a in argv for r in NAMED for m in r.finditer(a))
+            if (o := OWN.fullmatch(p)) and o["state"] in (None, STATE) and ".." not in p.split("/")]
 
 
 def client(argv: list) -> int:
@@ -114,8 +127,9 @@ def _written(kind: int, data: bytes, files: list) -> None:
     stderr, a file the client named to its own path — nothing else."""
     if kind == FILE:
         path, _, body = data.partition(b"\0")
-        if (path := path.decode()) in files:
-            with open(path, "wb") as f:
+        if (path := path.decode()) in files and os.path.realpath(os.path.dirname(path)) == os.path.dirname(path):
+            # …never through a link the command laid, at the file or above it
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "wb") as f:
                 f.write(body)
         return
     (out := (sys.stdout if kind == OUT else sys.stderr).buffer).write(data)

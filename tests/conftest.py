@@ -13,9 +13,12 @@ takes the canon's own EXPLORE branch (§9.9) and turns the gate off, exactly as 
 without a checker would. `tests/test_l2_gate.py` turns it back ON and owns that behavior end to end.
 """
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
+import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -24,15 +27,36 @@ from gfso.adapters import execution as E
 from gfso.adapters.llm import chat as _chat
 
 
+#: older than this, a suite's home is a run that was cut short: a whole suite takes under an hour
+CUT_RUN_S = 6 * 3600
+
+
+def _sweep(*homes: Path) -> None:
+    """Suite homes gone, with every container, volume and network labelled with them: a run cut short — the harness
+    under memory pressure, a timeout — never reached its fixtures' teardown, and every project its live tests stood up
+    stayed (2026-10-31: 97 containers, 160 volumes, 5699 homes left on one machine)."""
+    marks = {E._home(h / "data") for h in homes}
+    if marks and shutil.which("docker"):
+        for kind, ls in (("container", ["ps", "-a"]), ("volume", ["volume", "ls"]), ("network", ["network", "ls"])):
+            got = subprocess.run(["docker", *ls, "--format", '{{.ID}} {{.Label "gfso.home"}}'], capture_output=True,
+                                 text=True).stdout.splitlines()
+            if ids := [i for i, _, h in (r.partition(" ") for r in got) if h in marks]:
+                subprocess.run(["docker", kind, "rm", *(["-f"] if kind == "container" else []), *ids], capture_output=True)
+    for h in homes:
+        shutil.rmtree(h, ignore_errors=True)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _own_state_home():
     """A home of the suite's own, for the whole session."""
     prior = os.environ.get("GFSO_HOME")
-    os.environ["GFSO_HOME"] = tempfile.mkdtemp(prefix="gfso-suite-")
+    _sweep(*[d for d in Path(tempfile.gettempdir()).glob("gfso-suite-*") if time.time() - d.stat().st_mtime > CUT_RUN_S])
+    os.environ["GFSO_HOME"] = mine = tempfile.mkdtemp(prefix="gfso-suite-")
     os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
     E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
     os.environ["GFSO_LOCAL_AGENTS"] = "allow"           # the suite's sessions are fakes on this host, by its own word
     yield
+    _sweep(Path(mine))
     if prior is None:
         os.environ.pop("GFSO_HOME", None)
     else:

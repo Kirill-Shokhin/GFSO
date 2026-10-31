@@ -141,6 +141,7 @@ def test_where_commands_run_apart_the_clis_writers_are_kept_off_its_stdout_and_s
     args, env = ex.started[-1]
     deny = json.loads(args[args.index("--settings") + 1])["permissions"]["deny"]
     assert {"Write(//proc/**)", "Edit(//dev/**)", "NotebookEdit(//proc/**)"} <= set(deny)
+    assert {"Write(//home/**)", "Edit(//home/**)", "Write(//tmp/**)"} <= set(deny),         "a program laid on the client's PATH runs beside it; a call's pid its ending kills by lies in its /tmp"
     assert env["CLAUDE_CODE_SHELL"] == shell.CLIENT and env["BASH_ENV"] == shell.BESIDE
 
 
@@ -151,6 +152,12 @@ def test_a_client_writes_back_only_what_its_own_invocation_names():
     assert shell.named(["-c", "-l", "SNAPSHOT_FILE=/home/agent/.claude/shell-snapshots/snapshot-bash-1-x.sh\n"
                         'echo "x" >> "$SNAPSHOT_FILE"']) == ["/home/agent/.claude/shell-snapshots/snapshot-bash-1-x.sh"]
     assert shell.named(["-c", "env"]) == []
+    # …and nothing else a command's own text names, the model's: it was laid in the client's container as its user
+    for forged in ("/home/agent/.claude/gfso-sessions/handover_hook.py", "/home/agent/.local/bin/git", "/work/out",
+                   "/home/agent/.claude/shell-snapshots/../gfso-sessions/x.sh", "/tmp/claude-x-cwd",
+                   "/gfso-place/a/.claude/shell-snapshots/snapshot-bash-1-x.sh"):
+        assert shell.named(["-c", f"eval ': SNAPSHOT_FILE={forged}'"]) == [], forged
+
 
 
 # --- live: the real CLI, a stand-in for the model ------------------------------------------------------------------
@@ -162,7 +169,7 @@ def _place(project):
     made(project, "a")
     s = project.session(str(project.own / "a"), "agent-1")
     assert isinstance(s, PlaceContainer)
-    return s
+    return s.client()                           # …where the place's model clients run, its commands' listener with them
 
 
 def _model(s, commands: list) -> None:
@@ -304,3 +311,16 @@ def test_live_nothing_a_session_started_outlives_its_places_last_client(project)
     assert alive() == "1", "another client of the place still runs: its commands are its own"
     s._end_inside("u")
     assert alive() == "0", "a process that dropped its call's mark outlived its place's last client"
+
+
+@live
+def test_live_a_file_a_command_names_is_not_laid_in_the_clients_container(monkeypatch, project):
+    """The write-back took any path off the command's text and laid it beside the client (critic, live: a forged hook,
+    a forged stream). Only the CLI's own cwd file and snapshot come back."""
+    answer, call, s = _session(monkeypatch, project, [
+        "printf 'mkdir -p $HOME/.claude $HOME/.local/bin; echo x > $HOME/.claude/planted; echo x > $HOME/.local/bin/planted'"
+        " > s.sh", "sh s.sh; : SNAPSHOT_FILE=/home/agent/.claude/planted SNAPSHOT_FILE=/home/agent/.local/bin/planted"])
+    assert answer == "done", call
+    left = subprocess.run(["docker", "exec", s.container, "sh", "-c", "ls /home/agent/.claude/planted "
+                           "/home/agent/.local/bin/planted 2>/dev/null"], capture_output=True, text=True).stdout
+    assert not left.strip(), left

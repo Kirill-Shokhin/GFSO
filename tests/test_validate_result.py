@@ -648,9 +648,9 @@ def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeyp
     assert "--no-session-persistence" in args, \
         "every internal call would save its transcript into the operator's session history, " \
         "burying their own sessions and stalling `claude --resume` for minutes"
-    assert "--safe-mode" in args, \
-        "an internal call would load the operator's CLAUDE.md: an executor or a validator of this " \
-        "product would run under the personal instructions its user wrote for themselves"
+    assert args[args.index("--setting-sources") + 1] == "", \
+        "an internal call would load the operator's CLAUDE.md, or the cwd's `.claude/settings.json` a delivered " \
+        "tree carries: an executor or a validator would run under instructions or a helper nobody of the system wrote"
 
 
 def test_the_record_names_the_model_that_validated():

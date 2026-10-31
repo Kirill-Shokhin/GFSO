@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -690,6 +691,7 @@ class Dispatcher:
         self._validate = validator_runner or _auto_validate
         self._retry_model: dict = {}   # round key → the tier its RETRY should use
         self._seen: set[str] = set()      # "{task}#{iter}" / "v:{task}#{iter}" — one run per round
+        self._rested = False              # the stopped project's containers ended (`_rest`) since its stop
         self._lapsed_said: set[str] = set()   # roles whose owner's departure is already on the record
         # …and the claim on a key is ATOMIC. The dedup was a bare check-then-add over a set, and
         # `dispatch_once` runs from two places by design — the poll loop and the transition wake — so
@@ -1324,7 +1326,9 @@ class Dispatcher:
         if getattr(self._engine, "_dispatch_quiesce", 0):
             return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
         if self._engine.paused():
+            self._rest()
             return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
+        self._rested = False
         self._rejoin()     # a root's result that did not land is tried again (cheap: roots only)
         # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§10.3) —
         # both the LLM validator (a fresh read-only agent) and the deterministic unittest-checker
@@ -1870,6 +1874,17 @@ class Dispatcher:
                 clear_workspaces(self._engine, self._agents, t)   # tidying, never "did not land" (critic r4, J4)
             except Exception as e:                      # noqa: BLE001
                 log.warning(f"delegate: {tid} landed; its places were not cleared: {e}")
+
+    def _rest(self) -> None:
+        """A stopped project's containers ended once, when nothing of it runs any more (`run_state`'s `stopped`): its
+        work stands in its volumes, and its next start makes them again over them (`ExecutionPort.stop`)."""
+        if self._rested or any(w.get("project") == (self._engine.project_name or DEFAULT_PROJECT) for w in in_flight()):
+            return
+        self._rested = True
+        try:
+            execution_of(self._engine).stop()
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            log.warning(f"the stopped project's containers could not be ended: {e}")
 
     def _rejoin(self) -> None:
         """Try again every root whose result did not land, and on start every passed root whose branch the base does

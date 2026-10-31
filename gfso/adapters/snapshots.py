@@ -145,17 +145,16 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
     try:
         if commit:
             ran = ""
-            with execution.session(str(at)).without_state():   # …the delivered code built where its judge's state is not
-                for step in (lambda: _build(at, delivered[2], execution),
-                             lambda: _after_build(at, delivered[0], commit, execution, smudged)):
-                    try:
-                        ran += step()
-                    except BuildFailed as e:
-                        if not unbuilt_ok:
-                            raise
-                        ran += f"{'; ' if ran else ''}{e}"
-                    finally:
-                        execution.release(str(at))  # …every process the build left: the run starts in a fresh container
+            for step in (lambda: _build(at, delivered[2], execution),   # …where no client's state is (`client`)
+                         lambda: _after_build(at, delivered[0], commit, execution, smudged)):
+                try:
+                    ran += step()
+                except BuildFailed as e:
+                    if not unbuilt_ok:
+                        raise
+                    ran += f"{'; ' if ran else ''}{e}"
+                finally:
+                    execution.release(str(at))  # …every process the build left: the run starts in a fresh container
             if built is not None:
                 built.append(ran)
         yield str(at)

@@ -21,9 +21,9 @@ from gfso.adapters.llm import credentials
 from gfso.config import SECRET_ENV
 from gfso.llm import llm_factory
 
-SETTINGS = '{"disableAllHooks": true, "language": ""}'
+SETTINGS = '{"disableAllHooks": true, "language": "", "autoMemoryEnabled": false}'
 HEAD = ["/bin/claude", "-p", "--model", "m", "--system-prompt", "SYS", "--strict-mcp-config", "--settings", SETTINGS,
-        "--safe-mode"]
+        "--setting-sources", ""]
 STREAM = ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
 ANSWER = {"type": "result", "result": "OK", "is_error": False, "usage": {"input_tokens": 3, "output_tokens": 1},
           "num_turns": 1, "total_cost_usd": 0.01}

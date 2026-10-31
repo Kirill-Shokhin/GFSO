@@ -82,10 +82,12 @@ def test_live_a_sessions_container_mounts_its_own_subpaths_with_their_rights(pro
         a.run(["true"], cwd=str(project.own / "a"), timeout=120).check_returncode()
         sub = lambda d: (v, ".gfso-base" if d == project.base else d.relative_to(project.own).as_posix())
         want = {(a.to_inside(str(d)), sub(d), ro) for d, ro in a._mounts()}
-        want |= {(at, (project.volume.state, "+a"), False) for at in (a.to_inside(str(a.state)), STATE_INSIDE)}
         held = _held(a.container)
         assert all(m[1][1] for m in held if isinstance(m[1], tuple)), "a session mounts no whole volume"
-        assert held == want, "its own subpaths, with their rights"
+        assert held == want, "its own subpaths, with their rights — the system's side, no client's state"
+        (c := a.client()).run(["true"], cwd=str(project.own / "a"), timeout=120).check_returncode()
+        want |= {(at, (project.volume.state, "+a"), False) for at in (a.to_inside(str(a.state)), STATE_INSIDE)}
+        assert _held(c.container) == want, "its client's: the same, and its own CLI state at both its names"
         assert _held(project.container) == {(project.to_inside(str(project.base)), (v, ".gfso-base"), False),
                                             (project.to_inside(str(project.own)), (v, None), False)}
     finally:

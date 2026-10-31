@@ -207,7 +207,10 @@ def denied(sess: ExecutionPort) -> tuple:
     CLI hands its own long outputs back through Read from there, and a link the agent makes leads Grep around any rule
     (critic over the readers, both measured)."""
     states = sorted({Path(sess.state_seen()).as_posix(), sess.to_inside(str(sess.state_dir()))})
-    return tuple(f"{t}(/{p}/**)" for t in ("Edit", "Write", "NotebookEdit") for p in ("/proc", "/dev", *states))
+    # …and the home the client's container runs from: a program laid on its PATH there (`~/.local/bin`) ran at the
+    # client's next start, beside it (critic, live); and its `/tmp`, where a call's pid lies that its ending kills by
+    return tuple(f"{t}(/{p}/**)" for t in ("Edit", "Write", "NotebookEdit")
+                 for p in ("/proc", "/dev", *states, *(["/home", "/tmp"] if sess.commands_apart else [])))
 
 
 def kept(execution: ExecutionPort, sid: str, what: str) -> Path:
@@ -265,7 +268,7 @@ class _Hooks:
         conversation it armed one for, and the CLI's own writers kept off what `denied` names."""
         deny = {"permissions": {"deny": list(denied)}} if denied else {}
         if sid not in self.armed:
-            return json.dumps({"disableAllHooks": True, "language": "", **deny})
+            return json.dumps({"disableAllHooks": True, "language": "", "autoMemoryEnabled": False, **deny})
         # …on this host the server's own interpreter: `python3` on a Windows PATH is the Store's stub, which runs nothing
         py = Path(sys.executable if isinstance(self.where(sid), LocalExecution) else "python3").as_posix()
         at = f"{Path(self.where(sid).state_seen()).as_posix()}/gfso-sessions/{_HOOK.name}"
@@ -275,11 +278,12 @@ class _Hooks:
             {"matcher": "*", "hooks": [{"type": "command", "command": f'"{py}" "{at}"'}]}]}, **deny})
 
     def clean(self, sid: str | None) -> list[str]:
-        """What keeps the operator out of the call. `--safe-mode` also drops the hooks `--settings` brings, so a session
-        armed with the handover hook loads no setting source instead — the person's and the project's CLAUDE.md, skills
-        and hooks stay out as under it (probed on CLI 2.1.311, haiku 5.5: neither CLAUDE.md read, no skill listed, the
-        hook's word reached the model)."""
-        return ["--setting-sources", ""] if sid in self.armed else ["--safe-mode"]
+        """What keeps the operator and the repository out of the call: no setting source loaded — the person's and the
+        project's CLAUDE.md, skills and hooks stay out (probed on CLI 2.1.311, haiku 5.5: neither CLAUDE.md read, no skill
+        listed, the handover hook's word reached the model). Not `--safe-mode`: under it the CLI still read the cwd's
+        `.claude/settings.json`, and a delivered `apiKeyHelper` ran beside a judge's client and forged its verdict
+        (critic, live)."""
+        return ["--setting-sources", ""]
 
 
 class _Credentials:
@@ -618,7 +622,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         except PlaceUnavailable as e:
             return self._never_started(e, False)
         # in the session's own place (`ExecutionPort.session`): it writes there alone and sees no other node's
-        sess = self._exec.session(cwd, self.agent)
+        sess = self._exec.session(cwd, self.agent).client()
         args = [self._cmd, "-p", "--model", self._model, "--system-prompt", system,
                 # The CLI inherits the USER's MCP configuration, and this installation registers its
                 # own door there — so every internal call (decompose, the Level-2 review, the
@@ -646,8 +650,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                 # loaded the person's CLAUDE.md: probed 2026-09-24, an internal call listed the
                 # operator's working-mode and coding rules among its instructions — so an executor or
                 # a validator of this product ran under whatever its user had written for themselves.
-                # `--safe-mode` drops CLAUDE.md, skills, plugins, hooks and MCP and keeps auth (probed:
-                # none of those instructions reached the call; tools and the system prompt work).
+                # No setting source drops CLAUDE.md, skills, plugins, hooks and MCP and keeps auth — and, unlike
+                # `--safe-mode`, the cwd's `.claude/settings.json`, which a delivered tree carries (`_Hooks.clean`).
                 *self.hooks.clean(session),
                 *resuming,
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",

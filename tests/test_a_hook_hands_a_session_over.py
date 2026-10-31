@@ -184,15 +184,16 @@ def cli(tmp_path, monkeypatch):
 
 
 def test_an_armed_session_loads_no_setting_source_and_carries_the_hook_alone(cli):
-    """`--safe-mode` drops the hooks `--settings` brings (probed: the hook never ran); an armed session keeps the
-    operator out by loading no setting source instead, and every other call stays in safe mode."""
+    """`--safe-mode` drops the hooks `--settings` brings (probed: the hook never ran) and still loads the cwd's
+    `.claude/settings.json`, which a delivered tree carries (critic, live): every call loads no setting source."""
     llm, seen, tmp = cli
     llm.agent_round("s", "packet", ("Read",), cwd=str(tmp), session="plain")
     llm.arm("sid", dict(ARMED))
     assert (tmp / "cfg" / "gfso-sessions" / "handover_hook.py").read_bytes() == H._HOOK.read_bytes()
     llm.agent_round("s", "packet", ("Read",), cwd=str(tmp), session="sid")
     plain, armed = seen
-    assert "--safe-mode" in plain and "disableAllHooks" in plain[plain.index("--settings") + 1]
+    assert "--safe-mode" not in plain and plain[plain.index("--setting-sources") + 1] == ""
+    assert "disableAllHooks" in plain[plain.index("--settings") + 1]
     assert "--safe-mode" not in armed and armed[armed.index("--setting-sources") + 1] == ""
     hooks = json.loads(armed[armed.index("--settings") + 1])["hooks"]["PostToolUse"][0]["hooks"]
     assert hooks[0]["command"].endswith('gfso-sessions/handover_hook.py"')

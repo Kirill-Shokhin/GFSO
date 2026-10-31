@@ -7,6 +7,7 @@ volume, mounted at the same inside path."""
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import io
 import ipaddress
@@ -38,7 +39,7 @@ log = logging.getLogger(__name__)
 
 INSIDE = "/gfso-place"
 #: the agent CLI's state inside the container — the image's `CLAUDE_CONFIG_DIR`
-STATE_INSIDE = "/home/agent/.claude"
+STATE_INSIDE = shell.STATE
 #: Docker Desktop forwards this network to the HOST'S LOOPBACK, :8000 included (probe P8): a session inside could
 #: otherwise sign the graph it works under (§10.3)
 HOST_NET = "192.168.65.0/24"
@@ -136,8 +137,12 @@ def grouped(project_container: str, role: str) -> list[str]:
     """The labels that show a project's containers as ONE stack in Docker Desktop, subgrouped by role — a row's twenty
     containers hung side by side, alike by name (the author, 2026-10-28: «контейнеры … для одной задачи логично держать в
     группе»). A compose project's name: lower-case letters, digits, `_`, `-`."""
-    return ["--label", f"com.docker.compose.project={re.sub(r'[^a-z0-9_-]+', '-', project_container.lower())}",
+    return ["--label", f"{GROUP}={re.sub(r'[^a-z0-9_-]+', '-', project_container.lower())}",
             "--label", f"com.docker.compose.service={role}"]
+
+
+#: the label a project's containers share as one stack (`grouped`)
+GROUP = "com.docker.compose.project"
 
 
 #: the base read as a container reads it — through its own mount, nothing written into it: its listing, and its git's
@@ -840,12 +845,14 @@ class Commands:
         laid = io.BytesIO()
         with tarfile.open(fileobj=laid, mode="w") as t:
             for name, mode, data in ((shell.CLIENT, 0o555, b"#!/usr/bin/env -S python3 -I\n"
-                                      + Path(shell.__file__).read_bytes()), (shell.BESIDE, 0o444, shell.GUARD.encode())):
+                                      + Path(shell.__file__).read_bytes()), (shell.BESIDE, 0o444, shell.GUARD.encode()),
+                                     (shell.NO_GIT, 0o555, shell.NONE.encode())):
                 (i := tarfile.TarInfo(Path(name).name)).size, i.mode = len(data), mode
                 t.addfile(i, io.BytesIO(data))
-        run(["docker", "exec", "-i", "-u", "0", s.container, "sh", "-c",
-             f"mkdir -p -m 755 {shell.HOME} && tar -x -C {shell.HOME} -f -"], input=laid.getvalue(),
-            timeout=60).check_returncode()
+        run(["docker", "exec", "-i", "-u", "0", s.container, "/bin/sh", "-c",
+             f"/bin/mkdir -p -m 755 {shell.HOME} && /bin/tar -x -C {shell.HOME} -f - && /bin/cp "
+             f"{shell.HOME}/{Path(shell.NO_GIT).name} {shell.NO_GIT} && /bin/chmod 755 {shell.NO_GIT}"],
+            input=laid.getvalue(), timeout=60).check_returncode()   # …by path: root's PATH starts at the agent's home
         # …and one command through it, as the CLI will send them: a listener not up yet is waited for, never passed
         run(["docker", "exec", "-u", user, s.container, "sh", "-c",
              'for i in $(seq 100); do "$0" -c true 2>/dev/null && exit; sleep 0.1; done; exit 1', shell.CLIENT],
@@ -1365,9 +1372,10 @@ def container_name(execution: str, project: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{execution}-{project}").lower()
 
 
-def _home() -> str:
-    """This installation's state home, as a volume's label names it: two servers on one machine delete theirs alone."""
-    return hashlib.sha1(str(data_dir().resolve()).encode()).hexdigest()[:8]
+def _home(data: Path | None = None) -> str:
+    """This installation's state home — or the one whose state directory is `data` —, as a volume's label names it: two
+    servers on one machine delete theirs alone."""
+    return hashlib.sha1(str((data or data_dir()).resolve()).encode()).hexdigest()[:8]
 
 
 #: `_home`, read from outside: the resource view attributes what Docker holds by it
@@ -1391,7 +1399,7 @@ class ContainerExecution(ExecutionPort):
     #: place's (`session`), and the project's runs the plan's probes, written by agents — with the state mounted they
     #: read every place's conversations under it (critic over the CLI state per place)
     holds_sessions = False
-    #: a session container started with no model client's state (`PlaceContainer.without_state`)
+    #: a session container started with no model client's state (`PlaceContainer.client`)
     bare = False
     apart = True
 
@@ -1531,7 +1539,7 @@ class ContainerExecution(ExecutionPort):
             except (OSError, LookupError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 self.stop()
                 raise RuntimeError(f"{self.container}: {e} — no call runs unsealed") from e
-            seal = run(["docker", "exec", "-u", "0", self.container, "sh", "-c",       # uid 0: the rule is root's
+            seal = run(["docker", "exec", "-u", "0", self.container, "/bin/sh", "-c",       # uid 0: the rule is root's
                         f"{self.way.seal()} && mkdir -p /tmp/gfso-calls && chmod 1777 /tmp/gfso-calls"], timeout=60)
             if seal.returncode != 0:
                 self.stop()
@@ -1543,13 +1551,18 @@ class ContainerExecution(ExecutionPort):
         self.way.open()
 
     def stop(self) -> None:
-        """The project's container, its sessions' and its way out."""
+        """The project's container, its sessions' and its way out — every container of its stack, one an earlier server
+        started too; its volumes kept, where its work stands, and its next call makes them again over them."""
         for s in filter(None, [_SESSIONS.pop(k, None) for k in _SESSIONS.copy() if k[0] == self.container]):
             s.stop()
         run(["docker", "rm", "-f", self.container], timeout=60)
         self.gate.close()                                 # …first: a network with a member is not removed
         self.way.close()
         _STARTED.pop(self.container, None)
+        # …and what is left of its stack after the doors' and the way's logs are kept (`_mirror`)
+        if ids := (run(["docker", "ps", "-aq", "--filter", f"label={grouped(self.way.container, '')[1]}", "--filter",
+                        f"label={HOME}={_home()}"], timeout=60, text=True).stdout or "").split():
+            run(["docker", "rm", "-f", *ids], timeout=120)
 
     def _running(self) -> bool:
         """Is the container still up — and its allowlist's gateway, whose death would leave the project hanging on
@@ -1720,8 +1733,10 @@ class ContainerFiles(FilesPort):
         except ValueError:
             self.ex.start()                 # …a dead place stops first: refused for its own health, then for the path
             raise
-        if rw == (st := self.ex.state) or (rw.parent == st and (p == rw or not rw.name.startswith("+"))):
-            return self.ex.session(str(st)), str(st)        # …the CLI state: its keeper's, never the project's
+        if rw == (st := self.ex.state) or rw.parent == st:
+            # …the CLI state: its keeper's, never the project's — nor a place's own container, which mounts none of it
+            # (`PlaceContainer.client`)
+            return self.ex.session(str(st)), str(st)
         if p == rw:
             return self.ex, str(self.ex.base)
         rw = _served(rw, self.ex)
@@ -1910,11 +1925,24 @@ class PlaceContainer(ContainerExecution):
         # conversations, the system's notes on them and the CLI's own memory of another place are in no session's reach
         self.state = None if rw == project.state else project.state / ("+" + "+".join(rel))
         self.holds_sessions = True
-        #: started meanwhile with no model client's state mounted (`ContainerExecution.bare`)
-        self.bare = False
+        #: the system's container of the place mounts no model client's state; its client's does (`client`)
+        self.bare, self.paired, self.system = True, None, self
         self.commands = Commands(self)
         #: the model clients' calls running in this place now — its commands are ended whole when the last one ends
         self.clients: set = set()
+
+    def client(self) -> "PlaceContainer":
+        """The container the place's model clients run in — the place's mounts and its CLI state, and no git: the
+        repository's own configuration (a clean filter its agent or a delivered build wrote) ran in the client's
+        `git status` and in the system's git beside the client and its state, and forged a judge's PASS (critic, live).
+        Everything the system runs over the place — its git, a build — runs in the place's own container, which mounts
+        no state; the client's commands run in their own (`Commands`)."""
+        if self.paired is None:
+            c = copy.copy(self)
+            c.container, c.bare, c.clients, c.paired = self.container + "-client", False, set(), c
+            c.commands = Commands(c)
+            self.paired = c
+        return self.paired
 
     def _labels(self) -> list[str]:
         """Its project's stack, subgrouped by role (`grouped`); who works here, which node, as what."""
@@ -1924,9 +1952,9 @@ class PlaceContainer(ContainerExecution):
     def _mounts(self) -> list:
         """(directory, read-only?) for each directory the container holds. A judge's round or batch writable with a
         temp of its own, and what the system laid for it from its record read-only beside it (`laid_beside`): a standing
-        finding's files, a pinned probe's inputs — never an earlier round, whose files the delivered code run there could rewrite after its
+        finding's files — never an earlier round, whose files the delivered code run there could rewrite after its
         judge ran them, and whose container outlived its run (critic over the judged tree: a forged `../probe.sh`
-        re-run, rc 0); a directory of the system's checks, writable with a temp of its own and the inputs laid beside it read-only. Nothing else: no base, no
+        re-run, rc 0); a directory of the system's checks, writable with a temp of its own and what was laid beside it read-only. Nothing else: no base, no
         node's temp, no place, no other round or batch. A judge runs the delivered tree it was handed, and anything more
         it mounts is a way for that tree to read what the executor holds now — a delivered link into the node's temp, a
         root's base (the root's executor's live place), a sibling batch's copy (critic over the judged tree). A temp of
@@ -1945,20 +1973,6 @@ class PlaceContainer(ContainerExecution):
         # session slice); no judge works here (`apart`)
         own = [(self.rw, False), (scratch_of(self.rw, self.project_name), True)]
         return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
-
-    @contextlib.contextmanager
-    def without_state(self):
-        """What runs here meanwhile runs in a container of its own that mounts no model client's state: the delivered
-        code a judge's copy is built with ran as the client's uid where its CLI state was mounted, and wrote the
-        instructions its judge's client then started on (live: a delivered build's CLAUDE.md stood in the judge's
-        state). Ended on both sides: the judge's client starts in a fresh one, its state mounted."""
-        self.stop()
-        self.bare = True
-        try:
-            yield
-        finally:
-            self.stop()
-            self.bare = False
 
     def temp_root(self):
         """Its node's own temp (`ContainerExecution.temp_of`), not the project's."""
@@ -2005,7 +2019,7 @@ class PlaceContainer(ContainerExecution):
     def _open_the_way(self) -> None:
         self.project.start()                              # the project's network and gateway stand before any session
         # …and a project started here stopped its sessions first, this one among them: it is tracked again
-        _SESSIONS[(self.project.container, os.path.normcase(self.rw))] = self
+        _SESSIONS[(self.project.container, os.path.normcase(self.rw))] = self.system
         # a volume's subpath mounts once it stands: what the system lends it made by the project's container — its place
         # not, which the system made, or the session is refused where nothing of its place stands
         lent = [str(s) for s, _ in self._mounts() if s.is_relative_to(self.own) and s != self.rw]
@@ -2017,7 +2031,9 @@ class PlaceContainer(ContainerExecution):
                 raise OSError(f"{self.container}: its directories could not be made ({r.stderr.strip()[-300:]})")
 
     def stop(self) -> None:
-        """This session's container and its commands': the way out is its project's."""
+        """This session's container and its commands', its client's with them: the way out is its project's."""
+        if self.paired not in (None, self):
+            self.paired.stop()
         self.commands.close()
         run(["docker", "rm", "-f", self.container], timeout=60)
         _STARTED.pop(self.container, None)

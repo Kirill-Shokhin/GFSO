@@ -355,9 +355,10 @@ def test_a_sessions_cli_state_is_its_places_and_the_system_finds_it(project):
     assert a.state_dir() == project.state / "+a" and b.state_dir() == project.state / "+b"
     assert project.session(str(project.base)).state_dir() == project.state / "+"
     v = project.volume.state
-    assert [m for m in a.run_args() if v in m] == [
+    assert [m for m in a.client().run_args() if v in m] == [
         f"type=volume,src={v},dst=/gfso-place/.gfso-nodes-ws/p/.gfso-state/+a,volume-subpath=+a",
         f"type=volume,src={v},dst=/home/agent/.claude,volume-subpath=+a"], "its own, at both its names, in its volume"
+    assert not [m for m in a.run_args() if v in m], "the place's own container, where the system runs, mounts none"
     assert not [m for m in project.run_args() if v in m], "the project's container mounts no CLI state"
     llm = H.ClaudeCodeProvider(execution=project)
     llm.hooks.place("sid-a", str(work / ".gfso-nodes-ws/p/a"))
@@ -403,7 +404,7 @@ def test_live_a_session_holds_its_places_cli_state_alone(project):
     made(project, "a", "b")
     lay(project, {".gfso-state/+b/theirs.jsonl": "b's conversation"})
     try:
-        got = a.run(["bash", "-c", "cat /home/agent/.claude/theirs.jsonl 2>/dev/null && echo SAW-B; "
+        got = a.client().run(["bash", "-c", "cat /home/agent/.claude/theirs.jsonl 2>/dev/null && echo SAW-B; "
                                    "touch /home/agent/.claude/mine && echo OWN"], cwd=str(work / ".gfso-nodes-ws/p/a"),
                     timeout=120).stdout.split()
         assert got == ["OWN"] and project.files.exists(str(a.state / "mine")), got
@@ -422,7 +423,7 @@ def test_live_a_gone_directorys_cli_state_goes_with_its_container(project):
     try:
         with project.scratch("gfso-noplace-") as d:
             gone = project.session(d)
-            assert gone.run(["touch", "/home/agent/.claude/left"], cwd=d, timeout=120).returncode == 0
+            assert gone.client().run(["touch", "/home/agent/.claude/left"], cwd=d, timeout=120).returncode == 0
             assert project.files.exists(str(gone.state / "left"))
         assert not project.files.exists(str(gone.state))
     finally:

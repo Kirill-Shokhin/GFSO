@@ -449,10 +449,10 @@ class ExecutionPort(ABC):
         if (s := self.session(path)) is not self:
             s.stop()
 
-    @contextmanager
-    def without_state(self):
-        """What runs in this session meanwhile reaches no model client's state. This host keeps none apart."""
-        yield
+    def client(self) -> "ExecutionPort":
+        """Where a model client of this session runs, as opposed to what the system runs over its place. This host is
+        one place for both."""
+        return self
 
     def session(self, cwd: str, agent: Optional[str] = None) -> "ExecutionPort":
         """Where an agent's session working in `cwd` runs, as opposed to the system's own commands: an isolated place

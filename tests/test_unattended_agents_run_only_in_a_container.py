@@ -16,6 +16,7 @@ import pytest
 from gfso import serverctl, sessions as S, tools_llm as TL
 from gfso.adapters import execution as E
 from gfso.core.types import THIS_HOST, PlaceUnavailable
+import gfso.delegate as D
 from gfso.delegate import Dispatcher
 from tests.support import make_engine
 from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _an_offer
@@ -165,3 +166,24 @@ def test_the_remedy_never_names_the_users_home_nor_inits_inside_a_git_directory(
     assert "git init" in said and str(home) not in said.replace(str(work), ""), said
     said = _refused(tmp_path, home / ".git")
     assert "`.git` directory" in said and "git init" not in said, said
+
+
+def test_a_stopped_project_ends_its_containers_once_nothing_of_it_runs_and_keeps_its_work(tmp_path, monkeypatch):
+    """Stopped, a project's containers stood up for as long as it stood, holding the machine's memory (engineering): they
+    end once nothing of it runs, once per stop — its volumes kept, its next start makes them again."""
+    rested, working = [], [{"project": "default"}]
+    monkeypatch.setattr(D, "execution_of", lambda *a, **k: type("X", (), {"stop": lambda self: rested.append(1)})())
+    monkeypatch.setattr(D, "in_flight", lambda: working)
+    e = make_engine()
+    d = Dispatcher(e, _agents(tmp_path, ("exec-1", "llm-executor")))
+    e.pause("me", "stop")
+    d.dispatch_once()
+    assert rested == [], "a session of it still runs"
+    working.clear()
+    d.dispatch_once(), d.dispatch_once()
+    assert rested == [1], "ended once, when nothing of it runs"
+    e.resume("me")
+    d.dispatch_once()
+    e.pause("me", "again")
+    d.dispatch_once()
+    assert rested == [1, 1], "each stop its own"
