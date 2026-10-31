@@ -354,7 +354,7 @@ body {
 .cs-tile i .tally { font: inherit; text-transform: none; letter-spacing: 0; color: inherit; }
 .cs-tile i .tally b { font-family: var(--font-display); font-size: inherit; letter-spacing: 0; line-height: inherit; }
 .cs-legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 12px; }
-.cs-legend em { display: block; margin-left: 16px; font-style: normal; font-size: 10.5px; color: var(--ink-faint); }
+.cs-legend em { display: flex; gap: 12px; margin-left: 16px; font-style: normal; font-size: 10.5px; color: var(--ink-faint); }
 /* a figure the eye looks for is the brand's display face, as every count's (`.tally b`); a table's figures are mono */
 .cs-legend b { font-family: var(--font-display); font-weight: 650; color: var(--ink); }
 .cs-legend > span > i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
