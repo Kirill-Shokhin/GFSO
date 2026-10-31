@@ -324,3 +324,18 @@ def test_live_a_file_a_command_names_is_not_laid_in_the_clients_container(monkey
     left = subprocess.run(["docker", "exec", s.container, "sh", "-c", "ls /home/agent/.claude/planted "
                            "/home/agent/.local/bin/planted 2>/dev/null"], capture_output=True, text=True).stdout
     assert not left.strip(), left
+
+
+@live
+def test_live_the_record_says_what_each_command_changed_in_the_place(monkeypatch, project):
+    """Thm 11 for actions: each command's end line names what in the place changed while it ran — by the inode's change
+    time, so a file whose modification time the command set back is named too; a deletion names its directory."""
+    answer, call, s = _session(monkeypatch, project, ["mkdir -p d && echo x > d/made.txt && echo y > old.txt",
+                                                       "echo z > hid.txt && touch -d 2001-01-01 hid.txt && rm d/made.txt"])
+    assert answer == "done", call
+    ends = {r["seq"]: r for r in s.commands.record() if "rc" in r}
+    runs = [r for r in s.commands.record() if r.get("argv") and ("made.txt" in r["argv"][-1])]
+    first, second = (ends[r["seq"]] for r in runs[:2])
+    assert {"f d/made.txt", "f old.txt"} <= set(first["changed"]), first
+    assert "f hid.txt" in second["changed"] and "d d" in second["changed"], second
+    assert "f old.txt" not in second["changed"], "a command is said with its own span alone"

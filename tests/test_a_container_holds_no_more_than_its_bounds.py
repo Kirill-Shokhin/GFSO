@@ -56,7 +56,7 @@ def test_every_docker_run_of_the_system_is_bounded():
     with pytest.raises(ValueError, match="bounded"):
         E._system_run("gfso-never-started", IMAGE, ["--label", "x=y"], Path(__file__), [], Path("log"))
     assert E._SMALL == ("--memory", "256m", "--memory-swap", "256m", "--pids-limit", "256")
-    assert src.count("*_SMALL") == 3, "the door's, the gateway's and the ceiling's maker, no swap past their bound"
+    assert src.count("*_SMALL") == 4, "the door's, the gateway's, the ceiling's maker and its reader: no swap past their bound"
 
 
 @live
@@ -207,3 +207,102 @@ def test_live_the_systems_containers_are_bounded_in_their_sum(monkeypatch):
     finally:
         subprocess.run(["docker", "rm", "-f", *ids], capture_output=True)
         _cgroup(f"rmdir /cg/{group}")
+
+
+ID = lambda c: c * 64
+MiB = 2 ** 20
+
+
+def test_near_the_ceiling_the_work_furthest_over_its_share_is_ended_whatever_containers_it_runs_in():
+    """The kernel at the group's max ends its largest process — an honest one beside a runaway spread thin (measured).
+    Per container the same failed one level up (critic r2); so the unit is the node's work, every container of it, its
+    share the ceiling over the works that hold anything (critic r3), and what counts is what no reclaim gives back: an
+    honest writer's page cache fired the watch on its neighbour, a memfd runaway hid in the cache (critic r3)."""
+    units = {ID("a"): "h|p|honest", ID("b"): "h|p|runaway", ID("c"): "h|p|runaway", ID("d"): "h|p|runaway",
+             ID("e"): "h|p|idle"}
+    row = lambda i, held, file=0, shmem=0: f"{i} {held + file - shmem} {file} {shmem}"
+    read = lambda *rows: "\n".join(["1000000000", *rows])
+    spread = read(row(".", 900 * MiB), row(ID("a"), 300 * MiB), *(row(ID(c), 200 * MiB) for c in "bcd"),
+                  row(ID("e"), 1 * MiB))
+    assert sorted(E._over_share(spread, lambda ids: units)) == [ID("b"), ID("c"), ID("d")]
+    cache = read(row(".", 650 * MiB, file=500 * MiB), row(ID("a"), 650 * MiB), row(ID("b"), 0, file=500 * MiB))
+    assert E._over_share(cache, lambda ids: units) == [], "page cache is given back: the kernel ends nobody, nor the watch"
+    memfd = read(row(".", 900 * MiB, file=600 * MiB, shmem=600 * MiB), row(ID("a"), 300 * MiB),
+                 row(ID("b"), 600 * MiB, file=600 * MiB, shmem=600 * MiB))
+    assert E._over_share(memfd, lambda ids: units) == [ID("b")], "a memfd is memory, not cache"
+    alone = read(row(".", 900 * MiB), row(ID("a"), 899 * MiB), *(row(ID(c), 1 * MiB) for c in "e"))
+    assert E._over_share(alone, lambda ids: units) == [], "an honest heavy work beside idle ones holds the ceiling whole"
+    assert E._over_share(read(row(".", 849 * MiB), row(ID("b"), 849 * MiB)), lambda ids: units) == [], "below 85%"
+    assert E._over_share(read(row(".", 900 * MiB), "suite 900 0 0", row(ID("a"), 10 * MiB)), lambda ids: {}) == []
+    assert E._over_share("max\n. 9 0 0", lambda ids: {}) == [] and E._over_share("", lambda ids: {}) == []
+
+
+#: each case of the matrix: what the honest work runs, what the other runs in how many containers, and what must end
+#: (a work's name) — the watch never ends what the kernel would spare, and ends a runaway before the kernel chooses
+_GROW = "import time; xs = []\nwhile True: xs.append(bytearray(b'x' * 5 * 2 ** 20)); time.sleep(0.5)"
+_MEMFD = ("import os, time; f = os.memfd_create('m')\nwhile True: os.write(f, b'x' * 5 * 2 ** 20); time.sleep(0.5)")
+_HOLD = lambda mib: f"import time; b = b'x' * {mib} * 2 ** 20; time.sleep(40)"   # one allocation, all touched
+_WRITE = ("import os, time\nwith open('/tmp/big', 'wb') as f:\n for _ in range(200): f.write(b'x' * 5 * 2 ** 20); "
+          "f.flush(); os.fsync(f.fileno()); time.sleep(0.05)\ntime.sleep(10)")
+MATRIX = {
+    "anon runaway spread over three containers": (_HOLD(250), _GROW, 3, "runaway"),
+    "memfd runaway": (_HOLD(250), _MEMFD, 1, "runaway"),
+    "an honest writer's page cache": (_HOLD(300), _WRITE, 1, None),
+    "an honest heavy work beside idle ones": (_HOLD(480), "import time; time.sleep(40)", 4, None),
+}
+
+
+@live
+@pytest.mark.parametrize("case", list(MATRIX))
+def test_live_near_the_ceiling_the_watch_ends_only_the_runaway(monkeypatch, case):
+    honest, other, n, ended = MATRIX[case]
+    group = f"{E.CEILING_GROUP}/watch-test-{os.getpid()}"
+    monkeypatch.setattr(E, "CEILING_GROUP", group)
+    monkeypatch.setattr(E, "CEILING_WATCH_S", 1.0)
+    monkeypatch.setattr(E, "_CEILING", {"flags": ["--cgroup-parent", f"/{group}"]})
+    reader, ids, stop = f"{group.replace('/', '-')}-ceiling-reader", [], E.threading.Event()
+    if _cgroup(f"mkdir -p /cg/{group} && echo 600M > /cg/{group}/memory.max && "
+               f"echo 0 > /cg/{group}/memory.swap.max").returncode:
+        pytest.skip("Docker's cgroups take no such group here")
+
+    def start(node, body):
+        return subprocess.run(["docker", "run", "-d", "--network", "none", "--memory", "1g", "--memory-swap", "1g",
+                               "--label", f"{E.HOME}=h", "--label", f"{E.PROJECT}=p", "--label", f"{E.NODE}={node}",
+                               "--cgroup-parent", f"/{group}", IMAGE, "python3", "-c", body],
+                              capture_output=True, text=True).stdout.strip()
+    try:
+        # …the watch up first, its reader standing, as for a server's life: started after the runaway, it lost the race
+        (watch := E.threading.Thread(target=E._watch_ceiling, args=(stop,), daemon=True)).start()
+        for _ in range(60):
+            if subprocess.run(["docker", "exec", reader, "true"], capture_output=True).returncode == 0:
+                break
+            time.sleep(1)
+        ids.append(start("honest", honest))
+        time.sleep(3)
+        ids += [start("runaway" if ended else f"other{k}", other) for k in range(n)]
+        codes = [subprocess.run(["docker", "wait", i], capture_output=True, text=True, timeout=180).stdout.strip()
+                 for i in ids]
+        events = dict(x.split() for x in _cgroup(f"cat /cg/{group}/memory.events").stdout.splitlines() if x.strip())
+        assert codes[0] == "0", f"the honest work was ended: {codes}, {events}"
+        assert codes[1:] == (["137"] * n if ended else ["0"] * n), (codes, events)
+        assert events["oom_kill"] == "0", f"the kernel chose, not the watch: {events}"
+    finally:
+        stop.set()
+        watch.join(timeout=60)                  # …its turn ended: else it made its reader again after the removal
+        subprocess.run(["docker", "rm", "-f", *ids, reader], capture_output=True)
+        _cgroup(f"rmdir /cg/{group}")
+
+
+def test_a_judges_build_the_watch_ended_is_asked_again_not_the_deliverys_fail(monkeypatch, tmp_path):
+    """The watch ends the work furthest over its share, a judge's batches among them: ended so, a build read as the
+    delivery's FAIL — a neighbour pressing on the ceiling steered another node's verdict (critic B6). Its own bound, or
+    its own exit, still FAILs it."""
+    (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "judge.b.b_1.batch1-x"
+    box.shell, box.run = lambda: "sh", lambda *a, **k: subprocess.CompletedProcess(a, 137, "", "Killed")
+    ex = SimpleNamespace(session=lambda at: box, files=SimpleNamespace(exists=lambda p: False))
+    monkeypatch.setattr(E, "_WATCH_ENDED", {"judge.b.b_1.batch1-x"})
+    with pytest.raises(S.Uncopied, match="memory watch"):
+        S._build(tmp_path, "make", ex)
+    monkeypatch.setattr(E, "_WATCH_ENDED", set())
+    with pytest.raises(S.BuildFailed, match="exited 137"):
+        S._build(tmp_path, "make", ex)

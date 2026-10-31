@@ -282,6 +282,116 @@ def lay_ceiling() -> None:
                         f"unbounded until a later start writes it")
 
 
+#: past this share of the ceiling, in memory no reclaim gives back, the watch ends the work standing furthest over its
+#: fair share; how often it reads; what a work must hold to count among those the ceiling is shared by
+CEILING_ACT, CEILING_WATCH_S, CEILING_FLOOR = 0.85, 2.0, 64 * 2 ** 20
+#: one read of the group: its `memory.max`, then `<name> <memory.current> <file> <shmem>` for the group itself (`.`) and
+#: each directory in it, by a reader of the system's own that mounts Docker's cgroup tree read-only
+_READ_GROUP = ('cd "/cg/$1" && cat memory.max && for d in . */; do d=${d%/}; [ -f "$d/memory.stat" ] && '
+               'echo "$d" "$(cat "$d/memory.current")" "$(awk \'$1=="file"||$1=="shmem"{printf "%s ",$2}\' "$d/memory.stat")"; done')
+
+
+def _held(current: int, file: int, shmem: int) -> int:
+    """What a cgroup holds that no reclaim gives back: all it is charged, less its page cache — save the cache that is
+    memory (shmem: tmpfs, a memfd). Read whole, the watch fired on an honest writer's cache the kernel would have
+    dropped and ended its neighbour; read as anon alone, a memfd runaway was invisible and a neighbour paid (critic r3)."""
+    return current - (file - shmem)
+
+
+def _over_share(read: str, unit_of) -> list[str]:
+    """The containers to end, from a read of the group (`_READ_GROUP`): none while what it holds past reclaim stands
+    below `CEILING_ACT` of its max; else every container of the work standing furthest over its fair share, if one
+    stands over it — the ceiling over the works holding at least `CEILING_FLOOR`: shared among idle ones too, the share
+    shrank and an honest work paid for theirs (critic r3). A work is one node's, whatever number of containers it runs
+    in (`unit_of`: ids → {container id: its work}): per container, a runaway spread over several outweighed none of
+    them and an honest one paid (critic r2)."""
+    lines = read.splitlines()
+    try:
+        top, rows = int(lines[0]), [x.split() for x in lines[1:]]
+        held = {r[0]: _held(*map(int, r[1:4])) for r in rows if len(r) == 4}
+    except (ValueError, IndexError):
+        return []
+    group = held.pop(".", None)
+    held = {i: n for i, n in held.items() if re.fullmatch(r"[0-9a-f]{64}", i)}
+    if group is None or group < top * CEILING_ACT or not held:
+        return []
+    units, of = {}, unit_of(list(held))
+    for i in held:
+        units.setdefault(of.get(i, i), []).append(i)
+    sums = {u: sum(held[i] for i in ids) for u, ids in units.items()}
+    share = top // max(1, sum(n >= CEILING_FLOOR for n in sums.values()))
+    worst = max(sums, key=sums.get)
+    return units[worst] if sums[worst] > share else []
+
+
+#: what names the reader, so a sweep of leftovers knows it for the system's
+READER = "gfso.ceiling-reader"
+
+
+def _units(ids: list) -> dict:
+    """{container id: the node's work it belongs to} — read off the labels the system set at its making (`identity`,
+    `PlaceContainer._labels`, `Commands`): its installation, project and node; one without a node, a work alone."""
+    got = run(["docker", "inspect", "-f", f'{{{{.Id}}}} {{{{index .Config.Labels "{HOME}"}}}}|{{{{index .Config.Labels '
+               f'"{PROJECT}"}}}}|{{{{index .Config.Labels "{NODE}"}}}}', *ids], timeout=60, text=True)
+    out = {}
+    for line in (got.stdout or "").splitlines():
+        i, _, key = line.partition(" ")
+        if key and "<no value>" not in key:
+            out[i] = key
+    return out
+
+
+_WATCH = threading.Event()
+#: the containers the watch ended, by name: what ran in them was ended by a neighbour's pressure, not by what it ran
+_WATCH_ENDED: set = set()
+
+
+def ended_by_watch(ex) -> bool:
+    """Was `ex`'s container ended by the ceiling's watch (`_watch_ceiling`)? A judge's copy or build ended so is no
+    verdict on its delivery — a neighbour near the ceiling would steer it (critic) — but a copy to make again."""
+    return isinstance(ex, ContainerExecution) and ex.container in _WATCH_ENDED
+
+
+def watch_ceiling() -> None:
+    """The ceiling's watch, for this server's life (`_watch_ceiling`) — started by the server, once, whether or not
+    Docker answers yet: it asks again each turn."""
+    if not _WATCH.is_set():
+        _WATCH.set()
+        threading.Thread(target=_watch_ceiling, name="gfso-ceiling", daemon=True).start()
+
+
+def _watch_ceiling(stop: threading.Event | None = None) -> None:
+    """WHO PAYS WHEN THE MACHINE'S CEILING IS NEAR: the node's work standing furthest over its fair share, not the
+    kernel's choice — at the group's max the kernel ends its largest process, an honest one beside a runaway spread over
+    many small ones (measured). Past `CEILING_ACT` of the ceiling in memory no reclaim gives back, this ends that work's
+    containers; their rounds meet it as their own bound. Nobody over a share, nothing is ended and nothing is slowed:
+    the kernel's kill at the ceiling stays the last resort, for a runaway faster than a turn. Every `CEILING_WATCH_S`."""
+    group, every = CEILING_GROUP, CEILING_WATCH_S
+    reader = f"{group.replace('/', '-')}-ceiling-reader"
+    while not (stop or threading.Event()).wait(every):
+        if not ceiling():
+            continue
+        try:
+            got = run(["docker", "exec", reader, "sh", "-c", _READ_GROUP, "sh", group], timeout=30, text=True)
+            if got.returncode:
+                run(["docker", "rm", "-f", reader], timeout=60)
+                run(["docker", "run", "-d", "--name", reader, "--label", f"{READER}=1", "--network", "none",
+                     "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", *_SMALL,
+                     "--mount", "type=bind,src=/sys/fs/cgroup,dst=/cg,readonly", "--entrypoint", "sleep",
+                     CEILING_IMAGE, "infinity"], timeout=120)
+                continue
+            if ends := _over_share(got.stdout, _units):
+                names = run(["docker", "inspect", "-f", "{{.Name}}", *ends], timeout=60, text=True).stdout or ""
+                _WATCH_ENDED.update(n.strip().lstrip("/") for n in names.splitlines() if n.strip())
+                done = run(["docker", "kill", *ends], timeout=60, text=True)
+                log.warning(f"the machine's memory ceiling was near: the work of {len(ends)} container(s) "
+                            f"({', '.join(i[:12] for i in ends)}) stood furthest over its share and "
+                            + ("was ended, its neighbours left running" if not done.returncode else
+                               f"could not be ended ({(done.stderr or '').strip()[-200:]})"))
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log.warning(f"the memory ceiling's watch did not read the group ({e}); the kernel's limit still holds")
+
+
 def _system_run(name: str, image: str, flags: list, script: Path, args: list, mirror: Path, mode: str = "1777") -> None:
     """A system container (a door, a gateway, a session's commands) running `script` with `args`: started waiting for
     it, the script laid whole into its `OWN` through one `docker exec`, so nothing of the host is mounted into it. Its
@@ -334,6 +444,13 @@ _FILE_OPS = {
     "write_bytes": 'mkdir -p -- "$(dirname -- "$1")" && cat > "$1"',
     "mkdir": 'mkdir -p -- "$1"',
     "write_files": 'mkdir -p -- "$1" && tar -x -m -C "$1" -f -',
+    # as root, over "$1" the base and then every directory from the writable root down to it: each made the system's, a
+    # link refused — checked after it is the system's, when no agent can swap it any more — then the files, 0444 root's,
+    # every directory under them root's 1777: code beside them adds its own, and moves none of the system's
+    "seal_files": 'b=$1; shift; for d; do { [ -L "$d" ] || mkdir -p -- "$d"; } && chown -h 0:0 -- "$d" && '
+                  'chmod 1777 -- "$d" && [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u -- "$d")" = 0 ] || '
+                  '{ echo "$d: not the system\'s directory" >&2; exit 1; }; done; '
+                  'tar -x -m -C "$b" -f - && find "$b" -mindepth 1 -type d -exec chmod 1777 {} +',
     "read_tree": '[ -d "$1" ] && tar -c -C "$1" .',
     "subdirs": '[ -d "$1" ] && find "$1" -mindepth 1 -maxdepth "$2" -type d -printf "%P\\0"',
     "remove_matching": 'r=$1; shift; [ -d "$r" ] || exit 0; '
@@ -667,21 +784,27 @@ class WayOut:
                 [",".join(self.network[1]), f"{OWN}/egress.log", GATEWAY])
 
     def run_args(self) -> list[str]:
-        """What `docker run` of the container takes for this way out: NET_ADMIN for the host rule when open; else its
-        internal network, no capability at all, no IPv6, and under an allowlist the gateway named its proxy."""
+        """What `docker run` of the container takes for this way out: NET_ADMIN for root's seal (`seal`); when closed its
+        internal network, no IPv6, and under an allowlist the gateway named its proxy."""
         mode = self.network[0]
         if mode == "open":
             return ["--cap-add", "NET_ADMIN"]
-        return ["--network", self.net, "--cap-drop", "ALL", "--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
+        return ["--network", self.net, "--cap-drop", "ALL", "--cap-add", "NET_ADMIN",
+                "--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
                 *[a for k in ("HTTPS_PROXY", "https_proxy") for a in ("-e", f"{k}=http://{GATEWAY}:{egress.PORT}")
                   if mode == "allowlist"]]
 
     def seal(self) -> str:
-        """What root runs in the container before any call: the host shut when the switch is open — Docker Desktop's
-        host network and the default gateway, Docker Engine's host, a seal finding none failing; a closed switch's
-        container has no route to shut and no capability to set one."""
+        """What root runs in the container before any call, under every switch: no connection opened TO it — its own
+        loopback and the answers to what it opened aside —, so no other container reaches what runs inside: on one
+        project network a session reached another node's judge by its name and read the server the judge was testing
+        (critic F5). Under an open switch the host shut too — Docker Desktop's host network and the default gateway,
+        Docker Engine's host, a seal finding none failing. Root alone holds the capability, at the seal: no agent's
+        process runs as root."""
+        inbound = ("iptables -A INPUT -i lo -j ACCEPT && iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED "
+                   "-j ACCEPT && iptables -A INPUT -j DROP")
         return (f'iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
-                'iptables -A OUTPUT -d "$gw" -j REJECT') if self.network[0] == "open" else "true"
+                f'iptables -A OUTPUT -d "$gw" -j REJECT && {inbound}') if self.network[0] == "open" else inbound
 
     def open(self) -> None:
         """A closed switch's internal network, and the allowlist's gateway on it — refused when an allowed host has no
@@ -836,9 +959,10 @@ class Commands:
         self.close()
         run(["docker", "rm", "-f", self.name], timeout=60)
         _STARTED[self.name], self.user = s.container, user     # …before it runs: a cut start ends with the server
-        said = {PROJECT: s.project_name, NODE: s.node, ROLE: s.role, AGENT: s.agent, "session": s.container}
+        said = {PROJECT: s.project_name, NODE: s.node, ROLE: s.role, AGENT: s.agent, "session": s.container,
+                "place": s.to_inside(str(s.rw))}
         _system_run(self.name, s.image, [
-            *labelled(s.name, s.project_name), *flags, "-u", "0", "--cap-drop", "ALL",
+            *labelled(s.name, s.project_name), "--label", f"{NODE}={s.node}", *flags, "-u", "0", "--cap-drop", "ALL",
             *[a for c in self.CAPS for a in ("--cap-add", c)], "--security-opt", "no-new-privileges",
             *container_limits(), "--network", f"container:{s.container}"],
             Path(shell.__file__), ["serve", user, f"{OWN}/commands.log", json.dumps(said)], self.log(), "0700")
@@ -1624,14 +1748,14 @@ class ContainerExecution(ExecutionPort):
     def shell(self):
         return "bash"
 
-    def bytes_call(self, args, *, cwd, input: bytes | None = None) -> subprocess.CompletedProcess:
-        """`args` to its end here as the image's user, bytes in and out as they are — a file's, never a path to map;
-        the container started only where this process has not started it, no `docker inspect` per call
+    def bytes_call(self, args, *, cwd, input: bytes | None = None, root: bool = False) -> subprocess.CompletedProcess:
+        """`args` to its end here as the image's user — or root —, bytes in and out as they are — a file's, never a path
+        to map; the container started only where this process has not started it, no `docker inspect` per call
         (`ContainerFiles`, which starts it again where it went)."""
         if self.container not in _STARTED:
             self.start()
         call = uuid.uuid4().hex
-        argv, client = self._exec_argv(args, None, cwd, call, start=False)
+        argv, client = self._exec_argv(args, None, cwd, call, root, start=False)
         try:
             return run(argv, timeout=600, cwd=str(self.parent), env=client, input=input)
         except subprocess.TimeoutExpired:
@@ -1666,8 +1790,9 @@ class ContainerExecution(ExecutionPort):
         if not self.files.exists(path):
             return
         at = self.session(str(self.own / STATE_DIR)) if Path(path).is_relative_to(self.own / STATE_DIR) else self
+        # …by root in the project's: what the system laid as its own (`ContainerFiles.seal_files`) no agent's uid removes
         r = at.run(["sh", "-c", 'chmod -R u+rwX -- "$1" 2>/dev/null; rm -rf -- "$1"', "sh", path],
-                     cwd=str(Path(path).parent), timeout=600)
+                   cwd=str(Path(path).parent), timeout=600, root=at is self and not self.holds_sessions)
         if r.returncode != 0:
             raise OSError(f"rm -rf {path} failed in {self.container}: {r.stderr.strip()[-300:]}")
 
@@ -1745,12 +1870,13 @@ class ContainerFiles(FilesPort):
             return None, None
         return self.ex.session(str(rw)), str(rw)
 
-    def _run(self, at, cwd: str, op: str, *args: str, data: bytes | None = None) -> subprocess.CompletedProcess:
+    def _run(self, at, cwd: str, op: str, *args: str, data: bytes | None = None,
+             root: bool = False) -> subprocess.CompletedProcess:
         """One operation in `at`: started where it is not, and once more where it is gone under a live server (a Docker
         restart) — no `docker inspect` per operation. A failure of the exec itself is no "not there": the daemon down
         raises `PlaceUnavailable`, any other `OSError`."""
         for again in (False, True):
-            done = at.bytes_call(["sh", "-c", _FILE_OPS[op], "sh", *args], cwd=cwd, input=data)
+            done = at.bytes_call(["sh", "-c", _FILE_OPS[op], "sh", *args], cwd=cwd, input=data, root=root)
             why = (done.stderr or b"").decode(errors="replace").strip()
             if done.returncode and _GONE.search(why) and not again:
                 _STARTED.pop(at.container, None)
@@ -1799,6 +1925,24 @@ class ContainerFiles(FilesPort):
                 (i := tarfile.TarInfo(rel)).size = len(data)
                 t.addfile(i, io.BytesIO(data))
         self._wrote(self._file("write_files", base, data=buf.getvalue()), base)
+
+    def seal_files(self, base: str, files: dict) -> None:
+        """As root, in the project's container (`SYSTEM_CAPS`): the files root's 0444, and every directory from the
+        writable root a session there mounts down to `base` root's 1777 (`_FILE_OPS`). Root's files under one directory
+        an agent owned were nothing: it renamed that directory away and laid a forged one in its place — a sticky one's
+        own owner too (probe, image f400b818). The base of a project's root is never made the system's: its agent works
+        there, and nothing is laid in it."""
+        b = Path(os.path.abspath(base))
+        rw = _writable_root(b, self.ex)
+        chain = [*([] if rw == self.ex.base else [rw]), *reversed([p for p in b.parents if p.is_relative_to(rw)
+                                                                   and p != rw]), b]
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as t:
+            for rel, data in files.items():
+                (i := tarfile.TarInfo(rel)).size, i.mode = len(data), 0o444
+                t.addfile(i, io.BytesIO(data))
+        self._wrote(self._run(self.ex, str(rw), "seal_files", str(b), *map(str, chain), data=buf.getvalue(),
+                              root=True), base)
 
     def read_tree(self, path: str) -> dict | None:
         """One `tar -c` inside, its regular files read out of the stream."""
@@ -1904,10 +2048,10 @@ class PlaceContainer(ContainerExecution):
     CLI's state is its place's own, under its project's. No judge shares a place with its executor: a validation and an
     issuer's contact, a root's included, work each in a round of their own, on a checkout of the delivery — a
     validation's batches each in a batch of its own —, mounting that and a temp of their own alone (`_mounts`), and a
-    delivery that could not be checked out is not judged (`apart`). NOT HELD YET: the sessions that work in the base
-    share its CLI state — every session where it is no git repository, else the plan's place reader; a tool-loop
-    provider's issuer reads a node's inputs by its shell only; a done node's container stands until its directories go
-    or the project stops. A judge's ends with its run (`ExecutionPort.release`)."""
+    delivery that could not be checked out is not judged (`apart`). The base's CLI state is its root executor's alone:
+    a parent consents in its own place, the plan's place reader works in a temp of its own, a base that is no git
+    repository is refused. NOT HELD YET: a tool-loop provider's issuer reads a node's inputs by its shell only; a done
+    node's container stands until its directories go or the project stops. A judge's ends with its run (`ExecutionPort.release`)."""
     commands_apart = True
 
     def __init__(self, project: ContainerExecution, rw: Path, agent: str | None = None):

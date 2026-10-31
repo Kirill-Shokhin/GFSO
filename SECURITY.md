@@ -69,8 +69,11 @@ and nothing of your disk is mounted into any of its containers:
   a process space of its own, the image's user with no capability. So no command can write into the
   client's output, which the system reads as the record of what the session did. Each command is
   also recorded as it starts and as it ends — its session, node, role and agent, its arguments, its
-  exit code — by the system's listener in that container, which no command can signal, read or ask
-  for anything; the record is kept beside the door's log. A client that runs a shell beside itself
+  exit code, and what in the place changed while it ran (up to 200 paths, by the change time no
+  process of the agent can set; a deletion named by its directory; any process of the place in that
+  span counted, a command left running among them; what the client's own Write and Edit tools wrote
+  between commands is in the client's stream, not here) — by the system's listener in that container, which no command
+  can signal, read or ask for anything; the record is kept beside the door's log. A client that runs a shell beside itself
   instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
   is refused with that cause: the project stops. The client's own file tools may not write through
   `/proc` or `/dev`, nor into its own state. What the client's shell writes back into the client's container is the
@@ -106,7 +109,16 @@ and nothing of your disk is mounted into any of its containers:
     system, by their sha256, as the finding is filed. A later round's re-run lays them from that record
     into its read-only directory, and the command it is shown copies them into a fresh directory of
     its batch before it runs.
-  - A pinned probe's inputs are laid from the contract into the judge's own batch.
+  - A pinned probe's inputs are laid from the contract into the judge's own batch, as the system's
+    own and read-only: the code run beside them may add files there, never change, move or remove a
+    pinned one, nor any directory above them up to the root the judge's container writes. A probe
+    that edits an input in place fails; it edits a copy it made (none of 4,987 recorded judges'
+    commands did otherwise). The system's own exact checks each run in a container of the copy
+    started anew — every process and file an earlier one left outside the copy gone with it — over
+    their inputs laid afresh in a directory no earlier check or build could know the name of. The
+    copy itself they share: a check that runs the delivered code can change what a later check of
+    the same validation reads in it, which turns that later check's forced FAIL into the judge's
+    own reading; the judge's own copy is apart.
   A copy the delivery itself makes impossible — an object missing or rewritten, a commit not carrying
   the recorded tree, a nested repository or submodule — is not judged: the delivery FAILs with that
   cause, which the executor's next packet states, and nothing of it stands for later rounds; an
@@ -129,11 +141,18 @@ and nothing of your disk is mounted into any of its containers:
   whole: one about the bound's size fails an honest delivery until the bound is raised. Their sum is bounded
   too: every container the system makes, of every installation on that Docker, stands in one cgroup of Docker's
   (`gfso`) whose memory is at most three quarters of Docker's as it is when the limit is written — no installation
-  dials it, so none lowers it under another's running containers. Past it the kernel ends the largest process among
-  all of them: what the ceiling keeps is the quarter left to Docker itself and to containers that are not the system's.
-  It does not choose the runaway: a runaway made of many small processes can outlast the largest honest one, a
-  session's or another installation's, which then ends with no answer and is asked again. A judge's copy the ceiling ended reads as ended by its own bound, and
-  its delivery FAILs with that cause. The limit is written at a
+  dials it, so none lowers it under another's running containers: what it keeps is the quarter left to Docker itself
+  and to containers that are not the system's. Before the kernel chooses, a running server does: every two seconds it
+  reads the group, and once what it holds that no reclaim gives back — all its memory less its page cache, a tmpfs or
+  memfd counted as memory — passes 85% of the ceiling, it ends every container of the one node's work standing furthest
+  over its share (the ceiling over the works holding at least 64 MiB), whatever number of containers that work runs in;
+  nobody over a share, nothing is ended. Honest page cache fires nothing, a runaway spread over three containers or
+  hidden in a memfd is ended and its neighbour left running (measured). The price: an honest work over its share
+  while the rest stand near the ceiling is ended too, though the sum might never have reached it. Past the ceiling itself, for a runaway faster
+  than two seconds or with no server watching, the kernel ends the largest process among all of them, which can be an
+  honest one; that session then ends with no answer and is asked again. A judge's copy or build the watch ended is no
+  verdict on its delivery and is made again; one the kernel ended at the copy's own bound or at the ceiling reads as
+  ended by its own bound, and its delivery FAILs with that cause. The limit is written at a
   start, and again at a later one past five minutes, by a container of the system's own that runs no agent's code: a
   shell of an image pinned by its digest (busybox), as root with one capability, to write the cgroup's files, no
   network, a read-only root, mounting Docker's cgroup tree — which lets it limit, freeze or end any container on that
@@ -159,6 +178,8 @@ What one session can still reach:
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
   agent through the door rather than by the system's executor — is copied as it stands, ignored files
   and builds included, and nothing is built.
+- Disk is not bounded: a place, a judge's copy and a container's own layer stand on Docker's
+  disk, shared by every project, and one node filling it stops every other until space is freed.
 - A process a session starts runs until its call ends; one that left its call's group and dropped its mark runs on
   while another model client of the same place still works there, and ends with the place's last one — or, where the
   server died first, when the place's containers go: at its project's next start, or its place's removal.
@@ -168,8 +189,9 @@ What one session can still reach:
   model-client state; its Read tool can. A working directory a command leaves outside the place does
   not carry to the next command.
 - A judge runs the delivered code in its own container: while its run lasts, that code can rewrite
-  what the judge itself writes in its batch, a pinned probe's inputs laid there — the build included —, and a
-  finding's files
+  what the judge itself writes in its batch — the build included —, add files beside a pinned probe's
+  inputs that a later step of the same command, or a later command of the judge, reads where it
+  lists or searches that directory (a `GNUmakefile` beside a pinned `Makefile`), and a finding's files
   once the re-run has copied them out of the read-only directory and before it reads them. A file the
   delivered code rewrote in the judge's batch before its run ended is recorded as it then stood when
   a finding over it is filed.
@@ -188,11 +210,17 @@ How far a project's container reaches outside is a switch you set in its executi
 (`"network": {"mode": ..., "hosts": [...]}`). For one project, `set_mode(network=...)` can only narrow it —
 open → allowlist → off, an allowlist reaching only hosts the declaration also names — never widen it (once the
 project has work in it, only with your own words asking for the change):
-- `open` (the default) reaches everything but your host — other containers on Docker's bridge
-  included.
+- `open` (the default) reaches everything but your host's loopback and Docker's own address for
+  it — other containers on Docker's bridge included, and a service of your host listening on its
+  other addresses (its LAN one, a virtual adapter's): bind a host service to `127.0.0.1` to keep it
+  out of reach.
 - `off` reaches nothing but its model, through the door below: the container stands on an internal
-  Docker network of its own with no route out and no capability to make one. Each closed project takes one of Docker's address pools;
-  past their number a start fails.
+  Docker network of its own with no route out, and none of its agent's processes holds a
+  capability to make one. Each closed project takes one of Docker's address pools; past their
+  number a start fails.
+- Under every switch nothing reaches INTO a session's or a judge's container: before any call,
+  root there admits only its own loopback and the answers to connections it opened, so no node's
+  session reaches what another node's judge runs from a delivery.
 - `allowlist` adds one gateway container, the only way out. It opens a connection only to a host
   you named, on 443, when the TLS handshake names that host; what the session then sends inside
   the encrypted stream it does not see, so a host behind a shared front (a CDN) can carry requests
@@ -215,8 +243,10 @@ request to the provider alone. So no process in a session — the client, its to
 holds the credential to read or carry away, and another container is refused by the door. The
 credential is in no container's configuration, environment or disk: the door reads it once from
 memory and removes it; a credential replaced while calls run keeps its door, and so stays live,
-until the project stops. Under every switch the door passes the model's messages alone — the
-credential opens far more of the account (its files, its batches) — and it runs on the
+until the project stops. Under every switch the door passes the model's messages alone, as one
+JSON object it reads strictly (no compressed body, no key given twice) and sends on as it read it,
+naming no file nor container the account holds — the credential opens far more of the account (its files, its
+batches) — and it runs on the
 execution's own image, which must have `python3`. Under `allowlist` and `off` it passes only the
 messages the model answers by itself: every tool the client's own, no content the provider
 would fetch from a URL, no server-side tool, MCP server or container — so the door is no way out

@@ -50,6 +50,9 @@ CHUNK = 65536
 LOG_CAP, ARG, SHORT = 20 * 2 ** 20, 4096, 200
 #: the most of a named file sent back — a cwd file, a snapshot of a few kilobytes
 FILE_CAP = 2 ** 20
+#: what changed in the place while a command ran, as its record line says it: the paths at most, and the seconds the
+#: walk may take — 60 ms over 50 000 files (probe), cut past it and said so
+CHANGED_CAP, CHANGED_S = 200, 10
 #: the files a client names from its own argv to be written back: the CLI's cwd file and its shell snapshot
 NAMED = (re.compile(r"pwd -P >\| ?'?([^'\s]+)"), re.compile(r"SNAPSHOT_FILE='?([^'\s;]+)"))
 #: the client's CLI state inside its container — the image's `CLAUDE_CONFIG_DIR`, where no command reaches
@@ -220,6 +223,23 @@ class _Run:
         return self.p.wait()
 
 
+def _changed(place: str, since: float, user: dict) -> dict:
+    """What in `place` had its status changed since `since` — written, made, chmodded, a directory whose entries were
+    added, removed or renamed —, walked as the command's user: by the inode's change time, which no process of a user
+    sets (a written file's mtime it does: `touch -d`). Every process of the place in that span changes it, the
+    command's own and any left running: the record says where, not who."""
+    try:
+        got = subprocess.run(["timeout", str(CHANGED_S), "find", place, "-xdev", "-newerct", f"@{since:.3f}",
+                              "-printf", "%y %P\n"], capture_output=True, stdin=subprocess.DEVNULL, **user)
+    except OSError as e:
+        return {"changed_unread": str(e)}
+    lines = got.stdout.decode("utf-8", errors="replace").splitlines()
+    return {"changed": lines[:CHANGED_CAP], "changed_n": len(lines),
+            **({"changed_cut": True} if got.returncode == 124 else {}),
+            **({"changed_unread": got.stderr.decode("utf-8", errors="replace")[-300:]}
+               if got.returncode not in (0, 124) else {})}
+
+
 def _one(c, user: dict, record: Record) -> None:
     """One connection: refused where it comes from a command of the session itself; else the command run and recorded,
     its named files sent back after it."""
@@ -233,7 +253,9 @@ def _one(c, user: dict, record: Record) -> None:
         if req.get("beside"):
             record.begin(run, beside=REFUSED)
             return _frame(c, RC, b"126")
-        seq, t0 = record.begin(run, argv=req["argv"], cwd=req["cwd"]), time.monotonic()
+        # …a tick early: the kernel stamps a file by its coarse clock, a tick behind, and a change in a command's first
+        # milliseconds read as older than its start; the span takes the last 50 ms before it in
+        seq, t0, since = record.begin(run, argv=req["argv"], cwd=req["cwd"]), time.monotonic(), time.time() - 0.05
         for d in {os.path.dirname(f) for f in req["files"]}:     # …the snapshot's directory: else the CLI goes without
             subprocess.run(["mkdir", "-p", "--", d], capture_output=True, stdin=subprocess.DEVNULL, **user)
         try:
@@ -245,7 +267,8 @@ def _one(c, user: dict, record: Record) -> None:
             record.write({"seq": seq, "run": run, "rc": 126})
             return _frame(c, RC, b"126")
         rc = r.through()
-        record.write({"seq": seq, "run": run, "rc": rc, "ms": int((time.monotonic() - t0) * 1000), "bytes": r.out})
+        record.write({"seq": seq, "run": run, "rc": rc, "ms": int((time.monotonic() - t0) * 1000), "bytes": r.out,
+                      **(_changed(place, since, user) if (place := record.said.get("place")) else {})})
         if not r.gone:
             for f in req["files"]:
                 if (got := subprocess.run(["head", "-c", str(FILE_CAP), "--", f], capture_output=True,

@@ -32,19 +32,21 @@ def _ex(tmp_path, network=None, project="p"):
 
 def test_open_shuts_only_the_host(tmp_path):
     x = _ex(tmp_path)
-    assert x.way.seal().startswith(f"iptables -A OUTPUT -d {E.HOST_NET} -j REJECT && ") and         x.way.seal().endswith('iptables -A OUTPUT -d "$gw" -j REJECT'), "Docker Desktop's host and Docker Engine's"
+    assert x.way.seal().startswith(f"iptables -A OUTPUT -d {E.HOST_NET} -j REJECT && ") and         'iptables -A OUTPUT -d "$gw" -j REJECT && ' in x.way.seal(), "Docker Desktop's host and Docker Engine's"
+    assert x.way.seal().endswith("iptables -A INPUT -j DROP"), "and nothing reaches in"
     assert "--sysctl" not in x.run_args()
 
 
 def test_a_closed_switch_stands_on_its_internal_network_with_no_capability(tmp_path):
-    """The fence is the network's: a closed container gets no NET_ADMIN to lift anything with, and only the allowlist
-    names the gateway as its proxy."""
+    """The fence is the network's, and nothing reaches in: root seals the container's inbound with the one capability it
+    holds — no agent's process runs as root — and only the allowlist names the gateway as its proxy."""
     for mode in ("allowlist", "off"):
         x = _ex(tmp_path, {"mode": mode, "hosts": ["api.anthropic.com"] if mode == "allowlist" else []})
         a = x.run_args()
-        assert "NET_ADMIN" not in a and a[a.index("--network") + 1] == x.way.net and x.way.seal() == "true"
+        assert a[a.index("--network") + 1] == x.way.net and x.way.seal().endswith("iptables -A INPUT -j DROP")
+        assert "OUTPUT" not in x.way.seal(), "a closed switch's network has no route to shut"
         assert ("HTTPS_PROXY=http://gateway:3128" in a) == (mode == "allowlist")
-        assert ["--cap-drop", "ALL"] == a[a.index("--cap-drop"):][:2], "a closed container has no capability at all"
+        assert ["--cap-drop", "ALL", "--cap-add", "NET_ADMIN"] == a[a.index("--cap-drop"):][:4], "root's seal's alone"
     x = _ex(tmp_path, {"mode": "allowlist", "hosts": ["api.anthropic.com", "pypi.org"]})
     g, args = x.way.gateway_args()
     assert ["--cap-drop", "ALL"] == g[g.index("--cap-drop"):][:2] and "--read-only" in g and "no-new-privileges" in g
@@ -220,3 +222,33 @@ def test_a_projects_containers_stand_as_one_stack_subgrouped_by_role(tmp_path):
     project = group(x.run_args())[0]
     assert group(x.run_args()) == (project, "system") and group(place.run_args()) == (project, "executors")
     assert group(x.way.gateway_args()[0]) == (project, "gateway")
+
+
+@pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
+@pytest.mark.parametrize("mode", ["off", "open"])
+def test_live_no_session_reaches_what_runs_in_another_nodes_container(tmp_path, mode):
+    """On one project network a session reached another node's judge by its name and read the server the judge was
+    testing (critic F5); under an open switch, by its address on Docker's bridge. Nothing reaches in: its own loopback
+    does."""
+    (tmp_path / "e.env").write_text("NOTHING=1\n")
+    x = _ex(tmp_path, {"mode": mode, "hosts": []}, f"in{mode}{time.time_ns()}")
+    own = x.own
+    try:
+        x.run(["mkdir", "-p", str(own / "a"), str(own / ".gfso-scratch-b/b_1/batch1/delivery")], cwd=str(x.base),
+              timeout=60)
+        judge = x.session(str(own / ".gfso-scratch-b/b_1/batch1/delivery"))
+        judge.popen(["python3", "-m", "http.server", "8099"], env={}, cwd=str(own / ".gfso-scratch-b/b_1/batch1/delivery"),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(3)
+        ip = subprocess.run(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                             judge.container], capture_output=True, text=True).stdout.split()[0]
+        here = judge.run(["sh", "-c", "curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/"],
+                         cwd=str(own / ".gfso-scratch-b/b_1/batch1/delivery"), timeout=60).stdout
+        assert here == "200", f"the judge's own server does not answer it: {here!r}"
+        for client in (x.session(str(own / "a")), x.session(str(own / "a")).client()):
+            got = client.run(["sh", "-c", f"for h in {ip} {judge.container}; do curl -s -m 5 -o /dev/null "
+                                          f"-w '%{{http_code}} ' http://$h:8099/; done"],
+                             cwd=str(own / "a"), timeout=60).stdout.split()
+            assert "200" not in got, f"{mode}: node a reached node b's judge: {got}"
+    finally:
+        x.stop()

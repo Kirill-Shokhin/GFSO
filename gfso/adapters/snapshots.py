@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.adapters import worktrees as W
+from gfso.adapters.execution import ended_by_watch
 from gfso.config import subprocess_env
 from gfso.core.types import LAID, PlaceUnavailable
 
@@ -57,6 +58,11 @@ class _Place:
                 else:
                     self._copying -= 1
                 self._c.notify_all()
+
+
+#: a judge's copy or build the machine's memory watch ended near the shared ceiling: a neighbour's pressure, no verdict
+#: on the delivery — asked again (`execution.ended_by_watch`)
+WATCHED = "the judge's copy was ended by the machine's memory watch near the shared ceiling, not by the delivery"
 
 
 class NotTheDelivery(Exception):
@@ -528,6 +534,8 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[s
             raise NotTheDelivery(f"the delivery's own store cannot give back what DELIVER recorded ({commit[:12]}): "
                                  f"{err.strip()[-300:]}")
         raise OSError(f"{place} could not pack {commit[:12]}: {err.strip()[-300:]}")
+    if r.returncode == 4 and ended_by_watch(ex):
+        raise Uncopied(WATCHED)
     if r.returncode == 4:
         raise NotTheDelivery(f"the tree DELIVER recorded ({commit[:12]}) cannot be read back as recorded: "
                              f"{(r.stdout or '').strip()[-300:]}")
@@ -539,6 +547,8 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[s
     # …ended past the copy's memory bound, the same each time it is asked: a FAIL that says so (§8.4), not a copy waited
     # for forever. NOT HELD: git reads a Git LFS file whole through its filter here, so one about the bound's size
     # fails an honest delivery — the cause names the dial that lifts it
+    if r.returncode == 4 and ended_by_watch(ex):
+        raise Uncopied(WATCHED)
     if r.returncode == 4:
         raise NotTheDelivery(f"the tree DELIVER recorded ({commit[:12]}) cannot be checked out within its judge's memory "
                              f"bound — a Git LFS file is read whole here; GFSO_CONTAINER_MEMORY lifts it: "
@@ -574,6 +584,8 @@ def _after_build(at: Path, tree: str, commit: str, execution, smudged: set = fro
     ex = execution.session(str(at))
     r = ex.run([execution.python, "-I", "-c", _CHECKOUT, "kept", str(at), commit, tree, *W.APART], cwd=str(at.parent),
                timeout=BUILD_S, env=subprocess_env(extra=W.NO_CONFIG))
+    if r.returncode == 137 and ended_by_watch(ex):
+        raise Uncopied(WATCHED)
     if r.returncode:
         why = ("putting them back was ended past the copy's memory bound (GFSO_CONTAINER_MEMORY)" if r.returncode == 137
                else (r.stdout or r.stderr or "").strip()[-300:])
@@ -604,6 +616,8 @@ def _build(at: Path, declared: Optional[str], execution) -> str:
     except subprocess.TimeoutExpired:
         raise BuildFailed(f"the judge built with {which}, and it was still running at {BUILD_S} s: ended, and no check "
                           f"was run", declared) from None
+    if r.returncode == 137 and ended_by_watch(ex):
+        raise Uncopied(WATCHED)
     if r.returncode:
         out = f"{r.stdout or ''}{r.stderr or ''}".strip()
         raise BuildFailed(f"the judge built with {which}, and it exited {r.returncode}, so no check was run — its "

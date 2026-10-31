@@ -14,16 +14,23 @@ from __future__ import annotations
 
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
-from gfso.adapters.snapshots import snapshot, swap
-from gfso.core.protocol.procedure import INPUTS_TOKEN, materialize_inputs, probe_id, shows
+from dataclasses import replace
+
+from gfso.adapters.execution import ended_by_watch
+from gfso.adapters.snapshots import WATCHED, snapshot, swap
+from gfso.core.protocol.procedure import INPUTS_TOKEN, materialize_inputs, probe_id, shows, unsafe_input_paths
 from gfso.workspaces import execution_of
 
 #: Seconds one check may run, and the whole observation of one session's nodes — a quarter of the session's own
 #: cap at most (`observe_place`).
 PROBE_S, OBSERVE_S = 60, 300
+#: …and what starting each check from what the system laid costs it, on top of its own run (`_fresh_run`; 2.35 s a
+#: check measured, critic B7): the exact checks of a validation are given it each, so a rich contract's are not cut
+FRESH_S = 3
 #: Characters of a check's output the packet shows — its tail, where a build or a test reports how it ended: every
 #: turn of the session re-reads them.
 TAIL = 200
@@ -63,26 +70,43 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
     session (`observe_place`) and over a fresh copy of a delivery at its validation (`tools_llm._observe_exact`)."""
     if not (tree and probes and (bash := ex.shell())):
         return []
-    try:
-        dirs = materialize_inputs({id(c): c for _, c, _ in probes}.values(), Path(tmp) / "inputs", ex.files)
-    except ValueError:
+    crits = list({id(c): c for _, c, _ in probes}.values())
+    if unsafe_input_paths(crits):                        # …refused at admission: nothing runs over a truncated corpus
         return []
     out, ran, t0 = [], {}, time.monotonic()
     for key, c, p in probes:
-        d = dirs.get(probe_id(c.name, p))
-        cmd = swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, tree)
         row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect,
                "exact": p.exact}
-        if cmd not in ran:
+        if p.command not in ran:
             left = budget - (time.monotonic() - t0)
-            ran[cmd] = (_run(ex, bash, cmd, tree, min(PROBE_S, left), place) if left >= 1 else
-                        {"note": "not run: the observation's time ran out"})
+            ran[p.command] = (_fresh_run(ex, bash, c, p, tree, tmp, min(PROBE_S, left), place) if left >= 1
+                              else {"note": "not run: the observation's time ran out"})
         # …matched against THIS check's expectation: one command pinned twice with two expectations printed
         # once, and the second inherited the first's match (critic over 27de5f8)
-        got = ran[cmd]
+        got = ran[p.command]
         out.append((key, {**row, **{k: v for k, v in got.items() if k not in ("stdout", "stderr")},
                           **({"matched": printed(got, p.expect)} if "stdout" in got else {})}))
     return out
+
+
+def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str) -> dict:
+    """One check from what the system laid: the copy's container started anew — every process and file an earlier
+    check left outside the copy gone with the last one (`release`) —, the pinned inputs laid afresh, as the system's,
+    in a directory no earlier check could know the name of. A check runs the delivery's code, and what it left steered
+    the next: a `GNUmakefile` beside a pinned `Makefile` (probe), a `diff` laid first on the image's PATH (critic F5);
+    and a check that tidied after it was itself a switch the delivery turned to have every later check "not run"
+    (critic B6)."""
+    ex.release(tree)
+    try:
+        # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
+        dirs = materialize_inputs([replace(c, check=(p,))], Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}", ex.files)
+    except OSError as e:
+        return {"note": f"not run: its inputs could not be laid ({e})"}
+    d = dirs.get(probe_id(c.name, p))
+    got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, tree), tree,
+               timeout, place)
+    # …ended by the machine's memory watch: a neighbour's pressure is no observation of this delivery (critic B7)
+    return {"note": f"not run: {WATCHED}"} if ended_by_watch(ex.session(tree)) else got
 
 
 def printed(got: dict, expect: str) -> bool:

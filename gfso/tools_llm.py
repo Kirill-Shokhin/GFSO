@@ -37,7 +37,7 @@ from gfso.core.types import (BATCH, LAID, VOLUME, AgentId, LLMProviderPort, Mode
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
                                           with_part_observations)
-from gfso.observe import OBSERVE_S, run_checks
+from gfso.observe import FRESH_S, OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
@@ -1245,7 +1245,8 @@ def _observe_exact(engine: Engine, parts: list, workdir, built: Optional[list] =
                         # copy inside an enclosing repository (critic over the fresh copy). State an executor's own run
                         # left in a place with no recorded commit is the pin's to start clean of (`EXACT_TEXT`)
                         why, rows = ("its inputs could not be laid",
-                                     dict(run_checks(ex, probes, workdir, tree, at, OBSERVE_S)))
+                                     dict(run_checks(ex, probes, workdir, tree, at,
+                                                               OBSERVE_S + FRESH_S * len(probes))))
             except Uncopied as e:
                 why = str(e)
     return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}

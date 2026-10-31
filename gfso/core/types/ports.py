@@ -268,6 +268,12 @@ class FilesPort(ABC):
         for rel, data in files.items():
             self.write_bytes(str(Path(base) / rel), data)
 
+    def seal_files(self, base: str, files: dict) -> None:
+        """`files` laid under `base` as the system's: what an agent's code run beside them may add to, never change, move
+        or remove — a judge's pinned inputs (`procedure.materialize_inputs`). A host's own files hold no owner apart from
+        the agent's, so here it is `write_files`."""
+        self.write_files(base, files)
+
     def mkdtemp(self, prefix: str, dir: str) -> str:
         """A new empty directory of its own under `dir`, named `prefix` and a random tail."""
         self.mkdir(d := os.path.join(dir, f"{prefix}{uuid.uuid4().hex[:8]}"))

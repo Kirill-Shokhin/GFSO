@@ -523,7 +523,9 @@ def materialize_inputs(criteria: Iterable[Criteria], base: str | Path, files) ->
                 laid[(PurePosixPath(inputs_dir_name(pid)) / input_name(path)).as_posix()] = body.encode("utf-8")
             dirs[pid] = Path(base) / inputs_dir_name(pid)
     if laid:
-        files.write_files(str(base), laid)
+        # …as the system's (`seal_files`): laid as the agent's, the judged code run beside them rewrote an expected file
+        # its own output was then compared with — inside the very command that compared them
+        files.seal_files(str(base), laid)
     return dirs
 
 

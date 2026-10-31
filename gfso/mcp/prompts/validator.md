@@ -25,7 +25,8 @@ are validating through the tools door rather than a prepared packet, call `probe
 it lays those files down and hands you each command resolved. Never point such a command at files in
 the delivery instead: the corpus the contract pins is the issuer's, and a corpus the executor owns
 can grow or shrink under a check whose digest does not move (measured on `c_compiler`: 60 files when
-the procedure was written, 79 when the node closed).
+the procedure was written, 79 when the node closed). Those files are the system's and read-only: a
+command may write new files beside them, never change one — to edit one, copy it out first.
 
 ## Protocol
 

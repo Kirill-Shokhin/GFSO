@@ -34,7 +34,7 @@ LOG_CAP = 20 * 2 ** 20
 HEADER = {"token": ("authorization", "Bearer {}"), "api": ("x-api-key", "{}")}
 #: what the client's request does not carry upstream: its key, and what is the hop's own
 DROPPED = {"host", "authorization", "x-api-key", "connection", "keep-alive", "proxy-authorization", "proxy-connection",
-           "te", "trailer", "transfer-encoding", "upgrade", "content-length"}
+           "te", "trailer", "transfer-encoding", "upgrade", "content-length", "content-encoding"}
 #: the only requests a door passes, under every switch: the model's answer and its token count
 MODEL_PATHS = ("/v1/messages", "/v1/messages/count_tokens")
 #: the tools a closed switch's door passes: the client's own, which it runs itself — any other kind the provider runs
@@ -86,14 +86,54 @@ def _fetches(x) -> bool:
     return isinstance(x, list) and any(map(_fetches, x))
 
 
+#: the content blocks that name what the account holds by its id
+STORED = ("container_upload",)
+
+
+def _stored(x) -> bool:
+    """Does a message's content name a file the account already holds — a block whose source is of type `file`, or a
+    block of a type that carries one (`container_upload`) — anywhere in the messages or the system prompt? The door's
+    credential would read it out of the account for whoever asked (critic F5). Not a tool's declared schema: a
+    parameter named `file_id` there is the client's own (critic B6)."""
+    if isinstance(x, list):
+        return any(map(_stored, x))
+    if not isinstance(x, dict) or x.get("type") == "tool_use":
+        return False
+    return (x.get("type") in STORED or (isinstance(x.get("source"), dict) and x["source"].get("type") == "file")
+            or any(_stored(v) for k, v in x.items() if isinstance(v, (list, dict))))
+
+
 def refused(keyed: bool, command: str, path: str, body, closed: bool):
-    """Why a request is not passed, or None: without this door's key; anything but the model's messages, under every
-    switch — the credential opens far more of the account; under a closed one, what the model does not answer alone."""
+    """Why a request is not passed, or None: without this door's key; anything but the model's messages, a body that is
+    no JSON object, or one whose messages name a file the account holds, under every switch — the credential opens far
+    more of the account than the session's own, and a body read one way here and another upstream (compressed, invalid
+    text, a key twice) passed what this did not see (critic B6); under a closed one, what the model does not answer
+    alone. What passes is sent on as it was read here (`canonical`)."""
     if not keyed:
         return "refused: not this door's key"
     if command != "POST" or path not in MODEL_PATHS:
         return "refused: not the model's messages"
+    if (asked := canonical(body)) is None:
+        return "refused: no JSON object"
+    if _stored([asked.get("messages"), asked.get("system")]) or "container" in asked:
+        return "refused: a file the account holds"      # …or a container of its, its files and skills (critic B7)
     return "refused: the switch is closed" if closed and not model_alone(body) else None
+
+
+def _once(pairs: list) -> dict:
+    """An object of `pairs`, each key once: a key given twice is read one way here and maybe another upstream."""
+    if len({k for k, _ in pairs}) != len(pairs):
+        raise ValueError("a key twice")
+    return dict(pairs)
+
+
+def canonical(body):
+    """The request as this door reads it — a JSON object, decoded strictly, no key given twice — or None."""
+    try:
+        got = json.loads((body or b"{}").decode("utf-8"), object_pairs_hook=_once)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return got if isinstance(got, dict) else None
 
 
 def _relay(h, r) -> None:
@@ -131,8 +171,8 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {status}")
                     status = "said"
                     return self.send_error(403)
-                if closed and body:
-                    body = json.dumps(json.loads(body)).encode()     # …exactly what was read: no second parse upstream
+                if body:
+                    body = json.dumps(canonical(body)).encode()      # …exactly what was read: no second parse upstream
                 headers = {k: v for k, v in self.headers.items() if k.lower() not in DROPPED}
                 headers[name] = value_of.format(cred["value"])
                 up = http.client.HTTPSConnection(upstream, 443, context=tls, timeout=600)

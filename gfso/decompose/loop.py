@@ -105,7 +105,8 @@ _NAME_DESC = {"type": "object", "properties": {
             "expect": {"type": "string"},
             "exact": {"type": "boolean", "description": EXACT_TEXT},
             "inputs": {"type": "array", "description":
-                       "files the command reads, pinned with it: relative paths under `{inputs}`",
+                       "files the command reads, pinned with it: relative paths under `{inputs}`, read-only where it runs — a command "
+                       "may add files beside them, and edits one only in a copy it made",
                        "items": {"type": "object", "properties": {
                            "path": {"type": "string"}, "content": {"type": "string"}},
                            "required": ["path", "content"]}}},

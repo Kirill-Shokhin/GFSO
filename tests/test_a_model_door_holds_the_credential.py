@@ -1,6 +1,7 @@
 """The model door (`adapters/door.py`): the one place of a project that holds its provider's credential. A client
 inside holds the door's key; the door answers that key alone, and under a closed switch passes the model and nothing
 the provider would reach elsewhere for it."""
+import gzip
 import http.client
 import json
 import subprocess
@@ -152,3 +153,39 @@ def test_a_place_down_at_its_door_is_the_calls_own_ending(tmp_path, monkeypatch)
     llm = ClaudeCodeProvider("haiku", execution=ex, credential=Credential("api", "sk-ant-x"))
     assert llm.run_agent("sys", "packet", ("Read",), cwd=str(base)) == ""
     assert llm.calls[-1]["ended"] == "unavailable"
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_no_switch_lets_a_session_read_a_file_the_account_holds(closed):
+    """A file the account stores is read by the door's credential for whoever names it: no switch passes one (critic F5).
+    A model's own tool call naming one is the client's to run, not the provider's."""
+    msg = lambda block: json.dumps({"model": "m", "messages": [{"role": "user", "content": [block]}]}).encode()
+    for block in ({"type": "document", "source": {"type": "file", "file_id": "file_abc"}},
+                  {"type": "container_upload", "file_id": "file_abc"}):
+        assert D.refused(True, "POST", "/v1/messages", msg(block), closed) == "refused: a file the account holds"
+    own = {"type": "tool_use", "id": "t", "name": "Read", "input": {"file_id": "x"}}
+    assert D.refused(True, "POST", "/v1/messages", msg(own), closed) is None
+    assert D.refused(True, "POST", "/v1/messages", msg({"type": "text", "text": "hi"}), closed) is None
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_the_door_reads_a_body_one_way_and_passes_a_tools_own_file_parameter(closed):
+    """A body the door cannot read as one JSON object — compressed, invalid text, a key given twice — passed unread under
+    the open switch, a stored file inside it (critic B6); and a client tool declaring a `file_id` parameter was refused."""
+    doc = {"model": "m", "messages": [{"role": "user", "content": [{"type": "document",
+                                                                    "source": {"type": "file", "file_id": "f"}}]}]}
+    for body in (gzip.compress(json.dumps(doc).encode()), json.dumps(doc).encode().replace(b'"m"', b'"\xff"'),
+                 b'{"model": "m", "messages": [], "messages": []}', b"[]"):
+        assert D.refused(True, "POST", "/v1/messages", body, closed) == "refused: no JSON object", body[:30]
+    tool = {"model": "m", "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "get_doc", "input_schema": {"type": "object", "properties": {"file_id": {"type": "string"}}}}]}
+    assert D.refused(True, "POST", "/v1/messages", json.dumps(tool).encode(), closed) is None
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_no_switch_lets_a_session_reuse_a_container_the_account_holds(closed):
+    """A container named at the top of a request — reused by its id, or carrying the account's custom skills — opens
+    what the account stores to whoever names it (critic B7)."""
+    for container in ("container_abc", {"skills": [{"type": "custom", "skill_id": "s"}]}):
+        body = json.dumps({"model": "m", "messages": [{"role": "user", "content": "hi"}], "container": container})
+        assert D.refused(True, "POST", "/v1/messages", body.encode(), closed) == "refused: a file the account holds"
