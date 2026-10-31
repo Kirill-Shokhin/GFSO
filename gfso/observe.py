@@ -104,14 +104,22 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, 
     ran the delivered code changed what a later one read, and a forced FAIL turned into the judge's word (critic B7)."""
     ex.release(tree)
     own = str(Path(tmp) / f"run-{uuid.uuid4().hex[:12]}")
+    t0 = time.monotonic()
     try:
-        t0 = time.monotonic()
         ex.copy_tree(tree, own)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        # …the copy is of the BUILT delivery, whose files are the delivery's to choose: one it makes impossible to copy
+        # (a path past the system's limit) is its FAIL, the cause said — as the checkout's (`NotTheDelivery`); read as
+        # "not observed" it handed every exact check to the judge's word (critic B9)
+        cause = f"the built delivery could not be copied for this check: ...{str(e)[-120:]}"
+        return {"rc": 1, "out": cause, "stdout": "", "stderr": cause}
+    finally:
         copying.append(time.monotonic() - t0)
+    try:
         # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
         dirs = materialize_inputs([replace(c, check=(p,))], Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}", ex.files)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return {"note": f"not run: its copy or its inputs could not be laid ({e})"}
+        return {"note": f"not run: its inputs could not be laid ({e})"}
     try:
         d = dirs.get(probe_id(c.name, p))
         got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, own), own,
@@ -119,8 +127,10 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, 
         # …ended by the machine's memory watch: a neighbour's pressure is no observation of this delivery (critic B7)
         return {"note": f"not run: {WATCHED}"} if ended_by_watch(ex.session(own)) else got
     finally:
+        t0 = time.monotonic()
         with suppress(OSError):
             ex.remove_tree(own)
+        copying.append(time.monotonic() - t0)            # …its removal no more counted than its copy (critic B9)
 
 
 def printed(got: dict, expect: str) -> bool:

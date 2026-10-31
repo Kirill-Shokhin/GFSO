@@ -157,3 +157,23 @@ def test_one_command_pinned_over_two_inputs_is_run_over_each(tmp_path):
     rows = dict(run_checks(LocalExecution(), [("s", small, small.check[0]), ("b", big, big.check[0])], str(tree),
                            str(tree), tmp_path, 60))
     assert rows["s"]["matched"] and rows["b"]["matched"], rows
+
+
+@docker
+def test_live_a_delivery_that_cannot_be_copied_for_a_check_fails_it(project):
+    """A built delivery holding a path no copy can make left every exact check "not observed", the judge's word
+    deciding (critic B9): it is the delivery's FAIL, its cause said, as a checkout it makes impossible is."""
+    deep = Probe("answers", "echo RIGHT", "RIGHT", exact=True)
+    c = Criteria("c", check=(deep,))
+    made(project, "a")
+    try:
+        with project.scratch("gfso-exact-", system=True) as tmp:
+            project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
+            r = project.session(str(tree)).run(["sh", "-c", 'for i in $(seq 1 20); do d=$(printf "d%.0s" $(seq 1 200)); '
+                                                'mkdir "$d" && cd "$d"; done; echo x > f'], cwd=str(tree), timeout=60)
+            assert r.returncode == 0, r.stderr
+            rows = dict(run_checks(project, [("d", c, deep)], str(project.parent / ".gfso-nodes-ws/p/a"), str(tree),
+                                   tmp, 120))
+        assert rows["d"].get("matched") is False and "could not be copied" in rows["d"]["out"], rows
+    finally:
+        project.stop()

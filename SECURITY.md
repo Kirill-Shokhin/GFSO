@@ -117,8 +117,10 @@ and nothing of your disk is mounted into any of its containers:
     every process and file an earlier one left gone with it — over a copy of the built delivery of
     their own and their inputs laid afresh in a directory no earlier check or build could know the
     name of: no check changes what a later one reads, and checks pinning one command over different
-    inputs each run. A check whose copy cannot be made is not observed, the judge's own reading
-    deciding it; the copies' time is not counted against the observation's.
+    inputs each run. A check whose copy the built delivery makes impossible (a path past the
+    system's limit) FAILs the delivery with that cause, as a checkout it makes impossible does; the
+    copies' making and removal are not counted against the observation's time. A check that does not
+    finish within its own bound is not observed, the judge's own reading deciding it.
   A copy the delivery itself makes impossible — an object missing or rewritten, a commit not carrying
   the recorded tree, a nested repository or submodule — is not judged: the delivery FAILs with that
   cause, which the executor's next packet states, and nothing of it stands for later rounds; an

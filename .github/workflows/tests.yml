@@ -143,4 +143,6 @@ jobs:
           grep -E '^(FAILED|ERROR)' pytest.out | head -40 | while IFS= read -r line; do
             echo "::error title=live tests::${line}"
           done
+          # …green with every live test skipped would show nothing of SECURITY.md (critic B9): none passing is red
+          grep -qE '[0-9]+ passed' pytest.out || { echo "::error title=live tests::no live test passed"; rc=1; }
           exit ${rc:-0}
