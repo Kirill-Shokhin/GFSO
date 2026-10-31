@@ -1,11 +1,10 @@
 // What the run cost and where it went: money, tokens and session time, by role, by node, by level.
 // Every figure comes from the usage ledger through the run model; one measure per chart, no dual axes.
 import {esc, tally, lasting} from './dom.js';
-import {TIP, meter, sessionsOf, KIND, levelName} from './hints.js';
+import {TIP, KIND, levelName} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
-import {tip, untip} from './tip.js';
 import {dur, trim, money as reported, NOT_REPORTED, tok} from './fmt.js';
-import {concurrency, byRole} from './run.js';
+import {concurrency} from './run.js';
 
 
 // the shared head of the assignee ids (the project's name), cut at a '-' so the distinct tail stays
@@ -22,12 +21,16 @@ const tile = (v, label, ...notes) => `<div class="cs-tile"><b>${v}</b><span>${la
 
 // One bar chart: rows of [key, label, parts{exec,val,…}], the bar split by role so the cost of
 // checking stands beside the cost of doing. Roles keep their place in every row.
-function bars(title, rows, measure, fmt, attr) {
+// …and EACH PART SAYS ONLY ITSELF on its hover — its role, its figure, its share of the row — as the Models tab's cost split
+// does; the row's name stands at its left and is said again only where it is cut (the author, 2026-10-31: «первая показывает
+// общую мусорную инфу. вторая раздельно по каждой»; «во многих попапах дублируется имя ноды»)
+function bars(title, rows, measure, fmt, attr, part, says) {
     const max = Math.max(...rows.map(r => Object.values(r.parts).reduce((s, p) => s + measure(p), 0)), 1e-9);
     return `<section class="cs-chart"><h4>${title}</h4>${rows.map(r => {
         const total = Object.values(r.parts).reduce((s, p) => s + measure(p), 0);
         return `<div class="cs-row" ${attr(r)}><span class="cs-label"${r.label.length > 22 ? TIP.cell(r.label) : ''}>${esc(trim(r.label, 22))}</span>
-            <span class="cs-bar">${Object.entries(r.parts).map(([k, p]) => `<i class="cs-${k}" style="width:${(measure(p) / max) * 100}%"></i>`).join('')}</span>
+            <span class="cs-bar">${Object.entries(r.parts).map(([k, p]) => `<i class="cs-${k}" style="width:${(measure(p) / max) * 100}%"`
+                + `${TIP.part(k, part(p), measure(p) / (total || 1), p, says)}></i>`).join('')}</span>
             <span class="cs-num">${fmt(total, r)}</span></div>`; }).join('')}</section>`;
 }
 
@@ -40,7 +43,6 @@ export function render(el, run, nodes) {
     const agentRows = ids.map(id => ({id, label: id.slice(cut) || id, parts: c.byAgent[id],
         peak: concurrency(run.sessions.filter(s => (s.agent || '—') === id && !s.open)).peak}))
         .sort((a, b) => b.peak - a.peak || a.label.localeCompare(b.label));
-    const rounds = id => (run.rounds[id] || []).length;
     const nodeRows = Object.entries(node).map(([id, parts]) => ({id, label: name(id), parts}))
         .sort((a, b) => Object.values(b.parts).reduce((s, p) => s + p.cost, 0) - Object.values(a.parts).reduce((s, p) => s + p.cost, 0));
     const levelRows = Object.entries(level).sort(([a], [b]) => a - b).map(([d, parts]) => ({label: levelName(d), parts}));
@@ -56,19 +58,12 @@ export function render(el, run, nodes) {
         <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k].name} <b>${money([c.byKind[k]])}</b>`
             + `<em>${tally(c.byKind[k].calls, (KIND[k]?.count || k) + (c.byKind[k].calls === 1 ? '' : 's'))}${tally(dur(c.byKind[k].busy), 'busy')}</em></span>`).join('')}</div>
         <div class="cs-grid">
-            ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`)}
-            ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`)}
-            ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '')}
+            ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`, p => money([p]), 'cost')}
+            ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`, p => dur(p.busy), 'busy')}
+            ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '', p => money([p]), 'cost')}
             ${bars(`sessions by assignee${cut ? ` <span${TIP.prefix(ids[0].slice(0, cut))}>(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
-                   (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, () => '')}
+                   (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, () => '', p => p.calls, 'calls')}
         </div></div>`;
-    bindFocus(el, e => {
-        const row = e.target.closest('.cs-row[data-node]');
-        if (!row) return untip();
-        const parts = node[row.dataset.node], all = Object.values(parts);
-        tip(TIP.cost(name(row.dataset.node), [...byRole(parts).map(([k, p, share]) => meter(sessionsOf(k, p.calls), share, money([p]))),
-                     `${dur(all.reduce((s, p) => s + p.busy, 0))} of sessions, ${tok(all.reduce((s, p) => s + (p.tokens || 0), 0))} tokens`],
-                     rounds(row.dataset.node), money(all)), e);
-    }, untip);
+    bindFocus(el);
     bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));
 }

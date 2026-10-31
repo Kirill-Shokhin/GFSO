@@ -275,19 +275,21 @@ export const TIP = {
          criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // a stretch of work on the timeline
-    bar: (name, x, r, f) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
-        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
+    bar: (x, r, f) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
+        `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f),
         x.parts > 1 && `${x.parts} processes, ${dur(x.busy)} busy: ${x.kind === 'val' ? 'the validator works in batches of probes'
             : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.handed?.length && `${x.handed.length} handed over`,
                x.retried > 0 && `${x.retried} retried`].filter(Boolean).join(', ')}`,
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
-    verdict: (name, signal, r, t, f, m, total) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
-        name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
+    verdict: (signal, r, t, f, m, total) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
+        `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
     cell: (name, also) => hover(name, also),
-    // a node's row in spend
-    cost: (name, rows, rounds, all) => card(`${plural(rounds, 'delivery round')}\t${all}`, [name, ...rows]),
+    // a role's part of a row in spend: itself alone — its figure, its share of the row, its sessions, time and tokens
+    // …the heading's figure is the chart's measure (`says`), never said again below it
+    part: (k, figure, share, p, says) => hover(`${cap(KIND[k]?.name || k)}\t${figure}`, meter('of the row', share),
+        says !== 'calls' && sessionsOf(k, p.calls), says !== 'busy' && `${dur(p.busy)} busy`, p.tokens && `${tok(p.tokens)} tokens`),
     prefix: p => hover(p + '…', 'The start every assignee id shares, cut from the bars'),
     project: (name, id) => hover(name, id),
     where: why => hover(why),

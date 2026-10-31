@@ -96,7 +96,7 @@ export function render(el, run, nodes, tasks) {
         if (!g) return untip();
         const i = g.dataset.m.lastIndexOf(':'), id = g.dataset.m.slice(0, i), L = run.criteria.track[id], m = L.marks[+g.dataset.m.slice(i + 1)];
         const r = (run.rounds[m.node] || []).find(r => r.at === m.t);
-        tip(TIP.verdict(name(m.node), m.signal, r, m.t, {own: m.failed, edges: []}, m, L.total), e);
+        tip(TIP.verdict(m.signal, r, m.t, {own: m.failed, edges: []}, m, L.total), e);
     }, untip);
     bringSelected(el, id => tr.querySelector(`.pg-track[data-node="${CSS.escape(id)}"] .pg-band`));
 }
