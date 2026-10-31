@@ -27,6 +27,8 @@ const own = e => {
         const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); mine = true; }
     else if (mine) { untip(); mine = false; }
 };
+// a tap shows what a hover would: a view's own tip, else the thing's `data-tip` (store.js `bindFocus`)
+export const tapTip = own;
 const drop = () => { if (mine) { untip(); mine = false; } };
 document.addEventListener('mouseover', own);
 document.addEventListener('mousemove', own);

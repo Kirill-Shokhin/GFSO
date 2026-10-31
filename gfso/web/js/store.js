@@ -3,6 +3,7 @@
 // A watcher owned by an element lives as long as what is drawn there: the deck releases its view before it
 // draws the next one — a watcher left from another tab threw on markup that was gone and silenced every
 // watcher after it.
+import {tapTip} from './tip.js';
 const subs = new Map(), state = {hover: null, select: null, picks: 0};   // picks: selections made so far
 
 export const focus = () => state;
@@ -54,15 +55,15 @@ export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     };
     el.onmousemove = e => (point('hover', e.target.closest('[data-node]')?.dataset.node || null), onMove(e));
     el.onmouseleave = () => (point('hover', null), onLeave());
-    // …and where nothing hovers (a finger), the first tap on a row shows what a pointer's hover would — its tip — and a second
-    // tap on the same row selects it: a tap selected at once and the node's panel covered the screen, so no row's tip could
-    // ever be read on a phone (the author, 2026-10-31)
+    // …and where nothing hovers (a finger), the first tap on a thing shows what a pointer's hover would — its tip — and a second
+    // tap on the same thing selects its node: a tap selected at once and the node's panel covered the screen, so no row's tip
+    // could ever be read on a phone (the author, 2026-10-31). The thing, not the row: a cut and the bar beside it are two tips
     el.onclick = e => {
         const n = e.target.closest('[data-node]');
         if (!n) return void (el._tapped = null);
-        if (TOUCH.matches && el._tapped !== n.dataset.node) {
-            el._tapped = n.dataset.node;
-            return void (point('hover', n.dataset.node), onMove(e));
+        if (TOUCH.matches && el._tapped !== e.target) {
+            el._tapped = e.target;
+            return void (point('hover', n.dataset.node), onMove(e), tapTip(e));
         }
         el._tapped = null;
         if (TOUCH.matches) onLeave();          // the tip a tap showed does not stay over the panel it opens
