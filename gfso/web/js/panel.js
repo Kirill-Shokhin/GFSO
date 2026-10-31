@@ -8,7 +8,7 @@ import {PANEL, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
 import {S, hasKids, taskOf, myRole} from './state.js';
 import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
-        byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED} from './vocab.js';
+        byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
 import {when as at_, stamp, trim, plural} from './fmt.js';
@@ -308,7 +308,7 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
 
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
-    const line = `${stamp(a.timestamp, 5, 19)} ${a.signal} ${a.old_state || ''}→${a.new_state || 'rej'}${a.source ? ' · ' + esc(a.source) : ''}`;
+    const line = `${stamp(a.timestamp, 5, 19)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? label(a.new_state) : 'rej'}${a.source ? ' · ' + esc(a.source) : ''}`;
     const more = CARRIED.filter(([k]) => a[k] && a[k].length !== 0).map(([k, l]) => `<div class="rd-field"><b>${l}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;

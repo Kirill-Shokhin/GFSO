@@ -36,6 +36,9 @@ export function ages() {
     for (const e of document.querySelectorAll('[data-since]')) { const s = dur(now - +e.dataset.since); if (e.textContent !== s) e.textContent = s; }
     for (const e of document.querySelectorAll('[data-due]')) e.classList.toggle('overdue', now > +e.dataset.due);
 }
+// a label the reader cannot see right now — scrolled out of the deck's view (a phone's deck scrolls sideways)
+export const unseen = e => { if (!e) return true; const a = e.getBoundingClientRect(), b = (e.closest('.dk-body') || document.documentElement).getBoundingClientRect();
+    return a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom; };
 export const ul = (cls, items) => `<ul class="${cls}">${items.join('')}</ul>`;
 // `data-*` attributes for a delegated control (main.js dispatches `data-action`); empty values are left out.
 export const data = o => Object.entries(o).filter(([, v]) => v).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');

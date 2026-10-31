@@ -367,7 +367,7 @@ body {
 .cs-row.is-hover, .cs-row.is-select { background: var(--hair-soft); }
 .cs-label { text-align: right; color: var(--ink); white-space: nowrap; overflow: hidden; }
 .cs-bar { display: flex; gap: 2px; height: 10px; }
-.cs-bar i { display: block; height: 100%; border-radius: 1px; }
+.cs-bar i { display: block; height: 100%; border-radius: 1px; min-width: 3px; }   /* a part a pointer can find: each says itself on hover */
 
 .cs-num { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 /* a column's second figure stands apart as its own mark, never joined to the first by a comma (§7) */

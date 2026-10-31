@@ -7,7 +7,7 @@ import {glyph} from './draw.js';
 import {hm, day} from './fmt.js';
 import {at, said, failedOf} from './run.js';
 import {roundsLine, failedWords, TIP} from './hints.js';
-import {CARRIED} from './vocab.js';
+import {CARRIED, label} from './vocab.js';
 
 const KINDS = {
     verdict: ['PASS', 'FAIL'], delivery: ['DELIVER'], assignment: ['ASSIGN', 'ACCEPT', 'REOPEN'],
@@ -39,7 +39,7 @@ function row(r) {
     const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
-        <span class="ev-move">${a.old_state && a.new_state ? `${a.old_state} → ${a.new_state}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
+        <span class="ev-move">${a.old_state && a.new_state ? `${label(a.old_state)} → ${label(a.new_state)}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
         <span class="ev-src">${esc(a.source || '')}</span>
         ${a.failed_criteria?.length ? `<span class="ev-failed">${a.failed_criteria.map(c => `<em>${esc(c)}</em>`).join('')}</span>` : ''}
         ${prose.length ? `<details data-key="${esc(`r|${a.task_id}|${a.timestamp}|${a.signal}`)}"${opened.has(`r|${a.task_id}|${a.timestamp}|${a.signal}`) ? ' open' : ''}><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
@@ -52,7 +52,7 @@ function head(id, name, node, run, rs) {
     const last = rounds.at(-1), why = lastFail && `${last?.verdict === 'FAIL' ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${failedWords(failedOf(run, id, lastFail.failed))}`;
     // one line each, cut at its end: the whole of it on hover
     return `<summary><span class="ev-node"${TIP.cell(name)}>${esc(name)}</span>
-        <span class="state-badge ev-state">${esc(node.state)}</span>
+        <span class="state-badge ev-state">${esc(label(node.state))}</span>
         <span class="ev-rounds">${rounds.length ? roundsLine(rounds) + (last?.verdict ? ` · last ${last.verdict}` : '') : 'no delivery yet'}</span>
         ${why ? `<span class="ev-why${last?.verdict === 'FAIL' ? '' : ' was'}"${TIP.cell(why)}>${esc(why)}</span>` : ''}
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;

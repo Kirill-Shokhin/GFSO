@@ -1,7 +1,7 @@
 // The run's course: one row per node, its work as bars on the folded clock and every verdict as a mark
 // standing ABOVE the bar it answers — the carrier and the mark kept apart — and over the rows how many
 // executors ran at once. Del names who is accountable for a node; this names what ran, when, and beside what.
-import {esc} from './dom.js';
+import {esc, unseen} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, axisWidth, mark} from './draw.js';
@@ -93,20 +93,22 @@ export function render(el, run, nodes) {
         ${top ? `<circle class="tl-peakdot" cx="${f.X(top[0])}" cy="${cy(peak)}" r="2.5"/>` : ''}
         ${ids.map(row).join('')}
         <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW - 4}" y2="${TOP + ROW - 4}"/></svg>`;
+    // the row's name in a tip only where its label is off the screen
+    const named = id => unseen(el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-name`)) && name(id);
     bindFocus(el, e => {
         // a verdict: its round, what it failed, and how many of the node's own criteria pass after it
         const v = e.target.closest('[data-v]');
         if (v) {
             const id = v.closest('[data-node]').dataset.node, r = run.rounds[id].find(r => String(r.n) === v.dataset.v);
             const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), f = failedOf(run, id, r.failed);
-            return tip(TIP.verdict(r.verdict, r, r.at, f, m, T?.total), e);
+            return tip(TIP.verdict(r.verdict, r, r.at, f, m, T?.total, named(id)), e);
         }
         const s = e.target.closest('.tl-s');
         if (!s) return untip();
         // the round a stretch belongs to: the delivery an execution ended in, the verdict a validation gave
         const x = work[+s.dataset.i], key = x.kind === 'val' ? 'at' : 'delivered';
         const r = (run.rounds[x.node] || []).find(r => r[key] >= x.end - 1e3);
-        tip(TIP.bar(x, r, r?.failed?.length ? failedOf(run, x.node, r.failed) : null), e);
+        tip(TIP.bar(x, r, r?.failed?.length ? failedOf(run, x.node, r.failed) : null, named(x.node)), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`));
 }

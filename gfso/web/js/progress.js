@@ -2,7 +2,7 @@
 // part unfolds into its parts. Each track counts one node's criteria passing at its own verdicts — a part's PASS is its
 // issuer's signature at that seam, the root's PASS the goal delivered — never a sum across a level, which added parts
 // of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
-import {esc} from './dom.js';
+import {esc, unseen} from './dom.js';
 import {TIP, CELLS} from './hints.js';
 import {label, cancelled} from './vocab.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
@@ -70,14 +70,16 @@ function coverage(run, nodes, tasks) {
     if (!root) return '';
     const maps = root.criterion_mappings || [], st = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     const kids = [...new Set(maps.map(m => m.child_id))], self = run.criteria.status[root.id] || {}, name = run.name;
+    // a cancelled part first: a legacy one stands DONE with its reason CANCELLED, and its track already reads cancelled
+    const kind = k => cancelled(tasks.find(t => t.id === k)) ? 'gone' : st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : 'open';
     const cell = (c, k) => !maps.some(m => m.criterion_name === c && m.child_id === k) ? '<td></td>'
-        : `<td data-node="${esc(k)}"${TIP.cell(name(k), c)}><i class="cv cv-${st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : st[k] === 'ABANDONED' ? 'gone' : 'open'}"></i></td>`;
+        : `<td data-node="${esc(k)}"${TIP.cell(name(k), c)}><i class="cv cv-${kind(k)}"></i></td>`;
     const rows = run.criteria.names[root.id].map(c => `<tr><th${c.length > 30 ? TIP.cell(c) : ''}>${esc(trim(c, 30))}</th>
         ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase()) : '⊥'}</td></tr>`).join('');
     return `<table class="pg-cov"><thead><tr><th class="sec">the goal's criteria</th>
         ${kids.map(k => `<th class="kid" data-node="${esc(k)}"><span>${esc(trim(name(k), 14))}</span></th>`).join('')}<th class="kid"><span>root</span></th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="pg-legend">${CELLS.map(([k, t]) => `<i class="cv cv-${k}"></i>${t}`).join(' ')}</p>`;
+        <p class="pg-legend">${CELLS.filter(([k]) => k !== 'gone' || kids.some(x => kind(x) === 'gone')).map(([k, t]) => `<i class="cv cv-${k}"></i>${t}`).join(' ')}</p>`;
 }
 
 export function render(el, run, nodes, tasks) {
@@ -99,7 +101,8 @@ export function render(el, run, nodes, tasks) {
         if (!g) return untip();
         const i = g.dataset.m.lastIndexOf(':'), id = g.dataset.m.slice(0, i), L = run.criteria.track[id], m = L.marks[+g.dataset.m.slice(i + 1)];
         const r = (run.rounds[m.node] || []).find(r => r.at === m.t);
-        tip(TIP.verdict(m.signal, r, m.t, {own: m.failed, edges: []}, m, L.total), e);
+        tip(TIP.verdict(m.signal, r, m.t, {own: m.failed, edges: []}, m, L.total,
+            unseen(g.closest('.pg-track')?.querySelector('.pg-level')) && (id === rootOf(tasks)?.id ? "the goal's criteria" : name(id))), e);
     }, untip);
     bringSelected(el, id => tr.querySelector(`.pg-track[data-node="${CSS.escape(id)}"] .pg-band`));
 }

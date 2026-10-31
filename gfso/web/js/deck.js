@@ -4,7 +4,7 @@
 import {$, esc, tally, since, lasting} from './dom.js';
 import {frame, TAB, STRIP, doing} from './hints.js';
 import {S, procs, kept, keep} from './state.js';
-import {nameOf} from './vocab.js';
+import {nameOf, label} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
 import {said, blockers, runNow, failingNow, PROC_KIND, byRole} from './run.js';
 import {dur, trim, money, plural} from './fmt.js';
@@ -57,7 +57,7 @@ function strip() {
     const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
         ? `<span class="dk-now dk-idle"${STRIP.held}>stopped${tally(live.length, 'held mid-work')}</span>`
-          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}"${STRIP.live(nameOf(t))}><i${beat()}></i><em>${esc(name(t))}</em><span>${t.state.toLowerCase()}</span></button>`).join('')}${more}</span>`
+          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}"${STRIP.live(nameOf(t))}><i${beat()}></i><em>${esc(name(t))}</em><span>${label(t.state).toLowerCase()}</span></button>`).join('')}${more}</span>`
         // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
         // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
         : live.length ? `<span class="dk-now">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`

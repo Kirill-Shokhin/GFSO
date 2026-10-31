@@ -29,7 +29,7 @@ function bars(title, rows, measure, fmt, attr, part, says) {
     return `<section class="cs-chart"><h4>${title}</h4>${rows.map(r => {
         const total = Object.values(r.parts).reduce((s, p) => s + measure(p), 0);
         return `<div class="cs-row" ${attr(r)}><span class="cs-label"${r.label.length > 22 ? TIP.cell(r.label) : ''}>${esc(trim(r.label, 22))}</span>
-            <span class="cs-bar">${Object.entries(r.parts).map(([k, p]) => `<i class="cs-${k}" style="width:${(measure(p) / max) * 100}%"`
+            <span class="cs-bar">${Object.entries(r.parts).filter(([, p]) => measure(p) > 0).map(([k, p]) => `<i class="cs-${k}" style="width:${(measure(p) / max) * 100}%"`
                 + `${TIP.part(k, part(p), measure(p) / (total || 1), p, says)}></i>`).join('')}</span>
             <span class="cs-num">${fmt(total, r)}</span></div>`; }).join('')}</section>`;
 }

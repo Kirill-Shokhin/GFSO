@@ -267,6 +267,16 @@ export const PANEL = {
 
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
+// THE HANDOVERS of a stretch: how full its context stood when it handed over, a share of the model's whole window (the
+// author, 2026-10-31: «информации о например размере контекста на обрезанной нет … относительно полного доступного
+// контекста») — one cut its moment and fill; many, how many and the fullest, the range beside it (51 cuts made a tip
+// 2000 px tall). The budget a session ran under is not recorded per session yet, so it is not said.
+const cuts = cs => { const seen = cs.filter(c => c.peak && c.window), w = seen[0]?.window;
+    if (!cs.length) return [];
+    if (!seen.length) return [`${plural(cs.length, 'handover')}, context not recorded`];
+    const lo = Math.min(...seen.map(c => c.peak)), hi = Math.max(...seen.map(c => c.peak));
+    return cs.length === 1 ? [meter(`Handed over ${hm(cs[0].t)}, of the ${tok(w)} window`, hi / w, tok(hi))]
+        : [meter(`${cs.length} handed over, the fullest of the ${tok(w)} window`, hi / w, tok(hi)), `Each at ${tok(lo)}–${tok(hi)}`]; };
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
@@ -275,20 +285,18 @@ export const TIP = {
          criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // a stretch of work on the timeline
-    bar: (x, r, f) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
-        `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
+    // …its row's name only where that row's label is off the screen (a phone's deck scrolled sideways — critic 8)
+    bar: (x, r, f, name) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
+        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f),
         x.parts > 1 && [`${x.parts} processes, ${dur(x.busy)} busy`, x.kind === 'val' ? 'the validator works in batches of probes'
-            : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`,               x.retried > 0 && `${x.retried} retried`].filter(Boolean).join(', ')].filter(Boolean).join(': '),
-        // each cut: when it handed over, and how full its context stood then — a share of the model's whole window
-        // (the author, 2026-10-31: «информации о например размере контекста на обрезанной нет … относительно полного
-        // доступного контекста»); the budget it ran under is not recorded per session yet, so it is not said
-        ...(x.handed || []).map(c => c.peak && c.window ? meter(`Handed over ${hm(c.t)}`, c.peak / c.window, `${tok(c.peak)} of ${tok(c.window)}`)
-            : `Handed over ${hm(c.t)}, its context not recorded`),
+            : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.retried > 0 && `${x.retried} retried`]
+                .filter(Boolean).join(', ')].filter(Boolean).join(': '),
+        ...cuts(x.handed || []),
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
-    verdict: (signal, r, t, f, m, total) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
-        `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
+    verdict: (signal, r, t, f, m, total, name) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
+        name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
     cell: (name, also) => hover(name, also),
     // a role's part of a row in spend: itself alone — its figure, its share of the row, its sessions, time and tokens
     // …the heading's figure is the chart's measure (`says`), never said again below it
