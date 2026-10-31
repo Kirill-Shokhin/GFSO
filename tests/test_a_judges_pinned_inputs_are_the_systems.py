@@ -111,7 +111,8 @@ def test_an_exact_check_the_memory_watch_ended_observed_nothing(monkeypatch, tmp
     kill left and forced its delivery's FAIL — a neighbour's pressure steering another node's verdict (critic B7)."""
     (box := ContainerExecution.__new__(ContainerExecution)).container = "check.gfso-exact-x"
     files = SimpleNamespace(seal_files=lambda base, laid: None)
-    ex = SimpleNamespace(release=lambda tree: None, files=files, session=lambda tree: box)
+    ex = SimpleNamespace(release=lambda tree: None, files=files, session=lambda tree: box,
+                         copy_tree=lambda src, dst: None, remove_tree=lambda path: None)
     monkeypatch.setattr(O, "_run", lambda *a, **k: {"rc": 128, "out": "cannot exec in a stopped state", "stdout": "",
                                                      "stderr": "cannot exec in a stopped state"})
     p = PIN.check[0]
@@ -121,3 +122,25 @@ def test_an_exact_check_the_memory_watch_ended_observed_nothing(monkeypatch, tmp
     monkeypatch.setattr(E, "_WATCH_ENDED", set())
     assert "stdout" in O._fresh_run(ex, "bash", PIN, p, str(tmp_path), tmp_path, 10, str(tmp_path)), \
         "a check its own code ended is observed as it ended"
+
+
+@docker
+@pytest.mark.parametrize("order", ["the selftest first", "the read first"])
+def test_live_no_exact_check_changes_the_delivery_a_later_one_reads(project, order):
+    """Over one shared copy, a check running the delivered code rewrote what a later check read: its order turned a
+    forced FAIL into the judge's word (critic B7). Each check reads the delivery as delivered, in either order."""
+    selftest = Probe("selftest", "sh selftest.sh", "SELFTEST OK", exact=True)
+    status = Probe("status", "cat status.txt", "ok", exact=True)
+    c = Criteria("c", check=(selftest, status))
+    made(project, "a")
+    try:
+        with project.scratch("gfso-exact-", system=True) as tmp:
+            project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
+            project.files.write_files(str(tree), {"status.txt": b"bad\n",
+                                                  "selftest.sh": b"echo ok > status.txt; echo SELFTEST OK\n"})
+            runs = [("s", c, selftest), ("r", c, status)]
+            rows = dict(run_checks(project, runs if order == "the selftest first" else runs[::-1],
+                                   str(project.parent / ".gfso-nodes-ws/p/a"), str(tree), tmp, 120))
+        assert rows["s"].get("matched") and rows["r"].get("matched") is False, rows
+    finally:
+        project.stop()

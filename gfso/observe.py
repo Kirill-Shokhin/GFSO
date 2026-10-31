@@ -15,6 +15,7 @@ from __future__ import annotations
 import subprocess
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Optional
 
@@ -95,18 +96,25 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str) 
     in a directory no earlier check could know the name of. A check runs the delivery's code, and what it left steered
     the next: a `GNUmakefile` beside a pinned `Makefile` (probe), a `diff` laid first on the image's PATH (critic F5);
     and a check that tidied after it was itself a switch the delivery turned to have every later check "not run"
-    (critic B6)."""
+    (critic B6). And over a copy of the built delivery of its own, gone after it: over one they shared, a check that
+    ran the delivered code changed what a later one read, and a forced FAIL turned into the judge's word (critic B7)."""
     ex.release(tree)
+    own = str(Path(tmp) / f"run-{uuid.uuid4().hex[:12]}")
     try:
+        ex.copy_tree(tree, own)
         # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
         dirs = materialize_inputs([replace(c, check=(p,))], Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}", ex.files)
     except OSError as e:
-        return {"note": f"not run: its inputs could not be laid ({e})"}
-    d = dirs.get(probe_id(c.name, p))
-    got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, tree), tree,
-               timeout, place)
-    # …ended by the machine's memory watch: a neighbour's pressure is no observation of this delivery (critic B7)
-    return {"note": f"not run: {WATCHED}"} if ended_by_watch(ex.session(tree)) else got
+        return {"note": f"not run: its copy or its inputs could not be laid ({e})"}
+    try:
+        d = dirs.get(probe_id(c.name, p))
+        got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, own), own,
+                   timeout, place)
+        # …ended by the machine's memory watch: a neighbour's pressure is no observation of this delivery (critic B7)
+        return {"note": f"not run: {WATCHED}"} if ended_by_watch(ex.session(own)) else got
+    finally:
+        with suppress(OSError):
+            ex.remove_tree(own)
 
 
 def printed(got: dict, expect: str) -> bool:

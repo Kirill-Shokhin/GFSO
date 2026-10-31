@@ -113,12 +113,10 @@ and nothing of your disk is mounted into any of its containers:
     own and read-only: the code run beside them may add files there, never change, move or remove a
     pinned one, nor any directory above them up to the root the judge's container writes. A probe
     that edits an input in place fails; it edits a copy it made (none of 4,987 recorded judges'
-    commands did otherwise). The system's own exact checks each run in a container of the copy
-    started anew — every process and file an earlier one left outside the copy gone with it — over
-    their inputs laid afresh in a directory no earlier check or build could know the name of. The
-    copy itself they share: a check that runs the delivered code can change what a later check of
-    the same validation reads in it, which turns that later check's forced FAIL into the judge's
-    own reading; the judge's own copy is apart.
+    commands did otherwise). The system's own exact checks each run in a container started anew —
+    every process and file an earlier one left gone with it — over a copy of the built delivery of
+    their own and their inputs laid afresh in a directory no earlier check or build could know the
+    name of: no check changes what a later one reads.
   A copy the delivery itself makes impossible — an object missing or rewritten, a commit not carrying
   the recorded tree, a nested repository or submodule — is not judged: the delivery FAILs with that
   cause, which the executor's next packet states, and nothing of it stands for later rounds; an
