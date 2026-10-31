@@ -93,10 +93,10 @@ watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : c
 // ON A PHONE A NODE'S PANEL COVERS THE SCREEN, and the browser's Back is the way out a hand reaches for: opening it adds a step
 // to the history, Back closes the reader first, then the panel — never leaves the page (the author, 2026-10-31: «интуитивно
 // жмешь кнопку назад а не крестик»). A panel closed by its × takes its step back out.
-const PHONE = matchMedia('(max-width: 720px)');
+const phone = () => getComputedStyle(document.documentElement).getPropertyValue('--phone').trim() === '1';  // gfso.css decides
 let opened = false;
 watch((st, key) => {
-    if (key !== 'select' || !PHONE.matches) return;
+    if (key !== 'select' || !phone()) return;
     if (st.select && !opened) opened = true, history.pushState({gfso: 'node'}, '');
     else if (!st.select && opened) { opened = false; if (history.state?.gfso === 'node') history.back(); }
 });

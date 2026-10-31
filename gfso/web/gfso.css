@@ -1320,7 +1320,9 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 /* ============ A phone — ONE page, laid out for the width (the author, 2026-10-29: «что с мобильной версией в целом»):
    the header in two rows, the node's panel and reader over the graph whole, the deck's head and its views
    scrolled sideways rather than squeezed. Every view is the same module as on a desk: one owner per rule ============ */
+:root { --phone: 0; }
 @media (max-width: 720px) {
+    :root { --phone: 1; }   /* the width is decided here alone: the page's script reads this, never the number */
     .header { flex-wrap: wrap; gap: 6px 14px; padding: 8px 14px; }
     /* three rows: the wordmark and QUALITY; the goal's name whole, its mode and switch under it; where it stands — the
        buttons ran over each other on one row (the author, 2026-10-31) */
