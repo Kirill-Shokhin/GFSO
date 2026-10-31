@@ -6,6 +6,9 @@ export const hms = t => new Date(t).toTimeString().slice(0, 8);
 export const dayLong = t => new Date(t).toLocaleDateString(LOCALE, {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
 export const day = t => new Date(t).toLocaleDateString(LOCALE, {day: 'numeric', month: 'short'});
 export const moment = t => new Date(t).toLocaleString(LOCALE);
+// WHEN SOMETHING HAPPENED is said as the moment, never as an age: «13s ago» stood frozen until a reload, the moment stays
+// true (the author, 2026-10-31: «висит эта цифра до тех пор пока не обновишь страницу»); the day only when not today's
+export const clockAt = t => new Date(t).toDateString() === new Date().toDateString() ? hm(t) : `${day(t)} ${hm(t)}`;
 export const when = t => new Date(t).toLocaleString(LOCALE, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
 // an ISO stamp as written, to the minute (`from` 5 drops the year, `to` 19 keeps the seconds)
 export const stamp = (iso, from = 0, to = 16) => String(iso).slice(from, to).replace('T', ' ');

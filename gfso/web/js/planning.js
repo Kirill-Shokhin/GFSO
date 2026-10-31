@@ -2,7 +2,7 @@
 // (the author, 2026-10-30: «не вижу в ui прогон»). The canvas then says what the server already records: the authoring
 // in flight and since when (`in_flight`, auto_decompose), and its stages as the planner narrates them (the log's
 // `decompose` lines — «1/1 searcher…», «1/1 searcher done · this call 154s …»), each once, as its last line says.
-import {$, esc, tally} from './dom.js';
+import {$, esc, tally, since} from './dom.js';
 import {S, procs} from './state.js';
 import {rootOf} from './tree.js';
 import {at} from './run.js';
@@ -25,5 +25,5 @@ export function drawPlanning() {
     box.innerHTML = `<div class="cp-head"${PLAN.since(hm(w.since * 1e3))}><b>${PLAN.title}</b></div>`
         + (!steps.size ? `<div class="cp-row cp-now">${PLAN.starting}</div>` : [...steps].map(([name, s]) => s.took != null
             ? `<div class="cp-row"><span>${esc(name)}</span>${tally(dur(s.took), 'took')}</div>`
-            : `<div class="cp-row cp-now"><i></i><span>${esc(name)}</span>${tally(dur(Date.now() - s.t), 'running', PLAN.since(hm(s.t)))}</div>`).join(''));
+            : `<div class="cp-row cp-now"><i></i><span>${esc(name)}</span>${tally(since(s.t), 'running', PLAN.since(hm(s.t)))}</div>`).join(''));
 }

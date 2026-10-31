@@ -1,6 +1,6 @@
 // Wiring: the page's start, its refresh policy, and the one dispatch from `data-action` controls and
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
-import {$} from './dom.js';
+import {$, ages} from './dom.js';
 import {TASK, GOAL, getJSON, singleFlight} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
@@ -158,6 +158,8 @@ async function init() {
     // shown, so 30 s keeps every figure within half its own step; no server read. A call booked in the ledger arrives
     // as the engine's `usage` line, which re-reads the run.
     setInterval(() => { if (runIsOpen()) { rebuildRun(); paintDeck(); } drawPlanning(); }, 30e3);
+    // …and a figure in seconds is set each second, in place (dom.js `since`): nothing is redrawn, nothing read
+    setInterval(ages, 1e3);
     await initGraph();
     await refreshAll();
     suggestHeight(graphNeeds());

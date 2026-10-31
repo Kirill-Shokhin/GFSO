@@ -144,7 +144,7 @@ export const RES = {
     full: name => hover(name),
     unread: 'Docker did not answer: what it gave last is shown, nothing where it never did',
     ofMachine: size => hover(`The machine's memory\t${size}`),
-    ages: rows => hover('Read from Docker', rows.map(([k, a]) => `${k}: ${a === 'never' ? 'never' : `${a} ago`}`)),
+    ages: rows => hover('Read from Docker', rows.map(([k, a]) => `${k}: ${a === 'never' ? 'never' : `at ${a}`}`)),
     older: n => `${n} containers started by an older build carry no project: the counts here leave them out`,
     none: 'No container or volume of this project',
     unserved: 'No reading of Docker: this server does not serve one',
@@ -250,7 +250,7 @@ export const PANEL = {
     refusedSaid: 'a validator reported and the report was REFUSED as ⊥ — ',
     escalated: hover('The issuer decides', ISSUER_MOVES),
     contested: hover('Read the verdict', 'Legitimate (§10.3), and nothing can check it (§15.7)'),
-    deadline: (due, now) => hover(due < now ? `Overdue by ${dur(now - due)}` : `Due in ${dur(due - now)}`, moment(due)),
+    deadline: due => hover('Deadline', moment(due), 'Red once it has passed'),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
     // a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)

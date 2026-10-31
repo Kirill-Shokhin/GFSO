@@ -3,7 +3,7 @@
 // facet per tab, in a slide-over left of the panel. One unit: the reader renders what the panel read and fetches
 // nothing (they were two modules with seven names across the cut). Buttons carry `data-action` (dispatched in main.js);
 // nothing here sends anything.
-import {$, el, esc, data, section, ul, rebuild, tally} from './dom.js';
+import {$, el, esc, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
 import {S, hasKids, taskOf, myRole} from './state.js';
@@ -37,7 +37,7 @@ function head({d, rounds}) {
         + meta(esc(ids), ids)
         + `<div class="pn-status"><span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`
         + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
-        + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? PANEL.deadline(at(d.deadline), Date.now()) : ''}>⏱ ${when(d.deadline)}</span>` : '')
+        + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : ''}>⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
         + '</div>' + meta(`${wait}<span class="pn-round">round <b>${n}</b>${inWork ? ', in work' : ''}</span>`, waitText + round)
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)

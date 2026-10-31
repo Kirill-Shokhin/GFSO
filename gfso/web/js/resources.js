@@ -9,7 +9,7 @@ import {getJSON} from './api.js';
 import {RES} from './hints.js';
 import {S} from './state.js';
 import {nameOf} from './vocab.js';
-import {bytes, pct, trim, cpu, dur} from './fmt.js';
+import {bytes, pct, trim, cpu, clockAt} from './fmt.js';
 import {total} from './run.js';
 
 let last = null, pending = null, asked = false;
@@ -35,11 +35,11 @@ const roles = cs => {
     return Object.entries(by).map(([k, r]) => tally(r.n, k) + (r.busy ? tally(r.busy, 'busy', RES.busy) : '')).join('');
 };
 // HOW OLD THE READING IS, said only when it is old: the server pushes each fresh reading, so a figure on screen is now — but
-// where Docker did not answer, the reading shown is the last it gave, and its age says so (`read_at`); no clock of the
-// page's own (the author, 2026-10-30: «зачем он сам обновляет таймер по своим часам … опять костыли»)
-const ago = t => t == null ? 'never' : dur(Math.max(0, Date.now() - t * 1e3));
+// where Docker did not answer, the reading shown is the last it gave, and the moment it was read says so (`read_at`) — never an age, which
+// stood frozen; no clock of the page's own (the author, 2026-10-30: «зачем он сам обновляет таймер по своим часам … опять костыли»)
+const read = t => t == null ? 'never' : clockAt(t * 1e3);
 const age = d => { const r = d.read_at || {}, stale = Object.keys(r).filter(k => r[k] != null && !d.read[k]);
-    return stale.length ? tally(ago(Math.min(...stale.map(k => r[k]))), 'ago', RES.ages(stale.map(k => [k, ago(r[k])]))) : ''; };
+    return stale.length ? tally(read(Math.min(...stale.map(k => r[k]))), 'last read', RES.ages(stale.map(k => [k, read(r[k])]))) : ''; };
 // …the server's poller keeps the last reading (security 8746d6a): before its first, nothing is read yet — no failure
 const notes = d => [!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
     : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread,

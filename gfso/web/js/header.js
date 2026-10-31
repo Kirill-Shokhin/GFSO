@@ -7,7 +7,7 @@ import {post, GOAL} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
 import {label, closureNote, contested, modeDoc, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow} from './run.js';
-import {dur, trim, cap, pct, stamp} from './fmt.js';
+import {dur, trim, cap, pct, stamp, clockAt} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
 import {askInPage, act} from './overlays.js';
 
@@ -86,15 +86,15 @@ const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id
 // moves it. Three states, so a press of Stop is not read as done while the sessions it let finish still run:
 // running · stopping (who is still at work, on hover) · stopped (by whom, when, why) — author, 2026-10-25.
 // the stop's `at` is an ISO stamp, a working session's `since` epoch seconds (the in-flight registry's)
-const ago = t => dur(Date.now() - (typeof t === 'number' ? t * 1e3 : at(t)));
+const when = t => clockAt(typeof t === 'number' ? t * 1e3 : at(t));
 // …and none on a closed goal with nothing at work: there is nothing to stop or start (the author, 2026-10-30: «на done
 // проекте незачем висит кнопка stop») — nor the system's stop a server's start puts on every project that stood
 function runSwitch(r) {
     if (!r || !begun() || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return '';
     if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
-    const who = `stopped by ${r.by} ${ago(r.at)} ago${r.why ? ` — ${r.why}` : ''}`;
+    const who = `stopped by ${r.by} at ${when(r.at)}${r.why ? ` — ${r.why}` : ''}`;
     const text = r.state === 'stopping' ? `stopping · ${r.working.length} still at work` : 'stopped';
-    const tip = r.state === 'stopping' ? H.stopping(who, r.working.map(w => `${w.verb} · ${w.task_id || '—'} · ${ago(w.since)}`)) : H.stopped(who);
+    const tip = r.state === 'stopping' ? H.stopping(who, r.working.map(w => `${w.verb} · ${w.task_id || '—'} · since ${when(w.since)}`)) : H.stopped(who);
     return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}"${tip}>${text}</span>`
         + `<button class="hd-run" data-action="run-start"${H.start}>start</button>`;
 }
@@ -125,13 +125,10 @@ function drawReports() {
     $('hd-reports').dataset.seen = seen;
     $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${tally(reports.length, reports.length > 1 ? 'tech reports' : 'tech report')}</button>`
         + H.reports([...reports].reverse().map(r => ({head: r.role || 'the system',
-            val: `<span class="hq-when"><span data-at="${esc(r.at)}">${esc(ago(r.at))}</span> ago</span>`,
+            val: `<span class="hq-when">${esc(when(r.at))}</span>`,
             link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text})));
 }
-// the list is rebuilt only when a report arrives (it kept its scroll), so its ages are re-read when it is opened
-export const toggleReports = () => {
-    if ($('hd-reports').classList.toggle('open')) $('hd-reports').querySelectorAll('[data-at]').forEach(e => { e.textContent = ago(e.dataset.at); });
-};
+export const toggleReports = () => $('hd-reports').classList.toggle('open');
 
 // A goal still open with nothing at work, no call on anyone, and no event for longer than the run folds as idle
 // is STALLED — the one quiet that must not read "leave it" (a json-parser run sat 642h so, under "nothing needs you").
@@ -142,10 +139,13 @@ function stalled(calls) {
     // …and a run the person stopped is not stalled: it is stopped, and says so beside the goal
     if (calls || !run || !root || terminal(root.state) || busyNow(procs(), run.sessions)
         || S.runState?.state !== 'running') return '';
-    const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0), idle = Date.now() - last;
-    return idle > GAP ? need(1, `stalled — nothing at work for ${dur(idle)}`, [root.id],
-        H.stalled, '', 'stalled') : '';
+    const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0);
+    // …the quiet turns into a stall at a moment known now, with nothing pushed then: the header is drawn again at it
+    clearTimeout(wake);
+    if (Date.now() - last <= GAP) return void (wake = setTimeout(drawHeader, last + GAP - Date.now() + 1e3));
+    return need(1, `stalled — nothing at work since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled');
 }
+let wake;
 
 export async function drawHeader() {
     // the left side is written ONCE, after every read: written first and the switch added after the frontier's

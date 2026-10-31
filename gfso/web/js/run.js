@@ -189,7 +189,9 @@ function clock(spans, points, now) {
     const folds = merged.slice(1).map((m, i) => ({from: merged[i][1], to: m[0]}));
     const t0 = merged[0]?.[0] ?? now ?? 0;
     const x = t => t - t0 - sum(folds, f => Math.min(Math.max(t - f.from - FOLD, 0), f.to - f.from - FOLD));
-    return {t0, x, span: merged.length ? x(merged.at(-1)[1]) : 0, folds: folds.map(f => ({at: x(f.from), from: f.from, to: f.to}))};
+    const span = merged.length ? x(merged.at(-1)[1]) : 0;
+    // …while the run is open its span grows with time: `from` is the moment it counts from, for a figure set as it grows
+    return {t0, x, span, from: now ? now - span : null, folds: folds.map(f => ({at: x(f.from), from: f.from, to: f.to}))};
 }
 
 // How many sessions of a kind ran at once, as a step series; its peak is the parallelism figure.

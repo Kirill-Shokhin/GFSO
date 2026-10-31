@@ -1,7 +1,7 @@
 // The run deck under the graph: a strip that always says what is running now and what it has cost,
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
-import {$, esc, tally} from './dom.js';
+import {$, esc, tally, since} from './dom.js';
 import {frame, TAB, STRIP, doing} from './hints.js';
 import {S, procs, kept, keep} from './state.js';
 import {nameOf} from './vocab.js';
@@ -32,7 +32,7 @@ const ticks = new Map();                               // `source|node` → {nod
 // What runs now is the run's one reading (run.js `runNow`); before the run is read, the same rule over the registry.
 const doingOf = w => doing(w.verb, PROC_KIND[w.verb]);
 function strip() {
-    const run = S.run, at = run?.now ?? runNow(S.tasks, procs()), mine = at.procs, now = Date.now() / 1000;
+    const run = S.run, at = run?.now ?? runNow(S.tasks, procs()), mine = at.procs;
     const work = at.work, name = t => trim(nameOf(t), 26), runs = t => !!at.on(t.id);
     // what a process runs on first: a session hidden under "+2" behind the leaves it carries told nothing (critic)
     const busy = S.tasks.filter(t => work.has(t.id)).sort((a, b) => runs(b) - runs(a));
@@ -42,13 +42,13 @@ function strip() {
         const w = at.on(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
         const what = w ? doingOf(w) : doing(t.state);
         return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(w.verb) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), by.verb) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
-            + `<span>${what}${w ? ' · ' + dur((now - w.since) * 1e3) : ''}</span></button>`;
+            + `<span>${what}${w ? ' · ' + since(w.since * 1e3) : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
     for (const w of mine.filter(w => !w.task_id || !drawn.has(w.task_id)))
         live.push(`<span class="dk-live on"${STRIP.live('The goal', STRIP.running(w.verb))}><i${beat()}></i><em>the goal</em>`
-            + `<span>${doingOf(w)} · ${dur((now - w.since) * 1e3)}</span></span>`);
+            + `<span>${doingOf(w)} · ${since(w.since * 1e3)}</span></span>`);
     // as many chips as the line holds, the rest counted (`drawStrip`): what waits and what it cost stay on the line
     const more = '<span class="dk-more"></span>';
     // A STOPPED RUN RUNS NOTHING: its nodes still hold their working states, and the strip read "2 at work" over a run
@@ -86,7 +86,7 @@ function strip() {
 const sum = () => { const run = S.run; if (!run) return '';
     return `<span${STRIP.spend(byRole(run.cost.byKind), (run.now ?? runNow(S.tasks, procs())).procs.length)}>`
         + tally(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced), 'spent')
-        + tally(dur(run.clock.span), 'run') + '</span>'; };
+        + tally(run.clock.from ? since(run.clock.from) : dur(run.clock.span), 'run') + '</span>'; };
 
 // THE LINE SCROLLS IN ITS OWN PLACE, its bar hidden: a soft fade at the edge where more of it lies says there is more, and
 // a mouse's wheel moves it sideways (the author, 2026-10-30: «подписи … даже не все влезают и не понятно что там дальше»)
