@@ -188,6 +188,25 @@ def probe_view(p) -> tuple:
             [f"{x}@{hashlib.sha256(str(body).encode()).hexdigest()[:8]}" for x, body in p.inputs])
 
 
+#: one pinned input file shown to a reader at most this long — a guard against a corpus, not a budget: the three plans that
+#: reached held-out 1.0 hold 7 / 41 / 83 distinct files, 9k / 88k / 24k characters in all (2026-10-31)
+INPUT_SHOWN = 4000
+
+
+def input_files(criteria) -> str:
+    """Every file the criteria's pinned checks feed, ONCE, under the name its probe line gives it (`probe_view`). Named
+    only, a probe's SQL or C was invisible to a reader asked what the pins decide: `NOT BETWEEN`, pinned in a root's own
+    `.sql` input, was named undecided 3 reads of 3 (sql_database, scratchpad/gatecal, 2026-10-31)."""
+    seen = {}
+    for c in criteria:
+        for p in c.check or ():
+            for (name, body), key in zip(p.inputs, probe_view(p)[3]):
+                seen.setdefault(key, str(body))
+    return "\n\n".join(f"## {k}\n```\n{b[:INPUT_SHOWN]}\n```"
+                       + (f"\n({len(b) - INPUT_SHOWN} more characters not shown)" if len(b) > INPUT_SHOWN else "")
+                       for k, b in seen.items())
+
+
 def pinned_lines(check, indent: str) -> list[str]:
     """A criterion's pinned checks as the checker reads them — the parent's and the children's alike: a criterion IS
     what its procedure decides (A1(i)), and a checker shown the parent's probes and only the children's prose judged the

@@ -867,6 +867,7 @@ class Engine:
                 "cache_write_tokens": c.get("cache_creation_input_tokens"),
                 "peak_context": c.get("peak_context"), "context_window": c.get("context_window"),
                 "turns": c.get("turns"), "ended": c.get("ended"), "resumed": c.get("resumed"), "handover": c.get("handover"), "credential": c.get("credential"),
+                "context_budget": c.get("context_budget"),
                 "cost_usd": c.get("cost_usd"),
                 "duration_ms": c.get("duration_ms") or 0,
             })

@@ -343,7 +343,7 @@ class _Credentials:
         """One call's record, naming the credential this thread's call ran on."""
         rec["credential"] = self._mine.name
         self._mine.last = rec
-        self.calls.append(rec)
+        self._book(rec)
 
 
 class ClaudeCodeProvider(_Credentials, RecordingProvider):

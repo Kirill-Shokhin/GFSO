@@ -9,8 +9,17 @@ Bounded to ONE pass on purpose: the loop is what cost twenty-six rounds and $19.
 arm before it was bounded, and the switch exists because that arm must still be able to author a plan
 this has NOT pre-repaired — otherwise the two halves of the experiment are the same half.
 """
+import pytest
+
 import gfso.decompose as D
 from gfso.config import sufficiency_at_authoring
+
+
+@pytest.fixture(autouse=True)
+def _repairs_alone(monkeypatch):
+    """The repair loop alone: the stored goal reading and the checker's reading at the last repair have tests of their own."""
+    monkeypatch.setattr(D, "record_goal_reading", lambda *a, **k: None)
+    monkeypatch.setenv("GFSO_CHECKER_AT_AUTHORING", "0")
 
 
 def test_named_obligations_are_folded_in_and_the_residue_is_measured(monkeypatch):

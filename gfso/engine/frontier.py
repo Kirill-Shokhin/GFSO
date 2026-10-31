@@ -467,10 +467,11 @@ class NodeSteps:
                               f"(edit_criteria / map_criterion / add a child) and re-run "
                               f"review_decomposition('{t.id}'), or record why the finding is wrong "
                               f"(dispute_finding). Reasons: get_review('{t.id}')."
-                              + (f" NOTE — the `undecided` findings ({len(_own)}) are about "
-                                 f"'{t.id}'s OWN criteria, not its children's: a criterion added "
-                                 f"to a CHILD does not close one, and the finding comes back word "
-                                 f"for word. `edit_criteria('{t.id}', …)` is what closes them."
+                              + (f" NOTE — the `undecided` findings ({len(_own)}) are obligations of "
+                                 f"'{t.id}'s goal that no pinned check its validation runs decides — its "
+                                 f"own, or a mapped child's on the delivered product: a NEW pinned check "
+                                 f"of what each still admits closes it, on '{t.id}' or on the child "
+                                 f"mapped to it."
                                  if _own else "")))
                 return True
         return False

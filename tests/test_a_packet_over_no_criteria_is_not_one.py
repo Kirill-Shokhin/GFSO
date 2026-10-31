@@ -135,7 +135,7 @@ class _Model:
 
     def complete(self, prompt, context=""):
         self.calls.append({"stage": "x", "output_tokens": 1})
-        if "Name the obligations of the GOAL" in prompt:
+        if "obligation of the GOAL" in prompt:          # the goal's reading; its deciding call is read as no answer
             return "```json\n" + json.dumps({"gaps": [{"obligation": g, "admits": "a result that ignores it"}
                                                       for g in self.gaps]}) + "\n```"
         return "ALREADY-COVERED" if "CURRENT DECOMPOSITION" in prompt else "holes"

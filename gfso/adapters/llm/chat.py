@@ -329,7 +329,7 @@ class ChatProvider(RecordingProvider):
                      limit_resets_at=last.resets_at, resumed=resumed, stop_reason=stop_reason, error=error)
         if ended == "unavailable":
             rec["place"] = place or self.wire.address
-        self.calls.append(rec)
+        self._book(rec)
         return rec
 
     def _call(self, system: str, user: str) -> str:

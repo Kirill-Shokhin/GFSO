@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 #: what its transport reports; what it does not report stays None, never 0.
 RECORD = ("duration_ms", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
           "cost_usd", "model", "context_window", "peak_context", "turns", "transport_torn", "ended", "limit_resets_at",
-          "resumed", "stop_reason", "error", "at", "credential")
+          "resumed", "stop_reason", "error", "at", "credential", "context_budget")
 
 
 def record(**fields) -> dict:
@@ -47,6 +47,12 @@ class RecordingProvider(LLMProviderPort):
     #: can the provider read its session's context after each tool call from inside the run (`budget.hooked`, `arm`)?
     #: Else the budget reads it between rounds
     handover_hook = False
+
+    def _book(self, rec: dict) -> None:
+        """A call's record onto the ledger, with the budget its session ran under: the roster's setting changes later, and
+        read back from it a past handover was drawn against a line it never had (ui stream, 2026-10-31)."""
+        rec["context_budget"] = self.context_budget if self.budgeted else None
+        self.calls.append(rec)
 
     def __init__(self, model: str):
         self._model = model

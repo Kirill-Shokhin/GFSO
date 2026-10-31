@@ -531,6 +531,7 @@ def test_a_goal_that_has_not_moved_is_not_mined_again(engine):
     prior = {"goal_text": "build the thing", "goal_read": True,
              "undecided_obligations": [{"obligation": "it is installable"},
                                        {"obligation": "it has a README"}]}
+    prior["goal_obligations"] = list(prior["undecided_obligations"])   # the whole reading, as a record holds it
     assert not _goal_changed(prior, task)                         # same text → check the list
     # a record from before `goal_read` cannot say whether its round read the goal: read once more
     assert _goal_changed({k: v for k, v in prior.items() if k != "goal_read"}, task)
@@ -538,7 +539,7 @@ def test_a_goal_that_has_not_moved_is_not_mined_again(engine):
 
     class _Checker:
         def complete(self, prompt, context=None, **kw):
-            assert "OBLIGATIONS NAMED EARLIER" in prompt          # …the fixed list, not the goal
+            assert "THE GOAL'S OBLIGATIONS" in prompt          # …the fixed list, not the goal
             return json.dumps({"decided": ["1"]})
 
     left = _still_undecided(e, task, _Checker(), tuple(prior["undecided_obligations"]))
@@ -595,7 +596,7 @@ def test_the_checker_reads_the_plan_several_times_on_its_first_pass(engine, monk
             self.n = 0
 
         def complete(self, prompt, context=None, **kw):
-            if "OBLIGATIONS" in prompt or "obligations of the GOAL" in prompt:
+            if "OBLIGATIONS" in prompt or "obligation of the GOAL" in prompt:
                 return json.dumps({"gaps": []})
             self.n += 1
             return json.dumps(rounds[(self.n - 1) % len(rounds)])

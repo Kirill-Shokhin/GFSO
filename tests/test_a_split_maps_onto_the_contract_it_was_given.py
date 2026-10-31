@@ -117,7 +117,7 @@ def test_a_held_refine_round_spends_no_repair_on_the_contract_it_does_not_author
         "add_mappings": [{"criterion": "g", "child_id": "b"}]})
     monkeypatch.setattr(DEC, "_audit_fix", lambda llm, req, sp, refused, ex="": calls.append(refused) or {})
     monkeypatch.setattr(DEC._Agreement, "judge", lambda self, spec: None)
-    for n in ("_hint", "tag_stage"):
+    for n in ("_stage", "tag_stage"):
         monkeypatch.setattr(DEC, n, lambda *a, **k: None)
     monkeypatch.setattr(DEC, "_stat_line", lambda llm: "")
     changed, _, problems = DEC._refine_round(e, "", "root", "exec-1", object(), contract_fixed=True)

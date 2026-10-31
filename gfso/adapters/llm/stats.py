@@ -143,12 +143,18 @@ def readings(llm, n: int, read, stage: str) -> list:
     another on any other: readings are independent by construction, and serially the authoring paid three of them
     back to back at each obligation check (~100 s, twice per plan) and the first plan review three more (AUTO haiku
     coreutils, 2026-10-12). Labelled after the fact, since "the last call" means nothing while several run."""
-    n0 = len(calls_of(llm))
-    if n > 1 and isinstance(llm, LLMProviderPort) and llm.parallel_safe:
-        with ThreadPoolExecutor(n) as pool:
-            out = list(pool.map(lambda _: read(), range(n)))
+    return fan(llm, range(n), lambda _: read(), stage)
+
+
+def fan(llm, items, each, stage: str) -> list:
+    """`each(item)` over `items` — independent calls on one provider, at once where it says it may be called so
+    (`parallel_safe`), in order otherwise; every call they made labelled `stage` (`readings` is n of the same)."""
+    items, n0 = list(items), len(calls_of(llm))
+    if len(items) > 1 and isinstance(llm, LLMProviderPort) and llm.parallel_safe:
+        with ThreadPoolExecutor(len(items)) as pool:
+            out = list(pool.map(each, items))
     else:
-        out = [read() for _ in range(n)]
+        out = [each(x) for x in items]
     for c in calls_of(llm)[n0:]:
         if isinstance(c, dict):
             c["stage"] = stage

@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 from gfso.adapters.llm.stats import _hint, _stat_line, tag_stage
+from gfso.inflight import staged
 from gfso.core.protocol.procedure import EXACT_TEXT, pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
 from gfso.config import MODEL_DEFAULT
@@ -282,6 +283,12 @@ AUDIT_FAST = ("Pace note: this is a SIMPLE task — keep the reduction TIGHT: no
               "measured 63-77s numbers below are from the prose-era wording.")
 
 
+def _stage(llm, label: str) -> None:
+    """A stage of the authoring starts: its name on the adapter's live ticks, and on the authoring's in-flight entry."""
+    _hint(llm, label)
+    staged(label)
+
+
 def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False) -> str:
     if prev_md:
         # The sentinel is an I/O-FORMAT convention only: the frozen prompt already mandates "say so
@@ -506,12 +513,12 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     if getattr(llm, "on_tick", "absent") is None:  # adapter streams live ticks and none wired yet
         llm.on_tick = lambda msg: _progress(msg, progress)
     _progress(f"{label} searcher…", progress)
-    _hint(llm, f"{label} searcher")
+    _stage(llm, f"{label} searcher")
     holes = _search(llm, request, "", fast=fast)
     tag_stage(llm, Stage.SEARCH)
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     _progress(f"{label} auditor (fold, first round)…", progress)
-    _hint(llm, f"{label} auditor")
+    _stage(llm, f"{label} auditor")
     patch = _audit_fold(llm, request, "", holes, fast=fast, executor=executor) or {}
     tag_stage(llm, Stage.AUDIT_FOLD)
     spec, ops = _fold_merge({}, patch)

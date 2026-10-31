@@ -16,6 +16,7 @@ auto-fixes — the agent fixes via FSM verbs or consciously declares ACCEPTED_RI
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -26,11 +27,12 @@ from typing import Optional
 
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import CHECKER_READINGS, SUFFICIENCY_READINGS
-from gfso.core.graph.projection import pinned_lines, probe_view
+from gfso.core.graph.projection import input_files, pinned_lines, probe_view
 from gfso.core.graph.review import progress_baseline
 from gfso.core.types import CriticVerdict, Stage, State, TaskId
 from gfso.engine.validation import _EXEC_GATING_CHECKS
-from gfso.adapters.llm.stats import calls_of, readings, refused_by_limit, tag_stage
+from gfso.adapters.llm.stats import calls_of, fan, readings, refused_by_limit, tag_stage
+from gfso.inflight import staged
 from .types import NodeCritique
 
 log = logging.getLogger(__name__)
@@ -159,6 +161,9 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
         rec["goal_text"] = _goal_read_in(_before)
         rec["undecided_obligations"] = list(_before.get("undecided_obligations") or ())
         rec["goal_read"] = rec["goal_text"] is not None       # the reading carried is still a reading
+        rec.update({k: _before[k] for k in ("goal_obligations", "deciders") if k in _before})
+    elif _node is not None:
+        rec.update(_goal_record(engine, _node, critique.undecided_obligations, _before or None))
     # …AND THE PROGRESS BASELINE IS THE LAST ROUND THAT MEASURED. Compared against a round that read nothing, the
     # next review counted as having moved whatever it said, and the unproductive count reset (critic round 9).
     rec["measured"] = critique.semantic_covered is not None
@@ -317,7 +322,9 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
     # has not changed since is carried forward rather than re-asked (`_already_decided`): the gate
     # was non-monotone, which is what made discharging it feel like whack-a-mole.
     _decided = _already_decided(_prior, task, engine)
-    parsed, verdicts, conflicts = _read_the_plan(llm, user, system, _prior is None, decided=_decided,
+    # first = no reading of THIS plan yet: a record holding only the goal's reading (`record_goal_reading`) is not one
+    parsed, verdicts, conflicts = _read_the_plan(llm, user, system, not (_prior or {}).get("criteria_verdicts"),
+                                                 decided=_decided,
                                                  names=[c.name for c in task.spec.criteria])
     if parsed is None:
         return NodeCritique(nid, gate_passed=True)  # no verdict — never read as clean
@@ -349,7 +356,7 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
         ([] if covered else
          [f"[{v.get('verdict')}] {v.get('criterion')} — {v.get('why')}" for v in gaps]
          + [f"[conflict] {', '.join(c.get('between', ()))} — {c.get('why')}" for c in conflicts]
-         + [f"[undecided on {nid}'s OWN criteria] {g.get('obligation')} — "
+         + [f"[undecided by {nid}'s criteria or its split's pinned checks] {g.get('obligation')} — "
             f"admits: {g.get('admits')}" for g in short])
         + [f"[reported, not gating — one side is settled] {', '.join(c.get('between', ()))} — {c.get('why')}"
            for c in reported])
@@ -587,6 +594,42 @@ def _prior_review(engine, task) -> Optional[dict]:
         return None
 
 
+def record_goal_reading(engine, task, obligations) -> None:
+    """Store a reading of the node's goal — the obligations it carries, mined by `_undecided_obligations` — as the node's
+    review record, before any review: the plan's author asked the gate's own question, so the gate re-checks that list
+    (`_still_undecided`) instead of mining the unchanged goal again. The plan itself is unread (no verdicts, unverified).
+    Only where no review stands: over one, the open list replaced the whole reading, verdicts and disputes (critic over
+    68a895d) — and that record already holds the goal's reading."""
+    if _prior_review(engine, task) is not None:
+        return
+    engine._graph._storage.store_critique(task.id, json.dumps({
+        **asdict(NodeCritique(str(task.id), gate_passed=False, undecided_obligations=tuple(obligations), goal_read=True)),
+        **_goal_record(engine, task, obligations, None),
+        "goal_text": task.spec.description, "measured": False, "by": "authoring",
+        "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
+
+
+def _to_recheck(engine, task, prior: dict) -> tuple:
+    """The obligations a re-check of an unchanged goal asks about: those still open — or, where something that stood when
+    the rest were decided is gone or changed (`_deciders`), every obligation the goal was read to carry, since what
+    decided one may be what left. Kept to the open ones for good, an obligation a dropped child's pin had decided never
+    came back while the goal text stood (critic over fe4a6fc, hole C)."""
+    open_ = tuple(prior.get("undecided_obligations") or ())
+    whole = tuple(prior.get("goal_obligations") or ())
+    if whole and not set(prior.get("deciders") or ()) <= set(_deciders(engine, task)):
+        return whole
+    return open_
+
+
+def _goal_record(engine, task, obligations, before: Optional[dict]) -> dict:
+    """The goal reading's part of a node's record: every obligation the goal was read to carry — the fresh reading's, or
+    the one carried while the goal text stands — and the deciders they were last judged against."""
+    whole = ((obligations.whole if isinstance(obligations, _Reading) else tuple(obligations)) if _goal_changed(before, task)
+             else tuple((before or {}).get("goal_obligations") or (before or {}).get("undecided_obligations") or ()))
+    return {"goal_obligations": [{"obligation": g.get("obligation", ""), "admits": _first_reading(g)} for g in whole],
+            "deciders": _deciders(engine, task)}
+
+
 def _goal_changed(prior: Optional[dict], task) -> bool:
     """Is the node's own GOAL text different from the one the obligations were mined out of?
 
@@ -604,8 +647,10 @@ def _goal_read_in(rec: dict) -> Optional[str]:
     """The goal text a stored record READ, or None when it read none. A record older than `goal_read` is
     taken as unread: a round that read nothing was stamped with the goal all the same, and one whose goal
     reading failed looks exactly like a clean one — taken as read, either opened the gate (critic rounds 9,
-    10). The cost is one fresh reading of the goal per node, once, after the upgrade."""
-    if not rec.get("goal_read"):
+    10). The cost is one fresh reading of the goal per node, once, after the upgrade. So is a record without the whole
+    reading (`goal_obligations`): it held only what was still open, and what it had decided was lost for good (critic
+    over f417836)."""
+    if not rec.get("goal_read") or "goal_obligations" not in rec:
         return None
     return rec.get("goal_text")
 
@@ -622,8 +667,20 @@ STILL_SCHEMA = {
 }
 
 
+#: obligations one deciding call is asked about — a goal read alone carries hundreds (c_compiler: ~300), and one haiku call
+#: over all of them left 287 open where the same plan's next reading left 43 (2026-10-31)
+DECIDE_BATCH = 20
+
+
 def _still_undecided(engine, task, llm, prior: tuple, *,
                      stage: Stage = Stage.UNDECIDED_OBLIGATIONS) -> tuple[dict, ...]:
+    """`_decide` over the obligations in batches of DECIDE_BATCH, at once where the provider allows."""
+    batches = [prior[i:i + DECIDE_BATCH] for i in range(0, len(prior), DECIDE_BATCH)]
+    staged(f"deciding {len(prior)} obligation(s) in {len(batches)} batch(es)")
+    return tuple(g for out in fan(llm, batches, lambda b: _decide(engine, task, llm, b), stage) for g in out)
+
+
+def _decide(engine, task, llm, prior: tuple) -> tuple[dict, ...]:
     """Which of the obligations already named are STILL not decided by this node's criteria.
 
     A cheap assessment over a fixed list, instead of another open-ended reading of the goal. It
@@ -635,16 +692,20 @@ def _still_undecided(engine, task, llm, prior: tuple, *,
         return ()
     listed = "\n".join(f"{i + 1}. {g.get('obligation', '')}" for i, g in enumerate(prior))
     crits = _own_criteria(task) or "- (none)"
+    split = _split_criteria(engine, task)
     user = (f"# THE NODE: {task.id}\n\n# GOAL\n{task.spec.description}\n\n"
             f"# ITS CRITERIA NOW\n{crits}\n\n"
-            f"# OBLIGATIONS NAMED EARLIER AS UNDECIDED BY THEM\n{listed}\n\n"
-            f"For EACH numbered obligation decide one thing only: do the criteria as they now stand "
+            + (f"# THE CRITERIA OF ITS SPLIT (its children's, with their pinned checks)\n{split}\n\n" if split else "")
+            + _inputs_section(engine, task)
+            + f"# THE GOAL'S OBLIGATIONS, AS ITS READING NAMED THEM\n{listed}\n\n"
+            f"For EACH numbered obligation decide one thing only: do the criteria as they now stand — the node's "
+            f"own and its split's pinned checks — "
             f"DECIDE it — would a result satisfying every criterion necessarily have it? {PINS_DECIDE} Answer "
             f"with the numbers of the obligations that are now decided (`decided`), and for each one still "
             f"undecided (`open`) its number and what a result could do that passes every criterion AS IT NOW "
             f"STANDS and still breaks the obligation — the part no pinned check probes. Name nothing new: what "
             f"the goal carries was enumerated when it was read, and this round is about what the criteria "
-            f"have since covered.")
+            f"decide.")
     def _not_rechecked(why: str) -> tuple:
         """⊥ IS NOT "STILL OPEN". The list stands — a check that could not run closes nothing — but
         the reader must be able to tell an assessment from a silence. Two doors reported these
@@ -662,7 +723,6 @@ def _still_undecided(engine, task, llm, prior: tuple, *,
         text = llm.complete(prompt=user + schema_instruction(STILL_SCHEMA),
                             context="You assess whether stated criteria decide stated obligations. "
                                     "Nothing else.")
-        tag_stage(llm, stage)
         parsed = parse_structured(text or "", STILL_SCHEMA)
     except Exception:
         log.warning(f"re-checking the undecided obligations failed on {task.id}", exc_info=True)
@@ -710,16 +770,54 @@ PINS_DECIDE = ("A criterion's run is its PINNED CHECKS, listed under it: where a
                "read when the work is validated, never an undecided obligation.")
 
 
+def _blocks(criteria, tag: str = "") -> list[str]:
+    """Each criterion with its pinned checks, one block apiece — what a criterion decides is what its pins probe (A1(i)),
+    and a reader shown only the prose counted a clause no pin probes as decided (critic over e379c65)."""
+    return [f"- {tag}{c.name}: {c.description}"
+            + "".join("\n" + l for l in pinned_lines(map(probe_view, c.check or ()), "    ")) for c in criteria]
+
+
+def _split_blocks(engine, task) -> list[str]:
+    """The criteria of the node's split — each MAPPED active child's, with its pinned checks. A goal obligation a child's
+    pinned check probes is decided: joint sufficiency is carried by the children (§2.4, Thm 1), and the parent's
+    validation re-runs the mapped parts' pins on the integrated result (`parts_procedure`); an unmapped DONE child's pins
+    it never runs (critic over fe4a6fc). Judged on the root's own pins alone, the gate opened 16–55 "undecided" findings
+    on plans that reached held-out 1.0, 85–90 % of all it found (scratchpad/gatecal, 2026-10-31)."""
+    return [b for k in _mapped_kids(engine, task) for b in _blocks(k.spec.criteria, f"[{k.id}] ")]
+
+
+def _mapped_kids(engine, task) -> list:
+    if engine is None:
+        return []
+    mapped = {str(m.child_id) for m in task.criterion_mappings}
+    return [k for k in engine.graph.get_active_children(task.id) if str(k.id) in mapped]
+
+
+def _split_criteria(engine, task) -> str:
+    return "\n".join(_split_blocks(engine, task))
+
+
+def _inputs_section(engine, task) -> str:
+    """The files the deciding pins feed, each once — what a probe over a `{inputs}` file decides is in the file."""
+    files = input_files(list(task.spec.criteria) + [c for k in _mapped_kids(engine, task) for c in k.spec.criteria])
+    return f"# THE FILES THOSE PINNED CHECKS FEED (`{{inputs}}`, each once, by the name its check gives it)\n{files}\n\n" \
+        if files else ""
+
+
 def _own_criteria(task) -> str:
-    """A node's own criteria with their pinned checks — what each one decides is what its pins probe (A1(i)), and a
-    reader shown only the prose counted a clause no pin probes as decided (critic over e379c65)."""
-    return "\n".join(f"- {c.name}: {c.description}"
-                     + "".join("\n" + l for l in pinned_lines(map(probe_view, c.check or ()), "    "))
-                     for c in task.spec.criteria)
+    return "\n".join(_blocks(task.spec.criteria))
+
+
+def _deciders(engine, task) -> list[str]:
+    """What can decide the node's goal obligations — its own criteria and its split's, each with its pins — as digests.
+    An obligation once decided stays decided while every one of these still stands: a pin added decides more, never
+    less. One gone or changed — a child dropped or unmapped, a pin rewritten — may have been what decided it."""
+    return sorted(hashlib.sha256(b.encode()).hexdigest()[:16] for b in _blocks(task.spec.criteria) + _split_blocks(engine, task))
 
 
 def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_OBLIGATIONS) -> Optional[tuple[dict, ...]]:
-    """Obligations of the node's OWN goal that none of its OWN criteria decides (FM-1.f).
+    """Obligations of the node's OWN goal that no pinned check its validation runs decides — its own criteria's, or a
+    mapped child's on the delivered product (FM-1.f, §8.3).
 
     A separate call against its own prompt rather than a question bolted onto the checker's,
     deliberately: the checker's verdict is what the E3 measurement reads, and its provenance stays
@@ -739,22 +837,20 @@ def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_
     question. Duplicates are folded by the obligation's own words.
     """
     system = (Path(__file__).parent / "prompts" / "undecided.md").read_text(encoding="utf-8")
-    crits = _own_criteria(task) or "- (none)"
     excluded = "\n".join(f"- {x}" for x in task.spec.scope) or "- (none declared)"
-    user = (f"# THE NODE UNDER CHECK: {task.id}\n"
-            f"Its OWN criteria are the whole of what you quantify over — never its children's.\n\n"
-            f"# GOAL\n{task.spec.description}\n\n"
-            f"# CRITERIA OF {task.id}\n{crits}\n\n"
-            f"# DECLARED SCOPE EXCLUSIONS (deliberate absences — never gaps)\n{excluded}\n\n"
-            f"Name the obligations of the GOAL that none of these criteria decides. {PINS_DECIDE}")
+    # THE GOAL ALONE: the list is the goal's, read without the plan. Asked for what the plan does NOT decide, the reading
+    # left out what it did, and once its decider left the plan nothing could name it again (critic over f417836)
+    user = (f"# THE NODE: {task.id}\n\n# GOAL\n{task.spec.description}\n\n"
+            f"# DECLARED SCOPE EXCLUSIONS (deliberate absences — never obligations)\n{excluded}\n\n"
+            f"Name every obligation of the GOAL, each with the result that would break it.")
     prior = _prior_review(engine, task)
     if not _goal_changed(prior, task):
         # THE GOAL HAS NOT MOVED, so the obligations it carries have not either. What CAN have
         # changed is whether the node's criteria now decide them, and that is what this round asks —
         # about the list already on record, not about the text again.
-        return _still_undecided(engine, task, llm, tuple(prior.get("undecided_obligations") or ()),
-                                stage=stage)
+        return _still_undecided(engine, task, llm, _to_recheck(engine, task, prior), stage=stage)
     prompt = user + schema_instruction(UNDECIDED_SCHEMA)
+    staged("reading the goal's obligations")
     out, seen, read = [], [], False
     def _one():
         try:
@@ -784,7 +880,20 @@ def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_
                     phrasings.append(gap.get("obligation"))
     # NO READING PARSED IS ⊥, NOT "NO GAPS": returned as `()`, it counted as clean and was stored as the goal's
     # reading — the gate opened, and every later round re-checked the empty list (critic round 9)
-    return tuple(out) if read else None
+    if not read:
+        return None
+    # …AND DECIDED AGAINST THE PLAN, as every later round decides: its criteria, its split's pins and the files they feed
+    # (named only by `name@hash`, a probe's SQL read as deciding nothing — `NOT BETWEEN`, 3 reads of 3). Shown the files,
+    # the reading itself listed what the pins do not probe, 125 obligations for 45 (c_compiler, haiku, 2026-10-31). The
+    # whole reading rides along to the record (`_goal_record`).
+    found = _Reading(_still_undecided(engine, task, llm, tuple(out), stage=stage) if out else out)
+    found.whole = tuple(out)
+    return found
+
+
+class _Reading(tuple):
+    """The obligations still open, with `whole`: every one the goal was read to carry."""
+    whole: tuple = ()
 
 
 # Words that carry no obligation on their own — dropped before two findings are compared, so

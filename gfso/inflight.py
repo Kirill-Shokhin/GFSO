@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
+import threading
 import time
 from gfso.config import DEFAULT_PROJECT
 
@@ -26,6 +28,8 @@ INFLIGHT: dict = {}
 # a finished session at work (critic, 2026-10-26). So a listener must not block and must not read `in_flight()`;
 # a failing one is logged, never raised into the work.
 LISTENERS: list = []
+#: thread → the key of the entry it runs now (an entry nested in another restores the outer one at its end)
+MINE: dict = {}
 
 
 def _changed() -> None:
@@ -40,8 +44,9 @@ def _changed() -> None:
 def _inflight(name: str, engine=None, task_id=None):
     @contextlib.contextmanager
     def _track():
-        key = object()
+        key, me = object(), threading.get_ident()
         with _INFLIGHT_LOCK:
+            was, MINE[me] = MINE.get(me), key
             INFLIGHT[key] = {"verb": name,
                              "project": None if engine is None
                              else (engine.project_name or DEFAULT_PROJECT),
@@ -53,8 +58,22 @@ def _inflight(name: str, engine=None, task_id=None):
         finally:
             with _INFLIGHT_LOCK:
                 del INFLIGHT[key]
+                MINE.update({me: was}) if was else MINE.pop(me, None)
                 _changed()
     return _track()
+
+
+def staged(label: str) -> None:
+    """The stage the work this thread runs has reached — `{stage, done, of, since}` on its entry, pushed as any entry
+    is: the page told an authoring's progress only by the narration's prose (ui stream, 2026-10-31). `label` is the
+    stage's own line, "2/3 repairer" giving done 2 of 3."""
+    m = re.search(r"(\d+)/(\d+)", label)
+    with _INFLIGHT_LOCK:
+        if (w := INFLIGHT.get(MINE.get(threading.get_ident()))) is None:
+            return
+        w["stage"] = {"stage": re.sub(r"\s+", " ", re.sub(r"\d+/\d+", "", label)).strip(),
+                      "done": int(m[1]) if m else None, "of": int(m[2]) if m else None, "since": round(time.time(), 1)}
+        _changed()
 
 
 def in_flight() -> list[dict]:

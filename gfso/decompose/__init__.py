@@ -33,14 +33,22 @@ from gfso.adapters.llm.stats import calls_of
 from gfso.llm import llm_factory
 
 from .seams import seam_problems
+from gfso.inflight import staged
 from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search,
-                   _progress, _stat_line, _hint, tag_stage, _COVERED, AUDIT_SCHEMA, shape, AGREE_PROMPT, AGREE_SCHEMA)
+                   _progress, _stat_line, _stage, tag_stage, _COVERED, AUDIT_SCHEMA, shape, AGREE_PROMPT, AGREE_SCHEMA)
 from .build import build_graph_live, held_contract
 from .extract import extract_spec
 from gfso.config import ROOT_ID, MODEL_DEFAULT, sufficiency_at_authoring
-from gfso.critic.runner import _undecided_obligations
+from gfso.critic.runner import _undecided_obligations, critique_node, record_goal_reading
 
 REPAIR_ROUNDS = 2
+#: repairs of the goal's undecided obligations at authoring, each re-checked against the one stored reading
+SUFFICIENCY_ROUNDS = 2
+
+
+def checker_at_authoring() -> bool:
+    """Does the last authoring repair also fold the checker's unentailed root criteria (one gate reading, unstored)?"""
+    return __import__("os").environ.get("GFSO_CHECKER_AT_AUTHORING", "1") not in ("0", "false", "no")
 
 
 class NoPlan(ValueError):
@@ -221,6 +229,17 @@ class _Agreement:
              f"unread"] if self.unplaced else [])
 
 
+def _fields(fixed: dict) -> list:
+    """The fields a repair patch re-emits — a field re-emitted as null is not re-emitted: taken as the field,
+    `"subtasks": null` replaced the split with nothing and the rebuild crashed on it (c_compiler, haiku, 2026-10-31)."""
+    return [k for k in fixed if k in AUDIT_SCHEMA["properties"] and fixed[k] is not None]
+
+
+def _patched(spec: dict, fixed: dict) -> dict:
+    """PATCH semantics: a re-emitted top-level field replaces the old one wholesale; omitted fields kept."""
+    return {**spec, **{k: fixed[k] for k in _fields(fixed)}}
+
+
 def _repaired_before_build(spec: dict, request: str, llm, executor: str, progress, contract_fixed: bool,
                            agree: _Agreement) -> dict:
     """What the admission would refuse, a seam its files contradict, and a criterion its own checks deny (`agree`),
@@ -234,7 +253,7 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
                   + " | ".join(x[:140] for x in refused), progress)
         fixed = _audit_fix(llm, request, spec, refused, executor) or {}
         tag_stage(llm, f"{Stage.AUDIT_FIX}-pre-{r + 1}")
-        spec = {**spec, **{k: fixed[k] for k in fixed if k in AUDIT_SCHEMA["properties"]}}
+        spec = _patched(spec, fixed)
         if any(k in fixed for k in _CRITERIA_FIELDS):
             agree.judge(spec)
     return spec
@@ -260,6 +279,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
     engine._dispatch_quiesce = getattr(engine, "_dispatch_quiesce", 0) + 1
     try:
         _progress("builder: wholesale build through the FSM…", progress)
+        staged("builder")
         eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
                                                  max_iterations=max_iterations,
                                                  child_assignee=child_assignee, contract_fixed=contract_fixed)
@@ -271,14 +291,12 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
                 break
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(problems)} problem(s) → corrective auditor (patch)…",
                       progress)
-            _hint(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
+            _stage(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
             fixed = _audit_fix(llm, request, spec, problems, executor)
             tag_stage(llm, f"{Stage.AUDIT_FIX}-{r + 1}")
             if not fixed:
                 break  # repair call failed — return the honest residue
-            # PATCH semantics: a re-emitted top-level field replaces the old one wholesale; omitted fields kept.
-            patched = [k for k in fixed if k in AUDIT_SCHEMA["properties"]]
-            spec = hold({**spec, **{k: fixed[k] for k in patched}})
+            spec, patched = hold(_patched(spec, fixed)), [k for k in fixed if k in _fields(fixed)]
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
             if any(k in fixed for k in _CRITERIA_FIELDS):
                 agree.judge(spec)       # before the rebuild: what the patch rewrote still differs from the graph
@@ -423,7 +441,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
                          if cur_holes else "") \
         + (("\n\n# OPEN LEVEL-2 FINDINGS on this plan (the causal check — the Pragmatic level, §9.1)\n"
             "Each is a criterion the children's criteria do not entail, a conflict between "
-            "them, or an obligation of THIS node's goal that none of its own criteria decides. "
+            "them, or an obligation of THIS node's goal that no pinned check its validation runs decides. "
             "They are the plan's known defects: fold them in, or leave them for the issuer to "
             "dispute in writing — but do not return an unchanged plan while they stand." "\n"
             + "\n".join(f"- {f}" for f in l2_open)) if l2_open else "") \
@@ -449,7 +467,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
         holes = findings
     else:
         _progress(f"{label} searcher (over the graph projection)…", progress)
-        _hint(llm, f"{label} searcher")
+        _stage(llm, f"{label} searcher")
         holes = _search(llm, request, state_view)
         tag_stage(llm, Stage.SEARCH_REFINE)
         _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
@@ -458,7 +476,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
         return False, extract_spec(engine, root_id), []
     spec = extract_spec(engine, root_id)
     _progress(f"{label} auditor (fold into the graph state)…", progress)
-    _hint(llm, f"{label} auditor")
+    _stage(llm, f"{label} auditor")
     patch = _dens_patch(_audit_fold(llm, request, state_view, holes, executor=executor) or {}, root_id)
     tag_stage(llm, Stage.AUDIT_FOLD_REFINE)
     new_spec, ops = _fold_merge(spec, patch)
@@ -532,31 +550,57 @@ def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, hole
     task = engine.graph.get_task(rid)
     if task is None:
         return spec, holes, ()
-    gaps = _undecided_obligations(engine, task, llm, stage=Stage.AUTHORING_OBLIGATIONS)
-    if not gaps:
+    # THE GOAL IS READ ONCE, WITH THE GATE'S OWN INSTRUMENT, AND THE READING IS THE GATE'S: stored as the node's record,
+    # every later reading — the repair's and the gate's first review — re-checks this list rather than mining the
+    # unchanged goal again. Re-mined after each repair, every reading named a fresh corner of the same goal, and the
+    # gate a third set on top (haiku coreutils / c_compiler, scratchpad/authbench, 2026-10-31).
+    mined = _undecided_obligations(engine, task, llm, stage=Stage.AUTHORING_OBLIGATIONS)
+    if mined is None:
         return spec, holes, ()
-    _progress(f"{rid}: the goal has {len(gaps)} obligation(s) no criterion decides — one repair "
-              f"round over them", progress)
-    listed = "\n".join(f"- {g.get('obligation', '')}" for g in gaps)
-    changed, spec2, holes2 = _refine_round(
-        engine, request, str(rid), assignee, llm, progress=progress, label="sufficiency", executor=executor, agree=agree,
-        findings=f"# OBLIGATIONS OF THIS GOAL THAT NO CRITERION OF THE ROOT DECIDES\n"
-                 f"Each line is something the goal text requires and the plan does not yet make checkable. "
-                 f"Add or sharpen the ROOT's criteria so each becomes decidable — most belong in the criterion "
-                 f"of the component they name — and give the children the criteria that entail them. Do not "
-                 f"restate an obligation as a criterion — write the observable that settles it.\n{listed}")
-    if not changed:
-        return spec, holes, tuple(g.get("obligation", "") for g in gaps)
-    # …AND ASK AGAIN, because the repair is a model's answer and not a fact until it is checked.
-    _after = _undecided_obligations(engine, engine.graph.get_task(rid), llm)
-    if _after is None:   # ⊥: the goal could not be re-read, so nothing is measured closed — all stand
-        _progress(f"{rid}: the goal could not be re-read after the repair — its {len(gaps)} obligation(s) "
-                  f"stand as named", progress)
-        return spec2, holes2, tuple(g.get("obligation", "") for g in gaps)
-    residue = tuple(g.get("obligation", "") for g in _after)
-    _progress(f"{rid}: {len(gaps) - len(residue)} of {len(gaps)} closed"
-              + (f"; still open: {'; '.join(residue)}" if residue else ""), progress)
-    return spec2, holes2, residue
+    record_goal_reading(engine, task, mined)
+    gaps, unentailed = mined, []
+    for r in range(SUFFICIENCY_ROUNDS):
+        if not gaps and not unentailed:
+            break
+        _progress(f"{rid}: {len(gaps)} obligation(s) of the goal no criterion decides, {len(unentailed)} root "
+                  f"criteria its children do not entail — repair {r + 1}/{SUFFICIENCY_ROUNDS}", progress)
+        listed = "\n".join(f"- {g.get('obligation', '')}\n  a result passing every criterion yet breaking it: "
+                           f"{g.get('admits', '')}" for g in gaps) + "".join(
+            f"\n- root criterion {v.get('criterion')} is not entailed by the children mapped to it: {v.get('why')}"
+            for v in unentailed)
+        changed, spec, holes = _refine_round(
+            engine, request, str(rid), assignee, llm, progress=progress, label=f"sufficiency {r + 1}",
+            executor=executor, agree=agree,
+            findings=f"# WHAT THE PLAN ADMITS THAT BREAKS THE GOAL\n"
+                     f"Each line is a result the plan admits that breaks the goal. Close each with a PINNED CHECK "
+                     f"that refuses that result, ON THE CHILD THAT BUILDS THE BEHAVIOUR — a criterion of the root "
+                     f"holds only when the children mapped to it carry pins that entail it, so a check added only "
+                     f"to the root leaves it undecided by its split. Add a root criterion only for a property no "
+                     f"single child can show (a seam, an integration), and then give each child it maps to the pins "
+                     f"of its own part. Change nothing else. Do not restate an obligation as prose — a criterion "
+                     f"decides only what its pins probe.\n{listed}")
+        if not changed:
+            break
+        if r == SUFFICIENCY_ROUNDS - 2 and checker_at_authoring():
+            # …AND THE OTHER HALF OF THE GATE'S QUESTION, before the last repair: whether the children entail the
+            # root's criteria. Not stored — the gate's own reading of the plan stays its own.
+            c = critique_node(engine, rid, llm)
+            if c.semantic_covered is not None:
+                unentailed = [v for v in c.criteria_verdicts or () if v.get("verdict") != "sufficient"]
+                gaps = list(c.undecided_obligations or ())
+                _progress(f"{rid}: the checker reads {len(unentailed)} root criteria unentailed, "
+                          f"{len(gaps)} obligation(s) open", progress)
+                continue
+        unentailed = []
+        after = _undecided_obligations(engine, engine.graph.get_task(rid), llm, stage=Stage.AUTHORING_OBLIGATIONS)
+        if after is None:   # ⊥: nothing re-checked, so nothing is measured closed
+            break
+        _progress(f"{rid}: {len(gaps) - len(after)} of {len(gaps)} closed", progress)
+        gaps = after
+    residue = tuple(g.get("obligation", "") for g in gaps)
+    if residue:
+        _progress(f"{rid}: still open: {'; '.join(residue)}", progress)
+    return spec, holes, residue
 
 
 
