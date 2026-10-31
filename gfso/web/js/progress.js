@@ -6,7 +6,7 @@ import {esc, unseen} from './dom.js';
 import {TIP, CELLS} from './hints.js';
 import {label, cancelled} from './vocab.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
-import {tip, untip} from './tip.js';
+import {tip, untip, firstTap} from './tip.js';
 import {frame, axisWidth, mark, glyph} from './draw.js';
 import {hm, trim} from './fmt.js';
 import {rootOf, isRoot, childrenOf, ancestorsIn} from './tree.js';
@@ -49,12 +49,12 @@ function tracks(el, run, name, tasks) {
         const gone = cancelled(tasks.find(t => t.id === r.id));
         return `<g class="pg-track${r.d ? ' pg-part' : ''}${gone ? ' pg-gone' : ''}" data-node="${esc(r.id)}">
             <rect class="pg-band" x="0" y="${top - GAP / 2}" width="${W}" height="${h(r) + GAP}"/>
-            <text class="pg-level" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}${title.length > fits ? TIP.cell(title) : ''}>${caret}${esc(trim(title, fits))}</text>
+            <text class="pg-level" data-k="l|${esc(r.id)}" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}${title.length > fits ? TIP.cell(title) : ''}>${caret}${esc(trim(title, fits))}</text>
             <text class="pg-count" x="${LEFT - 10}" y="${top + (r.d ? 24 : 28)}">${gone ? `<tspan>${label('ABANDONED').toLowerCase()}</tspan>` : `${last}<tspan> of ${T.total}</tspan>`}</text>
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>
             <path class="pg-area" d="${f.area(T.steps, y0, h(r), T.total)}"/>
-            ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}">${m.signal === 'FAIL'   // a FAIL above the area stands on a stem, so its height reads
+            ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}" data-k="m|${esc(r.id)}|${m.t}">${m.signal === 'FAIL'   // a FAIL above the area stands on a stem, so its height reads
                 ? `<line class="pg-stem" x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${y0}" y2="${at(m.k)}"/>` : ''}${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
     }).join('');
     const H = y + 6, root = rs.find(r => !r.d);
@@ -73,7 +73,7 @@ function coverage(run, nodes, tasks) {
     // a cancelled part first: a legacy one stands DONE with its reason CANCELLED, and its track already reads cancelled
     const kind = k => cancelled(tasks.find(t => t.id === k)) ? 'gone' : st[k] === 'DONE' ? 'done' : st[k] === 'REWORKING' ? 'rework' : 'open';
     const cell = (c, k) => !maps.some(m => m.criterion_name === c && m.child_id === k) ? '<td></td>'
-        : `<td data-node="${esc(k)}"${TIP.cell(name(k), c)}><i class="cv cv-${kind(k)}"></i></td>`;
+        : `<td data-node="${esc(k)}" data-k="${esc(`cov|${c}|${k}`)}"${TIP.cell(name(k), c)}><i class="cv cv-${kind(k)}"></i></td>`;
     const rows = run.criteria.names[root.id].map(c => `<tr><th${c.length > 30 ? TIP.cell(c) : ''}>${esc(trim(c, 30))}</th>
         ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase()) : '⊥'}</td></tr>`).join('');
     return `<table class="pg-cov"><thead><tr><th class="sec">the goal's criteria</th>
@@ -95,7 +95,8 @@ export function render(el, run, nodes, tasks) {
     watch((st, key) => (key === 'select' || key === 'bring') && st.select && open(st.select) && paint(), el);
     // a part's name unfolds it into its own parts, and folds it again
     tr.onclick = e => { const id = e.target.closest('[data-unfold]')?.dataset.unfold;
-        if (id) { e.stopPropagation(); unfolded.has(id) ? unfolded.delete(id) : unfolded.add(id); paint(); } };   // unfolding is no selection
+        // …a finger's first tap on a cut name shows its whole first (tip.js), its second unfolds
+        if (id && !firstTap(e)) { e.stopPropagation(); unfolded.has(id) ? unfolded.delete(id) : unfolded.add(id); paint(); } };   // unfolding is no selection
     lit = bindFocus(el, e => {
         const g = e.target.closest('[data-m]');
         if (!g) return untip();

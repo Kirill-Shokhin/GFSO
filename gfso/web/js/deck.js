@@ -42,7 +42,7 @@ function strip() {
     const live = busy.map(t => {
         const w = at.on(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
         const what = w ? doingOf(w) : doing(t.state);
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(w.verb) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), by.verb) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(w.verb) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), by.verb) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
             + `<span>${what}${w ? ' · ' + since(w.since * 1e3) : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
@@ -58,7 +58,7 @@ function strip() {
     const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
         ? `<span class="dk-now dk-idle"${STRIP.held}>stopped${tally(live.length, 'held mid-work')}</span>`
-          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}"${STRIP.live(nameOf(t))}><i${beat()}></i><em>${esc(name(t))}</em><span>${label(t.state).toLowerCase()}</span></button>`).join('')}${more}</span>`
+          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}" data-k="held|${esc(t.id)}"${STRIP.live(nameOf(t))}><i${beat()}></i><em>${esc(name(t))}</em><span>${label(t.state).toLowerCase()}</span></button>`).join('')}${more}</span>`
         // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
         // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
         : live.length ? `<span class="dk-now">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
@@ -73,12 +73,12 @@ function strip() {
         // what is red comes first after what is at work: the line scrolls, and the last of it is the first behind its fade (critic)
         // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
         // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
-        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '')
+        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" data-k="back"${STRIP.back(back.map(([id, n]) => `${run.name(id)} — ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '')
         + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.map(t => `${name(t)} — ${t.state}`))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).slice(0, 2).map(([id, n]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
             const users = Object.entries(run.waits).filter(([, w]) => w.deps.includes(id)).map(([u]) => run.name(u));
-            return `<button class="dk-block" data-node="${esc(id)}"${STRIP.block(n, run.name(id), users)}>${tally(n, 'wait on')}<b>${esc(trim(run.name(id), 24))}</b>`
+            return `<button class="dk-block" data-node="${esc(id)}" data-k="wait|${esc(id)}"${STRIP.block(n, run.name(id), users)}>${tally(n, 'wait on')}<b>${esc(trim(run.name(id), 24))}</b>`
                 + (part ? `<span> ← its part ${esc(trim(run.name(part), 20))} at work</span>` : '') + '</button>'; }).join('') : '');
 }
 // THE RUN'S SUM, in a place of its own at the head's right — never laid over the line, which scrolls beside it. A session's

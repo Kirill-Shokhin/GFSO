@@ -57,13 +57,13 @@ export function render(el, run, nodes) {
     // a session passed on to a fresh one is a cut across its bar at the moment it wrote its note; the cut says ITSELF on a
     // narrow band of its own — its moment, its context against the window — as a part of a bar does (the author, 2026-10-31:
     // «не вижу чтобы на разрезах были свои попапы»), and the bar's tip stays on either side of it (10-28)
-    const bar = (s, i) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}" x="${f.X(s.start)}"
+    const bar = (s, i) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}" data-k="b|${esc(s.node)}|${s.kind}|${s.start}" x="${f.X(s.start)}"
         y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(s.end) - f.X(s.start), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`
         + (s.handed || []).map(({t}, j) => { const x = f.X(t), y1 = Y(s.node) - BAR[s.kind] / 2 - 2, y2 = Y(s.node) + BAR[s.kind] / 2 + 2;
-            return `<g data-c="${i}:${j}"><line class="tl-hand" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/><line class="tl-cut" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/></g>`; }).join('');
+            return `<g data-c="${i}:${j}" data-k="c|${esc(s.node)}|${t}"><line class="tl-hand" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/><line class="tl-cut" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/></g>`; }).join('');
     // a verdict: a hairline stem up from the bar line, the glyph on top — a mark, not a piece of the work
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
-        return `<g class="tl-v" data-v="${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
+        return `<g class="tl-v" data-v="${r.n}" data-k="v|${esc(id)}|${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
     const state = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     // the names it waits on cut to fit: the whole of them on hover
     const waitsOn = (id, cut) => `waits on ${waitWords(run.waits[id], d => cut ? trim(name(d), 24) : name(d))}`;
@@ -77,7 +77,7 @@ export function render(el, run, nodes) {
         `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 4}" width="${W}" height="${ROW}"/>
-        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id)) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id)))}</text>
+        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" data-k="n|${esc(id)}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id)) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id)))}</text>
         ${work.map((s, i) => s.node === id && !HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${work.map((s, i) => s.node === id && HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${marks(id)}${idle(id)}</g>`;
     // how many executors ran at once: its own band with its own scale, a line — not one more row of bars
     const c0 = 30 + CONC, peak = Math.max(run.exec.peak, 1), cy = k => c0 - (k / peak) * (CONC - 6);

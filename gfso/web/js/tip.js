@@ -51,9 +51,13 @@ document.addEventListener('click', e => { if (!TOUCH.matches) return;
 // an open bar changes as it grows (critic 13). A redraw of the same data gives the same path.
 // …up to the page, not the node: a node's coverage cells, or its cost bar and its time bar, are two things (critic 14); an
 // element with data of its own is known by it, one without by its rank — a row's rank moved with the axis ticks before it
-const thing = e => { const path = [];
+// …and first of all by the key the view that drew it gives it (`data-k`: a bar's node, kind and start, a mark's round, a
+// cell's criterion and part): only the view knows what a thing is — a glyph and its stem, a figure and its word are one,
+// and an index that shifts as work starts elsewhere is not its name (critic 15). The path is for what carries no key.
+const thing = e => { const k = e.target.closest?.('[data-k]'); if (k) return k.dataset.k;
+    const path = [];
     for (let x = e.target; x && x !== document.body; x = x.parentElement) {
-        const data = Object.entries(x.dataset || {}).filter(([k]) => k !== 'tip').map(([k, v]) => `${k}=${v}`).join(',');
+        const data = Object.entries(x.dataset || {}).filter(([k]) => k !== 'tip' && k !== 'k').map(([k, v]) => `${k}=${v}`).join(',');
         path.push(`${x.tagName}${data ? `[${data}]` : x.parentElement ? [...x.parentElement.children].indexOf(x) : ''}`);
     }
     return path.join('<'); };

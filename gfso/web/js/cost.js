@@ -26,10 +26,12 @@ const tile = (v, label, ...notes) => `<div class="cs-tile"><b>${v}</b><span>${la
 // общую мусорную инфу. вторая раздельно по каждой»; «во многих попапах дублируется имя ноды»)
 function bars(title, rows, measure, fmt, attr, part, says) {
     const max = Math.max(...rows.map(r => Object.values(r.parts).reduce((s, p) => s + measure(p), 0)), 1e-9);
+    const ck = title.replace(/<[^>]*>/g, '');           // the chart, by its title's words: a node's cost and time bars are two things
     return `<section class="cs-chart"><h4>${title}</h4>${rows.map(r => {
         const total = Object.values(r.parts).reduce((s, p) => s + measure(p), 0);
-        return `<div class="cs-row" ${attr(r)}><span class="cs-label"${r.label.length > 22 ? TIP.cell(r.label) : ''}>${esc(trim(r.label, 22))}</span>
-            <span class="cs-bar">${Object.entries(r.parts).filter(([, p]) => measure(p) > 0).map(([k, p]) => `<i class="cs-${k}" style="width:${(measure(p) / max) * 100}%"`
+        const rk = `${ck}|${r.id || r.label}`;
+        return `<div class="cs-row" ${attr(r)}><span class="cs-label" data-k="${esc(`l|${rk}`)}"${r.label.length > 22 ? TIP.cell(r.label) : ''}>${esc(trim(r.label, 22))}</span>
+            <span class="cs-bar">${Object.entries(r.parts).filter(([, p]) => measure(p) > 0).map(([k, p]) => `<i class="cs-${k}" data-k="${esc(`p|${rk}|${k}`)}" style="width:${(measure(p) / max) * 100}%"`
                 + `${TIP.part(k, part(p, k), measure(p) / (total || 1), p, says)}></i>`).join('')}</span>
             <span class="cs-num">${fmt(total, r)}</span></div>`; }).join('')}</section>`;
 }
