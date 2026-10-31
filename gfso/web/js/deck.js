@@ -1,7 +1,7 @@
 // The run deck under the graph: a strip that always says what is running now and what it has cost,
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
-import {$, esc, tally, since} from './dom.js';
+import {$, esc, tally, since, lasting} from './dom.js';
 import {frame, TAB, STRIP, doing} from './hints.js';
 import {S, procs, kept, keep} from './state.js';
 import {nameOf} from './vocab.js';
@@ -86,7 +86,7 @@ function strip() {
 const sum = () => { const run = S.run; if (!run) return '';
     return `<span${STRIP.spend(byRole(run.cost.byKind), (run.now ?? runNow(S.tasks, procs())).procs.length)}>`
         + tally(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced), 'spent')
-        + tally(run.clock.from ? since(run.clock.from) : dur(run.clock.span), 'run') + '</span>'; };
+        + tally(lasting(run.clock.from, run.clock.span), 'run') + '</span>'; };
 
 // THE LINE SCROLLS IN ITS OWN PLACE, its bar hidden: a soft fade at the edge where more of it lies says there is more, and
 // a mouse's wheel moves it sideways (the author, 2026-10-30: «подписи … даже не все влезают и не понятно что там дальше»)

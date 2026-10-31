@@ -176,10 +176,15 @@ export async function selectTask(id) {
         // …and while its signal is still admitted to the one acting (a role or a mode changes that with no new record)
         const form = sb.dataset.key === d.id && sb.dataset.last === last && $('inline-form')?.firstChild ? $('inline-form') : null;
         const sig = form?.querySelector('[data-action="send-signal"]')?.dataset.sig;
+        // …and the field being typed in keeps its focus and caret: a re-read moved it to the page and lost the keys (critic 6)
+        const typing = form?.contains(document.activeElement) && document.activeElement, at = typing && [typing.selectionStart, typing.selectionEnd];
         sb.classList.remove('hidden');
         rebuild(sb, d.id, PARTS.map(f => f(ctx)).join(''));
         sb.dataset.last = last; sb.dataset.per = rounds.some(r => r.per) ? '1' : '';
-        if (form && (!sig || acts?.actions?.includes(sig))) $('inline-form')?.replaceWith(form);
+        if (form && (!sig || acts?.actions?.includes(sig))) {
+            $('inline-form')?.replaceWith(form);
+            if (typing) { typing.focus(); if (at[0] != null) typing.setSelectionRange(...at); }
+        }
         showReader(ctx);
     } catch (e) { console.error('selectTask:', e); }
 }

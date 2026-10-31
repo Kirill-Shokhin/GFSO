@@ -25,6 +25,8 @@ export const tally = (figure, label, attrs = '') => `<span class="tally"${attrs}
 // moment, and the page's one display clock (`ages`, main.js) sets it again in place: drawn once, it read as true until a
 // reload (the author, 2026-10-31: «обновление страницы никогда не должно требоваться вручную»)
 export const since = t => `<span data-since="${t}">${dur(Date.now() - t)}</span>`;
+// a span that grows while its run is open (`from` its moment) and stands when it is closed — one figure for every view
+export const lasting = (from, ms) => from ? since(from) : dur(ms);
 export const due = t => ` data-due="${t}"`;
 export function ages() {
     const now = Date.now();

@@ -120,7 +120,7 @@ export async function startRun() {
 // Laid out beside the quality chip as a list one click opens — each report whole, its node one click away.
 function drawReports() {
     const reports = S.reports;
-    const seen = `${reports.length}|${reports.at(-1)?.at || ''}`;
+    const seen = `${reports.length}|${reports.at(-1)?.at || ''}|${new Date().toDateString()}`;
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
     $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${tally(reports.length, reports.length > 1 ? 'tech reports' : 'tech report')}</button>`
@@ -147,7 +147,11 @@ function stalled(calls) {
 }
 let wake;
 
+// …a moment said without its day (today's) needs it once the day turns: the header is drawn again at midnight
+let night;
+const atMidnight = () => { clearTimeout(night); const t = new Date(); t.setHours(24, 0, 1, 0); night = setTimeout(drawHeader, t - Date.now()); };
 export async function drawHeader() {
+    atMidnight();
     // the left side is written ONCE, after every read: written first and the switch added after the frontier's
     // answer, the Stop button was missing for the length of each read — a blinking button on a live run
     const left = await goal();

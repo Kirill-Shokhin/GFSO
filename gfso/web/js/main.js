@@ -19,6 +19,7 @@ import {askProjectName} from './overlays.js';
 import {mountHints} from './hints.js';
 import {drawPlanning} from './planning.js';
 import {onReading, rereadResources} from './resources.js';
+import {said} from './run.js';
 
 // THE REFRESHES, each a read of the page's model (model.js) and then the drawing of what it read. SERIALISED (api.js
 // singleFlight): a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each other.
@@ -30,11 +31,23 @@ const refreshDeck = singleFlight(async () => { await loadRun(); paintDeck(); });
 const refreshAll = async () => { await refreshGraph(); goal.labelGoalButton(); await refreshQuality(); await refreshHeader(); };
 S.reload = async () => { await refreshAll(); if (focus().select) await selectTask(focus().select); };
 const projects = () => refreshProjects().then(onInflight);
-// news on the narration re-reads the run, once a burst of it has settled
+// NEWS ON THE NARRATION re-reads, once a burst of it has settled, as much as its widest line asked: the run always; the
+// header; the open node's panel when a line names it (a dispute, a verdict, a validation change it with no transition);
+// all of it — plan, header, panel, the goal form — for a mode or a plan changed. Each line read at once read the panel
+// twice and the plan ten times over a burst of ten (critic 6)
 let soon = null;
-// …and the open node's panel with it: a dispute, a verdict or a validation can change what it says with no transition
-const later = () => (clearTimeout(soon), soon = setTimeout(() => {
-    refreshDeck().then(drawPlanning); if (focus().select) selectTask(focus().select); }, 1500));
+const want = {header: false, panel: false, all: false};
+const later = (o = {}) => {
+    for (const k in o) want[k] ||= o[k];
+    clearTimeout(soon);
+    soon = setTimeout(async () => {
+        const w = {...want};
+        for (const k in want) want[k] = false;
+        if (w.all) { await S.reload(); goal.recheckHolds(); }
+        else { if (w.header) await refreshHeader(); if (w.panel && focus().select) await selectTask(focus().select); }
+        refreshDeck().then(drawPlanning);
+    }, 1500);
+};
 // what reads the run once the deck has rebuilt it
 const afterDeck = () => { annotate(); refreshHeader(); drawPlanning(); if (focus().select) resign(focus().select); };
 
@@ -110,20 +123,20 @@ addEventListener('popstate', () => {
 
 const NEWS = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
-    pause: () => { refreshHeader(); projects(); },
+    pause: () => (projects(), {header: true}),
     // a mode or its settings set anywhere: who holds what, what each node offers, the goal form's readiness
-    mode: () => { S.reload(); goal.recheckHolds(); },
-    tech_report: () => refreshHeader(),
+    mode: () => ({all: true}),
+    tech_report: () => ({header: true}),
     // a call booked: a project that "never ran" has run now, and its Delete goes
     usage: () => { if (!$('project-delete').hidden) projects(); },
     // the plan changed with no transition — a Dep edge, an assignee, a criterion, a node created, an agent registered
-    graph: () => { S.reload(); goal.recheckHolds(); },
+    graph: () => ({all: true}),
 };
 const LIVE = {
     // NEWS ON THE NARRATION re-reads what it changed — no reload is ever needed to see what the server holds (the author,
     // 2026-10-31: «если пользователю требуется руками нажать обновление страницы - это либо перезапущен сервер, либо баг»)
-    pipeline: d => { if (onPipeline(d)) later(); NEWS[d.source]?.(); },
-    reject: later,                                     // a refused move is in the run's log: its row comes in
+    pipeline: d => { if (onPipeline(d)) later({panel: said(d.msg).node === focus().select, ...NEWS[d.source]?.()}); },
+    reject: d => later({panel: d.task_id === focus().select}),   // a refused move is in the run's log: its row comes in
     projects,                                          // a project appeared
     resources: onReading,                              // the server took a new reading of Docker
     // this tab's own project came to exist while the feed was refused: nothing of it was pushed here, so read it all
