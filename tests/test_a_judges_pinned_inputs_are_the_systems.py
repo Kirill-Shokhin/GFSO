@@ -112,7 +112,8 @@ def test_an_exact_check_the_memory_watch_ended_observed_nothing(monkeypatch, tmp
     (box := ContainerExecution.__new__(ContainerExecution)).container = "check.gfso-exact-x"
     files = SimpleNamespace(seal_files=lambda base, laid: None)
     ex = SimpleNamespace(release=lambda tree: None, files=files, session=lambda tree: box,
-                         copy_tree=lambda src, dst: None, remove_tree=lambda path: None)
+                         copy_tree=lambda src, dst: None, remove_tree=lambda path: None,
+                         system_writes=E.ExecutionPort.system_writes.__get__(object()))
     monkeypatch.setattr(O, "_run", lambda *a, **k: {"rc": 128, "out": "cannot exec in a stopped state", "stdout": "",
                                                      "stderr": "cannot exec in a stopped state"})
     p = PIN.check[0]

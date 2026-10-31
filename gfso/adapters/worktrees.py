@@ -14,6 +14,9 @@ only — sessions and validations run in their own trees in parallel.
 """
 from __future__ import annotations
 
+import contextlib
+import functools
+import inspect
 import os
 import re
 import shutil
@@ -98,6 +101,27 @@ def _fs(execution):
     return execution if execution is not None else LocalExecution()
 
 
+def _held(execution, path):
+    """The system writing under `path`, as its execution marks it (`ExecutionPort.system_writes`)."""
+    return _fs(execution).system_writes(str(path))
+
+
+def _writes_into(arg: str):
+    """The system's own writes into the directory the call's `arg` names — a commit, a carry, a join, a clone —: no
+    node's growth against its disk bound (`ExecutionPort.system_writes`; the root was charged with every child's
+    carried commit, a parent with its children's joins, and a neighbour's delivery FAILed the root's judge: critic)."""
+    def _wrap(f):
+        sig = inspect.signature(f)
+
+        @functools.wraps(f)
+        def _call(*a, **k):
+            got = sig.bind(*a, **k).arguments
+            with _held(got.get("execution"), got[arg]):
+                return f(*a, **k)
+        return _call
+    return _wrap
+
+
 def is_repo_top(base) -> bool:
     """Is `base` the top of a git work tree with a commit to branch from? Asked once per directory per process."""
     k = _key(base)
@@ -123,6 +147,7 @@ def relative_alternates(objects: Path, base_objects: Path, execution=None) -> No
                                      (Path(os.path.relpath(base_objects, objects)).as_posix() + "\n").encode())
 
 
+@_writes_into("place")
 def ensure(base, place, branch: str, start_from, execution=None) -> bool:
     """The node's own repository at `place` on `branch`, started from the HEAD of `start_from` when it is not there
     yet. True when it was made now; a place that exists is reused as it stands (a rework round continues its own tree).
@@ -211,6 +236,7 @@ def stage(git):
     return git("add", "-f", "--", *hidden) if hidden else r
 
 
+@_writes_into("place")
 def commit_all(base, place, message: str, who: str, execution=None, branch: str | None = None) -> str:
     """Everything in the place but caches as one commit — empty or not, so every delivery has a name. Its TREE: the
     same files are the same id whatever commit carries them, so a re-delivery of an unchanged result reads as one
@@ -258,6 +284,7 @@ def nested_cause(paths: list) -> str:
             f"drop its entry from `.gitmodules` too), so its files are plain files of your tree; then deliver again")
 
 
+@_writes_into("place")
 def bring(base, place, branch: str, execution=None) -> None:
     """`branch` of the base brought into a node's own repository under its name — what its packet tells it to merge."""
     if is_clone(place, execution):
@@ -265,6 +292,7 @@ def bring(base, place, branch: str, execution=None) -> None:
             _name(place, branch, _carry(base, base, place, f"refs/heads/{branch}", execution), execution)
 
 
+@_writes_into("repo")
 def _name(repo, branch: str, sha: str, execution) -> None:
     """`branch` of the repository at `repo` set to `sha`, whatever it held — checked out by a worktree left from
     before or not: the commit is the system's word, read in its source (`_carry`)."""
@@ -273,6 +301,7 @@ def _name(repo, branch: str, sha: str, execution) -> None:
         raise OSError(f"{repo} could not name {sha} {branch}: {r.stderr.strip()}")
 
 
+@_writes_into("dst")
 def _carry(base, src, dst, rev: str, execution) -> str:
     """The commit `rev` names in the repository at `src`, present in the one at `dst` — its id. TWO REPOSITORIES, AND
     NEITHER'S GIT RUNS WHERE THE OTHER STANDS: a fetch from a path ran the source's `upload-pack` beside the target, in
@@ -289,13 +318,14 @@ def _carry(base, src, dst, rev: str, execution) -> str:
         return sha
     ex, b = _fs(execution), Path(_fs(execution).temp_of(str(dst))) / f"gfso-{uuid.uuid4().hex}.bundle"
     tips = git(base, "for-each-ref", "--format=%(objectname)", "refs/heads/", execution=execution).stdout.split()
-    try:
-        ex.files.write_bytes(str(b), _bundled(src, rev, tips, execution))
-        got = git(dst, "bundle", "unbundle", str(b), execution=execution)
-        if got.returncode or git(dst, "cat-file", "-e", f"{sha}^{{commit}}", execution=execution).returncode:
-            raise OSError(f"{dst} could not take {rev} of {src}: {got.stderr.strip()[-300:]}")
-    finally:
-        ex.files.remove_matching(str(b.parent), [b.name])
+    with _held(execution, b.parent):         # …the bundle in the target's temp: no node's growth
+        try:
+            ex.files.write_bytes(str(b), _bundled(src, rev, tips, execution))
+            got = git(dst, "bundle", "unbundle", str(b), execution=execution)
+            if got.returncode or git(dst, "cat-file", "-e", f"{sha}^{{commit}}", execution=execution).returncode:
+                raise OSError(f"{dst} could not take {rev} of {src}: {got.stderr.strip()[-300:]}")
+        finally:
+            ex.files.remove_matching(str(b.parent), [b.name])
     _lfs_carried(base, src, dst, [sha, *(["--not", *tips] if tips else [])], execution)
     return sha
 
@@ -408,15 +438,16 @@ def _bundled(src, rev: str, nots: list, execution) -> bytes:
     the server's memory, every project's with it (critic over 61bf915) — past the cap, an `OSError`."""
     ex, name = _fs(execution), f"gfso-{uuid.uuid4().hex}.bundle"
     a = Path(ex.temp_of(str(src))) / name
-    try:
-        got = git(src, "bundle", "create", "-q", str(a), rev, *(["--not", *nots] if nots else []), execution=execution)
-        if got.returncode or (data := ex.files.read_bytes(str(a), BUNDLE_CAP + 1)) is None:
-            raise OSError(f"{src} could not bundle {rev}: {got.stderr.strip()[-300:]}")
-        if len(data) > BUNDLE_CAP:
-            raise OSError(f"{src}'s bundle of {rev} passes {BUNDLE_CAP >> 20} MiB: not carried")
-        return data
-    finally:
-        ex.files.remove_matching(str(a.parent), [name])
+    with _held(execution, a.parent):         # …the bundle in the source's temp: no node's growth
+        try:
+            got = git(src, "bundle", "create", "-q", str(a), rev, *(["--not", *nots] if nots else []), execution=execution)
+            if got.returncode or (data := ex.files.read_bytes(str(a), BUNDLE_CAP + 1)) is None:
+                raise OSError(f"{src} could not bundle {rev}: {got.stderr.strip()[-300:]}")
+            if len(data) > BUNDLE_CAP:
+                raise OSError(f"{src}'s bundle of {rev} passes {BUNDLE_CAP >> 20} MiB: not carried")
+            return data
+        finally:
+            ex.files.remove_matching(str(a.parent), [name])
 
 
 def land(base, ref: str, execution, since: str | None, tree: str | None = None) -> str:
@@ -474,6 +505,7 @@ def head(place, execution=None) -> str | None:
 MERGE_STANDS = "a merge stands unfinished in the tree, begun by its agent: left as it stands, this branch with it"
 
 
+@_writes_into("into")
 def merge(base, into, branch: str, message: str, execution=None) -> str | None:
     """Join `branch` into the tree at `into`. None when joined (or already in); else why not, with the tree
     returned to where it stood — a half-merged tree would be the torn read this module exists against. Written where the

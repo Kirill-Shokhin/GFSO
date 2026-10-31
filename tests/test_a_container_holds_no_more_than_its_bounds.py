@@ -16,9 +16,11 @@ import pytest
 
 import gfso.adapters.execution as E
 import gfso.adapters.snapshots as S
+import gfso.adapters.worktrees as W
 from gfso import config as C
 from tests.test_a_session_holds_only_its_own_place import IMAGE, made, project  # noqa: F401
 from tests.test_the_system_reads_a_place_where_its_agent_cannot_lead_it_out import _docker
+from tests.test_a_node_works_in_its_own_place import _repo
 
 live = pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 
@@ -56,7 +58,8 @@ def test_every_docker_run_of_the_system_is_bounded():
     with pytest.raises(ValueError, match="bounded"):
         E._system_run("gfso-never-started", IMAGE, ["--label", "x=y"], Path(__file__), [], Path("log"))
     assert E._SMALL == ("--memory", "256m", "--memory-swap", "256m", "--pids-limit", "256")
-    assert src.count("*_SMALL") == 4, "the door's, the gateway's, the ceiling's maker and its reader: no swap past their bound"
+    assert src.count("*_SMALL") == 5, \
+        "the door's, the gateway's, the ceiling's maker and its reader, the disk's reader of what nodes hold"
 
 
 @live
@@ -306,3 +309,273 @@ def test_a_judges_build_the_watch_ended_is_asked_again_not_the_deliverys_fail(mo
     monkeypatch.setattr(E, "_WATCH_ENDED", set())
     with pytest.raises(S.BuildFailed, match="exited 137"):
         S._build(tmp_path, "make", ex)
+
+
+def test_a_node_is_charged_with_what_it_added_and_never_with_the_systems_own_writes(monkeypatch):
+    """One node filling Docker's disk stopped every project on the machine: a work that added more than its own bound
+    pays — not the largest, not who grew by a fall a neighbour made, not the root for its children's commits the system
+    carried into the base (critic: a neighbour's delivery FAILed the root's judge), and nothing it wrote beside a system
+    write is forgiven with it (critic: a mark every 10 s forgave a node everything)."""
+    GiB, L = 2 ** 30, E.DiskLedger()
+    root, judge = ("p", "root", "executor", "s"), ("p", "root", "judge", "r1")
+    works = {root: {"dirs": {("v", "base")}, "layers": {"c1": (0, 0)}}, judge: {"dirs": {("v", "round")}, "layers": {}}}
+
+    def read(base, round_=(0, 0)):
+        L.begin()
+        return L.added(works, {("v", "base"): base, ("v", "round"): round_})
+    assert read((80 * GiB, 10 ** 6)) == {root: (0, 0), judge: (0, 0)}, "a first reading is the baseline"
+    assert read((81 * GiB, 10 ** 6))[root] == (GiB, 0), "the root's own write"
+    L.writing(("v", "base"), True)                      # …a child's commit carried into the base, 15 GiB
+    assert read((95 * GiB, 10 ** 6))[root] == (GiB, 0), "a directory the system writes into keeps its last charge"
+    L.wrote(("v", "base"), (81 * GiB, 10 ** 6), (96 * GiB, 10 ** 6))
+    L.writing(("v", "base"), False)
+    assert read((97 * GiB, 10 ** 6 + 5), (GiB, 3)) == {root: (2 * GiB, 5), judge: (GiB, 3)}, \
+        "the system's 15 GiB taken out, the root's own writes beside it charged, its judge's apart"
+    for _ in range(6):                                  # …a mark every reading forgives nothing of the node's own
+        L.writing(("v", "base"), True)
+        L.wrote(("v", "base"), (0, 0), (0, 0))
+        L.writing(("v", "base"), False)
+    assert read((107 * GiB, 10 ** 6 + 5), (GiB, 3))[root] == (12 * GiB, 5)
+    L.writing(("v", "round"), True)
+    L.wrote(("v", "round"), (GiB, 3), (0, 0))           # …the system removed the judge's copy
+    L.writing(("v", "round"), False)
+    L.writing(("v", "round"), True)
+    L.wrote(("v", "round"), (0, 0), (5 * GiB, 9))      # …and made the next
+    L.writing(("v", "round"), False)
+    assert read((107 * GiB, 10 ** 6 + 5), (5 * GiB, 9))[judge] == (GiB, 3), "a removal banks no credit"
+    assert read((107 * GiB, 10 ** 6 + 5), (6 * GiB, 9))[judge] == (2 * GiB, 3)
+    L.wrote(("v", "new"), (0, 0), (GiB, 4))            # …a directory the system made, as it left it
+    works[root]["dirs"].add(("v", "new"))
+    L.begin()
+    assert L.added(works, {("v", "base"): (107 * GiB, 10 ** 6 + 5), ("v", "round"): (6 * GiB, 9),
+                           ("v", "new"): (3 * GiB, 4)})[root] == (14 * GiB, 5), \
+        "what a node writes into a directory the system made is counted from the system's hand-over"
+    works[root]["layers"]["c2"] = (2 * GiB, 9)
+    assert read((107 * GiB, 10 ** 6 + 5), (6 * GiB, 9))[root] == (16 * GiB, 14), \
+        "a container made since the first reading: its layer counted from nothing"
+    assert read((90 * GiB, 10 ** 6 + 5), (6 * GiB, 9))[root] == (4 * GiB, 14), \
+        "what it deleted of what stood before is no credit against what it writes elsewhere"
+    bound, running = (20 * GiB, 10 ** 6), {("p", "filler", "executor", "f"), root}
+    assert E._past_bound({("p", "filler", "executor", "f"): (21 * GiB, 1), root: (3 * GiB, 5)}, running, bound) == \
+        [("p", "filler", "executor", "f")]
+    assert E._past_bound({root: (GiB, 2 * 10 ** 6)}, running, bound) == [root], "files count as bytes do"
+    assert E._past_bound({("p", "x", "judge", "r"): (99 * GiB, 1)}, running, bound) == [], "no container of it runs"
+    monkeypatch.setenv("GFSO_NODE_DISK", "5g")
+    monkeypatch.setenv("GFSO_NODE_FILES", "nope")
+    assert C.node_disk() == (5 * GiB, C.NODE_FILES)
+    assert E._bytes("12.3MB (virtual 1.2GB)") == 12_300_000 and E._bytes("") == 0
+
+
+def test_a_judges_build_its_disk_bound_ended_fails_the_delivery_with_its_cause(monkeypatch, tmp_path):
+    (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "judge.b.r1-x"
+    box.shell, box.run = lambda: "sh", lambda *a, **k: subprocess.CompletedProcess(a, 137, "", "Killed")
+    ex = SimpleNamespace(session=lambda at: box, files=SimpleNamespace(exists=lambda p: False))
+    monkeypatch.setattr(E, "_DISK_ENDED", {"judge.b.r1-x": "node b's work added 30 MiB … (GFSO_NODE_DISK, GFSO_NODE_FILES)"})
+    with pytest.raises(S.BuildFailed, match="ended: node b's work added .*GFSO_NODE_DISK"):
+        S._build(tmp_path, "make", ex)
+
+
+def _labelled(home, node, role="executor"):
+    return ["--label", f"{E.HOME}={home}", "--label", f"{E.PROJECT}=p", "--label", f"{E.NODE}={node}",
+            "--label", f"{E.ROLE}={role}"]
+
+
+@live
+def test_live_each_node_past_its_disk_bound_is_ended_wherever_it_wrote_and_none_else(monkeypatch):
+    """The probe matrix: a filler in a node's temp, in its CLI state's volume, in its container's own layer, and one
+    making files rather than bytes — each ended past its own bound, its layer gone; an honest node holding more than any
+    filler but adding nothing, an honest node writing under its bound, and a filler of another installation, all left
+    running."""
+    pid = os.getpid()
+    home, other, vol, state = f"critdisk{pid}", f"critdisk{pid}b", f"critdisk{pid}-v", f"critdisk{pid}-state"
+    monkeypatch.setenv("GFSO_NODE_DISK", "300m")
+    monkeypatch.setenv("GFSO_NODE_FILES", "3000")
+    monkeypatch.setattr(E, "LAYER_STEP", 1)                 # …a layer's paths counted at every growth here
+    sh = ["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh"]
+    grow = "i=0; while [ $i -lt 12 ]; do head -c 50000000 /dev/zero > {at}/f$i; i=$((i+1)); sleep 1; done; sleep 600"
+    many = "mkdir {at}/m && cd {at}/m && i=0; while [ $i -lt 6000 ]; do : > f$i; i=$((i+1)); done; sleep 600"
+    under = "head -c 100000000 /dev/zero > {at}/build; sleep 600"
+
+    def start(h, node, mount, body, role="executor"):
+        return subprocess.run(["docker", "run", "-d", "--network", "none", *_labelled(h, node, role), *mount,
+                               "--entrypoint", "sh", IMAGE, "-c", body], capture_output=True, text=True,
+                              check=True).stdout.strip()[:12]
+
+    def sub(v, s):
+        return ["--mount", f"type=volume,src={v},dst=/w,volume-subpath={s}"]
+
+    gone = lambda i: subprocess.run(["docker", "inspect", i], capture_output=True).returncode != 0
+    stop, ids, watch = E.threading.Event(), {}, None
+    try:
+        subprocess.run([*sh, "-u", "0", "-v", f"{vol}:/v", "-v", f"{state}:/s", IMAGE, "-c",
+                        "mkdir -p /v/root /v/h /v/x /v/dn /v/zz /v/qq /v/j/b1 /v/j/b2 /v/.gfso-tmp/node-a /v/.gfso-tmp/node-o /v/n /s/+b && "
+                        "chmod -R 777 /v /s && head -c 600000000 /dev/zero > /v/root/large"],
+                       capture_output=True, check=True, timeout=300)
+        ledger = E.DiskLedger()       # …each directory as the system left it when it made it (`Volume.writes`)
+        for v, subs in ((vol, ["root", "h", "x", "dn", "zz", "qq", "j/b1", "j/b2", ".gfso-tmp/node-a", ".gfso-tmp/node-o", "n"]), (state, ["+b"])):
+            for k, held in E._read(v, subs, IMAGE).items():
+                ledger.wrote(k, (0, 0), held)
+        (watch := E.threading.Thread(target=E._watch_disk, args=(stop, 2.0, home, ledger), daemon=True)).start()
+        while not ledger.read:          # …its first reading made: every container below is made since, its layer new
+            time.sleep(0.5)
+        for h, node, mount, body in ((home, "root", sub(vol, "root"), "sleep 600"),
+                                     (home, "honest", sub(vol, "h"), under.format(at="/w")),
+                                     (other, "o", sub(vol, ".gfso-tmp/node-o"), grow.format(at="/w")),
+                                     (home, "a", sub(vol, ".gfso-tmp/node-a"), grow.format(at="/w")),
+                                     (home, "b", sub(state, "+b"), grow.format(at="/w")),
+                                     (home, "c", [], grow.format(at="/tmp")),
+                                     (home, "n", sub(vol, "n"), many.format(at="/w")),
+                                     (home, "e", [], many.format(at="/tmp")),
+                                     (home, "x", sub(vol, "x"), "mkdir /w/h && chmod 700 /w/h && "    # …hidden from a reader
+                                      "head -c 400000000 /dev/zero > /w/h/big; sleep 600"),
+                                     (home, "d", sub(vol, "dn"), "cd /w && mkdir x && head -c 400000000 /dev/zero > x/big"
+                                      " && i=0; while [ $i -lt 40 ]; do mkdir t && mv x t/$(printf %0200d $i) && mv t x;"
+                                      " i=$((i+1)); done; sleep 600"),     # …hidden past the path-length limit
+                                     (home, "z", sub(vol, "zz"), "mkdir /w/l && chmod 000 /w/l && "    # …unreadable
+                                      "head -c 400000000 /dev/zero > /w/big; sleep 600"),
+                                     (home, "q", sub(vol, "qq"), "cd /w && mkdir x && i=0; while [ $i -lt 4200 ]; do "
+                                      "mkdir t && mv x t/x && mv t x; i=$((i+1)); done; sleep 600")):     # …deeper than the system reads
+            ids[node] = start(h, node, mount, body)
+        for batch in ("b1", "b2"):        # …one validation's two batches, each under the bound, over it together
+            ids[batch] = start(home, "j", sub(vol, f"j/{batch}"), "head -c 200000000 /dev/zero > /w/build; sleep 600", "judge")
+        for _ in range(60):
+            if all(gone(ids[n]) for n in "abcnexdzq"):
+                break
+            time.sleep(2)
+        assert {n: gone(ids[n]) for n in "abcnexdzq"} == dict.fromkeys("abcnexdzq", True), "a node past its bound was not ended"
+        ledger.writing((vol, "root"), True)      # …the system's own write into the root's base: a child's carried commit
+        before = E._read(vol, ["root"], IMAGE)[(vol, "root")]
+        subprocess.run([*sh, "-u", "0", "-v", f"{vol}:/v", IMAGE, "-c", "head -c 600000000 /dev/zero > /v/root/carried"],
+                       capture_output=True, check=True, timeout=300)
+        ledger.wrote((vol, "root"), before, E._read(vol, ["root"], IMAGE)[(vol, "root")])
+        ledger.writing((vol, "root"), False)
+        time.sleep(8)
+        alive = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", ids["root"], ids["honest"], ids["o"],
+                                ids["b1"], ids["b2"]],
+                               capture_output=True, text=True).stdout.split()
+        assert alive == ["true"] * 5, alive
+        assert E._DISK_ENDED and all("GFSO_NODE_DISK" in w or "cannot read" in w for w in E._DISK_ENDED.values()), E._DISK_ENDED
+    finally:
+        stop.set()
+        if watch:
+            watch.join(timeout=120)
+        subprocess.run(["docker", "rm", "-f", *ids.values()], capture_output=True)
+        subprocess.run(["docker", "volume", "rm", "-f", vol, state], capture_output=True)
+
+
+def test_a_carry_marks_both_temps_its_bundle_passes_through_as_the_systems(tmp_path, monkeypatch):
+    """The bundle a carry makes lies in the source's temp, then in the target's — each a node's own mounted directory: a
+    reading inside the carry charged them with it (engineering, signing the JOINT). Both are the system's writes."""
+    seen, held = [], W._held
+    monkeypatch.setattr(W, "_held", lambda ex, p: (seen.append(str(p)), held(ex, p))[1])
+    base = _repo(tmp_path / "ws")
+    W.ensure(base, tmp_path / "place", "gfso/p/a", base)
+    (tmp_path / "place" / "a.py").write_text("x = 1\n")
+    W.commit_all(base, tmp_path / "place", "d", "e", branch="gfso/p/a")
+    temp = E.LocalExecution().temp_of(str(tmp_path / "place"))
+    assert seen.count(str(temp)) == 2, ("the source's temp and the target's, each marked", seen)
+    assert str(base) in seen and str(tmp_path / "place") in seen
+
+
+def test_the_systems_writes_into_one_directory_are_measured_once_and_an_unread_one_is_unknown(monkeypatch):
+    """A write nested in another (a bring's carry) or beside it (two joins into one parent) measured twice banked
+    credit, and a reading that failed was taken for an empty directory and charged a node with its whole place (critic):
+    one measurement per span of the system's writes, and an unread side is unknown — the charge stands, the baseline is
+    taken again at the next reading."""
+    held, reads = {"now": (10, 1)}, []
+
+    def read(vol, subs, image=None):
+        reads.append(subs[0])
+        if held["now"] is None:
+            raise OSError("not read")
+        return {(vol, subs[0]): held["now"]}
+    L, v = E.DiskLedger(), E.Volume.__new__(E.Volume)
+    v.image = None
+    monkeypatch.setattr(E, "_LEDGER", L)
+    monkeypatch.setattr(E, "_read", read)
+    monkeypatch.setattr(E.Volume, "mount", lambda self, root, ro, dst: ["--mount", f"type=volume,src=vol,dst={dst},"
+                                                                              f"volume-subpath={root}"])
+    L.wrote(("vol", "p"), (0, 0), (10, 1))
+    with v.writes("p"):
+        with v.writes("p"):                              # …nested
+            held["now"] = (30, 2)
+    assert reads == ["p", "p"] and L.system[("vol", "p")] == (20, 1), (reads, L.system)
+    other = v.writes("p")                                # …held open: a collected one would end its span
+    t = E.threading.Thread(target=other.__enter__)
+    with v.writes("p"):                                  # …and beside another, from another thread
+        t.start()
+        t.join()
+        held["now"] = (50, 3)
+    assert len(reads) == 3 and L.busy == {("vol", "p"): 1}, "the other's span still open: measured when it ends"
+    L.busy.clear()
+    held["now"] = None                                   # …a reading that does not finish
+    with v.writes("p"):
+        pass
+    assert ("vol", "p") in L.lost and L.busy == {}
+    works = {("p", "n", "executor", "s"): {"dirs": {("vol", "p")}, "layers": {}}}
+    L.charged[("vol", "p")] = (5, 0)
+    L.begin()
+    assert L.added(works, {("vol", "p"): (99, 9)})[("p", "n", "executor", "s")] == (5, 0), \
+        "the charge stands across a write that was not measured"
+    L.begin()
+    assert L.added(works, {("vol", "p"): (101, 9)})[("p", "n", "executor", "s")] == (7, 0)
+
+
+def test_a_removed_copy_takes_off_only_what_the_system_put_there(monkeypatch):
+    """Each exact check copies the built delivery into the system's scratch, writes there, and the copy is removed:
+    booked as the measured removal, every check was charged with the outputs of all the checks before it (critic: 30
+    checks of 1 GiB → 30 GiB on a directory back at its baseline). What the system put there comes off, and what the
+    check wrote leaves what the directory holds by itself."""
+    GiB, held = 2 ** 30, {"now": (0, 0)}
+    L, v = E.DiskLedger(), E.Volume.__new__(E.Volume)
+    v.image = None
+    monkeypatch.setattr(E, "_LEDGER", L)
+    monkeypatch.setattr(E, "_read", lambda vol, subs, image=None: {(vol, subs[0]): held["now"]})
+    monkeypatch.setattr(E.Volume, "mount", lambda self, root, ro, dst: ["--mount", f"type=volume,src=vol,dst={dst},"
+                                                                              f"volume-subpath={root}"])
+    works = {("p", "x", "check", "c"): {"dirs": {("vol", "sys")}, "layers": {}}}
+    L.wrote(("vol", "sys"), (0, 0), (0, 0))
+    for i in range(30):
+        with v.writes(E.Path("sys"), E.Path("sys") / f"run{i}"):
+            held["now"] = (GiB, 1)                       # …the copy
+        held["now"] = (2 * GiB, 2)                       # …what the check wrote
+        L.begin()
+        assert L.added(works, {("vol", "sys"): held["now"]})[("p", "x", "check", "c")] == (GiB, 1)
+        with v.writes(E.Path("sys"), E.Path("sys") / f"run{i}", removing=True):
+            held["now"] = (0, 0)
+        L.begin()
+        assert L.added(works, {("vol", "sys"): held["now"]})[("p", "x", "check", "c")] == (0, 0), i
+
+
+def test_a_directory_that_outruns_its_reading_time_again_and_again_ends_its_work(monkeypatch):
+    """Unread, a directory's charge stood frozen below the bound for good, and a node that kept its directory slow to
+    walk kept it so (critic): read past its time `DISK_SLOW_READS` times in a row, its work is ended for it; one good
+    reading between starts the count again, and a reading that failed otherwise (no GNU find there) is no such count."""
+    said = {"out": "T 0 /v/p"}
+    monkeypatch.setattr(E, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, said["out"], ""))
+    monkeypatch.setattr(E, "_SLOW", {})
+    for n in (1, 2):
+        assert E._read("vol", ["p", "q"]) == {} and E._SLOW == {("vol", "p"): n}
+    said["out"] = "4096 1 /v/p"
+    assert E._read("vol", ["p", "q"]) == {("vol", "p"): (4096, 1)} and E._SLOW == {}
+    said["out"] = "U 0 /v/p"
+    E._read("vol", ["p", "q"])
+    assert E._SLOW == {}, "a reader that cannot read at all is no slowness of the node's"
+
+
+def test_a_whole_volume_outrun_counts_for_each_of_its_directories_and_a_nest_read_whole_is_cleared(monkeypatch):
+    """Each directory outrunning its time alone was counted, but a volume outrun as a whole left every charge frozen
+    with no count (critic); and a place once found too deep stayed so after its nest was gone (critic)."""
+    def late(*a, **k):
+        raise subprocess.TimeoutExpired("docker", 1)
+    monkeypatch.setattr(E, "_SLOW", {})
+    monkeypatch.setattr(E, "_TOO_DEEP", {("vol", "p")})
+    monkeypatch.setattr(E, "_read", late)
+    works = {("p", "n", "executor", "s"): {"dirs": {("vol", "p"), ("vol", "q")}, "layers": {}, "image": None}}
+    assert E._disk_read(works) == {} and E._SLOW == {("vol", "p"): 1, ("vol", "q"): 1}
+    monkeypatch.undo()
+    monkeypatch.setattr(E, "_SLOW", {})
+    monkeypatch.setattr(E, "_TOO_DEEP", {("vol", "p")})
+    monkeypatch.setattr(E, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "4096 1 /v/p", ""))
+    E._read("vol", ["p"])
+    assert E._TOO_DEEP == set()

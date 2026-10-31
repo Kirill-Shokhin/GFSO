@@ -181,8 +181,36 @@ What one session can still reach:
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
   agent through the door rather than by the system's executor — is copied as it stands, ignored files
   and builds included, and nothing is built.
-- Disk is not bounded: a place, a judge's copy and a container's own layer stand on Docker's
-  disk, shared by every project, and one node filling it stops every other until space is freed.
+- Disk has no quota on Docker Desktop: a place, a judge's copy and a container's own layer stand on
+  Docker's disk, shared by every project. Each session's work — a node's executor's, and each round
+  or batch of its judges and checks apart — has a bound of its own instead: what it adds, over every
+  directory its containers mount writable (its place, its round, its temp, its CLI state) and their
+  own layers (bytes, and the paths a layer changed), `GFSO_NODE_DISK` (default 20 GiB) and
+  `GFSO_NODE_FILES` (default 1,000,000). It counts from where the system left each directory when it
+  made it and from nothing for a container made since; what the system itself writes there — a
+  commit, a child's work carried into the base and the bundle that carries it, a join into a parent's
+  place, a judge's copy, a check's copy and inputs, their removal — is no node's: the directory is
+  measured just before and after each such write and the difference taken out, and a session is
+  never ended while the system writes into one of its directories. Every 10 seconds the server reads its own
+  installation's sessions; one past its bound has its containers removed, their layers with them,
+  its directories kept, and the server's log says so; a judge's build so ended FAILs the delivery,
+  the bound named. Nothing a neighbour holds or writes, and no reading of free space, moves that. Not
+  held: a session may overshoot by what it writes in 10 seconds plus the time a reading takes, which
+  grows with what the installation holds; what a session writes into a directory while the system
+  writes there is taken out with the system's write; the reader runs as root in the session's own
+  image and needs GNU find there (the product's image has it): a directory it cannot read whole —
+  in an image without it, or not within a minute — is left out, said in the server's log, and the
+  session's charge there stands as it was, no other directory's touched; a session whose directory
+  nests deeper than 4,096 levels, or is not walked within a minute three readings in a row (its
+  volume's whole reading running out counts for each of its directories), is ended for it, and so is
+  each later session there until the nest is gone; a session ended past its bound leaves its charge
+  on its directories, so its place's next session starts past it and is ended too, until the server
+  restarts; each system write costs two readings (about half a second to a second and a half), part
+  of which falls inside an exact check's time; a layer's paths are counted again only after it grew 8 MiB;
+  what stood before the server first read it is not counted (a restart starts the count again); an
+  executor's session so ended is said in the server's log, not in its node's; N sessions may add N
+  bounds together; and Docker's own disk on Windows is a file on the host's drive, which fills first
+  if it is the smaller.
 - A process a session starts runs until its call ends; one that left its call's group and dropped its mark runs on
   while another model client of the same place still works there, and ends with the place's last one — or, where the
   server died first, when the place's containers go: at its project's next start, or its place's removal.
@@ -192,7 +220,10 @@ What one session can still reach:
   model-client state; its Read tool can. A working directory a command leaves outside the place does
   not carry to the next command.
 - A judge runs the delivered code in its own container: while its run lasts, that code can rewrite
-  what the judge itself writes in its batch — the build included —, add files beside a pinned probe's
+  what the judge itself writes in its batch — the build included — and what the judge's later commands
+  load (its shell's setup, its home), so a check the judge writes and runs itself is in the
+  code's reach; a check that must be trusted is pinned, and the system runs it in a container of its
+  own on a fresh copy. It can also add files beside a pinned probe's
   inputs that a later step of the same command, or a later command of the judge, reads where it
   lists or searches that directory (a `GNUmakefile` beside a pinned `Makefile`), and a finding's files
   once the re-run has copied them out of the read-only directory and before it reads them. A file the

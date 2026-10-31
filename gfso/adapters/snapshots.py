@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.adapters import worktrees as W
-from gfso.adapters.execution import ended_by_watch
+from gfso.adapters.execution import ended_by_watch, past_disk
 from gfso.config import subprocess_env
 from gfso.core.types import LAID, PlaceUnavailable
 
@@ -126,13 +126,14 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
     try:
         if at.resolve().is_relative_to(place.resolve()):   # a scratch inside the place (no git base): no copy of a tree into itself
             raise OSError(f"{at} lies inside {place}")
-        with _place(place).enter(alone=False):
+        # …the copy the system's own writing, no judge's growth against its disk bound (`ExecutionPort.system_writes`)
+        with _place(place).enter(alone=False), execution.system_writes(str(at)):
             if commit:
                 smudged = _checkout(place, at, *delivered[:2], execution)
             else:
                 execution.copy_tree(str(place), str(at))
-        if not commit:
-            _own_git(place, at, execution)
+            if not commit:
+                _own_git(place, at, execution)
     except PlaceUnavailable:
         raise                    # …the place down is its project's stop, not a copy to do without (`PlaceUnavailable`)
     except (OSError, subprocess.TimeoutExpired, NotTheDelivery) as e:
@@ -152,7 +153,7 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
         if commit:
             ran = ""
             for step in (lambda: _build(at, delivered[2], execution),   # …where no client's state is (`client`)
-                         lambda: _after_build(at, delivered[0], commit, execution, smudged)):
+                         lambda: _put_back(at, delivered[0], commit, execution, smudged)):
                 try:
                     ran += step()
                 except BuildFailed as e:
@@ -586,6 +587,8 @@ def _after_build(at: Path, tree: str, commit: str, execution, smudged: set = fro
                timeout=BUILD_S, env=subprocess_env(extra=W.NO_CONFIG))
     if r.returncode == 137 and ended_by_watch(ex):
         raise Uncopied(WATCHED)
+    if r.returncode == 137 and (past := past_disk(ex)):
+        raise BuildFailed(f"the build was ended: {past}", "the judge's check of the delivered files")
     if r.returncode:
         why = ("putting them back was ended past the copy's memory bound (GFSO_CONTAINER_MEMORY)" if r.returncode == 137
                else (r.stdout or r.stderr or "").strip()[-300:])
@@ -594,6 +597,12 @@ def _after_build(at: Path, tree: str, commit: str, execution, smudged: set = fro
     put = (r.stdout or "").splitlines()
     return (f"; it changed {len(put)} delivered file(s), put back as delivered before any check: "
             f"{', '.join(put[:10])}" if put else "")
+
+
+def _put_back(at: Path, tree: str, commit: str, execution, smudged: set) -> str:
+    """`_after_build`, the system's own write: no judge's growth against its disk bound."""
+    with execution.system_writes(str(at)):
+        return _after_build(at, tree, commit, execution, smudged)
 
 
 def _build(at: Path, declared: Optional[str], execution) -> str:
@@ -618,6 +627,8 @@ def _build(at: Path, declared: Optional[str], execution) -> str:
                           f"was run", declared) from None
     if r.returncode == 137 and ended_by_watch(ex):
         raise Uncopied(WATCHED)
+    if r.returncode == 137 and (past := past_disk(ex)):
+        raise BuildFailed(f"the judge built with {which}, and it was ended: {past}; no check was run", declared)
     if r.returncode:
         out = f"{r.stdout or ''}{r.stderr or ''}".strip()
         raise BuildFailed(f"the judge built with {which}, and it exited {r.returncode}, so no check was run — its "

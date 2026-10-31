@@ -106,7 +106,8 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, 
     own = str(Path(tmp) / f"run-{uuid.uuid4().hex[:12]}")
     t0 = time.monotonic()
     try:
-        ex.copy_tree(tree, own)
+        with ex.system_writes(own):        # …the system's copy, no check's growth against its disk bound
+            ex.copy_tree(tree, own)
     except (OSError, subprocess.TimeoutExpired) as e:
         # …the copy is of the BUILT delivery, whose files are the delivery's to choose: one it makes impossible to copy
         # (a path past the system's limit) is its FAIL, the cause said — as the checkout's (`NotTheDelivery`); read as
@@ -117,7 +118,8 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, 
         copying.append(time.monotonic() - t0)
     try:
         # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
-        dirs = materialize_inputs([replace(c, check=(p,))], Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}", ex.files)
+        with ex.system_writes(laid := str(Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}")):
+            dirs = materialize_inputs([replace(c, check=(p,))], Path(laid), ex.files)
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"note": f"not run: its inputs could not be laid ({e})"}
     try:

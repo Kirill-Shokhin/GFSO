@@ -28,8 +28,10 @@ def _executor_inputs(engine, task) -> dict:
     (EVIDENCE_LOG §13.34). The validator still lays its own from the contract, so nothing done to this copy reaches a verdict."""
     criteria = task.spec.criteria
     ex = execution_of(engine)
-    return (materialize_inputs(criteria, ex.files.mkdtemp("gfso-check-inputs-", node_temp(engine, task)), ex.files)
-            if any(p.inputs for c in criteria or () for p in (c.check or ())) else {})
+    if not any(p.inputs for c in criteria or () for p in (c.check or ())):
+        return {}
+    with ex.system_writes(at := ex.files.mkdtemp("gfso-check-inputs-", node_temp(engine, task))):
+        return materialize_inputs(criteria, at, ex.files)       # …the system's laying: no node's disk growth
 
 
 def _crit_line(c, dirs: dict) -> str:
@@ -513,9 +515,11 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     # A probe's INPUTS are laid down here, from the contract, by the system — never read from the
     # delivery, where the executor could have grown them (the corpus that moved under `c_compiler`).
     ex = execution_of(engine)
-    _dirs = (materialize_inputs(_all, Path(scratch) / "probe_inputs" if scratch
-                                else ex.files.mkdtemp("gfso-probe-inputs-", ex.temp_of(workdir)), ex.files)
-             if any(p.inputs for c in _all for p in (c.check or ())) else {})
+    _dirs = {}
+    if any(p.inputs for c in _all for p in (c.check or ())):
+        _at = Path(scratch) / "probe_inputs" if scratch else ex.files.mkdtemp("gfso-probe-inputs-", ex.temp_of(workdir))
+        with ex.system_writes(str(_at)):                         # …the system's laying: no judge's disk growth
+            _dirs = materialize_inputs(_all, _at, ex.files)
     owed = owed_probes(engine, task, crits)
     if carry is None:
         carry = {pid: c.name for c, items in owed for pid, _ in items}

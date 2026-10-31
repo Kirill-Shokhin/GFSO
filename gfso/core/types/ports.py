@@ -6,6 +6,7 @@ MISSING implementation costs — a degraded feature, or a voided guarantee — b
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import queue
 import re
@@ -447,6 +448,12 @@ class ExecutionPort(ABC):
             t.join(60)
         text = lambda k: into.to_outside((got.get(k) or b"").decode("utf-8", errors="replace"))
         return a.returncode, text("err"), subprocess.CompletedProcess(into_args, b.returncode, text("out"), text("berr"))
+
+    @contextlib.contextmanager
+    def system_writes(self, path: str, removing: bool = False):
+        """The system itself writing under `path` — a commit, a carry, a join, a copy, `removing` one —: none of it a
+        node's growth against its disk bound (`execution.DiskLedger`). This host keeps no bound."""
+        yield
 
     def release(self, path: str) -> None:
         """The session standing in `path` ended, and whatever its processes left running with it — its files stay: a

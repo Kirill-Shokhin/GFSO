@@ -324,6 +324,21 @@ def _size(name: str) -> int:
     return size if size >= 64 * 2 ** 20 else 0
 
 
+NODE_DISK, NODE_FILES = 20 * 2 ** 30, 1_000_000
+
+
+def node_disk() -> tuple[int, int]:
+    """(bytes, files) one node's work may add to Docker's disk — `GFSO_NODE_DISK` (default 20g) and `GFSO_NODE_FILES`
+    (default 1 000 000) —, counted from when the server first saw it, over every directory its containers write and
+    their own layers (`execution.watch_disk`). Docker Desktop's disk takes no quota, and one node filling it stopped every
+    project on the machine; a bound of its own, as its memory has, makes its mistake its own, whatever its neighbours do."""
+    try:
+        files = int(os.environ.get("GFSO_NODE_FILES", NODE_FILES))
+    except ValueError:
+        files = NODE_FILES
+    return _size("GFSO_NODE_DISK") or NODE_DISK, files if files > 0 else NODE_FILES
+
+
 #: The share of Docker's memory the system's containers may hold together, by default (`memory_ceiling`).
 CEILING_SHARE = 0.75
 

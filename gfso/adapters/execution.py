@@ -30,7 +30,7 @@ from pathlib import Path
 from gfso.core.types import (BATCH, HOST, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, ExecutionPort, FilesPort,
                              PlaceUnavailable)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
-                         memory_ceiling, executions, executions_path, host_env, subprocess_env)
+                         memory_ceiling, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.places import same_place
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
@@ -390,6 +390,287 @@ def _watch_ceiling(stop: threading.Event | None = None) -> None:
                                f"could not be ended ({(done.stderr or '').strip()[-200:]})"))
         except (OSError, subprocess.TimeoutExpired) as e:
             log.warning(f"the memory ceiling's watch did not read the group ({e}); the kernel's limit still holds")
+
+
+#: how often the disk's watch reads what each node's work holds: what a node writes past its bound before it is ended
+DISK_WATCH_S = 10.0
+_LAYER = re.compile(r"([\d.]+)\s*([kMGT]?B)")
+#: what the disk's watch reads in a volume, per directory: `<kb> <files> <path>` a line
+_HELD = ('m=$1; t=$2; shift 2; for d; do [ -d "$d" ] || continue; '
+         'if [ -n "$(timeout "$t" find "$d" -xdev -mindepth "$m" -print -quit 2>/dev/null)" ]; then echo "D 0 $d"; '
+         'continue; fi; { timeout "$t" find "$d" -xdev -ignore_readdir_race -printf "%i %n %b\\n"; '
+         'echo "rc $?"; } | awk -v d="$d" \'$1 == "rc" {rc = $2; next} seen[$1]++ {next} '
+         '{b += $3; n++} END {if (rc == 0) print b * 512, n, d; else if (rc == 124) print "T", 0, d; '
+         'else print "U", 0, d}\'; done')
+#: deeper than this a directory is no session's to keep unread: honest trees nest tens of levels, and a chain of hundreds
+#: of thousands made the reader stall for minutes or stop short and say nothing (critic) — its work is ended for it
+DISK_DEPTH = 4096
+#: the seconds one directory's reading may take before it is left unread, said, and no other with it — and the readings
+#: in a row it may so outrun before its work is ended for it: unread, its charge stood frozen below the bound for good
+#: (critic); a million files, the files bound, read in seconds
+DISK_READ_S, DISK_SLOW_READS = 60, 3
+#: the directories `_read` found nested past `DISK_DEPTH`, until a reading reads them whole; and how many readings in a
+#: row each directory outran `DISK_READ_S`, its volume's whole reading outrun counting for each
+_TOO_DEEP: set = set()
+_SLOW: dict = {}
+
+
+def _bytes(size: str) -> int:
+    """Docker's `12.3MB` as bytes."""
+    m = _LAYER.match(size or "")
+    return int(float(m[1]) * {"B": 1, "kB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12}[m[2]]) if m else 0
+
+
+def _disk_works(home: str) -> dict:
+    """{(project, node, role, session): {"names", "running", "layers", "dirs"}} — each session's work of the installation
+    `home` — a node's executor's and each of its judges' rounds and batches apart: one validation's batches each build
+    their own copy (critic: an honest delivery's batches FAILed together) —, on Docker's disk as its containers say it: their names, whether one runs, each one's
+    own layer by name, stopped ones' included (`ps -a -s`), and every directory any of them mounts writable, as (volume,
+    subpath) — read from what Docker mounted, not from the system's naming: a dotted directory a name rule left out was
+    filled uncounted (critic over the first watch). The system's own keepers, which mount a volume whole, are none."""
+    got = run(["docker", "ps", "-a", "-s", "--filter", f"label={NODE}", "--filter", f"label={HOME}={home}", "--format",
+               f'{{{{.ID}}}}\t{{{{.Names}}}}\t{{{{.State}}}}\t{{{{.Size}}}}\t{{{{.Label "{PROJECT}"}}}}\t'
+               f'{{{{.Label "{NODE}"}}}}\t{{{{.Label "{ROLE}"}}}}\t{{{{.Image}}}}'], timeout=300, text=True)
+    rows = [r.split("\t") for r in (got.stdout or "").splitlines() if r.count("\t") == 7]
+    rows = [r for r in rows if r[6] != "system"]
+    mounts = run(["docker", "inspect", "-f", "{{.Id}}\t{{json .HostConfig.Mounts}}", *(r[0] for r in rows)],
+                 timeout=120, text=True).stdout if rows else ""
+    by_id = {i[:12]: json.loads(m or "null") or [] for i, _, m in (ln.partition("\t") for ln in mounts.splitlines())}
+    works: dict = {}
+    for cid, name, state, size, project, node, role, image in rows:
+        session = re.sub(r"(-(client|commands))+$", "", name)
+        w = works.setdefault((project, node, role, session), {"names": [], "running": False, "layers": {}, "dirs": set(),
+                                                              "image": image})
+        w["names"].append(name)
+        w["running"] |= state == "running"
+        w["layers"][cid] = (_bytes(size), _layer_files(cid, _bytes(size)))     # …by id: a name outlives its container
+        w["dirs"] |= {(m["Source"], (m.get("VolumeOptions") or {}).get("Subpath") or ".")
+                      for m in by_id.get(cid[:12], []) if m.get("Type") == "volume" and not m.get("ReadOnly")}
+    return works
+
+
+#: id → (its layer's bytes, its paths) when its paths were last counted: counted again once the layer grew a step
+_LAYER_FILES: dict = {}
+LAYER_STEP = 8 * 2 ** 20
+
+
+def _layer_files(cid: str, size: int) -> int:
+    """How many paths a container's own layer changed (`docker diff`), counted again only once its bytes grew a step:
+    empty files cost no bytes, and a million of them in /tmp ran Docker's disk out of inodes uncounted (critic)."""
+    seen = _LAYER_FILES.get(cid, (-LAYER_STEP, 0))
+    if size - seen[0] >= LAYER_STEP:
+        got = run(["docker", "diff", cid], timeout=300, text=True)
+        seen = (size, len((got.stdout or "").splitlines())) if got.returncode == 0 else seen
+        _LAYER_FILES[cid] = seen
+    return seen[1]
+
+
+def _disk_read(works: dict) -> dict:
+    """{(volume, subpath): (bytes, files)} of every directory the works mount writable, each volume read once (`_read`)."""
+    sizes: dict = {}
+    for vol in {v for w in works.values() for v, _ in w["dirs"]}:
+        image = next((w["image"] for w in works.values() if any(v == vol for v, _ in w["dirs"])), None)
+        try:
+            sizes.update(_read(vol, sorted({s for w in works.values() for v, s in w["dirs"] if v == vol}), image))
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log.warning(f"the disk's watch did not read {vol} ({e}): its charges stand as they were")
+            if isinstance(e, subprocess.TimeoutExpired):  # …outrun as a whole: each of its directories so (critic)
+                for k in {(v, sp) for w in works.values() for v, sp in w["dirs"] if v == vol}:
+                    _SLOW[k] = _SLOW.get(k, 0) + 1
+    return sizes
+
+
+def _read(vol: str, subs: list, image: "str | None" = None) -> dict:
+    """{(vol, subpath): (bytes, files)} of `subs` of the volume `vol` — one standing nowhere holds nothing —, read-only,
+    in a container of its own (a stopped project's has none), as root past every mode (one `chmod 700` or `000` hid a
+    directory from a reader without it, critic), in `image`, the work's own — the product's has GNU find, which walks
+    past the path-length limit busybox's stops at (a deep nest hid its whole contents, critic) —, else busybox. Bytes
+    by allocated blocks, each inode once; a file vanishing mid-walk is no stop (a parallel build's temp churn). A
+    directory not read whole is left out, said in the log — its charge stands, never nothing (critic: a failed read
+    charged a node with its whole place) —, and no other with it (critic: one session's unreadable directory stopped
+    its whole project's bounds); asked for alone, or the volume not read at all, `OSError`."""
+    if not subs:
+        return {}
+    name = f"gfso-disk-reader-{uuid.uuid4().hex[:12]}"
+    try:
+        got = run(["docker", "run", "--rm", "--name", name, "--network", "none", "-u", "0", "--cap-drop", "ALL",
+                   "--cap-add", "DAC_READ_SEARCH", "--read-only", *_SMALL, *ceiling(), "--mount",
+                   f"type=volume,src={vol},dst=/v,readonly", "--entrypoint", "sh", image or CEILING_IMAGE, "-c", _HELD,
+                   "sh", str(DISK_DEPTH + 1), str(DISK_READ_S), *(f"/v/{s}" for s in subs)],
+                  timeout=2 * DISK_READ_S * len(subs) + 60, text=True)    # …each directory's two walks
+    except subprocess.TimeoutExpired:
+        run(["docker", "rm", "-f", name], timeout=60)        # …the CLI ended, not its container (critic: one leaked)
+        raise
+    if got.returncode:
+        raise OSError(f"{vol} was not read: {(got.stderr or '').strip()[-200:]}")
+    sizes, unread = {}, []
+    for b, files, at in (ln.split(" ", 2) for ln in (got.stdout or "").splitlines() if ln.count(" ") >= 2):
+        key = (vol, at.strip()[3:] or ".")
+        if b == "T":
+            _SLOW[key] = _SLOW.get(key, 0) + 1
+        if b in ("U", "D", "T"):
+            unread.append(key[1])
+            if b == "D":
+                _TOO_DEEP.add(key)
+        elif b.isdigit() and files.isdigit():
+            _SLOW.pop(key, None)
+            _TOO_DEEP.discard(key)                   # …read whole: its nest is gone
+            sizes[(vol, at.strip()[3:] or ".")] = (int(b), int(files))
+    for sub in unread:
+        log.warning(f"the disk's watch could not read {sub} of {vol} whole: its charge stands as it was")
+    if unread and len(subs) == 1:
+        raise OSError(f"{unread[0]} of {vol} was not read whole")
+    return sizes
+
+
+class DiskLedger:
+    """What each directory and each container's layer has ADDED: what it holds now, less its baseline, less what the
+    system itself wrote or removed there — each such write measured just before and after it (`Volume.writes`), so a
+    child's commit carried into the base, a join into a parent's place, a judge's or a check's copy and its removal are
+    never a node's, and nothing a node writes beside them is forgiven with them (critic over the re-baselining ledger: a
+    mark every 10 s forgave a node everything). Never below nothing. A directory the system makes is baselined as it
+    leaves it, a container's layer made after the first reading from nothing; what stood before the first reading,
+    from there. A directory the system writes into while a reading runs keeps its last charge until the next."""
+
+    def __init__(self):
+        self.base: dict = {}             # (volume, subpath) or a container's id → (bytes, files) its baseline
+        self.system: dict = {}           # (volume, subpath) → (bytes, files) the system's own writes there since
+        self.charged: dict = {}          # …→ (bytes, files) the work added there at its last reading
+        self.busy: dict = {}             # (volume, subpath) → how many of the system's writes are in it now
+        self.touched: set = set()        # (volume, subpath) the system wrote into since the current reading began
+        self.lost: set = set()           # (volume, subpath) a system write into which was not measured: baseline again
+        self.put: dict = {}              # ((volume, subpath), path under it) → (bytes, files) the system booked there
+        self.read = False                # a first reading made: a layer seen after it is of a container made since
+        self.lock = threading.Lock()
+
+    def writing(self, at: tuple, start: bool) -> int:
+        """The system starts or ends a write into `at`; how many of its writes stand there now."""
+        with self.lock:
+            n = self.busy.get(at, 0) + (1 if start else -1)
+            self.busy[at] = n
+            if n <= 0:
+                del self.busy[at]
+            self.touched.add(at)
+            return n
+
+    def lose(self, at: tuple) -> None:
+        """A system write into `at` that was not measured: its charge stands, its baseline taken again at the next
+        reading."""
+        with self.lock:
+            self.lost.add(at)
+
+    def wrote(self, at: tuple, before: tuple, after: tuple, under: str = ".") -> None:
+        """The system's own write into `at`, under its path `under`, as `at` stood `before` and `after` it — `after` its
+        baseline where it had none (the system made it)."""
+        with self.lock:
+            if at not in self.base:
+                self.base[at], self.system[at] = after, (0, 0)
+            else:
+                s, p = self.system.get(at, (0, 0)), self.put.get((at, under), (0, 0))
+                self.system[at] = (s[0] + after[0] - before[0], s[1] + after[1] - before[1])
+                self.put[(at, under)] = (p[0] + after[0] - before[0], p[1] + after[1] - before[1])
+
+    def removed(self, at: tuple, under: str) -> None:
+        """The system removed its path `under` of `at`: what IT put there comes off its own account, and nothing else —
+        what a session wrote there leaves what `at` holds by itself (critic: booking the measured removal charged every
+        check with all the outputs of the checks before it)."""
+        with self.lock:
+            gone = [k for k in self.put if k[0] == at and (under == "." or k[1] == under or k[1].startswith(under + "/"))]
+            took = [self.put.pop(k) for k in gone]
+            s = self.system.get(at, (0, 0))
+            self.system[at] = (s[0] - sum(t[0] for t in took), s[1] - sum(t[1] for t in took))
+
+    def begin(self) -> None:
+        """A reading starts: what the system writes into a directory from now on keeps that directory's last charge."""
+        with self.lock:
+            self.touched = set(self.busy)
+
+    def added(self, works: dict, sizes: dict) -> dict:
+        """{work: (bytes, files)} each work added — over the directories it mounts now and its containers' layers —, of
+        the reading `begin` started and `sizes` (with the layers in `works`) holds."""
+        with self.lock:
+            dirty = self.touched | set(self.busy)
+            now = {**sizes, **{n: v for w in works.values() for n, v in w["layers"].items()}}
+            for k, v in now.items():
+                if k in dirty:
+                    continue                         # …half the system's write may be in what was read
+                if k not in self.base:
+                    self.base[k] = (0, 0) if self.read and k not in sizes else v
+                elif k in self.lost:
+                    c, s = self.charged.get(k, (0, 0)), self.system.get(k, (0, 0))
+                    self.base[k] = (v[0] - s[0] - c[0], v[1] - s[1] - c[1])
+                self.lost.discard(k)
+                b, s = self.base[k], self.system.get(k, (0, 0))
+                self.charged[k] = (max(0, v[0] - b[0] - s[0]), max(0, v[1] - b[1] - s[1]))
+            self.read = True
+            return {key: tuple(sum(self.charged.get(k, (0, 0))[i] for k in [*w["dirs"], *w["layers"]]) for i in (0, 1))
+                    for key, w in works.items()}
+
+
+_LEDGER = DiskLedger()
+#: (volume, subpath) → the lock its system writes' measurement is taken under, and what it held before their span
+_KEY_LOCKS: dict = {}
+_BEFORE: dict = {}
+
+
+def _past_bound(added: dict, running: set, bound: tuple) -> list:
+    """The works with a container running that added more than `bound` (bytes, files) — each against its own bound
+    alone: who holds the most, who grew by a fall in free space, what its neighbours wrote or what disk Docker shows,
+    none of it moves the answer."""
+    return [k for k, (b, n) in added.items() if k in running and (b > bound[0] or n > bound[1])]
+
+
+_DISK_WATCH = threading.Event()
+#: the containers the disk's watch ended, by name, with what their work added: a judge's copy or build so ended is its
+#: delivery's FAIL, its cause said (`past_disk`)
+_DISK_ENDED: dict = {}
+
+
+def past_disk(ex) -> "str | None":
+    """Why `ex`'s container was ended by the disk's watch, if it was: its work past its own bound — the delivery's own."""
+    return _DISK_ENDED.get(ex.container) if isinstance(ex, ContainerExecution) else None
+
+
+def watch_disk() -> None:
+    """The disk's watch, for this server's life (`_watch_disk`) over this installation's nodes, started once."""
+    if not _DISK_WATCH.is_set():
+        _DISK_WATCH.set()
+        threading.Thread(target=_watch_disk, args=(None, None, _home()), name="gfso-disk", daemon=True).start()
+
+
+def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, ledger: "DiskLedger | None" = None
+                ) -> None:
+    """WHO PAYS WHEN ONE NODE FILLS DOCKER'S DISK: that node, by a bound of its own (`config.node_disk`). Docker Desktop's
+    disk takes no quota and one node filling it stopped every project on the machine. Every `DISK_WATCH_S` it reads what
+    each node's work of the installation `scope` added (`DiskLedger`); a work with a container running past its bound has
+    its containers removed — their layers with them, its directories kept —, said in the log. A judge's copy or build so
+    ended FAILs its delivery, the bound named (`past_disk`). Its next session is counted on, and ended again past it."""
+    ledger = ledger or _LEDGER
+    while not (stop or threading.Event()).wait(every or DISK_WATCH_S):
+        try:
+            bound = node_disk()
+            ledger.begin()
+            works = _disk_works(scope)
+            added = ledger.added(works, _disk_read(works))
+            with ledger.lock:
+                busy = set(ledger.busy)
+            # …never while the system writes into one of its directories: its git would be ended halfway
+            free = {k for k, w in works.items() if w["running"] and not w["dirs"] & busy}
+            deep = {k for k in free if works[k]["dirs"] & _TOO_DEEP
+                    or any(_SLOW.get(d, 0) >= DISK_SLOW_READS for d in works[k]["dirs"])}
+            for k in [*deep, *(k for k in _past_bound(added, free, bound) if k not in deep)]:
+                why = (f"node {k[1]}'s {k[2]} work ({k[3]}) holds a directory the system cannot read — nested deeper "
+                       f"than {DISK_DEPTH} levels, or not walked within {DISK_READ_S} s at {DISK_SLOW_READS} readings "
+                       f"in a row" if k in deep else
+                       f"node {k[1]}'s {k[2]} work ({k[3]}) added {added[k][0] // 2 ** 20} MiB and {added[k][1]} files to "
+                       f"Docker's disk, past its bound of {bound[0] // 2 ** 20} MiB and {bound[1]} files "
+                       f"(GFSO_NODE_DISK, GFSO_NODE_FILES)")
+                _DISK_ENDED.update(dict.fromkeys(works[k]["names"], why))
+                done = run(["docker", "rm", "-f", *works[k]["names"]], timeout=120, text=True)
+                log.warning(f"{k[0]}: {why}: " + ("its containers were ended, its directories kept" if not done.returncode
+                                                  else f"it could not be ended ({(done.stderr or '').strip()[-200:]})"))
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as e:
+            log.warning(f"the disk's watch did not read Docker's disk ({e})")
 
 
 def _system_run(name: str, image: str, flags: list, script: Path, args: list, mirror: Path, mode: str = "1777") -> None:
@@ -1030,7 +1311,8 @@ class Volume:
     another base) is the place down too, both names said; no record, not made yet. Kept across every stop and every
     sweep of leftovers — it holds the project's work —, removed with the project alone (`drop_volumes`)."""
 
-    def __init__(self, container: str, execution: str, own: Path, base: Path, project: str):
+    def __init__(self, container: str, execution: str, own: Path, base: Path, project: str,
+                 image: "str | None" = None):
         key = f"{_home()}-{hashlib.sha1(os.path.normcase(base).encode()).hexdigest()[:6]}"
         self.name, self.state = f"{container}-{key}-v", f"{container}-{key}-state"
         self.execution, self.own, self.base, self.project = execution, own, base, project
@@ -1046,6 +1328,8 @@ class Volume:
         #: where what the system says of the volume goes — the project's log, set by whoever holds it
         self.said = lambda text: None
         self.copy_time = 1800                            # seconds a copy-in may take
+        #: the image its directories are read in for the disk's watch (`_read`) — its execution's
+        self.image = image
 
     def mount(self, src: Path, ro: bool, dst: str) -> list[str]:
         """`--mount` of the directory the system names `src` at `dst`: its CLI state's volume under `.gfso-state`, the
@@ -1057,6 +1341,42 @@ class Volume:
                     (self.name, BASE_DIR / src.relative_to(self.base)))
         spec = f"type=volume,src={vol},dst={dst}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
         return ["--mount", spec + (",readonly" if ro else "")]
+
+    @contextlib.contextmanager
+    def writes(self, root: Path, path: "Path | None" = None, removing: bool = False):
+        """The system writing into the directory `root` of this volume, at its `path` (`root` itself where none):
+        measured just before and after, what it wrote there no node's (`DiskLedger.wrote`); `removing` it, what the
+        system had put under `path` comes off (`DiskLedger.removed`); not read against any node meanwhile."""
+        under = Path(path).relative_to(root).as_posix() if path is not None and Path(path) != Path(root) else "."
+        spec = self.mount(root, False, "/x")[1]
+        at = (re.search(r"src=([^,]+)", spec)[1], (re.search(r"volume-subpath=([^,]+)", spec) or [None, "."])[1])
+        held = lambda: _read(at[0], [at[1]], self.image).get(at, (0, 0))
+        # ONE MEASUREMENT PER SPAN OF THE SYSTEM'S WRITES THERE: read before the first starts and after the last ends,
+        # under the directory's own lock for the reading alone — a write nested in another (a bring's carry) or beside
+        # it (two joins into one parent) counted twice banked credit (critic); none of it held across the write itself
+        with _KEY_LOCKS.setdefault(at, threading.Lock()):
+            if _LEDGER.writing(at, True) == 1 and not removing:
+                try:
+                    _BEFORE[at] = held() if at in _LEDGER.base else (0, 0)
+                except (OSError, subprocess.TimeoutExpired):
+                    _BEFORE[at] = None
+        try:
+            yield
+        finally:
+            with _KEY_LOCKS[at]:
+                if _LEDGER.busy.get(at) == 1 and removing and at not in _BEFORE:
+                    _LEDGER.removed(at, under)
+                elif _LEDGER.busy.get(at) == 1:     # …the last: measured and booked while still marked
+                    before = _BEFORE.pop(at, None)
+                    try:
+                        after = held()
+                    except (OSError, subprocess.TimeoutExpired):
+                        after = None
+                    if before is None or after is None:
+                        _LEDGER.lose(at)
+                    else:
+                        _LEDGER.wrote(at, before, after, under)
+                _LEDGER.writing(at, False)
 
     def _roles(self) -> dict:
         return {"places": self.name, "state": self.state}
@@ -1138,6 +1458,11 @@ class Volume:
         self._consume(host, old)
 
     def import_base(self, image: str, made: bool = False, again: bool = False) -> bool:
+        """`_import_base`, the system's own write into the base: no node's growth against its disk bound."""
+        with self.writes(self.base):
+            return self._import_base(image, made, again)
+
+    def _import_base(self, image: str, made: bool = False, again: bool = False) -> bool:
         """The base in the volume (`BASE_DIR`) as the user's repository stands — imported where nothing of it stands
         yet: by the project's first container start (`made`: its volumes made now), or, `again`, by THE CREATION OF A
         NEW ROOT of the project (`workspaces.root_created`). NEVER BY A START OVER A RECORD: a restart, a switch turned,
@@ -1517,7 +1842,25 @@ def drop_volumes(project: str) -> None:
         run(["docker", "volume", "rm", "-f", v], timeout=120)
 
 
-class ContainerExecution(ExecutionPort):
+class _SystemWrites:
+    """What the disk's watch is told by an execution in containers: the system's own writes into its nodes'
+    directories (`DiskLedger`), its removals among them."""
+
+    def system_writes(self, path: str, removing: bool = False):
+        """`ExecutionPort.system_writes`: the writable root `path` stands in, marked in its project's volume."""
+        try:
+            root = _writable_root(_real(path), self)
+        except ValueError:
+            return contextlib.nullcontext()      # …no node's directory: nothing of it is counted against a node
+        return self.volume.writes(root, _real(path), removing)
+
+    def remove_tree(self, path: str) -> None:
+        """`ExecutionPort.remove_tree`, what the system had put there coming off its account."""
+        with self.system_writes(path, removing=True):
+            self._remove_tree(path)
+
+
+class ContainerExecution(_SystemWrites, ExecutionPort):
     python = "python3"
     #: does a session's CLI run here, its state mounted? Not in the project's container: every session runs in its
     #: place's (`session`), and the project's runs the plan's probes, written by agents — with the state mounted they
@@ -1563,7 +1906,7 @@ class ContainerExecution(ExecutionPort):
             self.switch(network)
         self.mounts = [b, f"{NODES}{b}/{self.project_name}"]
         self.own = self.parent / self.mounts[1]
-        self.volume = Volume(self.container, name, self.own, self.base, self.project_name)
+        self.volume = Volume(self.container, name, self.own, self.base, self.project_name, image)
         # dotted, as no node's key is (`component`): the system's own among the project's places — the copies and
         # checks no session but the one handed a copy reaches; THE CLI'S STATE THE PROJECT'S, each place's under it
         # (`PlaceContainer`): shared by an execution's projects, every E3 row (all at /gfso-place/ws) read and appended
@@ -1776,7 +2119,7 @@ class ContainerExecution(ExecutionPort):
         if r.returncode != 0:
             raise OSError(f"cp -a {src} {dst} failed in {self.container}: {r.stderr.strip()[-300:]}")
 
-    def remove_tree(self, path: str) -> None:
+    def _remove_tree(self, path: str) -> None:
         # a place going takes its session's container with it, and its CLI's state: nothing will resume there — the
         # system's removal is what ends a session, not a directory found gone (a round's, a contact's, a no-place call's)
         # …over a copy, popped with a default: every thread of the server starts sessions into the one table, and a
@@ -2172,8 +2515,11 @@ class PlaceContainer(ContainerExecution):
             return                                       # …the keeper's own: the state volume whole, nothing lent
         keeper = self.project.session(str(self.project.state))
         for at, cwd, made in ((self.project, self.base, lent), (keeper, keeper.rw, [str(self.state)])):
-            if made and (r := at.run(["mkdir", "-p", "--", *made], cwd=str(cwd), timeout=60)).returncode:
-                raise OSError(f"{self.container}: its directories could not be made ({r.stderr.strip()[-300:]})")
+            with contextlib.ExitStack() as held:         # …made by the system: their baselines as it leaves them
+                for d in made:
+                    held.enter_context(self.project.system_writes(d))
+                if made and (r := at.run(["mkdir", "-p", "--", *made], cwd=str(cwd), timeout=60)).returncode:
+                    raise OSError(f"{self.container}: its directories could not be made ({r.stderr.strip()[-300:]})")
 
     def stop(self) -> None:
         """This session's container and its commands', its client's with them: the way out is its project's."""
