@@ -5,7 +5,7 @@ import {esc, unseen} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, axisWidth, mark} from './draw.js';
-import {trim} from './fmt.js';
+import {trim, commonPrefix} from './fmt.js';
 import {failedOf} from './run.js';
 import {label} from './vocab.js';
 import {TIP, KIND, waitWords} from './hints.js';
@@ -95,6 +95,9 @@ export function render(el, run, nodes) {
         ${top ? `<circle class="tl-peakdot" cx="${f.X(top[0])}" cy="${cy(peak)}" r="2.5"/>` : ''}
         ${ids.map(row).join('')}
         <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW - 4}" y2="${TOP + ROW - 4}"/></svg>`;
+    // who ran a stretch, only where its node had more than one for that kind of work, by the tail of the id the project's name heads
+    const agents = [...new Set(work.flatMap(w => w.agents))], cut = commonPrefix(agents);
+    const who = x => new Set(work.filter(w => w.node === x.node && w.kind === x.kind).flatMap(w => w.agents)).size > 1 && x.agents.map(a => a.slice(cut)).join(', ');
     // the row's name in a tip only where its label is off the screen
     const named = id => unseen(el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-name`)) && name(id);
     bindFocus(el, e => {
@@ -112,7 +115,7 @@ export function render(el, run, nodes) {
         // the round a stretch belongs to: the delivery an execution ended in, the verdict a validation gave
         const x = work[+s.dataset.i], key = x.kind === 'val' ? 'at' : 'delivered';
         const r = (run.rounds[x.node] || []).find(r => r[key] >= x.end - 1e3);
-        tip(TIP.bar(x, r, r?.failed?.length ? failedOf(run, x.node, r.failed) : null, named(x.node)), e);
+        tip(TIP.bar(x, r, r?.failed?.length ? failedOf(run, x.node, r.failed) : null, named(x.node), who(x)), e);
     }, untip);
     bringSelected(el, id => el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-band`));
 }

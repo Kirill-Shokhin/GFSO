@@ -209,8 +209,9 @@ export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(na
 export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
 export const failedWords = ({own, edges}) =>
     [own.join(' · '), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`].filter(Boolean).join('; ') || 'no criterion named';
-const failedRows = ({own, edges}) => own.length || edges.length ? [`Failed (${own.length + edges.length}):`, ...own.map(c => `– ${c}`),
-    ...edges.map(c => `– ${c}: ${EDGE_NOTE}`)] : [];
+// what a verdict failed: one criterion in one line, several under a line that counts them — «Failed (1): – x» read badly
+const failedRows = ({own, edges}) => { const all = [...own, ...edges.map(c => `${c}: ${EDGE_NOTE}`)];
+    return all.length === 1 ? [`Failed: ${all[0]}`] : all.length ? [`Failed ${all.length} criteria`, ...all] : []; };
 
 // ── the deck's strip ──
 // what a node at work is doing: its process's verb, else that verb's kind of session (run.js PROC_KIND), else — no process
@@ -293,9 +294,14 @@ export const TIP = {
         n > 1 && `${j + 1} of ${n} on this bar`, 'A fresh session went on from its note']),
     // a stretch of work on the timeline
     // …its row's name only where that row's label is off the screen (a phone's deck scrolled sideways — critic 8)
-    bar: (x, r, f, name) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
-        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
-        r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f),
+    // …ITS OWN only: a node's sessions read the same line after line — one executor's long id, a round's verdict and its
+    // failed criteria on every session of that round (the author, 2026-10-31: «на сессиях внутри ноды на таймлайне все еще
+    // пишется одно и тоже. в неудобно читаемом виде»). A session says when, how long, what it cost and took, which round
+    // it worked; the verdict and what failed are the validation's own result and the round's mark's; who ran it only where
+    // the node had more than one (`who`, timeline.js), without the project's name every id carries.
+    bar: (x, r, f, name, who) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
+        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, who,
+        r && (x.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : `Round ${r.n}`), x.kind === 'val' && f && failedRows(f),
         x.parts > 1 && [`${x.parts} processes, ${dur(x.busy)} busy`, x.kind === 'val' ? 'the validator works in batches of probes'
             : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.retried > 0 && `${x.retried} retried`]
                 .filter(Boolean).join(', ')].filter(Boolean).join(': '),

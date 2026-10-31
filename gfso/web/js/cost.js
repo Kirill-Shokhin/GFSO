@@ -3,14 +3,10 @@
 import {esc, tally, lasting} from './dom.js';
 import {TIP, KIND, levelName, sessionsOf} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
-import {dur, trim, money as reported, NOT_REPORTED, tok} from './fmt.js';
+import {dur, trim, money as reported, NOT_REPORTED, tok, commonPrefix} from './fmt.js';
 import {concurrency} from './run.js';
 
 
-// the shared head of the assignee ids (the project's name), cut at a '-' so the distinct tail stays
-const commonPrefix = ids => { if (ids.length < 2) return 0;
-    let n = 0; while (ids.every(s => s[n] === ids[0][n]) && n < ids[0].length) n++;
-    return ids[0].lastIndexOf('-', n - 1) + 1; };
 // money for sessions some of which reported no price: never a $0.00 for "not reported" (another provider's case)
 const money = ps => { const calls = ps.reduce((s, p) => s + p.calls, 0), un = ps.reduce((s, p) => s + (p.unpriced || 0), 0);
     const procs = ps.reduce((s, p) => s + (p.procs ?? p.calls), 0);

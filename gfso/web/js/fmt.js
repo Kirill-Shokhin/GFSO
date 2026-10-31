@@ -13,6 +13,10 @@ export const clockAt = (t, ref = Date.now()) => new Date(t).toDateString() === n
 export const when = t => new Date(t).toLocaleString(LOCALE, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
 // an ISO stamp as written, to the minute (`from` 5 drops the year, `to` 19 keeps the seconds)
 export const stamp = (iso, from = 0, to = 16) => String(iso).slice(from, to).replace('T', ' ');
+// the shared head of agent ids (the project's name), cut at a '-' so the distinct tail stays
+export const commonPrefix = ids => { if (ids.length < 2) return 0;
+    let n = 0; while (ids.every(s => s[n] === ids[0][n]) && n < ids[0].length) n++;
+    return ids[0].lastIndexOf('-', n - 1) + 1; };
 export const dur = ms => ms < 90e3 ? `${Math.round(ms / 1e3)}s` : ms < 90 * 60e3 ? `${Math.round(ms / 60e3)}m` : `${(ms / 3600e3).toFixed(1)}h`;
 
 // money and token counts; a count a provider did not report says so (`none`)
