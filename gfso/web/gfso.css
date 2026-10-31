@@ -131,7 +131,6 @@ body {
    count's figure only a step above the words (the author, 2026-10-30: «стоит неровно и вразнобой») */
 .hd-needs { display: flex; align-items: baseline; gap: 16px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
-.need b { font-weight: 600; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
 .need:hover { filter: brightness(1.15); }
 .hd-quiet { font-size: 12.5px; font-style: italic; color: var(--ui-on-chrome); opacity: 0.45; white-space: nowrap; }
@@ -358,7 +357,7 @@ body {
 .cs-legend em { display: block; margin-left: 16px; font-style: normal; font-size: 10.5px; color: var(--ink-faint); }
 /* a figure the eye looks for is the brand's display face, as every count's (`.tally b`); a table's figures are mono */
 .cs-legend b { font-family: var(--font-display); font-weight: 650; color: var(--ink); }
-.cs-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.cs-legend > span > i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 .cs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 32px; }
 .cs-chart h4 { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-faint); font-weight: 400; margin-bottom: 6px; }
 .cs-row { display: grid; grid-template-columns: 130px 1fr minmax(56px, auto); align-items: center; gap: 8px; height: 20px; font-size: 11.5px; }
@@ -418,7 +417,7 @@ body {
 .dk-grip { position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: ns-resize; z-index: 2; touch-action: none; }
 /* THE DECK'S HEAD SCROLLS, NEVER SQUEEZES — beside a node's panel the wait lines were cut to «9 WA» and the spend pushed
    out (the author, 2026-10-30: «при открытии ноды нижняя панель сжимается и прокрутки влево вправо не появляется»); every
-   item keeps its whole text, and the fold stays at the right edge */
+   item keeps its whole text; the head's far end is reached by the wheel and faded where more of it lies (deck.js) */
 .dk-head { display: flex; align-items: center; gap: 18px; padding: 0 0 0 16px; height: 34px; flex-shrink: 0; border-bottom: 1px solid var(--hair-soft);
            overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }   /* the line's floor not met (a node open on 1024): the head scrolls */
 .dk-head::-webkit-scrollbar { display: none; }
@@ -431,6 +430,9 @@ body {
 .dk-strip { flex: 1 1 auto; min-width: min(300px, 40vw); display: flex; align-items: center; gap: 10px; font-size: 11.5px; white-space: nowrap;
              overflow-x: auto; overflow-y: hidden; scrollbar-width: none; align-self: stretch; }
 .dk-strip::-webkit-scrollbar { display: none; }
+.dk-head.more-r { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }
+.dk-head.more-l { mask-image: linear-gradient(to right, transparent, #000 24px); }
+.dk-head.more-l.more-r { mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 40px), transparent); }
 .dk-strip.more-r { mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); }
 .dk-strip.more-l { mask-image: linear-gradient(to right, transparent, #000 40px); }
 .dk-strip.more-l.more-r { mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 56px), transparent); }
@@ -1224,7 +1226,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
    one baseline, apart by a gap and a hairline (the author, 2026-10-30: «8/11 на пол головы выше … как минимум 3 шрифта»;
    «статус и количество это два разных поинта … там что мало место их разнести?»); the figure set apart by weight alone */
 .hd-needs > .hd-phrase, .hd-needs > .tally, .hd-needs > .hd-quiet { font-size: 12.5px; white-space: nowrap; }
-.hd-needs > .tally b { color: inherit; }
+.hd-needs > .tally b, .hd-q .tally b, .need .tally b { color: inherit; }
 .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: 1px solid var(--hair-on-chrome); padding-left: 16px; }
 .hd-needs > .hd-quiet:first-child { border-left: none; padding-left: 0; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
@@ -1330,6 +1332,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .hd-goal { order: 2; flex: 1 0 100%; flex-wrap: wrap; row-gap: 6px; }
     .hd-goal .hd-root { flex: 1 0 100%; max-width: none; text-align: left; padding-left: 0; }
     .hd-needs { order: 5; flex: 1 0 100%; justify-content: flex-start; overflow-x: auto; }
+    .need { max-width: none; }   /* cut mid-word at the screen's edge (critic 5): whole, the row scrolls */
     .toolbar { padding-left: 14px; padding-right: 14px; }
     .sidebar:not(.hidden) { position: absolute; inset: 0; width: auto; z-index: 25; padding: 18px 16px; border-left: none; }
     .reader { left: 0; right: 0; width: auto; z-index: 26; padding: 0 16px 16px; }

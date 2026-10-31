@@ -101,7 +101,7 @@ function drawStrip() {
     const box = $('deck').querySelector('.dk-strip');
     box.innerHTML = strip();
     $('deck').querySelector('.dk-sum').innerHTML = sum();
-    requestAnimationFrame(() => fades(box));
+    requestAnimationFrame(() => { fades(box); fades($('deck').querySelector('.dk-head')); });
     // …from scratch each time: a `.fit` left by a line that had chips held the wait lines at full width once the chips
     // were gone, and pushed the spend out of the strip (1280 px beside the panel)
     box.classList.remove('fit');
@@ -164,8 +164,16 @@ export function mountDeck() {
     d.querySelector('.dk-fold').onclick = () => { pref.closed = !pref.closed; save(); paint(); };
     const line = d.querySelector('.dk-strip');
     line.onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n) point('select', n); };
-    line.onscroll = () => fades(line);
-    line.onwheel = e => { if (!e.deltaY || line.scrollWidth <= line.clientWidth) return; line.scrollLeft += e.deltaY; e.preventDefault(); };
+    // …and so does the head around it, short of room beside a node's panel: the wheel moves the line while it can move, then
+    // the head — the run's sum and the fold lay past a 1024 px edge with no way to them by a mouse (critic 5)
+    const head = d.querySelector('.dk-head');
+    for (const box of [line, head]) box.onscroll = () => fades(box);
+    const sideways = e => {
+        const box = [line, head].find(b => b.contains(e.target) && (e.deltaY > 0 ? b.scrollLeft + b.clientWidth < b.scrollWidth - 1 : b.scrollLeft > 0));
+        if (!e.deltaY || !box) return;
+        box.scrollLeft += e.deltaY; e.preventDefault();
+    };
+    head.onwheel = sideways;
     // …by a pointer of any kind: a finger on a phone drags it as a mouse does on a desk (it took a mouse only)
     d.querySelector('.dk-grip').onpointerdown = e => {
         const y0 = e.clientY, h0 = d.offsetHeight;

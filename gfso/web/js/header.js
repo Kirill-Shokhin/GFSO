@@ -69,7 +69,7 @@ async function goal() {
 
 // One chip per kind of call on a person; `ids` are the nodes it is about, the first one is selected.
 const need = (n, text, ids, rows, cls = '', kind = text) => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
-    + `${H.need(kind, rows)}><b>${n}</b> ${esc(text)}</button>`;
+    + `${H.need(kind, rows)}>${tally(n, esc(text))}</button>`;
 const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // Under AUTO the system makes every issuer move below the root (set_mode), so a challenge or a block there is the
 // machine issuer's to answer — in the strip as its turn or its wait, never here as a call on a person (critic).
@@ -143,7 +143,7 @@ function stalled(calls) {
     // …the quiet turns into a stall at a moment known now, with nothing pushed then: the header is drawn again at it
     clearTimeout(wake);
     if (Date.now() - last <= GAP) return void (wake = setTimeout(drawHeader, last + GAP - Date.now() + 1e3));
-    return need(1, `stalled — nothing at work since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled');
+    return need(1, `stalled since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled');
 }
 let wake;
 

@@ -60,7 +60,7 @@ export function render(el, run, nodes) {
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`)}
             ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '')}
             ${bars(`sessions by assignee${cut ? ` <span${TIP.prefix(ids[0].slice(0, cut))}>(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
-                   (n, r) => tally(n, '') + tally(r.peak, 'at once'), () => '')}
+                   (n, r) => `${n}, ${r.peak} at once`, () => '')}
         </div></div>`;
     bindFocus(el, e => {
         const row = e.target.closest('.cs-row[data-node]');
