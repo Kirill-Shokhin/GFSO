@@ -287,7 +287,7 @@ function review({cr}) {
         `<li class="${bad ? 'check-fail' : ''}">${status}${rev.model ? ' · ' + esc(rev.model) : ''}${rev.ts ? ' · ' + esc(rev.ts) : ''}</li>`,
         ...cv.map(v => `<li>${l2Mark(v.verdict)} ${esc(v.criterion)} — ${esc(v.why || '')}</li>`),
         ...conflicts.map(c => `<li>⚡ [${esc((c.between || []).join(', '))}] ${esc(c.why || '')}</li>`),
-        ...undecided.map(u => `<li class="check-fail">✗ this node's OWN criteria do not decide: ${esc(u.obligation || u.gap || '')}`
+        ...undecided.map(u => `<li class="check-fail">✗ no pinned check its validation runs decides: ${esc(u.obligation || u.gap || '')}`
             + `${u.admits ? ` <div class="verdict-evidence">${esc(u.admits)}</div>` : ''}</li>`),
         bad ? `<li class="faint">${PANEL.twoWays}</li>` : '']));
 }

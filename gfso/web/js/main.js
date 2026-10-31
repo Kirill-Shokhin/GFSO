@@ -62,6 +62,7 @@ async function applyInFlight(list) {
     S.inflight = list || [];
     if (JSON.stringify(busyByProject()) !== before) projects();
     rebuildRun(); onInflight(); annotate();      // what runs now, read again from the run's last read
+    drawPlanning();                              // …and the stage an authoring has reached comes on this same push
     // a process starting or ending here re-reads the graph and the header: a plan authored, or a session ending,
     // moves no transition this page hears, and the header said "no goal yet" through a whole planning (live run)
     if (here() !== was) { await S.reload(); refreshDeck().then(afterDeck); }

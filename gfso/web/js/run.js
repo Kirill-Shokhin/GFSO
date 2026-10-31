@@ -86,7 +86,7 @@ function sessions(calls, audit, pipeline) {
         return {node: c.node_id, kind, stage: c.stage, start, end, ms: c.duration_ms, cost: c.cost_usd || 0,
                 tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
                 out: c.output_tokens ?? null, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0,
-                handover: c.handover || 0, resumed: !!c.resumed, peak: c.peak_context ?? null, window: c.context_window ?? null};
+                handover: c.handover || 0, resumed: !!c.resumed, peak: c.peak_context ?? null, window: c.context_window ?? null, budget: c.context_budget ?? null};
     });
 }
 

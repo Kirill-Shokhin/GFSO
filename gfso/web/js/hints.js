@@ -284,9 +284,12 @@ export const TIP = {
     rounds: rs => hover(roundsLine(rs)),
     // ONE CUT, itself: when the session passed its work on, and how full its context stood then — the share of the model's
     // whole window as the figure (the author, 2026-10-31: «информации о например размере контекста на обрезанной нет …
-    // относительно полного доступного контекста»). The budget it ran under is not recorded per session yet, so not said.
+    // относительно полного доступного контекста»): where it stopped and the budget it ran under, both on the one scale of
+    // its window («есть точка бюджета есть фактическая остановка»), the budget as the call recorded it (`context_budget`)
     cut: (c, n, j, name) => card(`Passed on ${hm(c.t)}${c.peak && c.window ? `\t${pct(c.peak / c.window)}` : ''}`, [name,
-        c.peak && c.window ? meter(`of ${tok(c.window)}`, c.peak / c.window, tok(c.peak)) : 'Its context not recorded',
+        ...(c.peak && c.window ? [meter('stopped at', c.peak / c.window, tok(c.peak)),
+            c.budget ? meter('its budget', c.budget / c.window, tok(c.budget)) : 'Its budget not recorded (an older build)',
+            `Of the ${tok(c.window)} window`] : ['Its context not recorded']),
         n > 1 && `${j + 1} of ${n} on this bar`, 'A fresh session went on from its note']),
     // a stretch of work on the timeline
     // …its row's name only where that row's label is off the screen (a phone's deck scrolled sideways — critic 8)

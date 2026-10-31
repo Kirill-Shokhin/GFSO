@@ -27,7 +27,7 @@ function rows(run, nodes) {
 // One bar per piece of work: the engine validates a delivery in batches (`validation_batch` probes a session), and
 // a call may be retried — so the sessions of one kind on one node that no delivery or verdict separates are ONE
 // a handover: when the session wrote its note, and how full its context stood then against its model's whole window
-const cut = s => ({t: s.end, peak: s.peak, window: s.window});
+const cut = s => ({t: s.end, peak: s.peak, window: s.window, budget: s.budget});
 
 // stretch of work, drawn once; its batches are counted in the tip, its cost summed.
 function stretches(run) {
