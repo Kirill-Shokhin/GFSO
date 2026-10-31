@@ -5,7 +5,8 @@ import {$, esc, tally, since, lasting} from './dom.js';
 import {frame, TAB, STRIP, doing} from './hints.js';
 import {S, procs, kept, keep} from './state.js';
 import {nameOf, label} from './vocab.js';
-import {point, release, forgetBrought, firstTap} from './store.js';
+import {point, release, forgetBrought} from './store.js';
+import {firstTap} from './tip.js';
 import {said, blockers, runNow, failingNow, PROC_KIND, byRole} from './run.js';
 import {dur, trim, money, plural} from './fmt.js';
 import {beat} from './draw.js';
@@ -163,7 +164,7 @@ export function mountDeck() {
     };
     d.querySelector('.dk-fold').onclick = () => { pref.closed = !pref.closed; save(); paint(); };
     const line = d.querySelector('.dk-strip');
-    line.onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n && !firstTap(line, e)) point('select', n); };
+    line.onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n && !firstTap(e)) point('select', n); };
     // …and so does the head around it, short of room beside a node's panel: the wheel moves the line while it can move, then
     // the head — the run's sum and the fold lay past a 1024 px edge with no way to them by a mouse (critic 5)
     const head = d.querySelector('.dk-head');

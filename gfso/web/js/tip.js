@@ -14,7 +14,9 @@ export function tip(html, e) {
     e.tipped = true;
     mine = false;
 }
-export const untip = () => box().classList.remove('visible');
+// …and the thing a finger's first tap showed the tip of goes with the tip: a tip cleared anywhere disarms its second tap
+export const untip = () => { box().classList.remove('visible'); armed = null; };
+let armed = null;
 
 // Every hover on the page is this one tip, read off `data-tip` (hints.js writes them): the browser's own `title` box
 // (square, system font, default colours) is the one surface outside the brand. A view's own tip for the same event
@@ -43,4 +45,16 @@ const ACTS = 'button, a, input, select, [data-action]';
 document.addEventListener('click', e => { if (!TOUCH.matches || e.tipped) return;
     if (tipOf(e) && (e.showTip || !e.target.closest(ACTS))) own(e); else { untip(); mine = false; } });
 // …and whether a tap on this thing shows a tip: a view's own (`tip()` marked the event) or its `data-tip`
-export const hasTip = e => !!(e.tipped || tipOf(e));
+const hasTip = e => !!(e.tipped || tipOf(e));
+// THE FIRST TAP on a thing that has a tip shows it (true); a second on that same thing — its tip still up — acts (false),
+// and the tip goes with the act; a thing with no tip acts at once. One armed thing for the whole page.
+export function firstTap(e) {
+    if (TOUCH.matches && armed !== e.target && hasTip(e)) return (armed = e.target, e.showTip = true, true);
+    if (TOUCH.matches) { untip(); mine = false; }   // a mouse's tip follows the pointer as it always did
+    e.tipped = true;                       // acted on: the document's tap does not show a tip over what it opened
+    return false;
+}
+// a press held on a control shows its tip, where its tap is its act — a tab, Stop, a project's row (the usual long-press)
+document.addEventListener('contextmenu', e => { if (!TOUCH.matches || !tipOf(e)) return; e.preventDefault(); own(e); });
+// a tip stands where its thing stood: a scroll moves the thing away from it
+addEventListener('scroll', () => { if (TOUCH.matches) untip(); }, true);

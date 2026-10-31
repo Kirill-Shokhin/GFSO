@@ -3,7 +3,7 @@ import {$, esc} from './dom.js';
 import {S, taskOf, myRole, procs} from './state.js';
 import {bucketOf, statusLabel, contested, cancelled, nameOf, criteriaOf} from './vocab.js';
 import {banner} from './overlays.js';
-import {tip, untip} from './tip.js';
+import {tip, untip, TOUCH} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';
 import {runNow, failingNow, failedOf} from './run.js';
 import {TIP, waitWords, failedWords} from './hints.js';
@@ -93,6 +93,9 @@ export async function initGraph() {
     cy.on('select', 'node', evt => point('select', evt.target.id()));
     // …and a tap on the node already selected picks it again: its row in the deck, scrolled away, is brought back
     cy.on('tap', 'node', evt => evt.target.id() === focus().select && rebring());
+    // …and a finger's tap anywhere on the canvas is a tap elsewhere: a tip a deck view showed does not stay over the panel
+    // (cytoscape makes no `click` of a touch, so the document never hears it — critic 11)
+    cy.on('tap', () => { if (TOUCH.matches) untip(); });
     cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
