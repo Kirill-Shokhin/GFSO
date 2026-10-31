@@ -261,7 +261,8 @@ body {
 /* THE POINTER means a click acts — here, anywhere on a row that picks a node (store.js bindFocus); a thing that only
    explains itself on hover keeps the arrow */
 .pickable [data-node] { cursor: pointer; }
-.tl .tl-hand, .glyph .tl-hand { stroke: var(--bg); stroke-width: 2; pointer-events: none; }   /* a cut across a bar: the session handed over there */
+.tl .tl-hand, .glyph .tl-hand { stroke: var(--bg); stroke-width: 2; pointer-events: none; }   /* a cut across a bar: the session passed on there */
+.tl .tl-cut { stroke: transparent; stroke-width: 7; pointer-events: stroke; }   /* the cut's own band to hover: it says itself */
 .tl .tl-exec, .glyph .tl-exec { fill: var(--ink); }
 .tl .tl-consent { fill: var(--bg); stroke: var(--ink); stroke-width: 1.2; }
 .tl .tl-val { fill: var(--ink-faint); }

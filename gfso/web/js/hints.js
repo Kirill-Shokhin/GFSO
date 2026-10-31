@@ -267,18 +267,13 @@ export const PANEL = {
 
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
-// THE CUTS of a stretch — a session passing its work on to a fresh one: how full its context stood then, its share of the
-// model's whole window said as the figure (the author, 2026-10-31: «информации о например размере контекста на обрезанной
-// нет … относительно полного доступного контекста») — each cut its moment, its tokens and its share, up to CUTS; past
-// that, how many and the range, the fullest as the share (51 rows made a tip 2000 px tall). «Passed on», never «handed
-// over», which the key keeps for a node offered. The budget a session ran under is not recorded per session yet.
-const CUTS = 5;
-const cuts = cs => { const seen = cs.filter(c => c.peak && c.window), w = seen[0]?.window;
+// A SESSION PASSING ITS WORK ON to a fresh one — «passed on», never «handed over», which the key keeps for a node offered.
+// The bar says how many times and the range; each cut says itself on its own hover (timeline.js `.tl-cut`).
+const cuts = cs => { const seen = cs.filter(c => c.peak && c.window);
     if (!cs.length) return [];
     if (!seen.length) return [`Passed on ${plural(cs.length, 'time')}, its context not recorded`];
     const lo = Math.min(...seen.map(c => c.peak)), hi = Math.max(...seen.map(c => c.peak));
-    return cs.length <= CUTS ? [`Passed on: context, of the ${tok(w)} window`, ...seen.map(c => meter(`${hm(c.t)}, ${tok(c.peak)}`, c.peak / w))]
-        : [`Passed on ${cs.length} times: context ${tok(lo)}–${tok(hi)} of the ${tok(w)} window`, meter('the fullest', hi / w)]; };
+    return [`Passed on ${plural(cs.length, 'time')}, at ${lo === hi ? tok(hi) : `${tok(lo)}–${tok(hi)}`} of context`]; };
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
@@ -286,6 +281,12 @@ export const TIP = {
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`, waits && `Waits on ${waits}`,
          criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
     rounds: rs => hover(roundsLine(rs)),
+    // ONE CUT, itself: when the session passed its work on, and how full its context stood then — the share of the model's
+    // whole window as the figure (the author, 2026-10-31: «информации о например размере контекста на обрезанной нет …
+    // относительно полного доступного контекста»). The budget it ran under is not recorded per session yet, so not said.
+    cut: (c, n, j, name) => card(`Passed on ${hm(c.t)}${c.peak && c.window ? `\t${pct(c.peak / c.window)}` : ''}`, [name,
+        c.peak && c.window ? meter(`of ${tok(c.window)}`, c.peak / c.window, tok(c.peak)) : 'Its context not recorded',
+        n > 1 && `Cut ${j + 1} of ${n} on this bar`, 'A fresh session went on from its note']),
     // a stretch of work on the timeline
     // …its row's name only where that row's label is off the screen (a phone's deck scrolled sideways — critic 8)
     bar: (x, r, f, name) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [

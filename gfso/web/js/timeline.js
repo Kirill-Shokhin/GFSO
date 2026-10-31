@@ -54,11 +54,13 @@ export function render(el, run, nodes) {
     const ids = rows(run, nodes), name = run.name, work = stretches(run);
     const W = axisWidth(el), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
     const Y = id => TOP + ids.indexOf(id) * ROW + ROW / 2 + 4;
-    // a session handed over to a fresh one is a cut across its bar at the moment it wrote its note; the cut takes no
-    // pointer, so the bar's tip stays on under it (the author: a hover on the cut lost the tip)
+    // a session passed on to a fresh one is a cut across its bar at the moment it wrote its note; the cut says ITSELF on a
+    // narrow band of its own — its moment, its context against the window — as a part of a bar does (the author, 2026-10-31:
+    // «не вижу чтобы на разрезах были свои попапы»), and the bar's tip stays on either side of it (10-28)
     const bar = (s, i) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}" x="${f.X(s.start)}"
         y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(s.end) - f.X(s.start), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`
-        + (s.handed || []).map(({t}) => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${Y(s.node) - BAR[s.kind] / 2 - 2}" y2="${Y(s.node) + BAR[s.kind] / 2 + 2}"/>`).join('');
+        + (s.handed || []).map(({t}, j) => { const x = f.X(t), y1 = Y(s.node) - BAR[s.kind] / 2 - 2, y2 = Y(s.node) + BAR[s.kind] / 2 + 2;
+            return `<g data-c="${i}:${j}"><line class="tl-hand" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/><line class="tl-cut" x1="${x}" x2="${x}" y1="${y1}" y2="${y2}"/></g>`; }).join('');
     // a verdict: a hairline stem up from the bar line, the glyph on top — a mark, not a piece of the work
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
         return `<g class="tl-v" data-v="${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
@@ -103,6 +105,8 @@ export function render(el, run, nodes) {
             const T = run.criteria.track[id], m = T?.marks.find(m => m.t === r.at), f = failedOf(run, id, r.failed);
             return tip(TIP.verdict(r.verdict, r, r.at, f, m, T?.total, named(id)), e);
         }
+        const c = e.target.closest('[data-c]');
+        if (c) { const [i, j] = c.dataset.c.split(':').map(Number), x = work[i]; return tip(TIP.cut(x.handed[j], x.handed.length, j, named(x.node)), e); }
         const s = e.target.closest('.tl-s');
         if (!s) return untip();
         // the round a stretch belongs to: the delivery an execution ended in, the verdict a validation gave
