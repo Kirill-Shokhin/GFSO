@@ -392,7 +392,7 @@ body {
 .ev-group > summary::-webkit-details-marker { display: none; }
 .ev-group.is-hover > summary, .ev-group[open] > summary { background: var(--hair-soft); }
 .ev-node { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ev-state { justify-self: start; font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); padding: 1px 6px; border: 1px solid var(--hair); border-radius: 2px; color: var(--ink-soft); }
+.ev-state { white-space: nowrap; flex: none; justify-self: start; font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); padding: 1px 6px; border: 1px solid var(--hair); border-radius: 2px; color: var(--ink-soft); }
 .ev-rounds { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .ev-why { color: var(--acc); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .ev-group > summary > time { margin-left: auto; white-space: nowrap; }
@@ -1339,6 +1339,9 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .hd-goal .hd-root { flex: 1 0 100%; max-width: none; text-align: left; padding-left: 0; }
     .hd-needs { order: 5; flex: 1 0 100%; justify-content: flex-start; overflow-x: auto; }
     .need { max-width: none; }   /* cut mid-word at the screen's edge (critic 5): whole, the row scrolls */
+    /* an Events head wraps: why the node fails takes a line of its own — on one line it was squeezed to nothing (critic 12) */
+    .ev-group > summary { flex-wrap: wrap; }
+    .ev-why { flex-basis: 100%; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     .toolbar { padding-left: 14px; padding-right: 14px; }
     .sidebar:not(.hidden) { position: absolute; inset: 0; width: auto; z-index: 25; padding: 18px 16px; border-left: none; }
     .reader { left: 0; right: 0; width: auto; z-index: 26; padding: 0 16px 16px; }
