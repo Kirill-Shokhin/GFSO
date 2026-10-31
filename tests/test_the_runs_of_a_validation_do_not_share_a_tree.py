@@ -240,8 +240,9 @@ def test_the_copy_is_a_repository_of_its_own(place, tmp_path):
 def _image() -> str | None:
     if not shutil.which("docker"):
         return None
-    r = subprocess.run(["docker", "image", "inspect", "e3-linux-agent:2"], capture_output=True)
-    return "e3-linux-agent:2" if r.returncode == 0 else None
+    image = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")
+    r = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
+    return image if r.returncode == 0 else None
 
 
 @pytest.mark.skipif(_image() is None, reason="needs docker and the e3-linux-agent:2 image")

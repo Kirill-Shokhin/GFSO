@@ -30,7 +30,7 @@ from gfso.observe import _run
 from gfso.tools_llm import _observe_exact
 from tests.test_the_mode_decides_who_holds_what import _auto_goal
 
-IMAGE = "e3-linux-agent:2"
+IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
 
 
 @pytest.fixture

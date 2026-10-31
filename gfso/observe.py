@@ -74,23 +74,27 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
     crits = list({id(c): c for _, c, _ in probes}.values())
     if unsafe_input_paths(crits):                        # …refused at admission: nothing runs over a truncated corpus
         return []
-    out, ran, t0 = [], {}, time.monotonic()
+    out, ran, t0, copying = [], {}, time.monotonic(), []
     for key, c, p in probes:
         row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect,
                "exact": p.exact}
-        if p.command not in ran:
-            left = budget - (time.monotonic() - t0)
-            ran[p.command] = (_fresh_run(ex, bash, c, p, tree, tmp, min(PROBE_S, left), place) if left >= 1
-                              else {"note": "not run: the observation's time ran out"})
+        # …one run per command OVER ITS INPUTS: keyed by the command alone, a second criterion pinning it over other
+        # inputs read the first one's output — a false FAIL on correct work, a lost one on wrong work (critic B8)
+        if (once := (p.command, p.inputs)) not in ran:
+            # …the copies' time not counted: a large delivered tree spent the budget copying, and its later checks —
+            # the failing one among them — went unrun, the judge's word deciding (critic B8)
+            left = budget - (time.monotonic() - t0 - sum(copying))
+            ran[once] = (_fresh_run(ex, bash, c, p, tree, tmp, min(PROBE_S, left), place, copying) if left >= 1
+                         else {"note": "not run: the observation's time ran out"})
         # …matched against THIS check's expectation: one command pinned twice with two expectations printed
         # once, and the second inherited the first's match (critic over 27de5f8)
-        got = ran[p.command]
+        got = ran[once]
         out.append((key, {**row, **{k: v for k, v in got.items() if k not in ("stdout", "stderr")},
                           **({"matched": printed(got, p.expect)} if "stdout" in got else {})}))
     return out
 
 
-def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str) -> dict:
+def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, copying: list) -> dict:
     """One check from what the system laid: the copy's container started anew — every process and file an earlier
     check left outside the copy gone with the last one (`release`) —, the pinned inputs laid afresh, as the system's,
     in a directory no earlier check could know the name of. A check runs the delivery's code, and what it left steered
@@ -101,10 +105,12 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str) 
     ex.release(tree)
     own = str(Path(tmp) / f"run-{uuid.uuid4().hex[:12]}")
     try:
+        t0 = time.monotonic()
         ex.copy_tree(tree, own)
+        copying.append(time.monotonic() - t0)
         # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
         dirs = materialize_inputs([replace(c, check=(p,))], Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}", ex.files)
-    except OSError as e:
+    except (OSError, subprocess.TimeoutExpired) as e:
         return {"note": f"not run: its copy or its inputs could not be laid ({e})"}
     try:
         d = dirs.get(probe_id(c.name, p))

@@ -116,7 +116,9 @@ and nothing of your disk is mounted into any of its containers:
     commands did otherwise). The system's own exact checks each run in a container started anew —
     every process and file an earlier one left gone with it — over a copy of the built delivery of
     their own and their inputs laid afresh in a directory no earlier check or build could know the
-    name of: no check changes what a later one reads.
+    name of: no check changes what a later one reads, and checks pinning one command over different
+    inputs each run. A check whose copy cannot be made is not observed, the judge's own reading
+    deciding it; the copies' time is not counted against the observation's.
   A copy the delivery itself makes impossible — an object missing or rewritten, a commit not carrying
   the recorded tree, a nested repository or submodule — is not judged: the delivery FAILs with that
   cause, which the executor's next packet states, and nothing of it stands for later rounds; an
@@ -126,7 +128,8 @@ and nothing of your disk is mounted into any of its containers:
   An issuer's contact, whatever it asks, rules on the same checkout of the recorded commit.
   A standing finding whose file the record could not keep (not there when it was filed, or past the
   record's size limit) is shown to the judge, not demanded.
-- A judge's container ends when its run ends, with every process the run left behind.
+- A judge's container ends when its run ends, with every process the run left behind; a node's
+  place, client and commands containers end once it passed and joined, or was cancelled.
 - Every container the system makes holds at most 4 GiB of memory, with no swap past it, and 4096 processes
   (`GFSO_CONTAINER_MEMORY`, `GFSO_CONTAINER_PIDS`; the door and the gateway hold 256 MiB and 256). Past its memory
   the kernel ends the container's largest process: a runaway that is one program fails alone, exit 137, as its own

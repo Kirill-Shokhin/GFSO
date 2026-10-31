@@ -7,6 +7,7 @@ refused, the host's network is shut (Docker Desktop forwards 192.168.65.254 to t
 call is ended inside, its own group and whatever left it — killing the `docker exec` client leaves them running (probes
 P1, P8: docs/notes/ONE_SERVER_PROBES.md).
 """
+import os
 import shutil
 import subprocess
 import time
@@ -18,7 +19,7 @@ import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution, _writable_root, scratch_of
 from gfso.core.types import files_at, hold_places
 
-IMAGE = "e3-linux-agent:2"
+IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
 
 
 @pytest.fixture

@@ -15,7 +15,7 @@ import pytest
 
 import gfso.adapters.execution as E
 import gfso.observe as O
-from gfso.adapters.execution import ContainerExecution
+from gfso.adapters.execution import ContainerExecution, LocalExecution
 from gfso.core.protocol.procedure import inputs_dir_name, materialize_inputs, probe_id
 from gfso.core.types import Criteria, Probe
 from gfso.observe import run_checks
@@ -117,10 +117,10 @@ def test_an_exact_check_the_memory_watch_ended_observed_nothing(monkeypatch, tmp
                                                      "stderr": "cannot exec in a stopped state"})
     p = PIN.check[0]
     monkeypatch.setattr(E, "_WATCH_ENDED", {"check.gfso-exact-x"})
-    got = O._fresh_run(ex, "bash", PIN, p, str(tmp_path), tmp_path, 10, str(tmp_path))
+    got = O._fresh_run(ex, "bash", PIN, p, str(tmp_path), tmp_path, 10, str(tmp_path), [])
     assert "stdout" not in got and "memory watch" in got["note"], got
     monkeypatch.setattr(E, "_WATCH_ENDED", set())
-    assert "stdout" in O._fresh_run(ex, "bash", PIN, p, str(tmp_path), tmp_path, 10, str(tmp_path)), \
+    assert "stdout" in O._fresh_run(ex, "bash", PIN, p, str(tmp_path), tmp_path, 10, str(tmp_path), []), \
         "a check its own code ended is observed as it ended"
 
 
@@ -144,3 +144,16 @@ def test_live_no_exact_check_changes_the_delivery_a_later_one_reads(project, ord
         assert rows["s"].get("matched") and rows["r"].get("matched") is False, rows
     finally:
         project.stop()
+
+
+def test_one_command_pinned_over_two_inputs_is_run_over_each(tmp_path):
+    """Keyed by the command alone, a second criterion pinning it over other inputs read the first one's output: a false
+    FAIL on correct work, a lost one on wrong work (critic B8). On this host: what is run, not where."""
+    small = Criteria("small", check=(Probe("sorts", "sort -n {inputs}/in.txt", "1 2 3", inputs=(("in.txt", "3\n1\n2\n"),),
+                                           exact=True),))
+    big = Criteria("big", check=(Probe("sorts", "sort -n {inputs}/in.txt", "7 8 9", inputs=(("in.txt", "9\n8\n7\n"),),
+                                       exact=True),))
+    (tree := tmp_path / "tree").mkdir()
+    rows = dict(run_checks(LocalExecution(), [("s", small, small.check[0]), ("b", big, big.check[0])], str(tree),
+                           str(tree), tmp_path, 60))
+    assert rows["s"]["matched"] and rows["b"]["matched"], rows

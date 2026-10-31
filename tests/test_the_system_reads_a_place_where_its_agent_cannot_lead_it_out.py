@@ -8,6 +8,7 @@ place it lies in, whose mounts are the bound; a place's root and what stands abo
 are asked in the project's. And a call that did not run is no "not there". Live tests start containers of
 e3-linux-agent:2; the fake-driven one needs none.
 """
+import os
 import shutil
 import subprocess
 import time
@@ -20,7 +21,7 @@ from gfso.adapters.execution import ContainerExecution
 from gfso.adapters.snapshots import _own_git
 from gfso.core.types import PlaceUnavailable
 
-IMAGE = "e3-linux-agent:2"
+IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
 
 
 def _docker() -> bool:

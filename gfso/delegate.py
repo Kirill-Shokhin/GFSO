@@ -1826,6 +1826,8 @@ class Dispatcher:
             if (w := _place_of(self._engine, self._agents, t)) is not None and made(self._engine, w[1]):
                 self._engine.joins.mark_joining(tid, True)
             threading.Thread(target=self._join, args=(tid,), daemon=True).start()
+        if new == State.ABANDONED and tid is not None:
+            threading.Thread(target=self._released, args=(tid,), daemon=True).start()
         self._dirty.set()
 
     def _root_made(self, root) -> None:
@@ -1874,6 +1876,25 @@ class Dispatcher:
                 clear_workspaces(self._engine, self._agents, t)   # tidying, never "did not land" (critic r4, J4)
             except Exception as e:                      # noqa: BLE001
                 log.warning(f"delegate: {tid} landed; its places were not cleared: {e}")
+        self._released(tid)
+
+    def _released(self, tid) -> None:
+        """A node that ended — passed and joined, or cancelled — holds no container any more: its place's, its client's
+        and its commands' end, its directories and CLI state kept, and a node reopened later starts them again on its
+        next session. Standing until the project stopped, a done node's processes and memory counted against every
+        other's (SECURITY.md)."""
+        t = self._engine.graph.get_task(TaskId(tid))
+        if t is None or t.state not in (State.DONE, State.ABANDONED) or str(tid) in self._engine.joins.joining_nodes():
+            return
+        # …the place's own node alone: a scope's member works in its top's place, and its PASS ended the containers
+        # the scope's rework was running in (critic B8)
+        if (session_scope(self._engine, self._agents, t) or t).id != t.id:
+            return
+        try:
+            if (w := _place_of(self._engine, self._agents, t)) is not None and made(self._engine, w[1]):
+                execution_of(self._engine, self._agents).release(w[1])
+        except Exception as e:                          # noqa: BLE001 — tidying, said, never raised into a thread
+            log.warning(f"delegate: {tid} ended; its place's containers were not ended: {e}")
 
     def _rest(self) -> None:
         """A stopped project's containers ended once, when nothing of it runs any more (`run_state`'s `stopped`): its

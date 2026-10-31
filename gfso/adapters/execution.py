@@ -2050,8 +2050,9 @@ class PlaceContainer(ContainerExecution):
     validation's batches each in a batch of its own —, mounting that and a temp of their own alone (`_mounts`), and a
     delivery that could not be checked out is not judged (`apart`). The base's CLI state is its root executor's alone:
     a parent consents in its own place, the plan's place reader works in a temp of its own, a base that is no git
-    repository is refused. NOT HELD YET: a tool-loop provider's issuer reads a node's inputs by its shell only; a done
-    node's container stands until its directories go or the project stops. A judge's ends with its run (`ExecutionPort.release`)."""
+    repository is refused. NOT HELD YET: a tool-loop provider's issuer reads a node's inputs by its shell only. A judge's
+    container ends with its run (`ExecutionPort.release`), a node's when it passed and joined or was cancelled
+    (`delegate.Dispatcher._released`)."""
     commands_apart = True
 
     def __init__(self, project: ContainerExecution, rw: Path, agent: str | None = None):

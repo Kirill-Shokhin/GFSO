@@ -5,6 +5,7 @@ The author, 2026-10-28: «вкл выкл сети должен быть руб�
 stands on a network with no route out, no DNS, no IPv6, and under an allowlist one gateway outside it reaches only the
 named hosts, the handshake naming the host asked for.
 """
+import os
 import shutil
 import socket
 import subprocess
@@ -16,7 +17,7 @@ import pytest
 import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution
 
-IMAGE = "e3-linux-agent:2"
+IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
 
 
 @pytest.fixture(autouse=True)
