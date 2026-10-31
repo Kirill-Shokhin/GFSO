@@ -3,12 +3,14 @@
 // A watcher owned by an element lives as long as what is drawn there: the deck releases its view before it
 // draws the next one — a watcher left from another tab threw on markup that was gone and silenced every
 // watcher after it.
-import {tapTip} from './tip.js';
+import {TOUCH, hasTip, untip} from './tip.js';
 const subs = new Map(), state = {hover: null, select: null, picks: 0};   // picks: selections made so far
 
 export const focus = () => state;
 export const watch = (fn, owner = null) => (subs.set(fn, owner), () => subs.delete(fn));
-export const release = root => subs.forEach((owner, fn) => owner && root.contains(owner) && subs.delete(fn));
+// …and the pointer handlers a view set on it: the next view may bind an element inside, and the old ones fired on (critic 10)
+export const release = root => { subs.forEach((owner, fn) => owner && root.contains(owner) && subs.delete(fn));
+    root.onclick = root.onmousemove = root.onmouseleave = null; root._tapped = null; };
 export function point(key, id) {
     if (state[key] === id) return;
     state[key] = id;
@@ -41,9 +43,18 @@ export function bringSelected(el, find) {
     watch((st, key) => (key === 'select' || key === 'bring') && bring(), el);
 }
 
+// WHERE NOTHING HOVERS (a finger), the first tap on a thing that has a tip shows it, and a second tap on that same thing acts:
+// a tap acted at once and the node's panel covered the screen, so no tip could ever be read on a phone (the author,
+// 2026-10-31). The thing, not the row — a cut and the bar beside it are two tips; a thing with no tip acts on its first tap.
+export function firstTap(el, e) {
+    if (TOUCH.matches && el._tapped !== e.target && hasTip(e)) return (el._tapped = e.target, e.showTip = true, true);
+    el._tapped = null;
+    e.tipped = true;                       // acted on: the document's tap does not show a tip over what it opened
+    return false;
+}
+
 // Any element carrying `data-node` inside `el` takes part: hovering it points, clicking selects, and
 // it wears `is-hover` / `is-select` while it is the one pointed at. `onMove(e)` adds the view's own tip.
-const TOUCH = matchMedia('(hover: none)');      // a screen with no pointer that hovers
 export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     el.classList.add('pickable');           // every [data-node] in it selects its node on a click: gfso.css gives it the pointer
     const paint = st => {
@@ -55,18 +66,12 @@ export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
     };
     el.onmousemove = e => (point('hover', e.target.closest('[data-node]')?.dataset.node || null), onMove(e));
     el.onmouseleave = () => (point('hover', null), onLeave());
-    // …and where nothing hovers (a finger), the first tap on a thing shows what a pointer's hover would — its tip — and a second
-    // tap on the same thing selects its node: a tap selected at once and the node's panel covered the screen, so no row's tip
-    // could ever be read on a phone (the author, 2026-10-31). The thing, not the row: a cut and the bar beside it are two tips
     el.onclick = e => {
         const n = e.target.closest('[data-node]');
         if (!n) return void (el._tapped = null);
-        if (TOUCH.matches && el._tapped !== e.target) {
-            el._tapped = e.target;
-            return void (point('hover', n.dataset.node), onMove(e), tapTip(e));
-        }
-        el._tapped = null;
-        if (TOUCH.matches) onLeave();          // the tip a tap showed does not stay over the panel it opens
+        if (TOUCH.matches) point('hover', n.dataset.node), onMove(e);
+        if (firstTap(el, e)) return;
+        if (TOUCH.matches) onLeave(), untip();          // the tip a tap showed does not stay over the panel it opens
         point('select', n.dataset.node);
     };
     watch(paint, el);

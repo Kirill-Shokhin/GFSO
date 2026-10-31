@@ -273,7 +273,8 @@ const cuts = cs => { const seen = cs.filter(c => c.peak && c.window);
     if (!cs.length) return [];
     if (!seen.length) return [`Passed on ${plural(cs.length, 'time')}, its context not recorded`];
     const lo = Math.min(...seen.map(c => c.peak)), hi = Math.max(...seen.map(c => c.peak));
-    return [`Passed on ${plural(cs.length, 'time')}, at ${lo === hi ? tok(hi) : `${tok(lo)}–${tok(hi)}`} of context`]; };
+    const w = seen[0].window, at = (a, b, f) => a === b ? f(a) : `${f(a)}–${f(b)}`;
+    return [`Passed on ${plural(cs.length, 'time')}, at ${at(lo, hi, tok)}: ${at(lo / w, hi / w, pct)} of the ${tok(w)} window`]; };
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
@@ -286,7 +287,7 @@ export const TIP = {
     // относительно полного доступного контекста»). The budget it ran under is not recorded per session yet, so not said.
     cut: (c, n, j, name) => card(`Passed on ${hm(c.t)}${c.peak && c.window ? `\t${pct(c.peak / c.window)}` : ''}`, [name,
         c.peak && c.window ? meter(`of ${tok(c.window)}`, c.peak / c.window, tok(c.peak)) : 'Its context not recorded',
-        n > 1 && `Cut ${j + 1} of ${n} on this bar`, 'A fresh session went on from its note']),
+        n > 1 && `${j + 1} of ${n} on this bar`, 'A fresh session went on from its note']),
     // a stretch of work on the timeline
     // …its row's name only where that row's label is off the screen (a phone's deck scrolled sideways — critic 8)
     bar: (x, r, f, name) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
