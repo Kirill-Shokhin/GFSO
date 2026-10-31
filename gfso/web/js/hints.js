@@ -209,9 +209,10 @@ export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(na
 export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
 export const failedWords = ({own, edges}) =>
     [own.join(' · '), edges.length && `${edges.join(', ')}: ${EDGE_NOTE}`].filter(Boolean).join('; ') || 'no criterion named';
-// what a verdict failed: one criterion in one line, several under a line that counts them — «Failed (1): – x» read badly
+// what a verdict failed: one criterion in one line, several marked under a line that counts them («Failed (1): – x» read
+// badly; unmarked, the next row read as one more criterion — critic 17)
 const failedRows = ({own, edges}) => { const all = [...own, ...edges.map(c => `${c}: ${EDGE_NOTE}`)];
-    return all.length === 1 ? [`Failed: ${all[0]}`] : all.length ? [`Failed ${all.length} criteria`, ...all] : []; };
+    return all.length === 1 ? [`Failed: ${all[0]}`] : all.length ? [`Failed ${all.length} criteria:`, ...all.map(c => `– ${c}`)] : []; };
 
 // ── the deck's strip ──
 // what a node at work is doing: its process's verb, else that verb's kind of session (run.js PROC_KIND), else — no process
@@ -280,13 +281,18 @@ export const TIP = {
     // a node offered), how full its context stood then and the budget it ran under, both on the one scale of its model's
     // window (the author, 2026-10-31: «есть точка бюджета есть фактическая остановка и все это относительно полного
     // доступного контекста»; «вместо того чтобы показывать инфу на самом исполнении, она отображается между ними»)
-    session: (m, n, p, r, name, who) => card(`${cap(KIND[m.kind].name)}, ${dur(m.end - m.start)}${m.cost ? `\t${usd(m.cost)}` : ''}`, [
-        name, `Session ${p + 1} of ${n}, ${hm(m.start)}–${m.open ? 'now' : hm(m.end)}`, m.tokens && `${tok(m.tokens)} tokens`, who,
-        r && `Round ${r.n}`, m.resumed && 'Continued the session before it',
-        ...(!m.handover ? [] : m.peak && m.window ? [`Passed on at ${hm(m.end)}, of the ${tok(m.window)} window:`,
+    // …and the whole stretch it is part of in one line (`x`): its total no longer has a piece of its own (critic 17); a
+    // validation's piece keeps the round's verdict and what failed, its own result
+    session: (m, x, p, r, f, name, who) => card(`${cap(KIND[m.kind].name)}, ${dur(m.end - m.start)}${m.cost ? `\t${usd(m.cost)}` : ''}`, [
+        name, `${hm(m.start)}–${m.open ? 'now' : hm(m.end)}`, m.tokens && `${tok(m.tokens)} tokens`, who,
+        r && (m.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : `Round ${r.n}`), m.kind === 'val' && f && failedRows(f),
+        m.resumed && 'Continued the session before it',
+        ...(!m.handover ? [] : m.peak && m.window ? [`Passed on, of the ${tok(m.window)} window:`,
             meter('stopped at', m.peak / m.window, tok(m.peak)),
             m.budget ? meter('its budget', m.budget / m.window, tok(m.budget)) : 'Its budget not recorded (an older build)']
-            : [`Passed on at ${hm(m.end)}, its context not recorded`])]),
+            : ['Passed on, its context not recorded']),
+        `Session ${p + 1} of ${x.members.length} in a stretch of ${dur(x.end - x.start)}${x.cost ? `, ${usd(x.cost)}` : ''}`,
+        m.priced === false && 'No cost recorded for this call']),
     // a stretch of work on the timeline
     // …its row's name only where that row's label is off the screen (a phone's deck scrolled sideways — critic 8)
     // …ITS OWN only: a node's sessions read the same line after line — one executor's long id, a round's verdict and its

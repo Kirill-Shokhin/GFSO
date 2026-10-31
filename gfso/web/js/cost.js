@@ -3,7 +3,8 @@
 import {esc, tally, lasting} from './dom.js';
 import {TIP, KIND, levelName, sessionsOf} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
-import {dur, trim, money as reported, NOT_REPORTED, tok, commonPrefix} from './fmt.js';
+import {dur, trim, money as reported, NOT_REPORTED, tok, bare} from './fmt.js';
+import {S} from './state.js';
 import {concurrency} from './run.js';
 
 
@@ -37,8 +38,8 @@ export function render(el, run, nodes) {
     const node = c.byNode, level = c.byDepth;
     // An assignee (Del) is who is accountable for the nodes, not one process: its sessions overlap, so it
     // is shown by how many it ran and how many at once — never as one bar of hours that reads as serial.
-    const ids = Object.keys(c.byAgent), cut = commonPrefix(ids);
-    const agentRows = ids.map(id => ({id, label: id.slice(cut) || id, parts: c.byAgent[id],
+    const ids = Object.keys(c.byAgent), cut = ids.some(id => bare(id, S.project) !== id);
+    const agentRows = ids.map(id => ({id, label: bare(id, S.project), parts: c.byAgent[id],
         peak: concurrency(run.sessions.filter(s => (s.agent || '—') === id && !s.open)).peak}))
         .sort((a, b) => b.peak - a.peak || a.label.localeCompare(b.label));
     const nodeRows = Object.entries(node).map(([id, parts]) => ({id, label: name(id), parts}))
@@ -59,7 +60,7 @@ export function render(el, run, nodes) {
             ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`, p => money([p]), 'cost')}
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`, p => dur(p.busy), 'busy')}
             ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '', p => money([p]), 'cost')}
-            ${bars(`sessions by assignee${cut ? ` <span${TIP.prefix(ids[0].slice(0, cut))}>(${esc(ids[0].slice(0, cut))}…)</span>` : ''}`, agentRows, p => p.calls,
+            ${bars(`sessions by assignee${cut ? ` <span${TIP.prefix(`${S.project}-`)}>(${esc(S.project)}-…)</span>` : ''}`, agentRows, p => p.calls,
                    (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, () => '', (p, k) => sessionsOf(k, p.calls), 'calls')}
         </div></div>`;
     bindFocus(el);
