@@ -25,7 +25,8 @@ const tipOf = e => { const t = e.target.closest?.('[data-tip]');
 const own = e => {
     if (e.tipped) return;
     const t = tipOf(e);
-    if (t) { const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); mine = true; }
+    if (t) { const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); mine = true;
+        if (TOUCH.matches) shown = thing(e); }   // …a long press's tip too is what is in sight (critic 14)
     else if (mine) { untip(); mine = false; }
 };
 const drop = () => { if (mine) { untip(); mine = false; } };
@@ -48,13 +49,14 @@ document.addEventListener('click', e => { if (!TOUCH.matches) return;
 // its siblings and its own data (a mark's round, a cut's, a bar's index): never the element, which a redraw (a token tick,
 // the run read again) replaces between two taps (critic 12); never its tip's heading, which two rounds of one node share and
 // an open bar changes as it grows (critic 13). A redraw of the same data gives the same path.
-const thing = e => { const n = e.target.closest?.('[data-node]'), path = [];
+// …up to the page, not the node: a node's coverage cells, or its cost bar and its time bar, are two things (critic 14); an
+// element with data of its own is known by it, one without by its rank — a row's rank moved with the axis ticks before it
+const thing = e => { const path = [];
     for (let x = e.target; x && x !== document.body; x = x.parentElement) {
         const data = Object.entries(x.dataset || {}).filter(([k]) => k !== 'tip').map(([k, v]) => `${k}=${v}`).join(',');
-        path.push(`${x.tagName}${x.parentElement ? [...x.parentElement.children].indexOf(x) : ''}${data && `[${data}]`}`);
-        if (x === n) break;
+        path.push(`${x.tagName}${data ? `[${data}]` : x.parentElement ? [...x.parentElement.children].indexOf(x) : ''}`);
     }
-    return `${n?.dataset.node || ''}|${path.join('<')}`; };
+    return path.join('<'); };
 let shown = null, prior = null;
 // …and what stood in sight when this tap BEGAN: a view clearing its tip during the tap does not disarm it (critic 12)
 addEventListener('pointerdown', () => { prior = box().classList.contains('visible') ? shown : null; }, true);
