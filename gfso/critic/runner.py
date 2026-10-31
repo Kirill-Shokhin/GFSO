@@ -526,6 +526,7 @@ def _numbered(entries, names: list) -> list:
     for n in names:
         by_form.setdefault(form(n), []).append(n)
     def same(o):
+        """The entry keyed to the one unanswered criterion its text reads as, word form apart — else as it stands."""
         t = str(o["criterion"])
         if t in names:
             return o
