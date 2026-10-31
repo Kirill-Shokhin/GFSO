@@ -4,7 +4,7 @@ import {$, ages} from './dom.js';
 import {TASK, GOAL, getJSON, singleFlight} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
-import {loadCheckMap, terminal} from './vocab.js';
+import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {drawHeader, drawQuality, toggleReports, stopRun, startRun} from './header.js';
@@ -18,7 +18,7 @@ import {connectWS} from './live.js';
 import {askProjectName} from './overlays.js';
 import {mountHints} from './hints.js';
 import {drawPlanning} from './planning.js';
-import {onReading} from './resources.js';
+import {onReading, rereadResources} from './resources.js';
 
 // THE REFRESHES, each a read of the page's model (model.js) and then the drawing of what it read. SERIALISED (api.js
 // singleFlight): a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each other.
@@ -32,7 +32,9 @@ S.reload = async () => { await refreshAll(); if (focus().select) await selectTas
 const projects = () => refreshProjects().then(onInflight);
 // news on the narration re-reads the run, once a burst of it has settled
 let soon = null;
-const later = () => (clearTimeout(soon), soon = setTimeout(() => refreshDeck().then(drawPlanning), 1500));
+// …and the open node's panel with it: a dispute, a verdict or a validation can change what it says with no transition
+const later = () => (clearTimeout(soon), soon = setTimeout(() => {
+    refreshDeck().then(drawPlanning); if (focus().select) selectTask(focus().select); }, 1500));
 // what reads the run once the deck has rebuilt it
 const afterDeck = () => { annotate(); refreshHeader(); drawPlanning(); if (focus().select) resign(focus().select); };
 
@@ -47,7 +49,7 @@ async function applyInFlight(list) {
     rebuildRun(); onInflight(); annotate();      // what runs now, read again from the run's last read
     // a process starting or ending here re-reads the graph and the header: a plan authored, or a session ending,
     // moves no transition this page hears, and the header said "no goal yet" through a whole planning (live run)
-    if (here() !== was) { await refreshAll(); refreshDeck().then(afterDeck); }
+    if (here() !== was) { await S.reload(); refreshDeck().then(afterDeck); }
     if (S.runState?.state === 'stopping') refreshHeader();   // until the last session the stop let finish has ended
 }
 const readInFlight = () => getJSON('/api/runtime').then(r => applyInFlight(r.in_flight))
@@ -106,9 +108,22 @@ addEventListener('popstate', () => {
     opened = false; point('select', null);
 });
 
-const LIVE = {
+const NEWS = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
-    pipeline: d => { if (onPipeline(d)) later(); if (d.source === 'pause') { refreshHeader(); projects(); } },
+    pause: () => { refreshHeader(); projects(); },
+    // a mode or its settings set anywhere: who holds what, what each node offers, the goal form's readiness
+    mode: () => { S.reload(); goal.recheckHolds(); },
+    tech_report: () => refreshHeader(),
+    // a call booked: a project that "never ran" has run now, and its Delete goes
+    usage: () => { if (!$('project-delete').hidden) projects(); },
+    // the plan changed with no transition — a Dep edge, an assignee, a criterion, a node created, an agent registered
+    graph: () => { S.reload(); goal.recheckHolds(); },
+};
+const LIVE = {
+    // NEWS ON THE NARRATION re-reads what it changed — no reload is ever needed to see what the server holds (the author,
+    // 2026-10-31: «если пользователю требуется руками нажать обновление страницы - это либо перезапущен сервер, либо баг»)
+    pipeline: d => { if (onPipeline(d)) later(); NEWS[d.source]?.(); },
+    reject: later,                                     // a refused move is in the run's log: its row comes in
     projects,                                          // a project appeared
     resources: onReading,                              // the server took a new reading of Docker
     // this tab's own project came to exist while the feed was refused: nothing of it was pushed here, so read it all
@@ -116,7 +131,7 @@ const LIVE = {
     inflight: d => applyInFlight(d.in_flight),         // a process of the server started or ended
     opened: () => readInFlight(),
     // the feed was lost and is back: what happened meanwhile reached no one, so read it all once
-    async resync() { await readInFlight(); await refreshAll(); refreshDeck().then(afterDeck); },
+    async resync() { await readInFlight(); await S.reload(); refreshDeck().then(afterDeck); rereadResources(); if (!FM.loaded) loadCheckMap(); },
     async transition(d) {
         const t = S.tasks.find(x => x.id === d.task_id);
         if (t) t.state = d.new_state;                  // the tooltip reads the cache

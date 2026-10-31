@@ -25,6 +25,8 @@ export function readResources(then) {
     pending.then(then);
 }
 export const onReading = take;                        // main.js: the live feed's `resources`
+// …and after the feed was lost a reading may have been missed: the server pushes only a CHANGED one, so ask once more
+export const rereadResources = () => { last = null; if (shown.size) readResources(() => shown.forEach(f => f())); };
 export const whileShown = f => shown.add(f);
 
 const mark = (figure, label, counted) => tally(figure, label, RES.counted(counted));

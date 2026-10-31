@@ -109,6 +109,7 @@ export async function loadCheckMap() {
         const m = await getJSON('/api/check_map');
         FM.route = m.check_to_fm || {};
         FM.label = m.fm_label || {};
+        FM.loaded = true;
     } catch (e) { /* offline: render the codes bare rather than a wrong name */ }
 }
 // Absent from the map ≠ mapped to nothing: CHECK-1c is an engineering addition with no canon row,

@@ -33,6 +33,8 @@ export async function openGoal() {
     check();
 }
 export const closeGoal = () => { panel().hidden = true; };
+// a mode set or an agent registered while the form is open: what each mode needs is read again (main.js NEWS)
+export const recheckHolds = () => { if (!panel().hidden) whoHolds().then(check); };
 
 // ── who holds the work: shown, not chosen here — a mode is the user's choice made once before the plan, and
 // set by their agent (`set_mode`) once its executors and validator are registered; the page reads what each
