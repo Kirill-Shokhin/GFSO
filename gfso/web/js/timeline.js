@@ -25,6 +25,9 @@ function rows(run, nodes) {
 
 // One bar per piece of work: the engine validates a delivery in batches (`validation_batch` probes a session), and
 // a call may be retried — so the sessions of one kind on one node that no delivery or verdict separates are ONE
+// a handover: when the session wrote its note, and how full its context stood then against its model's whole window
+const cut = s => ({t: s.end, peak: s.peak, window: s.window});
+
 // stretch of work, drawn once; its batches are counted in the tip, its cost summed.
 function stretches(run) {
     const cuts = id => (run.rounds[id] || []).flatMap(r => [r.delivered, r.at]).filter(Boolean);
@@ -38,8 +41,8 @@ function stretches(run) {
                                  open: last.open || s.open, parts: last.parts + 1, busy: last.busy + (s.ms ?? s.end - s.start),
                                  continued: (last.continued || 0) + (s.resumed ? 1 : 0)});
             if (s.agent && !last.agents.includes(s.agent)) last.agents.push(s.agent);
-            if (s.handover) last.handed.push(s.end);
-        } else out.push({...s, parts: 1, busy: s.ms ?? s.end - s.start, agents: s.agent ? [s.agent] : [], handed: s.handover ? [s.end] : []});
+            if (s.handover) last.handed.push(cut(s));
+        } else out.push({...s, parts: 1, busy: s.ms ?? s.end - s.start, agents: s.agent ? [s.agent] : [], handed: s.handover ? [cut(s)] : []});
     }
     // what is left of its processes once those that continued or were handed over are counted: retries
     for (const x of out) x.retried = x.parts - 1 - (x.continued || 0) - x.handed.length;
@@ -54,7 +57,7 @@ export function render(el, run, nodes) {
     // pointer, so the bar's tip stays on under it (the author: a hover on the cut lost the tip)
     const bar = (s, i) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}" x="${f.X(s.start)}"
         y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(s.end) - f.X(s.start), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`
-        + (s.handed || []).map(t => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${Y(s.node) - BAR[s.kind] / 2 - 2}" y2="${Y(s.node) + BAR[s.kind] / 2 + 2}"/>`).join('');
+        + (s.handed || []).map(({t}) => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${Y(s.node) - BAR[s.kind] / 2 - 2}" y2="${Y(s.node) + BAR[s.kind] / 2 + 2}"/>`).join('');
     // a verdict: a hairline stem up from the bar line, the glyph on top — a mark, not a piece of the work
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
         return `<g class="tl-v" data-v="${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');

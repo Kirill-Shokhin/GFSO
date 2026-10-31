@@ -278,9 +278,13 @@ export const TIP = {
     bar: (x, r, f) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
         `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, x.agents.length && x.agents.join(', '),
         r && `Round ${r.n}${r.verdict ? ' → ' + r.verdict : ''}`, f && failedRows(f),
-        x.parts > 1 && `${x.parts} processes, ${dur(x.busy)} busy: ${x.kind === 'val' ? 'the validator works in batches of probes'
-            : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.handed?.length && `${x.handed.length} handed over`,
-               x.retried > 0 && `${x.retried} retried`].filter(Boolean).join(', ')}`,
+        x.parts > 1 && [`${x.parts} processes, ${dur(x.busy)} busy`, x.kind === 'val' ? 'the validator works in batches of probes'
+            : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`,               x.retried > 0 && `${x.retried} retried`].filter(Boolean).join(', ')].filter(Boolean).join(': '),
+        // each cut: when it handed over, and how full its context stood then — a share of the model's whole window
+        // (the author, 2026-10-31: «информации о например размере контекста на обрезанной нет … относительно полного
+        // доступного контекста»); the budget it ran under is not recorded per session yet, so it is not said
+        ...(x.handed || []).map(c => c.peak && c.window ? meter(`Handed over ${hm(c.t)}`, c.peak / c.window, `${tok(c.peak)} of ${tok(c.window)}`)
+            : `Handed over ${hm(c.t)}, its context not recorded`),
         x.priced === false && 'No cost recorded for this call']),
     // a verdict's mark, on the timeline or a progress track
     verdict: (signal, r, t, f, m, total) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
