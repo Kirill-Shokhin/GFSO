@@ -179,14 +179,14 @@ export async function initGraph() {
     // drawn at once and again after it, a node was zoomed twice (author, 2026-10-25)
     let wantT;
     const framed = () => { clearTimeout(wantT); if (want) { const z = cy.zoom(), p = {...cy.pan()}; fitCapped(want, 40);
-        if (cy.zoom() < FLOOR) { cy.zoom(FLOOR); cy.center(want.first()); }
+        if (cy.zoom() < FLOOR) { cy.zoom(FLOOR); cy.center(want.length > 1 ? want.slice(1) : want); }
         const to = {zoom: cy.zoom(), pan: {...cy.pan()}}; cy.viewport({zoom: z, pan: p}); cy.animate({...to, duration: 200}); } want = null; };
     const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, 450); };
     // a double-click on a node shows it with its parts: a folded node unfolds first, then the subtree is framed
-    const opening = async id => { if (foldOf(id).n) { unfolded.add(id); await redraw(); }
+    const opening = async id => { if (foldOf(id).n) { unfolded.add(id); await redraw(); fresh = false; }
         framing(subtree(cy.getElementById(id))); };
     cy.on('dbltap', 'node', evt => opening(evt.target.id()));
-    $('cy').addEventListener('click', e => { const id = e.target.closest?.('.cy-fold')?.dataset.node; if (id) { e.stopPropagation(); opening(id); } });
+    $('cy').addEventListener('pointerup', e => { const id = e.target.closest?.('.cy-fold')?.dataset.node; if (id) { e.stopPropagation(); opening(id); } });
     // …the background's: the plan as first drawn, its parts folded again
     cy.on('dbltap', async evt => { if (evt.target !== cy) return;
         if (unfolded.size) { unfolded.clear(); await redraw(); } framing(cy.elements()); });
@@ -264,11 +264,11 @@ function placeBadges() {
         const b = n.renderedBoundingBox(BODY), f = foldOf(id);
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
-        const tag = f.n ? `<div class="cy-fold" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px"${TIP.fold}>${tally(f.n, 'parts')}`
+        const tag = f.n ? `<div class="cy-fold" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px"${TIP.fold}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
             + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i>${tally(f.work.length, 'at work')}` : '')
-            + (f.decide.length ? tally(f.decide.length, 'wait on a decision') : '')
+            + (f.decide.length ? tally(f.decide.length, f.decide.length > 1 ? 'wait on a decision' : 'waits on a decision') : '')
             + (f.shut.length ? tally(f.shut.length, 'closed by FAIL') : '')
-            + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'failing')}</span>` : '') + '</div>' : '';
+            + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'sent back')}</span>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const t = taskOf(id), shut = t.state === 'DONE' && t.done_reason === 'FAIL';
@@ -327,7 +327,8 @@ export async function drawGraph(found) {
             // framed once the layout knows where things are — and the read resolves only then, so a caller
             // measuring the drawing measures the finished one
             await new Promise(done => { lay.one('layoutstop', () => { kept ? cy.viewport(kept) : (home(), fresh = true); done(); }); lay.run(); });
-            if (foldedFor !== S.project) { foldedFor = S.project; cy.fit(undefined, 30);
+            const plan = `${S.project}|${g.nodes.map(n => n.id).sort().join('|')}`;
+            if (foldedFor !== plan) { foldedFor = plan; cy.fit(undefined, 30);
                 folding = cy.zoom() < FLOOR && g.nodes.some(n => n.parent_id && g.nodes.find(p => p.id === n.parent_id)?.parent_id);
                 if (folding) return redraw(); home(); }
         }
