@@ -21,6 +21,7 @@ Single-level by definition (one node → its children); recurse by calling it ag
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -237,9 +238,29 @@ def _fields(fixed: dict) -> list:
     return [k for k in fixed if k in AUDIT_SCHEMA["properties"] and fixed[k] is not None]
 
 
-def _patched(spec: dict, fixed: dict) -> dict:
-    """PATCH semantics: a re-emitted top-level field replaces the old one wholesale; omitted fields kept."""
-    return {**spec, **{k: fixed[k] for k in _fields(fixed)}}
+#: the list fields a patch reads by their key — a part by its id, a root criterion by its name
+_KEYED = {"subtasks": "id", "root_criteria": "name"}
+
+
+def _names(text: str, name: str) -> bool:
+    """Does `text` name `name` as a whole word (`b` is not named by «CHECK-1b»)?"""
+    return re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", text) is not None
+
+
+def _patched(spec: dict, fixed: dict, named: str = "") -> dict:
+    """PATCH semantics: a re-emitted field replaces the old one, omitted fields kept. A part or root criterion the patch
+    leaves out is dropped only where the findings it answers (`named`) name it — taken wholesale, a repair over a few
+    refused probes re-emitted 3 of a plan's 38 criteria and the rest were gone without a word (V3_cc2, haiku,
+    2026-11-01); one a finding names (an orphan part, a duplicate) leaves as the repair meant."""
+    out = {**spec}
+    for k in _fields(fixed):
+        out[k] = fixed[k]
+        key = _KEYED.get(k)
+        if key and isinstance(fixed[k], list) and isinstance(spec.get(k), list):
+            kept = {x.get(key) for x in fixed[k] if isinstance(x, dict)}
+            out[k] = fixed[k] + [x for x in spec[k] if isinstance(x, dict) and x.get(key) not in kept
+                                 and not (x.get(key) and _names(named, str(x.get(key))))]
+    return out
 
 
 def _repaired_before_build(spec: dict, request: str, llm, executor: str, progress, contract_fixed: bool,
@@ -262,10 +283,17 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
                   + " | ".join(x[:140] for x in refused), progress)
         fixed = _audit_fix(llm, request, spec, refused, executor) or {}
         tag_stage(llm, f"{Stage.AUDIT_FIX}-pre-{r + 1}")
-        spec = _patched(spec, fixed)
+        spec = _patched(spec, fixed, " | ".join(map(str, refused)))
         if any(k in fixed for k in _CRITERIA_FIELDS):
             agree.judge(spec)
     return spec
+
+
+def repaired_before_build(spec: dict, request: str, llm, executor: str, progress, engine: Engine, root_id: str) -> dict:
+    """`spec` with what the admission would refuse repaired by `llm` before anything is built — the refine of a plan
+    file the go refused, whose refusals are the round's first findings (`planning.refine`)."""
+    return _repaired_before_build(spec, request, llm, executor, progress, False,
+                                  _Agreement(llm, engine, root_id, request, False, False))
 
 
 def _admitted_as_it_stands(spec: dict, request: str, root_id: str, assignee: str, max_iterations, child_assignee) -> None:
@@ -324,7 +352,8 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             tag_stage(llm, f"{Stage.AUDIT_FIX}-{r + 1}")
             if not fixed:
                 break  # repair call failed — return the honest residue
-            spec, patched = hold(_patched(spec, fixed)), [k for k in fixed if k in _fields(fixed)]
+            spec = hold(_patched(spec, fixed, " | ".join(map(str, problems))))
+            patched = [k for k in fixed if k in _fields(fixed)]
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
             if any(k in fixed for k in _CRITERIA_FIELDS):
                 agree.judge(spec)       # before the rebuild: what the patch rewrote still differs from the graph

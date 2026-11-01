@@ -45,15 +45,19 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
     """The plan file after the customer's `note`: one refine round over it with the note as its finding, the answer
     being what the round changed (or that it changed nothing), the review run again over the result."""
     p = artifact.parse(text)
-    e = _scratch()
-    _, rid, _ = build_graph_live(p["spec"], p["goal"], e, root_id=ROOT_ID, assignee=agent_id())
-    before = extract_spec(e, str(rid))          # the plan as built, the shape the round's own result comes back in
+    e, llm = _scratch(), _decompose.default_llm(model, execution=execution)
+    # …a file the admission refuses is this round's to repair, never a dead end: the go's refusal sends the customer
+    # here, and the round itself built the file first and died on the same refusal (V3_cc2, 2026-11-01)
+    spec = _decompose.repaired_before_build(p["spec"], p["goal"], llm, p["executor"], progress, e, ROOT_ID)
+    _, rid, _ = build_graph_live(spec, p["goal"], e, root_id=ROOT_ID, assignee=agent_id())
+    before = p["spec"]                          # the plan as the customer has it — what the answer says changed
     open_ = [f"[undecided] {g.get('obligation')} — admits: {g.get('admits')}"
              for g in p["review"].get("undecided_obligations") or ()]
     findings = "# THE CUSTOMER'S NOTE ON THIS PLAN\n" + note.strip() + (
         "\n\n# OPEN LEVEL-2 FINDINGS the plan was reviewed with\n" + "\n".join(open_) if open_ else "")
-    changed, _, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), _decompose.default_llm(model, execution=execution),
+    changed, _, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), llm,
                                            findings, progress=progress, executor=p["executor"])
+    changed = changed or spec != p["spec"]        # …the repair before the build changed it too
     after = extract_spec(e, str(rid))
     # …said as what it is: one round read the note TOGETHER with the review's open findings, so a change is the round's,
     # not proven the note's; and an unchanged plan is the system's answer to the note, the review below its reasons

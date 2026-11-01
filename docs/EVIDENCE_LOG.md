@@ -3759,11 +3759,12 @@ CATCH (near-misses a public check fails while its base passes), UNDECIDED (crite
 | sonnet on the revised pipeline | ≈ sonnet | 6.25 | 4.5/7 | 0.30–0.36 | 64 · 34 |
 | sonnet, an exact check demanded per criterion | — | 1–4 (one plan) | 1.5/7 | 0.07 | 22 · 44 |
 | sonnet, + checks run on the gcc reference and fed back (1 round · ≤ 3 rounds) | — | 12.5 · 15.5 | 2 · 1.5 | 0.15 · 0.16 | 41 · 8 → 27 · 8 |
+| revised pipeline, haiku 5.5, + the same reference rounds | — | — | 5 · 4 · 4 | 0.02 · 0.05 · 0 | 5 · 20 · 13 |
 
 - **The author model carries the content; the form of a plan's checks is the pipeline's and partly the model's too.**
   Through the same pipeline the stronger model writes expectations in prose a validator decides by reading; demanded exactness, it
   met the demand in form — checks through tools the statement does not define, prose in an `exact` field — not in truth.
-- **Grounding checks on a reference does not converge.** Each round repaired what the reference had read and wrote new
+- **Grounding checks on a reference does not converge** — on either model's plans. Each round repaired what the reference had read and wrote new
   checks it had not; and a check gcc passes can still fail a tree that scores 298/299: the reference is wider than the
   contract the held-out suite measures. Exact form and contact through one reference are not a check's truth (§3.5, §8.4).
 - **No planner meets every bar.** Every planner but main's fails SOUND, and main's fails CATCH; the revised pipeline
