@@ -73,7 +73,7 @@ const KEY = [
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
      head: 'Session passed on', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
-    {glyph: '<span class="cy-fold kf"><b>12</b> parts</span>', head: 'Parts folded inside', means: 'a part\'s own parts; in the accent, how many of them fail now'},
+    {glyph: '<span class="cy-fold kf"><b>12</b> parts</span>', head: 'Parts folded inside', means: 'a part\'s own parts, cancelled ones left out; then how many are at work, closed by FAIL, and in the accent fail now — a double-click unfolds them'},
     {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node unfolds and frames its parts · the background shows the plan as first drawn'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
@@ -296,7 +296,7 @@ export const TIP = {
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`,
          Array.isArray(waits) ? waits.length === 1 ? `Waits on ${waits[0]}` : [`Waits on ${waits.length}:`, waits.map(n => `– ${n}`)] : waits && `Waits on ${waits}`,
          criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${bare(t.assignee, S.project)}`,
-         fold && `${fold.n} parts folded inside`, fold?.failing.length && ['Failing now inside:', fold.failing.map(n => `– ${n}`)]], badge),
+         fold?.failing.length && ['Failing now inside:', fold.failing.map(n => `– ${n}`)]], badge),
     rounds: rs => hover(roundsLine(rs)),
     // ONE SESSION of a stretch passed on from session to session — its own piece of the bar between the cuts, saying itself:
     // its time, cost, tokens, round, and, where it passed its work on («passed on», never «handed over», the key's word for

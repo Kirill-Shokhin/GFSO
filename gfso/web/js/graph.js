@@ -57,9 +57,13 @@ function foldMap(tasks) {
     const d = depths(tasks), up = ancestorsIn(tasks), open = id => d[id] === 0 || unfolded.has(id);
     return Object.fromEntries(tasks.map(t => [t.id, up(t.id).reverse().find(a => !open(a)) ?? t.id]));
 }
-// a drawn node's folded parts: how many, and which of them fail now — the count in ink, the failing in the accent
-const foldOf = id => { const xs = Object.keys(hidden).filter(k => hidden[k] === id);
-    return {n: xs.length, failing: xs.filter(x => failingNow(S.run?.rounds[x], taskOf(x).state))}; };
+// a drawn node's folded parts: how many — counted as the header counts parts, the cancelled left out —, which are at work
+// now, which closed by FAIL, which fail now: folded, none of them may vanish from the first view (critic 4: an auto run's
+// work sits at depth 2 and below, and the graph showed none of it)
+const foldOf = id => { const xs = Object.keys(hidden).filter(k => hidden[k] === id && !cancelled(taskOf(k)));
+    const work = (S.run?.now ?? runNow(S.tasks, procs())).work;
+    return {n: xs.length, failing: xs.filter(x => failingNow(S.run?.rounds[x], taskOf(x).state)), work: xs.filter(x => work.has(x)),
+            shut: xs.filter(x => taskOf(x).state === 'DONE' && taskOf(x).done_reason === 'FAIL')}; };
 // at most the type's own size: fitted at 2.2 an 11-part plan drew 20 px blocks (audit E2)
 const fitCapped = (eles, pad = 30) => { cy.fit(eles, pad); if (cy.zoom() > 1) { cy.zoom(1); cy.center(eles); } };
 // …and at least the size a name is read at: where the whole plan fits only smaller (a phone), the first view is centred on
@@ -143,9 +147,9 @@ export async function initGraph() {
         cy.nodes(':selected').filter(n => n.id() !== st.select).unselect();
         // a node chosen in another view, folded here, unfolds the path to it
         if (st.select && hidden[st.select]) { ancestorsIn(S.tasks)(st.select).forEach(a => unfolded.add(a));
-            redraw().then(() => inSight(cy.getElementById(st.select))); return; }
+            redraw().then(() => { fresh = false; inSight(cy.getElementById(st.select)); }); return; }
         if (st.select) cy.getElementById(st.select).select();
-        if ((key === 'select' || key === 'bring') && st.select && !fresh) inSight(cy.getElementById(st.select));
+        if ((key === 'select' || key === 'bring') && st.select) { fresh = false; inSight(cy.getElementById(st.select)); }
     });
     cy.on('render', () => requestAnimationFrame(placeBadges));
     // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the
@@ -175,7 +179,6 @@ export async function initGraph() {
     // a double-click on a node shows it with its parts: a folded node unfolds first, then the subtree is framed
     const opening = async id => { if (foldOf(id).n) { unfolded.add(id); await redraw(); }
         framing(subtree(cy.getElementById(id))); };
-    window.__opening = opening;   // PROBE HANDLE (render only)
     cy.on('dbltap', 'node', evt => opening(evt.target.id()));
     // …the background's: the plan as first drawn, its parts folded again
     cy.on('dbltap', async evt => { if (evt.target !== cy) return;
@@ -254,6 +257,8 @@ function placeBadges() {
         const b = n.renderedBoundingBox(BODY), f = foldOf(id);
         // the folded parts hang under the node: their count, and those failing now in the accent
         const tag = f.n ? `<div class="cy-fold" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px"><b>${f.n}</b> parts`
+            + (f.work.length ? ` <i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i><b>${f.work.length}</b> at work` : '')
+            + (f.shut.length ? ` <b>${f.shut.length}</b> closed by FAIL` : '')
             + (f.failing.length ? ` <b class="acc">${f.failing.length}</b> <span class="acc">failing</span>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person

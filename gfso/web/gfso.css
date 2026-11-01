@@ -277,7 +277,8 @@ body {
 .tl .tl-s.tl-issuer, .tl .tl-s.tl-consent, .tl .tl-s.tl-plan { pointer-events: all; }
 /* a running bar breathes, but never pales into the validation colour: at the dots' .45 a black execution bar read as a
    grey validation one in a screenshot (2026-10-26) */
-.tl .tl-open { animation: tl-breathe var(--pulse) ease-in-out infinite; }
+.tl .tl-open { stroke: var(--acc); stroke-width: 1.5; animation: tl-ring var(--pulse) ease-in-out infinite; }
+@keyframes tl-ring { 50% { stroke-opacity: .15; } }
 @keyframes tl-breathe { 50% { opacity: .75; } }
 @keyframes tl-pulse { 50% { opacity: .45; } }
 /* The brand's bordeaux marks the real done — a PASS; a FAIL speaks by its shape, in ink. */
@@ -384,9 +385,9 @@ body {
 .cs-also { margin-left: 10px; font-size: 9.5px; color: var(--ink-caption); }
 /* THE FIVE KINDS ON ONE RAMP, ink to ink-faint in the key's order — filled, no outline; the faintest still 3:1 on the
    page (CQ1). Defined once: the timeline's bars would take the same five so a kind is one tone in every view. */
-:root { --k-exec: var(--ink); --k-consent: color-mix(in oklab, var(--ink) 75%, var(--ink-faint));
-        --k-val: color-mix(in oklab, var(--ink) 50%, var(--ink-faint)); --k-issuer: color-mix(in oklab, var(--ink) 25%, var(--ink-faint));
-        --k-plan: var(--ink-faint); }   /* even steps in lightness, so neighbours on the ramp part by the same amount */
+:root { --k-exec: var(--ink); --k-consent: color-mix(in srgb, var(--ink) 67%, var(--ink-faint));
+        --k-val: color-mix(in srgb, var(--ink) 45%, var(--ink-faint)); --k-issuer: color-mix(in srgb, var(--ink) 24%, var(--ink-faint));
+        --k-plan: var(--ink-faint); }   /* equal contrast steps: each neighbour 1.54:1 (at even mixes exec–consent was 1.25, critic 4) */
 .cs-exec { background: var(--k-exec); } .cs-consent { background: var(--k-consent); } .cs-val { background: var(--k-val); }
 .cs-issuer { background: var(--k-issuer); } .cs-plan { background: var(--k-plan); }
 .cs-legend > span > i { background-clip: border-box; }
@@ -1488,15 +1489,12 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 /* A STATE IS NOT A BUTTON: a dot and its words, no border — stopped a quiet dot, stopping the live one */
 .hd-run-state { border: none; padding: 0; font-family: var(--font-body); font-size: 12.5px; text-transform: none; letter-spacing: 0;
     display: inline-flex; align-items: center; gap: 0; cursor: default; }
-.hd-run-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; background: color-mix(in srgb, var(--bg) 45%, transparent); }
-.hd-run-state.live::before { width: 7px; height: 7px; margin-right: 7px; background: var(--acc); box-shadow: 0 0 0 1.5px var(--bg); }
 .hd-needs > .hd-phrase, .hd-needs > .tally, .hd-needs > .hd-quiet { font-size: 12.5px; }
-.hd-run-state + .hd-run, .hd-goal:has(.hd-run-state) ~ .hd-needs { }
 /* the deck's state in the strip's face, a dot and words — not a seventh tab */
 .dk-now { font-family: var(--font-body); font-size: 11.5px; letter-spacing: 0; text-transform: none; display: inline-flex; align-items: center; }
-.dk-now::before { content: ''; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px; background: var(--ink); }
+.dk-now::before { content: ''; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px; border: 1.5px solid var(--ink); box-sizing: border-box; }
 .dk-now.dk-idle { color: var(--ink-soft); }
-.dk-now.dk-idle::before { background: transparent; border: 1px solid var(--ink-faint); }
+.dk-now.dk-idle::before { display: none; }
 
 /* CAPS ONLY FOR AN EYEBROW OR A TAB: a label, a filter and a control say themselves in sentence case */
 .ev-chip, .pl-delete, .gp-label, .role-select { font-family: var(--font-body); text-transform: none; letter-spacing: 0; }
@@ -1527,8 +1525,8 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .hd-needs { order: 7; flex: 1 1 0; margin: 0; overflow-x: auto; justify-content: flex-start; }
 }
 /* on the dark bar a dot is cream: stopped a ring, stopping the ring filled and pulsing — the accent sinks into ink there */
-.hd-run-state::before { background: transparent; border: 1.5px solid color-mix(in srgb, var(--bg) 60%, transparent); }
-.hd-run-state.live::before { background: var(--bg); border-color: var(--bg); box-shadow: none; animation: tl-pulse var(--pulse) ease-in-out infinite; }
+.hd-run-state::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; box-sizing: border-box; background: transparent; border: 1.5px solid color-mix(in srgb, var(--bg) 60%, transparent); }
+.hd-run-state.live::before { width: 7px; height: 7px; margin-right: 7px; background: var(--bg); border-color: var(--bg); box-shadow: none; animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .hd-goal:has(.hd-run-state) + .hd-needs > :first-child { border-left: 1px solid var(--hair-on-chrome); padding-left: 16px; }
 /* a narrow desk: the goal's name gives way first (whole on hover), the middle's words never cut */
 @media (min-width: 721px) and (max-width: 1200px) {
