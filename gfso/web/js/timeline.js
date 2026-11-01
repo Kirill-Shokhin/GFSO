@@ -1,7 +1,7 @@
 // The run's course: one row per node, its work as bars on the folded clock and every verdict as a mark
 // standing ABOVE the bar it answers — the carrier and the mark kept apart — and over the rows how many
 // executors ran at once. Del names who is accountable for a node; this names what ran, when, and beside what.
-import {esc, unseen} from './dom.js';
+import {esc, unseen, tallySvg} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, axisWidth, mark, pinLeft} from './draw.js';
@@ -99,7 +99,7 @@ export function render(el, run, nodes) {
     el.innerHTML = `<svg class="tl" width="${W}" height="${H}">
         ${f.ticks(30, H - AXIS, 22)}${f.folds(30, H - AXIS, H - 6)}
         <g class="tl-legend" transform="translate(${W - legendW},0)">${legend}</g>
-        <text class="tl-peak" x="${LEFT - 10}" y="${cy(peak) + 3}"><tspan class="tl-fig">${run.exec.peak}</tspan> at once</text>
+        ${tallySvg(run.exec.peak, 'at once', 'tl-peak', LEFT - 10, cy(peak) + 3)}
         <text class="tl-peak tl-sub" x="${LEFT - 10}" y="${c0}">executors</text>
         <line class="tl-base" x1="${LEFT}" x2="${W - 16}" y1="${c0}" y2="${c0}"/>
         <line class="tl-base dash" x1="${LEFT}" x2="${W - 16}" y1="${cy(peak)}" y2="${cy(peak)}"/>

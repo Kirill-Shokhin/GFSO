@@ -2,7 +2,7 @@
 // part unfolds into its parts. Each track counts one node's criteria passing at its own verdicts — a part's PASS is its
 // issuer's signature at that seam, the root's PASS the goal delivered — never a sum across a level, which added parts
 // of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
-import {esc, unseen} from './dom.js';
+import {esc, unseen, tallySvg} from './dom.js';
 import {TIP, CELLS} from './hints.js';
 import {label, cancelled} from './vocab.js';
 import {failingNow} from './run.js';
@@ -61,7 +61,7 @@ function tracks(el, run, name, tasks, hot) {
         return `<g class="pg-track${r.d ? ' pg-part' : ''}${gone ? ' pg-gone' : ''}" data-node="${esc(r.id)}">
             <rect class="pg-band" x="0" y="${top - GAP / 2}" width="${W}" height="${h(r) + GAP}"/>
             <text class="pg-level" data-k="l|${esc(r.id)}" x="${lx}" y="${top + 10}" ${r.kids && r.d ? `data-unfold="${esc(r.id)}"` : ''}${title.length > fits ? TIP.cell(title) : ''}>${caret}${esc(trim(title, fits))}</text>
-            <text class="pg-count" x="${LEFT - 10}" y="${top + (r.d ? 24 : 28)}">${gone ? `<tspan>${label('ABANDONED').toLowerCase()}</tspan>` : `${last}<tspan> of ${T.total}</tspan>`}</text>
+            ${tallySvg(gone ? '' : last, gone ? label('ABANDONED').toLowerCase() : `of ${T.total}`, 'pg-count', LEFT - 10, top + (r.d ? 24 : 28))}
             <line class="pg-base" x1="${LEFT}" x2="${W - 16}" y1="${y0}" y2="${y0}"/>
             <line class="pg-full" x1="${LEFT}" x2="${W - 16}" y1="${at(T.total)}" y2="${at(T.total)}"/>
             <path class="pg-area" d="${f.area(T.steps, y0, h(r), T.total)}"/>

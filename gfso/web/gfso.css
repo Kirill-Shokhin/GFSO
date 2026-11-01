@@ -294,7 +294,7 @@ body {
 .tl .tl-sub { fill: var(--ink-faint); font-size: 8.5px; }
 .tl .tl-stem { stroke: var(--ink-faint); stroke-width: 1; }
 .tl .tl-peak { text-anchor: end; letter-spacing: var(--tr-mono); text-transform: uppercase; font-size: 9px; }
-.tl .tl-fig, .fchip i b { font-family: var(--font-display); font-weight: 650; fill: var(--ink); color: var(--ui-text); }
+.tally-svg .ts-fig, .fchip i b { font-family: var(--font-display); font-weight: 650; fill: var(--ink); color: var(--ui-text); }
 .tl .tl-split { stroke: var(--hair); }
 .ax-tick line { stroke: var(--hair-soft); }
 .ax-tick text { text-anchor: middle; fill: var(--ink-faint); }
@@ -315,13 +315,13 @@ body {
 .pg { display: block; font-family: var(--font-mono); }
 .pg text { font-size: 10px; fill: var(--ink-soft); }
 .pg .pg-level { text-anchor: start; text-transform: uppercase; letter-spacing: var(--tr-mono); font-size: 9px; fill: var(--ink-faint); }
-.pg .pg-count { text-anchor: end; font-family: var(--font-display); font-size: 18px; font-weight: 650; fill: var(--ink); }
-.pg .pg-part .pg-level { text-transform: none; letter-spacing: 0; font-size: 10px; fill: var(--ink-soft); }
+.pg .pg-count { text-anchor: end; font-size: 18px; }
+.pg .pg-part .pg-level { text-transform: none; letter-spacing: 0; font-family: var(--font-body); font-size: 11px; fill: var(--ink-soft); }   /* a name in the body face, as every view says names (audit E5) */
 .pg .pg-part [data-unfold] { cursor: pointer; }
 .pg .pg-caret { font-family: var(--font-display); font-size: 12px; fill: var(--ink-soft); }
 .pg .pg-part [data-unfold]:hover { fill: var(--ink); }
 .pg .pg-part .pg-count { font-size: 12px; }
-.pg .pg-count tspan { font-family: var(--font-mono); font-size: 10px; font-weight: 400; fill: var(--ink-soft); }
+.pg .pg-count .ts-lab { font-family: var(--font-mono); font-size: 10px; font-weight: 400; fill: var(--ink-soft); }
 .pg .pg-band { fill: transparent; }
 .pg .pg-track.is-hover .pg-band { fill: var(--hair-soft); }
 .pg .pg-track.is-select .pg-band { fill: var(--hair); }
@@ -1300,6 +1300,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .wk-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--hair-soft); font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; }
 .wk-table th:nth-child(-n+2), .wk-table td:nth-child(-n+2) { text-align: left; }
 
+.wk-table td:first-child { font-family: var(--font-body); font-size: 11.5px; }   /* a name, not a column of figures (audit E5) */
 .wk-table td:first-child b { font-weight: 600; }
 .wk-table tr.wk-first td { border-top: 1px solid var(--hair); }
 .cs-tile b em { font-family: var(--font-mono); font-style: normal; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--ink-faint); vertical-align: 6px; }

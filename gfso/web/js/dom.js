@@ -23,6 +23,10 @@ export const section = (title, body) =>
 // A COUNT IS ITS OWN MARK — the figure large, its label small beside it, never threaded into a sentence nor joined to
 // another figure by a dot or a dash (the author, 2026-10-29: «цифры опять спрятаны между букв … статус стоит через тире»)
 export const tally = (figure, label, attrs = '') => `<span class="tally"${attrs}><b>${figure}</b><i>${label}</i></span>`;
+// …the same mark inside a drawing: its figure in the brand's display face, its label in the line's; the size is the line's
+// (a view's class) — one owner for the views that draw it (audit B16: tally, .tl-fig and .pg-count were three)
+export const tallySvg = (figure, label, cls, x, y) => `<text class="tally-svg ${cls}" x="${x}" y="${y}">`
+    + `${figure === '' ? '' : `<tspan class="ts-fig">${figure}</tspan>`}<tspan class="ts-lab">${figure === '' ? '' : ' '}${label}</tspan></text>`;
 // A FIGURE TIME MOVES with nothing pushed — how long what runs now has run, whether a deadline has passed — carries its
 // moment, and the page's one display clock (`ages`, main.js) sets it again in place: drawn once, it read as true until a
 // reload (the author, 2026-10-31: «обновление страницы никогда не должно требоваться вручную»)
