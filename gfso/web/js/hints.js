@@ -238,7 +238,7 @@ export const STRIP = {
     block: (n, of, direct, through) => hover(`${n} wait on ${of}`, 'None starts until it passes', direct,
         through.length > 0 && [`${through.length} more through them:`, through]),
     onIssuer: n => `${n} wait${n > 1 ? '' : 's'} on the issuer`, sentBack: n => `${n} sent back`,
-    issuer: rows => hover(STRIP.onIssuer(rows.length), rows),
+    issuer: (n, rows) => hover(STRIP.onIssuer(n), rows),
     back: rows => hover(STRIP.sentBack(rows.length), rows, 'Their last round failed'),
     more: rows => hover(`${rows.length} more at work`, rows),
     running: verb => `${verb} — a session running on this server`,
