@@ -2148,10 +2148,12 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
     where = (verbs.place(engine, agents, task_id)
              if verbs and verbs.place and question not in SPLIT_QUESTIONS else None)
     out = issuer_turn(engine, task_id, question, actor, verbs, where=where, refusal=(
-        f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict. Decide: a next "
-        f"contract that changes what failed ({what_can_change(engine, engine.graph.get_task(task_id))})"
-        + ("." if "cancel" not in moves_for(engine, engine.graph.get_task(task_id), question)
-           else ", or `cancel` with the reason.") if spent else "" if question in SPLIT_QUESTIONS else refused_on_this_version(
+        f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict. " + (
+            "Its place is past its disk bound, so no next contract runs there: `cancel` with the reason."
+            if question == "parked" and engine.parking.execution_park_reason(engine.graph.get_task(task_id)) else
+            f"Decide: a next contract that changes what failed ({what_can_change(engine, engine.graph.get_task(task_id))})"
+            + ("." if "cancel" not in moves_for(engine, engine.graph.get_task(task_id), question)
+               else ", or `cancel` with the reason.")) if spent else "" if question in SPLIT_QUESTIONS else refused_on_this_version(
             engine, task_id, actor)))
     if out["status"] != "applied" and _still_open(engine, task_id, question, ep):
         out = issuer_turn(engine, task_id, question, actor, verbs, where=where,
