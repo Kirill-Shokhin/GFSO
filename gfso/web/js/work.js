@@ -28,10 +28,17 @@ function fill(r) {
 function where(r) {
     const s = r.split, total = s ? s.parts.reduce((x, [, v]) => x + v, 0) : 0;
     const kind = Object.fromEntries(TOKENS.map(([k, name, , field]) => [k, [name, fmtTok(r[field])]]));
-    if (!s || !total) return `<span class="wk-none"${MODELS.split(TOKENS.map(([k]) => [kind[k][0], '—', kind[k][1]]), r.unsplit ? MODELS.unsplit : MODELS.foreign)}>—</span>`;
-    const note = s.covered < 0.99 && MODELS.covers(pct(s.covered), s);
-    return `<span class="wk-cost">${s.parts.map(([k, v]) => `<i class="${COST_CLS(k)}" style="width:${pct(v / total)}"`
-        + `${MODELS.part(kind[k][0], usd(v), v / total, kind[k][1], note)}></i>`).join('')}</span>`;
+    // NOT SPLIT: its tokens by kind as recorded — the cache a build kept as one sum said as one, never «0 read, 0 written»
+    // beside the millions it holds (audit C1)
+    if (!s || !total) return `<span class="wk-none"${MODELS.split(r.unsplit ? MODELS.unsplit : MODELS.foreign,
+        [kind.input_tokens, kind.output_tokens, ...(r.unsplit ? [['cache, read and written as one', fmtTok(r.unsplit)]]
+            : [kind.cache_read_tokens, kind.cache_write_tokens])])}>—</span>`;
+    // the split's segments take the share of the row's cost they price, the rest one hatched segment saying why: drawn full
+    // width, a split of 11% of a row read as the whole row's (audit C2)
+    const rest = 1 - s.covered;
+    return `<span class="wk-cost">${s.parts.map(([k, v]) => `<i class="${COST_CLS(k)}" style="width:${pct(s.covered * v / total)}"`
+        + `${MODELS.part(kind[k][0], usd(v), s.covered * v / total, kind[k][1])}></i>`).join('')}`
+        + `${rest > 0.01 ? `<i class="wk-unsplit" style="width:${pct(rest)}"${MODELS.rest(rest, s)}></i>` : ''}</span>`;
 }
 
 export function render(el, run) {

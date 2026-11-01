@@ -36,7 +36,7 @@ const row = r => { if (!r.startsWith(METER)) return `<div class="tt-row">${esc(r
     const [label, share, figure] = r.slice(1).split('\t'), p = pct(+share);
     return `<div class="tt-meter"><span>${esc(label)}</span><i><b style="width:${p}"></b></i><em>${esc(figure || p)}</em></div>`; };
 export const card = (head, rows = [], badge = '') => { const [h, figure] = head.split('\t');
-    return `<div class="tt-name${figure ? ' tt-split' : ''}"><span>${esc(h)}</span>${figure ? `<b>${esc(figure)}</b>` : ''}</div>${badge}`
+    return `${h ? `<div class="tt-name${figure ? ' tt-split' : ''}"><span>${esc(h)}</span>${figure ? `<b>${esc(figure)}</b>` : ''}</div>` : ''}${badge}`
         + lines(rows).map(row).join(''); };
 // a popover: its title and the caption saying what it lists, set apart from the items; an item is a heading (a glyph
 // before it, a value and a tag after it, a link at its end) and what it means; `group` starts a new group of items
@@ -226,7 +226,8 @@ export const doing = (verb, kind) => DOING[verb] || KIND[kind]?.doing || verb.re
 export const STRIP = {
     live: (name, row) => hover(name, row),
     held: hover('Stopped', 'Nothing runs here until the run is started again', 'These nodes keep the state their work was in'),
-    block: (n, of, users) => hover(`${n} wait on ${of}`, 'None starts until it passes:', users),
+    block: (n, of, direct, through) => hover(`${n} wait on ${of}`, 'None starts until it passes', direct,
+        through.length > 0 && [`${through.length} more through them:`, through]),
     onIssuer: n => `${n} wait${n > 1 ? '' : 's'} on the issuer`, sentBack: n => `${n} sent back`,
     issuer: rows => hover(STRIP.onIssuer(rows.length), rows),
     back: rows => hover(STRIP.sentBack(rows.length), rows, 'Their last round failed'),
@@ -273,8 +274,9 @@ export const PANEL = {
 const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
-    node: (t, badge, waits, rs, criteria, failing) => card(nameOf(t),
-        [rs.length && roundsLine(rs), failing && `Failing: ${failing}`, waits && `Waits on ${waits}`,
+    node: (t, name, badge, waits, rs, criteria, failing) => card(name || '',
+        [rs.length && roundsLine(rs), failing && `Failing: ${failing}`,
+         Array.isArray(waits) ? waits.length === 1 ? `Waits on ${waits[0]}` : [`Waits on ${waits.length}:`, waits.map(n => `– ${n}`)] : waits && `Waits on ${waits}`,
          criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${bare(t.assignee, S.project)}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // ONE SESSION of a stretch passed on from session to session — its own piece of the bar between the cuts, saying itself:
@@ -316,7 +318,7 @@ export const TIP = {
     // …the heading's figure is the chart's measure (`says`), never said again below it
     part: (k, figure, share, p, says) => hover(`${cap(KIND[k]?.name || k)}\t${figure}`, meter('of the row', share),
         says !== 'calls' && sessionsOf(k, p.calls), says !== 'busy' && `${dur(p.busy)} busy`, p.tokens && `${tok(p.tokens)} tokens`),
-    prefix: p => hover(p + '…', 'The start every assignee id shares, cut from the bars'),
+    system: hover('The system', 'Sessions no assignee ran: the planning and the issuer turns the system takes itself'),
     project: (name, id) => hover(name, id),
     where: why => hover(why),
 };
@@ -326,7 +328,9 @@ export const MODELS = {
     sessions: hover('Sessions', 'Each with a context of its own; one resumed in its conversation counts once'),
     cost: hover('Cost split', `By kind of token: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right`,
         `Priced by Anthropic's structure: per ${TOKENS.map(([, n, p], i) => `${n}${i ? '' : ' token'} ${p}`).join(', ')}`, 'Another provider\'s rows are not split'),
-    part: (kind, cost, share, tokens, note) => hover(`${cap(kind)}\t${cost}`, meter('of the row', share), `${tokens} tokens`, note),
+    part: (kind, cost, share, tokens) => hover(`${cap(kind)}\t${cost}`, meter('of the row', share), `${tokens} tokens`),
+    // the part of a row's cost the split does not price: its share, and why
+    rest: (share, s) => hover('Not split', meter('of the row', share), MODELS.covers(s)),
     id: id => hover(id),
     window: hover('The model\'s context window'),
     fill: hover('Context filled', "Each session's fullest turn against its model's window: the dark bar the median session, the light one the fullest"),
@@ -341,11 +345,11 @@ export const MODELS = {
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The share is of what was priced'),
     unrecorded: hover('Not recorded', 'Kept only for sessions run on a build that records it'),
     // the cost split: what each kind of token cost, and how many; or why it cannot be split
-    split: (parts, note) => hover('Where the cost went', parts.map(([k, usd_, n]) => `${k}: ${usd_} · ${n} tokens`), note),
-    unsplit: 'Cache read and written kept as one sum on this build: not split',
-    foreign: "Not split: its provider's prices are not known here",
+    split: (why, parts) => hover('Not split', why, parts.map(([k, n]) => `${cap(k)}: ${n} tokens`)),
+    unsplit: 'Its cache read and written were recorded as one sum',
+    foreign: "Its provider's prices are not known here",
     // why a split does not cover its row, each cause counted apart — none is said that the row does not have
-    covers: (share, s) => [`The split covers ${share} of the row's cost — the ${s.sessions} sessions its tokens price`,
+    covers: s => [`The split prices ${plural(s.sessions, 'session')} by ${s.sessions > 1 ? 'their' : 'its'} own tokens`,
         s.resumedOut && `${plural(s.resumedOut, 'resumed round')} booked the whole conversation's cost (recorded before the fix): the round before counted twice`,
         s.out - s.resumedOut && `${plural(s.out - s.resumedOut, 'session')} not priced by ${s.out - s.resumedOut > 1 ? 'their' : 'its'} own tokens`,
         s.unweighed && `${plural(s.unweighed, 'session')} not split: recorded without the cache kept apart, without tokens, or unpriced`],

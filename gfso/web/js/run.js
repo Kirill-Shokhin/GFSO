@@ -173,8 +173,8 @@ export function blockers(waits) {
         ? waits[id].deps.flatMap(d => roots(d, seen)) : [id]);
     const held = {};
     for (const [id, w] of Object.entries(waits))
-        if (w.deps.length) new Set(w.deps.flatMap(d => roots(d))).forEach(r => (held[r] = (held[r] || 0) + 1));
-    return Object.entries(held).sort((a, b) => b[1] - a[1]);
+        if (w.deps.length) new Set(w.deps.flatMap(d => roots(d))).forEach(r => (held[r] ||= []).push(id));
+    return Object.entries(held).sort((a, b) => b[1].length - a[1].length);
 }
 
 // The folded clock: activity intervals merged, gaps over GAP shrunk to FOLD.

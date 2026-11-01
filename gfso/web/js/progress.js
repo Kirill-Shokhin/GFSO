@@ -5,6 +5,7 @@
 import {esc, unseen} from './dom.js';
 import {TIP, CELLS} from './hints.js';
 import {label, cancelled} from './vocab.js';
+import {failingNow} from './run.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip, firstTap} from './tip.js';
 import {frame, axisWidth, mark, glyph} from './draw.js';
@@ -13,25 +14,35 @@ import {rootOf, isRoot, childrenOf, ancestorsIn} from './tree.js';
 
 const LEFT = 220, GOAL = 54, PART = 30, GAP = 12, TOP = 22, INDENT = 12;
 const unfolded = new Set();                      // parts the reader opened; the goal is always open
+// …and the parts the reader folded: a path to a part failing NOW stands open unless the reader shut it — folded by
+// default, the one red part of a run sat inside «▸ Recursive-descent parser 0 of 3» under 13 empty tracks (audit B2)
+const folded = new Set();
 
 // the rows in tree order: the goal, its parts, and the parts of every part the reader unfolded
-function rows(tasks, track) {
+function rows(tasks, track, hot) {
     const out = [];
     // siblings that have a verdict first, by their first one, then the rest in plan order — as the timeline orders its
     // rows; in plan order the one part at work sat under nine empty tracks, below the fold of a short deck (critic)
     const first = id => track[id]?.marks[0]?.t ?? Infinity;
-    const kids = id => childrenOf(tasks, id).map(t => t.id).sort((a, b) => first(a) - first(b));
+    // …and a sibling over a part failing now before them all
+    const kids = id => childrenOf(tasks, id).map(t => t.id).sort((a, b) => hot.has(b) - hot.has(a) || first(a) - first(b));
     const walk = (id, d) => {
         const ks = kids(id);
         if (track[id]?.total) out.push({id, d, kids: ks.length});
-        if (d === 0 || unfolded.has(id)) for (const k of ks) walk(k, d + 1);
+        if (shown(id, d, hot)) for (const k of ks) walk(k, d + 1);
     };
     for (const t of tasks) if (isRoot(t)) walk(t.id, 0);
     return out;
 }
 
-function tracks(el, run, name, tasks) {
-    const tr = run.criteria.track, rs = rows(tasks, tr), h = r => r.d ? PART : GOAL;
+const shown = (id, d, hot) => d === 0 || unfolded.has(id) || (hot.has(id) && !folded.has(id));
+// a node failing now and every node above it
+const hotIn = (run, tasks) => { const up = ancestorsIn(tasks), hot = new Set();
+    for (const t of tasks) if (failingNow(run.rounds[t.id], t.state)) [t.id, ...up(t.id)].forEach(x => hot.add(x));
+    return hot; };
+
+function tracks(el, run, name, tasks, hot) {
+    const tr = run.criteria.track, rs = rows(tasks, tr, hot), h = r => r.d ? PART : GOAL;
     const W = axisWidth(el), f = frame(run, W, LEFT);
     let y = TOP;
     const body = rs.map(r => {
@@ -41,7 +52,7 @@ function tracks(el, run, name, tasks) {
         const last = T.steps.at(-1)?.[1] ?? (lm ? lm.k : 0);
         y += GAP;
         const lx = 8 + Math.max(r.d - 1, 0) * INDENT;
-        const caret = r.kids && r.d ? `<tspan class="pg-caret">${unfolded.has(r.id) ? '▾' : '▸'} </tspan>` : '';
+        const caret = r.kids && r.d ? `<tspan class="pg-caret">${shown(r.id, r.d, hot) ? '▾' : '▸'} </tspan>` : '';
         // a name cut to the track's width: the whole of it on hover (the caret makes the text differ, so only when cut)
         const title = r.d ? name(r.id) : "the goal's criteria", fits = 34 - Math.max(r.d - 1, 0) * 2;
         // A CANCELLED PART owes nothing: its track is kept for its history, faint as its tombstone on the graph, and says
@@ -86,17 +97,19 @@ export function render(el, run, nodes, tasks) {
     const name = run.name;
     el.innerHTML = `<div class="pg-wrap"><div class="pg-tracks"></div><div class="pg-side">${coverage(run, nodes, tasks)}</div></div>`;
     let lit;   // the shared selection's paint, re-applied to tracks drawn anew
-    const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks); lit?.(focus()); };
+    const hot = hotIn(run, tasks);
+    const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks, hot); lit?.(focus()); };
     // a node selected under a folded part unfolds the path to it, so its track is there to light
     const up = ancestorsIn(tasks);
-    const open = id => { let shut = false; for (const x of up(id).slice(0, -1)) if (!unfolded.has(x)) unfolded.add(x), shut = true; return shut; };
+    const open = id => { let shut = false; for (const x of up(id).slice(0, -1)) if (!unfolded.has(x)) unfolded.add(x), folded.delete(x), shut = true; return shut; };
     if (focus().select) open(focus().select);
     paint();
     watch((st, key) => (key === 'select' || key === 'bring') && st.select && open(st.select) && paint(), el);
     // a part's name unfolds it into its own parts, and folds it again
     tr.onclick = e => { const id = e.target.closest('[data-unfold]')?.dataset.unfold;
         // …a finger's first tap on a cut name shows its whole first (tip.js), its second unfolds
-        if (id && !firstTap(e)) { e.stopPropagation(); unfolded.has(id) ? unfolded.delete(id) : unfolded.add(id); paint(); } };   // unfolding is no selection
+        if (id && !firstTap(e)) { e.stopPropagation(); const d = up(id).length;
+            shown(id, d, hot) ? (unfolded.delete(id), folded.add(id)) : (unfolded.add(id), folded.delete(id)); paint(); } };   // unfolding is no selection
     lit = bindFocus(el, e => {
         const g = e.target.closest('[data-m]');
         if (!g) return untip();

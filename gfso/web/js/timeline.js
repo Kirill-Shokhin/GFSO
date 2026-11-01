@@ -14,6 +14,9 @@ import {TIP, KIND, waitWords} from './hints.js';
 // an outlined bar (an issuer's turn, a consent) is drawn over the filled ones: it can run beside an execution or a
 // validation (a challenge answered while the work goes on), and beneath them it hid; its outline shows what lies under it
 const HOLLOW = new Set(['consent', 'issuer']);
+// an outlined kind narrower than THIN px is drawn as a filled tick of its outline's ink: a few px of outline read as «0»
+// beside a name (audit B3)
+const OUTLINED = new Set([...HOLLOW, 'plan']), THIN = 6;
 const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
 const STEM = 9, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
 
@@ -60,8 +63,9 @@ export function render(el, run, nodes) {
     // its own tip — its time, cost, tokens, its round, and where it stood when it passed on, against its budget and window
     // (the author, 2026-10-31: «вместо того чтобы показывать инфу на самом исполнении, она отображается между ними в
     // разделении, а на самом исполнении одна и та же длинная инфа»); the cut is only the line between two pieces
-    const rect = (s, i, a, b, p) => `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}"${p == null ? '' : ` data-p="${p}"`}`
-        + ` data-k="b|${esc(s.node)}|${s.kind}|${a}" x="${f.X(a)}" y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(f.X(b) - f.X(a), 2)}" height="${BAR[s.kind]}" rx="1.5"/>`;
+    const rect = (s, i, a, b, p) => { const w = f.X(b) - f.X(a), thin = OUTLINED.has(s.kind) && w < THIN;
+        return `<rect class="tl-s tl-${s.kind}${thin ? ' tl-thin' : ''}${s.open ? ' tl-open' : ''}" data-i="${i}"${p == null ? '' : ` data-p="${p}"`}`
+        + ` data-k="b|${esc(s.node)}|${s.kind}|${a}" x="${f.X(a)}" y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(w, thin ? 3 : 2)}" height="${BAR[s.kind]}" rx="1.5"/>`; };
     const bar = (s, i) => !s.handed.length ? rect(s, i, s.start, s.end)
         : s.members.map((m, p) => rect(s, i, m.start, s.members[p + 1]?.start ?? s.end, p)).join('')
           + s.handed.map(({t}) => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${Y(s.node) - BAR[s.kind] / 2 - 2}" y2="${Y(s.node) + BAR[s.kind] / 2 + 2}"/>`).join('');
@@ -76,7 +80,9 @@ export function render(el, run, nodes) {
         : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}"${TIP.cell(waitsOn(id))}>${esc(waitsOn(id, true))}</text>`;
     // the bar kinds are a LABEL (hints.js): read each time, so drawn beside the bars; PASS and FAIL are the key's
     // consent shown only where a run has it: rows recorded before it was booked apart have none
-    const kinds = ['exec', ...(run.sessions.some(s => s.kind === 'consent') ? ['consent'] : []), 'val', 'issuer'], legendW = kinds.length * 92;
+    // …and planning only where the run planned (audit B4: 25 planning bars stood with no word for them)
+    const has = k => run.sessions.some(s => s.kind === k);
+    const kinds = ['exec', ...(has('consent') ? ['consent'] : []), 'val', 'issuer', ...(has('plan') ? ['plan'] : [])], legendW = kinds.length * 92;
     const legend = kinds.map((k, i) =>
         `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">

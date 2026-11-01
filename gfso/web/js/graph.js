@@ -1,7 +1,7 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc} from './dom.js';
 import {S, taskOf, myRole, procs} from './state.js';
-import {bucketOf, statusLabel, contested, cancelled, nameOf, criteriaOf} from './vocab.js';
+import {bucketOf, statusLabel, contested, cancelled, nameOf, criteriaOf, delivered} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';
@@ -186,9 +186,15 @@ function inSight(eles) {
 }
 
 // what the drawing does not say; how to frame a node is the key's, not every node's tip
+// …its name only where the drawing does not say it: cut, or drawn too small to read (audit D2: «never the row's name its
+// row shows», 10-31); its state in the panel's word — a passed node is DONE there, never PASS here (D5)
+const READABLE = 8;
 function nodeTip(t) {
-    const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id], words = w && waitWords(w, d => nameOf(taskOf(d)) || d), last = rs.at(-1);
-    return TIP.node(t, `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, t.done_reason)}</span>`,
+    // what it waits on: its producers one a row — names carry commas, so joined by commas they could not be counted (D4)
+    const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id], last = rs.at(-1);
+    const words = w?.deps.length ? w.deps.map(d => nameOf(taskOf(d)) || d) : w && waitWords(w, d => d);
+    const shown = readableLabel(nameOf(t)) === nameOf(t) && cy.zoom() * 11 >= READABLE;
+    return TIP.node(t, !shown && nameOf(t), `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, delivered(t) ? null : t.done_reason)}</span>`,
         words !== '—' && words, rs, criteriaOf(t).length,
         last?.verdict === 'FAIL' && failingNow(rs, t.state) && failedWords(failedOf(S.run, t.id, last.failed)));
 }

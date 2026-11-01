@@ -38,8 +38,10 @@ export function render(el, run, nodes) {
     const node = c.byNode, level = c.byDepth;
     // An assignee (Del) is who is accountable for the nodes, not one process: its sessions overlap, so it
     // is shown by how many it ran and how many at once — never as one bar of hours that reads as serial.
-    const ids = Object.keys(c.byAgent), cut = ids.some(id => bare(id, S.project) !== id);
-    const agentRows = ids.map(id => ({id, label: bare(id, S.project), parts: c.byAgent[id],
+    // ids without the project's name, as everywhere (f76e1a9) — no caption naming the cut: `agent` and the system's own
+    // sessions never carried it (audit C3); the sessions no assignee ran are the system's planning and issuer turns (C4)
+    const ids = Object.keys(c.byAgent);
+    const agentRows = ids.map(id => ({id, label: id === '—' ? 'the system' : bare(id, S.project), parts: c.byAgent[id],
         peak: concurrency(run.sessions.filter(s => (s.agent || '—') === id && !s.open)).peak}))
         .sort((a, b) => b.peak - a.peak || a.label.localeCompare(b.label));
     const nodeRows = Object.entries(node).map(([id, parts]) => ({id, label: name(id), parts}))
@@ -60,8 +62,8 @@ export function render(el, run, nodes) {
             ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`, p => money([p]), 'cost')}
             ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`, p => dur(p.busy), 'busy')}
             ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '', p => money([p]), 'cost')}
-            ${bars(`sessions by assignee${cut ? ` <span${TIP.prefix(`${S.project}-`)}>(${esc(S.project)}-…)</span>` : ''}`, agentRows, p => p.calls,
-                   (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, () => '', (p, k) => sessionsOf(k, p.calls), 'calls')}
+            ${bars('sessions by assignee', agentRows, p => p.calls,
+                   (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, r => r.id === '—' ? TIP.system : '', (p, k) => sessionsOf(k, p.calls), 'calls')}
         </div></div>`;
     bindFocus(el);
     bringSelected(el, id => el.querySelector(`.cs-row[data-node="${CSS.escape(id)}"]`));

@@ -267,8 +267,15 @@ body {
 .tl .tl-val { fill: var(--ink-faint); }
 .tl .tl-issuer { fill: var(--bg); stroke: var(--ink-soft); stroke-width: 1.2; }   /* filled with the page: hollow, it vanished over an execution bar (the author) */
 /* an outlined bar is hovered over its whole face, not on its hairline edge (the author) */
-.tl .tl-s.tl-issuer, .tl .tl-s.tl-consent { pointer-events: all; }
-.tl .tl-plan { fill: var(--paper); stroke: var(--ink-faint); }
+.tl .tl-s.tl-issuer, .tl .tl-s.tl-consent, .tl .tl-s.tl-plan { pointer-events: all; }
+.tl .tl-plan { fill: var(--paper); stroke: var(--ink-faint); stroke-dasharray: 1.5 1.5; }
+/* three outlined kinds, three strokes: consent solid, issuer dashed, planning dotted (audit B4) */
+.tl .tl-issuer { stroke-dasharray: 3 2; }
+/* an outlined bar too short to show its outline is a filled tick of its ink (audit B3) */
+.tl .tl-thin { stroke: none; }
+.tl .tl-thin.tl-consent { fill: var(--ink); }
+.tl .tl-thin.tl-issuer { fill: var(--ink-soft); }
+.tl .tl-thin.tl-plan { fill: var(--ink-faint); }
 /* a running bar breathes, but never pales into the validation colour: at the dots' .45 a black execution bar read as a
    grey validation one in a screenshot (2026-10-26) */
 .tl .tl-open { animation: tl-breathe var(--pulse) ease-in-out infinite; }
@@ -1287,6 +1294,8 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 /* what the cost went to: one bar, a segment per kind of token (hints.js TOKENS), the key in the column's head */
 .wk-cost { display: inline-flex; width: 140px; height: 7px; background: var(--hair); vertical-align: 0; }
 .wk-cost i, .wk-key i { display: block; height: 100%; }
+/* the share of a row's cost its split does not price: hatched, said on hover (audit C2) */
+.wk-cost .wk-unsplit { background: repeating-linear-gradient(135deg, var(--ink-faint) 0 1px, transparent 1px 4px); }
 .wk-input { background: var(--ink-soft); }
 .wk-output { background: var(--ink); }
 .wk-cache { background: var(--paper); box-shadow: inset 0 0 0 1px var(--ink-faint); }
