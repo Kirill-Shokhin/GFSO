@@ -78,7 +78,7 @@ const ACT = {
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
-    mine: toggleMine, pop: (d, b) => b.closest('.hd-quality').classList.toggle('open'), reports: toggleReports, 'close-modal': author.closeModal,
+    mine: toggleMine, pop: (d, b) => b.setAttribute('aria-expanded', b.closest('.hd-quality').classList.toggle('open')), reports: toggleReports, 'close-modal': author.closeModal,
     projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects, 'project-delete': deleteProject,
     'project-new': () => (closeProjects(), askProjectName()),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
@@ -89,12 +89,12 @@ const ACT = {
 };
 // Esc closes whatever is open over the page: a popover, the reader, the goal form, the projects list
 document.addEventListener('keydown', e => { if (e.key !== 'Escape') return;
-    document.querySelectorAll('.hd-quality.open').forEach(p => p.classList.remove('open'));
+    document.querySelectorAll('.hd-quality.open').forEach(p => { p.classList.remove('open'); p.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', false); });
     closeReader(); goal.closeGoal(); closeProjects(); });
 document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]'), mine = e.target.closest('.hd-quality');
     // one popover at a time: a click anywhere else, or on a link inside one, closes the open ones
-    document.querySelectorAll('.hd-quality.open').forEach(p => { if (p !== mine || (b && b.dataset.action === 'select')) p.classList.remove('open'); });
+    document.querySelectorAll('.hd-quality.open').forEach(p => { if (p !== mine || (b && b.dataset.action === 'select')) { p.classList.remove('open'); p.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', false); } });
     if (b) ACT[b.dataset.action](b.dataset, b);
     // a header popover opens below the toolbar, not over it: over it, it covered the toolbar's own "?" (critic 9).
     // Set on the header, not on the popover: the quality chip is rebuilt on every transition and took an inline top with it.

@@ -122,7 +122,9 @@ function draw() {
         last = d;
         html += row(p, busy[p.n], on);
     });
-    morph($('pl-list'), machine() + (html || '<div class="pn-meta">no project matches</div>'));
+    // one head over the columns: the mode's column said nowhere else (audit AQ4)
+    const head = '<div class="pl-row pl-head"><span></span><span>run</span><span>where it stands</span><span>mode</span><span>resources</span><span>cost</span></div>';
+    morph($('pl-list'), machine() + (html ? head + html : '<div class="pn-meta">no project matches</div>'));
     $('pl-count').innerHTML = tally(`${hits.length}/${(all || []).length}`, 'shown');
     $('pl-more').hidden = hits.length <= shown;
     $('pl-more').textContent = `show ${Math.min(SHOWN, hits.length - shown)} more`;

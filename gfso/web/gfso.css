@@ -1269,6 +1269,9 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pl-row { display: grid; grid-template-columns: 44px 1fr 150px 40px 120px 64px; gap: 10px; align-items: baseline;
           padding: 7px 6px; border-bottom: 1px solid var(--hair-soft); color: var(--ink); text-decoration: none; }
 .pl-row:hover { background: var(--hair-soft); }
+.pl-row.pl-head, .pl-row.pl-head:hover { background: none; cursor: default; font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); padding-top: 2px; padding-bottom: 2px; }
+.pl-head span:nth-child(5), .pl-head span:nth-child(6) { text-align: right; }
+@media (max-width: 720px) { .pl-head { display: none; } }
 .pl-row.cur { box-shadow: inset 2px 0 0 var(--acc); }
 .pl-time, .pl-mode, .pl-cost, .pl-res { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .pl-cost { text-align: right; }
@@ -1294,7 +1297,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 #pl-more { margin-top: 12px; }
 
 /* ============ Who did the work (js/work.js) — each model in each role, signed like a person ============ */
-.wk-table { width: 100%; border-collapse: collapse; font-size: 11.5px; color: var(--ink); }
+.wk-table { width: 100%; max-width: 1100px; border-collapse: collapse; font-size: 11.5px; color: var(--ink); }
 .wk-table th { font-family: var(--font-mono); font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: var(--tr-mono);
                color: var(--ink-faint); text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
 .wk-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--hair-soft); font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; }
@@ -1305,12 +1308,12 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .wk-table tr.wk-first td { border-top: 1px solid var(--hair); }
 .cs-tile b em { font-family: var(--font-mono); font-style: normal; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--ink-faint); vertical-align: 6px; }
 /* context filled: the fullest session light, the median session dark over it; the numbers are on hover */
-.wk-fill { display: inline-block; position: relative; width: 96px; height: 7px; background: var(--hair); vertical-align: 0; }
+.wk-fill { display: inline-block; position: relative; width: 96px; height: 10px; background: var(--hair); vertical-align: 0; }
 .wk-fill i { position: absolute; left: 0; top: 0; height: 100%; background: var(--ink-soft); }
 .wk-fill i.max { background: var(--ink-faint); opacity: 0.45; }
 .wk-fill.high i.max { background: var(--acc); opacity: 0.5; }
 /* what the cost went to: one bar, a segment per kind of token (hints.js TOKENS), the key in the column's head */
-.wk-cost { display: inline-flex; width: 140px; height: 7px; background: var(--hair); vertical-align: 0; }
+.wk-cost { display: inline-flex; width: 140px; height: 10px; background: var(--hair); vertical-align: 0; }
 .wk-cost i, .wk-key i { display: block; height: 100%; }
 /* the share of a row's cost its split does not price: hatched, said on hover (audit C2) */
 .wk-cost .wk-unsplit { background: repeating-linear-gradient(135deg, var(--ink-faint) 0 1px, transparent 1px 4px); }
@@ -1390,3 +1393,11 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .rs-cap { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); margin-right: 14px; }
 .wk-table td .tally { margin-left: 8px; }
 .wk-table td .tally i { color: var(--ink-soft); }
+
+/* A FINGER finds a bar's part: on a screen with no hover the bars a tap reads are tall enough to hit (audit CQ3) */
+@media (hover: none) {
+    .cs-bar { height: 16px; }
+    .wk-cost, .wk-fill { height: 14px; }
+}
+/* a model tile's figures read as figures beside its name (audit CQ5) */
+.wk .cs-tile i .tally b { font-size: 15px; }

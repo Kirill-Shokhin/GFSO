@@ -7,6 +7,7 @@ import {post} from './api.js';
 const del = cls => el('button', {className: cls, type: 'button', innerHTML: '&times;', onclick() { this.parentElement.remove(); }});
 const input = (className, placeholder, value, width) => {
     const i = el('input', {className, placeholder, value});
+    i.setAttribute('aria-label', placeholder);   // a field named only by its placeholder has no name once typed in (audit AQ6)
     if (width) i.style.width = width;
     return i;
 };

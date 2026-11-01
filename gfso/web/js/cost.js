@@ -13,6 +13,8 @@ const money = ps => { const calls = ps.reduce((s, p) => s + p.calls, 0), un = ps
     const procs = ps.reduce((s, p) => s + (p.procs ?? p.calls), 0);
     const m = reported(ps.reduce((s, p) => s + p.cost, 0), calls && procs, un);
     return m; };   // …the figure alone: how many went unpriced is one mark of its own, said once (audit C7)
+// a chart's rows by its own measure, the largest first: in another chart's order a bar chart reads as noise (audit CQ4)
+const byOwn = (rows, m) => [...rows].sort((a, b) => Object.values(b.parts).reduce((s, p) => s + m(p), 0) - Object.values(a.parts).reduce((s, p) => s + m(p), 0));
 // a tile's notes each on a line of its own, never joined to one another by a dot
 const tile = (v, label, ...notes) => `<div class="cs-tile"><b>${v}</b><span>${label}</span>${notes.filter(Boolean).map(n => `<i>${n}</i>`).join('')}</div>`;
 
@@ -60,7 +62,7 @@ export function render(el, run, nodes) {
             + `<em>${tally(c.byKind[k].calls, (KIND[k]?.count || k) + (c.byKind[k].calls === 1 ? '' : 's'))}${tally(dur(c.byKind[k].busy), 'busy')}</em></span>`).join('')}</div>
         <div class="cs-grid">
             ${bars('cost by node', nodeRows, p => p.cost, (t, r) => money(Object.values(r.parts)), r => `data-node="${esc(r.id)}"`, p => money([p]), 'cost')}
-            ${bars('session time by node', nodeRows, p => p.busy, dur, r => `data-node="${esc(r.id)}"`, p => dur(p.busy), 'busy')}
+            ${bars('session time by node', byOwn(nodeRows, p => p.busy), p => p.busy, dur, r => `data-node="${esc(r.id)}"`, p => dur(p.busy), 'busy')}
             ${bars('cost by level', levelRows, p => p.cost, (t, r) => money(Object.values(r.parts)), () => '', p => money([p]), 'cost')}
             ${bars('sessions by assignee', agentRows, p => p.calls,
                    (n, r) => `${n}<span class="cs-also">${r.peak} at once</span>`, r => r.id === '—' ? TIP.system : '', (p, k) => sessionsOf(k, p.calls), 'calls')}
