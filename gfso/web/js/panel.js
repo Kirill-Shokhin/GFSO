@@ -20,8 +20,11 @@ const link = (facet, label) => `<button class="pn-link" data-action="read" data-
 function waiting(d) {
     const w = waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], words = waitWords(w, id => nameOf(taskOf(id)) || id);
     // …its own parts as a count of its own, never «its 1 part» threaded into the words
-    const what = !w?.deps.length && w?.parts.length ? tally(w.parts.length, w.parts.length > 1 ? 'parts' : 'part') : `<b>${esc(words)}</b>`;
-    return words === '—' ? ['', ''] : [`<span>waiting on ${what}</span>`, `waiting on ${words}, `];
+    // …and several producers as a count too, their names one a row on the line's hover: names carry commas (audit D4)
+    const deps = (w?.deps || []).map(id => nameOf(taskOf(id)) || id);
+    const what = deps.length > 1 ? tally(deps.length, 'nodes')
+        : !w?.deps.length && w?.parts.length ? tally(w.parts.length, w.parts.length > 1 ? 'parts' : 'part') : `<b>${esc(words)}</b>`;
+    return words === '—' ? ['', ''] : [`<span>waiting on ${what}</span>`, deps.length > 1 ? `Waiting on ${deps.length}:\n${deps.map(n => `– ${n}`).join('\n')}\n` : `waiting on ${words}, `];
 }
 // a meta line is one line, cut at its end: the whole of it on hover
 const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</div>`;
@@ -30,16 +33,18 @@ function head({d, rounds}) {
     const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure);
     const live = !terminal(d.state), mode = S.graph.mode?.mode;
     // the round is an ordinal — «round 6», its figure standing out — never a count «6 rounds»; whether it is in work beside it
-    const [wait, waitText] = waiting(d), inWork = consented(d.state) && (!rounds.length || rounds.at(-1).verdict),
-          n = rounds.length + (inWork ? 1 : 0), round = `round ${n}${inWork ? ', in work' : ''}`;
+    // …«in work» only where the run has it at work: beside «nothing at work» it said what was not (audit D8); no round 0 (D9)
+    const [wait, waitText] = waiting(d), next = consented(d.state) && (!rounds.length || rounds.at(-1).verdict),
+          n = rounds.length + (next ? 1 : 0), inWork = next && !!S.run?.now?.work.has(d.id), round = n ? `round ${n}${inWork ? ', in work' : ''}` : '';
     const ids = [d.id, mode && `${mode} mode`, `Del ${d.assignee ? bare(d.assignee, S.project) : '—'}`].filter(Boolean).join(' · ');
     return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
         + meta(esc(ids), ids)
         + `<div class="pn-status"><span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v === 'undef' ? '⊥' : v}</span>`
         + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
-        + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : ''}>⏱ ${when(d.deadline)}</span>` : '')
+        // a deadline only where it still binds: on a closed node it was clutter with no tip (audit D18)
+        + (d.deadline && live ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : ''}>⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
-        + '</div>' + meta(`${wait}<span class="pn-round">round <b>${n}</b>${inWork ? ', in work' : ''}</span>`, waitText + round)
+        + '</div>' + (wait || n ? meta(`${wait}${n ? `<span class="pn-round">round <b>${n}</b>${inWork ? ', in work' : ''}</span>` : ''}`, waitText + round) : '')
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-meta pn-by" id="pn-by">${signedBy(S.run, d.id)}</div>`
         + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip"${PANEL.escalated}>issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
@@ -51,7 +56,7 @@ function head({d, rounds}) {
 // THE EXECUTION VERDICT in one line — what, who, when, what failed; its evidence is the reader's.
 function verdict({vr}) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
-        + `<span class="pn-who">${signer(vr)}${vr.ts ? ' · ' + when(vr.ts) : ''}</span>`
+        + `<span class="pn-who">${signer(vr)}</span>${vr.ts ? `<span class="pn-when">${when(vr.ts)}</span>` : ''}`
         + `${vr.current === false ? `<span class="check-fail"${PANEL.earlier}>earlier</span>` : ''}`
         // a refused report LATER than this verdict asks for a look; an earlier one is history this verdict answered
         + `${vr.refused_report && at(vr.refused_report.ts) > at(vr.ts) ? `<span class="check-fail"${PANEL.refused(vr.refused_report.note)}>a later report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
@@ -201,7 +206,9 @@ export function closeSidebar() {
 
 // ── the reader ──
 let cur = null, tab = null;
-const txt = x => esc(typeof x === 'string' ? x : JSON.stringify(x, null, 1));
+// …a list carried by a signal one item a row, never a JSON dump (audit D15)
+const txt = x => Array.isArray(x) && x.every(i => typeof i === 'string') ? `<ul class="rd-items">${x.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
+    : esc(typeof x === 'string' ? x : JSON.stringify(x, null, 1));
 
 
 // Who produced a verdict: a hand or an instrument — nothing closes on impression (HTTP door, 2026-09-02).
@@ -230,7 +237,8 @@ function verdictFull({vr}) {
         + `${vr.current === false ? ' <span class="check-fail">(validated an EARLIER delivery)</span>' : ''}</div>`
         + (vr.independence ? `<div class="verdict-evidence"${PANEL.signed}>${esc(vr.independence)}</div>` : '')
         + refusedOf(vr.refused_report)
-        + ((vr.failed_criteria || []).length ? `<div class="check-fail">failed: ${esc(vr.failed_criteria.join(', '))}</div>` : '')
+        // what failed is the ✗ rows below; said here only where no row per criterion was kept (audit DQ3)
+        + ((vr.failed_criteria || []).length && !(vr.per_criterion || []).length ? `<div class="check-fail">failed: ${esc(vr.failed_criteria.join(', '))}</div>` : '')
         + ((vr.undecidable || []).length ? `<div class="check-skip">undecidable (never observed): ${esc(vr.undecidable.join(', '))}</div>` : '')
         + ul('item-list', (vr.per_criterion || []).map(c => {
             const byCmd = new Map();
@@ -284,7 +292,8 @@ const l2 = cr => {
 function review({cr}) {
     const {rev, cv, conflicts, undecided, status, bad} = l2(cr);
     return section(`L2 review${cr.verified ? '' : ' — STALE (decomposition changed)'}`, ul('item-list', [
-        `<li class="${bad ? 'check-fail' : ''}">${status}${rev.model ? ' · ' + esc(rev.model) : ''}${rev.ts ? ' · ' + esc(rev.ts) : ''}</li>`,
+        `<li class="${bad ? 'check-fail' : ''}">${status}</li>`,
+        (rev.model || rev.ts) && `<li class="faint">${rev.model ? `reviewed by ${esc(modelName(rev.model))}` : 'reviewed'}${rev.ts ? `, ${when(rev.ts)}` : ''}</li>`,
         ...cv.map(v => `<li>${l2Mark(v.verdict)} ${esc(v.criterion)} — ${esc(v.why || '')}</li>`),
         ...conflicts.map(c => `<li>⚡ [${esc((c.between || []).join(', '))}] ${esc(c.why || '')}</li>`),
         ...undecided.map(u => `<li class="check-fail">✗ no pinned check its validation runs decides: ${esc(u.obligation || u.gap || '')}`
@@ -308,7 +317,7 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
 
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
-    const line = `${stamp(a.timestamp, 5, 19)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? label(a.new_state) : 'rej'}${a.source ? ' · ' + esc(bare(a.source, S.project)) : ''}`;
+    const line = `${when(a.timestamp)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? label(a.new_state) : 'rej'}${a.source ? ' by ' + esc(bare(a.source, S.project)) : ''}`;
     const more = CARRIED.filter(([k]) => a[k] && a[k].length !== 0).map(([k, l]) => `<div class="rd-field"><b>${l}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;
@@ -325,7 +334,9 @@ export const FACETS = [
     {id: 'risks', label: 'AcceptedRisk', n: ({d}) => (d.accepted_risks || []).length, body: list('accepted_risks', 'AcceptedRisk (STD-1)')},
     {id: 'components', label: 'Risk components', n: ({d}) => (d.risk_components || []).length, body: list('risk_components', 'Risk components (STD-3)')},
     {id: 'parts', label: 'Parts', n: ({d}) => kids(d).length && `${passing(d)}/${kids(d).length} pass`, body: composition},
-    {id: 'checks', label: 'Checks', n: ({d}) => ran(d).length && `${ran(d).filter(c => !met(c)).length}/${ran(d).length} unmet`, body: checks},
+    // all met reads as met, not «0/6 unmet» (audit D17)
+    {id: 'checks', label: 'Checks', n: ({d}) => { const n = ran(d).length, un = ran(d).filter(c => !met(c)).length;
+        return n && (un ? `${un}/${n} unmet` : `${n} met`); }, body: checks},
     {id: 'l2', label: 'L2 review', n: ({cr}) => l2(cr)?.short, body: review},
     {id: 'recs', label: 'AI recommendations', n: ({d}) => d.recommendation?.suggestions?.length,
      body: ({d}) => section('AI Recommendations', `<div class="recs">${ul('', d.recommendation.suggestions.map(s =>
@@ -341,10 +352,11 @@ function render() {
     const f = FACETS.find(x => x.id === tab && x.n(cur)) || FACETS.find(x => x.n(cur)), {d} = cur;
     tab = f.id;
     box().hidden = false;
-    const budget = `${d.id}: rework budget ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN, reopened ${d.reopens || 0}×`;
+    const budget = `Rework budget: ${d.iteration} of ${d.max_iterations} used since the last re-ASSIGN${d.reopens ? `\nReopened ${plural(d.reopens, 'time')}` : ''}`;
     rebuild(box(), `${d.id}|${tab}`, `<div class="rd-top"><div class="sidebar-header"><h2${PANEL.full(nameOf(d))}>${esc(nameOf(d))}</h2>`
         + `<button class="sidebar-close" data-action="read"${frame('close')}>&times;</button></div>`
-        + meta(esc(d.id) + tally(`${d.iteration}/${d.max_iterations}`, 'rework rounds') + tally(d.reopens || 0, 'reopens'), budget)
+        // the rework budget is no third round figure beside the panel's «round N» and the badge (audit D7); reopens only when any
+        + meta(esc(d.id) + tally(`${d.iteration}/${d.max_iterations}`, 'rework budget used') + (d.reopens ? tally(d.reopens, d.reopens > 1 ? 'reopens' : 'reopen') : ''), budget)
         + `<div class="rd-tabs">${FACETS.map(x => chip(x, cur, x === f)).join('')}</div></div>${f.body(cur)}`);
 }
 

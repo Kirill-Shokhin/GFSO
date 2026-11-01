@@ -1,13 +1,13 @@
 // The log as events: grouped by node, newest first, filtered by kind. A group's head says where the
 // node stands and, when it has failed, what its last FAIL named — the usual question answered
 // without opening anything; one click opens the node's own trail, its narration nested in.
-import {esc} from './dom.js';
+import {esc, tally} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
 import {hm, day, bare} from './fmt.js';
 import {S} from './state.js';
 import {at, said, failedOf} from './run.js';
-import {roundsLine, failedWords, TIP} from './hints.js';
+import {failedWords, TIP} from './hints.js';
 import {CARRIED, label} from './vocab.js';
 
 const KINDS = {
@@ -34,7 +34,8 @@ function streams(run, nodes, pipeline) {
 }
 
 function row(r) {
-    if (r.p) return `<li class="ev ev-narration${r.kind === 'run' ? ' ev-run' : ''}"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text">${esc(r.p.text)}</span></li>`;
+    // …a long one folded to two lines, the whole of it on hover: hundreds of characters a row read as the console (audit D16)
+    if (r.p) return `<li class="ev ev-narration${r.kind === 'run' ? ' ev-run' : ''}"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text"${r.p.text.length > 60 ? TIP.cell(r.p.text) : ''}>${esc(r.p.text)}</span></li>`;
     // what it carried, folded — but its failed criteria, drawn as chips, and an error the move line already says
     const a = r.a, prose = CARRIED.filter(([k]) => a[k] && k !== 'failed_criteria' && (k !== 'error' || a.rejected)).map(([k, l]) => [l, a[k]]);
     const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
@@ -46,6 +47,11 @@ function row(r) {
         ${prose.length ? `<details data-key="${esc(`r|${a.task_id}|${a.timestamp}|${a.signal}`)}"${opened.has(`r|${a.task_id}|${a.timestamp}|${a.signal}`) ? ' open' : ''}><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
 }
 
+// the rows' times are hours: a day's first row stands under its day, unless every row is today's (audit D12)
+const today = () => day(Date.now());
+const days = (rs, i) => (i ? day(rs[i].t) !== day(rs[i - 1].t) : rs.some(r => day(r.t) !== today()))
+    ? `<li class="ev-day">${day(rs[i].t)}</li>` : '';
+
 function head(id, name, node, run, rs) {
     if (id === RUN) return `<summary><span class="ev-node">the run</span><span class="ev-rounds">on no node — stops, starts, the mode, tech reports</span>
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
@@ -54,7 +60,7 @@ function head(id, name, node, run, rs) {
     // one line each, cut at its end: the whole of it on hover
     return `<summary><span class="ev-node"${TIP.cell(name)}>${esc(name)}</span>
         <span class="state-badge ev-state">${esc(label(node.state))}</span>
-        <span class="ev-rounds">${rounds.length ? roundsLine(rounds) + (last?.verdict ? ` · last ${last.verdict}` : '') : 'no delivery yet'}</span>
+        <span class="ev-rounds">${rounds.length ? tally(rounds.length, rounds.length > 1 ? 'rounds' : 'round') + (fails.length ? tally(fails.length, 'failed') : '') : 'no delivery yet'}</span>
         ${why ? `<span class="ev-why${last?.verdict === 'FAIL' ? '' : ' was'}"${TIP.cell(why)}>${esc(why)}</span>` : ''}
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
 }
@@ -66,7 +72,9 @@ let query = '', shown = null;
 
 export function render(el, run, nodes, tasks, pipeline = []) {
     const name = run.name, by = streams(run, nodes, pipeline), ids = [...nodes.map(n => n.id), RUN];
-    el.innerHTML = `<div class="ev-bar">${Object.keys(KINDS).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}</button>`).join('')}
+    // a kind's count over what is in view: the whole run, or the one node chosen
+    const count = (k, sel) => (sel ? [by[sel] || []] : Object.values(by)).reduce((n, rs) => n + rs.filter(r => r.kind === k).length, 0);
+    el.innerHTML = `<div class="ev-bar">${Object.keys(KINDS).filter(k => count(k)).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}<b>${count(k)}</b></button>`).join('')}
         <input class="ev-find" type="search" placeholder="find in events…"><span class="ev-only"></span></div><div class="ev-groups"></div>`;
     const box = el.querySelector('.ev-groups'), find = el.querySelector('.ev-find');
     find.value = query;
@@ -82,8 +90,9 @@ export function render(el, run, nodes, tasks, pipeline = []) {
             const rs = kept[id];
             if (!rs.length && (q || sel !== id)) return '';
             return `<details class="ev-group" data-key="${esc(`g|${id}`)}"${id === RUN ? '' : ` data-node="${esc(id)}"`}${opened.has(`g|${id}`) ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, rs)}
-                <ol><li class="ev ev-cols"><span>time</span><span>signal</span><span>state</span><span>by</span></li>${rs.map(row).join('')}</ol></details>`;
+                <ol><li class="ev ev-cols"><span>time</span><span>signal</span><span>state</span><span>by</span></li>${rs.map((r, i) => days(rs, i) + row(r)).join('')}</ol></details>`;
         }).join('') || '<p class="ev-none">nothing matches</p>';
+        el.querySelectorAll('.ev-chip').forEach(c => c.querySelector('b').textContent = count(c.dataset.kind, sel));
         el.querySelector('.ev-only').innerHTML = sel ? `only <b>${esc(name(sel))}</b> <button data-clear>show all</button>` : '';
     };
     el.querySelector('.ev-bar').onclick = e => {

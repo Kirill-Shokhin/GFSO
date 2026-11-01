@@ -388,6 +388,11 @@ body {
 .ev-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 .ev-chip { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; padding: 3px 8px; border: 1px solid var(--hair); background: transparent; color: var(--ink-faint); border-radius: 2px; cursor: pointer; }
 .ev-chip.on { color: var(--ink); border-color: var(--ink-soft); }
+.ev-chip b { margin-left: 5px; font-weight: 600; letter-spacing: 0; }
+.ev-rounds .tally { margin-right: 8px; }
+.ev-sig .glyph { margin-right: 4px; vertical-align: -1px; }
+/* a day's first row stands under its day (events.js) */
+.ev-day { list-style: none; padding: 6px 4px 2px 18px; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); }
 .ev-find { margin-left: 8px; font: inherit; font-size: 12px; padding: 3px 8px; border: 1px solid var(--hair); background: var(--canvas); color: var(--ink); border-radius: 2px; width: 200px; }
 .ev-only { font-size: 12px; color: var(--ink-soft); }
 .ev-only button { font: inherit; font-size: 11px; background: none; border: none; text-decoration: underline; color: var(--ink-soft); cursor: pointer; }
@@ -1080,6 +1085,7 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .pn-verdict { display: flex; align-items: center; gap: 6px; font-size: 11.5px; margin: 14px 0 6px; min-width: 0; }
 .pn-verdict b { font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: var(--tr-mono); }
 .pn-who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ui-text-faint); }
+.pn-when { font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft); white-space: nowrap; }
 .pn-link {
     background: none;
     border: none;
@@ -1165,6 +1171,7 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .rd-text { white-space: pre-wrap; font-size: 12.5px; line-height: 1.6; color: var(--ui-text-soft); }
 .reader .audit-list, .reader .verdict-evidence { max-height: none; }
 .reader .audit-list summary { cursor: pointer; }
+.rd-items { margin: 2px 0 0; padding-left: 16px; white-space: normal; }
 .rd-field { white-space: pre-wrap; font-family: var(--font-body); font-size: 11.5px; padding: 4px 0 4px 12px; }
 .rd-field b { font-family: var(--font-mono); font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: var(--tr-mono); color: var(--ui-text-faint); margin-right: 8px; }
 
@@ -1241,7 +1248,8 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
    one baseline, apart by a gap and a hairline (the author, 2026-10-30: «8/11 на пол головы выше … как минимум 3 шрифта»;
    «статус и количество это два разных поинта … там что мало место их разнести?»); the figure set apart by weight alone */
 .hd-needs > .hd-phrase, .hd-needs > .tally, .hd-needs > .hd-quiet { font-size: 12.5px; white-space: nowrap; }
-.hd-needs > .tally b, .hd-q .tally b, .need .tally b { color: inherit; }
+.hd-needs > .tally b, .hd-q .tally b, .need .tally b, .hd-run-state .tally b, .pl-where .tally b { color: inherit; }
+.hd-run-state .tally, .pl-where .tally { margin-left: 0.5em; }
 .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: 1px solid var(--hair-on-chrome); padding-left: 16px; }
 .hd-needs > .hd-quiet:first-child { border-left: none; padding-left: 0; }
 .dk-head .tally { gap: 5px; margin-right: 8px; }
@@ -1271,8 +1279,10 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .rs-busy { color: var(--ink); }
 .pl-what { min-width: 0; }
 .pl-what b { display: block; font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pl-what i { display: block; font-style: normal; font-family: var(--font-mono); font-size: 10px; color: var(--ink-faint); }   /* wraps between its parts, never cut */
-.pl-what i span { white-space: nowrap; }
+.pl-what i { display: flex; flex-wrap: wrap; column-gap: 15px; overflow: hidden; font-style: normal; font-family: var(--font-mono); font-size: 10px; color: var(--ink-faint); }   /* wraps between its parts, never cut */
+/* the separator stands before a part, and a part starting a line has it outside the box: no «·» dangles at a wrap (audit A13) */
+.pl-what i span { white-space: nowrap; position: relative; }
+.pl-what i span + span::before { content: '·'; position: absolute; left: -10px; }
 .pl-where { font-size: 11.5px; color: var(--ink-soft); }
 .pl-where.done, .pl-where.live { color: var(--ink); }
 .pl-where.bad { color: var(--ink); font-weight: 650; }

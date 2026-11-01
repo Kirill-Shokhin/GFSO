@@ -88,7 +88,7 @@ export const V_SYMBOL = {pass: '✓', fail: '✗', undef: '⊥'};
 // A model id as a person says it — claude-haiku-4-5-20251001 → haiku 4.5; a bare alias, recorded before the model
 // that ran was kept, says the version is unknown; any other id — another provider's — as written.
 export const modelName = m => { const x = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(m || '');
-    return x ? `${x[1]} ${x[2]}${x[3] ? '.' + x[3] : ''}` : /^(haiku|sonnet|opus|fable)$/.test(m || '') ? `${m} · version not recorded` : m || 'model not recorded'; };
+    return x ? `${x[1]} ${x[2]}${x[3] ? '.' + x[3] : ''}` : /^(haiku|sonnet|opus|fable)$/.test(m || '') ? `${m} (version not recorded)` : m || 'model not recorded'; };
 export const statusLabel = (s, doneReason) => (s === 'DONE' && doneReason) ? doneReason : label(s);
 
 // A CLOSED NODE IS NOT ONE KIND OF THING (§15.7): what the drawing says about a closure, in words.
@@ -135,10 +135,10 @@ export const CARRIED = [['error', 'why refused'], ['reason', 'reason'], ['justif
 // What a planning verb costs, said before it runs — the same words wherever one is offered.
 export const PLAN_COST = 'Runs ~2–6 min and spends model calls; its progress shows in the deck (Events, with narration on).';
 
-// WHO HOLDS THE WORK, in the server's words: the `set_mode` doc's three bullets, read once.
-let modes;
-export const modeDoc = () => modes ??= getJSON('/api/tools').then(d => {
-    const doc = (d.tools || []).find(t => t.tool === 'set_mode')?.doc || '';
-    return Object.fromEntries([...doc.matchAll(/- `(\w+)` — ([\s\S]*?)(?=\n\s*- `|\n\s*\n|$)/g)]
-        .map(([, m, text]) => [m, text.replace(/\s+/g, ' ').trim()]));
-}).catch(() => (modes = null, {}));
+// WHAT EACH MODE MEANS, said to a person: set_mode's own doc is written to the agent («you (the user-agent) hold…»), and
+// read to a person it named the wrong reader (audit A10). What each mode NEEDS stays the engine's (`/api/modes`).
+export const MODES = {
+    solo: "The user's agent holds every node and performs it; the system validates the goal and every part larger than one session.",
+    semi: "The user's agent holds the top of the plan — the goal, by default — and makes the issuer's moves there; the project's registered executors hold every part below it.",
+    auto: "The system holds every node, the goal included. The user's agent is the customer: it states the goal and reads where it stands, and does not intervene.",
+};

@@ -2,11 +2,11 @@
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
 import {$, esc, data, tally, daily} from './dom.js';
-import {H, QUALITY} from './hints.js';
+import {H, QUALITY, GRADES, doing} from './hints.js';
 import {post, GOAL} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
-import {label, closureNote, contested, modeDoc, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
-import {GAP, at, busyNow} from './run.js';
+import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
+import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
 import {askInPage, act} from './overlays.js';
@@ -38,6 +38,10 @@ function standing(root) {
     return `<span class="hd-phrase">${cap(phrase)}</span>` + (parts.length ? tally(`${k}/${parts.length}`, 'parts done') : '');
 }
 
+// the mode's settings in words (set_mode's own names: l2_gate, observe, deadline_s)
+const SETTING = {l2_gate: 'Plan review gate', observe: 'Checks observed before execution', deadline_s: 'Default deadline', network: 'Network'};
+const SWITCH = new Set(['l2_gate', 'observe']);   // switches, whatever their value's type
+const PERFORM = {dispatch: 'each node in a clean session of its executor', in_chat: "by the user's agent itself"};
 let status = '';                   // the root's standing, set by goal(), shown in the middle
 async function goal() {
     status = '';
@@ -46,15 +50,15 @@ async function goal() {
     if (!root) return GOAL && S.missing ? '<span class="hd-phrase">A new project — it exists once its goal is created</span>'
         : `<span class="hd-phrase${S.missing ? ' acc' : ''}">${esc(S.missing
             || (procs().some(w => w.verb === 'auto_decompose') ? 'The goal is being planned' : 'No goal yet'))}</span>`;
-    const doc = mode ? await modeDoc() : {};
     // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
     const m = S.graph.mode, st = m?.settings || {};
-    const set = [m?.by && ['set by', `${m.by}${m.at ? ' · ' + stamp(m.at) : ''}`],
-        m?.boundary && ['boundary', `depths 0…${m.boundary - 1} held by the user's agent`], m?.perform && ['perform', m.perform],
-        m?.hands && ['hands', m.hands], st.system_model && ['system model', `the system's roles run on ${modelName(st.system_model)}`],
+    // …each a capitalised head in words, its moment as the page says moments, an on/off as on/off (audit A10)
+    const set = [m?.by && ['Set by', `${m.by}${m.at ? `, ${clockAt(at(m.at))}` : ''}`],
+        m?.boundary && ['Boundary', `depths 0…${m.boundary - 1} held by the user's agent`], m?.perform && ['Perform', PERFORM[m.perform] || m.perform],
+        m?.hands && ['Hands', m.hands], st.system_model && ['System model', `the system's roles run on ${modelName(st.system_model)}`],
         // a setting in seconds is said as a time (deadline_s 29160 → deadline 8.1h)
-        ...Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => /_s$/.test(k) && typeof v === 'number'
-            ? [k.slice(0, -2).replace(/_/g, ' '), dur(v * 1e3)] : [k.replace(/_/g, ' '), String(v)])].filter(Boolean);
+        ...Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => [SETTING[k] || cap(k.replace(/_s$/, '').replace(/_/g, ' ')),
+            /_s$/.test(k) && typeof v === 'number' ? dur(v * 1e3) : typeof v === 'boolean' || SWITCH.has(k) ? (v ? 'on' : 'off') : typeof v === 'object' ? JSON.stringify(v) : String(v)])].filter(Boolean);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = nameOf(root), short = full.split(/\s[(:—]/)[0].slice(0, 40);
     const done = delivered(root);
@@ -64,12 +68,12 @@ async function goal() {
     status = word ? `<span class="hd-verdict${word === 'failed' ? ' bad' : ''}">${word}${done ? '<i class="brand-dot"></i>' : ''}</span>`
         : standing(root);
     return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full)}>${esc(short)}</button>`
-        + (mode ? `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode)}</button>${H.mode(doc, mode, set)}</span>` : '');
+        + (mode ? `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode)}</button>${H.mode(MODES, mode, set)}</span>` : '');
 }
 
 // One chip per kind of call on a person; `ids` are the nodes it is about, the first one is selected.
-const need = (n, text, ids, rows, cls = '', kind = text) => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
-    + `${H.need(kind, rows)}>${tally(n, esc(text))}</button>`;
+const need = (n, text, ids, rows, cls = '', kind = text, counted = true) => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
+    + `${H.need(kind, rows)}>${counted ? tally(n, esc(text)) : esc(text)}</button>`;
 const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // Under AUTO the system makes every issuer move below the root (set_mode), so a challenge or a block there is the
 // machine issuer's to answer — in the strip as its turn or its wait, never here as a call on a person (critic).
@@ -92,9 +96,11 @@ const when = t => clockAt(typeof t === 'number' ? t * 1e3 : at(t));
 function runSwitch(r) {
     if (!r || !begun() || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return '';
     if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
-    const who = `stopped by ${r.by} at ${when(r.at)}${r.why ? ` — ${r.why}` : ''}`;
-    const text = r.state === 'stopping' ? `stopping · ${r.working.length} still at work` : 'stopped';
-    const tip = r.state === 'stopping' ? H.stopping(who, r.working.map(w => `${w.verb} · ${w.task_id || '—'} · since ${when(w.since)}`)) : H.stopped(who);
+    // the count its own mark (audit A5); the tip headed by who and when, each session still at work by its node and what it
+    // does — not the in-flight registry's verb and id joined by dots (A8, A9)
+    const text = r.state === 'stopping' ? `stopping${tally(r.working.length, 'still at work')}` : 'stopped';
+    const tip = r.state === 'stopping' ? H.stopping(r.by, when(r.at), r.why, r.working.map(w => `${w.task_id ? nameOf(taskOf(w.task_id)) || w.task_id : 'the system'}: ${doing(w.verb, PROC_KIND[w.verb])}, since ${when(w.since)}`))
+        : H.stopped(r.by, when(r.at), r.why);
     return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}"${tip}>${text}</span>`
         + `<button class="hd-run" data-action="run-start"${H.start}>start</button>`;
 }
@@ -143,7 +149,8 @@ function stalled(calls) {
     // …the quiet turns into a stall at a moment known now, with nothing pushed then: the header is drawn again at it
     clearTimeout(wake);
     if (Date.now() - last <= GAP) return void (wake = setTimeout(drawHeader, last + GAP - Date.now() + 1e3));
-    return need(1, `stalled since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled');
+    // the goal's one stall is no count: «1 stalled» read as one thing stalled among others (audit A6)
+    return need(1, `stalled since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled', false);
 }
 let wake;
 daily(() => drawHeader());   // a moment said without its day (today's) gains it at midnight
@@ -183,6 +190,11 @@ export async function drawHeader() {
 // the server's `means` is a paragraph: its first sentence says what the metric counts and stands under the heading,
 // the rest — how to read it, what it is not — one click away (a popover of five paragraphs read as prose, not a list);
 // the server's own short name before a colon goes where it says what the heading already says
+// the server's prose said to a person: no § references (the canon is not on the page), no code quotes, no shouting — a
+// protocol word (PASS, FAIL, BLOCK…) keeps its capitals (audit A12)
+const SIGNALS = /^(PASS|FAIL|BLOCK|REOPEN|DONE|ASSIGN|DELIVER|ACCEPT|CHALLENGE|CANCEL|TIMEOUT)$/;
+const plain = t => t.replace(/\s*\(§[^)]*\)/g, '').replace(/`([^`]*)`/g, '$1')
+    .replace(/\b[A-Z]{2,}(?:\s+[A-Z]{2,})*\b/g, w => w.split(/\s+/).every(x => SIGNALS.test(x)) ? w : w.toLowerCase());
 const readMeans = r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(r.means || '') || [, r.means];
     // …only when the heading says every word of it: «delegation correctness» gone left a ratio read the wrong way
     const words = s => s.toLowerCase().match(/[a-z]{4,}/g)?.map(w => w.slice(0, 5)) || [], head = words(r.head);
@@ -203,10 +215,11 @@ export function drawQuality() {
         // ⊥ is an empty population (§15.4) — a dash, not a fake 100%
         const means = m.means || {}, alarm = m.alarm || {}, ffs = m.false_fail_share;
         $('hd-quality').innerHTML = `<button class="hd-q${m.calls_person ? ' acc' : ''}" data-action="pop">quality</button>`
-            + H.quality(Object.entries(m.grades || {}).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: `${k}, ${grade}`, means: means[k] || '', none: m[k] == null,
+            + H.quality([...Object.entries(m.grades || {}).flatMap(([k, grade]) => [{head: QUALITY[k] || k, tag: grade, means: plain(means[k] || ''), none: m[k] == null,
                 val: m[k] == null ? '<span class="hq-val">—</span><span class="hq-nil">no observations yet</span>'
                     : `<span class="hq-val${alarm[k] ? ' acc' : ''}">${pct(m[k])}</span>`},
                 // §15.4: a low q_D is read TOGETHER with the false-FAIL share (an over-strict validator inflates it).
-                ...k === 'q_D' && ffs != null ? [{head: QUALITY.false_fail_share, tag: 'high is bad', val: `<span class="hq-val">${pct(ffs)}</span>`, means: means.false_fail_share || ''}] : []]).map(readMeans));
+                ...k === 'q_D' && ffs != null ? [{head: QUALITY.false_fail_share, tag: 'high is bad', val: `<span class="hq-val">${pct(ffs)}</span>`, means: plain(means.false_fail_share || '')}] : []]).map(readMeans),
+                {group: 'How far a figure goes'}, ...[...new Set(Object.values(m.grades || {}))].map(g => ({head: cap(g), means: GRADES[g] || ''}))]);
     }
 }

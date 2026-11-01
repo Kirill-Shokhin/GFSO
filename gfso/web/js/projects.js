@@ -61,8 +61,9 @@ function where(p, busy) {
     // finish still run, as stopping (the engine's three states, `run_state`)
     const stop = p.stopped;
     // …its why on hover: written by whoever stopped it, it ran to a paragraph where every other status is a phrase
-    if (stop) return ['open', `${busy ? `stopping · ${busy} still at work` : 'stopped'} · by ${stop.by}`, stop.why];
-    if (busy) return ['live', `running · ${busy}`];
+    // …a count its own mark (audit A5)
+    if (stop) return ['open', busy ? 'stopping' : 'stopped', stop.why, busy && [busy, 'still at work'], `by ${stop.by}`];
+    if (busy) return ['live', 'running', '', [busy, 'at work']];
     const since = p.t ? ` · last act ${when(p.t)}` : '';
     if (r.state === 'ESCALATED') return ['bad', `awaits a decision${since}`];
     // acted lately: a run another process drives (an AUTO dispatcher, an E3 container) is in no registry of
@@ -89,21 +90,23 @@ const when = (t, ref) => clockAt(t * 1e3, ref && ref * 1e3);
 // it (how long it ran) — said only on another day before, which read as some rows having it and others not (the
 // author). An unfinished one says its last act in its status. The model comes before the time: the line is cut at its end.
 function row(p, busy, active) {
-    const [cls, text, why] = where(p, busy), r = p.goal, cur = p.n === S.project;
+    const [cls, text, why, count, tail] = where(p, busy), r = p.goal, cur = p.n === S.project;
     const acted = active ? r?.started && `launched ${when(r.started)}`
         : (terminal(r?.state) || p.stopped) && r?.started && p.t && `until ${when(p.t, r.started)}`;
     const t = active ? p.t : r?.started;
-    return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}"${TIP.project(r?.name || p.n, r?.name && p.n)}>`
+    return `<a class="pl-row${cur ? ' cur' : ''}" href="?project=${encodeURIComponent(p.n)}">`
         + `<span class="pl-time">${t ? hm(t * 1e3) : ''}</span>`
-        + `<span class="pl-what"><b>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(x => `<span>${esc(x)}</span>`).join(' · ')}</i></span>`
-        + `<span class="pl-where ${cls}"${TIP.where(why)}>${esc(text)}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
+        + `<span class="pl-what"><b${TIP.cell(r?.name || p.n)}>${esc(r?.name || p.n)}</b><i>${[p.n, (p.models || []).map(modelName).join(' + '), acted].filter(Boolean).map(x => `<span>${esc(x)}</span>`).join('')}</i></span>`
+        + `<span class="pl-where ${cls}"${TIP.where(why)}>${esc(text)}${count ? tally(...count) : ''}${tail ? ` ${esc(tail)}` : ''}${cls === 'done' ? '<i class="brand-dot"></i>' : ''}</span>`
         + `<span class="pl-mode">${esc(p.mode || '')}</span><span class="pl-res">${ofProject(p.n)}</span>`
         + `<span class="pl-cost">${p.cost ? usd(p.cost) : ''}</span></a>`;
 }
 
 function draw() {
     const q = $('pl-search').value.trim().toLowerCase(), busy = busyByProject();
-    const hits = (all || []).filter(p => !q || [p.n, p.goal?.name || '', ...(p.models || []).map(modelName)]
+    // …by what its row says: its status and its day too («cancel» found none of seven cancelled rows — audit A15)
+    const hits = (all || []).filter(p => !q || [p.n, p.goal?.name || '', ...(p.models || []).map(modelName),
+            where(p, busy[p.n]).filter(x => typeof x === 'string').join(' '), p.goal?.started ? dayName(day(p.goal.started)) : '']
         .some(x => x.toLowerCase().includes(q)));
     // TWO QUESTIONS, TWO AXES: what is acting now — the last day's acts, newest first, the server's own order —
     // and what each run was, by when it was launched (author, 2026-10-24: «мои текущие или последние прогоны …

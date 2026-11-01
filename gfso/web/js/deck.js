@@ -132,6 +132,8 @@ export function paint() {
     const opened = el._drawn !== drawn;
     if (opened) forgetBrought(el), el._drawn = drawn;   // a view opened brings the selection again
     el.style.minWidth = '';
+    // a view opened starts at its top: Events opened 99 px down, its filters and the why-head above the fold (audit D11)
+    if (opened) { const box = el.closest('.dk-body'); box.scrollTop = 0; box.scrollLeft = 0; }
     if (!pref.closed && run) VIEWS[view].render(el, run, S.graph.nodes, S.tasks, S.pipeline);
     // a view on the run's time opened on a phone shows its latest first, the legend with it — at its start, a run of hours
     // showed the empty first minutes (audit B11)

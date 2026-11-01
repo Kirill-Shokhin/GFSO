@@ -2,10 +2,11 @@
 // plans it. A slide-over from the left; nothing is sent until one of its two buttons. What the engine owns it
 // READS: admission (`/api/admission`, the ladder every ASSIGN runs) and who holds the work (`/api/modes`).
 import {$, esc} from './dom.js';
+import {cap} from './fmt.js';
 import {getJSON, post, refusal} from './api.js';
 import {S, myRole, begun} from './state.js';
 import {notice, askInPage, act, askProjectName, NO_ANSWER} from './overlays.js';
-import {PLAN_COST, modeDoc} from './vocab.js';
+import {PLAN_COST, MODES} from './vocab.js';
 import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest} from './forms.js';
 import {rootOf} from './tree.js';
 
@@ -40,17 +41,21 @@ export const recheckHolds = () => { if (!panel().hidden) whoHolds().then(check);
 // set by their agent (`set_mode`) once its executors and validator are registered; the page reads what each
 // mode needs from the rule set_mode enforces ──
 async function whoHolds() {
-    const doc = await modeDoc(), m = mode();
+    const doc = MODES, m = mode();
     const r = !m && await getJSON('/api/modes').catch(() => null);
     // readiness for the default way of working (dispatch); "I do the work myself" (in_chat) is the user's to ask for
-    const need = s => s.ready ? 'ready' : esc(s.missing);
+    // …a want every mode shares said once above them, not three times under each (audit A11)
+    const ms = r?.modes ? ['solo', 'semi', 'auto'].map(k => r.modes[k].dispatch) : [];
+    const shared = ms.length && ms.every(s => !s.ready && s.missing === ms[0].missing) && ms[0].missing;
+    const need = s => s.ready ? 'ready' : shared ? 'not ready' : esc(s.missing);
     $('gp-modes').innerHTML = m
         ? `<p class="gp-note">This project runs <b>${esc(m)}</b> — ${esc(doc[m] || '')}</p>`
         : `<p class="gp-note">No mode yet. A mode — who holds which nodes — is the user's choice, set by their agent `
           + `(<code>set_mode</code>) BEFORE the goal is created: it governs nodes issued after it, so a goal created here `
           + `first is held by you, and under AUTO the goal must be stated after the mode. Executors and a validator can be `
           + `registered for a project before it exists (<code>register_agent</code>).</p>`
-          + ['solo', 'semi', 'auto'].map(k => `<div class="gp-mode off"><b>${k}</b><span>${esc(doc[k] || '')}</span>`
+          + (shared ? `<p class="gp-note gp-shared">${esc(shared)}</p>` : '')
+          + ['solo', 'semi', 'auto'].map(k => `<div class="gp-mode off"><b>${cap(k)}</b><span>${esc(doc[k] || '')}</span>`
               + (r?.modes ? `<span class="gp-needs">${need(r.modes[k].dispatch)}</span>` : '') + '</div>').join('');
 }
 

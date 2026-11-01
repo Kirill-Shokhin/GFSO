@@ -18,7 +18,7 @@
 //              projects.js delete, acts.js, goal.js); forms' own field help (index.html goal panel, goal.js).
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
-import {dur, hm, usd, money, NOT_REPORTED, tok, pct, cap, plural, moment, bare} from './fmt.js';
+import {dur, hm, usd, money, NOT_REPORTED, tok, pct, cap, plural, bare} from './fmt.js';
 import {S} from './state.js';
 import {statesIn, label, TOKENS, nameOf} from './vocab.js';
 
@@ -169,21 +169,25 @@ export const H = {
     stop: hover('Stop the run', 'Nothing new starts: no executor, validator or issuer session, no timeout',
                 'The sessions running now finish and their signals land'),
     start: hover('Start the run again', 'The time it stood stopped is left off every deadline and timeout'),
-    stopping: (who, working) => hover(`Stopping — ${working.length} still at work`, who, 'Each finishes and its signal lands:', working),
-    stopped: who => hover('Stopped', who, 'Nothing runs and no timeout fires until it is started again'),
+    stopping: (by, at, why, working) => hover(`By ${by}\t${at}`, why, `${working.length} still at work; each finishes and its signal lands:`, working),
+    stopped: (by, at, why) => hover(`By ${by}\t${at}`, why, 'Nothing runs and no timeout fires until it is started again'),
     // the mode: the three modes as items, this project's marked, then how this project's was set
     mode: (doc, mode, set) => pop('Who holds the work', 'The mode is set once per project; it decides which nodes a person holds and which the system does.',
-        [...Object.entries(doc).map(([m, text]) => ({head: m, tag: m === mode ? 'this project' : '', on: m === mode, means: text})),
+        [...Object.entries(doc).map(([m, text]) => ({head: cap(m), tag: m === mode ? 'this project' : '', on: m === mode, means: text})),
          ...set.length ? [{group: 'How it was set'}, ...set.map(([head, v]) => ({head, val: `<span class="hq-kv">${esc(v)}</span>`}))] : []]),
     reports: rs => pop('Tech reports', 'What the system reported about itself — a check contradicting its contract, a tool that cannot run. '
         + 'A report stops and moves nothing. Newest first.', rs),
-    quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each metric with its grade (§15.8).', rows),
+    quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each figure with how far it goes.', rows),
 };
 
 // what each quality metric measures, as its row's heading — its code (q_D…) and grade go beside it as the tag; the server
 // says the rest (`means`)
 export const QUALITY = {q_D: 'Splits that held', q_V: 'Verdicts that held', q_T: 'Criteria that held as issued',
     q_Dep: 'Dependencies foreseen', q_Del: 'Delegations that fit', false_fail_share: 'Over-strict FAILs'};
+// how far a figure goes (canon §15: two genuine observables, two proxies with known biases, one weak) — said once, under
+// the figures, rather than a bare tag the reader had to know (audit A12)
+export const GRADES = {observed: 'Read straight off the log: what it names, observed',
+    proxy: 'Stands for what it names, with known biases', weak: 'A weak indication only'};
 
 // ── a run's facts in words ──
 // THE KINDS OF SESSION (run.js), one row a kind, in the order the deck lists them: the bar's label, a count of them, who
@@ -254,7 +258,7 @@ export const PANEL = {
     refusedSaid: 'a validator reported and the report was REFUSED as ⊥ — ',
     escalated: hover('The issuer decides', ISSUER_MOVES),
     contested: hover('Read the verdict', 'Legitimate (§10.3), and nothing can check it (§15.7)'),
-    deadline: due => hover('Deadline', moment(due), 'Red once it has passed'),
+    deadline: () => hover('Deadline', 'Red once it has passed'),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
     // a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)
@@ -319,7 +323,6 @@ export const TIP = {
     part: (k, figure, share, p, says) => hover(`${cap(KIND[k]?.name || k)}\t${figure}`, meter('of the row', share),
         says !== 'calls' && sessionsOf(k, p.calls), says !== 'busy' && `${dur(p.busy)} busy`, p.tokens && `${tok(p.tokens)} tokens`),
     system: hover('The system', 'Sessions no assignee ran: the planning and the issuer turns the system takes itself'),
-    project: (name, id) => hover(name, id),
     where: why => hover(why),
 };
 
