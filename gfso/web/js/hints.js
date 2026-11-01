@@ -18,7 +18,8 @@
 //              projects.js delete, acts.js, goal.js); forms' own field help (index.html goal panel, goal.js).
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
-import {dur, hm, usd, money, NOT_REPORTED, tok, pct, cap, plural, moment} from './fmt.js';
+import {dur, hm, usd, money, NOT_REPORTED, tok, pct, cap, plural, moment, bare} from './fmt.js';
+import {S} from './state.js';
 import {statesIn, label, TOKENS, nameOf} from './vocab.js';
 
 // ── the renderers ──
@@ -63,7 +64,7 @@ const node = (look, head, bucket, means) => ({glyph: `<i class="kn kn-${look}"><
 const KEY = [
     {group: 'The graph'},
     {glyph: '<i class="lg-split"></i>', head: 'Split into its parts', means: 'from a node to each of its parts'},
-    {glyph: '<i class="lg-dep"></i>', head: 'Uses the result of', means: 'the user waits until its producer passes (Dep)'},
+    {glyph: '<i class="lg-dep"></i>', head: 'Uses the result of', means: 'the node using it waits until its producer passes (Dep)'},
     {glyph: '<i class="cy-live"></i>', head: 'At work', means: 'counted in the deck as «N at work»; a parent only waiting on its parts is not'},
     {glyph: '<i class="cy-live on"></i>', head: 'Running on this server now', means: 'a process of this server works on it'},
     // one mark, the round count; its accent is a state of it, not a second mark (the author: «почему это две разные и одинаковой иконкой»)
@@ -167,7 +168,7 @@ export const H = {
     stalled: 'Nobody owes a move the engine names, nothing is at work — a run that stopped without an end; Events shows its last act',
     stop: hover('Stop the run', 'Nothing new starts: no executor, validator or issuer session, no timeout',
                 'The sessions running now finish and their signals land'),
-    start: hover('Start the run again', 'A bound that passed meanwhile fires as any passed bound does'),
+    start: hover('Start the run again', 'The time it stood stopped is left off every deadline and timeout'),
     stopping: (who, working) => hover(`Stopping — ${working.length} still at work`, who, 'Each finishes and its signal lands:', working),
     stopped: who => hover('Stopped', who, 'Nothing runs and no timeout fires until it is started again'),
     // the mode: the three modes as items, this project's marked, then how this project's was set
@@ -274,7 +275,7 @@ export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
     node: (t, badge, waits, rs, criteria, failing) => card(nameOf(t),
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`, waits && `Waits on ${waits}`,
-         criteria && `${criteria} criteria`, t.assignee && `Del: ${t.assignee}`], badge),
+         criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${bare(t.assignee, S.project)}`], badge),
     rounds: rs => hover(roundsLine(rs)),
     // ONE SESSION of a stretch passed on from session to session — its own piece of the bar between the cuts, saying itself:
     // its time, cost, tokens, round, and, where it passed its work on («passed on», never «handed over», the key's word for

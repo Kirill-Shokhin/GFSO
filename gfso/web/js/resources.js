@@ -21,7 +21,8 @@ const take = d => { if (Array.isArray(d?.projects)) { last = d; shown.forEach(f 
 // опрос докера. он должен отобразить текущее число»)
 export function readResources(then) {
     if (last) return void then?.();
-    pending ??= getJSON('/api/resources').then(take, () => {}).finally(() => { pending = null; asked = true; });
+    // …and whatever the answer, the views draw again: a failed read left «reading Docker…» until the tab was reopened (audit C5)
+    pending ??= getJSON('/api/resources').then(take, () => {}).finally(() => { pending = null; asked = true; shown.forEach(f => f()); });
     pending.then(then);
 }
 export const onReading = take;                        // main.js: the live feed's `resources`

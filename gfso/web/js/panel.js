@@ -11,7 +11,7 @@ import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
-import {when as at_, stamp, trim, plural} from './fmt.js';
+import {when as at_, stamp, trim, plural, bare} from './fmt.js';
 
 const when = iso => at_(at(iso));
 const link = (facet, label) => `<button class="pn-link" data-action="read" data-facet="${facet}">${label} →</button>`;
@@ -32,10 +32,10 @@ function head({d, rounds}) {
     // the round is an ordinal — «round 6», its figure standing out — never a count «6 rounds»; whether it is in work beside it
     const [wait, waitText] = waiting(d), inWork = consented(d.state) && (!rounds.length || rounds.at(-1).verdict),
           n = rounds.length + (inWork ? 1 : 0), round = `round ${n}${inWork ? ', in work' : ''}`;
-    const ids = [d.id, mode && `${mode} mode`, `Del ${d.assignee || '—'}`].filter(Boolean).join(' · ');
+    const ids = [d.id, mode && `${mode} mode`, `Del ${d.assignee ? bare(d.assignee, S.project) : '—'}`].filter(Boolean).join(' · ');
     return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
         + meta(esc(ids), ids)
-        + `<div class="pn-status"><span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v}</span>`
+        + `<div class="pn-status"><span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v === 'undef' ? '⊥' : v}</span>`
         + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
         + (d.deadline ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : ''}>⏱ ${when(d.deadline)}</span>` : '')
         // a node in work after its last verdict is working on the NEXT round, not the one already answered
@@ -206,7 +206,7 @@ const txt = x => esc(typeof x === 'string' ? x : JSON.stringify(x, null, 1));
 
 // Who produced a verdict: a hand or an instrument — nothing closes on impression (HTTP door, 2026-09-02).
 export const signer = vr => vr.by_hand ? byHand(esc(vr.validator || ''))
-    : `validated by ${esc(vr.validator || 'an instrument')}${vr.validator_model ? ' · ' + esc(vr.validator_model) : ''}`;
+    : `validated by ${esc(vr.validator ? bare(vr.validator, S.project) : 'an instrument')}${vr.validator_model ? `, ${esc(modelName(vr.validator_model))}` : ''}`;
 export const perCrit = vr => Object.fromEntries((vr?.per_criterion || []).map(c => [c.criterion, c]));
 
 // A criterion's pinned check is what makes it a contract (A1, §2) — folded, the longest part of it.
@@ -308,7 +308,7 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
 
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
-    const line = `${stamp(a.timestamp, 5, 19)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? label(a.new_state) : 'rej'}${a.source ? ' · ' + esc(a.source) : ''}`;
+    const line = `${stamp(a.timestamp, 5, 19)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? label(a.new_state) : 'rej'}${a.source ? ' · ' + esc(bare(a.source, S.project)) : ''}`;
     const more = CARRIED.filter(([k]) => a[k] && a[k].length !== 0).map(([k, l]) => `<div class="rd-field"><b>${l}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;

@@ -4,7 +4,8 @@
 import {esc} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
-import {hm, day} from './fmt.js';
+import {hm, day, bare} from './fmt.js';
+import {S} from './state.js';
 import {at, said, failedOf} from './run.js';
 import {roundsLine, failedWords, TIP} from './hints.js';
 import {CARRIED, label} from './vocab.js';
@@ -40,7 +41,7 @@ function row(r) {
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
         <span class="ev-move">${a.old_state && a.new_state ? `${label(a.old_state)} → ${label(a.new_state)}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
-        <span class="ev-src">${esc(a.source || '')}</span>
+        <span class="ev-src">${esc(a.source ? bare(a.source, S.project) : a.signal === 'TIMEOUT' ? 'clock' : '')}</span>
         ${a.failed_criteria?.length ? `<span class="ev-failed">${a.failed_criteria.map(c => `<em>${esc(c)}</em>`).join('')}</span>` : ''}
         ${prose.length ? `<details data-key="${esc(`r|${a.task_id}|${a.timestamp}|${a.signal}`)}"${opened.has(`r|${a.task_id}|${a.timestamp}|${a.signal}`) ? ' open' : ''}><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
 }

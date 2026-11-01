@@ -90,7 +90,8 @@ export async function initGraph() {
     // The page follows the canvas's OWN selection, not its `tap`: a press that moves a few pixels is no tap, yet
     // cytoscape selects the node — the border showed, the panel stayed, and the next redraw took the border back
     // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
-    cy.on('select', 'node', evt => point('select', evt.target.id()));
+    // …and its hover tip goes: it repeats what the panel the click opens says, over it (audit E3)
+    cy.on('select', 'node', evt => { untip(); point('select', evt.target.id()); });
     // …and a tap on the node already selected picks it again: its row in the deck, scrolled away, is brought back
     cy.on('tap', 'node', evt => evt.target.id() === focus().select && rebring());
     // …and a finger's tap anywhere on the canvas is a tap elsewhere: a tip a deck view showed does not stay over the panel

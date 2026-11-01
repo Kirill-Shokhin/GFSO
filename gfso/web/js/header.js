@@ -174,7 +174,7 @@ export async function drawHeader() {
     chips += stalled(chips);
     drawReports();
     $('hd-goal').innerHTML = left + runSwitch(S.runState);
-    $('hd-needs').innerHTML = status + (chips || (heard ? '<span class="hd-quiet">nothing needs you</span>' : ''));
+    $('hd-needs').innerHTML = status + (chips || (heard && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : ''));
 }
 
 // The quality metrics. What each MEANS, how far it can be trusted (§15.8's grade) and which of them call a person are the
