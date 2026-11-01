@@ -13,7 +13,8 @@ from gfso.core.graph.model import root_of
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, Task, TaskId, Verdict, Wait,
                              settled_positive)
 from .moves import Move
-from .validation import _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
+from .parking import USERS_WAY
+from .validation import users_criteria, _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
 
 #: Actions whose signal is the ISSUER's to give (§11.2) — everything else is the executor's.
 
@@ -207,6 +208,42 @@ class NodeSteps:
                 f"child below now carries it and passed, integrate and DELIVER again; if none does, add or "
                 f"revise the child that will (`revise`, `auto_decompose` on it).")
 
+    def _parked_step(self, t, nm):
+        """The issuer's step on a node whose executor is parked — its place past its disk bound, the user's alone
+        to lift or its issuer's to cancel; or stopped twice without a signal — else None."""
+        if (past := self.engine.parking.execution_park_said(t)) and users_criteria(self.engine.graph, t):
+            # …the user's (`users_criteria`: an AUTO root, a part of their plan): no system move lifts it, none offered
+            # (critic: CANCEL offered as the system's, while the machine issuer stopped the run telling the user to restart)
+            return (2, t, Action.REVISE, f"ITS EXECUTOR CANNOT GO ON on '{t.id}' ({nm}): {past}; {USERS_WAY}.")
+        if past:
+            # ITS PLACE IS PAST ITS DISK BOUND — a new version or another executor works in the same place, whose
+            # charge stands, and is ended again within seconds: the parked directive below offered exactly those moves
+            return (2, t, Action.REVISE,
+                    f"ITS EXECUTOR CANNOT GO ON on '{t.id}' ({nm}): {past}. " + self.engine.offer(
+                        Move("signal", str(t.id), f"`signal('{t.id}', 'CANCEL')` " + (
+                            "(it abandons the goal: nothing above it re-issues the work)"
+                            if self.engine.graph.get_parent(t.id) is None else
+                            "(its parent's split can issue the work anew, in a place of its own)"), Signal.CANCEL.name),
+                        lead="The move is its issuer's: ") + " Else only the installation's user lifts it: a server "
+                    "restart counts the place again from what it then holds (the bound, GFSO_NODE_DISK and "
+                    "GFSO_NODE_FILES, is theirs too).")
+        if self.engine.parking.is_execution_parked(t):
+            # ITS EXECUTOR STOPPED — the step is the ISSUER's, not a wait on the executor: the door
+            # otherwise showed "NOT YOURS … in hand, not stuck" and a waiting issuer never returned.
+            return (2, t, Action.REVISE,
+                    f"ITS EXECUTOR STOPPED WITHOUT A SIGNAL on '{t.id}' ({nm}), twice: each run ended "
+                    f"with no readable report (a run cut at its turn cap, a crash, a malformed answer), "
+                    f"so nothing was signalled and nothing will be — only the deadline would move it. "
+                    + (f"Its last: {note}. " if (note := self.engine.parking.execution_park_note(t)) else "") +
+                    f"Its work so far is on disk. " + self.engine.offer(
+                        Move("revise", str(t.id), f"`revise('{t.id}', …)` (a new packet version starts a fresh run "
+                                                  f"over what is already there — narrow or split the contract if one "
+                                                  f"run cannot carry it)"),
+                        Move("reassign", str(t.id), f"`reassign('{t.id}', …)`"),
+                        Move("signal", str(t.id), f"`signal('{t.id}', 'CANCEL')`", Signal.CANCEL.name),
+                        lead="The moves are its issuer's: ") + ".")
+        return None
+
     def _step_for(self, t, kids, crits, nm, cands, held, _deps_ready, _passed):
         """What the holder of this node is asked to do next — one answer per state.
 
@@ -222,20 +259,8 @@ class NodeSteps:
             return (2, t, Action.REVISE,
                     f"ITS SPLIT IS OWED on '{t.id}' ({nm}): {owed['why']}. It is not delivered as a leaf and no "
                     f"executor session is started on it. The step: {owed['opens_with']}.")
-        if self.engine.parking.is_execution_parked(t):
-            # ITS EXECUTOR STOPPED — the step is the ISSUER's, not a wait on the executor: the door
-            # otherwise showed "NOT YOURS … in hand, not stuck" and a waiting issuer never returned.
-            cand = (2, t, Action.REVISE,
-                    f"ITS EXECUTOR STOPPED WITHOUT A SIGNAL on '{t.id}' ({nm}), twice: each run ended "
-                    f"with no readable report (a run cut at its turn cap, a crash, a malformed answer), "
-                    f"so nothing was signalled and nothing will be — only the deadline would move it. "
-                    f"Its work so far is on disk. " + self.engine.offer(
-                        Move("revise", str(t.id), f"`revise('{t.id}', …)` (a new packet version starts a fresh run "
-                                                  f"over what is already there — narrow or split the contract if one "
-                                                  f"run cannot carry it)"),
-                        Move("reassign", str(t.id), f"`reassign('{t.id}', …)`"),
-                        Move("signal", str(t.id), f"`signal('{t.id}', 'CANCEL')`", Signal.CANCEL.name),
-                        lead="The moves are its issuer's: ") + ".")
+        if (parked := self._parked_step(t, nm)) is not None:
+            cand = parked
         elif t.state == State.VALIDATING:
             return self._step_for_a_delivered_node(t, nm, crits)
         elif t.state in (State.OFFERED, State.EXECUTING, State.REWORKING) and                 (_held := self.engine.held_node_refusal(t.id, Signal.ACCEPT if t.state == State.OFFERED

@@ -631,6 +631,32 @@ def past_disk(ex) -> "str | None":
     return _DISK_ENDED.get(ex.container) if isinstance(ex, ContainerExecution) else None
 
 
+def ended_past_disk(ex) -> "str | None":
+    """Why the disk's watch ended the session that worked in `ex`'s place, if it did — taken off once said: the place's
+    next session runs in containers of the same names, and an older end is not its."""
+    if not isinstance(ex, ContainerExecution):
+        return None
+    mine = [n for n in _DISK_ENDED if n == ex.container or n.startswith(ex.container + "-")]
+    return next(iter({_DISK_ENDED.pop(n) for n in mine}), None)
+
+
+def place_past_disk(ex) -> "str | None":
+    """Do the directories of `ex`'s place — the ones its sessions write and that outlive them — hold more than its
+    node's bound of what its work added, by the disk's ledger as it stands now? The cause, else None. Asked of the
+    system's record, never of an end remembered (critic: one never read named an ordinary cut later), and of the
+    directories alone: a container's own layer goes with it, so an end its layer caused the next session is free of."""
+    if not isinstance(ex, PlaceContainer):
+        return None
+    at = {ex.volume.key(d) for d in ex.writable()}
+    with _LEDGER.lock:
+        held = tuple(sum(_LEDGER.charged.get(k, (0, 0))[i] for k in at) for i in (0, 1))
+    bound = node_disk()
+    if held[0] <= bound[0] and held[1] <= bound[1]:
+        return None
+    return (f"the directories of its place hold {held[0] // 2 ** 20} MiB and {held[1]} files its work added, past its "
+            f"bound of {bound[0] // 2 ** 20} MiB and {bound[1]} files (GFSO_NODE_DISK, GFSO_NODE_FILES)")
+
+
 def watch_disk() -> None:
     """The disk's watch, for this server's life (`_watch_disk`) over this installation's nodes, started once."""
     if not _DISK_WATCH.is_set():
@@ -644,7 +670,9 @@ def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, l
     disk takes no quota and one node filling it stopped every project on the machine. Every `DISK_WATCH_S` it reads what
     each node's work of the installation `scope` added (`DiskLedger`); a work with a container running past its bound has
     its containers removed — their layers with them, its directories kept —, said in the log. A judge's copy or build so
-    ended FAILs its delivery, the bound named (`past_disk`). Its next session is counted on, and ended again past it."""
+    ended FAILs its delivery, the bound named (`past_disk`). What its place's directories hold stays charged, so an
+    executor whose place stays past it parks its node, the cause said to its issuer (`place_past_disk`); one its own
+    container's layer took past it goes on, that layer gone with its container."""
     ledger = ledger or _LEDGER
     while not (stop or threading.Event()).wait(every or DISK_WATCH_S):
         try:
@@ -1342,14 +1370,18 @@ class Volume:
         spec = f"type=volume,src={vol},dst={dst}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
         return ["--mount", spec + (",readonly" if ro else "")]
 
+    def key(self, root: Path) -> tuple:
+        """(volume, subpath) the directory `root` is, as Docker mounts it — the disk's ledger's key (`DiskLedger`)."""
+        spec = self.mount(root, False, "/x")[1]
+        return re.search(r"src=([^,]+)", spec)[1], (re.search(r"volume-subpath=([^,]+)", spec) or [None, "."])[1]
+
     @contextlib.contextmanager
     def writes(self, root: Path, path: "Path | None" = None, removing: bool = False):
         """The system writing into the directory `root` of this volume, at its `path` (`root` itself where none):
         measured just before and after, what it wrote there no node's (`DiskLedger.wrote`); `removing` it, what the
         system had put under `path` comes off (`DiskLedger.removed`); not read against any node meanwhile."""
         under = Path(path).relative_to(root).as_posix() if path is not None and Path(path) != Path(root) else "."
-        spec = self.mount(root, False, "/x")[1]
-        at = (re.search(r"src=([^,]+)", spec)[1], (re.search(r"volume-subpath=([^,]+)", spec) or [None, "."])[1])
+        at = self.key(root)
         held = lambda: _read(at[0], [at[1]], self.image).get(at, (0, 0))
         # ONE MEASUREMENT PER SPAN OF THE SYSTEM'S WRITES THERE: read before the first starts and after the last ends,
         # under the directory's own lock for the reading alone — a write nested in another (a bring's carry) or beside
@@ -2461,6 +2493,10 @@ class PlaceContainer(ContainerExecution):
         # session slice); no judge works here (`apart`)
         own = [(self.rw, False), (scratch_of(self.rw, self.project_name), True)]
         return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
+
+    def writable(self) -> set:
+        """The directories its sessions write that outlive them: what it mounts writable, and its CLI state."""
+        return {d for d, ro in self._mounts() if not ro} | ({self.state} if self.state else set())
 
     def temp_root(self):
         """Its node's own temp (`ContainerExecution.temp_of`), not the project's."""

@@ -53,6 +53,7 @@ from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUna
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
+from gfso.engine.parking import USERS_WAY
 from gfso.engine.validation import is_auto_root, party_kind, users_criteria, users_plan
 from gfso.packets import SHOWN_FINDINGS, answered_challenges, answers_given, as_shown, capped, list_key, outside_text
 from gfso.engine.events import emit_cb
@@ -499,7 +500,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
                    + (f"\n\nNaming one of this node's criteria (CHECK-4; `drop_risk` takes them out): "
                       + "; ".join(f"«{i}»" for i in _flag) if _flag else ""))
     q, moves = QUESTIONS[question], moves_for(engine, task, question)
-    out.append(f"# The question: {q['ask']}"
+    out.append(f"# The question: {ask_of(engine, task, question)}"
                + ("\n\nIts offer lapsed: its contract never started, and a lapse shows nothing infeasible (an executor "
                   "that finds a contract so challenges it) — continue it with a new contract whose deadline leaves what it "
                   "waits on time; closing it is not a move here."
@@ -1572,6 +1573,15 @@ def _refine(engine, task, actor, answer, why, verbs):
     return not out.get("error"), str(out.get("error") or "")
 
 
+def ask_of(engine, task, question: str) -> str:
+    """The question as THIS node poses it: a park with a cause asks with it (`execution_park_said`)."""
+    if question == "parked" and task is not None and (said := engine.parking.execution_park_said(task)):
+        return f"{said}. Decide what happens to the node."
+    if question == "parked" and task is not None and (note := engine.parking.execution_park_note(task)):
+        return f"{QUESTIONS[question]['ask']} Its last: {note}."
+    return QUESTIONS[question]["ask"]
+
+
 def moves_for(engine, task, question: str) -> tuple:
     """The moves this question admits on THIS node: `drop_dependency` only where a child waits on a cancelled
     producer — offered on a dependency-order refutation it could never land, and an AUTO issuer spent four answers on
@@ -1583,6 +1593,9 @@ def moves_for(engine, task, question: str) -> tuple:
     other node of a plan the user handed in `cancel` is offered and STOPS the run (`_cancel`): the system never cuts
     that plan, and an issuer that finds a part of it cannot be carried says so to the user, who re-plans."""
     moves = QUESTIONS[question]["moves"]
+    if question == "parked" and task is not None and engine.parking.execution_park_reason(task):
+        # …a session in its place, by any move, is ended again (`execution_park_said`); none where only the user lifts it
+        moves = () if users_criteria(engine.graph, task) else ("cancel",)
     if "drop_dependency" in moves and task is not None and not any(
             _cancelled_producers(engine, k) for k in engine.graph.get_active_children(task.id)):
         moves = tuple(m for m in moves if m != "drop_dependency")
@@ -2103,6 +2116,11 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
                f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
                f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec` on a new project), or `set_mode` "
                f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
+        engine.pause("system", why)
+        return {"status": "users", "why": why}
+    if question == "parked" and not moves_for(engine, (t := engine.graph.get_task(task_id)), question):
+        # …no move of the system's lifts it (an AUTO root past its disk bound: cancelling is the user's): the user told
+        why = f"{task_id}: {engine.parking.execution_park_said(t)}; {USERS_WAY}"
         engine.pause("system", why)
         return {"status": "users", "why": why}
     if question == "split":

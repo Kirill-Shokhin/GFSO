@@ -1273,7 +1273,8 @@ class Dispatcher:
                     and not any(self._engine.parking.contested_reason(m.id) for m in members)):
                 self._one_retry_then_park(top_id, "u:", f"the scope session reported "
                                           f"{(out or {}).get('status')!r} and no signal took effect", claim=key,
-                                          cut=bool((out or {}).get("cut")), limit=bool((out or {}).get("limit")))
+                                          cut=bool((out or {}).get("cut")), limit=bool((out or {}).get("limit")),
+                                          ended=(out or {}).get("past_disk"), note=(out or {}).get("disk_ended"))
         except Exception as e:                          # noqa: BLE001 — a failed round is not a signal
             log.warning(f"delegate: scope session of {top_id} failed: {e}")
             self._one_retry_then_park(top_id, "x:", f"scope session failed — {e}", claim=key,
@@ -1436,7 +1437,8 @@ class Dispatcher:
         return True
 
     def _one_retry_then_park(self, task_id: TaskId, tag: str, what: str, claim: str | None = None,
-                             cut: bool = False, limit: bool = False) -> None:
+                             cut: bool = False, limit: bool = False, ended: str | None = None,
+                             note: str | None = None) -> None:
         """A round that ended with NOTHING SIGNALLED: give it exactly one more, then park it and say so.
 
         Three things end a round that way — an unreadable report, a status word the contract does not
@@ -1448,6 +1450,13 @@ class Dispatcher:
         unreadable-report case came to be handled and the other two did not.
         """
         t = self._engine.graph.get_task(task_id)
+        if ended:
+            # …its place's directories past its own disk bound: every session there is ended again, so no redial and no
+            # retry — the issuer told why, at once (four redials and a retry each died within seconds, said as a cut)
+            self._engine.emit_info("delegate", f"{task_id}: {what} — {ended}; the node is PARKED where it stands and "
+                                               f"needs its issuer")
+            self._engine.parking.park_execution(task_id, ended)
+            return
         if limit and t is not None:
             return self._wait_out_limit(task_id, claim or self._round_key(t), "the session's")
         if cut and t is not None and self._redial(task_id, claim or self._round_key(t), "the session's"):
@@ -1462,8 +1471,9 @@ class Dispatcher:
             self._engine.emit_info(
                 "delegate", f"{task_id}: {what} twice — the node is PARKED where it stands and "
                             f"needs its issuer; nothing was signalled on its behalf")
-            # …and said where the ISSUER reads, not only in the log (the frontier's step for the node)
-            self._engine.parking.park_execution(task_id)
+            # …and said where the ISSUER reads, not only in the log (the frontier's step for the node) — with what the
+            # disk's watch said of its last end, where it was that (critic: a place just under its bound lost its cause)
+            self._engine.parking.park_execution(task_id, note=note and f"ended by the disk's watch: {note}")
 
     def _consent_guarded(self, task_id: TaskId, executor_id: str) -> None:
         """A consent round under the concurrency cap; one that signals nothing is retried once and then
@@ -1577,7 +1587,9 @@ class Dispatcher:
                              f"refusal)")
                     self._one_retry_then_park(task_id, "u:", _what,
                                               cut=bool(isinstance(out, dict) and out.get("cut")),
-                                              limit=bool(isinstance(out, dict) and out.get("limit")))
+                                              limit=bool(isinstance(out, dict) and out.get("limit")),
+                                              ended=out.get("past_disk") if isinstance(out, dict) else None,
+                                              note=out.get("disk_ended") if isinstance(out, dict) else None)
             except Exception as e:
                 # Into the OBSERVATION FIELD, not only a log record. This handler catches the whole
                 # spawn path, and a node whose dispatch raised is never retried — its key stays in

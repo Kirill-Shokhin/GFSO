@@ -116,12 +116,17 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, 
         return {"rc": 1, "out": cause, "stdout": "", "stderr": cause}
     finally:
         copying.append(time.monotonic() - t0)
+    t0 = time.monotonic()
     try:
         # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
         with ex.system_writes(laid := str(Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}")):
             dirs = materialize_inputs([replace(c, check=(p,))], Path(laid), ex.files)
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"note": f"not run: its inputs could not be laid ({e})"}
+    finally:
+        # …nor their laying: the system's own write, measured twice for the disk's watch (~0.5–1.5 s), left later
+        # checks of a rich contract unrun, the judge's word deciding them
+        copying.append(time.monotonic() - t0)
     try:
         d = dirs.get(probe_id(c.name, p))
         got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, own), own,

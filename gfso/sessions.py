@@ -18,6 +18,7 @@ from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.workspaces import _enter_workspace, conversation_of, execution_of, performer, project_llm
 from gfso.observe import observe_place
 from gfso.adapters import worktrees as W
+from gfso.adapters.execution import ended_past_disk, place_past_disk
 from gfso.packets import (TECH_REPORT, _EXECUTOR_STATES, _executor_packet, observed_lines, _scope_order, _scope_packet,
                           file_tech_reports)
 from gfso.reports import _decided_status, _report_into_signals, _scope_report_into_signals
@@ -96,6 +97,21 @@ def _unread(llm, unparsed: str) -> str:
     the execution place down) refused its call: then nothing came to be read and no issuer's attention is owed."""
     return ("no report — the call was refused by what stops the project, nothing was answered"
             if refused_by_limit(calls_of(llm)) else unparsed)
+
+
+def _fresh_disk(engine, agents, cwd) -> None:
+    """A session starts: an end of the disk's watch nobody read for its place — its idle container ended between
+    sessions — is not this session's (critic: it named a later ordinary cut)."""
+    if cwd:
+        ended_past_disk(execution_of(engine, agents).session(cwd))
+
+
+def _past_disk(engine, agents, cwd) -> tuple:
+    """(past, ended) of a session that left no report: `past`, its place's directories past its node's bound now
+    (`place_past_disk`) — which no redial or retry lifts, every session there ended again; `ended`, why the disk's watch
+    ended this one, if it did (`ended_past_disk`) — said, and lifted by the next session where its layer alone held it."""
+    ex = execution_of(engine, agents).session(cwd) if cwd else None
+    return (place_past_disk(ex), ended_past_disk(ex)) if ex is not None else (None, None)
 
 
 def _run_session(llm, system: str, user: str, cfg: dict, cap, cwd: str | None, session: str | None = None) -> str:
@@ -206,6 +222,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     seen, cap = _observed(engine, task_id, [task], cwd, cap, _cb)
     if late := _too_late(engine, task_id, cap):
         return late
+    _fresh_disk(engine, agents, cwd)
     _cb(f"{task_id}: executor {executor_id} spawned (workdir={cwd or 'cwd'}"
         + (f", cap {cap}s" if cap else "") + ")…")
     # The dispatcher's own spawn is the LONGEST thing this server does — up to a fifteen-minute
@@ -217,10 +234,12 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     if report is None:
         # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
         # monitor escalates a stuck node (no second clock). Visible in the observation field.
+        past, ended = _past_disk(engine, agents, cwd)
         _cb(f"{task_id}: {_unread(llm, 'executor report DID NOT PARSE — no signals sent; issuer attention needed')} "
-            f"· executor {_stat_line(llm)}")
+            f"· executor {_stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
         return {"task_id": str(task_id), "status": "unparsed", "report_text": text, "stats": stats,
-                "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm))}
+                "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm)), "past_disk": past,
+                "disk_ended": ended}
 
     # `_decided_status` is the owner of "which of the three was this"; the dispatch enforces it and
     # this line only reports what the round amounted to. An unrecognised word is `undecided`, and
@@ -323,16 +342,19 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     seen, cap = _observed(engine, top_id, todo, cwd, cap, _cb)
     if late := _too_late(engine, top_id, cap):
         return late
+    _fresh_disk(engine, agents, cwd)
     _cb(f"{top_id}: one executor session ({executor_id}) for the scope's open node(s) "
         f"{', '.join(str(t.id) for t in todo)}" + (f", cap {cap}s" if cap else "") + "…")
     report, text, stats, llm, _cb = _spawn(engine, top_id, executor_id, cfg, _llm, "scope-executor",
                                            "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined, seen),
                                            SCOPE_SCHEMA, "delegated_execution", cwd, cap, tasks=tuple(todo))
     if report is None:
+        past, ended = _past_disk(engine, agents, cwd)
         _cb(f"{top_id}: " + _unread(llm, "the scope session's report DID NOT PARSE — no signals sent")
-            + f" · {_stat_line(llm)}")
+            + f" · {_stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
         return {"task_id": str(top_id), "status": "unparsed", "report_text": text, "stats": stats,
-                "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm))}
+                "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm)), "past_disk": past,
+                "disk_ended": ended}
     _scope_report_into_signals(engine, order, executor_id, report, llm, _cb, workspace=ws, started_on=started_on,
                                unjoined=unjoined)
     return {"task_id": str(top_id), "status": "reported", "stats": stats}

@@ -3,6 +3,7 @@ judge's probe held 9 GiB of the Docker VM's 19.5 and starved every project on th
 c_compiler, 2026-10-30; the author's charter: «по ошибке могут насрать соседу и вся система полетит»). A runaway dies
 as its own failure, exit 137, and the session it ran in goes on.
 """
+import contextlib
 import inspect
 import json
 import os
@@ -17,7 +18,15 @@ import pytest
 import gfso.adapters.execution as E
 import gfso.adapters.snapshots as S
 import gfso.adapters.worktrees as W
-from gfso import config as C
+import gfso.observe as O
+import gfso.sessions as SS
+from gfso import config as C, issuer as I, tools as T
+from gfso.core.types import Criteria, Mode, Probe, TaskId
+from gfso.delegate import Dispatcher
+from gfso.engine.parking import USERS_WAY
+from tests.support import criterion, round_over
+from tests.test_delegate import _agents, _eng, _goal, _node
+from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid
 from tests.test_a_session_holds_only_its_own_place import IMAGE, made, project  # noqa: F401
 from tests.test_the_system_reads_a_place_where_its_agent_cannot_lead_it_out import _docker
 from tests.test_a_node_works_in_its_own_place import _repo
@@ -579,3 +588,165 @@ def test_a_whole_volume_outrun_counts_for_each_of_its_directories_and_a_nest_rea
     monkeypatch.setattr(E, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "4096 1 /v/p", ""))
     E._read("vol", ["p"])
     assert E._TOO_DEEP == set()
+
+
+def test_an_executor_ended_past_its_disk_bound_is_said_once_by_its_place(monkeypatch):
+    """The executor's path saw only a cut: the watch's cause is read there by the session's place, every container of
+    it, and taken off once said — the place's next session runs in containers of the same names."""
+    (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "executor.a-f40103"
+    monkeypatch.setattr(E, "_DISK_ENDED", {"executor.a-f40103-client": "past", "executor.a-f40103-client-commands":
+                                           "past", "executor.a-f40103x": "a neighbour's", "judge.a.r1-x": "its judge's"})
+    assert E.ended_past_disk(box) == "past"
+    assert E.ended_past_disk(box) is None, "said once: an older end is not the place's next session's"
+    assert set(E._DISK_ENDED) == {"executor.a-f40103x", "judge.a.r1-x"}, "no other place's cause taken with it"
+    assert E.ended_past_disk(SimpleNamespace(container="executor.a-f40103x")) is None, "a host session: none"
+
+
+def test_a_node_whose_executor_its_disk_bound_ended_is_parked_at_once_with_its_cause_and_the_move_that_lifts_it(
+        tmp_path):
+    """Its next session in the same place is ended again within seconds: four redials and a retry were spent on that,
+    then the node parked as «stopped twice without a signal» with `revise` and `reassign` offered — each a session in
+    the same place, ended again. Parked at once, the cause said to the issuer, CANCEL offered; the control, a cut with
+    no such cause, is still redialled."""
+    why = "the directories of its place hold 21000 MiB and 3 files its work added, past its bound (GFSO_NODE_DISK, …)"
+    for past in (why, None):
+        e = _eng()
+        agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+        tries, said = [], []
+        e.emit_info = lambda src, msg, _s=said: _s.append(msg)
+        d = Dispatcher(e, agents, poll=30, runner=lambda en, tid, ex, ag, _p=past: tries.append(1) or
+                       {"task_id": str(tid), "status": "unparsed", "cut": True, "past_disk": _p})
+        _goal(e, assignee="agent")
+        _node(e, "n1", assignee="exec-1", parent="goal")
+        d.dispatch_once()
+        round_over(d, "n1", lambda: len(tries) >= 1)
+        parked = "n1" in e.parking.parked_executions()
+        assert parked == bool(past), (past, said)
+        if past:
+            assert any(why in m and "PARKED" in m for m in said) and not any("redialled" in m for m in said), said
+            step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == "n1")
+            assert step["mine"] and why in step["directive"] and "CANCEL" in step["directive"]
+            assert "revise(" not in step["directive"] and "reassign(" not in step["directive"], step["directive"]
+            T.revise(e, "n1", agent="agent", max_iterations=5)
+            assert "n1" not in e.parking.parked_executions(), "a new version lifts the park, as any park"
+        else:
+            assert any("redialled" in m for m in said), said
+        e.stop()
+
+
+def test_under_auto_a_node_its_disk_bound_ended_is_asked_with_its_cause_and_cancel_alone():
+    """The machine issuer read its own «parked» question — «twice ended without any signal», `reassign` offered — and
+    never the cause, so it could reassign into the same place, ended again (engineering over the JOINT). The cause in
+    its question and `cancel` its one move; at an AUTO root, where cancelling is the user's, the run waits for the user,
+    told why; the control, a park with no cause, keeps its question and moves."""
+    why = "the directories of its place hold 21000 MiB and 3 files its work added, past its bound (GFSO_NODE_DISK, …)"
+    e = _engine(Mode.AUTO)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+    _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")))
+    root, part = e.graph.get_task(TaskId("root")), e.graph.get_task(TaskId("root.part"))
+    e.parking.park_execution(part.id)
+    assert I.moves_for(e, part, "parked") == ("reassign", "cancel")
+    assert "twice ended without any signal" in I.issuer_context(e, part.id, "parked")
+    e.parking.park_execution(part.id, why)
+    assert I.moves_for(e, part, "parked") == ("cancel",)
+    asked = I.issuer_context(e, part.id, "parked")
+    assert why in asked and "is ended again" in asked and "twice ended" not in asked, asked
+    e.parking.park_execution(root.id, why)
+    assert I.moves_for(e, root, "parked") == ()
+    out = I.settle(e, None, root.id, "parked", str(e.graph.issuer_of(root.id)), None)
+    assert out["status"] == "users" and why in out["why"] and "start_project" in out["why"], out
+    assert e.paused(), "the run waits for the user"
+
+
+def test_laying_a_checks_inputs_spends_none_of_the_observations_time(monkeypatch, tmp_path):
+    """Laying each check's inputs is the system's own write, measured twice for the disk's watch (~0.5–1.5 s): counted in
+    the observation's budget, it left a rich contract's later checks unrun, the judge's word deciding them — as the copy
+    did, which is already not counted."""
+    monkeypatch.setattr(O, "materialize_inputs", lambda *a: (time.sleep(0.4), {})[1])
+    monkeypatch.setattr(O, "_run", lambda *a: {"rc": 0, "out": "ok", "stdout": "ok", "stderr": ""})
+    monkeypatch.setattr(O, "ended_by_watch", lambda ex: False)
+    ex = SimpleNamespace(shell=lambda: "sh", release=lambda tree: None, copy_tree=lambda a, b: None,
+                         system_writes=lambda p: contextlib.nullcontext(), files=None, remove_tree=lambda p: None,
+                         session=lambda p: None)
+    c = Criteria(name="c", check=tuple(Probe(behaviour=f"b{i}", command=f"echo {i}", expect="ok") for i in range(5)))
+    rows = O.run_checks(ex, [("k", c, p) for p in c.check], str(tmp_path), str(tmp_path), str(tmp_path), 1.5)
+    assert [r.get("note") for _, r in rows] == [None] * 5, rows
+
+
+def test_a_place_is_past_its_bound_by_its_own_directories_now_never_by_its_layer_nor_an_end_remembered(monkeypatch):
+    """What parks a node is its place's directories — they outlive its sessions — holding more than its bound by the
+    ledger as it stands: a container's own layer goes with it, and a session ended for what its layer held left the next
+    one free (critic: parked at once with cancel alone, a node a retry would carry was thrown away); an end never read
+    named an ordinary cut later (critic) — the record now, not the event, decides."""
+    GiB = 2 ** 30
+    ex = E.PlaceContainer.__new__(E.PlaceContainer)
+    ex._mounts = lambda: [(Path("place"), False), (Path("base"), True), (Path("temp"), False)]
+    ex.state, ex.volume = Path("state"), SimpleNamespace(key=lambda d: ("v", d.name))
+    monkeypatch.setattr(E, "_LEDGER", L := E.DiskLedger())
+    monkeypatch.setattr(E, "_DISK_ENDED", {})
+    monkeypatch.setenv("GFSO_NODE_DISK", "20g")
+    L.charged = {("v", "base"): (99 * GiB, 0), "c1": (99 * GiB, 0), ("v", "place"): (12 * GiB, 0),
+                 ("v", "temp"): (5 * GiB, 0), ("v", "state"): (2 * GiB, 0)}
+    assert E.place_past_disk(ex) is None, "a read-only directory and a container's layer are no part of the place's"
+    L.charged[("v", "temp")] = (7 * GiB, 0)
+    assert "21504 MiB" in (E.place_past_disk(ex) or ""), "its writable directories and its CLI state, summed"
+    assert E.place_past_disk(SimpleNamespace()) is None, "a host session: none"
+
+
+def test_the_issuers_step_at_a_root_its_disk_bound_parked_says_cancelling_abandons_the_goal():
+    """A root has no parent: «its parent's split can issue the work anew» offered a CANCEL that abandons the goal
+    (critic). Its step says so, and the user's own way — a restart counts the place again."""
+    why = "the directories of its place hold 21000 MiB and 3 files its work added, past its bound"
+    e = _engine(Mode.SOLO)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+    _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")))
+    for node, says in (("root", "abandons the goal"), ("root.part", "its parent's split can issue")):
+        e.parking.park_execution(TaskId(node), why)
+        step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == node)
+        assert why in step["directive"] and says in step["directive"] and "restart" in step["directive"], step
+
+
+def test_where_only_the_user_lifts_a_place_past_its_bound_no_system_move_is_offered_and_their_way_is_said():
+    """At an AUTO root the step offered CANCEL «made without you» while the machine issuer, offered nothing, stopped the
+    run telling the user to restart — two texts at odds (critic); a part of the user's own plan was cancelled with «only
+    the user re-plans it», the restart never named (critic). Both are the user's: one predicate, one sentence."""
+    why = "the directories of its place hold 21000 MiB and 3 files its work added, past its bound"
+    e = _engine(Mode.AUTO)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+    _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")))
+    root, part = e.graph.get_task(TaskId("root")), e.graph.get_task(TaskId("root.part"))
+    e.parking.park_execution(root.id, why)
+    step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == "root")
+    assert USERS_WAY in step["directive"] and "CANCEL" not in step["directive"], step["directive"]
+    e.parking.park_execution(part.id, why)
+    assert I.moves_for(e, part, "parked") == ("cancel",), "below the root of the system's own plan: cancel"
+    e.give_users_plan(root.id)
+    assert I.moves_for(e, part, "parked") == (), "a part of the plan the user handed in is not the system's to cut"
+    out = I.settle(e, None, part.id, "parked", str(e.graph.issuer_of(part.id)), None)
+    assert out["status"] == "users" and USERS_WAY in out["why"], out
+
+
+def test_a_plain_park_whose_last_end_was_the_disks_watch_says_it_and_keeps_its_moves(tmp_path, monkeypatch):
+    """A place just under its bound: each session ended after what little the place leaves, each a plain cut, the node
+    parked «stopped twice» with the cause lost (critic). The plain park keeps its moves — a narrower contract may fit
+    what is left — and says what ended it; an end nobody read is cleared when a session starts (critic)."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"))
+    tries = []
+    d = Dispatcher(e, agents, poll=30, runner=lambda en, tid, ex, ag: tries.append(1) or
+                   {"task_id": str(tid), "status": "unparsed", "past_disk": None, "disk_ended": "LAST-END"})
+    _goal(e, assignee="agent")
+    _node(e, "n1", assignee="exec-1", parent="goal")
+    for want in (1, 2):
+        d.dispatch_once()
+        round_over(d, "n1", lambda: len(tries) >= want)
+    assert "n1" in e.parking.parked_executions()
+    step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == "n1")
+    assert "STOPPED WITHOUT A SIGNAL" in step["directive"] and "ended by the disk's watch: LAST-END" in step["directive"]
+    assert "revise(" in step["directive"], "its moves kept"
+    e.stop()
+    (box := E.PlaceContainer.__new__(E.PlaceContainer)).container = "executor.n1-ab"
+    monkeypatch.setattr(E, "_DISK_ENDED", {"executor.n1-ab-client": "OLD"})
+    monkeypatch.setattr(SS, "execution_of", lambda engine, agents=None: SimpleNamespace(session=lambda cwd: box))
+    SS._fresh_disk(None, None, "/w")
+    assert not E._DISK_ENDED, "an unread end is not the next session's"

@@ -194,7 +194,10 @@ What one session can still reach:
   never ended while the system writes into one of its directories. Every 10 seconds the server reads its own
   installation's sessions; one past its bound has its containers removed, their layers with them,
   its directories kept, and the server's log says so; a judge's build so ended FAILs the delivery,
-  the bound named. Nothing a neighbour holds or writes, and no reading of free space, moves that. Not
+  the bound named. What a place's directories hold stays charged, so an executor whose place stays
+  past its bound parks its node at once, the cause said to its issuer: every later session there
+  would be ended again, and what lifts it is cancelling the node or a server restart, which counts
+  the place again; one ended for what its own container's layer held goes on, that layer gone. Nothing a neighbour holds or writes, and no reading of free space, moves that. Not
   held: a session may overshoot by what it writes in 10 seconds plus the time a reading takes, which
   grows with what the installation holds; what a session writes into a directory while the system
   writes there is taken out with the system's write; the reader runs as root in the session's own
@@ -203,12 +206,11 @@ What one session can still reach:
   session's charge there stands as it was, no other directory's touched; a session whose directory
   nests deeper than 4,096 levels, or is not walked within a minute three readings in a row (its
   volume's whole reading running out counts for each of its directories), is ended for it, and so is
-  each later session there until the nest is gone; a session ended past its bound leaves its charge
-  on its directories, so its place's next session starts past it and is ended too, until the server
-  restarts; each system write costs two readings (about half a second to a second and a half), part
-  of which falls inside an exact check's time; a layer's paths are counted again only after it grew 8 MiB;
-  what stood before the server first read it is not counted (a restart starts the count again); an
-  executor's session so ended is said in the server's log, not in its node's; N sessions may add N
+  each later session there until the nest is gone; a server restart counts a place past its bound
+  from what it then holds, so its next session there may add a bound again; each system write costs
+  two readings (about half a second to a second and a half), none of it counted in the time the
+  system's own checks are given; a layer's paths are counted again only after it grew 8 MiB;
+  what stood before the server first read it is not counted (a restart starts the count again); N sessions may add N
   bounds together; and Docker's own disk on Windows is a file on the host's drive, which fills first
   if it is the smaller.
 - A process a session starts runs until its call ends; one that left its call's group and dropped its mark runs on
