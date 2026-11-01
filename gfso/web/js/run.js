@@ -259,6 +259,11 @@ function work(calls) {
             (r.weighed ??= []).push({t: Object.fromEntries(TOKENS.map(([k]) => [k, c[k] || 0])), cost: c.cost_usd, resumed: !!c.resumed});
     }
     for (const r of Object.values(rows)) r.split = split(r);
+    // …a row its own sessions cannot tell (one session, no writes) takes the price its model's other rows paid, where they agree
+    for (const r of Object.values(rows)) if (r.split && r.split.write == null) {
+        const told = new Set(Object.values(rows).filter(x => x.model === r.model && x.split?.write != null).map(x => x.split.write));
+        if (told.size === 1) r.split = split(r, [...told][0]);
+    }
     return {rows: Object.values(rows).sort((a, b) => b.cost - a.cost), byNode, unanswered, unansweredOn,
             total: sum(calls, c => c.cost_usd || 0)};
 }
@@ -281,11 +286,12 @@ function weigh(r, write) {
     const rate = median(ws.map(s => s.rate));
     return {write, rate, ws, held: ws.filter(s => Math.abs(s.rate / rate - 1) <= 0.02)};
 }
-function split(r) {
+function split(r, given) {
     if (!r.weighed) return null;
     // …the one that prices more of the row's sessions; where both price as many, which was paid is not told (`write` null)
-    const [a, b] = Object.keys(WRITES).map(Number).sort((x, y) => y - x).map(w => weigh(r, w)), best = b.held.length > a.held.length ? b : a;
-    const {rate, ws, held} = best, write = a.held.length === b.held.length ? null : best.write;
+    const [a, b] = (given ? [given] : Object.keys(WRITES).map(Number).sort((x, y) => y - x)).map(w => weigh(r, w));
+    const best = b && b.held.length > a.held.length ? b : a;
+    const {rate, ws, held} = best, write = given ?? (a.held.length === b.held.length ? null : best.write);
     r.weighed = ws;
     const parts = TOKENS.map(([k]) => [k, rate * sum(held, x => x.w[k])]);
     const out = r.weighed.filter(x => !held.includes(x));

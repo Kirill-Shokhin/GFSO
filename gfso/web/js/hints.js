@@ -154,6 +154,7 @@ export const RES = {
     unserved: 'No reading of Docker: this server does not serve one',
     first: 'No reading of Docker yet',
     failed: (ks, why, at) => `Docker gave no ${ks.join(' or ')} reading at ${at}: ${why}`,
+    untried: ks => `No ${ks.join(' or ')} reading taken yet`,
     orphan: size => hover(`Orphans\t${size}`, "Volumes of a project this installation no longer holds"),
     volumes: vs => hover('On disk', vs.map(([role, size]) => `${size} ${role}`)),
     machine: hover("What GFSO's containers take of this machine now", 'Every project of this installation'),

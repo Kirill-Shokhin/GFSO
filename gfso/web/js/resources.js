@@ -52,7 +52,9 @@ const age = d => { const r = d.read_at || {}, stale = Object.keys(r).filter(k =>
 const failed = d => { const by = {};
     for (const [k, e] of Object.entries(d.error || {})) if (e) (by[e] ??= []).push(k);
     return Object.entries(by).map(([e, ks]) => RES.failed(ks, e, read(Math.max(...ks.map(k => d.tried_at?.[k] || 0)) || null))); };
-const notes = d => [...failed(d), !failed(d).length && (!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
+const untried = d => Object.keys(d.read || {}).filter(k => d.read_at?.[k] == null && !d.error?.[k]);
+const notes = d => [...failed(d), failed(d).length > 0 && untried(d).length > 0 && RES.untried(untried(d)),
+    !failed(d).length && (!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
     : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread),
     d.older_build?.containers && RES.older(d.older_build.containers)].filter(Boolean)
     .map(n => `<div class="pn-meta">${esc(n)}</div>`).join('');
