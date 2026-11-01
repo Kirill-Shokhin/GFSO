@@ -750,3 +750,19 @@ def test_a_plain_park_whose_last_end_was_the_disks_watch_says_it_and_keeps_its_m
     monkeypatch.setattr(SS, "execution_of", lambda engine, agents=None: SimpleNamespace(session=lambda cwd: box))
     SS._fresh_disk(None, None, "/w")
     assert not E._DISK_ENDED, "an unread end is not the next session's"
+
+
+def test_a_parents_consent_in_a_place_past_its_bound_parks_it_at_once_with_the_cause(tmp_path):
+    """A revised parent consents in its own place: past its bound there, the consent was ended twice and the node
+    parked with no cause, `revise` offered again (critic) — parked at once with it, as its executor's round is."""
+    why = "the directories of its place hold 21000 MiB and 3 files its work added, past its bound"
+    for past in (why, None):
+        e = _eng()
+        d = Dispatcher(e, _agents(tmp_path, ("exec-1", "llm-executor")), poll=30, runner=lambda *a: None,
+                       consent_runner=lambda *a, _p=past: {"status": "unparsed", "past_disk": _p})
+        _goal(e, assignee="agent")
+        _node(e, "n1", assignee="exec-1", parent="goal")
+        d._consent_guarded(TaskId("n1"), "exec-1")
+        assert ("n1" in e.parking.parked_executions()) == bool(past), past
+        assert e.parking.execution_park_reason(e.graph.get_task(TaskId("n1"))) == past
+        e.stop()

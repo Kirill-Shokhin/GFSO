@@ -1492,6 +1492,10 @@ class Dispatcher:
             t = self._engine.graph.get_task(task_id)
             if out.get("limit") and t is not None:
                 return self._wait_out_limit(task_id, self._round_key(t, "consent"), f"{executor_id}'s consent")
+            if past := out.get("past_disk"):          # …its place past its bound: a retry is ended again (`_one_retry…`)
+                self._engine.emit_info("delegate", f"{task_id}: {executor_id}'s consent signalled nothing — {past}; "
+                                                   f"PARKED for its issuer")
+                return self._engine.parking.park_execution(task_id, past)
             retry = self._round_key(t, "consent-retry") if t is not None else None
             if retry and retry not in self._retried:
                 self._retried.add(retry)

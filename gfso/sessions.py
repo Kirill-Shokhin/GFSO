@@ -287,12 +287,15 @@ def run_consent(engine, task_id: TaskId, executor_id: str, agents: "AgentRegistr
     packet = (_executor_packet(engine, task, here)
               + f"\n## The split under your node — built by its children, merged into your tree: what your criteria "
                 f"catch in it is yours to fix there, not a defect of your contract\n{kids}\n")
+    _fresh_disk(engine, agents, here)
     answer, _t, _s, _l, _cb = _spawn(engine, task_id, executor_id, cfg, _llm, "consent", "consent.md", packet,
                                      CONSENT_SCHEMA, "delegated_consent", here, work=False)
     if answer is None:
+        past, ended = _past_disk(engine, agents, here)    # …a revised parent's place still past its bound (critic)
         _cb(f"{task_id}: " + _unread(_l, f"{executor_id}'s consent DID NOT PARSE — nothing signalled")
-            + f" · {_stat_line(_l)}")
-        return {"task_id": str(task_id), "status": "unparsed", "limit": refused_by_limit(calls_of(_l))}
+            + f" · {_stat_line(_l)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
+        return {"task_id": str(task_id), "status": "unparsed", "limit": refused_by_limit(calls_of(_l)),
+                "past_disk": past}
     decision = str(answer.get("decision", "")).strip().lower()
     if decision not in ("accept", "challenge"):
         _cb(f"{task_id}: {executor_id}'s consent named no decision it may make ({decision!r}) — nothing signalled")
