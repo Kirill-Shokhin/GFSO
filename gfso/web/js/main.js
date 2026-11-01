@@ -100,7 +100,7 @@ document.addEventListener('click', e => {
     // Set on the header, not on the popover: the quality chip is rebuilt on every transition and took an inline top with it.
     const open = document.querySelector('.header .hd-quality.open');
     if (open) document.querySelector('.header').style.setProperty('--below-toolbar',
-        `${document.querySelector('.toolbar').getBoundingClientRect().bottom - open.getBoundingClientRect().top + 8}px`);
+        `${(document.querySelector('.toolbar') || document.querySelector('.header')).getBoundingClientRect().bottom - open.getBoundingClientRect().top + 8}px`);
 });
 $('goal-panel').addEventListener('input', goal.recheck);
 $('goal-panel').addEventListener('click', goal.recheck);   // a row removed by its ×

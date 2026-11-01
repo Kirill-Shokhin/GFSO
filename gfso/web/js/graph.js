@@ -8,7 +8,7 @@ import {point, watch, focus, rebring} from './store.js';
 import {runNow, failingNow, failedOf} from './run.js';
 import {TIP, waitWords, failedWords} from './hints.js';
 import {css, beat} from './draw.js';
-import {childrenOf} from './tree.js';
+import {childrenOf, depths, ancestorsIn} from './tree.js';
 
 // Leaf tokens are hex literals (draw.js css).
 const [INK, SOFT, FAINT, PAPER, BG, ACC, TOMB, TOMB_LINE] = ['--ink', '--ink-soft', '--ink-faint', '--paper', '--bg', '--acc', '--ui-tomb', '--ui-tomb-line'].map(css);
@@ -45,6 +45,35 @@ function readableLabel(text) {
 // its 11 px names at 6 px, which a newcomer could not read (2026-10-26); at 1.0/20/40 it fits at 0.93
 const LAYOUT = {name: 'dagre', rankDir: 'TB', spacingFactor: 1.0, nodeSep: 20, rankSep: 40};
 let cy;
+
+// THE PLAN AT A GLANCE: a part's own parts are folded into it — a 49-part plan drawn whole was dust at zoom 0.24 (audit
+// DQ1/E2). The goal's parts always stand; the reader unfolds a part by double-clicking it, and the background's
+// double-click returns here. Unlike Progress, the path to a part failing now is not opened: opened, the plan was dust
+// again at 0.42 — the fold says it instead, its count of parts failing now in the accent (the red is never folded away).
+const unfolded = new Set();
+let hidden = {};                                // id → the drawn node it is folded into
+// the drawn node standing for each node: itself, or the outermost ancestor whose parts are folded
+function foldMap(tasks) {
+    const d = depths(tasks), up = ancestorsIn(tasks), open = id => d[id] === 0 || unfolded.has(id);
+    return Object.fromEntries(tasks.map(t => [t.id, up(t.id).reverse().find(a => !open(a)) ?? t.id]));
+}
+// a drawn node's folded parts: how many, and which of them fail now — the count in ink, the failing in the accent
+const foldOf = id => { const xs = Object.keys(hidden).filter(k => hidden[k] === id);
+    return {n: xs.length, failing: xs.filter(x => failingNow(S.run?.rounds[x], taskOf(x).state))}; };
+// at most the type's own size: fitted at 2.2 an 11-part plan drew 20 px blocks (audit E2)
+const fitCapped = (eles, pad = 30) => { cy.fit(eles, pad); if (cy.zoom() > 1) { cy.zoom(1); cy.center(eles); } };
+// …and at least the size a name is read at: where the whole plan fits only smaller (a phone), the first view is centred on
+// what asks for the reader — failing now, its own or folded inside, then at work — else on the goal; the rest a pan away
+const FLOOR = 0.6;
+function home() {
+    fitCapped();
+    if (cy.zoom() >= FLOOR) return;
+    const work = (S.run?.now ?? runNow(S.tasks, procs())).work;
+    const asks = [n => failingNow(S.run?.rounds[n.id()], taskOf(n.id()).state) || foldOf(n.id()).failing.length,
+                  n => work.has(n.id()) || Object.keys(hidden).some(k => hidden[k] === n.id() && work.has(k)), n => !taskOf(n.id()).parent_id]
+        .map(f => cy.nodes().filter(f)).find(c => c.length);
+    cy.zoom(FLOOR); cy.center(asks);
+}
 
 export async function initGraph() {
     // A canvas draws with whatever face is loaded NOW and never redraws for a late one: without this wait the
@@ -112,6 +141,9 @@ export async function initGraph() {
         cy.nodes().removeClass('focus');
         if (st.hover && !own) cy.getElementById(st.hover).addClass('focus');
         cy.nodes(':selected').filter(n => n.id() !== st.select).unselect();
+        // a node chosen in another view, folded here, unfolds the path to it
+        if (st.select && hidden[st.select]) { ancestorsIn(S.tasks)(st.select).forEach(a => unfolded.add(a));
+            redraw().then(() => inSight(cy.getElementById(st.select))); return; }
         if (st.select) cy.getElementById(st.select).select();
         if ((key === 'select' || key === 'bring') && st.select && !fresh) inSight(cy.getElementById(st.select));
     });
@@ -132,15 +164,22 @@ export async function initGraph() {
     addEventListener('pointerup', () => { held = false; }, true);
     // a double-click's own first click opens or closes the panel, and the frame is redone for the canvas it leaves
     const reseat = () => held ? (frame = setTimeout(reseat, 120))
-        : (cy.resize(), want ? framed() : fresh ? cy.fit(undefined, 30) : inSight(cy.nodes(':selected')));
+        : (cy.resize(), want ? framed() : fresh ? home() : inSight(cy.nodes(':selected')));
     new ResizeObserver(() => { clearTimeout(frame); frame = setTimeout(reseat, 120); }).observe($('cy'));
     // a double-click's own first click opens or closes the panel: the frame waits for that resize and is drawn ONCE —
     // drawn at once and again after it, a node was zoomed twice (author, 2026-10-25)
     let wantT;
-    const framed = () => { clearTimeout(wantT); if (want) cy.animate({fit: {eles: want, padding: 40}, duration: 200}); want = null; };
+    const framed = () => { clearTimeout(wantT); if (want) { const z = cy.zoom(), p = {...cy.pan()}; fitCapped(want, 40);
+        const to = {zoom: cy.zoom(), pan: {...cy.pan()}}; cy.viewport({zoom: z, pan: p}); cy.animate({...to, duration: 200}); } want = null; };
     const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, 450); };
-    cy.on('dbltap', 'node', evt => framing(subtree(evt.target)));
-    cy.on('dbltap', evt => { if (evt.target === cy) framing(cy.elements()); });
+    // a double-click on a node shows it with its parts: a folded node unfolds first, then the subtree is framed
+    const opening = async id => { if (foldOf(id).n) { unfolded.add(id); await redraw(); }
+        framing(subtree(cy.getElementById(id))); };
+    window.__opening = opening;   // PROBE HANDLE (render only)
+    cy.on('dbltap', 'node', evt => opening(evt.target.id()));
+    // …the background's: the plan as first drawn, its parts folded again
+    cy.on('dbltap', async evt => { if (evt.target !== cy) return;
+        if (unfolded.size) { unfolded.clear(); await redraw(); } framing(cy.elements()); });
     // A node under the strip the panel opens over: the first click opens the panel there and the second lands on it,
     // so the canvas never saw a double-click — and the click could press a button of the panel (critics 7, 9). A press
     // on the panel within the double-click's time, where that node was pressed, is the node's second click. Delaying
@@ -155,7 +194,7 @@ export async function initGraph() {
         const hit = last && Date.now() - last.t < DBL && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 8
             && (e.target.closest?.('#sidebar') || (e.target.closest?.('#cy') && moved()));
         if (!hit) return;
-        e.preventDefault(); e.stopPropagation(); framing(subtree(last.n)); last = null;
+        e.preventDefault(); e.stopPropagation(); opening(last.n.id()); last = null;
         swallow = true; setTimeout(() => { swallow = false; }, DBL);   // its own click only, never a later one
     }, true);
     addEventListener('click', e => { if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); } }, true);
@@ -196,7 +235,8 @@ function nodeTip(t) {
     const shown = readableLabel(nameOf(t)) === nameOf(t) && cy.zoom() * 11 >= READABLE;
     return TIP.node(t, !shown && nameOf(t), `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, delivered(t) ? null : t.done_reason)}</span>`,
         words !== '—' && words, rs, criteriaOf(t).length,
-        last?.verdict === 'FAIL' && failingNow(rs, t.state) && failedWords(failedOf(S.run, t.id, last.failed)));
+        last?.verdict === 'FAIL' && failingNow(rs, t.state) && failedWords(failedOf(S.run, t.id, last.failed)),
+        (f => f.n && {...f, failing: f.failing.map(x => nameOf(taskOf(x)) || x)})(foldOf(t.id)));
 }
 
 // Badges over the canvas: a pulse on a node being worked right now, and its rounds when it took more
@@ -211,19 +251,28 @@ function placeBadges() {
     layer.innerHTML = cy.nodes().map(n => {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
         const id = n.id(), rs = S.run?.rounds[id] || [], failing = failingNow(rs, n.data('state') ?? taskOf(id).state);
-        if (!work.has(id) && rs.length < 2) return '';
-        const b = n.renderedBoundingBox(BODY);
-        return `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
+        const b = n.renderedBoundingBox(BODY), f = foldOf(id);
+        // the folded parts hang under the node: their count, and those failing now in the accent
+        const tag = f.n ? `<div class="cy-fold" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px"><b>${f.n}</b> parts`
+            + (f.failing.length ? ` <b class="acc">${f.failing.length}</b> <span class="acc">failing</span>` : '') + '</div>' : '';
+        // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
+        // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
+        const t = taskOf(id), shut = t.state === 'DONE' && t.done_reason === 'FAIL';
+        const cross = shut ? `<div class="cy-badge cy-shut" style="left:${b.x1 - 9}px;top:${b.y1 - 9}px"><svg viewBox="-6 -6 12 12"><path class="mk-fail" d="M-2.5,-2.5l5,5m0,-5l-5,5"/></svg></div>` : '';
+        if (!work.has(id) && rs.length < 2) return cross + tag;
+        return cross + `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
             // the pulse keeps the page's one clock: a badge redrawn on every render restarted it mid-beat
             + (work.has(id) ? `<i class="cy-live${now.on(id) ? ' on' : ''}"${beat()}></i>` : '')
-            + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''}${TIP.rounds(rs)}>${rs.length}</span>` : '') + '</div>';
+            + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''}${TIP.rounds(rs)}>${rs.length}</span>` : '') + '</div>' + tag;
     }).join('');
 }
-export const annotate = placeBadges;
+// the run is read after the first drawing: an untouched view is framed again on what asks now
+export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBadges(); };
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;
 
 // The graph as last read (model.js loadGraph); `found` false: the project does not exist (yet), and nothing is drawn.
+const redraw = () => drawGraph(true);
 export async function drawGraph(found) {
         if (!found) {
             // a project not on disk yet has no mode: a mode set first would have created it (a goal stated here)
@@ -236,27 +285,34 @@ export async function drawGraph(found) {
         // them with, belong to a project without one, where a node is held by whoever it names (author, 2026-10-26)
         document.body.classList.toggle('manual', !g.mode?.mode);
         // the same nodes drawn again keep the reader's view; a new set (another project, parts added) is framed whole
-        const key = g.nodes.map(n => n.id).sort().join('|'), kept = key === drawn && {zoom: cy.zoom(), pan: {...cy.pan()}};
+        hidden = {};
+        const rep = foldMap(g.nodes);
+        for (const n of g.nodes) if (rep[n.id] !== n.id) hidden[n.id] = rep[n.id];
+        const key = g.nodes.filter(n => !hidden[n.id]).map(n => n.id).sort().join('|'), kept = key === drawn && {zoom: cy.zoom(), pan: {...cy.pan()}};
         drawn = key;
         cy.elements().remove();
         const tomb = new Set(g.nodes.filter(cancelled).map(n => n.id));
-        for (const n of g.nodes)
+        for (const n of g.nodes.filter(n => !hidden[n.id]))
             cy.add({data: {id: n.id, label: readableLabel(nameOf(n)),
  state: n.state, ...closureStyle(styleOf(n.state), n.closure)},
                     classes: tomb.has(n.id) ? 'cancelled' : undefined});
         // ONE BAD EDGE MUST NOT COST THE WHOLE PICTURE: a dangling edge threw before the layout ran and
         // left fifteen nodes stacked at the origin (2026-09-06). Draw what can be drawn, SAY what cannot.
-        const ids = new Set(g.nodes.map(n => n.id)), undrawable = [];
+        // an edge into a folded part is drawn to the node it is folded into — once, and never inside one fold
+        const ids = new Set(g.nodes.map(n => n.id)), undrawable = [], seen = new Set();
         for (const e of g.edges) {
             if (!ids.has(e.source) || !ids.has(e.target)) { undrawable.push(e); continue; }
-            cy.add({data: {source: e.source, target: e.target, type: e.type},
+            const source = rep[e.source], target = rep[e.target], k = `${source}>${target}>${e.type}`;
+            if (source === target || seen.has(k)) continue;
+            seen.add(k);
+            cy.add({data: {source, target, type: e.type},
                     classes: tomb.has(e.source) ? 'fromCancelled' : undefined});
         }
         if (cy.nodes().length) {
             const lay = cy.layout({...LAYOUT, animate: !kept, animationDuration: 200});
             // framed once the layout knows where things are — and the read resolves only then, so a caller
             // measuring the drawing measures the finished one
-            await new Promise(done => { lay.one('layoutstop', () => { kept ? cy.viewport(kept) : (cy.fit(undefined, 30), fresh = true); done(); }); lay.run(); });
+            await new Promise(done => { lay.one('layoutstop', () => { kept ? cy.viewport(kept) : (home(), fresh = true); done(); }); lay.run(); });
         }
         // a redraw removes and re-adds every node, and the chosen one lost its border while its panel stayed open
         if (focus().select) cy.getElementById(focus().select).select();

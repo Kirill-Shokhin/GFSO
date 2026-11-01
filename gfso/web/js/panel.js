@@ -24,31 +24,36 @@ function waiting(d) {
     const deps = (w?.deps || []).map(id => nameOf(taskOf(id)) || id);
     const what = deps.length > 1 ? tally(deps.length, 'nodes')
         : !w?.deps.length && w?.parts.length ? tally(w.parts.length, w.parts.length > 1 ? 'parts' : 'part') : `<b>${esc(words)}</b>`;
-    return words === '—' ? ['', ''] : [`<span>waiting on ${what}</span>`, deps.length > 1 ? `Waiting on ${deps.length}:\n${deps.map(n => `– ${n}`).join('\n')}\n` : `waiting on ${words}, `];
+    return words === '—' ? ['', ''] : [what, deps.length > 1 ? `Waiting on ${deps.length}:\n${deps.map(n => `– ${n}`).join('\n')}` : ''];
 }
 // a meta line is one line, cut at its end: the whole of it on hover
 const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</div>`;
 
+// THE STATE AS ONE PILL: the shape is the node's own look on the graph (the key's swatch — a mark keeps its meaning across
+// views), the accent only where V = fail on a node still open: the red that asks the reader to step in.
+const pill = (d, v) => `<span class="pn-pill k-${bucketOf(d.state)}${v === 'fail' && !terminal(d.state) ? ' fails' : ''}">`
+    + `${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`;
+// a property is a label and its value, one row of the grid; an absent one is no row
+const prop = (k, html, attrs = '') => html ? `<div class="pn-k">${k}</div><div class="pn-v"${attrs}>${html}</div>` : '';
+
 function head({d, rounds}) {
-    const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure);
-    const live = !terminal(d.state), mode = S.graph.mode?.mode;
-    // the round is an ordinal — «round 6», its figure standing out — never a count «6 rounds»; whether it is in work beside it
-    // …«in work» only where the run has it at work: beside «nothing at work» it said what was not (audit D8); no round 0 (D9)
+    const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure), live = !terminal(d.state);
+    // the round is an ordinal, its figure the eye looks for; «in work» only where the run has it at work (audit D8), no round 0 (D9)
     const [wait, waitText] = waiting(d), next = consented(d.state) && (!rounds.length || rounds.at(-1).verdict),
-          n = rounds.length + (next ? 1 : 0), inWork = next && !!S.run?.now?.work.has(d.id), round = n ? `round ${n}${inWork ? ', in work' : ''}` : '';
-    const ids = [d.id, mode && `${mode} mode`, `Del ${d.assignee ? bare(d.assignee, S.project) : '—'}`].filter(Boolean).join(' · ');
+          n = rounds.length + (next ? 1 : 0), inWork = next && !!S.run?.now?.work.has(d.id);
     return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
-        + meta(esc(ids), ids)
-        + `<div class="pn-status"><span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v === 'undef' ? '⊥' : v}</span>`
-        + `<span class="state-badge b-${bucketOf(d.state)}">${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`
-        // a deadline only where it still binds: on a closed node it was clutter with no tip (audit D18)
-        + (d.deadline && live ? `<span class="deadline-chip${live && at(d.deadline) < Date.now() ? ' overdue' : ''}"${live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : ''}>⏱ ${when(d.deadline)}</span>` : '')
-        // a node in work after its last verdict is working on the NEXT round, not the one already answered
-        + '</div>' + (wait || n ? meta(`${wait}${n ? `<span class="pn-round">round <b>${n}</b>${inWork ? ', in work' : ''}</span>` : ''}`, waitText + round) : '')
+        + `<div class="pn-status">${pill(d, v)}<span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v === 'undef' ? '⊥' : v}</span>`
+        + `<span class="pn-id"${PANEL.full(d.id)}>${esc(d.id)}</span></div>`
+        + `<div class="pn-grid">`
+        + prop('Del', `<code>${esc(d.assignee ? bare(d.assignee, S.project) : '—')}</code>`)
+        + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
+        // a deadline only where it still binds (audit D18)
+        + prop('Deadline', d.deadline && live ? `<code class="${at(d.deadline) < Date.now() ? 'overdue' : ''}">${when(d.deadline)}</code>` : '',
+               d.deadline && live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : '')
+        + prop('Waiting on', wait, waitText && PANEL.full(waitText))
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
-        + `<div class="pn-meta pn-by" id="pn-by">${signedBy(S.run, d.id)}</div>`
+        + `<div class="pn-by" id="pn-by">${signedBy(S.run, d.id)}</div></div>`
         + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip"${PANEL.escalated}>issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
-        // HOW IT CLOSED, on the node itself — the same `closure` the drawing reads, no copy of the rule.
         + (note ? `<div class="pn-note ${bad ? 'check-fail' : 'check-skip'}"${bad ? PANEL.contested : ''}>`
                   + `${bad ? '⚠ ' : ''}${note}</div>` : '');
 }
@@ -150,14 +155,14 @@ function actions({d, acts}) {
 // A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
 // user's agent or a person, whose model the system is not told — is signed by who delivered it, and says so.
 const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r.by).filter(Boolean).at(-1);
-    return by && !run.work.byNode[id]?.exec ? [`<span>executed by <b>${esc(by)}</b> <span class="wk-none">no session booked to this node — its model is not reported here</span></span>`] : []; };
+    return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(by)}</b> <span class="wk-none">no session booked to this node — its model is not reported here</span>`)] : []; };
+// who ran it, one grid row per role: «Executed by · haiku 5.5 ×12»
 const signedBy = (run, id) => [
     ...deliveredBy(run, id),
     ...Object.entries(run?.work.byNode[id] || {}).map(([kind, ms]) =>
-        // each role apart by space, never a dot between figures; a model's sessions on the node as its own small count
-        `<span>${KIND[kind]?.by} by `
-        + Object.entries(ms).map(([m, n]) => `<b${PANEL.model(m)}>${esc(modelName(m))}</b>${n > 1 ? `<sup>×${n}</sup>` : ''}`).join(', ') + '</span>'),
-    ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => `<span class="wk-none">${tally(n, `${KIND[k].name} ${n > 1 ? 'sessions' : 'session'} unanswered`)}</span>`),
+        prop(KIND[kind]?.by.replace(/^./, c => c.toUpperCase()) + ' by',
+             Object.entries(ms).map(([m, n]) => `<b${PANEL.model(m)}>${esc(modelName(m))}</b>${n > 1 ? `<sup>×${n}</sup>` : ''}`).join(', '))),
+    ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => prop('Unanswered', `<span class="wk-none">${tally(n, `${KIND[k].name} ${n > 1 ? 'sessions' : 'session'}`)}</span>`)),
 ].join('');
 
 const PARTS = [head, verdict, facets, criteria, actions];   // the prose chips above the list, always on screen

@@ -73,7 +73,8 @@ const KEY = [
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
      head: 'Session passed on', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
-    {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it with its parts · the background shows the whole graph'},
+    {glyph: '<span class="cy-fold kf"><b>12</b> parts</span>', head: 'Parts folded inside', means: 'a part\'s own parts; in the accent, how many of them fail now'},
+    {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node unfolds and frames its parts · the background shows the plan as first drawn'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
@@ -86,7 +87,8 @@ const KEY = [
     {glyph: '<b class="kt">$</b>', head: 'Spend', means: 'booked when a session ends; a running one is counted, not priced'},
     {glyph: '<i class="cv cv-done"></i>', head: "A part's state, not a verdict", means: 'a coverage cell: the part responsible for that criterion (§2.4); the row\'s mark is the root\'s own'},
     {group: 'Nodes'},
-    node('done', 'Closed', '', 'passed or failed: its state badge says which'),
+    node('done', 'Closed, passed', ''),
+    {glyph: '<i class="kn kn-done kn-x"></i>', head: 'Closed by FAIL', means: 'closed on its FAIL; the cross is the FAIL mark of every view'},
     node('busy', 'In work', 'busy'),
     node('attend', 'Handed over, not taken yet', 'attend'),
     node('pathology', 'Waits on a decision', 'pathology'),
@@ -290,10 +292,11 @@ const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total}`;
 const span = s => { const f = s.end - s.start < 60e3 && !s.open ? hms : hm; return `${f(s.start)}–${s.open ? 'now' : f(s.end)}`; };
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
-    node: (t, name, badge, waits, rs, criteria, failing) => card(name || '',
+    node: (t, name, badge, waits, rs, criteria, failing, fold) => card(name || '',
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`,
          Array.isArray(waits) ? waits.length === 1 ? `Waits on ${waits[0]}` : [`Waits on ${waits.length}:`, waits.map(n => `– ${n}`)] : waits && `Waits on ${waits}`,
-         criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${bare(t.assignee, S.project)}`], badge),
+         criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${bare(t.assignee, S.project)}`,
+         fold && `${fold.n} parts folded inside`, fold?.failing.length && ['Failing now inside:', fold.failing.map(n => `– ${n}`)]], badge),
     rounds: rs => hover(roundsLine(rs)),
     // ONE SESSION of a stretch passed on from session to session — its own piece of the bar between the cuts, saying itself:
     // its time, cost, tokens, round, and, where it passed its work on («passed on», never «handed over», the key's word for
@@ -340,6 +343,8 @@ export const TIP = {
     // …a count of sessions heads the part where the chart counts sessions: «Execution | 17 executions» said the kind twice
     part: (k, figure, share, p, says) => hover(says === 'calls' ? cap(sessionsOf(k, p.calls)) : `${cap(KIND[k]?.name || k)}\t${figure}`, meter('of the row', share),
         says !== 'calls' && sessionsOf(k, p.calls), says !== 'busy' && `${dur(p.busy)} busy`, p.tokens && `${tok(p.tokens)} tokens`),
+    // a row's whole split, on its figure: a part too thin to hit still has its line here (critic 8's findability, CQ2)
+    split: parts => hover('By role', parts.map(([k, figure, share]) => meter(cap(KIND[k]?.name || k), share, figure))),
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The sums are of what was priced'),
     system: hover('The system', 'Sessions no assignee ran: the planning and the issuer turns the system takes itself'),
     where: why => hover(why),

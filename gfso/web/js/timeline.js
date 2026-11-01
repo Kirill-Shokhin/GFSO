@@ -11,13 +11,12 @@ import {failedOf} from './run.js';
 import {label} from './vocab.js';
 import {TIP, KIND} from './hints.js';
 
-// an outlined bar (an issuer's turn, a consent) is drawn over the filled ones: it can run beside an execution or a
-// validation (a challenge answered while the work goes on), and beneath them it hid; its outline shows what lies under it
-const HOLLOW = new Set(['consent', 'issuer']);
-// an outlined kind narrower than THIN px is drawn as a filled tick of its outline's ink: a few px of outline read as «0»
-// beside a name (audit B3)
-const OUTLINED = new Set([...HOLLOW, 'plan']), THIN = 6;
-const ROW = 28, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
+// the side kinds (a consent, an issuer's turn, a planning session) run on a thin lane of their own under the row's work:
+// drawn over an execution they hid what ran (audit BQ1); filled in their tone on the kinds' one ramp (gfso.css --k-*)
+const SIDE = new Set(['consent', 'issuer', 'plan']), LANE = 9;
+// the name column takes the room a wide screen has, so a name is read whole, not cut at 20 characters (BQ1)
+const gutter = W => Math.round(Math.min(260, Math.max(140, W * 0.16)));
+const ROW = 34, CONC = 34, TOP = 30 + CONC + 14, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
 const STEM = 7, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
 
 // Rows: the goal's first; then what is at work now; then every node that has worked, in the order it
@@ -57,18 +56,19 @@ function stretches(run) {
 
 export function render(el, run, nodes) {
     const ids = rows(run, nodes), name = run.name, work = stretches(run);
-    const W = axisWidth(el), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
+    const W = axisWidth(el), LEFT = gutter(W), cutN = Math.floor((LEFT - 18) / 6), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
     const Y = id => TOP + ids.indexOf(id) * ROW + ROW / 2 + 4;
     // A STRETCH PASSED ON from session to session is drawn as its sessions, each its own piece of the bar between the cuts and
     // its own tip — its time, cost, tokens, its round, and where it stood when it passed on, against its budget and window
     // (the author, 2026-10-31: «вместо того чтобы показывать инфу на самом исполнении, она отображается между ними в
     // разделении, а на самом исполнении одна и та же длинная инфа»); the cut is only the line between two pieces
-    const rect = (s, i, a, b, p) => { const w = f.X(b) - f.X(a), thin = OUTLINED.has(s.kind) && w < THIN;
-        return `<rect class="tl-s tl-${s.kind}${thin ? ' tl-thin' : ''}${s.open ? ' tl-open' : ''}" data-i="${i}"${p == null ? '' : ` data-p="${p}"`}`
-        + ` data-k="b|${esc(s.node)}|${s.kind}|${a}" x="${f.X(a)}" y="${Y(s.node) - BAR[s.kind] / 2}" width="${Math.max(w, thin ? 3 : 2)}" height="${BAR[s.kind]}" rx="1.5"/>`; };
+    const yb = s => Y(s.node) + (SIDE.has(s.kind) ? LANE : 0);
+    const rect = (s, i, a, b, p) => { const w = f.X(b) - f.X(a);
+        return `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}"${p == null ? '' : ` data-p="${p}"`}`
+        + ` data-k="b|${esc(s.node)}|${s.kind}|${a}" x="${f.X(a)}" y="${yb(s) - BAR[s.kind] / 2}" width="${Math.max(w, 3)}" height="${BAR[s.kind]}" rx="1.5"/>`; };
     const bar = (s, i) => !s.handed.length ? rect(s, i, s.start, s.end)
         : s.members.map((m, p) => rect(s, i, m.start, s.members[p + 1]?.start ?? s.end, p)).join('')
-          + s.handed.map(({t}) => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${Y(s.node) - BAR[s.kind] / 2 - 2}" y2="${Y(s.node) + BAR[s.kind] / 2 + 2}"/>`).join('');
+          + s.handed.map(({t}) => `<line class="tl-hand" x1="${f.X(t)}" x2="${f.X(t)}" y1="${yb(s) - BAR[s.kind] / 2 - 2}" y2="${yb(s) + BAR[s.kind] / 2 + 2}"/>`).join('');
     // a verdict: a hairline stem up from the bar line, the glyph on top — a mark, not a piece of the work
     const marks = id => (run.rounds[id] || []).filter(r => r.verdict).map(r => { const x = f.X(r.at), y = Y(id);
         return `<g class="tl-v" data-v="${r.n}" data-k="v|${esc(id)}|${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
@@ -88,9 +88,9 @@ export function render(el, run, nodes) {
     const legend = kinds.map((k, i) =>
         `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
-        <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 4}" width="${W}" height="${ROW}"/>
-        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" data-k="n|${esc(id)}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id)) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id)))}</text>
-        ${work.map((s, i) => s.node === id && !HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${work.map((s, i) => s.node === id && HOLLOW.has(s.kind) ? bar(s, i) : '').join('')}${marks(id)}${idle(id)}</g>`;
+        <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 2}" width="${W}" height="${ROW}"/>
+        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" data-k="n|${esc(id)}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id), cutN) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id), cutN))}</text>
+        ${work.map((s, i) => s.node === id ? bar(s, i) : '').join('')}${marks(id)}${idle(id)}</g>`;
     // how many executors ran at once: its own band with its own scale, a line — not one more row of bars
     const c0 = 30 + CONC, peak = Math.max(run.exec.peak, 1), cy = k => c0 - (k / peak) * (CONC - 6);
     let line = `M${LEFT},${c0}`;
@@ -106,7 +106,7 @@ export function render(el, run, nodes) {
         <path class="tl-conc" d="${line}"/>
         ${top ? `<circle class="tl-peakdot" cx="${f.X(top[0])}" cy="${cy(peak)}" r="2.5"/>` : ''}
         ${ids.map(row).join('')}
-        <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW - 4}" y2="${TOP + ROW - 4}"/></svg>`;
+        <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW + 2}" y2="${TOP + ROW + 2}"/></svg>`;
     pinLeft(el.querySelector('svg.tl'), LEFT);
     // who ran a stretch, only where its node had more than one for that kind of work, without the project's name its id
     // carries (a prefix common to every agent was none: the user's own `agent` shares nothing — critic 17)

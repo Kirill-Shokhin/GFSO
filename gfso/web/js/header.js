@@ -56,8 +56,9 @@ async function goal() {
     const set = [m?.by && ['Set by', `${m.by}${m.at ? `, ${clockAt(at(m.at))}` : ''}`],
         m?.boundary && ['Boundary', `depths 0…${m.boundary - 1} held by the user's agent`], m?.perform && ['Perform', PERFORM[m.perform] || m.perform],
         m?.hands && ['Hands', m.hands], st.system_model && ['System model', `the system's roles run on ${modelName(st.system_model)}`],
+        st.planner_model && ['Planner model', `the plan is authored on ${modelName(st.planner_model)}`],
         // a setting in seconds is said as a time (deadline_s 29160 → deadline 8.1h)
-        ...Object.entries(st).filter(([k]) => k !== 'system_model').map(([k, v]) => [SETTING[k] || cap(k.replace(/_s$/, '').replace(/_/g, ' ')),
+        ...Object.entries(st).filter(([k]) => k !== 'system_model' && k !== 'planner_model').map(([k, v]) => [SETTING[k] || cap(k.replace(/_s$/, '').replace(/_/g, ' ')),
             /_s$/.test(k) && typeof v === 'number' ? dur(v * 1e3) : typeof v === 'boolean' || SWITCH.has(k) ? (v ? 'on' : 'off') : typeof v === 'object' ? JSON.stringify(v) : String(v)])].filter(Boolean);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = nameOf(root), short = full.split(/\s[(:—]/)[0].slice(0, 40);
@@ -98,7 +99,7 @@ function runSwitch(r) {
     if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
     // the count its own mark (audit A5); the tip headed by who and when, each session still at work by its node and what it
     // does — not the in-flight registry's verb and id joined by dots (A8, A9)
-    const text = r.state === 'stopping' ? `stopping${tally(r.working.length, 'still at work')}` : 'stopped';
+    const text = r.state === 'stopping' ? `Stopping${tally(r.working.length, 'still at work')}` : 'Stopped';
     const tip = r.state === 'stopping' ? H.stopping(r.by, when(r.at), r.why, r.working.map(w => `${w.task_id ? nameOf(taskOf(w.task_id)) || w.task_id : 'the system'}: ${doing(w.verb, PROC_KIND[w.verb])}, since ${when(w.since)}`))
         : H.stopped(r.by, when(r.at), r.why);
     return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}"${tip}>${text}</span>`

@@ -57,12 +57,12 @@ function strip() {
     // …under AUTO only, where the system holds every node: a stop pauses the system, never a person's own work (critic)
     const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
     const now_ = held && live.length
-        ? `<span class="dk-now dk-idle"${STRIP.held}>stopped${tally(live.length, 'held mid-work')}</span>`
+        ? `<span class="dk-now dk-idle"${STRIP.held}>Stopped${tally(live.length, 'held mid-work')}</span>`
           + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}" data-k="held|${esc(t.id)}"${STRIP.live(nameOf(t))}><i${beat()}></i><em>${esc(name(t))}</em><span>${label(t.state).toLowerCase()}</span></button>`).join('')}${more}</span>`
         // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
         // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
         : live.length ? `<span class="dk-now">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
-        : '<span class="dk-now dk-idle">nothing at work</span>';
+        : '<span class="dk-now dk-idle">Nothing at work</span>';
     // …and what waits on what is said whether the run runs or is held
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
     // the red rounds badge's rule; a count of every FAIL ever never went away on a green run (critic)

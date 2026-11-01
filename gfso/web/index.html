@@ -24,23 +24,21 @@
 <body>
 <div class="header">
     <h1><span>GFSO</span></h1>
-    <div class="hd-goal" id="hd-goal"></div>
-    <div class="hd-needs" id="hd-needs"></div>
-    <div class="hd-quality hd-reports" id="hd-reports"></div>
-    <div class="hd-quality" id="hd-quality"></div>
-</div>
-<div class="toolbar">
     <div class="role-select">
         <label for="project-open">Project</label>
         <button class="pl-open" id="project-open" data-action="projects" data-hint="projects"></button>
         <button class="pl-delete" id="project-delete" data-action="project-delete" data-hint="deleteProject" hidden>delete…</button>
     </div>
+    <div class="hd-goal" id="hd-goal"></div>
+    <div class="hd-needs" id="hd-needs"></div>
     <button class="btn btn-goal" id="btn-goal" data-action="goal" data-hint="goal" hidden>Pose the goal</button>
     <button class="queue-toggle manual-only" id="queue-toggle" data-action="mine" data-hint="mine">Mine only</button>
     <div class="role-select acting-as manual-only" data-hint="actingAs">
         <label for="current-role">acting as</label>
         <input id="current-role" value="pm" placeholder="your name" spellcheck="false">
     </div>
+    <div class="hd-quality hd-reports" id="hd-reports"></div>
+    <div class="hd-quality" id="hd-quality"></div>
     <div class="hd-quality tb-help" id="tb-help"><button class="hd-q" data-action="pop" data-hint="help">?</button></div>
 </div>
 <div class="main">
