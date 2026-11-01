@@ -19,6 +19,18 @@ export const glyph = (v, r = 4) => `<svg class="glyph" width="${2 * r + 4}" heig
 // A time axis keeps the room to be read: narrower than this, the deck scrolls it sideways rather than squeezing a run's
 // hours into a phone's width (the author, 2026-10-29: «почему нижнюю панель можно скроллить вверх но нельзя вбок»)
 export const axisWidth = el => Math.max(el.clientWidth, 720);
+// …and while it scrolls, its names stay: the drawing's left `left` px laid again over it, held at the box's left edge —
+// scrolled to the run's latest, a phone's rows had lost their names (audit B11). The copy is the same drawing, so a hover
+// or a tap on a name there is one on the name.
+export function pinLeft(svg, left) {
+    const box = svg.closest('.dk-body'), w = +svg.getAttribute('width');
+    if (!box || w <= box.clientWidth) return;
+    const c = svg.cloneNode(true), p = document.createElement('div');
+    c.setAttribute('width', left); c.setAttribute('viewBox', `0 0 ${left} ${svg.getAttribute('height')}`);
+    p.className = 'pin-left'; p.append(c); svg.before(p);
+    // a sticky thing sticks only within its block: the block made as wide as what scrolls
+    svg.parentElement.style.minWidth = `${w}px`;
+}
 
 export function frame(run, W, left, right = 16) {
     const span = Math.max(run.clock.span, 60e3), k = (W - left - right) / span;

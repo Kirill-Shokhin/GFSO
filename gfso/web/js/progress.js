@@ -8,7 +8,7 @@ import {label, cancelled} from './vocab.js';
 import {failingNow} from './run.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip, firstTap} from './tip.js';
-import {frame, axisWidth, mark, glyph} from './draw.js';
+import {frame, axisWidth, mark, glyph, pinLeft} from './draw.js';
 import {hm, trim} from './fmt.js';
 import {rootOf, isRoot, childrenOf, ancestorsIn} from './tree.js';
 
@@ -98,7 +98,7 @@ export function render(el, run, nodes, tasks) {
     el.innerHTML = `<div class="pg-wrap"><div class="pg-tracks"></div><div class="pg-side">${coverage(run, nodes, tasks)}</div></div>`;
     let lit;   // the shared selection's paint, re-applied to tracks drawn anew
     const hot = hotIn(run, tasks);
-    const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks, hot); lit?.(focus()); };
+    const tr = el.querySelector('.pg-tracks'), paint = () => { tr.innerHTML = tracks(tr, run, name, tasks, hot); pinLeft(tr.querySelector('svg.pg'), LEFT); lit?.(focus()); };
     // a node selected under a folded part unfolds the path to it, so its track is there to light
     const up = ancestorsIn(tasks);
     const open = id => { let shut = false; for (const x of up(id).slice(0, -1)) if (!unfolded.has(x)) unfolded.add(x), folded.delete(x), shut = true; return shut; };

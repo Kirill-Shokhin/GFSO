@@ -1,7 +1,7 @@
 // The run deck under the graph: a strip that always says what is running now and what it has cost,
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
-import {$, esc, tally, since, lasting} from './dom.js';
+import {$, esc, tally, since, lasting, phone} from './dom.js';
 import {frame, TAB, STRIP, doing} from './hints.js';
 import {S, procs, kept, keep} from './state.js';
 import {nameOf, label} from './vocab.js';
@@ -120,6 +120,7 @@ function drawStrip() {
     if (gone.length) more.outerHTML = `<span class="dk-more"${STRIP.more(gone.map(c => `${c.dataset.tip.split('\n')[0]} — ${c.querySelector('span').textContent}`))}>+${gone.length}</span>`;
 }
 
+const TIMED = new Set(['timeline', 'progress']);
 // the deck drawn from the run as last read (model.js loadRun)
 export function paint() {
     const d = $('deck');
@@ -128,8 +129,15 @@ export function paint() {
     d.querySelectorAll('.dk-tab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
     const run = S.run, el = d.querySelector('.dk-view'), drawn = pref.closed || !run ? null : view;
     release(el);
-    if (el._drawn !== drawn) forgetBrought(el), el._drawn = drawn;   // a view opened brings the selection again
+    const opened = el._drawn !== drawn;
+    if (opened) forgetBrought(el), el._drawn = drawn;   // a view opened brings the selection again
+    el.style.minWidth = '';
     if (!pref.closed && run) VIEWS[view].render(el, run, S.graph.nodes, S.tasks, S.pipeline);
+    // a view on the run's time opened on a phone shows its latest first, the legend with it — at its start, a run of hours
+    // showed the empty first minutes (audit B11)
+    // …the time axis's end at the box's right, not the view's (Progress keeps its coverage table past it)
+    const axis = opened && phone() && TIMED.has(view) && el.querySelector('.pin-left + svg');
+    if (axis) { const box = el.closest('.dk-body'); box.scrollLeft += axis.getBoundingClientRect().right - box.getBoundingClientRect().right; }
 }
 
 
@@ -138,7 +146,10 @@ export function paint() {
 export function suggestHeight(graphNeeds) {
     if (pref.h) return;
     const d = $('deck'), stage = d.parentElement.clientHeight;
-    d.style.height = `${Math.round(Math.max(stage * 0.25, Math.min(stage * 0.42, stage - graphNeeds)))}px`;
+    // …on a phone the deck holds the first screen's answer (what runs, what waits): half of it at least — at a quarter it
+    // showed 131 px of body under a graph no fit makes readable (audit E1)
+    const [lo, hi] = phone() ? [0.5, 0.6] : [0.25, 0.42];
+    d.style.height = `${Math.round(Math.max(stage * lo, Math.min(stage * hi, stage - graphNeeds)))}px`;
 }
 
 // a narration line: a live token tick is shown in place; anything else is news the run should be read again for (true)

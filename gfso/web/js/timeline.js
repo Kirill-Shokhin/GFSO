@@ -4,7 +4,7 @@
 import {esc, unseen} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
-import {frame, axisWidth, mark} from './draw.js';
+import {frame, axisWidth, mark, pinLeft} from './draw.js';
 import {trim, bare} from './fmt.js';
 import {S} from './state.js';
 import {failedOf} from './run.js';
@@ -105,6 +105,7 @@ export function render(el, run, nodes) {
         ${top ? `<circle class="tl-peakdot" cx="${f.X(top[0])}" cy="${cy(peak)}" r="2.5"/>` : ''}
         ${ids.map(row).join('')}
         <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW - 4}" y2="${TOP + ROW - 4}"/></svg>`;
+    pinLeft(el.querySelector('svg.tl'), LEFT);
     // who ran a stretch, only where its node had more than one for that kind of work, without the project's name its id
     // carries (a prefix common to every agent was none: the user's own `agent` shares nothing — critic 17)
     const who = x => new Set(work.filter(w => w.node === x.node && w.kind === x.kind).flatMap(w => w.agents)).size > 1 && x.agents.map(a => bare(a, S.project)).join(', ');

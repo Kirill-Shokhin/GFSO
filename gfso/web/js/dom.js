@@ -1,6 +1,8 @@
 // Markup primitives every view builds with.
 import {dur} from './fmt.js';
 export const $ = id => document.getElementById(id);
+// a phone's layout: the width is decided in gfso.css alone, the script reads its verdict, never the number
+export const phone = () => getComputedStyle(document.documentElement).getPropertyValue('--phone').trim() === '1';
 
 // EVERY STRING ON THIS PAGE THAT A MODEL WROTE GOES THROUGH HERE. Panels are built by concatenation,
 // and a validator's evidence quoting `a<=f>=g` lost `<=f>` to the parser (author, 2026-09-12): a page
