@@ -8,7 +8,7 @@ import {nameOf, label} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
 import {firstTap} from './tip.js';
 import {said, blockers, runNow, failingNow, PROC_KIND, byRole} from './run.js';
-import {dur, trim, money, plural} from './fmt.js';
+import {dur, clockAt, trim, money, plural} from './fmt.js';
 import {beat} from './draw.js';
 import * as timeline from './timeline.js';
 import * as progress from './progress.js';
@@ -42,14 +42,14 @@ function strip() {
     const live = busy.map(t => {
         const w = at.on(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
         const what = w ? doingOf(w) : doing(t.state);
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(w.verb) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), by.verb) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
-            + `<span>${what}${w ? ' · ' + since(w.since * 1e3) : ''}</span></button>`;
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3)) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
+            + `<span>${what}${w ? `<b class="dk-age">${since(w.since * 1e3)}</b>` : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
     for (const w of mine.filter(w => !w.task_id || !drawn.has(w.task_id)))
-        live.push(`<span class="dk-live on"${STRIP.live('The goal', STRIP.running(w.verb))}><i${beat()}></i><em>the goal</em>`
-            + `<span>${doingOf(w)} · ${since(w.since * 1e3)}</span></span>`);
+        live.push(`<span class="dk-live on"${STRIP.live('The goal', STRIP.running(clockAt(w.since * 1e3)))}><i${beat()}></i><em>the goal</em>`
+            + `<span>${doingOf(w)}<b class="dk-age">${since(w.since * 1e3)}</b></span></span>`);
     // as many chips as the line holds, the rest counted (`drawStrip`): what waits and what it cost stay on the line
     const more = '<span class="dk-more"></span>';
     // A STOPPED RUN RUNS NOTHING: its nodes still hold their working states, and the strip read "2 at work" over a run
@@ -173,6 +173,11 @@ export function mountDeck() {
         <nav>${Object.keys(VIEWS).map(k => `<button class="dk-tab" data-view="${k}"${TAB[k]}>${k}</button>`).join('')}</nav>
         <div class="dk-strip"></div><div class="dk-sum"></div><button class="dk-fold"${frame('fold')}>▾</button></div><div class="dk-body"><div class="dk-view"></div></div>`;
     if (pref.h) d.style.height = `${pref.h}px`;
+    // THE DECK KEEPS ITS LAYOUT WHILE A NODE'S PANEL IS OPEN: its width with no panel is remembered, and a view laid out by
+    // width (Spend's columns, Models' table) keeps it and scrolls sideways — at 1024 Spend restacked to one column and Models
+    // squeezed beside the panel (critic, 2026-11-01; the author 2026-10-30: «прокрутки влево вправо не появляется»)
+    const main = d.closest('.main');
+    new ResizeObserver(() => d.style.setProperty('--deck-free', `${main.clientWidth - 32}px`)).observe(main);
     d.querySelector('nav').onclick = e => {
         const v = e.target.dataset.view;
         if (!v) return;

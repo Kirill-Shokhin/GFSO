@@ -37,7 +37,7 @@ function where(r) {
     // width, a split of 11% of a row read as the whole row's (audit C2)
     const rest = 1 - s.covered;
     return `<span class="wk-cost">${s.parts.map(([k, v]) => `<i class="${COST_CLS(k)}" style="width:${pct(s.covered * v / total)}"`
-        + `${MODELS.part(kind[k][0], usd(v), s.covered * v / total, kind[k][1])}></i>`).join('')}`
+        + `${MODELS.part(kind[k][0], usd(v), s.covered * v / total, kind[k][1], k === 'cache_write_tokens' && (s.write === 2 ? 'The 1-hour cache, ×2 input' : 'The 5-minute cache, ×1.25 input'))}></i>`).join('')}`
         + `${rest > 0.01 ? `<i class="wk-unsplit" style="width:${pct(rest)}"${MODELS.rest(rest, s)}></i>` : ''}</span>`;
 }
 

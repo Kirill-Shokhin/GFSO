@@ -47,9 +47,11 @@ const roles = cs => {
 const read = t => t == null ? 'never' : clockAt(t * 1e3);
 const age = d => { const r = d.read_at || {}, stale = Object.keys(r).filter(k => r[k] != null && !d.read[k]);
     return stale.length ? tally(read(Math.min(...stale.map(k => r[k]))), 'last read', RES.ages(stale.map(k => [k, read(r[k])]))) : ''; };
-// …the server's poller keeps the last reading (security 8746d6a): before its first, nothing is read yet — no failure
-const notes = d => [!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
-    : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread,
+// …the server's poller keeps the last reading (security 8746d6a): before its first, nothing is read yet — no failure; a
+// reading Docker was asked for and did not give says why, in Docker's words (`tried_at`/`error`, security — audit C6)
+const failed = d => Object.entries(d.error || {}).filter(([, e]) => e).map(([k, e]) => RES.failed(k, e, read(d.tried_at?.[k])));
+const notes = d => [...failed(d), !failed(d).length && (!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
+    : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread),
     d.older_build?.containers && RES.older(d.older_build.containers)].filter(Boolean)
     .map(n => `<div class="pn-meta">${esc(n)}</div>`).join('');
 

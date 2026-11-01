@@ -254,9 +254,9 @@ function work(calls) {
         // a resumed process continues its session: counted once, as everywhere else
         if (c.node_id && !c.resumed) (((byNode[c.node_id] ??= {})[kind] ??= {})[model] = (byNode[c.node_id][kind][model] || 0) + 1);
         // what the cost went to: a priced Claude call with its cache kept apart, weighed by the price structure
-        const w = /^claude-/.test(model) && c.cost_usd && c.input_tokens != null && c.cache_read_tokens != null
-            && Object.fromEntries(TOKENS.map(([k, , x]) => [k, (c[k] || 0) * x]));
-        if (w) (r.weighed ??= []).push({w, cost: c.cost_usd, rate: c.cost_usd / sum(Object.values(w), v => v), resumed: !!c.resumed});
+        // …its tokens by kind kept, weighed in `split` (the cache write's weight is the row's to find)
+        if (/^claude-/.test(model) && c.cost_usd && c.input_tokens != null && c.cache_read_tokens != null)
+            (r.weighed ??= []).push({t: Object.fromEntries(TOKENS.map(([k]) => [k, c[k] || 0])), cost: c.cost_usd, resumed: !!c.resumed});
     }
     for (const r of Object.values(rows)) r.split = split(r);
     return {rows: Object.values(rows).sort((a, b) => b.cost - a.cost), byNode, unanswered, unansweredOn,
@@ -270,12 +270,25 @@ function work(calls) {
 // before 7213607, which recorded the whole conversation's cost (the CLI's running total) — their predecessor's cost
 // counted twice; the split leaves them out and says which share of the row's cost it covers, and why.
 // Another provider's sessions are not split: its price structure is not known here.
+// A CACHE WRITE HAS TWO PRICES — ×1.25 input for the 5-minute cache, ×2 for the 1-hour one (WRITES) — and which one a run
+// paid is not recorded: each row is weighed at the one its own sessions price at. Fixed at ×2, a haiku 5.5 run of 5-minute
+// writes priced 20 of 91 issuer sessions and drew the rest as «not split» (critic, 2026-11-01; ×1.25 prices 91/91, while an
+// older run of 1-hour writes prices 75/77 at ×2 and 34/77 at ×1.25).
+const WRITES = [2, 1.25];
+function weigh(r, write) {
+    const x = Object.fromEntries(TOKENS.map(([k, , p]) => [k, k === 'cache_write_tokens' ? write : p]));
+    const ws = r.weighed.map(s => ({...s, w: Object.fromEntries(TOKENS.map(([k]) => [k, s.t[k] * x[k]]))}))
+        .map(s => ({...s, rate: s.cost / sum(Object.values(s.w), v => v)}));
+    const rate = median(ws.map(s => s.rate));
+    return {write, rate, ws, held: ws.filter(s => Math.abs(s.rate / rate - 1) <= 0.02)};
+}
 function split(r) {
     if (!r.weighed) return null;
-    const rate = median(r.weighed.map(x => x.rate)), held = r.weighed.filter(x => Math.abs(x.rate / rate - 1) <= 0.02);
+    const {write, rate, ws, held} = WRITES.map(w => weigh(r, w)).reduce((a, b) => b.held.length > a.held.length ? b : a);
+    r.weighed = ws;
     const parts = TOKENS.map(([k]) => [k, rate * sum(held, x => x.w[k])]);
     const out = r.weighed.filter(x => !held.includes(x));
-    return {parts, covered: sum(held, x => x.cost) / Math.max(r.cost, 1e-12), sessions: held.length,
+    return {parts, write, covered: sum(held, x => x.cost) / Math.max(r.cost, 1e-12), sessions: held.length,
             out: out.length, resumedOut: out.filter(x => x.resumed).length, unweighed: r.calls - r.weighed.length};
 }
 

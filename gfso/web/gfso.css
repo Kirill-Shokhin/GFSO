@@ -459,6 +459,7 @@ body {
 .dk-live i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--ink-soft); }
 .dk-live.on i { background: var(--acc); border-color: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .dk-live span { font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft); }
+.dk-live .dk-age { font-weight: 400; margin-left: 6px; color: var(--ink-faint); }   /* how long, apart from what it does */
 /* a chip shortens its name to a readable floor, never its state; below that floor it goes into the count (deck.js drawStrip) */
 .dk-live { flex: 0 1 auto; min-width: 10.5em; overflow: hidden; }
 .dk-live em { font-style: normal; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -469,6 +470,7 @@ body {
 .dk-fold { background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; width: 32px; height: 100%; padding: 0; }
 .deck.closed .dk-fold { transform: rotate(180deg); }
 .dk-body { flex: 1; overflow: auto; padding: 12px 16px 16px; min-height: 0; }
+.main:has(#sidebar:not(.hidden)) .dk-view { min-width: var(--deck-free, 0px); }   /* deck.js: the layout it had with no panel */
 /* a time view's names held at the left while it scrolls sideways (draw.js pinLeft) */
 .pin-left { position: sticky; left: -16px; height: 0; width: 0; z-index: 2; }
 .pin-left svg { display: block; background: var(--ui-page); margin-left: -16px; padding-left: 16px; box-sizing: content-box; }
@@ -648,6 +650,7 @@ body {
 /* ============ Bucket styling — theory → visual translation ============ */
 .b-done      { background: var(--ink);      color: var(--bg); }
 .b-quiet     { background: transparent;     color: var(--ink-faint); border-color: var(--ink-faint); padding: 1px 7px; }
+.b-busy      { background: transparent;     color: var(--ink); border: 1.5px solid var(--ink); padding: 1px 7px; }   /* in work: the graph's ink border */
 .b-attend    { background: var(--ink-soft); color: var(--bg); }
 .b-pathology { background: var(--ink-soft); color: var(--bg); border-style: dashed; border-color: var(--ink); padding: 1px 7px; }
 .meta {
