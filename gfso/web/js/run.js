@@ -4,7 +4,7 @@
 // disagree on a fact. Pure: payloads in, model out — no fetch, no DOM, no words (hints.js says
 // them); it imports the protocol's vocabulary only.
 
-import {terminal, delivered, working, consented, nameOf, criteriaOf, isVerdict, TOKENS} from './vocab.js';
+import {terminal, delivered, working, consented, nameOf, criteriaOf, isVerdict, TOKENS, WRITES} from './vocab.js';
 import {childrenOf, ancestorsIn, depths} from './tree.js';
 
 // Sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one)
@@ -274,7 +274,6 @@ function work(calls) {
 // paid is not recorded: each row is weighed at the one its own sessions price at. Fixed at ×2, a haiku 5.5 run of 5-minute
 // writes priced 20 of 91 issuer sessions and drew the rest as «not split» (critic, 2026-11-01; ×1.25 prices 91/91, while an
 // older run of 1-hour writes prices 75/77 at ×2 and 34/77 at ×1.25).
-const WRITES = [2, 1.25];
 function weigh(r, write) {
     const x = Object.fromEntries(TOKENS.map(([k, , p]) => [k, k === 'cache_write_tokens' ? write : p]));
     const ws = r.weighed.map(s => ({...s, w: Object.fromEntries(TOKENS.map(([k]) => [k, s.t[k] * x[k]]))}))
@@ -284,7 +283,9 @@ function weigh(r, write) {
 }
 function split(r) {
     if (!r.weighed) return null;
-    const {write, rate, ws, held} = WRITES.map(w => weigh(r, w)).reduce((a, b) => b.held.length > a.held.length ? b : a);
+    // …the one that prices more of the row's sessions; where both price as many, which was paid is not told (`write` null)
+    const [a, b] = Object.keys(WRITES).map(Number).sort((x, y) => y - x).map(w => weigh(r, w)), best = b.held.length > a.held.length ? b : a;
+    const {rate, ws, held} = best, write = a.held.length === b.held.length ? null : best.write;
     r.weighed = ws;
     const parts = TOKENS.map(([k]) => [k, rate * sum(held, x => x.w[k])]);
     const out = r.weighed.filter(x => !held.includes(x));

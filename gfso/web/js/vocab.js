@@ -126,7 +126,9 @@ export const fmOf = name => {
 // THE KINDS OF TOKEN a cost goes to, one table, in the order the Models bar draws them: the ledger's field, the kind's name,
 // its weight in Anthropic's price structure (Claude Code writes the one-hour cache), and the Models row's field.
 export const TOKENS = [['input_tokens', 'input', 1, 'input'], ['output_tokens', 'output', 5, 'output'],
-    ['cache_read_tokens', 'cache read', 0.1, 'read'], ['cache_write_tokens', 'cache written', 2, 'write']];
+    ['cache_read_tokens', 'cache read', 0.1, 'read'], ['cache_write_tokens', 'cache written', null, 'write']];
+// …a cache write has two prices, the 5-minute cache's and the 1-hour one's; which a run paid is not recorded (run.js split)
+export const WRITES = {1.25: '5-minute cache', 2: '1-hour cache'};
 
 // What a signal carries beyond its move, in the log's words: the field, and what it is called where it is shown.
 export const CARRIED = [['error', 'why refused'], ['reason', 'reason'], ['justification', 'justification'], ['action', 'resolution'],

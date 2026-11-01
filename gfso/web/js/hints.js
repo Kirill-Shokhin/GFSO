@@ -20,7 +20,7 @@
 import {esc} from './dom.js';
 import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural, bare} from './fmt.js';
 import {S} from './state.js';
-import {statesIn, label, TOKENS, nameOf} from './vocab.js';
+import {statesIn, label, TOKENS, WRITES, nameOf} from './vocab.js';
 
 // ── the renderers ──
 const lines = xs => xs.flat(Infinity).filter(Boolean).map(String);
@@ -153,7 +153,7 @@ export const RES = {
     none: 'No container or volume of this project',
     unserved: 'No reading of Docker: this server does not serve one',
     first: 'No reading of Docker yet',
-    failed: (k, why, at) => `Docker gave no ${k} reading at ${at}: ${why}`,
+    failed: (ks, why, at) => `Docker gave no ${ks.join(' or ')} reading at ${at}: ${why}`,
     orphan: size => hover(`Orphans\t${size}`, "Volumes of a project this installation no longer holds"),
     volumes: vs => hover('On disk', vs.map(([role, size]) => `${size} ${role}`)),
     machine: hover("What GFSO's containers take of this machine now", 'Every project of this installation'),
@@ -349,8 +349,11 @@ export const MODELS = {
     sessions: hover('Sessions', 'Each with a context of its own; one resumed in its conversation counts once'),
     cost: hover('Cost split', `By kind of token: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right`,
         `Priced by Anthropic's structure, each kind weighed against input: ${TOKENS.slice(1, 3).map(([, n, p]) => `${n} ×${p}`).join(', ')}`,
-        'cache written ×1.25 for the 5-minute cache or ×2 for the 1-hour one: each row at the one its sessions price at', 'Another provider\'s rows are not split'),
+        `cache written ${Object.entries(WRITES).map(([p, n]) => `×${p} for the ${n}`).join(' or ')}: each row at the one its sessions price at`, 'Another provider\'s rows are not split'),
+
     part: (kind, cost, share, tokens, note) => hover(`${cap(kind)}\t${cost}`, meter('of the row', share), `${tokens} tokens`, note),
+    // which cache's price a row's writes were weighed at, or that its sessions do not tell
+    write: w => w ? `The ${WRITES[w]}, ×${w} input` : 'Which cache it was, its sessions do not tell: weighed at the 1-hour price',
     // the part of a row's cost the split does not price: its share, and why
     rest: (share, s) => hover('Not split', meter('of the row', share), MODELS.covers(s)),
     id: id => hover(id),

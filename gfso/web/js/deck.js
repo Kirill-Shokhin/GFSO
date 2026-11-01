@@ -119,7 +119,7 @@ function drawStrip() {
     box.classList.add('fit');
     while (all.length > 1 && over()) gone.unshift(all.pop()), gone[0].remove(), more.textContent = `+${gone.length}`;
     if (over()) box.classList.remove('fit');
-    if (gone.length) more.outerHTML = `<span class="dk-more"${STRIP.more(gone.map(c => `${c.dataset.tip.split('\n')[0]} — ${c.querySelector('span').textContent}`))}>+${gone.length}</span>`;
+    if (gone.length) more.outerHTML = `<span class="dk-more"${STRIP.more(gone.map(c => `${c.dataset.tip.split('\n')[0]}: ${[...c.querySelector('span').childNodes].map(n => n.textContent).join(', ')}`))}>+${gone.length}</span>`;
 }
 
 const TIMED = new Set(['timeline', 'progress']);
@@ -136,14 +136,18 @@ export function paint() {
     const opened = el._drawn !== drawn;
     if (opened) forgetBrought(el), el._drawn = drawn;   // a view opened brings the selection again
     el.style.minWidth = '';
+    el.dataset.view = drawn || '';
     // a view opened starts at its top: Events opened 99 px down, its filters and the why-head above the fold (audit D11)
     if (opened) { const box = el.closest('.dk-body'); box.scrollTop = 0; box.scrollLeft = 0; }
     if (!pref.closed && run) VIEWS[view].render(el, run, S.graph.nodes, S.tasks, S.pipeline);
     // a view on the run's time opened on a phone shows its latest first, the legend with it — at its start, a run of hours
     // showed the empty first minutes (audit B11)
     // …the time axis's end at the box's right, not the view's (Progress keeps its coverage table past it)
-    const axis = opened && phone() && TIMED.has(view) && el.querySelector('.pin-left + svg');
-    if (axis) { const box = el.closest('.dk-body'); box.scrollLeft += axis.getBoundingClientRect().right - box.getBoundingClientRect().right; }
+    // …on a phone or beside a node's panel alike: whenever the axis starts to overflow its box — a view opened so, or a panel
+    // opened beside it (critic 2: beside a panel the timeline opened at the run's start, its node's crosses off the screen)
+    const axis = TIMED.has(view) && el.querySelector('.pin-left + svg'), was = el._overflow;
+    el._overflow = !!axis;
+    if (axis && (opened || !was)) { const box = el.closest('.dk-body'); box.scrollLeft += axis.getBoundingClientRect().right - box.getBoundingClientRect().right; }
 }
 
 

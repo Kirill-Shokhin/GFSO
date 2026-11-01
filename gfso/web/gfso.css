@@ -470,7 +470,9 @@ body {
 .dk-fold { background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; width: 32px; height: 100%; padding: 0; }
 .deck.closed .dk-fold { transform: rotate(180deg); }
 .dk-body { flex: 1; overflow: auto; padding: 12px 16px 16px; min-height: 0; }
-.main:has(#sidebar:not(.hidden)) .dk-view { min-width: var(--deck-free, 0px); }   /* deck.js: the layout it had with no panel */
+/* deck.js: the layout a view laid out by width had with no panel — Spend's columns, Models' table; the time views scroll on
+   their own axis and Events is a list, and widened they opened with their latest off the screen (critic 2) */
+.main:has(#sidebar:not(.hidden)) .dk-view:is([data-view="spend"], [data-view="models"]) { min-width: var(--deck-free, 0px); }
 /* a time view's names held at the left while it scrolls sideways (draw.js pinLeft) */
 .pin-left { position: sticky; left: -16px; height: 0; width: 0; z-index: 2; }
 .pin-left svg { display: block; background: var(--ui-page); margin-left: -16px; padding-left: 16px; box-sizing: content-box; }
