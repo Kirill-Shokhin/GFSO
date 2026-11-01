@@ -127,10 +127,10 @@ export function mountHints() {
 export const TAB = {
     timeline: hover('Which nodes ran when, and at once'),
     progress: hover("How the goal's criteria came to pass"),
-    spend: hover('Where the money and session time went', 'By node, by level of the plan, by role'),
+    spend: hover('Where the money and session time went', 'By node, by level of the plan, by role and by assignee'),
     models: hover('Who did the work', 'Each model in each role: sessions, what the cost went to, how full its contexts got'),
     events: hover('The log, grouped by node and kind', 'Newest first; a node\'s group opens its trail'),
-    resources: hover("What this project's containers take now", 'Memory, CPU and disk by node, read from Docker'),
+    resources: hover("What this project's containers take now", 'Memory and CPU by node, disk by volume, read from Docker'),
 };
 
 // ── the plan being authored, on the canvas while there is no graph yet (planning.js) ──
@@ -152,10 +152,12 @@ export const RES = {
     older: n => `${n} containers started by an older build carry no project: the counts here leave them out`,
     none: 'No container or volume of this project',
     unserved: 'No reading of Docker: this server does not serve one',
-    first: 'No reading of Docker yet: the server takes its first in a few seconds',
+    first: 'No reading of Docker yet',
     orphan: size => hover(`Orphans\t${size}`, "Volumes of a project this installation no longer holds"),
     volumes: vs => hover('On disk', vs.map(([role, size]) => `${size} ${role}`)),
-    machine: hover('This machine', "What GFSO's containers take of it now — every project of this installation"),
+    machine: hover("What GFSO's containers take of this machine now", 'Every project of this installation'),
+    // a role's container by what it is to a reader (security's names: the door is the project's one way to its model provider)
+    role: {door: hover('Model door', "The project's one way out to its model provider: every model call passes it")},
 };
 
 // ── the header ──
@@ -331,8 +333,10 @@ export const TIP = {
     noValue: why => hover('No value', cap(NO_VALUE[why])),
     // a role's part of a row in spend: itself alone — its figure, its share of the row, its sessions, time and tokens
     // …the heading's figure is the chart's measure (`says`), never said again below it
-    part: (k, figure, share, p, says) => hover(`${cap(KIND[k]?.name || k)}\t${figure}`, meter('of the row', share),
+    // …a count of sessions heads the part where the chart counts sessions: «Execution | 17 executions» said the kind twice
+    part: (k, figure, share, p, says) => hover(says === 'calls' ? cap(sessionsOf(k, p.calls)) : `${cap(KIND[k]?.name || k)}\t${figure}`, meter('of the row', share),
         says !== 'calls' && sessionsOf(k, p.calls), says !== 'busy' && `${dur(p.busy)} busy`, p.tokens && `${tok(p.tokens)} tokens`),
+    unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The sums are of what was priced'),
     system: hover('The system', 'Sessions no assignee ran: the planning and the issuer turns the system takes itself'),
     where: why => hover(why),
 };
@@ -341,7 +345,7 @@ export const TIP = {
 export const MODELS = {
     sessions: hover('Sessions', 'Each with a context of its own; one resumed in its conversation counts once'),
     cost: hover('Cost split', `By kind of token: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right`,
-        `Priced by Anthropic's structure: per ${TOKENS.map(([, n, p], i) => `${n}${i ? '' : ' token'} ${p}`).join(', ')}`, 'Another provider\'s rows are not split'),
+        `Priced by Anthropic's structure, each kind weighed against input: ${TOKENS.slice(1).map(([, n, p]) => `${n} ×${p}`).join(', ')}`, 'Another provider\'s rows are not split'),
     part: (kind, cost, share, tokens) => hover(`${cap(kind)}\t${cost}`, meter('of the row', share), `${tokens} tokens`),
     // the part of a row's cost the split does not price: its share, and why
     rest: (share, s) => hover('Not split', meter('of the row', share), MODELS.covers(s)),
@@ -352,8 +356,7 @@ export const MODELS = {
     // author 2026-10-27: «чем это не обычные сессии? почему отдельный счёт?») — the processes are a hover at most
     processes: n => hover(`Run in ${n} processes`, 'A session resumed in its own conversation is one session'),
     handed: n => hover(`Passed on ${plural(n, 'time')}`, 'Its context reached the budget: it wrote a note, and a fresh session went on from it'),
-    moved: hover('Moved to the next credential', "Attempts an account's limit refused; the call ran again on the provider's next credential",
-        'Not counted as sessions above'),
+    moved: hover("Attempts an account's limit refused", "The call ran again on the provider's next credential", 'Not counted as sessions above'),
     ends: hover('Worked, gave no answer', "A cut session's tokens are its turns' own, its price unknown", 'One out of turns is taken up by the next round'),
     turns: (turned, calls) => hover(`Turns recorded\t${turned}/${calls} sessions`, 'The rest were recorded before turns were kept'),
     unpriced: hover('Unpriced', 'Sessions that spent tokens with no cost recorded — a cut stream among them', 'The share is of what was priced'),

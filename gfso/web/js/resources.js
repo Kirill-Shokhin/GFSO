@@ -32,11 +32,14 @@ export const whileShown = f => shown.add(f);
 daily(() => shown.forEach(f => f()));   // «last read» said without its day gains it at midnight
 
 const mark = (figure, label, counted) => tally(figure, label, RES.counted(counted));
+// a count's noun in its number: «1 container running», «2 executors» (audit C12)
+const many = (n, one, more = `${one}s`) => n === 1 ? one : more;
+const ROLE = {door: 'model door'};
 // each role's containers as their own marks, the busy ones beside them
 const roles = cs => {
     const by = {};
     for (const x of cs) { const r = by[x.role] ??= {n: 0, busy: 0}; r.n++; r.busy += x.busy ? 1 : 0; }
-    return Object.entries(by).map(([k, r]) => tally(r.n, k) + (r.busy ? tally(r.busy, 'busy', RES.busy) : '')).join('');
+    return Object.entries(by).map(([k, r]) => tally(r.n, many(r.n, ROLE[k] || k), RES.role[k] || '') + (r.busy ? tally(r.busy, 'busy', RES.busy) : '')).join('');
 };
 // HOW OLD THE READING IS, said only when it is old: the server pushes each fresh reading, so a figure on screen is now — but
 // where Docker did not answer, the reading shown is the last it gave, and the moment it was read says so (`read_at`) — never an age, which
@@ -66,7 +69,7 @@ function draw(el) {
     if (!c) return void morph(el, `<div class="wk"><div class="rs-tallies">${disk}</div>${notes(d)}</div>`);
     const rows = [...(p.nodes || []).map(n => [nameOf(S.tasks.find(t => t.id === n.node) || {id: n.node}), n.containers, n]),
         ['the project itself', p.system || [], null]].filter(([, cs]) => cs.length);
-    morph(el, `<div class="wk"><div class="rs-tallies">${age(d)}${mark(c.running, 'containers running')}`
+    morph(el, `<div class="wk"><div class="rs-tallies">${age(d)}${mark(c.running, many(c.running, 'container running', 'containers running'))}`
         + `${c.busy != null ? mark(c.busy, 'busy', c.busy_counted) : ''}${mark(bytes(p.memory_bytes, '—'), 'memory', p.memory_bytes_counted)}`
         + `${mark(cpu(p.cpu_percent), 'CPU', p.cpu_percent_counted)}${disk}</div>`
         + (!rows.length ? '' : `<table class="wk-table"><thead><tr><th>node</th><th>containers</th><th>memory</th><th>CPU</th></tr></thead><tbody>`
@@ -82,7 +85,9 @@ export function machine() {
     if (!d) return '';
     const ps = d.projects, orphans = ps.filter(p => !p.known);
     const mem = total(ps, p => p.memory_bytes), of = d.machine?.memory_bytes;
-    return `<div class="rs-machine"${RES.machine}>${age(d)}${mark(total(ps, p => p.containers?.running) ?? '—', 'containers running')}`
+    const run = total(ps, p => p.containers?.running);
+    // the line's caption said once at its start, not as every figure's tip (audit C11)
+    return `<div class="rs-machine"><span class="rs-cap"${RES.machine}>this machine</span>${age(d)}${mark(run ?? '—', many(run, 'container running', 'containers running'))}`
         + mark(bytes(mem, '—'), 'memory') + (mem != null && of ? tally(pct(mem / of), "of the machine's memory", RES.ofMachine(bytes(of))) : '')
         + mark(bytes(total(ps, p => p.disk_bytes), '—'), 'disk')
         + (orphans.length ? tally(orphans.length, orphans.length > 1 ? 'orphans' : 'orphan', RES.orphan(bytes(total(orphans, p => p.disk_bytes), '—'))) : '')

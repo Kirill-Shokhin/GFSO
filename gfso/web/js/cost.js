@@ -12,7 +12,7 @@ import {concurrency} from './run.js';
 const money = ps => { const calls = ps.reduce((s, p) => s + p.calls, 0), un = ps.reduce((s, p) => s + (p.unpriced || 0), 0);
     const procs = ps.reduce((s, p) => s + (p.procs ?? p.calls), 0);
     const m = reported(ps.reduce((s, p) => s + p.cost, 0), calls && procs, un);
-    return m === NOT_REPORTED || !un ? m : `${m} + ${un} not priced`; };
+    return m; };   // …the figure alone: how many went unpriced is one mark of its own, said once (audit C7)
 // a tile's notes each on a line of its own, never joined to one another by a dot
 const tile = (v, label, ...notes) => `<div class="cs-tile"><b>${v}</b><span>${label}</span>${notes.filter(Boolean).map(n => `<i>${n}</i>`).join('')}</div>`;
 
@@ -50,7 +50,7 @@ export function render(el, run, nodes) {
     const kinds = Object.keys(KIND).filter(k => c.byKind[k]);
     el.innerHTML = `<div class="cs">
         <div class="cs-tiles">
-            ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced && tally(c.unpriced, 'with no cost recorded'))}
+            ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced && tally(c.unpriced, 'unpriced', TIP.unpriced))}
             ${tile(tok(c.tokens), 'tokens', 'cache included', c.untold && c.tokens != null && tally(c.untold, 'reported none'))}
             ${tile(lasting(run.clock.from, run.clock.span), 'run time', run.clock.folds.length && tally(dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0)), 'idle, folded'))}
             ${tile(dur(c.busy), 'session time', tally(`${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}×`, 'the run'))}

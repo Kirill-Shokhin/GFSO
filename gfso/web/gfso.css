@@ -1386,3 +1386,6 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .dk-fold { order: 4; height: 34px; border-top: 1px solid var(--hair-soft); }
 }
 .rs-roles .tally { margin-right: 12px; }
+.rs-cap { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); margin-right: 14px; }
+.wk-table td .tally { margin-left: 8px; }
+.wk-table td .tally i { color: var(--ink-soft); }

@@ -52,10 +52,10 @@ export function render(el, run) {
     const price = (x, calls, unpriced) => (m => m === NOT_REPORTED ? NOT : m)(money(x, calls, unpriced)),
           share = (x, priced) => priced && total ? pct(x / total) : '—';
     const row = (r, i, m) => `<tr${i ? '' : ' class="wk-first"'}>${i ? '<td></td>' : `<td${MODELS.id(r.model)}><b>${esc(modelName(r.model))}</b></td>`}`
-        + `<td>${KIND[r.kind].name}</td><td>${r.resumed ? `<span${MODELS.processes(r.calls)}>${r.calls - r.resumed}</span>` : r.calls}${r.handed ? `<span class="wk-none"${MODELS.handed(r.handed)}>, ${r.handed} passed on</span>` : ''}`
-        + `${Object.keys(r.ends).length ? ` <span class="wk-none"${MODELS.ends}>(${Object.entries(r.ends).map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')})</span>` : ''}</td>`
-        + `<td>${!r.turned ? NOT : r.turned < r.calls ? `<span${MODELS.turns(r.turned, r.calls)}>${r.turns} in ${r.turned}</span>` : r.turns}</td>`
-        + `<td>${price(r.cost, r.calls, r.unpriced)}${r.unpriced && r.unpriced < r.calls ? ` <span class="wk-none"${MODELS.unpriced}>+ ${r.unpriced} unpriced</span>` : ''}</td>`
+        + `<td>${KIND[r.kind].name}</td><td>${r.resumed ? `<span${MODELS.processes(r.calls)}>${r.calls - r.resumed}</span>` : r.calls}${r.handed ? tally(r.handed, 'passed on', MODELS.handed(r.handed)) : ''}`
+        + `${Object.entries(r.ends).map(([w, n]) => tally(n, esc(WHY[w] || w.replace(/_/g, ' ')), MODELS.ends)).join('')}</td>`
+        + `<td>${!r.turned ? `<span class="wk-none"${MODELS.unrecorded}>not recorded</span>` : r.turned < r.calls ? `<span${MODELS.turns(r.turned, r.calls)}>${r.turns} in ${r.turned}</span>` : r.turns}</td>`
+        + `<td>${price(r.cost, r.calls, r.unpriced)}${r.unpriced && r.unpriced < r.calls ? tally(r.unpriced, 'unpriced', MODELS.unpriced) : ''}</td>`
         + `<td>${share(r.cost, r.calls - r.unpriced)}</td><td>${where(r)}</td><td>${fill(r)}</td></tr>`;
     el.innerHTML = `<div class="wk">
         <div class="cs-tiles">${models.map(([m, x]) =>
@@ -70,8 +70,8 @@ export function render(el, run) {
 }
 
 // sessions no model answered, said once under the table rather than counted as anyone's work
-const WHY = {limit: 'an account limit', prompt_too_long: 'the context outgrew the window', cut: 'cut', max_turns: 'out of turns',
-             error_max_turns: 'out of turns', error: 'an error', '': 'cause not recorded'};
+const WHY = {limit: 'stopped at an account limit', prompt_too_long: 'outgrew the window', cut: 'cut', max_turns: 'out of turns',
+             error_max_turns: 'out of turns', error: 'ended in an error', '': 'cause not recorded'};
 const unansweredLine = u => !Object.keys(u).length ? '' : `<div class="pn-meta wk-note">not counted above — sessions that spent `
     + `nothing: ${Object.entries(u).map(([k, why]) => `${KIND[k].name}: ` + Object.entries(why).sort((a, b) => b[1] - a[1])
         .map(([w, n]) => `${n} ${esc(WHY[w] || w.replace(/_/g, ' '))}`).join(', ')).join(' · ')}</div>`;
