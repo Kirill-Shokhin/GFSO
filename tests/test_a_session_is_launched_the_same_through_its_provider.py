@@ -44,6 +44,14 @@ class _Seen(list):
 
 
 @pytest.fixture
+def held(seen):
+    """The provider's one place holds a credential: no call runs outside its provider (`headless._in_force`), so a test
+    of what a call does gives it one — a test of WHICH credential runs puts its own."""
+    credentials.put("claude", "token", "t-held", name="held")
+    return seen
+
+
+@pytest.fixture
 def seen(monkeypatch, tmp_path):
     seen = _Seen()
 
@@ -104,18 +112,18 @@ SPAWN = {"stdin": subprocess.PIPE, "stdout": subprocess.PIPE, "stderr": subproce
          "start_new_session": None if os.name == "nt" else True}
 
 
-def test_a_one_shot_starts_in_an_empty_place_of_its_own_with_no_tools(seen):
+def test_a_one_shot_starts_in_an_empty_place_of_its_own_with_no_tools(seen, held):
     assert llm_factory("m").complete("hello", "SYS") == "OK"
     [call] = seen
     assert call["argv"] == HEAD + ["--no-session-persistence"] + STREAM + ["--disallowedTools", "*"]
     assert Path(call["cwd"]).name.startswith("gfso-noplace-") and call["place_existed"]
     assert not Path(call["cwd"]).exists(), "the empty place is removed once the call ends"
-    assert "ANTHROPIC_API_KEY" in DROPPED() and _env_change(call["env"]) == (DROPPED(), ADDED)
+    assert "ANTHROPIC_API_KEY" in DROPPED() and _env_change(call["env"]) == (DROPPED(), {**ADDED, "CLAUDE_CODE_OAUTH_TOKEN": "t-held"})
     assert _spawn_keywords(call) == SPAWN
     assert call["proc"].stdin.fed == "hello"
 
 
-def test_an_agent_run_opens_its_conversation_then_continues_it_only_after_its_turn_cap(seen, tmp_path):
+def test_an_agent_run_opens_its_conversation_then_continues_it_only_after_its_turn_cap(seen, tmp_path, held):
     work = tmp_path / "work"
     work.mkdir()
     llm = llm_factory("m")

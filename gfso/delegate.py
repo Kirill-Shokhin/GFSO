@@ -30,7 +30,7 @@ from gfso.tools import _agent_id
 from gfso.inflight import _inflight, being_rewritten, in_flight
 from gfso.adapters.verifiers import evaluate_unittest
 from gfso.core.graph.model import generation_of_task
-from gfso.core.protocol.procedure import criterionless, probes_from as _checks_of
+from gfso.core.protocol.procedure import BOUND_SPENT, criterionless, probes_from as _checks_of
 from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Verdict, Action, Mode, PlaceUnavailable,
                              SPAWNABLE_ACTIONS, files_at, passed, register_of)
@@ -224,6 +224,10 @@ def _sign_scope(engine, top, verdicts: dict, validator_id: str, sign: bool) -> s
     state = engine.graph.get_state(top.id)
     return ("pass" if state == State.DONE else "fail" if failing else
             "recorded" if not sign and str(top.id) not in undecided else
+            # …every undecided node ⊥ by checks that ran their whole bound on the tree it delivered: asked again, the same
+            # tree times out again (`BOUND_SPENT`)
+            "no-verdict:bound" if undecided and not again and all(
+                BOUND_SPENT in str((verdicts.get(x) or {}).get("error") or "") for x in undecided) else
             "no-verdict" if undecided and not again else "rejected")
 
 
@@ -527,6 +531,8 @@ def _classify_no_verdict(engine, task_id: TaskId, out: dict) -> str:
     # ended with no result event — `transport_torn`); here it only has to be believed rather
     # than re-derived from a cost of zero, which is the inference that misdiagnosed it.
     _stats = out.get("stats") or ()
+    if BOUND_SPENT in f"{_why} {out.get('verdict_defects') or ''}":     # …a refused report's reason rides here
+        return "no-verdict:bound"
     if refused_by_limit(_stats) or is_limit(_why):
         return "no-verdict:limit"
     if torn_among(_stats):
@@ -1309,8 +1315,9 @@ class Dispatcher:
                 self._seen.discard(vkey)                # revalidates, on the standing records, when the graph moves
             if ret in ("pass", "fail", "recorded", "no-instrument", "rejected"):
                 return
-            if ret == "no-verdict:limit":
-                return self._wait_out_limit(top_id, vkey, "the scope's validator")
+            if ret in ("no-verdict:limit", "no-verdict:bound"):
+                return (self._wait_out_limit(top_id, vkey, "the scope's validator") if ret == "no-verdict:limit"
+                        else self._wait_for_the_issuer(top_id))
             if ret == "no-verdict:torn" and self._redial(top_id, vkey):   # a cut call is no answer: it spends no retry
                 return
             if vkey not in self._retried:
@@ -1721,8 +1728,9 @@ class Dispatcher:
                 # own instead — small, because an installation that cannot complete a call twice in
                 # a row has a problem no third attempt fixes, and finite, because an unbounded
                 # redial is the loop Inv-5 exists against.
-                if ret == "no-verdict:limit":
-                    return self._wait_out_limit(task_id, key, "the validator's")
+                if ret in ("no-verdict:limit", "no-verdict:bound"):
+                    return (self._wait_out_limit(task_id, key, "the validator's") if ret == "no-verdict:limit"
+                            else self._wait_for_the_issuer(task_id))
                 if ret == "no-verdict:torn" and self._redial(task_id, key):
                     return
                 if key not in self._retried:
@@ -1790,6 +1798,12 @@ class Dispatcher:
                     # …and say it where the DRIVER looks, not only in the log: the frontier kept
                     # printing "VALIDATE this" while nothing was ever going to come.
                     self._engine.parking.park_validation(task_id)
+
+    def _wait_for_the_issuer(self, task_id: TaskId) -> None:
+        """A delivery whose every unobserved check ran past its whole own bound: not validated again — the same tree
+        times out again, and each re-ask was a paid validator run every half minute until T_validate (critic over the
+        timeout ⊥). It waits, no verdict invented, for VALIDATING's bound to hand it to its issuer (§12.2, §16.14)."""
+        self._engine.emit_info("delegate", f"{task_id}: {BOUND_SPENT}")
 
     def _ask_again_where_the_system_issues(self, task_id: TaskId, key: str, wait: float) -> bool:
         """After two validations with no verdict: where the SYSTEM is the node's issuer, schedule its

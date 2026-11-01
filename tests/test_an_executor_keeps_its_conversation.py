@@ -15,6 +15,7 @@ from gfso import sessions as S
 from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
 from gfso.workspaces import session_key
+from tests.support import hold_a_credential
 
 
 class _Proc:
@@ -30,6 +31,7 @@ def cli(tmp_path, monkeypatch):
     """A stand-in for the CLI: `--session-id` writes the transcript where the real one does, `--resume` reads it;
     `ends` is how the next call ends: "answer", "cap" (cut at the turn cap) or "gone" (a resume the CLI cannot take)."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+    hold_a_credential(monkeypatch, tmp_path)
     seen, state = [], {"ends": "answer"}
 
     def popen(args, **kw):

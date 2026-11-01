@@ -134,3 +134,20 @@ def test_a_store_that_does_not_read_stops_the_project_and_parks_no_node(seen, tm
     llm = llm_factory("m")
     assert llm.complete("x", "SYS") == "" and not seen, "a call ran without knowing its credential"
     assert llm.calls[-1]["ended"] == "unauthorized" and "credentials.json" in llm.calls[-1]["error"]
+
+
+def test_an_api_keys_spent_credit_moves_the_call_to_the_next(seen):  # noqa: F811
+    """An API key's limit is its credit: "Credit balance is too low" failed the call as a plain API error while the next
+    credential in the order stood unused (b-api, 2026-11-01) — it is that key's limit, and the call moves on."""
+    credentials.put("claude", "api", "k-b", name="b-api")
+    credentials.put("claude", "api", "k-a", name="a-api")
+
+    def answer(self):
+        spent = seen[-1]["env"].get("ANTHROPIC_API_KEY") == "k-b"
+        return ANSWER if not spent else {"type": "result", "is_error": True, "result": "Credit balance is too low",
+                                         "api_error": "Credit balance is too low", "total_cost_usd": 0, "usage": {}}
+    seen.Proc.answer = property(answer)
+    llm = llm_factory("m")
+    assert llm.complete("x", "SYS") == "OK"
+    assert [c["ended"] for c in llm.calls] == ["moved", "answered"]
+    assert credentials.listing()["claude"]["active"] == "a-api"

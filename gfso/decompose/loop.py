@@ -24,9 +24,10 @@ from pathlib import Path
 
 from gfso.adapters.llm.stats import _hint, _stat_line, tag_stage
 from gfso.inflight import staged
-from gfso.core.protocol.procedure import EXACT_TEXT, pinned_files, with_named_files
+from gfso.core.protocol.procedure import EXACT_TEXT, PROBE_S, pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
-from gfso.config import MODEL_DEFAULT
+from gfso.config import MODEL_DEFAULT, sufficiency_at_authoring
+from gfso.critic.runner import goal_obligations
 from gfso.llm import llm_factory
 from gfso.decompose.seams import critical_path, waves
 
@@ -58,7 +59,8 @@ def shape(spec: dict) -> tuple[int, int, int]:
 
 _PROMPTS = Path(__file__).parent / "prompts"
 SEARCH_PROMPT = (_PROMPTS / "search.md").read_text(encoding="utf-8")
-AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8")
+# …the bound a probe runs under is the engine's own, said where the probe is written (one owner: `procedure.PROBE_S`)
+AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8").replace("<PROBE_S>", str(PROBE_S))
 AGREE_PROMPT = (_PROMPTS / "agree.md").read_text(encoding="utf-8")
 AGREE_SCHEMA = {"type": "object", "required": ["contradictions"], "properties": {"contradictions": {
     "type": "array", "items": {"type": "object", "required": ["node", "criterion", "description_says", "check_requires",
@@ -492,6 +494,22 @@ def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[st
     return llm.complete_structured(AUDIT_PROMPT, user, AUDIT_SCHEMA_PATCH)
 
 
+def _obligations_first(llm, request: str) -> str:
+    """The goal's obligations, read with the gate's own question from the goal alone, as the first fold's findings —
+    each to be decided by a pinned check on the part that builds it. A free search handed the first fold what IT found
+    missing, and haiku's first plan for c_compiler left 256 of the goal's obligations to no pin (sonnet's: 17); given the
+    list, 129 (one haiku reader, 2026-10-31). A reading that does not parse falls back to the search."""
+    gaps = goal_obligations(llm, request)
+    if not gaps:
+        return ""
+    return ("# THE GOAL'S OBLIGATIONS — every one must be DECIDED by the plan\n"
+            "Each line is an obligation of the goal and a result that would break it. Author the split so that EVERY "
+            "obligation is refused by a PINNED CHECK on the part that builds the behaviour (one check may decide "
+            "several: prefer integrated programs compared against the reference over one-case probes). A requirement "
+            "written only as prose in a criterion decides nothing.\n"
+            + "\n".join(f"- {g.get('obligation', '')}\n  breaks it: {g.get('admits', '')}" for g in gaps))
+
+
 def decompose_spec(request: str, model: str = MODEL_DEFAULT,
                    llm: LLMProviderPort | None = None, progress=None,
                    fast: bool = False, label: str = "1/1", executor: str = "") -> dict:
@@ -515,8 +533,16 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
         llm.on_tick = lambda msg: _progress(msg, progress)
     _progress(f"{label} searcher…", progress)
     _stage(llm, f"{label} searcher")
-    holes = _search(llm, request, "", fast=fast)
+    # …the search gives the split its structure (components, seams, failure modes), the goal's obligations its coverage:
+    # the obligations alone, in place of the search, lost structure on every E2 task (0.33–0.59 vs 0.50–0.84, 2026-10-31)
+    found = _search(llm, request, "", fast=fast)
     tag_stage(llm, Stage.SEARCH)
+    # …the gate's own question asked of the goal only where the authoring answers it at all: the measurement arm's
+    # switch exists so a plan the gate has NOT pre-repaired can still be authored (critic over the first fold)
+    owed = _obligations_first(llm, request) if sufficiency_at_authoring() else ""
+    if owed:
+        tag_stage(llm, Stage.AUTHORING_OBLIGATIONS)
+    holes = "\n\n".join(x for x in (found, owed) if x)
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     _progress(f"{label} auditor (fold, first round)…", progress)
     _stage(llm, f"{label} auditor")

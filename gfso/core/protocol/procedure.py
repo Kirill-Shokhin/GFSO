@@ -208,6 +208,30 @@ def inputs_unpinned(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
+#: a file a command names under `{inputs}` — a literal name; a glob or a shell variable names no one file
+_NAMED_INPUT = re.compile(re.escape(INPUTS_TOKEN) + r"/([^\s'\";|&<>()]+)")
+#: …a file the command itself makes there — a redirect's or an `-o`'s target — which no one has to pin (critic)
+_MADE_INPUT = re.compile(r"(?:>>?|-o)\s*" + re.escape(INPUTS_TOKEN) + r"/([^\s'\";|&<>()]+)")
+_PATTERN = re.compile(r"[*?\[\]${}`]")
+
+
+def inputs_named_not_pinned(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: [`{inputs}/<file>` its probes name that the probe itself does not pin]}: each probe's inputs are laid
+    down in its own directory, so a file pinned under a sibling probe, or nowhere, is "cannot open" at validation — a
+    false FAIL of every delivery, correct ones included (V3_cc2's `builtins_memory_setjmp_va`, read on the oracle's
+    good trees, 2026-10-31)."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        for p in c.check or ():
+            have = {input_name(path) for path, _ in _input_items(p.inputs)}
+            made = set(_MADE_INPUT.findall(p.command or ""))
+            bad = [n for n in dict.fromkeys(_NAMED_INPUT.findall(p.command or "")) if n not in made
+                   and not _PATTERN.search(n) and n.rstrip("/") not in have and not any(h.startswith(n.rstrip("/") + "/") for h in have)]
+            if bad:
+                out.setdefault(c.name, []).extend(f"{INPUTS_TOKEN}/{n}" for n in bad)
+    return out
+
+
 def twin_probes(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     """{criterion: [ids two or more of its probes share]}. A probe's id is its command, so two probes of one
     criterion with one command — `python {inputs}/probe.py` twice over different files — are laid down in one
@@ -438,6 +462,9 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
             f"{{inputs}})" for k, v in sorted(twin_probes(crit).items())]
     out += [f"{k}: its probe reads {INPUTS_TOKEN} and pins nothing there ({', '.join(v)}) — it would run over an empty "
             f"directory; pin the files it reads in its `inputs`" for k, v in sorted(inputs_unpinned(crit).items())]
+    out += [f"{k}: its probe names {', '.join(v)} and does not pin it — each probe's inputs are laid down in its own "
+            f"directory, so a file pinned under another probe or nowhere cannot be opened; pin it in THIS probe's `inputs`"
+            for k, v in sorted(inputs_named_not_pinned(crit).items())]
     out += [f"{k}: pinned input file(s) it feeds or runs are EMPTY ({', '.join(v)}) — the probe would run over nothing "
             f"and decide nothing; write their content (an empty expected output under `diff`/`cmp` is fine, and an empty "
             f"stdin is `< /dev/null`)" for k, v in sorted(empty_inputs(crit).items())]
@@ -1124,6 +1151,21 @@ def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterio
     return lent
 
 
+#: an entry's exact pinned checks the system ran that did not finish within their own bound: ⊥ for its criterion,
+#: written here only (`with_engine_observations`), read by the engine as under-observation (`Engine.record_verdict`)
+PAST_BOUND = "past_bound"
+#: the seconds one exact pinned check the system runs may take, its build included — the bound every reader names
+PROBE_S = 60
+#: …and whether every one of them had its WHOLE bound (no budget cutting it): then the same tree times out again, and
+#: asking the validation again only pays for the same ⊥ (`BOUND_SPENT`, the dispatcher's `no-verdict:bound`)
+PAST_WHOLE = "past_bound_whole"
+#: said in a refusal whose every unobserved criterion is PAST_WHOLE — read by the dispatcher, which stops re-asking
+BOUND_SPENT = ("NOT ASKED AGAIN: every unobserved check ran past its whole own bound on this delivered tree, which would "
+               "time out again — VALIDATING's bound hands the node to its issuer (§12.2), who may re-pin the check to finish "
+               f"inside the system's fixed per-check bound, {PROBE_S} s with its build (a slow corpus split across "
+               "checks), or cancel")
+
+
 def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
                              parts: Mapping[str, Sequence[Criteria]] | None, observed: Mapping | None) -> list:
     """The report with what the system itself observed of its `exact` pinned probes (`observed`: {probe id: {matched,
@@ -1140,7 +1182,7 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
               for p in (c.check or ()) if _norm(p.command)}
     exact = {pid: o for pid, o in (observed or {}).items() if pid in pinned and pinned[pid].exact}
     if not exact:
-        return list(per_criterion or ())
+        return [{k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE)} for e in per_criterion or ()]
 
     def _copies(seen: dict) -> dict:   # every id one observation is of (`same_probe`)
         seen_as = {same_probe(pinned[pid]): o for pid, o in seen.items()}
@@ -1154,6 +1196,7 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
     named = lambda q: next((pid for pid in off if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])), None)
     out = []
     for e in per_criterion or ():
+        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE)}   # …the system's mark alone: a report cannot ⊥ its own FAIL
         probes = [{**q, "held": False} if named(q) else q for q in probes_of(e)]
         on = list(dict.fromkeys(rests.get(_norm(e.get("criterion")), ())))
         if hit := [pid for pid in on if pid in off]:
@@ -1164,6 +1207,16 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
                  "divergences": [*why, *(e.get("divergences") or ())],
                  "probe": probes + [{"id": pid, "behaviour": pinned[pid].behaviour, "command": pinned[pid].command,
                                      "expect": pinned[pid].expect, "held": False} for pid in hit if pid not in cited]}
+        elif (late := [pid for pid in on if unseen.get(pid, {}).get("timed_out")]) and not (
+                spoken_verdict(e.get("verdict")) == "fail" and str(e.get("evidence", "")).strip()):
+            # …a check that ran past its own bound decided nothing (A1 (i)): ⊥, and no PASS over it (Inv-2) — read as
+            # the validator's word, a looping delivery hid from the system's FAIL (security's critic, 2026-10-31). It
+            # only LOWERS a pass: a FAIL the validator showed with evidence is a decision this absence does not undo
+            why = [f"the system ran exact pinned check {pid} itself and it {unseen[pid].get('note')}: undecided"
+                   for pid in late]
+            e = {**e, "verdict": "undecidable", "probe": probes, PAST_BOUND: late,
+                 PAST_WHOLE: all(unseen[pid].get("whole") for pid in late),
+                 "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why)}
         else:
             if probes:
                 e = {**e, "probe": probes}
@@ -1345,6 +1398,14 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # criterion falls short on another count below, where the refusal names everything it is short of, as before
     stood = named_beyond_procedure(task.spec.criteria, per_criterion, dirs) if task is not None else {}
     gaps = underprobed(per_criterion)
+    # …and an exact check the SYSTEM ran and left unfinished in the time it was given (`with_engine_observations`): it
+    # decided nothing in finite time (A1 (i)), whoever validates — no PASS over it, and no FAIL either: an honest slow
+    # check is no defect of the work (the first form landed it in `failed_criteria` and reworked honest work)
+    for e in per_criterion or ():
+        if e.get(PAST_BOUND):
+            gaps.setdefault(str(e.get("criterion")), []).append(
+                f"the system ran its pinned check(s) {', '.join(map(str, e[PAST_BOUND]))} and they did not finish within "
+                f"the time they were given — undecided")
     # The internal-node exemption (§10.3) is narrowed to the case that HAS it: §10.3 lets an INTERNAL node
     # self-verify; at a seam independence is owed and a self-validation is not a verdict at all. The
     # caller guarantees that upstream today, and the repo's own recurring class is a rule that

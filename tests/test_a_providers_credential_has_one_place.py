@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from gfso import cli
 from gfso.adapters.execution import ContainerExecution
 from gfso.adapters.llm import credentials, registry
-from gfso.adapters.llm.headless import client_env
+from gfso.adapters.llm.headless import ClaudeCodeProvider, client_env
 from gfso.adapters.llm.conformance import AGENT_ROLES, ONE_SHOT_ROLES, assess
 from gfso.adapters.llm.stub import StubLLM
 from gfso.api.server import create_app
@@ -82,6 +82,23 @@ def test_the_cli_is_given_the_stored_token_and_no_inherited_one(seen, monkeypatc
     env = seen[0]["env"]
     assert "ANTHROPIC_API_KEY" not in env and env["CLAUDE_CODE_OAUTH_TOKEN"] == "t-stored"
     assert env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1"
+
+
+def test_an_empty_store_runs_no_call_on_the_hosts_login(seen, store):  # noqa: F811
+    """The author: «как она фолбекается на логин без самого фолбек механизма который задан в кредах?» — a fallback is
+    an entry of the list, so with none in force the call is refused and no CLI process starts."""
+    llm = llm_factory("m")
+    assert llm.complete("x", "SYS") == "" and seen == []
+    [rec] = llm.calls
+    assert rec["ended"] == "unauthorized" and str(store) in rec["error"] and rec["credential"] is None
+
+
+def test_a_provider_made_with_no_credential_runs_no_call_on_the_hosts_login(seen, store):  # noqa: F811
+    """`credential=None` once meant the host's login: the same undeclared fallback by another door, refused alike."""
+    credentials.put("claude", "token", "t-stored")          # a store in force does not stand in for the None given
+    llm = ClaudeCodeProvider(model="m", credential=None)
+    assert llm.complete("x", "SYS") == "" and seen == []
+    assert llm.calls[-1]["ended"] == "unauthorized" and "no credential" in llm.calls[-1]["error"]
 
 
 def test_every_child_starts_without_a_key(monkeypatch):

@@ -11,10 +11,17 @@ import io
 import json
 import sqlite3
 
+import pytest
+
 from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
 from gfso.adapters.storage.sqlite import SqliteStorage, peek_project
-from tests.support import make_engine
+from tests.support import hold_a_credential, make_engine
+
+
+@pytest.fixture(autouse=True)
+def _held(monkeypatch, tmp_path):
+    hold_a_credential(monkeypatch, tmp_path)
 
 
 def _turn(i, w, r, out=10, mid="m1"):

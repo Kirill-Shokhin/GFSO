@@ -10,6 +10,7 @@ from gfso.adapters.llm import headless as H
 from gfso.adapters.llm.stats import _stat_line
 from gfso.core.protocol.procedure import admission_defects, merge_regression, refuting_probes
 from gfso.core.types import Criteria, Mode, Probe, TaskId
+from tests.support import hold_a_credential
 from tests.test_the_mode_decides_who_holds_what import _engine, _goal
 
 
@@ -80,7 +81,8 @@ def test_a_probe_that_leaves_its_nodes_directory_is_not_admitted():
                 "./sql_database < {inputs}/q.sql", "make -C build"):
         assert not left(cmd), cmd
 
-def test_a_call_naming_no_place_runs_in_an_empty_one(monkeypatch):
+def test_a_call_naming_no_place_runs_in_an_empty_one(monkeypatch, tmp_path):
+    hold_a_credential(monkeypatch, tmp_path)
     seen = []
 
     def popen(*a, **k):

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.adapters.agents.human import HumanAgent
+from gfso.adapters.llm import credentials
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.core.types.ports import ClockPort, RunnerPort, StoragePort
 from gfso import tools as T
@@ -62,6 +63,13 @@ def module_reached(repo: Path, module: str, name: Optional[str]) -> str:
     """The module an import reaches: `module.name` where that name is itself a module or package of `module`."""
     sub = repo / module.replace(".", "/") / (name or "")
     return f"{module}.{name}" if name and (sub.with_suffix(".py").exists() or sub.is_dir()) else module
+
+
+def hold_a_credential(monkeypatch, root: Path) -> None:
+    """The Claude provider's one place, under `root`, holding the credential a test's calls run on: with none in force
+    no call runs (`headless._in_force`), so a test of what a call does gives it one — never in the suite's shared home."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(root / "data"))
+    credentials.put("claude", "token", "t-held", name="held")
 
 
 def make_engine(

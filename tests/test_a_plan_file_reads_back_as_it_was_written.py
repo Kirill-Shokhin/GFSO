@@ -34,7 +34,7 @@ def _plan() -> dict:
                           "writes": [], "runs": ["root.core"]}],
             "mappings": [{"criterion": "counts", "child_id": "core"}],
             "deps": [{"from": "io", "to": "core", "glue": "open_file()"}],
-            "accepted_risks": [{"factor": "f", "estimate": {"p": 0.05, "impact": "low"}}],
+            "accepted_risks": [{"item": "f", "p": 0.05, "impact": "low"}],
             "denial": {"p": 0.1, "justification": "j"}, "scope": [], "whole_volume": "~400 lines",
             "whole_fits_one_session": False}
 

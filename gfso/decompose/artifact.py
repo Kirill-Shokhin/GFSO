@@ -37,6 +37,8 @@ def parse(text: str) -> dict:
     doc = tomllib.loads(text)
     if doc.get("format") != FORMAT:
         raise ValueError(f"not a {FORMAT} file (format = {doc.get('format')!r})")
+    if bad := form(doc):
+        raise ValueError(f"the {FORMAT} file is malformed: " + "; ".join(bad))
     fit, inputs = doc.get("fit", {}), doc.get("inputs", {})
     spec = _lower(doc.get("plan", {}), inputs)
     marks = {p["id"]: p for p in fit.get("parts", ())}
@@ -45,6 +47,117 @@ def parse(text: str) -> dict:
     spec.update({f"whole_{k}": fit[f"whole_{k}"] for k in _FIT if f"whole_{k}" in fit})
     return {"goal": doc.get("goal", ""), "spec": spec, "review": doc.get("review", {}),
             "notes": doc.get("notes", []), "executor": fit.get("executor", "")}
+
+
+def _named(rows, where, *keys) -> list[str]:
+    """Each row of `rows` that lacks one of `keys`, said by its place in the file."""
+    return [f"{where}[{i}].{k}: missing" for i, r in enumerate(rows or ()) for k in keys if not r.get(k)]
+
+
+def _known(v, domain, where, what) -> list[str]:
+    """`v`, where given, names one of `domain` — else said with what the file does have."""
+    return [f"{where}: {v!r} is no {what} (have: {', '.join(map(str, domain)) or 'none'})"] if (
+        v is not None and v not in domain) else []
+
+
+_SECTIONS = ("format", "goal", "plan", "fit", "review", "notes", "inputs")
+#: what the build reads of [plan] (`build_graph_live`) and of [fit] (`parse`)
+_PLAN = ("name", "root_criteria", "subtasks", "mappings", "deps", "accepted_risks", "denial", "scope")
+_FIT_KEYS = ("executor", "parts", *(f"whole_{k}" for k in _FIT))
+#: what the build reads of each row below them — a field it does not read is a slip, built silently without this
+_ROWS = {"part": ("id", "name", "description", "criteria", "writes", "runs"),
+         "criterion": ("name", "description", "check", "depends_on"),
+         "probe": ("behaviour", "command", "expect", "exact", "inputs"),
+         "dep": ("from", "to", "glue", "reads"), "mapping": ("criterion", "child_id"), "scope": ("item", "why_out"),
+         "risk": ("item", "predictability", "justification", "invalidation_condition", "invalidation", "p", "impact",
+                  "component", "denial"),
+         "fit part": ("id", *_FIT)}
+
+
+def _slip(where: str, kind: str, row) -> list[str]:
+    """Each field of one `kind` row at `where` the build does not read, said by its place."""
+    return [f"{where}.{k}: no field of a {kind} (have: {', '.join(_ROWS[kind])})"
+            for k in (row if isinstance(row, dict) else ()) if k not in _ROWS[kind]]
+
+
+def _slips(where: str, kind: str, rows) -> list[str]:
+    """`_slip` over a list of rows at `where`, each by its index."""
+    return [x for i, r in enumerate(rows or ()) for x in _slip(f"{where}[{i}]", kind, r)]
+
+
+def _unread(doc: dict) -> list[str]:
+    """Every section, table field and row field of a plan file the build does not read — a misspelled `[fits]`,
+    `[[plan.mapping]]` or `expcet` was dropped silently, a check built expecting nothing — and an `exact` that is no
+    true/false (`exact = "true"` built a check no system runs)."""
+    plan, fit = doc.get("plan"), doc.get("fit")
+    out = [f"{k}: no section of a {FORMAT} file (have: {', '.join(_SECTIONS)})" for k in doc if k not in _SECTIONS]
+    for where, table, known in (("plan", plan, _PLAN), ("fit", fit, _FIT_KEYS)):
+        out += [f"{where}.{k}: no field of [{where}] (have: {', '.join(known)})"
+                for k in (table if isinstance(table, dict) else ()) if k not in known]
+    out += _slips("fit.parts", "fit part", fit.get("parts") if isinstance(fit, dict) else ())
+    if not isinstance(plan, dict):
+        return out
+    out += _slips("plan.subtasks", "part", plan.get("subtasks"))
+    crits = [(f"plan.root_criteria[{j}]", c) for j, c in enumerate(plan.get("root_criteria") or ())] + [
+        (f"plan.subtasks[{i}].criteria[{j}]", c) for i, s in enumerate(plan.get("subtasks") or ())
+        for j, c in enumerate(s.get("criteria") or ())]
+    for where, c in crits:
+        out += _slip(where, "criterion", c)
+        out += _slips(f"{where}.check", "probe", c.get("check"))
+        out += [f"{where}.check[{n}].exact: {q['exact']!r} is no true/false" for n, q in enumerate(c.get("check") or ())
+                if isinstance(q, dict) and "exact" in q and not isinstance(q["exact"], bool)]
+    for name, kind in (("deps", "dep"), ("mappings", "mapping"), ("scope", "scope"), ("accepted_risks", "risk")):
+        out += _slips(f"plan.{name}", kind, plan.get(name))
+    return out
+
+
+def form(doc: dict) -> list[str]:
+    """What is wrong with the SHAPE of a plan file, each as `<field>: <problem>` — a person editing it by hand learns it
+    here, not when the build drops a mapping onto a part that is not there or dies on a missing key. Names only what the
+    build would lose or fail on; whether the plan is any good is the review's."""
+    plan, inputs, out = doc.get("plan"), doc.get("inputs", {}), []
+    out += _unread(doc)
+    if not str(doc.get("goal") or "").strip():
+        out.append("goal: missing or empty — the plan answers a goal")
+    if not isinstance(plan, dict):
+        return out + ["plan: missing — the [plan] table holds the criteria and the split"]
+    parts = plan.get("subtasks") or []
+    ids = [s.get("id") for s in parts]
+    roots = [c.get("name") for c in plan.get("root_criteria") or ()]
+    if not roots:
+        out.append("plan.root_criteria: none — a goal with no criterion cannot fail")
+
+    named, known = (lambda *a: out.extend(_named(*a))), (lambda *a: out.extend(_known(*a)))
+
+    named(plan.get("root_criteria"), "plan.root_criteria", "name")
+    named(parts, "plan.subtasks", "id")
+    named(plan.get("scope"), "plan.scope", "item")
+    twice = lambda xs: sorted({x for x in xs if x and xs.count(x) > 1}, key=str)     # noqa: E731
+    out += [f"plan.subtasks: id {i!r} appears twice" for i in twice(ids)]
+    # …a mapping names its criterion: two of one name are one criterion to the build, the other's checks unread
+    out += [f"plan.root_criteria: name {n!r} appears twice" for n in twice(roots)]
+    for i, s in enumerate(parts):
+        named(s.get("criteria"), f"plan.subtasks[{i}].criteria", "name")
+        out += [f"plan.subtasks[{i}].criteria: name {n!r} appears twice"
+                for n in twice([c.get("name") for c in s.get("criteria") or ()])]
+        for j, c in enumerate(s.get("criteria") or ()):
+            known(c.get("depends_on"), ids, f"plan.subtasks[{i}].criteria[{j}].depends_on", "part")
+    named(plan.get("mappings"), "plan.mappings", "criterion", "child_id")
+    named(plan.get("deps"), "plan.deps", "from", "to")
+    for i, m in enumerate(plan.get("mappings") or ()):
+        known(m.get("criterion"), roots, f"plan.mappings[{i}].criterion", "root criterion")
+        known(m.get("child_id"), ids, f"plan.mappings[{i}].child_id", "part")
+    for i, d in enumerate(plan.get("deps") or ()):
+        known(d.get("from"), ids, f"plan.deps[{i}].from", "part")
+        known(d.get("to"), ids, f"plan.deps[{i}].to", "part")
+    for i, m in enumerate(doc.get("fit", {}).get("parts") or ()):
+        known(m.get("id"), ids, f"fit.parts[{i}].id", "part")
+    for c in _criteria(plan):
+        for k, p in enumerate(c.get("check") or ()):
+            for name, h in (p.get("inputs") or {}).items() if isinstance(p.get("inputs"), dict) else ():
+                if h not in inputs:
+                    out.append(f"check {c.get('name')!r}[{k}].inputs.{name}: {h!r} has no file under [inputs]")
+    return out
 
 
 def _hoist(spec: dict) -> tuple[dict, dict]:

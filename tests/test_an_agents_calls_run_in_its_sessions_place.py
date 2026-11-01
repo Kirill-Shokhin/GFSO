@@ -4,6 +4,7 @@ every place of the project in reach again."""
 from gfso.adapters.execution import LocalExecution
 from gfso.adapters.llm import headless as H
 from gfso.adapters.llm.toolloop import Place
+from tests.support import hold_a_credential
 
 
 class _Proc:
@@ -47,6 +48,7 @@ class _Project(LocalExecution):
 
 
 def test_a_cli_session_starts_in_its_places_execution(tmp_path, monkeypatch):
+    hold_a_credential(monkeypatch, tmp_path)
     monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", lambda self, proc, t0, cap: ({"result": "R"}, [], 0))
     project = _Project()
     llm = H.ClaudeCodeProvider(execution=project)
@@ -63,6 +65,7 @@ def test_a_tool_loops_commands_run_in_its_places_execution(tmp_path):
 def test_a_conversation_keeps_its_state_where_its_session_runs(tmp_path, monkeypatch):
     """The handover hook's notes, the spend so far, the transcript a round resumes: kept in the state of the place
     the conversation runs in, which no other place's session holds."""
+    hold_a_credential(monkeypatch, tmp_path)
     monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", lambda self, proc, t0, cap: ({"result": "R"}, [], 0))
     project = _Project()
     llm = H.ClaudeCodeProvider(execution=project)

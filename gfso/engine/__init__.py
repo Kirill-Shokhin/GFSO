@@ -32,7 +32,7 @@ from gfso.core.protocol.fsm import available_signals, not_admissible_here, trans
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
                                           verdict_report_defects, probe_labels, unrun_probes)
-from gfso.core.protocol.procedure import (admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
+from gfso.core.protocol.procedure import (BOUND_SPENT, PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
                                           refuting_probes, merge_regression, probe_id, layable_over, unrerunnable,
                                           unaccounted_for, orphaned_regression,
                                           claim_digest)
@@ -75,7 +75,7 @@ log = logging.getLogger(__name__)
 
 #: what a project sets for itself (`set_mode`): the system's model, the Level-2 gate, the switch on the way out, the
 #: deadline nobody typed, the place's observation — each in the settings table alone (`Engine.settings`)
-SETTINGS = ("system_model", "l2_gate", "network", "deadline_s", "observe")
+SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s", "observe")
 
 #: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
 LIFT_MARGIN_S = 30
@@ -518,6 +518,12 @@ class Engine:
         """The model the system's own roles run on in this project — its issuer, its plan's author and reviewer: the
         project's choice (`set_mode(system_model=)`), else the server's."""
         return self._storage.get_setting("system_model") or MODEL_DEFAULT
+
+    def planner_model(self) -> str:
+        """The model the plan's AUTHOR runs on — its own choice (`set_mode(planner_model=)`), else the system's: a split's
+        content is its author's (§4.5), the form the apparatus's, and the two are chosen apart — a plan authored once by a
+        stronger model is executed, judged and repaired by the system's (the plan as its own artifact)."""
+        return self._storage.get_setting("planner_model") or self.system_model()
 
     def set_mode(self, mode: Mode, boundary: Optional[int], author: AgentId, said: str = "",
                  hands: Optional[str] = None, settings: Optional[dict] = None) -> dict:
@@ -1036,6 +1042,10 @@ class Engine:
                                    internal=not self._graph.is_public(task), dirs=inputs_dirs,
                                    parts=self.parts_procedure(task_id), delivery=workdir,
                                    standing=round_stands(self._graph))
+            # …AND A PINNED CHECK THE SYSTEM RAN THAT DID NOT FINISH WITHIN ITS OWN BOUND: it decided nothing in finite time
+            # (A1 (i)), so its criterion is ⊥ — no PASS over it, and no FAIL either: an honest slow check is no defect of
+            # the work, and the executor has nothing to fix (the withdrawn first form landed it in `failed_criteria`
+            # and reworked honest work; read as the validator's word, a looping delivery hid from the system's FAIL)
             for _c in unrun_probes(per_criterion, tools_used):
                 gaps.setdefault(_c, []).append(
                     "its probe names a command, and this validation run's tool ledger records no shell "
@@ -1096,6 +1106,8 @@ class Engine:
                     verdict, failed_criteria = Verdict.FAIL, sorted(set(real))
                 else:
                     raise ValueError(
+                        (BOUND_SPENT + ". " if set(gaps) <= {str(e.get("criterion")) for e in per_criterion
+                                                             if e.get(PAST_BOUND) and e.get(PAST_WHOLE)} else "") +
                         f"not a verdict on {task_id} (⊥, not pass — §2.3): the report names "
                         f"behaviours it never observed and refutes nothing, so it decides nothing. "
                         + "; ".join(f"criterion '{c}' — unobserved: {', '.join(b)}"

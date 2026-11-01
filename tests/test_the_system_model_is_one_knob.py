@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from gfso import config, issuer, tools_llm
 from gfso.api.server import create_app
+from gfso.engine import Engine
 from tests.test_integration import _engine
 
 PROBE = ("import gfso.config as c; from tests.support import make_engine;"
@@ -35,8 +36,11 @@ def test_unset_it_is_the_default_door():
 
 
 def test_the_issuer_the_plans_author_and_its_reviewer_ask_the_one_place():
-    for door in (issuer._ask, tools_llm.auto_decompose, tools_llm.review_decomposition):
+    for door in (issuer._ask, tools_llm.review_decomposition):
         assert "engine.system_model()" in inspect.getsource(door), door.__name__
+    # …the plan's author through its own setting, which falls back to the one place (`planner_model`)
+    assert "engine.planner_model()" in inspect.getsource(tools_llm.auto_decompose)
+    assert "self.system_model()" in inspect.getsource(Engine.planner_model)
 
 
 def test_the_server_says_which_model_plays_the_roles():

@@ -15,6 +15,7 @@ from gfso.adapters.llm import budget as B
 from gfso.adapters.llm import handover_hook as K
 from gfso.adapters.llm import headless as H
 from gfso.adapters.llm.base import RecordingProvider
+from tests.support import hold_a_credential
 
 ARMED = {"budget": 50_000, "ceiling": 180_000, "reopen": False, "resumed": False, "boundary": "point"}
 
@@ -157,6 +158,7 @@ def test_the_second_session_is_asked_to_update_the_note_it_started_from():
 def cli(tmp_path, monkeypatch):
     """The CLI provider over a scripted stream, its argv kept."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+    hold_a_credential(monkeypatch, tmp_path)
     seen = []
 
     class _P:

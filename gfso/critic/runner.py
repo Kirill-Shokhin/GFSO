@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
-from gfso.config import CHECKER_READINGS, SUFFICIENCY_READINGS
+from gfso.config import CHECKER_READINGS, ROOT_ID, SUFFICIENCY_READINGS
 from gfso.core.graph.projection import input_files, pinned_lines, probe_view
 from gfso.core.graph.review import progress_baseline
 from gfso.core.types import CriticVerdict, Stage, State, TaskId
@@ -813,6 +813,21 @@ def _deciders(engine, task) -> list[str]:
     An obligation once decided stays decided while every one of these still stands: a pin added decides more, never
     less. One gone or changed — a child dropped or unmapped, a pin rewritten — may have been what decided it."""
     return sorted(hashlib.sha256(b.encode()).hexdigest()[:16] for b in _blocks(task.spec.criteria) + _split_blocks(engine, task))
+
+
+def goal_obligations(llm, goal: str) -> list:
+    """The obligations a goal carries, each with the result that would break it — read from the goal alone, with the
+    gate's own question, before any plan exists (the authoring's first fold takes them as its findings). [] where the
+    reading did not run or parse: no list is no claim that the goal carries none."""
+    system = (Path(__file__).parent / "prompts" / "undecided.md").read_text(encoding="utf-8")
+    user = (f"# THE NODE: {ROOT_ID}\n\n# GOAL\n{goal}\n\n# DECLARED SCOPE EXCLUSIONS (deliberate absences — never "
+            f"obligations)\n- (none declared)\n\nName every obligation of the GOAL, each with the result that would "
+            f"break it." + schema_instruction(UNDECIDED_SCHEMA))
+    try:
+        return list((parse_structured(llm.complete(prompt=user, context=system) or "", UNDECIDED_SCHEMA) or {})
+                    .get("gaps") or ())
+    except Exception:       # a reading that could not run names nothing; the caller falls back to its search
+        return []
 
 
 def _undecided_obligations(engine, task, llm, *, stage: Stage = Stage.UNDECIDED_OBLIGATIONS) -> Optional[tuple[dict, ...]]:

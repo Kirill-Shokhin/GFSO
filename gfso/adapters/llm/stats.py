@@ -23,7 +23,10 @@ def tag_stage(llm, stage: str) -> None:
 
 #: How an account's limit reads in a call's error — not a context window's "limit", which no wait lifts. The CLI's own
 #: words for its five-hour window are "session limit" (`usage_limit_reached` in the envelope's `api_error`).
-ACCOUNT_LIMIT = ("usage limit", "usage_limit", "session limit", "weekly limit", "spend limit", "rate_limit", "rate limit")
+ACCOUNT_LIMIT = ("usage limit", "usage_limit", "session limit", "weekly limit", "spend limit", "rate_limit", "rate limit",
+                 # …and an API key's own: its credit spent, read as a plain API error, the call failed on it while the
+                 # provider's next credential stood unused (b-api, 2026-11-01) — an api credential's limit is its credit
+                 "credit balance is too low")
 
 
 #: How a refused authentication reads in a call's error: the account is signed out or its key refused — no call of any

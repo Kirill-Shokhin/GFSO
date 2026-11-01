@@ -23,12 +23,13 @@ from dataclasses import replace
 
 from gfso.adapters.execution import ended_by_watch
 from gfso.adapters.snapshots import WATCHED, snapshot, swap
-from gfso.core.protocol.procedure import INPUTS_TOKEN, materialize_inputs, probe_id, shows, unsafe_input_paths
+from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, materialize_inputs, probe_id, shows,
+                                         unsafe_input_paths)
 from gfso.workspaces import execution_of
 
 #: Seconds one check may run, and the whole observation of one session's nodes — a quarter of the session's own
 #: cap at most (`observe_place`).
-PROBE_S, OBSERVE_S = 60, 300
+OBSERVE_S = 300
 #: …and what starting each check from what the system laid costs it, on top of its own run (`_fresh_run`; 2.35 s a
 #: check measured, critic B7): the exact checks of a validation are given it each, so a rich contract's are not cut
 FRESH_S = 3
@@ -86,6 +87,13 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
             left = budget - (time.monotonic() - t0 - sum(copying))
             ran[once] = (_fresh_run(ex, bash, c, p, tree, tmp, min(PROBE_S, left), place, copying) if left >= 1
                          else {"note": "not run: the observation's time ran out"})
+            # …not finished in the time it was given — its own bound, or what the observation's budget left it, or none
+            # left at all —: it decided nothing in finite time, and the delivery's own code spends that budget, so a
+            # looping check placed after slow honest ones fell to "the budget's cause" and the judge's word passed it
+            # (critic over the first form, which marked only a check given the whole PROBE_S). `with_engine_observations`
+            # reads it as ⊥ — no PASS, no FAIL —, and the next validation re-runs only the ⊥ criteria, with the whole budget
+            if str(ran[once].get("note", "")).startswith(("did not finish", "not run: the observation's time")):
+                ran[once] = {**ran[once], "timed_out": True, "whole": left >= PROBE_S}
         # …matched against THIS check's expectation: one command pinned twice with two expectations printed
         # once, and the second inherited the first's match (critic over 27de5f8)
         got = ran[once]

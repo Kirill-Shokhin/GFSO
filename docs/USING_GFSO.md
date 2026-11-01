@@ -78,6 +78,11 @@ Every parent criterion must be **mapped** to the child that delivers it. That ma
 the whole composition rests on: the parent passes exactly when its children do (§7.3), so an
 unmapped criterion is a parent obligation nobody has agreed to carry.
 
+A plan can also exist before any project does, as a file of its own: `plan` authors and reviews a `.gfso` file with no project,
+`refine_plan` answers your note on it, and `auto_decompose(plan=<file>)` is the go, which builds the project from the file as it
+stands. The file is TOML you can read whole and edit by hand; its fields, and what `parse` checks in a file you edited, are in
+[`PLAN_FORMAT.md`](PLAN_FORMAT.md).
+
 Assign a node to someone else only when the work is really theirs. Ownership is load-bearing: a node
 owned by another party moves only on *their* signals, and a node owned by a person the engine does
 not know simply waits for that person — which is the honest state of the graph, not a stall.
@@ -113,7 +118,8 @@ dispute_finding("api", "<criterion>", "<why the entailment does hold>")
 The checker is an a-priori approximation, not an oracle; contact keeps the last word. What the engine
 enforces is that you *ran* it and dispositioned what it said — never that it was right.
 
-**If you have no checker.** The review needs a model — the Claude CLI on your `PATH`, signed in. With
+**If you have no checker.** The review needs a model — the Claude CLI on your `PATH`, with a credential set by
+`gfso credential claude`. With
 none, `review_decomposition` answers with no verdict, and no verdict is never read as clean: the gate
 stays shut and nothing executes. That is deliberate and it is not the only supported way to run. The
 canon's other branch (§9.9, EXPLORE) buys the plan's verification with *contact* instead of with a

@@ -113,7 +113,7 @@ def _stream(is_error: bool) -> list:
 
 def _ran(record, is_error=False, tmp_path=None):
     ex = _Apart(record, _stream(is_error))
-    llm = H.ClaudeCodeProvider(model="m", execution=ex, credential=None)
+    llm = H.ClaudeCodeProvider(model="m", execution=ex, credential=H.credentials.Credential("api", "sk-ant-none"))
     return llm.agent_round("s", "u", ("Bash",), cwd=str(tmp_path)), llm.calls[-1], ex
 
 
@@ -195,7 +195,7 @@ def _session(monkeypatch, project, commands: list, trace=None, laid=None, tools=
     for path, text in (laid or {}).items():
         subprocess.run(["docker", "exec", "-u", "0", s.container, "sh", "-c", 'mkdir -p "${1%/*}" && printf %s "$2" > "$1" '
                         '&& chmod 644 "$1"', "sh", path, text], check=True, capture_output=True)
-    llm = H.ClaudeCodeProvider(model="haiku", execution=project, credential=None)
+    llm = H.ClaudeCodeProvider(model="haiku", execution=project, credential=H.credentials.Credential("api", "sk-ant-none"))
     llm.stage_hint = "a executor(agent-1)"
     answer = llm.agent_round("s", "go", tools, cwd=str(project.own / "a"), timeout=180)
     return answer, llm.calls[-1], s

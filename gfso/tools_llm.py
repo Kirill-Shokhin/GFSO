@@ -108,8 +108,8 @@ def _nothing_was_validated(a_model_ran: bool) -> str:
     thing you did: a loop with no exit named, for everyone without the CLI.
     """
     return ("not measured: the checker was admitted and returned no readable verdict"
-            + (" — it made NO model call, so most likely no provider is available (the Claude CLI "
-               "on PATH, signed in)" if not a_model_ran else "")
+            + (" — it made NO model call, so most likely no provider is available (the Claude CLI on PATH, "
+               "a credential set by `gfso credential claude`)" if not a_model_ran else "")
             + ". No verdict is never read as clean (§9.5 fail-closed), so execution stays shut. Run this "
               "again — a reply that could not be read may not recur. If every run comes back like this, two "
               "supported ways on: make a checker available and run this again, or take the canon's "
@@ -1628,7 +1628,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
     and the plan the file holds, as they stand — the customer's from then on, as any plan handed in."""
     request, spec = _the_go(plan, request, spec) if plan is not None else (request, spec)
-    model = model or engine.system_model()
+    model = model or engine.planner_model()
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
     # every child, which is the opposite of what "delegate the work" usually means to the caller.
@@ -1681,6 +1681,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                              # A term of the CONTRACT, chosen per decomposition: how many
                              # rework rounds a node gets before the loop settles (§12.15).
                              max_iterations=max_iterations, spec=spec, author=author,
+                             closed=spec is not None and not open_plan,
                              # WHICH EXECUTOR ONE SESSION IS: the fact the decomposer judges each piece's fit
                              # against, so the seams move with the model rather than with a number we set
                              executor=engine.workforce.executor_session(executor or assignee))
@@ -1694,7 +1695,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # …A PLAN BEING POLISHED IS NOT YET THE USER'S: `open_plan` hands the spec in as a draft the system may repair and
     # re-split on contact, so its final graph (export_plan) shows what the plan needed — the author, 2026-10-25: «пока
     # план полируется оставлять открытым возможность менять, потом смотреть что менялось и фиксировать итог»
-    if fresh and spec is not None and not open_plan:
+    if spec is not None and not open_plan:
         engine.give_users_plan(res.root_id)
     out = {"root_id": str(res.root_id),
            "subtasks": [{"id": str(c.id), "description": c.spec.description} for c in kids],
@@ -1744,13 +1745,13 @@ def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Op
     Nothing executes and no project is made. Send a note with `refine_plan`; give the go with
     `auto_decompose(plan=<path>)`, which builds the project from the file as it stands. `executor` names the registered
     executor whose session the fit of each part is judged against."""
-    model = model or engine.system_model()
+    model = model or engine.planner_model()
     # …the goal as the project's root will hold it — with the documents it names written under it, as the go would add
     # them — so the plan and its review are written against the contract the work will run on (critic)
     request = (request or "") + _named_documents(engine, request or "")
     try:
         text = _planning.author(request, model, engine.workforce.executor_session(executor) if executor else "",
-                                depth, review_model or "", emit_cb(engine, "plan", _progress),
+                                depth, review_model or engine.system_model(), emit_cb(engine, "plan", _progress),
                                 execution=execution_of(engine))
     except NoPlan as no:
         return {"error": _no_plan(no)}
@@ -1762,9 +1763,11 @@ def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = Non
     """The customer's note on a plan file (a path or the text): one refine round with the note as its finding, by
     `model` (an older one may be named), and the review run again. The new file carries the note with its answer —
     what the round changed in the plan, read off the plan itself. The old file stays as it was."""
-    model = model or engine.system_model()
+    model = model or engine.planner_model()
     try:
-        text = _planning.refine(_planning.text_of(plan), note, model, review_model or "", emit_cb(engine, "plan", _progress),
+        # …the review is the system's, on its model: a planner named stronger authors, it does not also review (critic)
+        text = _planning.refine(_planning.text_of(plan), note, model, review_model or engine.system_model(),
+                                emit_cb(engine, "plan", _progress),
                                 execution=execution_of(engine))
     except (NoPlan, ValueError, OSError) as e:
         return {"error": str(e)}
@@ -2185,7 +2188,7 @@ next_steps.__doc__ += "\n\n    " + (_tools.next_steps.__doc__ or "").strip()
 
 def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int] = None,
              agent: Optional[str] = None, user_said: str = "", perform: Optional[str] = None,
-             system_model: Optional[str] = None, l2_gate: Optional[bool] = None,
+             system_model: Optional[str] = None, planner_model: Optional[str] = None, l2_gate: Optional[bool] = None,
              deadline_s: Optional[float] = None, observe: Optional[bool] = None,
              network: Optional[Union[str, dict]] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
@@ -2214,7 +2217,9 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
     recorded with the mode: a refusal or a stall is a reason to ask the user, never to switch yourself.
 
     What the project sets for itself, recorded with the mode (unset = the server's): `system_model` — the model the
-    system's own roles run on here (its issuer, its plan's author and reviewer); `l2_gate` — whether the plan's
+    system's own roles run on here (its issuer, its plan's reviewer, and its author unless named apart); `planner_model`
+    — the model that AUTHORS the plan (`auto_decompose`, `plan`, `refine_plan`), when it is to be another than the
+    system's: a stronger author once, the system's roles after it; `l2_gate` — whether the plan's
     Level-2 review gates execution (off: the plan was verified where it was authored); `deadline_s` — how far ahead a
     deadline nobody typed is written (0 = none); `observe` — whether the system runs a node's pinned checks once on its
     place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`);
@@ -2249,6 +2254,7 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         except ValueError as e:
             return {"refused": True, "error": str(e)}
     settings = {k: v for k, v in (("system_model", str(system_model).strip() or None if system_model else None),
+                                  ("planner_model", str(planner_model).strip() or None if planner_model else None),
                                   ("network", None if network is None else "" if network == "declared"
                                    else json.dumps(network)),
                                   ("l2_gate", None if l2_gate is None else "1" if l2_gate else "0"),

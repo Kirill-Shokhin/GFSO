@@ -3741,3 +3741,36 @@ of 28 executor sessions passed 128k (peak 337k), executors 0.91 of the row's cos
   standing finding whose command entered the node's own place, read as a gone past round and shown without its pinned
   inputs (since fixed). No budget cell ran. The budget reading still waits; and a fresh pair of references was not
   needed for it — the plan-given references already on record serve, their build named.
+
+### 13.50 The system's own plan for `c_compiler`, measured before any row: no planner yet meets every bar; the cheap model's pipeline holds the axes execution cannot repair (2026-10-31 → 11-01)
+
+Pre-registered with a hash before each reading (`experiments/e3_specbench/PREREGISTERED_decomposer_quality.md`, its
+amendments A–E; results in `RESULT_decomposer_quality.md`). Three instruments: E2 (structure against reference
+decompositions, a blind grader, three rollouts per task); a Level-2 reader of coverage over the authored plan (undecided
+obligations, two readings); and a model-free oracle bench — every pinned check run on 4 good trees (held-out 298/299),
+6 weak trees and 7 single-edit near-miss mutants of a good tree. Its readings: SOUND (no public check fails a good tree),
+CATCH (near-misses a public check fails while its base passes), UNDECIDED (criteria no check decides on good trees).
+
+| planner | E2 | coverage reader (undecided) | CATCH | UNDECIDED | SOUND: public FAILs on good trees |
+|---|---|---|---|---|---|
+| main's pipeline, haiku 5.5 | 0.69 | 51 | 1/7 | 0.05 | 0 |
+| revised pipeline, haiku 5.5 | 0.67 | 18.5 | 5/7 | 0–0.06 | 5 · 26 · 13 |
+| main's pipeline, sonnet 5.5 | 0.82 | 7.25 | 0–3/7 | 0.35–0.54 | 25 · 48 |
+| sonnet on the revised pipeline | ≈ sonnet | 6.25 | 4.5/7 | 0.30–0.36 | 64 · 34 |
+| sonnet, an exact check demanded per criterion | — | 1–4 (one plan) | 1.5/7 | 0.07 | 22 · 44 |
+| sonnet, + checks run on the gcc reference and fed back (1 round · ≤ 3 rounds) | — | 12.5 · 15.5 | 2 · 1.5 | 0.15 · 0.16 | 41 · 8 → 27 · 8 |
+
+- **The author model carries the content; the form of a plan's checks is the pipeline's and partly the model's too.**
+  Through the same pipeline the stronger model writes expectations in prose a validator decides by reading; demanded exactness, it
+  met the demand in form — checks through tools the statement does not define, prose in an `exact` field — not in truth.
+- **Grounding checks on a reference does not converge.** Each round repaired what the reference had read and wrote new
+  checks it had not; and a check gcc passes can still fail a tree that scores 298/299: the reference is wider than the
+  contract the held-out suite measures. Exact form and contact through one reference are not a check's truth (§3.5, §8.4).
+- **No planner meets every bar.** Every planner but main's fails SOUND, and main's fails CATCH; the revised pipeline
+  trails the stronger model on E2 structure. The revised pipeline on the cheap model is the only one holding CATCH and UNDECIDED —
+  the defects execution cannot surface (an insensitive check passes silently, a prose check is decided by impression);
+  a check that fails correct work is loud (FAIL, a CHALLENGE) and has a channel to its repair in execution — derived
+  from the protocol's channels (§11.2–11.3), not yet measured on this cell. Its gap is coverage, which the run's second
+  number (held-out) reports.
+- What remains to show: whether the cheap model, on its own revised plan, carries `c_compiler` to its root verdict —
+  no admission row on the live gate has run yet, and none on the target cell.

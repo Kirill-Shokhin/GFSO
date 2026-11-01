@@ -15,7 +15,7 @@ from gfso.adapters import execution as E
 from gfso.adapters.llm import budget as B
 from gfso.adapters.llm import headless as H
 from gfso.adapters.llm.base import RecordingProvider
-from tests.support import make_engine
+from tests.support import hold_a_credential, make_engine
 
 
 class Worker(RecordingProvider):
@@ -234,6 +234,7 @@ class _Proc:
 def cli(tmp_path, monkeypatch):
     """The CLI provider over a scripted stream: each call ends as `script` says, at the peak it names."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+    hold_a_credential(monkeypatch, tmp_path)
     seen, script = [], []
 
     def popen(args, **kw):

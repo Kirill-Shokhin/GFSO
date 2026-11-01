@@ -3,8 +3,8 @@
 THE Anthropic transport (the only one): each call is a fresh process and a single-request generation —
 exactly the call shape the decompose loop was calibrated on; an agent run may continue a named conversation
 (`workspaces.session_key`). Its credential is the provider's (`credentials`, provider `claude`): a subscription's
-token or an API key, given to the CLI's own process alone, its tools' shells scrubbed of it; with none set, the host's
-own login. Nothing inherited reaches the child — an inherited key silently outranked the login (measured live).
+token or an API key, given to the CLI's own process alone, its tools' shells scrubbed of it; with none in force, no call
+runs (the host's own login is no credential the provider lists). Nothing inherited reaches the child — an inherited key silently outranked the login (measured live).
 Structured output = the shared
 provider-agnostic machinery (`structured.py`): appended fenced-json instruction + parse + one repair
 retry — the schema is enforced by validation here, never trusted to the transport.
@@ -346,9 +346,20 @@ class _Credentials:
 
     def _in_force(self) -> tuple:
         """(name, credential) a call starts on: the one given, or the provider's in force now."""
+        if self._credential is None:
+            # …None once meant the host's login: the same fallback no credential list declares, by another door
+            raise ValueError("a provider made with no credential runs on no one's: name one, or leave it to the "
+                             f"provider's store ({credentials.where()})")
         if self._credential is not STORED:
             return None, self._credential
-        return credentials.current(PROVIDER) or (None, None)
+        if (got := credentials.current(PROVIDER)) is None:
+            # …NO CALL OUTSIDE ITS PROVIDER: with nothing in force in the one place, the CLI ran on whatever login its host
+            # held — a fallback no credential list declared, and a bench whose home held no store spent a subscription
+            # half a wave while the provider's API key stood unused (2026-11-01). A fallback is an entry of the list.
+            raise ValueError(f"no credential of {PROVIDER!r} is in force in {credentials.where()} — set one there "
+                             f"(`gfso credential {PROVIDER} --kind token|api`, the value on stdin); no call runs outside "
+                             f"its provider")
+        return got
 
     def _no_store(self, e: Exception) -> str:
         """THE STORE DOES NOT READ: no call can say which credential it runs on — not the node's failure, and not the
@@ -385,7 +396,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         # Latency lever: per-call wall time is dominated by OUTPUT tokens, and thinking tokens bill into
         # output. Caps the child CLI's thinking budget (MAX_THINKING_TOKENS env); None = CLI default.
         self._max_thinking = max_thinking_tokens
-        # `credentials.Credential` given, or None = the host's login; by default the provider's one in force at each
+        # `credentials.Credential` given (None is refused at the call: no host login); by default the provider's one in force at each
         # call's start (`credentials.current`), so a moved pointer reaches every new call and none in flight
         self._credential = credential
         self.last_model = ""          # the model its turns name — what a cut session ran on

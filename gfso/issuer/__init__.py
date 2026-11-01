@@ -46,7 +46,7 @@ from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, materialize_inputs, same_probe, shows,
-                                          pinned_files, probe_id, probes_from as _checks_of, unrerunnable,
+                                          PROBE_S, pinned_files, probe_id, probes_from as _checks_of, unrerunnable,
                                           with_named_files)
 from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of)
@@ -62,6 +62,11 @@ from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
 log = logging.getLogger("gfso.issuer")
 
 PROMPT = Path(__file__).parent / "issuer.md"
+
+
+def _prompt() -> str:
+    """The issuer's instructions, the per-check bound said from its one owner (`procedure.PROBE_S`)."""
+    return PROMPT.read_text(encoding="utf-8").replace("<PROBE_S>", str(PROBE_S))
 
 #: How many contracts the machine writes for the AUTO ROOT out of ESCALATED before the next must CHANGE what failed — there
 #: it stands in for the user, the root's issuer, and nothing above bounds it; below the root no count (§12.15). Not a
@@ -1701,7 +1706,7 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                         if not copy and at_place.apart:
                             raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
                         at = copy or where
-                        text = llm.run_agent(PROMPT.read_text(encoding="utf-8"),
+                        text = llm.run_agent(_prompt(),
                                              CONTACT.format(where=at, checkout=checkout_note(at))
                                              + (swap(packet, where, copy) if copy else packet)
                                              + (f"\n\nBefore you, the system built this copy as its judge did: "
@@ -1712,7 +1717,7 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                     # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
                     # directory refused every real call, so no machine issuer ever answered (hidden by fakes that
                     # accepted the missing argument)
-                    text = llm.complete(packet, context=PROMPT.read_text(encoding="utf-8"))
+                    text = llm.complete(packet, context=_prompt())
     except PlaceUnavailable as e:    # …the place down laying the inputs or copying: booked as a call that could not start
         llm.calls.append({"duration_ms": 0, "ended": "unavailable", "place": e.place, "error": str(e), "at": time.time()})
     except NotTheDelivery as e:
@@ -1720,7 +1725,7 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
         # cause to rule on, not to wait out — asked again it failed again, forever (critic over 909e417)
         text = llm.complete(packet + f"\n\nNO COPY of this delivery could be made for you, and the delivery itself is "
                                      f"the cause: {e}. Rule on that: there is no tree to run anything in.",
-                            context=PROMPT.read_text(encoding="utf-8"))
+                            context=_prompt())
     except Uncopied as e:            # …no copy for a cause not the delivery's: no ruling yet, asked again
         raise Unavailable(f"no copy of {where} to rule on: {e}") from e
     finally:                         # …booked whatever raises after the model ran (leaving the copy, the swap)

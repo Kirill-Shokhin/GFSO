@@ -8,16 +8,24 @@ import io
 import json
 import time
 
+import pytest
+
 from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
 from gfso.adapters.llm.stats import refused_by_limit
 from gfso.core.types import TaskId
 from gfso.issuer import LIMIT_RETRY_S
-from tests.support import make_engine
+from tests.support import hold_a_credential, make_engine
 
 #: the stream of a refused authentication (the validator's, tncfs1160, trimmed to its result)
 REFUSED_STREAM = [{"type": "result", "is_error": True, "subtype": "success", "terminal_reason": "api_error",
                    "api_error": "authentication_error", "result": "API Error: 403 Failed to authenticate"}]
+
+
+@pytest.fixture(autouse=True)
+def _held(monkeypatch, tmp_path):
+    """…so a refusal read here is the CLI's 403, not the empty store's (`headless._in_force` books that one alike)."""
+    hold_a_credential(monkeypatch, tmp_path)
 
 
 class _Proc:

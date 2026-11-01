@@ -19,7 +19,7 @@ from gfso import tools_llm as TL
 from gfso.adapters.llm.headless import _tool_use_name, ClaudeCodeProvider
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.invariants import verdict_report_defects
-from tests.support import criterion, make_engine, pinned, REGISTER
+from tests.support import criterion, hold_a_credential, make_engine, pinned, REGISTER
 
 
 def _eng():
@@ -577,7 +577,7 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     e.stop()
 
 
-def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeypatch):
+def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeypatch, tmp_path):
     """Every internal call (decompose, the Level-2 review, the validator) is a `claude -p`, and a
     `claude -p` inherits the operator's whole console configuration. Two parts of it must not come
     along, for two different reasons.
@@ -629,6 +629,7 @@ def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeyp
     # a machine with `claude` installed (green) and on a CI runner without it (red), for one and the
     # same correct code. Pinning `which` makes the argv real on both.
     monkeypatch.setattr("shutil.which", lambda cmd: cmd)
+    hold_a_credential(monkeypatch, tmp_path)
     llm = ClaudeCodeProvider(model="haiku", claude_cmd="claude")
     try:
         llm.complete("system", "user")

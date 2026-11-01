@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import gfso.core.graph.model as M
 import gfso.tools as T
 from gfso.adapters import execution as E
+from gfso.adapters.llm import credentials
 from gfso.adapters.llm import headless as H
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.types import TaskId
@@ -48,7 +49,8 @@ def test_the_adapter_reads_when_the_limit_lifts(monkeypatch, tmp_path):
     monkeypatch.setattr(H.subprocess, "Popen", lambda args, **kw: _Proc(LIMIT_STREAM))
     for name in ("adopt", "kill_tree", "release"):
         monkeypatch.setattr(E, name, lambda p: p)
-    llm = H.ClaudeCodeProvider()
+    # …a credential given, not stored: what the ADAPTER reads of the stream, before the store marks it spent (`spend`)
+    llm = H.ClaudeCodeProvider(credential=credentials.Credential("token", "t-held"))
     llm._cmd = "claude"
     assert llm.run_agent("sys", "packet", ("Read",), cwd=str(tmp_path)) == ""
     assert llm.calls[-1]["ended"] == "limit" and llm.calls[-1]["limit_resets_at"] == LIFT, llm.calls[-1]

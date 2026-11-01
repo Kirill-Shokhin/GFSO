@@ -30,7 +30,7 @@ from gfso.core.types import TaskId
 from gfso.critic.runner import _already_decided, _criterion_stamps
 from gfso.issuer import Unavailable, Verbs, _what_happened, settle, unanswered
 from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _a_delivery, _an_offer
-from tests.support import make_engine
+from tests.support import hold_a_credential, make_engine
 from tests.test_equal_fails_do_not_measure_kappa import _leaf, _leaves
 from tests.test_one_session_carries_a_scope import _project
 from tests.test_delegate import _agents
@@ -52,6 +52,7 @@ def test_the_adapter_records_the_limit_where_its_readers_look(monkeypatch, tmp_p
     monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", lambda self, p, t0, cap: (dict(LIMIT_ENVELOPE), [], 0))
     for name in ("adopt", "kill_tree", "release"):
         monkeypatch.setattr(E, name, lambda p: p)
+    hold_a_credential(monkeypatch, tmp_path)
     llm = H.ClaudeCodeProvider()
     llm._cmd = "claude"
     assert llm.run_agent("sys", "packet", ("Read",), cwd=str(tmp_path)) == ""

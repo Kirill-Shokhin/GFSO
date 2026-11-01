@@ -44,14 +44,15 @@ class Credential:
     value: str
 
 
-def _path() -> Path:
+def where() -> Path:
+    """Where the provider's one place lives — for a refusal to name it."""
     return data_dir() / "credentials.json"
 
 
 def _read(path: Path | None = None) -> dict:
     """The store as it stands; none yet — empty. A store that is there and does not read RAISES: read as "nothing set",
     a call ran on the host's login and a change wrote the whole store back near-empty (critic, two processes)."""
-    p = path or _path()
+    p = path or where()
     for left in range(_TRIES, -1, -1):
         try:
             text = p.read_text(encoding="utf-8")
@@ -101,7 +102,7 @@ def _settle(p: dict) -> None:
 
 
 def _write(every: dict) -> None:
-    p = _path()
+    p = where()
     p.parent.mkdir(parents=True, exist_ok=True)
     # …whole or not at all: rewritten in place, a call starting mid-write read it empty and ran on the host's login
     # (critic: 520 of 10 653 reads under one writer) — a new file, then one rename over the old
@@ -152,7 +153,7 @@ def get(provider: str) -> Credential | None:
 def _locked():
     """One writer at a time across PROCESSES — the person's `gfso credential` beside the server's `spend` — not only
     threads: a read-act-write of one lost the other's change, the pointer a person just moved included (critic)."""
-    lock = _path().with_name(".credentials.lock")
+    lock = where().with_name(".credentials.lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK:
         t0 = time.time()

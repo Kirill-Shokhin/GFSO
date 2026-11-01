@@ -23,7 +23,8 @@ it, what contract comes next, or is the node to be closed.
   the command prints on correct work (the system runs it as written on a fresh copy of the delivered
   tree and a different output fails the criterion) — so it builds what it runs, creates any state it
   reads, and prints the same every time; false where it cannot, or where `expect` describes the output
-  or names part of it.
+  or names part of it. It runs <PROBE_S> seconds at most, its build included: one still running then
+  decides nothing, so a slow corpus is split across checks.
 - **A repair flows down, not around.** When contact refuted a split (the parent failed on criteria its
   children passed), the fix is in the child that should have carried the failure — revise it to carry
   the failed criterion, with a procedure that would have caught it — or in a new child that carries it.

@@ -118,6 +118,9 @@ Reduce everything to a canonical, non-redundant **BASIS**:
       different output fails the criterion. Such a command builds what it runs (`make -s prog &&
       ./prog …`), creates any state it reads (a fresh temp file, not one an earlier run may have left),
       merges its streams (`2>&1`) where its output alternates them, and prints the same every time.
+      It runs <PROBE_S> seconds at most, the build it starts included: a command still running then
+      decides nothing and leaves its criterion undecided, so a corpus too slow for one probe is split
+      across several, each over its own part of the inputs.
       Leave it false where it cannot, and where `expect` describes the output in words or names only
       part of it.
       The test data a command reads — the programs, documents, request bodies — is part of the probe:

@@ -52,6 +52,7 @@ dependencies, the register, the Level-2 review's open obligations. Then either `
 your note, written as what the plan must change, by any model (a stronger one may be named); the new file carries
 the note with its answer, what the round changed — or give the go: `auto_decompose(plan=path)` on the empty project
 builds it as it stands, the user's plan from then on. Your note is checked like any input; the plan is not bent to it.
+The file's format (`gfso-plan/1`, every field) is `docs/PLAN_FORMAT.md`.
 
 ## The loop (solo; in semi, over the levels you hold)
 
