@@ -157,9 +157,10 @@ function actions({d, acts}) {
 const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r.by).filter(Boolean).at(-1);
     return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(by)}</b> <span class="wk-none">no session booked to this node — its model is not reported here</span>`)] : []; };
 // who ran it, one grid row per role: «Executed by · haiku 5.5 ×12»
+const ROLE_ORDER = ['plan', 'consent', 'exec', 'issuer', 'val'];   // executed, issued, validated — one order on every node
 const signedBy = (run, id) => [
     ...deliveredBy(run, id),
-    ...Object.entries(run?.work.byNode[id] || {}).map(([kind, ms]) =>
+    ...Object.entries(run?.work.byNode[id] || {}).sort(([a], [b]) => ROLE_ORDER.indexOf(a) - ROLE_ORDER.indexOf(b)).map(([kind, ms]) =>
         prop(KIND[kind]?.by.replace(/^./, c => c.toUpperCase()) + ' by',
              Object.entries(ms).map(([m, n]) => `<b${PANEL.model(m)}>${esc(modelName(m))}</b>${n > 1 ? `<sup>×${n}</sup>` : ''}`).join(', '))),
     ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => prop('Unanswered', `<span class="wk-none">${tally(n, `${KIND[k].name} ${n > 1 ? 'sessions' : 'session'}`)}</span>`)),
