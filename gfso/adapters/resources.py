@@ -15,6 +15,7 @@ A number Docker did not give is None, never 0: a sum says how many it summed (`�
 (`read`) — the reading before it served —, and counts no read ever answered are None."""
 import atexit
 import json
+import logging
 import os
 import re
 import subprocess
@@ -43,6 +44,12 @@ _read: dict = {}
 _lock = threading.Lock()
 _watch = threading.Event()
 _asked = [float("-inf")]
+_log = logging.getLogger(__name__)
+#: {key: (when Docker was last asked for it — epoch seconds, why it gave nothing then — None where it answered)}: a page
+#: tells "not read yet" from "Docker does not answer: <why>" (ui)
+_tried: dict = {}
+#: why this thread's last `_docker` got no answer
+_why = threading.local()
 #: who is told each new reading the poller stores — an open page's socket (`/ws/events`, type `resources`)
 LISTENERS: list = []
 
@@ -56,11 +63,26 @@ def size(text) -> int | None:
 
 def _docker(*args) -> list[str] | None:
     """Docker's answer, line by line; None where it gave none — not running, not installed, past `ASK`."""
+    _why.last = None
     try:
         got = run(["docker", *args], timeout=ASK, text=True, encoding="utf-8", errors="replace")
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        _why.last = f"Docker did not answer within {ASK:g} s"
         return None
-    return (got.stdout or "").splitlines() if got.returncode == 0 else None
+    except OSError:
+        _why.last = "Docker could not be run — is it installed?"
+        return None
+    if got.returncode:
+        # …a short reason for the page; Docker's own words, which name its socket and endpoint, for the server's log
+        err = (got.stderr or "").strip()
+        _why.last = ("Docker refused this user access" if re.search(r"permission denied", err, re.I) else
+                     "Docker's engine is not running" if re.search(
+                         r"cannot connect to the docker daemon|error during connect|docker_?engine|"
+                         r"dockerDesktopLinuxEngine|is the docker daemon running", err, re.I)
+                     else f"docker {args[0]} exited {got.returncode}")
+        _log.info(f"docker {args[0]} gave no reading: {err[-300:]}")
+        return None
+    return (got.stdout or "").splitlines()
 
 
 def _cached(key: str, fresh: float, read) -> tuple:
@@ -70,8 +92,10 @@ def _cached(key: str, fresh: float, read) -> tuple:
     8.8 s behind a slow `system df`)."""
     at, value, ok, taken = _read.get(key, (0.0, None, False, None))
     if time.perf_counter() - at > fresh:
+        _why.last = None
         got = read()
         with _lock:
+            _tried[key] = (time.time(), None if got is not None else (_why.last or "Docker's answer could not be read"))
             at, value, ok, taken = _read.get(key, (0.0, None, False, None))
             ok = got is not None
             value, taken = (got, time.time()) if ok else (value, taken)
@@ -98,7 +122,7 @@ def _parse_stats(lines: list) -> dict:
     out = {}
     for line in lines:
         i, cpu, mem, pids = (line.split("\t") + [""] * 4)[:4]
-        out[i] = (float(cpu.rstrip("%")) if re.fullmatch(r"[\d.]+%", cpu) else None,
+        out[i] = (float(cpu.rstrip("%")) if re.fullmatch(r"\d+(\.\d+)?%", cpu) else None,
                   size(mem.split("/")[0]), int(pids) if pids.isdigit() else None)
     return out
 
@@ -203,7 +227,9 @@ class Live:
         self.stale = {"ps", "volumes"}
         #: this installation's home, as its containers' label and its volumes' names carry it
         self.home = installation()
-        self.told: dict = {}
+        self.told: tuple = ()
+        #: the streams this server ended itself — their end is no word of Docker's (critic: an idle stop read as down)
+        self.dropped: set = set()
 
     def tick(self) -> None:
         """One second of the server's reading: the streams kept up while wanted, what an event made stale read again,
@@ -229,7 +255,8 @@ class Live:
 
     def tell(self) -> None:
         """What is new since the last tick, told to the listeners."""
-        now = {k: v[0] for k, v in _read.items()}       # …each read's own moment, on a clock fine enough that two differ
+        with _lock:     # …each read's own moment, on a clock fine enough that two differ, and each ask's outcome
+            now = ({k: v[0] for k, v in _read.items()}, dict(_tried))
         if now != self.told:
             self.told = now
             for tell in list(LISTENERS):
@@ -245,18 +272,20 @@ class Live:
                              "--format", "{{.Type}}\t{{.Actor.ID}}\t{{index .Actor.Attributes \"" + HOME + "\"}}"])
         stats = self.spawn(["docker", "stats", "--format", _STATS])
         self.procs = [events, stats]
-        threading.Thread(target=self.events, args=(events.stdout,), daemon=True).start()
-        threading.Thread(target=self.stats, args=(stats.stdout,), daemon=True).start()
+        threading.Thread(target=self.events, args=(events.stdout, events), daemon=True).start()
+        threading.Thread(target=self.stats, args=(stats.stdout, stats), daemon=True).start()
 
     def stop(self) -> None:
         """Both streams ended — Docker's client, a process of its own with none under it."""
+        # …only a stream still running: one already dead was ended by Docker, and its reader says so (critic)
+        self.dropped.update(p for p in self.procs if p.poll() is None)
         for p in self.procs:
             p.kill()
             p.wait()
             release(p)                                # …reaped and forgotten: a restart leaks no process nor its pipe
         self.procs = []
 
-    def events(self, lines) -> None:
+    def events(self, lines, proc=None) -> None:
         """Each event of this installation's makes the list stale; a volume's, the disk too — a container by its label, a
         volume by its name, which carries the installation's home (`execution.Volume`)."""
         for line in lines:
@@ -265,8 +294,9 @@ class Live:
                 self.stale |= {"ps", "volumes"}
             elif kind == "container" and home == self.home:
                 self.stale |= {"ps"}
+        self.dropped.discard(proc)                    # …its end needs no word, and holds no place in the set after
 
-    def stats(self, lines) -> None:
+    def stats(self, lines, proc=None) -> None:
         """Frames as Docker draws them for a terminal, each opening with the cursor sent home: one reading each."""
         frame: list = []
         for line in lines:
@@ -275,9 +305,13 @@ class Live:
                 frame = []
             if row := re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).strip():
                 frame.append(row)
+        if proc is not None and proc in self.dropped:
+            self.dropped.discard(proc)                # …ended by this server, not by Docker: nothing to say of it
+            return
         with _lock:                                   # …the stream ended: the last reading stands, said as not fresh
             at, value, _, taken = _read.get("stats", (0.0, None, False, None))
             _read["stats"] = (at, value, False, taken)
+            _tried["stats"] = (time.time(), "Docker's stats stream ended")
 
 
 def _spawn(argv: list):
@@ -290,6 +324,7 @@ def _spawn(argv: list):
 def _store(key: str, value) -> None:
     with _lock:
         _read[key] = (time.perf_counter(), value, True, time.time())
+        _tried[key] = (_read[key][3], None)
 
 
 def _stored(key: str) -> tuple:
@@ -309,6 +344,8 @@ def held(known: set | None = None) -> dict:
         lines, ps_ok, ps_at = _stored("ps")
         volumes, disk_ok, disk_at = _stored("volumes")
         machine, _, _ = _stored("machine")
+        tried = {k: _tried.get(src, (None, None)) for k, src in (("containers", "ps"), ("stats", "stats"),
+                                                                  ("disk", "volumes"))}
     rows = [_container(line.split("\t"), stats or {}) for line in lines or []]
     volumes = volumes or []
     ours, older = [r for r in rows if r["home"] == installation()], [r for r in rows if not r["home"]]
@@ -318,6 +355,8 @@ def held(known: set | None = None) -> dict:
             "read": {"containers": ps_ok, "stats": stats_ok, "disk": disk_ok},
             # …and when each reading given was taken (epoch seconds; None: none yet), so a reader can say its age
             "read_at": {"containers": ps_at, "stats": stats_at, "disk": disk_at},
+            # …and when Docker was last asked for each, and why it gave nothing then (None: it answered; ui)
+            "tried_at": {k: t for k, (t, _) in tried.items()}, "error": {k: e for k, (_, e) in tried.items()},
             "projects": [_project(p, [r for r in ours if r["project"] == p] if lines is not None else None,
                                   [v for v in volumes if v["project"] == p], held_as) for p in projects],
             "older_build": {"containers": len(older) if lines is not None else None, **_totals(older)}}

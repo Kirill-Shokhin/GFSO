@@ -281,3 +281,72 @@ def test_a_stream_dying_at_once_is_tried_again_ever_later_up_to_a_minute(docker,
         clock[0] += 1.0
     gaps = [b - a for a, b in zip(starts, starts[1:])]
     assert max(gaps) == 60 and gaps[-1] == 60, gaps
+
+
+def test_a_reading_docker_did_not_give_says_when_it_was_asked_and_why(monkeypatch):
+    """Docker down, the page could only say "no reading yet": it told no "not read yet" from "asked, and Docker does not
+    answer: <why>" (ui). Each reading says when Docker was last asked for it and why it gave nothing; answered, no why."""
+    monkeypatch.setattr(R, "_read", {})
+    monkeypatch.setattr(R, "_tried", {})
+    monkeypatch.setattr(R, "watch", lambda: None)
+    answer = {"rc": 1}
+    monkeypatch.setattr(R, "run", lambda args, **k: subprocess.CompletedProcess(
+        args, answer["rc"], "" if answer["rc"] else "", "error during connect: the engine is down" if answer["rc"] else ""))
+    R.refresh()
+    got = R.held()
+    assert got["read_at"] == {"containers": None, "stats": None, "disk": None}
+    assert all(got["tried_at"][k] for k in ("containers", "stats", "disk")), got["tried_at"]
+    assert got["error"]["containers"] == "Docker's engine is not running", got["error"]
+    answer["rc"] = 0
+    monkeypatch.setattr(R, "_read", {})
+    R.refresh()
+    assert R.held()["error"]["containers"] is None
+
+
+def test_a_stream_the_server_ended_is_no_word_of_docker_and_one_that_died_is_told(monkeypatch):
+    """An idle stop or a restart of the stats stream read as "Docker does not answer" about a healthy Docker, and a
+    stream that died changed nothing a page was told (critic): the server's own end says nothing; Docker's is told."""
+    monkeypatch.setattr(R, "_read", {})
+    monkeypatch.setattr(R, "_tried", {})
+    live, mine, its = R.Live(spawn=lambda argv: None), object(), object()
+    live.dropped.add(mine)
+    live.stats([], mine)
+    assert "stats" not in R._tried and mine not in live.dropped
+    R._read["stats"] = (5.0, {}, True, 1.0)            # …a reading stands: the stream's end changes no moment of it
+    told = []
+    monkeypatch.setattr(R, "LISTENERS", [lambda: told.append(1)])
+    live.tell()
+    live.stats([], its)
+    live.tell()
+    assert R._tried["stats"][1] == "Docker's stats stream ended" and len(told) == 2, (R._tried, told)
+
+
+def test_a_timeout_is_said_without_the_command_it_ran(monkeypatch):
+    def late(args, **k):
+        raise subprocess.TimeoutExpired(args, 20)
+    monkeypatch.setattr(R, "run", late)
+    assert R._docker("ps", "--filter", "label=secret") is None and R._why.last == f"Docker did not answer within {R.ASK:g} s"
+
+
+@pytest.mark.parametrize("err, said", [
+    ("permission denied while trying to connect to the Docker daemon socket", "Docker refused this user access"),
+    ("error during connect: open //./pipe/dockerDesktopLinuxEngine", "Docker's engine is not running"),
+    ("Error response from daemon: something else", "docker ps exited 1")])
+def test_a_reason_names_what_docker_said_and_guesses_nothing(monkeypatch, err, said):
+    monkeypatch.setattr(R, "run", lambda args, **k: subprocess.CompletedProcess(args, 1, "", err))
+    assert R._docker("ps") is None and R._why.last == said
+
+
+def test_a_stream_already_dead_at_the_stop_is_dockers_and_none_stays_in_the_set(monkeypatch):
+    monkeypatch.setattr(R, "_read", {"stats": (5.0, {}, True, 1.0)})
+    monkeypatch.setattr(R, "_tried", {})
+    dead = type("P", (), {"poll": lambda s: 1, "kill": lambda s: None, "wait": lambda s: 0})()
+    alive = type("P", (), {"poll": lambda s: None, "kill": lambda s: None, "wait": lambda s: 0})()
+    live = R.Live(spawn=lambda argv: None)
+    live.procs = [alive, dead]
+    monkeypatch.setattr(R, "release", lambda p: None)
+    live.stop()
+    assert live.dropped == {alive}
+    live.events([], alive)
+    live.stats([], dead)
+    assert live.dropped == set() and R._tried["stats"][1] == "Docker's stats stream ended"
