@@ -590,6 +590,10 @@ body {
 .tooltip .tt-meter { display: grid; grid-template-columns: 96px 1fr 50px; align-items: center; gap: 8px; margin: 4px 0; font-size: 11px; color: var(--ui-text-soft); }
 .tooltip .tt-meter i { display: block; height: 4px; background: var(--hair); min-width: 80px; }
 .tooltip .tt-meter b { display: block; height: 100%; background: var(--ink-soft); }
+/* a mark on the meter's own scale (a budget), and the fill past it in the accent (hints.js meterAt) */
+.tooltip .tt-meter i { position: relative; }
+.tooltip .tt-meter u { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); }
+.tooltip .tt-meter b.over { background: var(--acc); }
 .tooltip .tt-meter em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; color: var(--ui-text); }
 .tooltip .tt-hint { color: var(--ui-text-faint); font-size: 10px; margin-top: 6px; }
 

@@ -18,7 +18,7 @@
 //              projects.js delete, acts.js, goal.js); forms' own field help (index.html goal panel, goal.js).
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
-import {dur, hm, usd, money, NOT_REPORTED, tok, pct, cap, plural, bare} from './fmt.js';
+import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural, bare} from './fmt.js';
 import {S} from './state.js';
 import {statesIn, label, TOKENS, nameOf} from './vocab.js';
 
@@ -32,9 +32,11 @@ export const hover = (head, ...rows) => head ? ` data-tip="${esc(lines([head, ro
 const METER = '\u0007';
 // …its figure at the end is the percent, or the sum the share is of (a role's cost)
 export const meter = (label, share, figure = '') => `${METER}${label}\t${share}\t${figure}`;
+// …and a meter may carry a mark on its own scale (`at`): a budget beside where a session stopped, its fill in the accent past it
+export const meterAt = (label, share, figure, at) => `${meter(label, share, figure)}\t${at}`;
 const row = r => { if (!r.startsWith(METER)) return `<div class="tt-row">${esc(r)}</div>`;
-    const [label, share, figure] = r.slice(1).split('\t'), p = pct(+share);
-    return `<div class="tt-meter"><span>${esc(label)}</span><i><b style="width:${p}"></b></i><em>${esc(figure || p)}</em></div>`; };
+    const [label, share, figure, at] = r.slice(1).split('\t'), p = pct(+share), over = at && +share > +at;
+    return `<div class="tt-meter"><span>${esc(label)}</span><i><b${over ? ' class="over"' : ''} style="width:${p}"></b>${at ? `<u style="left:${pct(+at)}"></u>` : ''}</i><em>${esc(figure || p)}</em></div>`; };
 export const card = (head, rows = [], badge = '') => { const [h, figure] = head.split('\t');
     return `${h ? `<div class="tt-name${figure ? ' tt-split' : ''}"><span>${esc(h)}</span>${figure ? `<b>${esc(figure)}</b>` : ''}</div>` : ''}${badge}`
         + lines(rows).map(row).join(''); };
@@ -109,6 +111,7 @@ const FRAME = {
     close: ['Close', 'Esc'],
     grip: ['Drag to resize'],
     fold: ['Fold the deck', 'The open tab pressed again folds it too'],
+    unfold: ['Unfold the deck', 'Any tab unfolds it too'],
     dismiss: ['Click to dismiss'],
     deadline: ['Deadline', 'When this part is due — before its parent is'],
     deleteProject: ['Delete this project', 'Offered only for a project that never ran: no model call, nothing spent',
@@ -198,7 +201,7 @@ export const KIND = {
     consent: K('consent',    'consent',     'consented', 'reading the contract'),
     val:     K('validation', 'validation',  'validated', 'validating'),
     issuer:  K('issuer',     'issuer turn', 'issued',    "the issuer's turn"),
-    plan:    K('planning',   'planning',    'planned',   'planning'),
+    plan:    K('planning',   'planning session', 'planned', 'planning'),
 };
 // a role's sessions counted in words — «46 executions», «9 issuer turns» — so a count needs no line explaining it
 export const sessionsOf = (kind, n) => plural(n, KIND[kind]?.count || kind);
@@ -275,7 +278,10 @@ export const PANEL = {
 
 // ── the views' own tips ── the heading carries what is looked for — the verdict and its count, the cost, the time —
 // and the rows under it say where and why (the author, 2026-10-27: «ни одна цифра не должна быть в помойке»)
-const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total} pass`;
+// …the heading's count beside its signal says the count alone: «PASS 16/16 pass» said pass twice (audit B15)
+const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total}`;
+// when a piece of work ran: to the minute, or to the second where it took less than one («13:53–13:53» for 25 s)
+const span = s => { const f = s.end - s.start < 60e3 && !s.open ? hms : hm; return `${f(s.start)}–${s.open ? 'now' : f(s.end)}`; };
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
     node: (t, name, badge, waits, rs, criteria, failing) => card(name || '',
@@ -291,12 +297,14 @@ export const TIP = {
     // …and the whole stretch it is part of in one line (`x`): its total no longer has a piece of its own (critic 17); a
     // validation's piece keeps the round's verdict and what failed, its own result
     session: (m, x, p, r, f, name, who) => card(`${cap(KIND[m.kind].name)}, ${dur(m.end - m.start)}${m.cost ? `\t${usd(m.cost)}` : ''}`, [
-        name, `${hm(m.start)}–${m.open ? 'now' : hm(m.end)}`, m.tokens && `${tok(m.tokens)} tokens`, who,
+        name, span(m), m.tokens && `${tok(m.tokens)} tokens`, who,
         r && (m.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : `Round ${r.n}`), m.kind === 'val' && f && failedRows(f),
         m.resumed && 'Continued the session before it',
+        // ONE meter on the window's scale: where it stopped filled, its budget a mark on the same line — two near-empty
+        // meters side by side read 114k against 50k as 30k against 50k (audit B14)
         ...(!m.handover ? [] : m.peak && m.window ? [`Passed on, of the ${tok(m.window)} window:`,
-            meter('stopped at', m.peak / m.window, tok(m.peak)),
-            m.budget ? meter('its budget', m.budget / m.window, tok(m.budget)) : 'Its budget not recorded (an older build)']
+            m.budget ? meterAt('stopped at', m.peak / m.window, tok(m.peak), m.budget / m.window) : meter('stopped at', m.peak / m.window, tok(m.peak)),
+            m.budget ? `Its budget, the mark: ${tok(m.budget)}` : 'Its budget not recorded (an older build)']
             : ['Passed on, its context not recorded']),
         `Session ${p + 1} of ${x.members.length} in a stretch of ${dur(x.end - x.start)}${x.cost ? `, ${usd(x.cost)}` : ''}`,
         m.priced === false && 'No cost recorded for this call']),
@@ -308,7 +316,7 @@ export const TIP = {
     // it worked; the verdict and what failed are the validation's own result and the round's mark's; who ran it only where
     // the node had more than one (`who`, timeline.js), without the project's name every id carries.
     bar: (x, r, f, name, who) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
-        name, `${hm(x.start)}–${x.open ? 'now' : hm(x.end)}`, x.tokens && `${tok(x.tokens)} tokens`, who,
+        name, span(x), x.tokens && `${tok(x.tokens)} tokens`, who,
         r && (x.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : `Round ${r.n}`), x.kind === 'val' && f && failedRows(f),
         x.parts > 1 && [`${x.parts} processes, ${dur(x.busy)} busy`, x.kind === 'val' ? 'the validator works in batches of probes'
             : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.retried > 0 && `${x.retried} retried`]
@@ -318,6 +326,9 @@ export const TIP = {
     verdict: (signal, r, t, f, m, total, name) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
         name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
     cell: (name, also) => hover(name, also),
+    waits: names => hover(`Waits on ${names.length}`, names.map(n => `– ${n}`)),
+    // a ⊥ standing alone: which absence it is
+    noValue: why => hover('No value', cap(NO_VALUE[why])),
     // a role's part of a row in spend: itself alone — its figure, its share of the row, its sessions, time and tokens
     // …the heading's figure is the chart's measure (`says`), never said again below it
     part: (k, figure, share, p, says) => hover(`${cap(KIND[k]?.name || k)}\t${figure}`, meter('of the row', share),

@@ -9,7 +9,7 @@ import {trim, bare} from './fmt.js';
 import {S} from './state.js';
 import {failedOf} from './run.js';
 import {label} from './vocab.js';
-import {TIP, KIND, waitWords} from './hints.js';
+import {TIP, KIND} from './hints.js';
 
 // an outlined bar (an issuer's turn, a consent) is drawn over the filled ones: it can run beside an execution or a
 // validation (a challenge answered while the work goes on), and beneath them it hid; its outline shows what lies under it
@@ -17,8 +17,8 @@ const HOLLOW = new Set(['consent', 'issuer']);
 // an outlined kind narrower than THIN px is drawn as a filled tick of its outline's ink: a few px of outline read as «0»
 // beside a name (audit B3)
 const OUTLINED = new Set([...HOLLOW, 'plan']), THIN = 6;
-const ROW = 26, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
-const STEM = 9, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
+const ROW = 28, CONC = 34, TOP = 30 + CONC + 14, LEFT = 140, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
+const STEM = 7, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
 
 // Rows: the goal's first; then what is at work now; then every node that has worked, in the order it
 // first started; the nodes that never ran last, saying what they wait on.
@@ -74,10 +74,12 @@ export function render(el, run, nodes) {
         return `<g class="tl-v" data-v="${r.n}" data-k="v|${esc(id)}|${r.n}"><line class="tl-stem" x1="${x}" x2="${x}" y1="${y - 2}" y2="${y - STEM}"/>${mark(r.verdict, x, y - STEM - 3.5, 3.5)}</g>`; }).join('');
     const state = Object.fromEntries(nodes.map(n => [n.id, n.state]));
     // the names it waits on cut to fit: the whole of them on hover
-    const waitsOn = (id, cut) => `waits on ${waitWords(run.waits[id], d => cut ? trim(name(d), 24) : name(d))}`;
-    const idle = id => run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : !run.waits[id]?.deps.length
+    // …its first producer and how many more, the whole list one name a row on hover — joined by commas, names that carry
+    // commas ran a row out to 1000 px and could not be counted (audit B8; the graph's tip and the panel say it so too)
+    const idle = id => { const deps = run.waits[id]?.deps || [];
+        return run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : !deps.length
         ? `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${esc(label(state[id]).toLowerCase())}</text>`
-        : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}"${TIP.cell(waitsOn(id))}>${esc(waitsOn(id, true))}</text>`;
+        : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}"${deps.length > 1 || name(deps[0]).length > 32 ? TIP.waits(deps.map(name)) : ''}>waits on ${esc(trim(name(deps[0]), 32))}${deps.length > 1 ? ` +${deps.length - 1}` : ''}</text>`; };
     // the bar kinds are a LABEL (hints.js): read each time, so drawn beside the bars; PASS and FAIL are the key's
     // consent shown only where a run has it: rows recorded before it was booked apart have none
     // …and planning only where the run planned (audit B4: 25 planning bars stood with no word for them)

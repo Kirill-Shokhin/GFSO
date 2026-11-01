@@ -2,7 +2,7 @@
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
 import {$, esc, tally, since, lasting, phone} from './dom.js';
-import {frame, TAB, STRIP, doing} from './hints.js';
+import {frame, frameText, TAB, STRIP, doing} from './hints.js';
 import {S, procs, kept, keep} from './state.js';
 import {nameOf, label} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
@@ -125,6 +125,8 @@ const TIMED = new Set(['timeline', 'progress']);
 export function paint() {
     const d = $('deck');
     d.classList.toggle('closed', !!pref.closed);
+    // the fold's tip says what a press does now (audit B13)
+    d.querySelector('.dk-fold').dataset.tip = frameText(pref.closed ? 'unfold' : 'fold');
     drawStrip();
     d.querySelectorAll('.dk-tab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
     const run = S.run, el = d.querySelector('.dk-view'), drawn = pref.closed || !run ? null : view;

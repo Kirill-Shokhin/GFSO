@@ -68,10 +68,12 @@ function tracks(el, run, name, tasks, hot) {
             ${T.marks.map((m, j) => `<g data-m="${esc(r.id)}:${j}" data-k="m|${esc(r.id)}|${m.t}">${m.signal === 'FAIL'   // a FAIL above the area stands on a stem, so its height reads
                 ? `<line class="pg-stem" x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${y0}" y2="${at(m.k)}"/>` : ''}${mark(m.signal, f.X(m.t), at(m.k), r.d ? 3.5 : 5)}</g>`).join('')}</g>`;
     }).join('');
-    const H = y + 6, root = rs.find(r => !r.d);
+    // the axis labelled as the timeline's is (ticks without times read as a grid of nothing — audit B7); the goal's done
+    // mark said under the tracks, clear of the labels
+    const H = y + 18, root = rs.find(r => !r.d);
     const miles = (root ? tr[root.id].marks : []).filter(m => m.signal === 'PASS').map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>
-        <text x="${f.X(m.t) - 4}" y="${TOP - 10}">goal done ${hm(m.t)}</text></g>`).join('');
-    return `<svg class="pg" width="${W}" height="${H}">${f.ticks(TOP - 6, H)}${f.folds(TOP - 6, H, H)}${miles}${body}</svg>`;
+        <text x="${f.X(m.t) - 4}" y="${H - 3}" text-anchor="end">goal done ${hm(m.t)}</text></g>`).join('');
+    return `<svg class="pg" width="${W}" height="${H}">${f.ticks(TOP - 6, H - 14, TOP - 10)}${f.folds(TOP - 6, H - 14, H - 3)}${miles}${body}</svg>`;
 }
 
 // The goal's coverage: each root criterion, the parts the split made responsible for it (§2.4), the
@@ -86,9 +88,10 @@ function coverage(run, nodes, tasks) {
     const cell = (c, k) => !maps.some(m => m.criterion_name === c && m.child_id === k) ? '<td></td>'
         : `<td data-node="${esc(k)}" data-k="${esc(`cov|${c}|${k}`)}"${TIP.cell(name(k), c)}><i class="cv cv-${kind(k)}"></i></td>`;
     const rows = run.criteria.names[root.id].map(c => `<tr><th${c.length > 30 ? TIP.cell(c) : ''}>${esc(trim(c, 30))}</th>
-        ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase()) : '⊥'}</td></tr>`).join('');
+        ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase())
+            : `<span${TIP.noValue((run.rounds[root.id] || []).some(r => r.verdict) ? 'current' : 'unchecked')}>⊥</span>`}</td></tr>`).join('');
     return `<table class="pg-cov"><thead><tr><th class="sec">the goal's criteria</th>
-        ${kids.map(k => `<th class="kid" data-node="${esc(k)}"><span>${esc(trim(name(k), 14))}</span></th>`).join('')}<th class="kid"><span>root</span></th></tr></thead>
+        ${kids.map(k => `<th class="kid" data-node="${esc(k)}"${name(k).length > 14 ? TIP.cell(name(k)) : ''}><span>${esc(trim(name(k), 14))}</span></th>`).join('')}<th class="kid"><span>the goal</span></th></tr></thead>
         <tbody>${rows}</tbody></table>
         <p class="pg-legend">${CELLS.filter(([k]) => k !== 'gone' || kids.some(x => kind(x) === 'gone')).map(([k, t]) => `<i class="cv cv-${k}"></i>${t}`).join(' ')}</p>`;
 }
