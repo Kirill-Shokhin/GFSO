@@ -368,11 +368,19 @@ def _watch_ceiling(stop: threading.Event | None = None) -> None:
     containers; their rounds meet it as their own bound. Nobody over a share, nothing is ended and nothing is slowed:
     the kernel's kill at the ceiling stays the last resort, for a runaway faster than a turn. Every `CEILING_WATCH_S`."""
     group, every = CEILING_GROUP, CEILING_WATCH_S
-    reader = f"{group.replace('/', '-')}-ceiling-reader"
+    reader, stands = f"{group.replace('/', '-')}-ceiling-reader", True     # …one a server before this left, gone at its first turn
     while not (stop or threading.Event()).wait(every):
         if not ceiling():
             continue
         try:
+            # …NO WORK ON THE MACHINE, NO READER: an idle server holds no container and reads nothing inside Docker. Up within a
+            # turn of work's first container, long before anything in it can press on the ceiling, and gone with its last.
+            if not (run(["docker", "ps", "-q", "--filter", f"label={HOME}"], timeout=30, text=True).stdout or "").strip():
+                if stands:
+                    run(["docker", "rm", "-f", reader], timeout=60)
+                    stands = False
+                continue
+            stands = True
             got = run(["docker", "exec", reader, "sh", "-c", _READ_GROUP, "sh", group], timeout=30, text=True)
             if got.returncode:
                 run(["docker", "rm", "-f", reader], timeout=60)

@@ -283,13 +283,13 @@ def test_live_near_the_ceiling_the_watch_ends_only_the_runaway(monkeypatch, case
                                "--cgroup-parent", f"/{group}", IMAGE, "python3", "-c", body],
                               capture_output=True, text=True).stdout.strip()
     try:
-        # …the watch up first, its reader standing, as for a server's life: started after the runaway, it lost the race
+        # …the reader standing before the runaway, as with the first work of a server: started after it, it lost the race
         (watch := E.threading.Thread(target=E._watch_ceiling, args=(stop,), daemon=True)).start()
+        ids.append(start("honest", honest))
         for _ in range(60):
             if subprocess.run(["docker", "exec", reader, "true"], capture_output=True).returncode == 0:
                 break
             time.sleep(1)
-        ids.append(start("honest", honest))
         time.sleep(3)
         ids += [start("runaway" if ended else f"other{k}", other) for k in range(n)]
         codes = [subprocess.run(["docker", "wait", i], capture_output=True, text=True, timeout=180).stdout.strip()
@@ -305,27 +305,42 @@ def test_live_near_the_ceiling_the_watch_ends_only_the_runaway(monkeypatch, case
         _cgroup(f"rmdir /cg/{group}")
 
 
-def test_live_with_no_group_yet_the_reader_stands_and_is_not_made_again(monkeypatch):
-    """On a Docker where no work has run the group does not exist yet: an idle server's reader was removed and made again
-    every turn, for ever, on any new installation (2026-11-02, a Docker wiped clean)."""
+def test_live_the_reader_stands_only_while_work_does(monkeypatch):
+    """An idle server holds no container: the author, on a Docker wiped clean, «кто такой busybox и почему он все еще работает».
+    With work the reader stands, once, whether or not the group exists yet (it was removed and made again every turn, for
+    ever, on any new installation); with the last of it, it goes."""
     group = f"{E.CEILING_GROUP}/no-such-group-{os.getpid()}"
     monkeypatch.setattr(E, "CEILING_GROUP", group)
     monkeypatch.setattr(E, "CEILING_WATCH_S", 1.0)
     monkeypatch.setattr(E, "_CEILING", {"flags": ["--cgroup-parent", f"/{group}"]})
-    reader, stop = f"{group.replace('/', '-')}-ceiling-reader", E.threading.Event()
+    reader, stop, work = f"{group.replace('/', '-')}-ceiling-reader", E.threading.Event(), None
     inspect = lambda: subprocess.run(["docker", "inspect", "-f", "{{.Id}}", reader], capture_output=True, text=True).stdout.strip()
+    theirs = subprocess.run(["docker", "ps", "-q", "--filter", f"label={E.HOME}"], capture_output=True, text=True).stdout.strip()
+    if theirs:
+        pytest.skip("other work stands on this machine")
     (watch := E.threading.Thread(target=E._watch_ceiling, args=(stop,), daemon=True)).start()
     try:
-        for _ in range(60):
+        time.sleep(3)
+        assert not inspect(), "a reader stands with no work on the machine"
+        work = subprocess.run(["docker", "run", "-d", "--network", "none", "--label", f"{E.HOME}=h", E.CEILING_IMAGE, "sleep", "60"],
+                              capture_output=True, text=True).stdout.strip()
+        for _ in range(30):
             if first := inspect():
                 break
             time.sleep(1)
         time.sleep(5)
         assert first and inspect() == first, "the reader was made again"
+        subprocess.run(["docker", "rm", "-f", work], capture_output=True)
+        work = None
+        for _ in range(30):
+            if not inspect():
+                break
+            time.sleep(1)
+        assert not inspect(), "the reader outlived the work"
     finally:
         stop.set()
         watch.join(timeout=60)
-        subprocess.run(["docker", "rm", "-f", reader], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", reader, *([work] if work else [])], capture_output=True)
 
 
 def test_a_judges_build_the_watch_ended_is_asked_again_not_the_deliverys_fail(monkeypatch, tmp_path):
