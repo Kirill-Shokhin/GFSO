@@ -269,42 +269,47 @@ def _admitted(criterion: dict) -> bool:
         Probe.of(p) for p in criterion.get("check") or ()))])
 
 
-def _patched_admissible(spec: dict, fixed: dict, named: str, progress) -> dict:
-    """`_patched`, less what the patch itself made refusable: a criterion it rewrote into what the admission refuses keeps
-    its earlier admitted text; one refused under a name the node did not have leaves, and what it may have replaced, an
-    admitted criterion the patch left out of that node, comes back, nothing tying the two; a part the patch added left
-    with no criterion leaves with its seams. Nothing re-reads the last round's patch, so a repair of other findings that
-    wrote a probe naming an unpinned file ended a paid authoring at its build (E2 T03, 2026-11-02). A criterion refused
-    before the patch too stays as written: it is the repair's own to finish, or the build's to refuse."""
-    out, undone = _patched(spec, fixed, named), []
+def _taken_back(history: list, spec: dict, progress, contract_fixed: bool = False) -> dict:
+    """`spec` as it may go to the build when no repair round follows: a criterion the admission refuses goes back to its
+    latest admitted text in `history`, the versions before it, oldest first; one that never had any leaves, said here, and an admitted criterion
+    the last patch left out of that node comes back, nothing tying the two; a part left with no criterion leaves with its
+    seams. A refused probe ended a paid authoring at its build after the rounds were spent (E2 T03, 2026-11-02). Only at
+    the end of the rounds: taken back earlier, the next round is never told what it could still finish (critic)."""
+    out, undone = dict(spec), []
 
-    def held(where: str, before, after) -> list:
-        """`after`'s criteria of one node, what this patch made refusable taken back."""
-        was = {c.get("name"): c for c in before or ()}
+    def versions(of) -> list:
+        """A node's criteria through `history`, the latest first."""
+        return [c for h in reversed(history) for c in of(h) or ()]
+
+    def held(where: str, of) -> list:
+        """One node's criteria as they may go to the build."""
         kept, left = [], False
-        for c in after or ():
-            old = was.get(c.get("name"))
-            if _admitted(c) or (old is not None and not _admitted(old)):
+        for c in of(spec) or ():
+            name = c.get("name")
+            if _admitted(c):
                 kept.append(c)
-            elif old is not None:
-                undone.append(f"{where} / {c.get('name')} keeps its earlier text")
+            elif old := next((v for v in versions(of) if v.get("name") == name and _admitted(v)), None):
+                undone.append(f"{where} / {name} goes back to its admitted text")
                 kept.append(old)
             else:
-                undone.append(f"{where} / {c.get('name')} leaves")
+                undone.append(f"{where} / {name} leaves: no version of it was admitted")
                 left = True
         here = {c.get("name") for c in kept}
-        return kept + [c for c in before or () if left and c.get("name") not in here and _admitted(c)]
-    out["root_criteria"] = held(ROOT_ID, spec.get("root_criteria"), out.get("root_criteria"))
-    earlier = {k.get("id"): k for k in spec.get("subtasks") or ()}
-    kids = [{**k, "criteria": held(str(k.get("id")), (earlier.get(k.get("id")) or {}).get("criteria"), k.get("criteria"))}
-            for k in out.get("subtasks") or ()]
-    out["subtasks"] = [k for k in kids if k["criteria"] or k.get("id") in earlier]
-    parts, roots = {k.get("id") for k in out["subtasks"]}, {c.get("name") for c in out["root_criteria"]}
+        return kept + [c for c in of(history[-1]) or () if left and c.get("name") not in here and _admitted(c)]
+
+    def part_of(pid):
+        """Reads part `pid`'s criteria off a version of the spec."""
+        return lambda h: next((k.get("criteria") for k in h.get("subtasks") or () if k.get("id") == pid), None)
+    if not contract_fixed:
+        out["root_criteria"] = held(ROOT_ID, lambda h: h.get("root_criteria"))
+    kids = [{**k, "criteria": held(str(k.get("id")), part_of(k.get("id")))} for k in spec.get("subtasks") or ()]
+    out["subtasks"] = [k for k in kids if k["criteria"]]
     if undone:
-        out["mappings"] = [m for m in out.get("mappings") or () if m.get("child_id") in parts and m.get("criterion") in roots]
-        out["deps"] = [d for d in out.get("deps") or () if d.get("from") in parts and d.get("to") in parts]
-        _progress(f"repair: what the patch made refusable is taken back: " + " | ".join(undone), progress)
-    return out
+        parts, roots = {k.get("id") for k in out["subtasks"]}, {c.get("name") for c in out.get("root_criteria") or ()}
+        out["mappings"] = [m for m in spec.get("mappings") or () if m.get("child_id") in parts and m.get("criterion") in roots]
+        out["deps"] = [d for d in spec.get("deps") or () if d.get("from") in parts and d.get("to") in parts]
+        _progress("repair: the rounds are spent, what the admission refuses is taken back: " + " | ".join(undone), progress)
+    return out if undone else spec
 
 
 def _repaired_before_build(spec: dict, request: str, llm, executor: str, progress, contract_fixed: bool,
@@ -313,6 +318,7 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
     repaired before anything is built (bounded by REPAIR_ROUNDS); a patch that rewrote criteria is judged again.
     `closed`: the plan is the user's, handed in whole — refused as it stands, never rewritten by a model."""
     agree.judge(spec)
+    history = [spec]
     for r in range(REPAIR_ROUNDS):
         if not (refused := _refused_probes(spec, contract_fixed) + seam_problems(spec) + agree.repair()):
             break
@@ -327,10 +333,11 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
                   + " | ".join(x[:140] for x in refused), progress)
         fixed = _audit_fix(llm, request, spec, refused, executor) or {}
         tag_stage(llm, f"{Stage.AUDIT_FIX}-pre-{r + 1}")
-        spec = _patched_admissible(spec, fixed, " | ".join(map(str, refused)), progress)
+        history.append(spec)
+        spec = _patched(spec, fixed, " | ".join(map(str, refused)))
         if any(k in fixed for k in _CRITERIA_FIELDS):
             agree.judge(spec)
-    return spec
+    return spec if closed else _taken_back(history, spec, progress, contract_fixed)
 
 
 def repaired_before_build(spec: dict, request: str, llm, executor: str, progress, engine: Engine, root_id: str) -> dict:
@@ -396,7 +403,8 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             tag_stage(llm, f"{Stage.AUDIT_FIX}-{r + 1}")
             if not fixed:
                 break  # repair call failed — return the honest residue
-            spec = hold(_patched_admissible(spec, fixed, " | ".join(map(str, problems)), progress))
+            # …the build reads this patch at once and refuses it there: no round of its own would ever be told
+            spec = hold(_taken_back([spec], _patched(spec, fixed, " | ".join(map(str, problems))), progress, contract_fixed))
             patched = [k for k in fixed if k in _fields(fixed)]
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
             if any(k in fixed for k in _CRITERIA_FIELDS):

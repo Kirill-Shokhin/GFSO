@@ -63,16 +63,41 @@ def test_a_refused_new_criterion_does_not_take_the_fix_beside_it_back(monkeypatc
     assert [c["name"] for c in kids["b"]["criteria"]] == ["open"] and kids["b"]["criteria"][0]["check"]
 
 
+def test_a_patch_a_later_round_can_still_finish_is_left_to_it(monkeypatch):
+    """Round 1 breaks `design`, round 2 is told and pins it: taken back on the spot, it was never told (critic)."""
+    told = []
+    patches = iter([{"subtasks": [kids_a() | {"criteria": [_bad("design")]}, _FIXED_B]},
+                    {"subtasks": [kids_a() | {"criteria": [_ok("design", "./prog --new")]}]}])
+    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or next(patches, {}))
+    e = make_engine()
+    e.start()
+    try:
+        _, spec, _p = D._build_verified(_plan(), "req", e, "root", "agent", llm=None)
+    finally:
+        e.stop()
+    assert any("design" in str(x) for x in told[1]), "the second round is told"
+    assert {k["id"]: k for k in spec["subtasks"]}["a"]["criteria"][0]["check"][0]["command"] == "./prog --new"
+
+
+def test_what_no_round_could_pin_leaves_and_the_authoring_goes_on(monkeypatch):
+    """Refused from the start and never repaired: no admitted text to go back to, so it leaves, its part with it, said."""
+    spec, kids = _authored(monkeypatch, {}, {})
+    assert "b" not in kids and "a" in kids and not D._refused_probes(spec)
+    assert not [m for m in spec["mappings"] if m["child_id"] == "b"]
+
+
 def test_a_root_criterion_refused_leaves_with_its_mappings():
     plan = _plan()
-    out = D._patched_admissible(plan, {"root_criteria": [_ok("r", "./prog --r"), _bad("r2")],
-                                       "mappings": plan["mappings"] + [{"criterion": "r2", "child_id": "a"}]}, "", None)
+    bad = {**plan, "root_criteria": [_ok("r", "./prog --r"), _bad("r2")], "mappings": plan["mappings"] + [{"criterion": "r2", "child_id": "a"}]}
+    out = D._taken_back([plan], bad, None)
     assert [c["name"] for c in out["root_criteria"]] == ["r"]
     assert not [m for m in out["mappings"] if m["criterion"] == "r2"]
 
 
 def test_a_new_part_keeps_what_is_admitted_of_it():
-    out = D._patched_admissible(_plan(), {"subtasks": [{"id": "c", "criteria": [_ok("k", "./prog --c"), _bad("x")]}]}, "", None)
+    plan = _plan()
+    bad = {**plan, "subtasks": plan["subtasks"] + [{"id": "c", "criteria": [_ok("k", "./prog --c"), _bad("x")]}]}
+    out = D._taken_back([plan], bad, None)
     assert [c["name"] for c in next(k for k in out["subtasks"] if k["id"] == "c")["criteria"]] == ["k"]
 
 
@@ -84,8 +109,6 @@ def test_a_part_the_patch_adds_with_nothing_admitted_leaves_with_its_seams(monke
     assert not [m for m in spec["mappings"] if m["child_id"] == "c"] and not spec["deps"]
 
 
-def test_a_criterion_refused_before_the_patch_too_stays_the_repair_s():
-    bad = {"root_criteria": [], "subtasks": [{"id": "a", "criteria": [_bad("design")]}]}
-    still = {**_bad("design"), "check": [{"behaviour": "c", "command": "cat {inputs}/other.md", "expect": "y"}]}
-    out = D._patched_admissible(bad, {"subtasks": [{"id": "a", "criteria": [still]}]}, "", None)
-    assert out["subtasks"][0]["criteria"] == [still], "no earlier admitted text to go back to"
+def test_a_contract_held_as_issued_is_not_touched():
+    plan = {**_plan(), "root_criteria": [_bad("held")]}
+    assert D._taken_back([plan], plan, None, contract_fixed=True)["root_criteria"] == plan["root_criteria"]

@@ -145,8 +145,8 @@ def test_the_plan_s_author_repairs_what_the_admission_would_refuse_before_the_bu
 def test_a_field_the_repairer_re_emits_as_null_keeps_the_plan_s_own(monkeypatch):
     """`"subtasks": null` in a repair patch replaced the split with nothing, and the rebuild crashed on it (c_compiler,
     haiku, 2026-10-31): a field re-emitted as null is not re-emitted."""
-    spec = {"root_criteria": [{"name": "c", "check": [{"behaviour": "b", "command": "true", "expect": "0"}]}],
-            "subtasks": [{"id": "a", "criteria": [{"name": "k", "check": [{"behaviour": "b", "command": "true",
+    spec = {"root_criteria": [{"name": "c", "check": [{"behaviour": "b", "command": "./prog --c", "expect": "0"}]}],
+            "subtasks": [{"id": "a", "criteria": [{"name": "k", "check": [{"behaviour": "b", "command": "./prog --c",
                                                                          "expect": "0"}]}]}], "mappings": []}
     built, rounds = [], iter([["a mapping drifted"], []])
     monkeypatch.setattr(D, "build_graph_live", lambda sp, *a, **k: built.append(sp) or (None, "root", []))
