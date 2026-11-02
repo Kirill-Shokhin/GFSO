@@ -149,7 +149,7 @@ function stalled(calls) {
     const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0);
     // …the quiet turns into a stall at a moment known now, with nothing pushed then: the header is drawn again at it
     clearTimeout(wake);
-    if (Date.now() - last <= GAP) return void (wake = setTimeout(drawHeader, last + GAP - Date.now() + 1e3));
+    if (Date.now() - last <= GAP) { wake = setTimeout(drawHeader, last + GAP - Date.now() + 1e3); return ''; }
     // the goal's one stall is no count: «1 stalled» read as one thing stalled among others (audit A6)
     return need(1, `stalled since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled', false);
 }

@@ -72,7 +72,8 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   Models with cost by token kind and context fill, Quality with each metric's grade, Events, resources); a live feed
   in place of polling; a key under «?»; a node panel with criterion histories, the signals the engine admits to this
   person under a mode, and a challenge's acceptance that can retire findings with its why; counts as marks of their own;
-  a layout for phone width; a project that never ran can be deleted from its page.
+  a layout for phone width; a plan too large to read whole folds its parts under a tag that counts what they hide; a
+  project that never ran can be deleted from its page.
 
 ### Fixed
 - The machine issuer answers no question in a subtree `auto_decompose` is still writing: two writers on one split had

@@ -4,6 +4,7 @@ import {$} from './dom.js';
 import {PROJECT} from './api.js';
 import {childrenOf} from './tree.js';
 import {cancelled} from './vocab.js';
+import {runNow} from './run.js';
 
 // THE WHOLE SURFACE, written by its owners and read by the views:
 //   model.js — tasks, graph, closures, missing (the graph read); frontier, runState, waiting, steps, mySteps (the
@@ -17,6 +18,8 @@ export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missin
 
 // the processes this server runs in this project now — the in-flight registry, the one reading of it
 export const procs = () => S.inflight.filter(w => w.project === S.project);
+// what runs now is the run's one reading; before the run is read, the same rule over the registry
+export const nowOf = () => S.run?.now ?? runNow(S.tasks, procs());
 // the project's work has begun: a node exists, or a process runs here — the goal's own plan authored before its root
 // exists is work; read as «nothing yet», the page offered «Pose the goal» and no Stop over a planning run (a live row)
 export const begun = () => S.tasks.length > 0 || procs().length > 0;

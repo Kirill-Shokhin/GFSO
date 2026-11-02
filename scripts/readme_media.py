@@ -1,7 +1,8 @@
 """Rebuild the README's pictures of the page from a recorded run — one command, the same paths every time.
 
-The README shows the UI on a real run: an animation of the run replayed and stills of its last moment. Re-shot by hand
-they drift from the page; this makes them a build product. Each frame is the run cut at a moment T — the db copied,
+The README shows the UI on a real run: an animation of the run replayed and stills of its last moment; and the engine's
+refusal of a self-signed PASS, its own words on a stub engine. Re-shot by hand they drift; this makes them a build
+product. Each frame is the run cut at a moment T — the db copied,
 every row after T dropped, each node in the state its last move before T left it — and the page drawn over that copy
 with its clock fixed at T. The page and its API are served from THIS process (the server's own app over the copy, no
 port, no model), so nothing live is touched; the sessions running at T, booked only when they end, are put back into
@@ -187,6 +188,66 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
     shutil.rmtree(home, ignore_errors=True)
 
 
+# ---- the refusal the README opens on: the engine's own words, not a retyped copy of them ----
+
+GATE_CONTRACT = {"name": "Add POST /health", "description": "Add POST /health in app.py", "criteria": [
+    {"name": "answers", "description": "POST /health answers 200", "check": [
+        {"behaviour": "answers 200", "command": "python -m pytest -q tests/test_health.py", "expect": "exit 0"}]}]}
+GATE_DONE = "added POST /health in app.py; 12 tests pass"
+GATE_CUT = "verifier ≠ executor (§10.3)"          # the refusal's own sentence; the how-to after it is not the picture's point
+
+
+def refusal() -> tuple[dict, dict]:
+    """A node delivered and then signed by its own executor, on a stub engine over a temporary home."""
+    home = Path(tempfile.mkdtemp(prefix="gfso-media-"))
+    (home / "data").mkdir()
+    os.environ.update(GFSO_HOME=str(home), GFSO_DATA_DIR=str(home / "data"))
+    sys.path.insert(0, str(ROOT))
+    from gfso.runtime import ProjectRegistry
+    from gfso.tools import TOOLS
+
+    e = ProjectRegistry(default_storage="sqlite", default_llm="stub", seed=False).engine("default")
+    TOOLS["create_task"](e, "build", GATE_CONTRACT)
+    TOOLS["signal"](e, "build", "ACCEPT", "agent")
+    delivered = TOOLS["signal"](e, "build", "DELIVER", "agent", self_validation="PASS", result=GATE_DONE)
+    refused = TOOLS["signal"](e, "build", "PASS", "agent")
+    if not delivered["accepted"] or refused["accepted"] or GATE_CUT not in refused["error"]:
+        raise SystemExit(f"gate.png: the engine no longer answers as the picture says: {refused}")
+    return delivered, refused
+
+
+def gate(out: Path) -> None:
+    from html import escape
+    from playwright.sync_api import sync_playwright
+
+    delivered, refused = refusal()
+    error = refused["error"]
+    error = escape(error[:error.index(GATE_CUT) + len(GATE_CUT)]).replace(escape(GATE_CUT), f"<b>{escape(GATE_CUT)}</b>") + " …"
+    page = f"""<!doctype html><meta charset="utf-8"><body><main>
+      <h1>Self-approval, rejected</h1>
+      <p><i>$</i> gfso run signal build DELIVER agent PASS result="{GATE_DONE}"</p>
+      <p class="out">{{"accepted": {str(delivered["accepted"]).lower()}, "state": "{delivered["state"]}", …}}</p>
+      <p><i>$</i> gfso run signal build PASS agent <em># the executor signs off its own work</em></p>
+      <p class="no">{{"accepted": <b>{str(refused["accepted"]).lower()}</b>, "state": "{refused["state"]}",<br>
+      "error": "{error}"}}</p></main>"""
+    style = """body { margin: 0; padding: 28px; width: max-content; background: var(--bg); }
+      main { width: 860px; padding: 26px 28px; background: var(--canvas); border: 1px solid var(--paper); border-radius: 12px;
+             font: 14px/1.65 var(--font-mono); color: var(--ink); }
+      h1 { margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--paper); font: 11px var(--font-mono);
+           letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+      p { margin: 0 0 6px; } p + p + p { margin-top: 16px; } i, em { color: var(--ink-faint); } .out { color: var(--ink-soft); }
+      .no { color: var(--acc); } b { font-weight: 700; }"""
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        pg = b.new_page(viewport={"width": 980, "height": 400}, device_scale_factor=2)
+        pg.set_content(page)
+        pg.add_style_tag(path=str(ROOT / "gfso" / "web" / "tokens.css"))
+        pg.add_style_tag(content=style)
+        pg.evaluate("document.fonts.ready")
+        pg.screenshot(path=str(out), full_page=True)
+        b.close()
+
+
 # ---- assembling ----
 
 def gif(frames: list[Path], out: Path) -> None:
@@ -211,10 +272,21 @@ def main() -> None:
     ap.add_argument("--run", type=Path, default=RUN, help="the recorded run's db (default: %(default)s)")
     ap.add_argument("--only", nargs="*", help="these shots of SHOTS only")
     ap.add_argument("--frame", nargs=4, metavar=("DB", "T", "SHOT", "PNG"), help=argparse.SUPPRESS)
+    ap.add_argument("--gate", help=argparse.SUPPRESS)
     a = ap.parse_args()
     if a.frame:
         db, T, name, out = a.frame
         return frame(Path(db), T, SHOTS[name], Path(out))
+    if a.gate:
+        return gate(Path(a.gate))
+    if not a.only or "gate.png" in a.only:
+        raw = Path(tempfile.mkdtemp(prefix="gfso-media-frames-")) / "gate.png"
+        subprocess.run([sys.executable, __file__, "--gate", str(raw)], check=True)
+        png(raw, DOCS / "gate.png")
+        print(f"gate.png: {(DOCS / 'gate.png').stat().st_size // 1024} KB", flush=True)
+        shutil.rmtree(raw.parent, ignore_errors=True)
+    if a.only and not set(a.only) & set(SHOTS):
+        return
     if not a.run.exists():
         sys.exit(f"no run at {a.run} — pass --run <a recorded run's db>")
     if not shutil.which("ffmpeg"):

@@ -3,11 +3,11 @@
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
 import {$, esc, tally, since, lasting, phone} from './dom.js';
 import {frame, frameText, TAB, STRIP, doing} from './hints.js';
-import {S, procs, kept, keep} from './state.js';
+import {S, nowOf, kept, keep} from './state.js';
 import {nameOf, label} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
 import {firstTap} from './tip.js';
-import {said, blockers, runNow, failingNow, PROC_KIND, byRole} from './run.js';
+import {said, blockers, failingNow, PROC_KIND, byRole} from './run.js';
 import {dur, clockAt, trim, money, plural} from './fmt.js';
 import {beat} from './draw.js';
 import * as timeline from './timeline.js';
@@ -33,7 +33,7 @@ const ticks = new Map();                               // `source|node` → {nod
 // What runs now is the run's one reading (run.js `runNow`); before the run is read, the same rule over the registry.
 const doingOf = w => doing(w.verb, PROC_KIND[w.verb]);
 function strip() {
-    const run = S.run, at = run?.now ?? runNow(S.tasks, procs()), mine = at.procs;
+    const run = S.run, at = nowOf(), mine = at.procs;
     const work = at.work, name = t => trim(nameOf(t), 26), runs = t => !!at.on(t.id);
     // what a process runs on first: a session hidden under "+2" behind the leaves it carries told nothing (critic)
     const busy = S.tasks.filter(t => work.has(t.id)).sort((a, b) => runs(b) - runs(a));
@@ -88,7 +88,7 @@ function strip() {
 // cost is booked when it ENDS: the running ones are said on its hover, not as «+N running» beside «N at work», which
 // counted the same sessions twice (the author, 2026-10-30)
 const sum = () => { const run = S.run; if (!run) return '';
-    return `<span${STRIP.spend(byRole(run.cost.byKind), (run.now ?? runNow(S.tasks, procs())).procs.length)}>`
+    return `<span${STRIP.spend(byRole(run.cost.byKind), nowOf().procs.length)}>`
         + tally(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced), 'spent')
         + tally(lasting(run.clock.from, run.clock.span), 'run') + '</span>'; };
 
