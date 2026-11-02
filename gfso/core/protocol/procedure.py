@@ -93,10 +93,14 @@ def _content(path: Path) -> str | None:
         return None                       # unreadable is not there to read: the round stays in the id
 
 
+#: the most of a file a digest reads: past it, no digest, and the round stays in the id
+DIGEST_CAP = 64 << 20
+
+
 def _digest(path: Path) -> str | None:
     fs = files_at(path)
-    if (raw := fs.read_bytes(str(path))) is not None:
-        return hashlib.sha256(raw).hexdigest()
+    if (raw := fs.read_bytes(str(path), DIGEST_CAP + 1)) is not None:     # …an agent writes it: never whole into this process
+        return hashlib.sha256(raw).hexdigest() if len(raw) <= DIGEST_CAP else None
     if (tree := fs.read_tree(str(path))) is not None:
         h = hashlib.sha256()
         for rel, raw in sorted(tree.items(), key=lambda x: Path(x[0])):

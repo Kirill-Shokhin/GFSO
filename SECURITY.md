@@ -54,7 +54,7 @@ check and a chat API provider's command take the image's PATH, a build and a che
 program delivered code laid there replaces one a later step of the check runs by name (one a declared image keeps under its
 home is found last: name its path). The Claude Code client's commands keep the system's directories first, its shell
 restoring the client's own PATH: a program of a declared image that shadows a system one needs activating in the command. What a call prints reaches the server to 64 MiB a stream, its head and tail: the rest is said
-as dropped. A `unittest-checker` runs a delivery in the server's process, so it is refused for a project in a container. That boundary is a container on the one kernel of Docker's
+as dropped; a file or directory the system digests or keeps as a finding's is read to 64 MiB, past that not read. A `unittest-checker` runs a delivery in the server's process, so it is refused for a project in a container. That boundary is a container on the one kernel of Docker's
 VM, shared by every project: not a VM per task, as the best-isolated products use, so an escape from a container crosses
 it. Enhanced Container Isolation is neither required nor checked, and Docker Desktop's licence for an organization is
 yours to check. A role registered with an execution (`register_agent(execution=)`,

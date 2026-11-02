@@ -791,7 +791,7 @@ _FILE_OPS = {
                   'chmod 1777 -- "$d" && [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u -- "$d")" = 0 ] || '
                   '{ echo "$d: not the system\'s directory" >&2; exit 1; }; done; '
                   'tar -x -m -C "$b" -f - && find "$b" -mindepth 1 -type d -exec chmod 1777 {} +',
-    "read_tree": '[ -d "$1" ] && tar -c -C "$1" .',
+    "read_tree": '[ -d "$1" ] && tar -c -C "$1" . | head -c "$2"',
     "subdirs": '[ -d "$1" ] && find "$1" -mindepth 1 -maxdepth "$2" -type d -printf "%P\\0"',
     "remove_matching": 'r=$1; shift; [ -d "$r" ] || exit 0; '
                        'for g; do find -P "$r" -mindepth 1 -path "$r/$g" ! -type d -delete || exit 1; done',
@@ -2308,6 +2308,10 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         return STATE_INSIDE
 
 
+#: the most of a directory the server reads into its memory
+TREE_CAP = 64 << 20
+
+
 class ContainerFiles(FilesPort):
     """The files of a project's places (`ContainerExecution.files`), each operation one `docker exec` as the image's
     user, never root — IN THE CONTAINER THE SYSTEM'S OWN RECORD OF THE PATH NAMES (`_writable_root`, a name the system
@@ -2414,8 +2418,9 @@ class ContainerFiles(FilesPort):
                               root=True), base)
 
     def read_tree(self, path: str) -> dict | None:
-        """One `tar -c` inside, its regular files read out of the stream."""
-        if (r := self._file("read_tree", path)) is None or r.returncode:
+        """One `tar -c` inside, its regular files read out of the stream; None past `TREE_CAP`: a directory an agent filled
+        stood whole in the server's memory, every project's with it."""
+        if (r := self._file("read_tree", path, str(TREE_CAP + 1))) is None or r.returncode or len(r.stdout) > TREE_CAP:
             return None
         with tarfile.open(fileobj=io.BytesIO(r.stdout)) as t:
             return {m.name.removeprefix("./"): t.extractfile(m).read() for m in t.getmembers() if m.isreg()}
