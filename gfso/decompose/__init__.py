@@ -263,6 +263,42 @@ def _patched(spec: dict, fixed: dict, named: str = "") -> dict:
     return out
 
 
+def _admitted(criterion: dict) -> bool:
+    """Whether the admission would take this criterion of a spec as it is written."""
+    return not admission_defects([Criteria(str(criterion.get("name", "")), check=tuple(
+        Probe.of(p) for p in criterion.get("check") or ()))])
+
+
+def _patched_admissible(spec: dict, fixed: dict, named: str, progress) -> dict:
+    """`_patched`, less what the patch itself made refusable: a criterion it rewrote into what the admission refuses keeps
+    its earlier admitted text, one it added so leaves. Nothing re-reads the last round's patch, so a repair of other
+    findings that wrote a probe naming an unpinned file ended a paid authoring at its build (E2 T03, 2026-11-02). A
+    criterion refused before the patch too stays as written: it is the repair's own to finish, or the build's to refuse."""
+    out, undone = _patched(spec, fixed, named), []
+
+    def held(where: str, before, after) -> list:
+        """`after`'s criteria of one node, each refused one this patch made so undone."""
+        was = {c.get("name"): c for c in before or ()}
+        kept = []
+        for c in after or ():
+            old = was.get(c.get("name"))
+            if _admitted(c) or (old is not None and not _admitted(old)):
+                kept.append(c)
+                continue
+            undone.append(f"{where} / {c.get('name')}")
+            if old is not None:
+                kept.append(old)
+        return kept
+    out["root_criteria"] = held(ROOT_ID, spec.get("root_criteria"), out.get("root_criteria"))
+    earlier = {k.get("id"): k for k in spec.get("subtasks") or ()}
+    out["subtasks"] = [{**k, "criteria": held(str(k.get("id")), (earlier.get(k.get("id")) or {}).get("criteria"),
+                                              k.get("criteria"))} for k in out.get("subtasks") or ()]
+    if undone:
+        _progress(f"repair: {len(undone)} criterion(s) the patch made refusable keep their earlier text: "
+                  + " | ".join(undone), progress)
+    return out
+
+
 def _repaired_before_build(spec: dict, request: str, llm, executor: str, progress, contract_fixed: bool,
                            agree: _Agreement, closed: bool = False) -> dict:
     """What the admission would refuse, a seam its files contradict, and a criterion its own checks deny (`agree`),
@@ -283,7 +319,7 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
                   + " | ".join(x[:140] for x in refused), progress)
         fixed = _audit_fix(llm, request, spec, refused, executor) or {}
         tag_stage(llm, f"{Stage.AUDIT_FIX}-pre-{r + 1}")
-        spec = _patched(spec, fixed, " | ".join(map(str, refused)))
+        spec = _patched_admissible(spec, fixed, " | ".join(map(str, refused)), progress)
         if any(k in fixed for k in _CRITERIA_FIELDS):
             agree.judge(spec)
     return spec
@@ -352,7 +388,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             tag_stage(llm, f"{Stage.AUDIT_FIX}-{r + 1}")
             if not fixed:
                 break  # repair call failed — return the honest residue
-            spec = hold(_patched(spec, fixed, " | ".join(map(str, problems))))
+            spec = hold(_patched_admissible(spec, fixed, " | ".join(map(str, problems)), progress))
             patched = [k for k in fixed if k in _fields(fixed)]
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
             if any(k in fixed for k in _CRITERIA_FIELDS):
@@ -645,7 +681,7 @@ def _pin_by_part(engine, request, rid, assignee, llm, gaps, progress, executor, 
         # …only what the admission would take: one criterion pinning `{inputs}` with no file in them ended the whole
         # authoring at its build after two repairs (Q_cc1, 2026-10-31) — the part's other additions are kept
         new = [c for c in added.get(p["id"], ()) if c.get("name") and c["name"] not in have and not have.add(c["name"])
-               and not admission_defects([Criteria(str(c["name"]), check=tuple(Probe.of(q) for q in c.get("check") or ()))])]
+               and _admitted(c)]
         if new:
             upd.append({**p, "criteria": list(p.get("criteria") or ()) + new})
     if not upd:
