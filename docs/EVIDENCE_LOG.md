@@ -3790,5 +3790,6 @@ CATCH (near-misses a public check fails while its base passes), UNDECIDED (crite
 - **Out of sample, `sql_database` (7 near-misses, 4 good trees chosen blind to the plans; two plans an arm).** The stage split catches
   3.5 of 7 against 3, reads 1.75 obligations open against 5.5, and fails the good trees no more often than the cheap planner (13 pairs
   against 14): that it is less true, read on `c_compiler`, does not carry over. Rollouts of one build differ more than arms: criteria no
-  check decides 0 and 0.625 for the cheap planner. Three near-misses no plan of five catches, among them a defect that costs 5 of the 11
-  suites. No proof of the decomposer's quality stands, and no row of the system's own plan on `c_compiler` was run on any of this.
+  check decides 0 and 0.625 for the cheap planner. Three near-misses no plan of five catches by a check the bench can decide: for `>=`
+  and `<=` one plan does hold boundary checks, written as prose, which a validator would read and this bench does not; identifiers with
+  an underscore, a defect costing 5 of the 11 suites, no plan's SQL uses, and the contract states no rule for them. No proof of the decomposer's quality stands, and no row of the system's own plan on `c_compiler` was run on any of this.
