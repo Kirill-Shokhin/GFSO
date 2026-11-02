@@ -3787,9 +3787,11 @@ CATCH (near-misses a public check fails while its base passes), UNDECIDED (crite
   to the contract's text, a criterion left with none dropped, brings the pairs to 4 and 14, the cheap planner's level, with catch and
   coverage in its range, and refuted by its registered margin (median 9 against 7): it drops a whole check for one clause beyond the
   contract, so required rejections left with it. No planner is separated from the cheap one on this bench by that route.
-- **Out of sample, `sql_database` (7 near-misses, 4 good trees chosen blind to the plans; two plans an arm).** The stage split catches
-  3.5 of 7 against 3, reads 1.75 obligations open against 5.5, and fails the good trees no more often than the cheap planner (13 pairs
-  against 14): that it is less true, read on `c_compiler`, does not carry over. Rollouts of one build differ more than arms: criteria no
-  check decides 0 and 0.625 for the cheap planner. Three near-misses no plan of five catches by a check the bench can decide: for `>=`
-  and `<=` one plan does hold boundary checks, written as prose, which a validator would read and this bench does not; identifiers with
-  an underscore, a defect costing 5 of the 11 suites, no plan's SQL uses, and the contract states no rule for them. No proof of the decomposer's quality stands, and no row of the system's own plan on `c_compiler` was run on any of this.
+- **Out of sample, `sql_database` (7 near-misses, 4 good trees chosen blind to the plans; two plans an arm).** The stage split reads 1.75
+  obligations open against 5.5 and fails the good trees no more often than the cheap planner (13 pairs against 14): that it is less true,
+  read on `c_compiler`, does not carry over. On catch the arms are not separated: 3.5 of 7 against 4, once a flag is read that plans left
+  off. Rollouts of one build differ more than arms: 48 of one plan's 51 checks held the whole expected output and lacked only the flag
+  that lets a machine decide them, so criteria no check decides read 0 and 0.625 for one planner. Taking expectations from a reference
+  instead costs something: a forwarder's own form entered two checks. One near-miss no plan of five catches, identifiers with an
+  underscore, a defect costing 5 of the 11 suites, though the contract's own examples write such names. No proof of the decomposer's
+  quality stands, and no row of the system's own plan on `c_compiler` was run on any of this.
