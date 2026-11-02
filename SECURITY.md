@@ -12,9 +12,14 @@ mutate every project on it. Do not bind it to a public interface, and do not put
 proxy without adding authentication of your own.
 
 What the server does refuse is a web page: it answers only to its own host names (so a name re-pointed
-at 127.0.0.1 is not served), and from a browser page that is not its own it serves reads only — no
-write, no live socket. A server started on another name (`gfso serve --host`) answers to that name;
-any further name is added by hand in `GFSO_ALLOWED_HOSTS` (comma-separated).
+at 127.0.0.1 is not served), and from a browser page that is not its own it serves no write and no
+live socket — and nothing at all to a browser that says the page is another site's (`Sec-Fetch-Site`).
+A server started on another name (`gfso serve --host`) answers to that name; any further name is added
+by hand in `GFSO_ALLOWED_HOSTS` (comma-separated). A front that forwards such a name to the server (a
+reverse proxy, `tailscale serve`) gives whatever reaches the front the server's every door: the
+system's own containers are kept off a front on your machine's addresses or your networks (below), nothing else
+there is — one the internet reaches a session under an `open` switch reaches too, and so does one in a container of
+yours on Docker's default bridge listening on 8080 or 3128.
 
 **The engine executes code it did not write.** In the delegated regime it spawns Claude Code CLI
 subprocesses — executors that write and run code in a working directory you name, and validators that
@@ -26,21 +31,30 @@ will reach a model with a shell.
 Unattended work runs in a container. The work the system dispatches — an executor's session, a
 scope's, a system-held parent's consent — is a model with tools whose commands nobody watches, and
 before it the plan's checks of its place run; on your machine none of it starts unless the server
-was started with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (so `gfso up` keeps it, and
+was started with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (or that variable in its
+environment; `data/serve.json` is where `gfso up` keeps it, and
 a server started without it is restarted). Without that, the first such round stops its project with
 the cause named, nothing of the node having run or been consented to, and the project stays
 stopped until the word is given or an execution is declared; a mode that would dispatch such work
-is not set as ready. Work your own agent does in its chat, and the validator that
-judges it, run on your machine as before: a person is there. With the word, dispatched work runs on
+is not set as ready. Work your own agent does in its chat, the validator that
+judges it, and the reader of a plan's documents a goal you hand `auto_decompose` names (read-only tools)
+run on your machine as before: a person asked for them. With the word, dispatched work runs on
 your machine unattended, with what is said below for a session with no execution.
 Docker is part of the installation: `gfso setup` builds the agents' image from the file the package
-ships (no credential and no agent state in it) and declares it in `data/executions.json` as the
+ships (no credential and no agent state in it; built from a base named by its digest and a CLI
+binary refused unless its checksum is the one the file names) and declares it in `data/executions.json` as the
 execution `default`, moving it to the new image on an upgrade and keeping one you declared under that
 name. A project's executors registered with no execution of their own take it when a mode that dispatches
 its work is set — not where the project already runs in another, its work is done in your own chat, or the
 server has the word above. `gfso doctor`, `gfso setup` and every container execution hold a Docker Desktop older than 4.44.3 not usable: before it a
 container reached Docker's own API unauthenticated (CVE-2025-9074), and every boundary below stands on Docker
-holding; no container of the system's mounts Docker's socket. A role registered with an execution (`register_agent(execution=)`,
+holding; no container of the system's mounts Docker's socket. What you declare in an execution's `env_file` reaches
+every container of the project, judges' included: only a provider's credential is refused there, by its name. The
+system's calls and what runs under them take the system's directories first on PATH, so a program of a declared image
+that shadows a system one (a virtual environment's `python3`) is not found by its bare name: activate it in the command. That boundary is a container on the one kernel of Docker's
+VM, shared by every project: not a VM per task, as the best-isolated products use, so an escape from a container crosses
+it. Enhanced Container Isolation is neither required nor checked, and Docker Desktop's licence for an organization is
+yours to check. A role registered with an execution (`register_agent(execution=)`,
 declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut,
 and nothing of your disk is mounted into any of its containers:
 - The project's work lives in Docker volumes of its own: the agents' places, the judges' copies, the
@@ -48,8 +62,11 @@ and nothing of your disk is mounted into any of its containers:
   once per root: your own git bundles its committed HEAD, and the project's copy is cloned inside
   with none of your configuration or hooks; what did not come in (uncommitted or untracked files,
   submodule contents) is said in the project's log when it comes in. The root's accepted result comes back as the
-  branch `gfso/<project>/accepted` of your repository — your git fetches a bundle of it, nothing
-  of the agents' configuration travels, and your working tree and branches are not touched; a
+  branch `gfso/<project>/accepted` of your repository — your git fetches a bundle of it, every
+  object checked as it takes it where your git is 2.46 or newer — an older one takes the bundle
+  unchecked — (what parses that pack, made where an agent writes, is your git; a bundle carrying history your git would
+  refuse does not land, the cause said), nothing of the agents' configuration travels, and your working tree and branches
+  are not touched; a
   project whose base is no git repository gets its result in `.gfso-accepted-<base>/<project>/`
   beside it. `gfso export-places` writes the places out for reading, with every agent repository's
   configuration and hooks replaced.
@@ -73,7 +90,9 @@ and nothing of your disk is mounted into any of its containers:
   process of the agent can set; a deletion named by its directory; any process of the place in that
   span counted, a command left running among them; what the client's own Write and Edit tools wrote
   between commands is in the client's stream, not here) — by the system's listener in that container, which no command
-  can signal, read or ask for anything; the record is kept beside the door's log. A client that runs a shell beside itself
+  can signal, read or ask for anything; the record is kept beside the door's log. It records no
+network traffic: only an allowlist's gateway logs what it opened, and under `open` nothing records
+where a session connected. A client that runs a shell beside itself
   instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
   is refused with that cause: the project stops. The client's own file tools may not write through
   `/proc` or `/dev`, nor into its own state. What the client's shell writes back into the client's container is the
@@ -246,18 +265,23 @@ How far a project's container reaches outside is a switch you set in its executi
 (`"network": {"mode": ..., "hosts": [...]}`). For one project, `set_mode(network=...)` can only narrow it —
 open → allowlist → off, an allowlist reaching only hosts the declaration also names — never widen it (once the
 project has work in it, only with your own words asking for the change):
-- `open` (the default) reaches everything but your host's loopback and Docker's own address for
-  it — other containers on Docker's bridge included, and a service of your host listening on its
-  other addresses (its LAN one, a virtual adapter's): bind a host service to `127.0.0.1` to keep it
-  out of reach.
+- `open` (the default) reaches outward: the internet, and its names through its resolvers — not your
+  host's loopback nor Docker's own address for it, not the networks your machine stands on (private
+  addresses, a tailnet's, link-local ones, a cloud's metadata among them: no switch reaches an intranet),
+  and no IPv6 at all. A service of your host on a public address is the internet: bind it to `127.0.0.1`. On
+  Docker's default bridge it still connects to any container's ports 8080 and 3128, yours included:
+  another project's door there answers only to its own key.
 - `off` reaches nothing but its model, through the door below: the container stands on an internal
   Docker network of its own with no route out, and none of its agent's processes holds a
   capability to make one. Each closed project takes one of Docker's address pools; past their
   number a start fails.
-- Under every switch nothing reaches INTO a session's or a judge's container: before any call,
-  root there admits only its own loopback and the answers to connections it opened, so no node's
-  session reaches what another node's judge runs from a delivery.
-- `allowlist` adds one gateway container, the only way out. It opens a connection only to a host
+- Under every switch nothing reaches INTO a session's or a judge's container, and nothing passes
+  directly between two of them (under `open` two may still relay through a server on the internet): before any call, root there admits only its own loopback and the answers to
+  connections it opened, and on its own network it opens nothing but TCP to its project's door and
+  gateway, from a port the kernel picks — two containers each sending to the other were each other's
+  «answers» under the first rule alone. So no node's session reaches what another node's judge runs
+  from a delivery, nor any other node's session.
+- `allowlist`, a custom mode beside the two above (with the internet, or without it), kept minimal, adds one gateway container, the only way out. It opens a connection only to a host
   you named, on 443, when the TLS handshake names that host; what the session then sends inside
   the encrypted stream it does not see, so a host behind a shared front (a CDN) can carry requests
   to other sites of that front. Every opening is logged to a file the sessions cannot reach;
@@ -273,8 +297,9 @@ In a container execution no session holds its provider's credential; a session o
 store included. A provider over a chat API calls its model from the
 server itself; only its tools run in the container. The Claude Code client, which runs inside,
 reaches its model under every switch through its project's door: a container of its own that
-holds the credential (from `gfso credential`) and nothing of the project. The client holds only
-the door's key, which opens that door and no other; the door puts the credential in and passes the
+holds the credential (from `gfso credential`) and nothing of the project. The client — and every
+command it runs, which inherits its environment — holds only the door's key, which opens that door and
+no other; the door puts the credential in and passes the
 request to the provider alone. So no process in a session — the client, its tools, what they run —
 holds the credential to read or carry away, and another container is refused by the door. The
 credential is in no container's configuration, environment or disk: the door reads it once from

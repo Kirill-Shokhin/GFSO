@@ -50,6 +50,24 @@ HOST_NET = "192.168.65.0/24"
 _GATEWAY_OF = ("awk 'function h(s){return index(\"0123456789ABCDEF\",substr(s,1,1))*16+"
                "index(\"0123456789ABCDEF\",substr(s,2,1))-17} $2==\"00000000\"{g=$3; print h(substr(g,7,2))\".\""
                "h(substr(g,5,2))\".\"h(substr(g,3,2))\".\"h(substr(g,1,2)); exit}' /proc/net/route")
+#: the on-link network of a container (its address's own, where its project's door stands under an open switch), as
+#: `dest/mask` read off /proc/net/route like `_GATEWAY_OF`
+_SUBNET_OF = ("awk 'function h(s){return index(\"0123456789ABCDEF\",substr(s,1,1))*16+"
+              "index(\"0123456789ABCDEF\",substr(s,2,1))-17} function ip(g){return h(substr(g,7,2))\".\"h(substr(g,5,2))"
+              "\".\"h(substr(g,3,2))\".\"h(substr(g,1,2))} NR>1 && $2!=\"00000000\" && $3==\"00000000\"{print ip($2)\"/\"ip($8);"
+              " exit}' /proc/net/route")
+#: what an open switch keeps shut beside the host — the user's own networks: private, carrier-grade NAT (a tailnet),
+#: link-local (a cloud's metadata). Open is the way OUT (the author: «рубильниками просто наружу»), not into the
+#: network the machine stands on: a front on the machine's tailnet address forwarded a session to the server's door
+#: (critic over the stream in use)
+#: the system's own calls into a container: by this PATH and an absolute shell, never the image's PATH, which starts at
+#: the agent's home: a command laid `sh` there, and the root read of the action record ran it — the record forged,
+#: what it held erased (critic over the stream in use, run live)
+SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+SYS = ("-e", f"PATH={SYSTEM_PATH}")
+#: the ports the kernel hands a connection that names none (`ip_local_port_range`, which no session's uid may set)
+EPHEMERAL = "32768:60999"
+PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16")
 #: the switch on a container's way out — set OUTSIDE the system (the execution's declaration, or whoever builds it), never
 #: a policy of its own. `open` — everything but the host (other containers on Docker's bridge included), the rule set in
 #: the container by root. `allowlist` and `off` — the container stands on an internal network with no route out, so the
@@ -187,7 +205,7 @@ def _unavailable(ex, storage: bool):
     p = ex.project if isinstance(ex, PlaceContainer) else ex
     try:
         if p.container in _STARTED:
-            got = run(["docker", "exec", p.container, "sh", "-c", _BASE_READ, "sh", p.to_inside(str(p.base))],
+            got = run(["docker", "exec", *SYS, p.container, "/bin/sh", "-c", _BASE_READ, "sh", p.to_inside(str(p.base))],
                       timeout=120, text=True)
             if got.returncode and not _GONE.search(got.stderr or ""):
                 return f"its storage does not answer: {(got.stderr or got.stdout or '').strip()[-300:]}"
@@ -721,16 +739,16 @@ def _system_run(name: str, image: str, flags: list, script: Path, args: list, mi
         raise ValueError(f"{name}: a system container starts bounded in memory and processes")
     run(["docker", "run", "-d", "--init", "--name", name, *flags, *ceiling(), "--label", f"gfso.log={mirror}",
          "--tmpfs", f"{OWN}:size={3 * door.LOG_CAP // 2 ** 20}m,mode={mode}", image,
-         "sh", "-c", f'until [ -f {OWN}/run.py ]; do sleep 0.1; done; exec python3 {OWN}/run.py "$@"', "sh", *args],
+         "/bin/sh", "-c", f'export PATH={SYSTEM_PATH}:$PATH; until [ -f {OWN}/run.py ]; do sleep 0.1; done; exec python3 {OWN}/run.py "$@"', "sh", *args],
         timeout=120).check_returncode()
-    run(["docker", "exec", "-i", name, "sh", "-c", f"cat > {OWN}/laid && mv {OWN}/laid {OWN}/run.py"],
+    run(["docker", "exec", *SYS, "-i", name, "/bin/sh", "-c", f"cat > {OWN}/laid && mv {OWN}/laid {OWN}/run.py"],
         input=script.read_bytes(), timeout=60).check_returncode()
 
 
 def _log_out(names, mirror: Path) -> str:
     """What the system containers `names` logged in their `OWN`, appended to the host's `mirror` before they go —
     the mirror read with them: what they logged outlives them."""
-    got = [run(["docker", "exec", n, "sh", "-c", f"cat {OWN}/*.log 2>/dev/null; true"], timeout=60, text=True,
+    got = [run(["docker", "exec", *SYS, n, "/bin/sh", "-c", f"cat {OWN}/*.log 2>/dev/null; true"], timeout=60, text=True,
                encoding="utf-8", errors="replace").stdout or "" for n in names]
     kept = mirror.read_text(encoding="utf-8") if mirror.is_file() else ""
     return kept + "".join(got)
@@ -1106,7 +1124,8 @@ class WayOut:
         internal network, no IPv6, and under an allowlist the gateway named its proxy."""
         mode = self.network[0]
         if mode == "open":
-            return ["--cap-add", "NET_ADMIN"]
+            # …no IPv6 under it either: the seal is IPv4's, and a bridge with IPv6 on passed around it (critic)
+            return ["--cap-add", "NET_ADMIN", "--sysctl", "net.ipv6.conf.all.disable_ipv6=1"]
         return ["--network", self.net, "--cap-drop", "ALL", "--cap-add", "NET_ADMIN",
                 "--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
                 *[a for k in ("HTTPS_PROXY", "https_proxy") for a in ("-e", f"{k}=http://{GATEWAY}:{egress.PORT}")
@@ -1121,8 +1140,24 @@ class WayOut:
         process runs as root."""
         inbound = ("iptables -A INPUT -i lo -j ACCEPT && iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED "
                    "-j ACCEPT && iptables -A INPUT -j DROP")
-        return (f'iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
-                f'iptables -A OUTPUT -d "$gw" -j REJECT && {inbound}') if self.network[0] == "open" else inbound
+        # …and on its own network nothing but its project's door and gateway, opened by TCP from a port the kernel picks:
+        # two sessions each sending to the other were each other's «answers» past the inbound seal (UDP, or both ends of
+        # one port pair), a channel between nodes under a closed switch (critic over the stream in use, run live)
+        to_own = 'iptables -A OUTPUT -d "$sn"'
+        own = " && ".join((f'sn=$({_SUBNET_OF}) && [ -n "$sn" ]', "iptables -A OUTPUT -o lo -j ACCEPT",
+                           f"{to_own} -m conntrack --ctstate ESTABLISHED -j ACCEPT",
+                           *(f"{to_own} -p tcp --dport {port} --sport {EPHEMERAL} -m conntrack --ctstate NEW -j ACCEPT"
+                             for port in (door.PORT, egress.PORT)),
+                           f"{to_own} -j REJECT"))
+        if self.network[0] != "open":
+            return f"{own} && {inbound}"
+        # …its resolvers answer names (on Linux often the router's, a private address); every other private address is
+        # shut, after the host and the gateway themselves
+        dns = ("for n in $(awk '/^nameserver [0-9.]+$/{print $2}' /etc/resolv.conf); do iptables -A OUTPUT -d $n -p "
+               "udp --dport 53 -j ACCEPT && iptables -A OUTPUT -d $n -p tcp --dport 53 -j ACCEPT || exit 1; done && ")
+        shut = " && ".join(f"iptables -A OUTPUT -d {n} -j REJECT" for n in PRIVATE_NETS)
+        return (f'{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
+                f'iptables -A OUTPUT -d "$gw" -j REJECT && {own} && {shut} && {inbound}')
 
     def open(self) -> None:
         """A closed switch's internal network, and the allowlist's gateway on it — refused when an allowed host has no
@@ -1196,7 +1231,7 @@ class Door:
             self.log())
         # …laid by a `docker exec` whose environment is its own and gone with it: in no configuration Docker keeps
         laid = json.dumps({"kind": credential.kind, "value": credential.value, "key": key})
-        run(["docker", "exec", "-e", "GFSO_DOOR_LAID", name, "sh", "-c",
+        run(["docker", "exec", *SYS, "-e", "GFSO_DOOR_LAID", name, "/bin/sh", "-c",
              f'printf %s "$GFSO_DOOR_LAID" > {door.RUN}/laid && mv {door.RUN}/laid {door.RUN}/credential'],
             timeout=60, env={**host_env(), "GFSO_DOOR_LAID": laid}).check_returncode()
         if closed:
@@ -1272,7 +1307,7 @@ class Commands:
         if self.name in _STARTED and _up(self.name):
             return
         # …the session's own user, as numbers: the listener refuses root, who would reach what holds the record
-        user = ":".join(run(["docker", "exec", s.container, "sh", "-c", "id -u; id -g"], timeout=60,
+        user = ":".join(run(["docker", "exec", *SYS, s.container, "/bin/sh", "-c", "id -u; id -g"], timeout=60,
                             text=True).stdout.split())
         self.close()
         run(["docker", "rm", "-f", self.name], timeout=60)
@@ -1291,12 +1326,12 @@ class Commands:
                                      (shell.NO_GIT, 0o555, shell.NONE.encode())):
                 (i := tarfile.TarInfo(Path(name).name)).size, i.mode = len(data), mode
                 t.addfile(i, io.BytesIO(data))
-        run(["docker", "exec", "-i", "-u", "0", s.container, "/bin/sh", "-c",
+        run(["docker", "exec", "-i", "-u", "0", *SYS, s.container, "/bin/sh", "-c",
              f"/bin/mkdir -p -m 755 {shell.HOME} && /bin/tar -x -C {shell.HOME} -f - && /bin/cp "
              f"{shell.HOME}/{Path(shell.NO_GIT).name} {shell.NO_GIT} && /bin/chmod 755 {shell.NO_GIT}"],
             input=laid.getvalue(), timeout=60).check_returncode()   # …by path: root's PATH starts at the agent's home
         # …and one command through it, as the CLI will send them: a listener not up yet is waited for, never passed
-        run(["docker", "exec", "-u", user, s.container, "sh", "-c",
+        run(["docker", "exec", *SYS, "-u", user, s.container, "/bin/sh", "-c",
              'for i in $(seq 100); do "$0" -c true 2>/dev/null && exit; sleep 0.1; done; exit 1', shell.CLIENT],
             timeout=60).check_returncode()
 
@@ -1310,7 +1345,7 @@ class Commands:
         `every`: the place's last client gone — every command's process ends, one that left its call's group and
         dropped its mark (`setsid`, `env -u`) with them: nothing an agent started outlives the session it ran in."""
         if self.name in _STARTED and self.user:
-            run(["docker", "exec", "-u", self.user, self.name, "sh", "-c",
+            run(["docker", "exec", *SYS, "-u", self.user, self.name, "/bin/sh", "-c",
                  _ending(call) + ("; kill -KILL -1" if every else "")], timeout=60)
 
     def log(self) -> Path:
@@ -1834,8 +1869,10 @@ def fetched_on_host(base: Path, bundle: bytes) -> str:
         return "what came out is no git bundle"
     with tempfile.TemporaryDirectory(prefix="gfso-land-") as d:
         (f := Path(d) / "accepted.bundle").write_bytes(bundle)
-        got = run(["git", "-C", str(base), "fetch", "-q", "--no-recurse-submodules", "--no-write-fetch-head", str(f),
-                   "HEAD"], timeout=600,
+        # …every object it carries checked as git takes it (`fsckObjects`): the pack is made where an agent writes, and
+        # the user's git parses it on the host (critic over the stream in use)
+        got = run(["git", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-C", str(base), "fetch",
+                   "-q", "--no-recurse-submodules", "--no-write-fetch-head", str(f), "HEAD"], timeout=600,
                   text=True, encoding="utf-8", errors="replace")
     return "" if got.returncode == 0 else (got.stderr or "").strip()[-300:] or f"git fetch exited {got.returncode}"
 
@@ -2047,7 +2084,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
             except (OSError, LookupError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 self.stop()
                 raise RuntimeError(f"{self.container}: {e} — no call runs unsealed") from e
-            seal = run(["docker", "exec", "-u", "0", self.container, "/bin/sh", "-c",       # uid 0: the rule is root's
+            seal = run(["docker", "exec", "-u", "0", *SYS, self.container, "/bin/sh", "-c",       # uid 0: the rule is root's
                         f"{self.way.seal()} && mkdir -p /tmp/gfso-calls && chmod 1777 /tmp/gfso-calls"], timeout=60)
             if seal.returncode != 0:
                 self.stop()
@@ -2107,7 +2144,8 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         secret = {k: v for k, v in own.items() if SECRET_ENV.search(k)}
         return (["docker", "exec", "-i", *(["-u", "0"] if root else []), "-w", self._inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
                  *[a for k, v in own.items() for a in ("-e", k if k in secret else f"{k}={self.to_inside(v)}")],
-                 self.container, "sh", "-c", f'echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh",
+                 self.container, "/bin/sh", "-c",
+                 f'export PATH={SYSTEM_PATH}:$PATH; echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh",
                  *map(self.to_inside, args)], {**here, **secret})
 
     def popen(self, args, *, env, cwd, **pipes):
@@ -2191,7 +2229,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         LocalExecution().end(proc)
 
     def _end_inside(self, call: str) -> None:
-        run(["docker", "exec", self.container, "sh", "-c", _ending(call)], timeout=60)
+        run(["docker", "exec", *SYS, self.container, "/bin/sh", "-c", _ending(call)], timeout=60)
 
     def temp_root(self):
         return str(self.tmp)            # …a name: made where it is written, in the volume (`FilesPort.mkdtemp`)
@@ -2544,7 +2582,7 @@ class PlaceContainer(ContainerExecution):
         return proc
 
     def _end_inside(self, call: str) -> None:
-        run(["docker", "exec", self.container, "sh", "-c", _ending(call)], timeout=60)
+        run(["docker", "exec", *SYS, self.container, "/bin/sh", "-c", _ending(call)], timeout=60)
         last = call in self.clients and self.clients <= {call}
         self.clients.discard(call)
         self.commands.end(call, every=last)

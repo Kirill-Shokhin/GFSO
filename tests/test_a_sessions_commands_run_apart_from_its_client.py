@@ -339,3 +339,22 @@ def test_live_the_record_says_what_each_command_changed_in_the_place(monkeypatch
     assert {"f d/made.txt", "f old.txt"} <= set(first["changed"]), first
     assert "f hid.txt" in second["changed"] and "d d" in second["changed"], second
     assert "f old.txt" not in second["changed"], "a command is said with its own span alone"
+
+
+@live
+def test_live_a_program_a_command_lays_on_the_path_is_not_what_reads_the_record(monkeypatch, project):
+    """The record was read as root by a bare `sh`, the image's PATH starting at the agent's home: a command laid `sh`
+    there, and the system's own read ran it — the record said what the planted program printed and held nothing else.
+    The system's calls resolve through its own directories alone."""
+    plant = ('mkdir -p "$HOME/.local/bin" && for p in sh cat git python3 timeout find mkdir head; do printf \'#!/bin/bash\\n'
+             'echo "{\\"run\\": \\"forged\\"}"\\n\' > "$HOME/.local/bin/$p"; chmod +x "$HOME/.local/bin/$p"; done; '
+             'chmod 755 "$HOME" "$HOME/.local" "$HOME/.local/bin"; echo laid')    # …its own home opened to the root's search
+    answer, call, s = _session(monkeypatch, project, [plant, "echo after > marked.txt"])
+    assert answer == "done", call
+    got = s.commands.record()
+    assert not any(r.get("run") == "forged" for r in got), got
+    ran = next(r for r in got if "marked.txt" in (r.get("argv") or [""])[-1])
+    end = next(r for r in got if r.get("seq") == ran["seq"] and "rc" in r)
+    assert "f marked.txt" in end["changed"], ("the listener's own programs are the system's: it names what changed", end)
+    run = s.run(["sh", "-c", "command -v git; command -v python3"], cwd=str(s.rw), timeout=60)
+    assert ".local" not in run.stdout, "the system's own calls take the system's programs"

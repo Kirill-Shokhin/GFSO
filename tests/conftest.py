@@ -182,7 +182,8 @@ class _NoLiveModel(subprocess.Popen):          # a subclass: callers subscript i
 LIVE_OWED = {
     "gfso/adapters/execution.py": ("a_container_runs_a_call_with_the_hosts_paths_mapped", "a_container_holds_no_more_than_its_bounds",
                                    "a_session_holds_only_its_own_place", "a_sessions_commands_run_apart_from_its_client",
-                                   "a_judges_pinned_inputs_are_the_systems", "the_way_out_is_a_switch_set_outside"),
+                                   "a_judges_pinned_inputs_are_the_systems", "the_way_out_is_a_switch_set_outside",
+                                   "a_projects_places_stand_in_its_volume"),    # …the judge's whole file: `snapshots.py` and the pin's
     "gfso/adapters/door.py": ("a_projects_places_stand_in_its_volume", "a_container_holds_no_more_than_its_bounds"),
     "gfso/adapters/egress.py": ("the_way_out_is_a_switch_set_outside",),
     "gfso/adapters/shell.py": ("a_sessions_commands_run_apart_from_its_client", "a_container_holds_no_more_than_its_bounds"),

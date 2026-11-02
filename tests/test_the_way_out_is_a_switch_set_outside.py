@@ -33,9 +33,9 @@ def _ex(tmp_path, network=None, project="p"):
 
 def test_open_shuts_only_the_host(tmp_path):
     x = _ex(tmp_path)
-    assert x.way.seal().startswith(f"iptables -A OUTPUT -d {E.HOST_NET} -j REJECT && ") and         'iptables -A OUTPUT -d "$gw" -j REJECT && ' in x.way.seal(), "Docker Desktop's host and Docker Engine's"
+    assert f"iptables -A OUTPUT -d {E.HOST_NET} -j REJECT && " in x.way.seal() and         'iptables -A OUTPUT -d "$gw" -j REJECT && ' in x.way.seal(), "Docker Desktop's host and Docker Engine's"
     assert x.way.seal().endswith("iptables -A INPUT -j DROP"), "and nothing reaches in"
-    assert "--sysctl" not in x.run_args()
+    assert "net.ipv6.conf.all.disable_ipv6=1" in x.run_args(), "the seal is IPv4's: no IPv6 around it"
 
 
 def test_a_closed_switch_stands_on_its_internal_network_with_no_capability(tmp_path):
@@ -45,7 +45,7 @@ def test_a_closed_switch_stands_on_its_internal_network_with_no_capability(tmp_p
         x = _ex(tmp_path, {"mode": mode, "hosts": ["api.anthropic.com"] if mode == "allowlist" else []})
         a = x.run_args()
         assert a[a.index("--network") + 1] == x.way.net and x.way.seal().endswith("iptables -A INPUT -j DROP")
-        assert "OUTPUT" not in x.way.seal(), "a closed switch's network has no route to shut"
+        assert "--dport 53" not in x.way.seal() and E.PRIVATE_NETS[0] not in x.way.seal(),             "a closed switch's network has no route out to shut — only its own network's peers (`two_sessions`)"
         assert ("HTTPS_PROXY=http://gateway:3128" in a) == (mode == "allowlist")
         assert ["--cap-drop", "ALL", "--cap-add", "NET_ADMIN"] == a[a.index("--cap-drop"):][:4], "root's seal's alone"
     x = _ex(tmp_path, {"mode": "allowlist", "hosts": ["api.anthropic.com", "pypi.org"]})
@@ -107,11 +107,15 @@ def test_live_the_switch_holds_for_the_agent(tmp_path, mode, reached):
              "for h in api.anthropic.com example.com; do c=$(curl -s -m 10 -o /dev/null -w '%{http_code}' https://$h/); "
              "[ \"$c\" != 000 ] && echo $h; done; "
              "getent hosts example.org >/dev/null && echo DNS; iptables -F 2>/dev/null && echo FLUSHED; "
+             # …the user's own networks shut under open: refused at once, never a timeout (critic over the stream in use)
+             "for h in 10.255.255.1 100.100.100.100 169.254.169.254; do (timeout 5 bash -c \"echo > /dev/tcp/$h/443\") "
+             "2>&1 | grep -q refused && echo shut-$h; done; "
              "grep -Eq 'NoNewPrivs:[[:space:]]+1' /proc/self/status || echo PRIVILEGED; true")
     try:
         got = x.run(["bash", "-c", probe], cwd=str(x.base), timeout=120).stdout.split()
         if mode == "open":
             assert {"direct-api.anthropic.com", "example.com", "DNS"} <= set(got) and "direct-192.168.65.254" not in got
+            assert {"shut-10.255.255.1", "shut-100.100.100.100", "shut-169.254.169.254"} <= set(got), got
         else:
             assert got == ([reached] if reached else []), f"{mode}: the agent got out to {got}"
         if mode == "allowlist":       # a container elsewhere on Docker's bridge does not reach the gateway
@@ -253,3 +257,47 @@ def test_live_no_session_reaches_what_runs_in_another_nodes_container(tmp_path, 
             assert "200" not in got, f"{mode}: node a reached node b's judge: {got}"
     finally:
         x.stop()
+
+
+_TALK = '''import socket, sys
+peer, me, kind = sys.argv[1], sys.argv[2], sys.argv[3]
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM if kind == "udp" else socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", 8080)); s.settimeout(0.3)
+for _ in range(25):
+    try:
+        if kind == "udp":
+            s.sendto(me.encode(), (peer, 8080)); print("got", s.recvfrom(100)[0].decode()); break
+        s.connect((peer, 8080)); s.sendall(me.encode()); print("got", s.recv(100).decode()); break
+    except OSError:
+        if kind != "udp":
+            s.close(); s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", 8080)); s.settimeout(0.3)
+'''
+
+
+@pytest.mark.skipif(not shutil.which("docker"), reason="needs docker")
+@pytest.mark.parametrize("mode", ["off", "open"])
+@pytest.mark.parametrize("kind", ["udp", "tcp"])
+def test_live_two_sessions_sending_to_each_other_open_no_channel(tmp_path, mode, kind):
+    """Each of two sealed sessions sending to the other from the same port: under the inbound seal alone each one's
+    packets were the other's «answers» — a channel between nodes under a closed switch (run live). On its own network a
+    session opens nothing but its project's door and gateway, by TCP from a port the kernel picks."""
+    net, seal = f"talk{time.time_ns()}", _ex(tmp_path, {"mode": mode}).way.seal()
+    subprocess.run(["docker", "network", "create", *(["--internal"] if mode == "off" else []), net], check=True,
+                   capture_output=True)
+    names = [f"{net}-{c}" for c in "ab"]
+    try:
+        for n in names:
+            subprocess.run(["docker", "run", "-d", "-u", "0", "--name", n, "--network", net, "--cap-add", "NET_ADMIN",
+                            "--entrypoint", "sh", IMAGE, "-c", f"{seal} && sleep 120"], check=True, capture_output=True)
+        time.sleep(3)
+        ip = [subprocess.run(["docker", "inspect", "-f", f'{{{{(index .NetworkSettings.Networks "{net}").IPAddress}}}}',
+                              n], capture_output=True, text=True).stdout.strip() for n in names]
+        talk = [subprocess.Popen(["docker", "exec", "-u", "1001", n, "python3", "-c", _TALK, ip[1 - i], n[-1], kind],
+                                 stdout=subprocess.PIPE, text=True) for i, n in enumerate(names)]
+        heard = [t.communicate(timeout=60)[0] for t in talk]
+        assert not any("got" in h for h in heard), f"{mode}/{kind}: two sessions talked past the seal: {heard}"
+    finally:
+        subprocess.run(["docker", "rm", "-f", *names], capture_output=True)
+        subprocess.run(["docker", "network", "rm", net], capture_output=True)

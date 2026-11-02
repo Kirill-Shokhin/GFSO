@@ -400,3 +400,22 @@ def test_a_commit_left_without_its_blobs_is_fetched_again_never_landed(tmp_path,
     assert bundle.returncode == 0 and W.land(user, "refs/heads/gfso/p/accepted", None, None, tree) == sha
     assert g(user, "rev-list", "--objects", "--missing=error", "gfso/p/accepted").returncode == 0, "landed whole"
     assert g(user, "cat-file", "blob", f"{sha}:a.txt").stdout == "the content\n"
+
+
+def test_a_bundle_whose_objects_git_would_not_accept_is_refused_on_the_host(tmp_path):
+    """The accepted work's bundle is made where an agent writes, and the user's git parses it on the host: every object
+    it carries is checked as git takes it — a malformed one is refused, never stored in the user's repository."""
+    def g(d, *a, data=None):
+        return subprocess.run(["git", "-C", str(d), *a], capture_output=True, input=data, check=True).stdout.decode().strip()
+    src, base = tmp_path / "src", tmp_path / "base"
+    for d in (src, base):
+        d.mkdir()
+        g(d, "init", "-q")
+    tree = g(src, "write-tree")
+    bad = g(src, "hash-object", "-t", "commit", "-w", "--literally", "--stdin",
+            data=f"tree {tree}\nauthor no-email-here 0 +0000\ncommitter x <x@y> 0 +0000\n\nbad\n".encode())
+    (src / ".git" / "refs" / "heads" / "main").write_bytes(f"{bad}\n".encode())      # …as an agent's own git would lay it
+    g(src, "symbolic-ref", "HEAD", "refs/heads/main")
+    g(src, "bundle", "create", str(tmp_path / "b.bundle"), "HEAD")
+    said = E.fetched_on_host(base, (tmp_path / "b.bundle").read_bytes())
+    assert "missingEmail" in said and subprocess.run(["git", "-C", str(base), "cat-file", "-e", bad]).returncode, said

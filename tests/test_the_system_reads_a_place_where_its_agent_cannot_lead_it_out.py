@@ -164,7 +164,7 @@ def test_the_storage_probe_reads_the_base_through_the_mount_the_project_stands_o
 
     def _docker_client(args, **kw):
         ran.append(args)
-        if args[:3] == ["docker", "exec", project.container]:
+        if args[:2] == ["docker", "exec"] and project.container in args:
             return subprocess.CompletedProcess(args, 1, "", "ls: /gfso-place/ws: Input/output error")
         return subprocess.CompletedProcess(args, 0, "ok" if args[:2] == ["docker", "run"] else "", "")
     monkeypatch.setattr(E, "run", _docker_client)
