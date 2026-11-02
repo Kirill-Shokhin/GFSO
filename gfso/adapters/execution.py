@@ -287,7 +287,8 @@ def lay_ceiling() -> None:
 CEILING_ACT, CEILING_WATCH_S, CEILING_FLOOR = 0.85, 2.0, 64 * 2 ** 20
 #: one read of the group: its `memory.max`, then `<name> <memory.current> <file> <shmem>` for the group itself (`.`) and
 #: each directory in it, by a reader of the system's own that mounts Docker's cgroup tree read-only
-_READ_GROUP = ('cd "/cg/$1" && cat memory.max && for d in . */; do d=${d%/}; [ -f "$d/memory.stat" ] && '
+_READ_GROUP = ('[ -d "/cg/$1" ] || exit 0; '     # …no group yet, no work yet: nothing to read, the reader no worse for it
+               'cd "/cg/$1" && cat memory.max && for d in . */; do d=${d%/}; [ -f "$d/memory.stat" ] && '
                'echo "$d" "$(cat "$d/memory.current")" "$(awk \'$1=="file"||$1=="shmem"{printf "%s ",$2}\' "$d/memory.stat")"; done')
 
 

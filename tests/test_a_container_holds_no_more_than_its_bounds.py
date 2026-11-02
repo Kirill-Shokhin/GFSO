@@ -305,6 +305,29 @@ def test_live_near_the_ceiling_the_watch_ends_only_the_runaway(monkeypatch, case
         _cgroup(f"rmdir /cg/{group}")
 
 
+def test_live_with_no_group_yet_the_reader_stands_and_is_not_made_again(monkeypatch):
+    """On a Docker where no work has run the group does not exist yet: an idle server's reader was removed and made again
+    every turn, for ever, on any new installation (2026-11-02, a Docker wiped clean)."""
+    group = f"{E.CEILING_GROUP}/no-such-group-{os.getpid()}"
+    monkeypatch.setattr(E, "CEILING_GROUP", group)
+    monkeypatch.setattr(E, "CEILING_WATCH_S", 1.0)
+    monkeypatch.setattr(E, "_CEILING", {"flags": ["--cgroup-parent", f"/{group}"]})
+    reader, stop = f"{group.replace('/', '-')}-ceiling-reader", E.threading.Event()
+    inspect = lambda: subprocess.run(["docker", "inspect", "-f", "{{.Id}}", reader], capture_output=True, text=True).stdout.strip()
+    (watch := E.threading.Thread(target=E._watch_ceiling, args=(stop,), daemon=True)).start()
+    try:
+        for _ in range(60):
+            if first := inspect():
+                break
+            time.sleep(1)
+        time.sleep(5)
+        assert first and inspect() == first, "the reader was made again"
+    finally:
+        stop.set()
+        watch.join(timeout=60)
+        subprocess.run(["docker", "rm", "-f", reader], capture_output=True)
+
+
 def test_a_judges_build_the_watch_ended_is_asked_again_not_the_deliverys_fail(monkeypatch, tmp_path):
     """The watch ends the work furthest over its share, a judge's batches among them: ended so, a build read as the
     delivery's FAIL — a neighbour pressing on the ceiling steered another node's verdict (critic B6). Its own bound, or

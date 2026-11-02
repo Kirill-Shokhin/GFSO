@@ -5,6 +5,7 @@ config of the user's run, and never commit an LFS file's content as a blob)."""
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -101,6 +102,9 @@ def _repo(tmp_path):
     (base / ".gitattributes").write_bytes(b"*.bin filter=lfs diff=lfs merge=lfs -text\n")
     (base / "big.bin").write_bytes(CONTENT)
     (base / "gone.bin").write_bytes(b"its object will be lost")
+    # …older than the index: in the index's own second git re-reads a file through the clean filter, which writes its object back
+    for f in ("big.bin", "gone.bin", ".gitattributes"):
+        os.utime(base / f, (time.time() - 60,) * 2)
     _g(base, "add", "-A")
     _g(base, "commit", "-qm", "base")
     return base
