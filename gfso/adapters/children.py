@@ -37,6 +37,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
 from gfso.config import mark_serving, serving, subprocess_env
@@ -151,6 +152,63 @@ def run(args, *, timeout: float, input=None, **kw) -> subprocess.CompletedProces
     try:
         out, err = proc.communicate(input, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, out, err)
+    finally:
+        kill_tree(proc)
+        release(proc)
+
+
+#: the most of one stream of a program whose output nobody bounded that the server keeps in its memory: half its head,
+#: half its tail. Held whole, a build or a check looping on print added 100 MiB a second to the server (measured),
+#: past every container's limit and the machine's ceiling, which count none of it
+PRINTED_CAP = 64 * 2 ** 20
+#: what stands in a stream in place of what was dropped
+CUT = "bytes printed here, not kept"
+
+
+def _kept(stream, cap: int, into: list) -> None:
+    """`stream` read to its end, its head and tail kept, the rest counted: [head, tail, bytes dropped]."""
+    head, tail, half, cut = bytearray(), bytearray(), cap // 2, 0
+    while chunk := stream.read(2 ** 16):
+        take = chunk[:half - len(head)]
+        head += take
+        tail += chunk[len(take):]
+        if len(tail) > 2 * half:                 # …trimmed by the half, not per chunk: a byte's move per chunk is quadratic
+            cut += len(tail) - half
+            del tail[:len(tail) - half]
+    if len(tail) > half:
+        cut += len(tail) - half
+        del tail[:len(tail) - half]
+    into[:] = [bytes(head), bytes(tail), cut]
+
+
+def _said(kept: list, encoding: str, errors: str) -> str:
+    head, tail, cut = kept
+    return (head.decode(encoding, errors) + (f"\n… [{cut} {CUT}] …\n" if cut else "")
+            + tail.decode(encoding, errors))
+
+
+def run_printing(args, *, timeout: float, encoding: str = "utf-8", errors: str = "replace",
+                 **kw) -> subprocess.CompletedProcess:
+    """`run` of a program that may print without end, as text: each stream kept to `PRINTED_CAP`, what was dropped from
+    its middle said in its place."""
+    kw.setdefault("env", subprocess_env())
+    kw.setdefault("stdin", subprocess.DEVNULL)
+    if os.name == "nt":
+        kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    proc = adopt(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw, **spawn_kw()))
+    kept: tuple = ([], [])
+    readers = [threading.Thread(target=_kept, args=(s, PRINTED_CAP, k), daemon=True)
+               for s, k in zip((proc.stdout, proc.stderr), kept)]
+    try:
+        end = time.monotonic() + timeout
+        for r in readers:
+            r.start()
+        for r in readers:
+            r.join(max(0.0, end - time.monotonic()))
+        if any(r.is_alive() for r in readers):
+            raise subprocess.TimeoutExpired(args, timeout)
+        proc.wait(max(0.0, end - time.monotonic()))
+        return subprocess.CompletedProcess(args, proc.returncode, *(_said(k, encoding, errors) for k in kept))
     finally:
         kill_tree(proc)
         release(proc)

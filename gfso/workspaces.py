@@ -15,7 +15,7 @@ from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecutio
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
-from gfso.core.graph.model import generation_of_task, root_of
+from gfso.core.graph.model import generation_of_task, grounds_key, root_of
 from gfso.core.types import HOST, MADE, VOLUME, Signal, TaskId, State, hold_places
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
@@ -135,6 +135,19 @@ def _where_it_joins(engine, agents: "AgentRegistry", task, w: tuple) -> str | No
     return pw[1] if pw is not None and same_place(pw[0], w[0]) and made(engine, pw[1]) else w[0]
 
 
+def _before_a_part_joins(engine, whole, base, into, execution) -> None:
+    """Where the whole's tree stands before a part joins it is the ground of every part in its split that has none yet:
+    what it starts from. From the tree with its joined parts in, a node read a sibling's work with no edge in the plan,
+    by the order the parts happened to start in: an input the graph does not say, the plan held by agents who know more
+    than it does (M1, §15.5). A part admitted later stands on what the whole held when it entered: its decomposer's
+    fixing saw that; an edge declared for one part opens nothing to another."""
+    with W.one_at_a_time(base):
+        held = json.loads(engine.graph.setting(key := grounds_key(whole.id)) or "{}")
+        if new := [str(k.id) for k in engine.graph.get_active_children(whole.id) if str(k.id) not in held]:
+            head = W.git(into, "rev-parse", "HEAD", execution=execution).stdout.strip()
+            engine.graph.store_setting(key, json.dumps({**held, **dict.fromkeys(new, head)}))
+
+
 def _has_branch(w: tuple, execution) -> bool:
     """Does the node's work exist to join? Its branch, not its directory: a place removed by hand once let a producer's
     work drop out of every consumer without a word, its commits still in the refs."""
@@ -185,6 +198,8 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
         if engine.say_once(f"lost:{t.id}:{generation_of_task(t)}"):
             engine.emit_info("delegate", f"{t.id}: PASSED, and {why}")
         return why
+    if parent is not None:
+        _before_a_part_joins(engine, parent, w[0], into, ex)
     why = W.merge(w[0], into, ref, f"gfso: {t.id} joins {parent.id if parent else 'the base'}", execution=ex)
     if why and engine.say_once(f"unjoined:{t.id}:{generation_of_task(t)}"):
         engine.emit_info("delegate", f"{t.id}: PASSED, and its branch `{w[2]}` did not join {into} ({why}) - "
@@ -201,14 +216,15 @@ def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     if parent is not None and (pw := _workspace(engine, agents, parent)) is not None and pw[2] != w[2] \
             and same_place(pw[0], w[0]):
         _ensure_place(engine, agents, parent, pw)
-    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=execution_of(engine, agents))
+    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=execution_of(engine, agents),
+             ground=lambda: parent is not None and json.loads(engine.graph.setting(grounds_key(parent.id)) or "{}").get(str(task.id)))
     _record(engine, w[1], True)
 
 
 def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tuple:
-    """(cwd, unjoined, workspace) of a session over `members` keyed by `top`: its worktree, made from where its
-    parent works when its first session starts — its producers are DONE by then (Dep readiness), hence joined —
-    and reused on rework; every DONE part and producer outside it merged in, those that conflict listed for its
+    """(cwd, unjoined, workspace) of a session over `members` keyed by `top`: its worktree, made when its first session
+    starts from where its parent stood before its parts joined (`_before_a_part_joins`), and reused on rework;
+    every DONE part and producer outside it merged in — its producers are DONE by then (Dep readiness) —, those that conflict listed for its
     packet. With no git base: the roster workdir, shared as before, and said once."""
     wd = (performer(engine, agents, top.assignee)[1] or {}).get("workdir")
     w = _workspace(engine, agents, top)
@@ -234,6 +250,8 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
             if engine.say_once(f"lost:{x.id}:{why}"):
                 engine.emit_info("delegate", f"{x.id}: {why} - it does not join {top.id}")
             continue
+        if engine.graph.get_parent(x.id) is not None and engine.graph.get_parent(x.id).id == top.id:
+            _before_a_part_joins(engine, top, base, place, ex)
         if (why := W.merge(base, place, ref, f"gfso: {x.id} joins {top.id}", execution=ex)):
             unjoined.append((str(x.id), xw[2], why, ref))   # …and the accepted commit: what it merges, held on
             W.bring(base, place, xw[2], execution=ex)        # …named in its own repository, as its packet says

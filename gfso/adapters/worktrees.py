@@ -26,7 +26,7 @@ from pathlib import Path
 
 from gfso.adapters import children, lfs
 from gfso.config import subprocess_env
-from gfso.adapters.execution import NODES, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
+from gfso.adapters.execution import NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
 
 #: the largest bundle `_carry` moves through the server's memory
 BUNDLE_CAP = 512 * 2 ** 20
@@ -106,6 +106,11 @@ def _held(execution, path):
     return _fs(execution).system_writes(str(path))
 
 
+def one_at_a_time(base):
+    """The base's lock, for a caller whose reading must not cross a join."""
+    return _lock(base)
+
+
 def _writes_into(arg: str):
     """The system's own writes into the directory the call's `arg` names — a commit, a carry, a join, a clone —: no
     node's growth against its disk bound (`ExecutionPort.system_writes`; the root was charged with every child's
@@ -148,9 +153,9 @@ def relative_alternates(objects: Path, base_objects: Path, execution=None) -> No
 
 
 @_writes_into("place")
-def ensure(base, place, branch: str, start_from, execution=None) -> bool:
-    """The node's own repository at `place` on `branch`, started from the HEAD of `start_from` when it is not there
-    yet. True when it was made now; a place that exists is reused as it stands (a rework round continues its own tree).
+def ensure(base, place, branch: str, start_from, execution=None, ground=lambda: None) -> bool:
+    """The node's own repository at `place` on `branch`, started from the commit `ground()`, asked under the base's lock,
+    of `start_from` — its HEAD where it names none or that repository no longer holds it — when it is not there yet. True when it was made now; a place that exists is reused as it stands (a rework round continues its own tree).
 
     A REPOSITORY OF ITS OWN, not a worktree of the base's: a worktree writes the base's refs, objects and
     registrations, so a session in one place could move or break every other node's (NODE_ISOLATION_RESEARCH §6, G).
@@ -174,7 +179,7 @@ def ensure(base, place, branch: str, start_from, execution=None) -> bool:
             for args in (("init", "-q"), *(("config", k, v) for k, v in own.items())):
                 if (r := git(place, *args, execution=execution)).returncode:
                     raise OSError(f"git {args[0]} in {place} failed: {r.stderr.strip()}")
-            _start(base, place, branch, start_from, execution)
+            _start(base, place, branch, start_from, execution, ground() or "HEAD")
         except Exception:   # …a half-made place would be reused as it stands, empty, and its emptiness delivered
             _fs(execution).remove_tree(str(place))
             raise
@@ -197,16 +202,17 @@ def kept_out(base, execution=None) -> dict:
             if (b := _fs(execution).files.read_bytes(str(Path(base) / ".git" / "info" / n))) is not None}
 
 
-def _start(base, place: Path, branch: str, start_from, execution) -> None:
-    """The new clone on `branch`: the base's commit of that name where it has one, else the HEAD of `start_from` — a
+def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HEAD") -> None:
+    """The new clone on `branch`: the base's commit of that name where it has one, else `rev` of `start_from` — a
     parent's place, whose commit comes over by bundle (`_carry`): no container holds both places."""
     relative_alternates(place / ".git" / "objects", Path(base) / ".git" / "objects", execution)
     for name, kept in kept_out(base, execution).items():
         _fs(execution).files.write_bytes(str(place / ".git" / "info" / name), kept)
     if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0:
-        start = git(base, "rev-parse", f"refs/heads/{branch}", execution=execution).stdout.strip()
+        start = _carry(base, base, place, f"refs/heads/{branch}", execution)
     else:
-        start = _carry(base, start_from, place, "HEAD", execution)
+        held = git(start_from, "cat-file", "-e", f"{rev}^{{commit}}", execution=execution).returncode == 0
+        start = _carry(base, start_from, place, rev if held else "HEAD", execution)
     r = git(place, "checkout", "-q", "-B", branch, start, execution=execution)
     if r.returncode != 0:
         raise OSError(f"{place} could not start {branch}: {r.stderr.strip()}")
@@ -301,6 +307,24 @@ def _name(repo, branch: str, sha: str, execution) -> None:
         raise OSError(f"{repo} could not name {sha} {branch}: {r.stderr.strip()}")
 
 
+#: a commit named by its id
+_BARE = re.compile(r"[0-9a-f]{40,64}")
+
+
+def _not_carried(base, dst, execution) -> list:
+    """The commits a carry into `dst` leaves out: what every place reads through its alternates — the read copy of the
+    base, where the sessions read that one (`execution._READ_COPY`), the base's branches where they read the base —, what
+    `dst` stands on, and into the base its branches, which it holds: else every carry up the tree held the whole's
+    accumulated work, in the server's memory, up to the cap."""
+    def _out(*a):
+        return git(*a, execution=execution).stdout.split()
+    branches = _out(base, "for-each-ref", "--format=%(objectname)", "refs/heads/")
+    seen = _out(base, "rev-parse", "--verify", "--quiet", f"{READ_REF}^{{commit}}")
+    into_base = Path(dst) == Path(base)
+    held = branches if into_base or not seen else _out(dst, "rev-list", "--no-walk", "--ignore-missing", *branches) if branches else []
+    return [*held, *seen]
+
+
 @_writes_into("dst")
 def _carry(base, src, dst, rev: str, execution) -> str:
     """The commit `rev` names in the repository at `src`, present in the one at `dst` — its id. TWO REPOSITORIES, AND
@@ -317,7 +341,7 @@ def _carry(base, src, dst, rev: str, execution) -> str:
     if git(dst, "cat-file", "-e", f"{sha}^{{commit}}", execution=execution).returncode == 0:
         return sha
     ex, b = _fs(execution), Path(_fs(execution).temp_of(str(dst))) / f"gfso-{uuid.uuid4().hex}.bundle"
-    tips = git(base, "for-each-ref", "--format=%(objectname)", "refs/heads/", execution=execution).stdout.split()
+    tips = _not_carried(base, dst, execution)
     with _held(execution, b.parent):         # …the bundle in the target's temp: no node's growth
         try:
             ex.files.write_bytes(str(b), _bundled(src, rev, tips, execution))
@@ -326,7 +350,7 @@ def _carry(base, src, dst, rev: str, execution) -> str:
                 raise OSError(f"{dst} could not take {rev} of {src}: {got.stderr.strip()[-300:]}")
         finally:
             ex.files.remove_matching(str(b.parent), [b.name])
-    _lfs_carried(base, src, dst, [sha, *(["--not", *tips] if tips else [])], execution)
+    _lfs_carried(base, src, dst, ["--ignore-missing", sha, *(["--not", *tips] if tips else [])], execution)
     return sha
 
 
@@ -347,8 +371,8 @@ def pointed(repo, revs: list, execution) -> dict:
     at `repo`, read in its own container as git stores them — no filter runs to read them."""
     r = execution.session(str(repo)).run(["sh", "-c", _POINTED, "sh", " ".join(revs), *apart(execution)],
                                          cwd=str(repo), timeout=_SLOW, env=_env())
-    if r.returncode:
-        raise OSError(f"{repo}: its LFS pointers could not be read ({r.stderr.strip()[-300:]})")
+    if r.returncode or children.CUT in r.stdout:
+        raise OSError(f"{repo}: its LFS pointers could not be read ({r.stderr.strip()[-300:] or 'past what the server holds'})")
     listing, _, batch = r.stdout.partition("\n\n")
     paths = dict(ln.split(" ", 1) for ln in listing.splitlines() if " " in ln)
     return {m["oid"]: (int(m["size"]), paths.get(m["blob"], m["blob"])) for m in _BLOB.finditer(batch)}
@@ -440,7 +464,15 @@ def _bundled(src, rev: str, nots: list, execution) -> bytes:
     a = Path(ex.temp_of(str(src))) / name
     with _held(execution, a.parent):         # …the bundle in the source's temp: no node's growth
         try:
-            got = git(src, "bundle", "create", "-q", str(a), rev, *(["--not", *nots] if nots else []), execution=execution)
+            # …a bundle names refs, and a bare commit makes an empty one, refused; what `nots` holds that the source does
+            # not know, it has none of
+            ref = f"refs/gfso-carry/{uuid.uuid4().hex}" if _BARE.fullmatch(rev) else rev
+            if ref != rev:
+                git(src, "update-ref", ref, rev, execution=execution)
+            got = git(src, "bundle", "create", "-q", str(a), ref, "--ignore-missing", *(["--not", *nots] if nots else []),
+                      execution=execution)
+            if ref != rev:
+                git(src, "update-ref", "-d", ref, execution=execution)
             if got.returncode or (data := ex.files.read_bytes(str(a), BUNDLE_CAP + 1)) is None:
                 raise OSError(f"{src} could not bundle {rev}: {got.stderr.strip()[-300:]}")
             if len(data) > BUNDLE_CAP:
@@ -518,8 +550,13 @@ def merge(base, into, branch: str, message: str, execution=None) -> str | None:
         # undid its merge — MERGE_HEAD and every resolution gone between two rounds (GB_c_compiler_ctx3b1285)
         if merging(base, into, execution=execution):
             return MERGE_STANDS
-        r = git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, _commit_in(base, branch, execution),
-                execution=execution)
+        sha = _commit_in(base, branch, execution)
+        # …its objects into `into`'s own store: a session reads no delivery through the base (`execution._READ_COPY`)
+        try:
+            _carry(base, base, into, sha, execution)
+        except OSError as e:                # …said as any join's refusal: the whole integrates, or the root's join is retried
+            return str(e)
+        r = git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, sha, execution=execution)
         if r.returncode == 0:
             return None
         git(into, "merge", "--abort", execution=execution)   # refused before it started (a dirty tree): nothing to abort

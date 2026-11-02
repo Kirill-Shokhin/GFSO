@@ -18,8 +18,7 @@ A server started on another name (`gfso serve --host`) answers to that name; any
 by hand in `GFSO_ALLOWED_HOSTS` (comma-separated). A front that forwards such a name to the server (a
 reverse proxy, `tailscale serve`) gives whatever reaches the front the server's every door: the
 system's own containers are kept off a front on your machine's addresses or your networks (below), nothing else
-there is — one the internet reaches a session under an `open` switch reaches too, and so does one in a container of
-yours on Docker's default bridge listening on 8080 or 3128.
+there is — one the internet reaches a session under an `open` switch reaches too.
 
 **The engine executes code it did not write.** In the delegated regime it spawns Claude Code CLI
 subprocesses — executors that write and run code in a working directory you name, and validators that
@@ -50,8 +49,12 @@ server has the word above. `gfso doctor`, `gfso setup` and every container execu
 container reached Docker's own API unauthenticated (CVE-2025-9074), and every boundary below stands on Docker
 holding; no container of the system's mounts Docker's socket. What you declare in an execution's `env_file` reaches
 every container of the project, judges' included: only a provider's credential is refused there, by its name. The
-system's calls and what runs under them take the system's directories first on PATH, so a program of a declared image
-that shadows a system one (a virtual environment's `python3`) is not found by its bare name: activate it in the command. That boundary is a container on the one kernel of Docker's
+system's own calls take the system's directories first on PATH, so no program a command laid is what they run. A build, a
+check and a chat API provider's command take the image's PATH, a build and a check with what lies under the home last, so no
+program delivered code laid there replaces one a later step of the check runs by name (one a declared image keeps under its
+home is found last: name its path). The Claude Code client's commands keep the system's directories first, its shell
+restoring the client's own PATH: a program of a declared image that shadows a system one needs activating in the command. What a call prints reaches the server to 64 MiB a stream, its head and tail: the rest is said
+as dropped. A `unittest-checker` runs a delivery in the server's process, so it is refused for a project in a container. That boundary is a container on the one kernel of Docker's
 VM, shared by every project: not a VM per task, as the best-isolated products use, so an escape from a container crosses
 it. Enhanced Container Isolation is neither required nor checked, and Docker Desktop's licence for an organization is
 yours to check. A role registered with an execution (`register_agent(execution=)`,
@@ -78,8 +81,11 @@ and nothing of your disk is mounted into any of its containers:
   setting source — no `.claude/settings.json` a delivered tree carries (a key helper, hooks, environment) —, and its
   own file tools may not write under the home it runs from, where a program laid on its PATH would run at its next
   start. It does not
-  see another node's place, conversations or inputs, nor the system's own checks; what it receives
-  of other nodes' work comes by the joins the system makes into its place and the base.
+  see another node's place, conversations or inputs, nor the system's own checks. What it receives of other nodes' work
+  comes by the joins the system makes into its place, by the plan alone: a place starts from where its whole stood
+  when the part entered its split, a sibling's work reaching it by a Dep edge, not by the order the parts happened to
+  start in. What it reads as the base is a copy holding what was imported, never a delivery, whose
+  objects reach a place when it joins there; a project made before this keeps, readable by id alone, what its base already held.
 - The commands a session's Claude Code client runs (its Bash tool) do not run beside the client. The
   client's shell is one the system lays where no agent process writes, and it sends each command to
   a container of its own beside the session's: the same place mounted, the same network and switch,
@@ -269,8 +275,9 @@ project has work in it, only with your own words asking for the change):
   host's loopback nor Docker's own address for it, not the networks your machine stands on (private
   addresses, a tailnet's, link-local ones, a cloud's metadata among them: no switch reaches an intranet),
   and no IPv6 at all. A service of your host on a public address is the internet: bind it to `127.0.0.1`. On
-  Docker's default bridge it still connects to any container's ports 8080 and 3128, yours included:
-  another project's door there answers only to its own key.
+  Docker's default bridge it opens one port alone, its project's doors' (a number in 20000–29999 by the project), on any
+  container there: a service of yours listening on that very number answers it, and another project's door answers only to
+  its own key.
 - `off` reaches nothing but its model, through the door below: the container stands on an internal
   Docker network of its own with no route out, and none of its agent's processes holds a
   capability to make one. Each closed project takes one of Docker's address pools; past their
@@ -295,7 +302,9 @@ a model API that stores data is a way out to someone else's account.
 In a container execution no session holds its provider's credential; a session on the host
 (`LocalExecution`) runs as the user it runs under and reads what that user reads, the credential
 store included. A provider over a chat API calls its model from the
-server itself; only its tools run in the container. The Claude Code client, which runs inside,
+server itself; only its tools run in the container: its commands through the system's shell into the commands' container
+above, on the same record, under the same switch, what they left running ending with its run; its file tools in its place's client container, reading the base as a session reads it and a file up to
+32 MiB, on no record but the agent trace you may turn on. The Claude Code client, which runs inside,
 reaches its model under every switch through its project's door: a container of its own that
 holds the credential (from `gfso credential`) and nothing of the project. The client — and every
 command it runs, which inherits its environment — holds only the door's key, which opens that door and

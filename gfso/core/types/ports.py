@@ -195,6 +195,13 @@ class StoragePort(ABC):
 
 #: the place a stop names where this host refused what it was asked to start (`ExecutionPort.agents_refused`)
 THIS_HOST = "this host"
+#: where a call into a container keeps the image's own PATH while the system's directories come first for the call itself
+WORK_PATH = "GFSO_WORK_PATH"
+#: the head of a shell's text that runs a build or a check: it finds the programs of the image it was declared to run in,
+#: a virtual environment's among them — but those under the home last: the home is the agent's to write, and a pinned
+#: check whose later step runs a program by name found what the delivered code of its earlier step laid there (critic)
+IN_THE_WORKS_PATH = (f'if [ -n "${WORK_PATH}" ]; then o=$IFS IFS=: w= h=; for p in ${WORK_PATH}; do case $p in "$HOME"|"$HOME"/*) '
+                     'h=$h:$p;; *) w=$w:$p;; esac; done; IFS=$o; export PATH="${w#:}$h"; fi; ')
 
 
 class PlaceUnavailable(OSError):
@@ -329,6 +336,20 @@ class ExecutionPort(ABC):
         """The record of the commands the client `proc` ran apart (`commands_env`), each as the system ran it — None
         where none is kept (this host)."""
         return None
+
+    def command(self, command: str, *, cwd: str, timeout: float, env: Optional[dict] = None):
+        """A model's shell command, run for a provider that runs its own tools: as a client's commands run where they
+        run apart (`commands_env`), recorded the same way; here, through this place's shell."""
+        shell = self.shell()
+        return self.run([shell, "-c", command] if shell else ["cmd", "/c", command], cwd=cwd, timeout=timeout, env=env)
+
+    @property
+    def tool_files(self):
+        """The files a model's file tools reach, where its provider runs them itself."""
+        return self.files
+
+    def commands_ended(self) -> None:
+        """A run of such commands (`command`) over: what they left running ends with it, where the system can end it."""
 
     def unavailable(self, storage: bool = False) -> Optional[str]:
         """Why this place cannot start a call now, or None where it can — a cheap health check; with `storage`, its

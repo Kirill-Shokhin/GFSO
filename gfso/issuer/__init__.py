@@ -48,7 +48,7 @@ from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, materialize_inputs, same_probe, shows,
                                           PROBE_S, pinned_files, probe_id, probes_from as _checks_of, unrerunnable,
                                           with_named_files)
-from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, PlaceUnavailable, Register, RevisionReason,
+from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, IN_THE_WORKS_PATH, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of)
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
@@ -770,7 +770,7 @@ def _derived(command: str, criterion, probe, execution=None) -> tuple[Optional[s
             return None, f"could not lay down the probe's inputs ({e})"
         cmd = command.replace(INPUTS_TOKEN, laid.get(probe_id(criterion.name, probe), Path(tmp)).as_posix())
         try:
-            p = ex.session(tmp).run([bash, "-c", cmd], cwd=tmp, timeout=DERIVE_TIMEOUT_S)   # a proposed command: its own container
+            p = ex.session(tmp).run([bash, "-c", IN_THE_WORKS_PATH + cmd], cwd=tmp, timeout=DERIVE_TIMEOUT_S)   # a proposed command: its own container
         except (OSError, subprocess.TimeoutExpired) as e:
             return None, f"did not finish ({type(e).__name__})"
         if p.returncode:

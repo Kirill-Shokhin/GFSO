@@ -12,6 +12,16 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 
 ## [Unreleased]
 
+### Changed
+- A part's place starts from where its whole stood when the part entered the split, its producers coming by their Dep
+  edges, and what a session reads as the base holds no delivery: a sibling's work reaches it by the plan, not by the order
+  the parts started in. A plan that relied on that order meets the missing edge at contact (a BLOCK, or a FAIL), and
+  siblings editing one file conflict at the join for the whole to integrate.
+- A provider over a chat API runs its commands where a client's run, apart from the system's calls and on the action
+  record; a build, a check and such a command find the image's programs, the system's own calls the system's; a project's
+  model door listens on a port of its own; what a program prints reaches the server to 64 MiB a stream; a `unittest-checker`
+  is refused for a project in a container.
+
 ### Added
 - Any model provider: a model spec `provider/model` per role (`ollama/…`, `deepseek/…`, `openrouter/…` and other
   OpenAI-compatible presets, a user's own by `GFSO_PROVIDER_<NAME>_*`, a third party's class by the entry-point group

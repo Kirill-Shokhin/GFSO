@@ -113,6 +113,9 @@ def client(argv: list) -> int:
         return 126
     # …its own path is no shell where the command runs, and its guard is the client's container's alone
     env = {**{k: v for k, v in os.environ.items() if k != "BASH_ENV"}, "SHELL": "/bin/bash"}
+    # …the image's PATH: the system's own directories first were for the system's calls (`execution.SYSTEM_PATH`); a
+    # command is the agent's own, and a declared image's environment is what it was given to work in
+    env["PATH"] = env.pop("GFSO_WORK_PATH", env.get("PATH", ""))
     _frame(s, REQ, json.dumps({"argv": argv, "cwd": os.getcwd(), "env": env, "files": files,
                                "beside": argv == ["--beside"]}).encode())
     for n in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT):

@@ -84,6 +84,10 @@ def _answer_pending(msgs: list, why: str) -> None:
              for c in msgs[last].get("tool_calls") or () if c.get("id") not in done]
 
 
+#: the most of a file a model's file tool holds in this process
+FILE_CAP = 32 * 2 ** 20
+
+
 def transcript_path(execution, session: str) -> Path:
     """Where a session's conversation is kept between rounds — beside the agent state of its execution."""
     return Path(execution.state_dir()) / "gfso-sessions" / f"{session}.json"
@@ -105,6 +109,7 @@ class Place:
     def __init__(self, execution, cwd: str, deadline: float = float("inf"), agent: str | None = None):
         # its commands run in the session's own place (`ExecutionPort.session`), not the system's
         self.exec, self.cwd, self.deadline = execution.session(str(cwd), agent), Path(cwd).resolve(), deadline
+        self.files = self.exec.tool_files
         base = base_of(str(self.cwd))
         self.roots = [self.cwd, Path(self.exec.temp_root()).resolve(), *([Path(base).resolve()] if base else [])]
 
@@ -124,8 +129,11 @@ class Place:
     def Read(self, file_path, offset=None, limit=None):
         """The file's lines, numbered, a window of them at most."""
         f = self.path(file_path)
-        if (text := self.exec.files.read_text(str(f))) is None:
-            return f"Error: {file_path} {'is a directory' if self.exec.files.is_dir(str(f)) else 'does not exist'}"
+        if (raw := self.files.read_bytes(str(f), FILE_CAP + 1)) is None:
+            return f"Error: {file_path} {'is a directory' if self.files.is_dir(str(f)) else 'does not exist'}"
+        if len(raw) > FILE_CAP:      # …a file's whole reading stands in the server's memory
+            return f"Error: {file_path} is larger than {FILE_CAP >> 20} MiB: read a part of it with Bash"
+        text = raw.decode("utf-8", errors="replace")
         lines = text.splitlines()
         start = max(1, int(offset or 1))
         part = lines[start - 1:start - 1 + int(limit or READ_LINES)]
@@ -136,14 +144,16 @@ class Place:
     def Write(self, file_path, content):
         """The file written whole."""
         f = self.path(file_path, write=True)
-        self.exec.files.write_bytes(str(f), content.encode("utf-8"))
+        self.files.write_bytes(str(f), content.encode("utf-8"))
         return f"wrote {len(content)} characters to {file_path}"
 
     def Edit(self, file_path, old_string, new_string, replace_all=False):
         """One occurrence replaced — or every one, asked so; none or several where one was meant is an error."""
         f = self.path(file_path, write=True)
-        if (raw := self.exec.files.read_bytes(str(f))) is None:
+        if (raw := self.files.read_bytes(str(f), FILE_CAP + 1)) is None:
             return f"Error: {file_path} does not exist"
+        if len(raw) > FILE_CAP:
+            return f"Error: {file_path} is larger than {FILE_CAP >> 20} MiB: edit it with Bash"
         text = raw.decode("utf-8")                                 # as written: a CRLF file stays CRLF
         if "\r\n" in text and "\r\n" not in old_string:
             old_string, new_string = (s.replace("\n", "\r\n") for s in (old_string, new_string))
@@ -152,21 +162,19 @@ class Place:
             return f"Error: old_string not found in {file_path}"
         if n > 1 and not replace_all:
             return f"Error: old_string occurs {n} times in {file_path} — give more context or set replace_all"
-        self.exec.files.write_bytes(str(f), (text.replace(old_string, new_string) if replace_all
+        self.files.write_bytes(str(f), (text.replace(old_string, new_string) if replace_all
                                        else text.replace(old_string, new_string, 1)).encode("utf-8"))
         return f"replaced {n if replace_all else 1} occurrence(s) in {file_path}"
 
     def Bash(self, command, timeout=None):
         """The command run in the place's working directory through its execution, its output capped; this process's
         keys are not in its environment."""
-        shell = self.exec.shell()
-        args = [shell, "-c", command] if shell else ["cmd", "/c", command]
         left = self.deadline - time.monotonic()
         if left <= 0:
             return "Error: the run's time is up"
         cap = max(1, int(min(int(timeout or SHELL_TIMEOUT_S), SHELL_TIMEOUT_S * 3, left)))
         try:
-            r = self.exec.run(args, cwd=str(self.cwd), timeout=cap, env=env_without_secrets())
+            r = self.exec.command(command, cwd=str(self.cwd), timeout=cap, env=env_without_secrets())
         except subprocess.TimeoutExpired:
             return f"Error: the command ran past {cap}s and was ended"
         out = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
@@ -277,16 +285,18 @@ class ToolLoop:
         msgs.append({"role": "user", "content": user if resumed else (p.resume_fallback or user)})
         p.begin_run()
         turns, (answer, ended, stop, error) = [], ("", "answered", None, None)
-        trace, place = _open_trace(p.stage_hint), None
+        trace, place, tools = _open_trace(p.stage_hint), None, None
         try:
-            answer, ended, stop, error = self._turns(msgs, names, Place(p.execution, cwd, t0 + timeout, p.agent), turns,
-                                                     t0, timeout, max_turns, trace)
+            tools = Place(p.execution, cwd, t0 + timeout, p.agent)
+            answer, ended, stop, error = self._turns(msgs, names, tools, turns, t0, timeout, max_turns, trace)
         except PlaceUnavailable as e:
             answer, ended, stop, error, place = "", "unavailable", None, str(e), e.place
             _answer_pending(msgs, f"Error: the place went down before this ran ({e}) — run it again")
         finally:
             if trace is not None:
                 trace.close()
+            if tools is not None:           # …what its commands left running goes with the run, as a client's does
+                tools.exec.commands_ended()
         p.book(turns, t0, ended=ended, resumed=resumed, stop_reason=stop, error=error, place=place)
         if kept is not None:                # only a round cut at its cap is continued (the CLI's rule)
             if stop == "max_turns" or ended in ("limit", "unavailable", "unauthorized"):

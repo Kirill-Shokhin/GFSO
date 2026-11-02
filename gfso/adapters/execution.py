@@ -27,13 +27,13 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import (BATCH, HOST, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, ExecutionPort, FilesPort,
-                             PlaceUnavailable)
+from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
+                             FilesPort, PlaceUnavailable)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
                          memory_ceiling, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.places import same_place
-from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, spawn_kw
+from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, run_printing, spawn_kw
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +65,8 @@ _SUBNET_OF = ("awk 'function h(s){return index(\"0123456789ABCDEF\",substr(s,1,1
 #: what it held erased (critic over the stream in use, run live)
 SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 SYS = ("-e", f"PATH={SYSTEM_PATH}")
+#: the band a project's doors listen in (`WayOut.door_port`), below the ports the kernel hands out
+DOOR_PORTS = 20000
 #: the ports the kernel hands a connection that names none (`ip_local_port_range`, which no session's uid may set)
 EPHEMERAL = "32768:60999"
 PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16")
@@ -132,6 +134,8 @@ STATE_DIR = ".gfso-state"
 #: the base inside the project's places volume — mounted wherever the system names the base, at the same inside path
 #: the user's repository was: a clone of the user's HEAD imported for the project's root (`Volume.import_base`)
 BASE_DIR = ".gfso-base"
+#: the base as a session reads it (`_READ_COPY`), and the ref in the base that names what it holds
+BASE_READ, READ_REF = ".gfso-base-read", "refs/gfso/read"
 #: what keys, in a project's settings, the record of its base's import: {"for": the root, commit, at}
 IMPORTED = "imported"
 #: a system container's own memory-backed directory — its script laid there by the system, its log written there:
@@ -845,6 +849,32 @@ if [ -d /tmp/x/.gfso-base/.git ]; then
 fi
 [ -n "$(ls -A /tmp/x)" ] || { note "nothing to export"; exit 1; }
 tar -c -C /tmp/x .'''
+#: WHAT EVERY SESSION READS AS THE BASE: a copy beside it holding what the base was imported with, never a delivery. Each delivery is carried into the base as a branch, and a session mounting the base read
+#: every sibling's commit by its name or its id, judged or not, for its whole life (critic, live). Hard links: the
+#: base's files as they are, nothing doubled; git replaces a file, never writes one in place. `read_copy` makes it, or at
+#: a new root's import brings it to the commit imported by what that reaches alone (its LFS objects laid there by the import
+#: itself), and names what it holds in the base (`READ_REF`). Nothing moves it between imports: a root's next one starts from
+#: the user's repository again.
+_READ_COPY = r'''g() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
+  -c core.fsmonitor=false -c "$fc" -c "$fs" -C "$d" "$@" </dev/null; }
+read_copy() {
+  b=$d r=${d%/*}/''' + BASE_READ + r'''
+  if [ ! -d "$r" ] || { [ -d "$b/.git" ] && [ ! -d "$r/.git" ]; }; then
+    rm -rf "$r" "$r.new" && cp -al "$b" "$r.new" || return 1
+    if [ -d "$b/.git" ]; then       # …its HEAD detached, a new file: linked, a write would be the base's; on a node branch it would name nothing
+      s=$(g rev-parse HEAD) && rm -f "$r.new/.git/HEAD" && echo "$s" > "$r.new/.git/HEAD" && rm -rf "$r.new/.git/refs/heads/gfso" || return 1
+    fi
+    [ ! -f "$r.new/.git/packed-refs" ] || sed -i '\# refs/heads/gfso/#d' "$r.new/.git/packed-refs" || return 1
+    mv "$r.new" "$r" || return 1
+  elif [ -d "$b/.git" ]; then
+    d=$r; g fetch -q --no-tags "$b" HEAD && g reset -q --hard FETCH_HEAD || return 1
+    d=$b
+  fi
+  [ ! -d "$b/.git" ] || { s=$(d=$r; g rev-parse HEAD) && g update-ref ''' + READ_REF + r''' "$s"; }
+}
+'''
+#: `Volume.read_again` inside: "$1" the base's directory in the volume, "$2" "$3" the system's LFS filter
+_READ_AGAIN = "d=/to/$1 fc=$2 fs=$3\n" + _READ_COPY + "read_copy"
 #: `Volume.import_base` inside, as the image's user, the places volume at /to, what the host carried on stdin (a tar:
 #: `bundle`, `branch`, `exclude`, `attributes`, `lfs/<oid>` — or `tree`, a base with no git): "$1" the commit (empty: no
 #: git), "$2" the base's directory in the volume, "$3" the project, "$4" "$5" the system's LFS filter (`lfs`), which
@@ -852,11 +882,9 @@ tar -c -C /tmp/x .'''
 #: root's agent's own git agrees. Its git reads no config but the clone's own, runs no hook; a node branch that stands in
 #: the volume is never overwritten, a base with no git never removed
 _IMPORT = r'''c=$1 d=/to/$2 p=$3 fc=$4 fs=$5
-g() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
-  -c core.fsmonitor=false -c "$fc" -c "$fs" -C "$d" "$@" </dev/null; }
-mkdir -p /tmp/in && tar -x -C /tmp/in || exit 1
+''' + _READ_COPY + r'''mkdir -p /tmp/in && tar -x -C /tmp/in || exit 1
 if [ -z "$c" ]; then
-  mkdir -p "$d" && { [ ! -d /tmp/in/tree ] || cp -a /tmp/in/tree/. "$d/"; }
+  mkdir -p "$d" && { [ ! -d /tmp/in/tree ] || cp -a /tmp/in/tree/. "$d/"; } && read_copy
   exit
 fi
 [ -d "$d/.git" ] || { rm -rf "$d" && mkdir -p "$d" && g init -q; } || exit 1
@@ -873,9 +901,11 @@ for f in /tmp/in/lfs/*; do
   [ -f "$f" ] || continue
   o=${f##*/} a=${f##*/}; a=${a#??}; b=${a#??}; s=$d/.git/lfs/objects/${o%"$a"}/${a%"$b"}
   mkdir -p "$s" && mv -f "$f" "$s/$o" || exit 1
+  q=${d%/*}/''' + BASE_READ + r'''/.git/lfs/objects/${o%"$a"}/${a%"$b"}
+  [ ! -d "${d%/*}/''' + BASE_READ + r'''/.git" ] || { mkdir -p "$q" && ln -f "$s/$o" "$q/$o"; } || exit 1
 done
 for kv in "$fc" "$fs"; do g config "${kv%%=*}" "${kv#*=}" || exit 1; done
-g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx'''
+g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx && read_copy'''
 #: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
 _DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
 #: …and where the container is gone or stopped under a live server — started again, once
@@ -1007,8 +1037,7 @@ class LocalExecution(ExecutionPort):
         return claude_config_dir()
 
     def run(self, args, *, cwd, timeout, env=None):
-        return run(args, timeout=timeout, cwd=cwd, text=True, encoding="utf-8", errors="replace",
-                   **({"env": env} if env is not None else {}))
+        return run_printing(args, timeout=timeout, cwd=cwd, **({"env": env} if env is not None else {}))
 
     def copy_tree(self, src: str, dst: str) -> None:
         shutil.copytree(src, dst, symlinks=True)
@@ -1089,6 +1118,10 @@ class WayOut:
     def __init__(self, container: str, name: str, image: str, home: Path, project: str):
         self.container, self.name, self.image, self.home, self.project = container, name, image, home, project
         self.net, self.gateway = f"{container}-net", gateway_of(container)
+        #: its doors' port, the project's own and under the kernel's choice of ports: on Docker's bridge, under an open
+        #: switch, the seal lets a session open this port on the bridge's addresses, and a fixed well-known one reached
+        #: any container of the user's listening there
+        self.door_port = DOOR_PORTS + int(_short(container), 16) % 10000
 
     def switch(self, network) -> None:
         """Turn the way out to `network`. The container holds it, so every holder's next call starts the container
@@ -1147,7 +1180,7 @@ class WayOut:
         own = " && ".join((f'sn=$({_SUBNET_OF}) && [ -n "$sn" ]', "iptables -A OUTPUT -o lo -j ACCEPT",
                            f"{to_own} -m conntrack --ctstate ESTABLISHED -j ACCEPT",
                            *(f"{to_own} -p tcp --dport {port} --sport {EPHEMERAL} -m conntrack --ctstate NEW -j ACCEPT"
-                             for port in (door.PORT, egress.PORT)),
+                             for port in (self.door_port, *(() if self.network[0] == "open" else (egress.PORT,)))),
                            f"{to_own} -j REJECT"))
         if self.network[0] != "open":
             return f"{own} && {inbound}"
@@ -1215,7 +1248,7 @@ class Door:
             except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 # …no call of the project reaches its model: the place down, its stop said as such (critic 3)
                 raise PlaceUnavailable(self.way.name, f"its model door did not start ({e})") from e
-        return f"http://{name if closed else address}:{door.PORT}", self.held[d][1]
+        return f"http://{name if closed else address}:{self.way.door_port}", self.held[d][1]
 
     def _start(self, name: str, credential, upstream: str, closed: bool) -> str | None:
         """One door started holding `credential`, its key kept; its address on Docker's bridge."""
@@ -1227,7 +1260,8 @@ class Door:
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", *_SMALL,
             "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
             *(["--network", self.way.net, "--network-alias", name] if closed else [])],
-            Path(door.__file__), [upstream, f"{OWN}/door.log", name if closed else "0.0.0.0", "1" if closed else "0"],
+            Path(door.__file__), [upstream, f"{OWN}/door.log", name if closed else "0.0.0.0", "1" if closed else "0",
+                                  str(self.way.door_port)],
             self.log())
         # …laid by a `docker exec` whose environment is its own and gone with it: in no configuration Docker keeps
         laid = json.dumps({"kind": credential.kind, "value": credential.value, "key": key})
@@ -1410,7 +1444,7 @@ class Volume:
         states = self.own / STATE_DIR
         vol, sub = ((self.state, src.relative_to(states)) if src.is_relative_to(states) else
                     (self.name, src.relative_to(self.own)) if src.is_relative_to(self.own) else
-                    (self.name, BASE_DIR / src.relative_to(self.base)))
+                    (self.name, (BASE_READ if ro else BASE_DIR) / src.relative_to(self.base)))
         spec = f"type=volume,src={vol},dst={dst}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
         return ["--mount", spec + (",readonly" if ro else "")]
 
@@ -1552,6 +1586,9 @@ class Volume:
         never written over. True where it imported."""
         rec = json.loads(self.record[0](VOLUME + IMPORTED) or "{}")
         if rec and not made and (not again or rec.get("commit") == "tree"):
+            if not rec.get("read"):              # …a volume from before sessions read a copy
+                self.read_again(image)
+                self.record[1](VOLUME + IMPORTED, json.dumps({**rec, "read": 1}))
             return False
         root = self.root()
         with tempfile.TemporaryDirectory(prefix="gfso-import-") as d:
@@ -1566,12 +1603,23 @@ class Volume:
         if got.returncode:
             raise OSError(f"{self.name}: the base could not be imported "
                           f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
-        self.record[1](VOLUME + IMPORTED, json.dumps({"for": root, "commit": commit or "tree",
+        self.record[1](VOLUME + IMPORTED, json.dumps({"for": root, "commit": commit or "tree", "read": 1,
                                                        "at": time.strftime("%Y-%m-%dT%H:%M:%S")}))
         self.said(f"the base is imported into the project's volume from {self.base}: "
                   + (f"its commit {commit[:12]}" if commit else "its tree (no git: imported once)")
                   + "".join(f"; {n}" for n in notes))
         return True
+
+    def read_again(self, image: str) -> None:
+        """The copy of the base sessions read, made or brought to the base's HEAD (`_READ_COPY`), by git under no config
+        of a repository's."""
+        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
+        got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/to"],
+                             [_READ_AGAIN, "sh", BASE_DIR, *lfs.filter_args(ContainerExecution.python)[1::2]], "read",
+                             user or "0")
+        if got.returncode:
+            raise OSError(f"{self.name}: the base's read copy could not be brought up "
+                          f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
 
     def land_tree(self, image: str, to: Path) -> list:
         """A base with no git as it stands in the volume, written to the host directory `to` in place of what stood
@@ -2055,8 +2103,8 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
             return self        # refused where the call starts, after the place's own health — a dead place stops first
         with _START:
             s = _SESSIONS.setdefault((self.container, os.path.normcase(rw)), PlaceContainer(self, rw, agent))
-            if agent and s.container not in _STARTED:
-                s.agent = agent
+            for c in (s, s.paired or s):     # …the record's word, whoever started the container first (a system's git)
+                c.agent = agent or c.agent
             return s
 
     def start(self) -> None:
@@ -2145,7 +2193,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         return (["docker", "exec", "-i", *(["-u", "0"] if root else []), "-w", self._inside_cwd(cwd), "-e", f"GFSO_CALL={call}",
                  *[a for k, v in own.items() for a in ("-e", k if k in secret else f"{k}={self.to_inside(v)}")],
                  self.container, "/bin/sh", "-c",
-                 f'export PATH={SYSTEM_PATH}:$PATH; echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh",
+                 f'export {WORK_PATH}="$PATH" PATH={SYSTEM_PATH}:$PATH; echo $$ >/tmp/gfso-calls/{call}; exec "$@"', "sh",
                  *map(self.to_inside, args)], {**here, **secret})
 
     def popen(self, args, *, env, cwd, **pipes):
@@ -2157,8 +2205,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         call = uuid.uuid4().hex
         argv, client = self._exec_argv(args, env, cwd, call, root)
         try:
-            done = run(argv, timeout=timeout, cwd=str(self.parent), env=client, text=True,
-                       encoding="utf-8", errors="replace")
+            done = run_printing(argv, timeout=timeout, cwd=str(self.parent), env=client)
         except subprocess.TimeoutExpired:
             self._end_inside(call)
             raise
@@ -2460,6 +2507,15 @@ def _kind_of(rel: tuple, systems: tuple) -> tuple:
     return ("check", rel[-1], ()) if rel[0] in systems else ("executor", rel[0], ())
 
 
+class _ClientFiles(ContainerFiles):
+    """A model's file tools where its provider runs them itself: in the place's client container, as a client's own run —
+    no system's call there for a link they follow to reach, and the base as the session reads it, the copy."""
+
+    def _where(self, path: str) -> tuple:
+        c = self.ex.client()
+        return c, str(c.rw)
+
+
 class PlaceContainer(ContainerExecution):
     """One session's container: its place writable (`rw`), the base read-only — a node's clone borrows the base's
     objects, and nothing it does reaches the base's refs — nothing of another node's place nor of the system's own
@@ -2574,6 +2630,22 @@ class PlaceContainer(ContainerExecution):
 
     def commands_of(self, proc) -> list:
         return [r for r in self.commands.record() if r.get("run") == proc.call]
+
+    def command(self, command: str, *, cwd: str, timeout: float, env=None):
+        """Through the system's shell in the place's client container, as a client's commands come (`Commands`): in the
+        place's own container it ran beside the system's git, in reach of what that prints, and on no record."""
+        c = self.client()
+        c.commands_env()
+        return c.run([shell.CLIENT, "-c", command], cwd=cwd, timeout=timeout, env=env)
+
+    @property
+    def tool_files(self):
+        return _ClientFiles(self)
+
+    def commands_ended(self) -> None:
+        c = self.client()
+        with contextlib.suppress(subprocess.TimeoutExpired):        # …a Docker that hangs costs the place, not this run's answer
+            c.commands.end(uuid.uuid4().hex, every=not c.clients)
 
     def popen(self, args, *, env, cwd, **pipes):
         proc = super().popen(args, env=env, cwd=cwd, **pipes)

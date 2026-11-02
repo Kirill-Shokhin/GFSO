@@ -80,7 +80,7 @@ def test_live_a_sessions_container_mounts_its_own_subpaths_with_their_rights(pro
     v = project.volume.name
     try:
         a.run(["true"], cwd=str(project.own / "a"), timeout=120).check_returncode()
-        sub = lambda d: (v, ".gfso-base" if d == project.base else d.relative_to(project.own).as_posix())
+        sub = lambda d: (v, ".gfso-base-read" if d == project.base else d.relative_to(project.own).as_posix())
         want = {(a.to_inside(str(d)), sub(d), ro) for d, ro in a._mounts()}
         held = _held(a.container)
         assert all(m[1][1] for m in held if isinstance(m[1], tuple)), "a session mounts no whole volume"
@@ -126,9 +126,9 @@ def test_live_a_door_runs_with_nothing_of_the_host_mounted_and_its_log_reads_out
     name = next(iter(project.gate.held.values()))[0]
     try:
         assert _mounts(name) == [], "its script laid in its own memory, not mounted"
-        knock = ("import urllib.request as u\ntry: u.urlopen(u.Request('http://127.0.0.1:8080/v1/x', data=b'{}', "
+        knock = ("import urllib.request as u\ntry: u.urlopen(u.Request('http://127.0.0.1:%d/v1/x' % PORT, data=b'{}', "
                  "headers={'x-api-key': 'not-its-key'}))\nexcept Exception: pass")
-        subprocess.run(["docker", "exec", name, "python3", "-c", knock], capture_output=True, timeout=60)
+        subprocess.run(["docker", "exec", name, "python3", "-c", f"PORT = {project.way.door_port}\n" + knock], capture_output=True, timeout=60)
         assert "refused: not this door's key" in project.gate.log_text()
     finally:
         project.stop()
@@ -180,7 +180,7 @@ def test_only_a_projects_deletion_removes_its_volume(tmp_path, monkeypatch):
 _KNOCK = '''import sys, urllib.request as u, urllib.error as e
 from concurrent.futures import ThreadPoolExecutor
 def ask(key, path="/v1/messages"):
-    r = u.Request("http://127.0.0.1:8080" + path, data=b'{"model":"x","messages":[]}', method="POST",
+    r = u.Request("http://127.0.0.1:" + sys.argv[-1] + path, data=b'{"model":"x","messages":[]}', method="POST",
                   headers={"x-api-key": key, "content-type": "application/json"})
     try:
         return u.urlopen(r, timeout=60).status
@@ -209,12 +209,12 @@ def test_live_a_flood_of_refusals_and_a_full_disk_never_cut_a_keyed_request(proj
     name = next(iter(project.gate.held.values()))[0]
     sh = lambda *a: subprocess.run(["docker", "exec", name, *a], capture_output=True, text=True, timeout=600)
     try:
-        sh("python3", "-c", _KNOCK, "flood", "4500")
+        sh("python3", "-c", _KNOCK, "flood", "4500", str(project.way.door_port))
         assert "the log is full" in project.gate.log_text()
         # …every block taken, and the slack of the log's last one too: a short line still fits there
         sh("sh", "-c", "dd if=/dev/zero of=/gfso-own/fill bs=64k 2>/dev/null; "
                        "while printf x >> /gfso-own/door.log 2>/dev/null; do :; done")
-        got = sh("python3", "-c", _KNOCK, "keyed", key).stdout.strip()
+        got = sh("python3", "-c", _KNOCK, "keyed", key, str(project.way.door_port)).stdout.strip()
         assert got in ("400", "401", "403", "404"), f"a keyed request after the flood got {got}, not the upstream's answer"
     finally:
         project.stop()

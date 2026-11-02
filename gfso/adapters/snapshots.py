@@ -28,7 +28,7 @@ from typing import Optional
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ended_by_watch, past_disk
 from gfso.config import subprocess_env
-from gfso.core.types import LAID, PlaceUnavailable
+from gfso.core.types import IN_THE_WORKS_PATH, LAID, PlaceUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -620,7 +620,7 @@ def _build(at: Path, declared: Optional[str], execution) -> str:
                 "nothing: no `build` was declared at DELIVER and the delivered tree has no Makefile at its root")
     ex = execution.session(str(at))
     try:
-        r = ex.run([ex.shell() or "sh", "-c", "exec 2>&1\n" + declared], cwd=str(at), timeout=BUILD_S,
+        r = ex.run([ex.shell() or "sh", "-c", "exec 2>&1\n" + IN_THE_WORKS_PATH + declared], cwd=str(at), timeout=BUILD_S,
                    env=subprocess_env())
     except subprocess.TimeoutExpired:
         raise BuildFailed(f"the judge built with {which}, and it was still running at {BUILD_S} s: ended, and no check "

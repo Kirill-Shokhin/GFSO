@@ -182,14 +182,15 @@ class _NoLiveModel(subprocess.Popen):          # a subclass: callers subscript i
 LIVE_OWED = {
     "gfso/adapters/execution.py": ("a_container_runs_a_call_with_the_hosts_paths_mapped", "a_container_holds_no_more_than_its_bounds",
                                    "a_session_holds_only_its_own_place", "a_sessions_commands_run_apart_from_its_client",
-                                   "a_judges_pinned_inputs_are_the_systems", "the_way_out_is_a_switch_set_outside",
+                                   "a_chat_providers_commands_run_apart", "a_part_starts_with_no_siblings_work_but_by_an_edge", "a_judges_pinned_inputs_are_the_systems", "the_way_out_is_a_switch_set_outside",
                                    "a_projects_places_stand_in_its_volume"),    # …the judge's whole file: `snapshots.py` and the pin's
     "gfso/adapters/door.py": ("a_projects_places_stand_in_its_volume", "a_container_holds_no_more_than_its_bounds"),
     "gfso/adapters/egress.py": ("the_way_out_is_a_switch_set_outside",),
-    "gfso/adapters/shell.py": ("a_sessions_commands_run_apart_from_its_client", "a_container_holds_no_more_than_its_bounds"),
+    "gfso/adapters/shell.py": ("a_sessions_commands_run_apart_from_its_client", "a_chat_providers_commands_run_apart", "a_container_holds_no_more_than_its_bounds"),
+    "gfso/adapters/llm/toolloop.py": ("a_chat_providers_commands_run_apart",),
     "gfso/adapters/snapshots.py": ("the_runs_of_a_validation_do_not_share_a_tree", "a_judge_judges_what_was_delivered", "the_system_reads_a_place_where_its_agent_cannot_lead_it_out",
                                    "the_systems_git_runs_in_the_place_it_reads"),
-    "gfso/adapters/worktrees.py": ("a_projects_places_stand_in_its_volume", "the_base_is_imported_and_its_result_lands_as_a_branch",
+    "gfso/adapters/worktrees.py": ("a_part_starts_with_no_siblings_work_but_by_an_edge", "a_projects_places_stand_in_its_volume", "the_base_is_imported_and_its_result_lands_as_a_branch",
                                    "the_systems_git_runs_in_the_place_it_reads"),
     "gfso/adapters/lfs.py": ("lfs_files_come_in_whole_and_leave_as_pointers", "the_base_is_imported_and_its_result_lands_as_a_branch"),
     "gfso/adapters/agent.Dockerfile": ("a_session_holds_only_its_own_place", "a_sessions_commands_run_apart_from_its_client"),

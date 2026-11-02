@@ -342,6 +342,18 @@ def test_live_the_record_says_what_each_command_changed_in_the_place(monkeypatch
 
 
 @live
+def test_live_a_later_step_of_a_check_does_not_run_what_delivered_code_laid_under_the_home(project):
+    """A pinned check's later step finds its program by name: delivered code run by its earlier step lays one under the home,
+    which is the agent's to write and first on the image's PATH (critic): under the home comes last for a build and a check."""
+    made(project, "c")
+    s = project.session(str(project.own / "c"))
+    text = E.IN_THE_WORKS_PATH + ('mkdir -p "$HOME/.local/bin" && printf "#!/bin/sh\necho forged\n" > "$HOME/.local/bin/ls" && '
+                                  'chmod +x "$HOME/.local/bin/ls"; hash -r; ls /; echo "$PATH"')
+    got = s.run(["bash", "-c", text], cwd=str(project.own / "c"), timeout=60).stdout
+    assert "forged" not in got and "usr" in got, got
+
+
+@live
 def test_live_a_program_a_command_lays_on_the_path_is_not_what_reads_the_record(monkeypatch, project):
     """The record was read as root by a bare `sh`, the image's PATH starting at the agent's home: a command laid `sh`
     there, and the system's own read ran it — the record said what the planted program printed and held nothing else.

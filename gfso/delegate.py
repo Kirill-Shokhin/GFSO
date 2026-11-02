@@ -31,7 +31,7 @@ from gfso.inflight import _inflight, being_rewritten, in_flight
 from gfso.adapters.verifiers import evaluate_unittest
 from gfso.core.graph.model import generation_of_task
 from gfso.core.protocol.procedure import BOUND_SPENT, criterionless, probes_from as _checks_of
-from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
+from gfso.core.types import (HOST, TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Verdict, Action, Mode, PlaceUnavailable,
                              SPAWNABLE_ACTIONS, files_at, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
@@ -286,13 +286,18 @@ def _oracle_workdir(engine, vcfg: dict):
         return None
 
 
-def _checker_validate(engine, task_id: TaskId, vcfg: dict, workdir: str | None = None) -> dict:
+def _checker_validate(engine, task_id: TaskId, vcfg: dict, workdir: str | None = None, execution=None) -> dict:
     """Deterministic HIDDEN-TEST validation (the issuer's oracle — the executor never sees the tests).
     Runs the project's hidden unittest suite against the delivered solution.py, maps each test method
     to the criterion of the same name, returns {verdict, per_criterion, failed_criteria}. No LLM, no
     false-PASS. The oracle map (config: `oracle_map`) is issuer-side; the agent has no path to it.
     It has NO default: a shipped default pointed every install at one experiment's map file, which
     on any other machine simply did not exist — a registration that names no map now says so."""
+    # …IN THIS PROCESS, ON THE SERVER'S MACHINE: it imports what the delivery wrote, so no project whose work the system
+    # holds in a container may name it (a delivery's code ran on the host under a container execution, critic, live)
+    if execution is not None and execution.files is not HOST:
+        return {"verdict": None, "note": "a unittest-checker runs a delivery on this machine, and this project's work runs "
+                                         "in a container: refused — register an llm-validator with pinned checks"}
     project = getattr(engine, "_project_name", None) or "default"
     try:
         entry = json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
@@ -380,7 +385,7 @@ def _validate_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
         # per-criterion verdict (the integrity gate applies), then auto-signals below.
         generation = engine.graph.generation_of(task_id)     # the delivery THIS check reads (§10.3 gate)
         read_at = len(engine.audit_log())               # …and where the log stood when it read it
-        out = _checker_validate(engine, task_id, vcfg, node_workspace(engine, agents, task_id))
+        out = _checker_validate(engine, task_id, vcfg, node_workspace(engine, agents, task_id), execution_of(engine, agents))
         if out.get("verdict") in (Verdict.PASS, Verdict.FAIL):
             try:
                 engine.record_exec_verdict(task_id, out["verdict"], out.get("failed_criteria") or [],
@@ -390,7 +395,7 @@ def _validate_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
                 engine.emit_info("delegate", f"{task_id}: checker verdict refused ({e})")
                 out = {"verdict": None}
         f = out.get("failed_criteria") or []
-        engine.emit_info("delegate", f"{task_id}: unittest-checker → {out.get('verdict')}"
+        engine.emit_info("delegate", f"{task_id}: unittest-checker → {out.get('verdict')} {out.get('note') or ''}"
                          + (f" (failed: {', '.join(f)})" if f else ""))
     else:
         ecfg = agents.get(task.assignee) if task else None   # validate WHERE the executor worked

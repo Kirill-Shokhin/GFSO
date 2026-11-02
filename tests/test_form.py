@@ -69,7 +69,7 @@ BASE = {
     # 5 (2026-10-25): `Graph` (21) — `setting`, the one door to a project's own settings where only the graph is in
     # hand (the Level-2 gate, the deadline nobody typed); a module function reaching `_storage` instead is the private
     # reach `test_coupling` refuses.
-    # 6 (2026-10-30, S6): `ExecutionPort` (21) — `commands_env`/`commands_of`: where a session's commands run, and
+    # 6 (2026-10-30, S6): `ExecutionPort` (24) — `commands_env`/`commands_of`/`command`/`commands_ended`/`tool_files`: where a session's commands run, and
     # the record of them, are the execution's alone (`execution.Commands`); folded into one method they would be one
     # call answering two questions
     "F_class_over_method_limit": 6,

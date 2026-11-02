@@ -216,8 +216,10 @@ def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
 
 def test_a_session_whose_directory_is_gone_is_stopped_and_one_started_by_its_project_stays_tracked(project, monkeypatch):
     ran = []
-    monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
-        args, 0, "true" if args[:2] == ["docker", "inspect"] else "", ""))
+    fake = lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
+        args, 0, "true" if args[:2] == ["docker", "inspect"] else "", "")
+    monkeypatch.setattr(E, "run", fake)
+    monkeypatch.setattr(E, "run_printing", fake)
     monkeypatch.setattr(E, "_STARTED", {})
     with project.scratch("gfso-noplace-") as d:
         gone = project.session(d)

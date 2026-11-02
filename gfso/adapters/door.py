@@ -26,7 +26,6 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-PORT = 8080
 #: where the system lays the credential for the door to read once (a tmpfs of the door's container)
 RUN = "/gfso-door-run"
 LOG_CAP = 20 * 2 ** 20
@@ -222,10 +221,10 @@ def _laid(wait: float = 120) -> dict:
     return cred
 
 
-def main(upstream: str, log: str, listen: str, closed: str) -> None:
-    """Serve on `listen`'s address until the container is removed."""
-    _Server((socket.gethostbyname(listen), PORT), handler(upstream, _laid(), log, closed == "1")).serve_forever()
+def main(upstream: str, log: str, listen: str, closed: str, port: str) -> None:
+    """Serve on `listen`'s address and `port` until the container is removed."""
+    _Server((socket.gethostbyname(listen), int(port)), handler(upstream, _laid(), log, closed == "1")).serve_forever()
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:5])
+    main(*sys.argv[1:6])

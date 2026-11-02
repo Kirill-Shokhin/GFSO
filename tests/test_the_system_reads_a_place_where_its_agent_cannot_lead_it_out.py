@@ -143,6 +143,7 @@ def test_an_io_error_stops_the_place_only_where_the_systems_own_probe_fails(proj
             return subprocess.CompletedProcess(args, 1, "" if kw.get("text") else b"", err if kw.get("text") else err.encode())
         return subprocess.CompletedProcess(args, 0, "" if kw.get("text") else b"", "" if kw.get("text") else b"")
     monkeypatch.setattr(E, "run", _docker_client)
+    monkeypatch.setattr(E, "run_printing", lambda args, **kw: _docker_client(args, text=True, **kw))
     monkeypatch.setattr(ContainerExecution, "unavailable", lambda self, storage=False, _said=storage: _said if storage
                         else None)
     where = str(project.parent / ".gfso-nodes-ws/p")

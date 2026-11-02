@@ -100,6 +100,12 @@ def admission_key(task_id) -> str:
     return f"admission:{task_id}"
 
 
+def grounds_key(task_id) -> str:
+    """{part: the commit of its whole's tree it starts from}: where the whole stood at the first join after the part
+    entered its split. The parts joined since are none of its input but by a Dep edge."""
+    return f"grounds:{task_id}"
+
+
 def goal_deps_key(task_id) -> str:
     """Where the declarations of a ROOT's Dep edges are recorded — a root sits in no split to re-admit (§15.2: the goal's
     issuer joins a second goal to it by Dep) — each with its producers as they then stand and its place in the log."""

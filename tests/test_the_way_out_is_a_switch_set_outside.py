@@ -260,19 +260,19 @@ def test_live_no_session_reaches_what_runs_in_another_nodes_container(tmp_path, 
 
 
 _TALK = '''import socket, sys
-peer, me, kind = sys.argv[1], sys.argv[2], sys.argv[3]
+peer, me, kind, port = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM if kind == "udp" else socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("0.0.0.0", 8080)); s.settimeout(0.3)
+s.bind(("0.0.0.0", port)); s.settimeout(0.3)
 for _ in range(25):
     try:
         if kind == "udp":
-            s.sendto(me.encode(), (peer, 8080)); print("got", s.recvfrom(100)[0].decode()); break
-        s.connect((peer, 8080)); s.sendall(me.encode()); print("got", s.recv(100).decode()); break
+            s.sendto(me.encode(), (peer, port)); print("got", s.recvfrom(100)[0].decode()); break
+        s.connect((peer, port)); s.sendall(me.encode()); print("got", s.recv(100).decode()); break
     except OSError:
         if kind != "udp":
             s.close(); s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("0.0.0.0", 8080)); s.settimeout(0.3)
+            s.bind(("0.0.0.0", port)); s.settimeout(0.3)
 '''
 
 
@@ -283,7 +283,8 @@ def test_live_two_sessions_sending_to_each_other_open_no_channel(tmp_path, mode,
     """Each of two sealed sessions sending to the other from the same port: under the inbound seal alone each one's
     packets were the other's «answers» — a channel between nodes under a closed switch (run live). On its own network a
     session opens nothing but its project's door and gateway, by TCP from a port the kernel picks."""
-    net, seal = f"talk{time.time_ns()}", _ex(tmp_path, {"mode": mode}).way.seal()
+    way = _ex(tmp_path, {"mode": mode}).way
+    net, seal = f"talk{time.time_ns()}", way.seal()
     subprocess.run(["docker", "network", "create", *(["--internal"] if mode == "off" else []), net], check=True,
                    capture_output=True)
     names = [f"{net}-{c}" for c in "ab"]
@@ -294,10 +295,32 @@ def test_live_two_sessions_sending_to_each_other_open_no_channel(tmp_path, mode,
         time.sleep(3)
         ip = [subprocess.run(["docker", "inspect", "-f", f'{{{{(index .NetworkSettings.Networks "{net}").IPAddress}}}}',
                               n], capture_output=True, text=True).stdout.strip() for n in names]
-        talk = [subprocess.Popen(["docker", "exec", "-u", "1001", n, "python3", "-c", _TALK, ip[1 - i], n[-1], kind],
+        talk = [subprocess.Popen(["docker", "exec", "-u", "1001", n, "python3", "-c", _TALK, ip[1 - i], n[-1], kind, str(way.door_port)],
                                  stdout=subprocess.PIPE, text=True) for i, n in enumerate(names)]
         heard = [t.communicate(timeout=60)[0] for t in talk]
         assert not any("got" in h for h in heard), f"{mode}/{kind}: two sessions talked past the seal: {heard}"
     finally:
         subprocess.run(["docker", "rm", "-f", *names], capture_output=True)
         subprocess.run(["docker", "network", "rm", net], capture_output=True)
+
+
+@pytest.mark.skipif(not shutil.which("docker"), reason="needs docker")
+def test_live_an_open_session_reaches_no_container_of_the_users_on_the_bridge(tmp_path):
+    """The door's port was one well-known number for every project, so under an open switch a session opened it on any
+    container of the bridge: a user's own service on 8080 answered it (named in SECURITY.md). Each project's doors listen
+    on a port of its own, and the seal opens that one alone."""
+    (tmp_path / "e.env").write_text("NOTHING=1\n")
+    x, theirs = _ex(tmp_path, {"mode": "open"}, f"users{time.time_ns()}"), f"users-{time.time_ns()}"
+    made_a = str(x.own / "a")
+    try:
+        subprocess.run(["docker", "run", "-d", "--name", theirs, "--entrypoint", "python3", IMAGE, "-m", "http.server",
+                        "8080"], check=True, capture_output=True)
+        x.run(["mkdir", "-p", made_a], cwd=str(x.base), timeout=60)
+        ip = subprocess.run(["docker", "inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", theirs],
+                            capture_output=True, text=True).stdout.strip()
+        got = x.session(made_a).run(["sh", "-c", f"curl -s -m 5 -o /dev/null -w '%{{http_code}}' http://{ip}:8080/"],
+                                    cwd=made_a, timeout=60).stdout
+        assert got == "000", f"a session reached a container of the user's on the bridge: {got!r}"
+    finally:
+        x.stop()
+        subprocess.run(["docker", "rm", "-f", theirs], capture_output=True)

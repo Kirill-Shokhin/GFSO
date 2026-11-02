@@ -21,6 +21,7 @@ from typing import Optional
 
 from dataclasses import replace
 
+from gfso.core.types import IN_THE_WORKS_PATH
 from gfso.adapters.execution import ended_by_watch
 from gfso.adapters.snapshots import WATCHED, snapshot, swap
 from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, materialize_inputs, probe_id, shows,
@@ -163,7 +164,7 @@ def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict
         # in the copy's own container (`ExecutionPort.session`): a check runs what the agents wrote — the plan's probe,
         # the delivery's scripts — and in the project's container that would reach every node's place (critic over
         # SECURITY.md); there it writes its copy alone
-        r = ex.session(tree).run([bash, "-c", cmd], cwd=tree, timeout=timeout)
+        r = ex.session(tree).run([bash, "-c", IN_THE_WORKS_PATH + cmd], cwd=tree, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"note": f"did not finish in {int(timeout)} s"}
     except OSError as e:
