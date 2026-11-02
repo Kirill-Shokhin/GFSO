@@ -3775,3 +3775,10 @@ CATCH (near-misses a public check fails while its base passes), UNDECIDED (crite
   number (held-out) reports.
 - What remains to show: whether the cheap model, on its own revised plan, carries `c_compiler` to its root verdict —
   no admission row on the live gate has run yet, and none on the target cell.
+- Splitting the authoring by stage (a stronger model writes the parts, criteria and couplings, the cheap one every check),
+  c_compiler, two plans: more near-miss mutants caught than either model alone (6 of 7 each), checks nearly all decidable,
+  coverage better than the stronger model's, at a third to a half of its price; structure on E2 0.795 against its 0.830, the margin
+  registered in advance missed by 0.005. Its checks fail the good trees more often than the cheap planner's, on behaviour
+  the contract does not list (25 and 34 tree-criterion pairs against 4, 14 and 7): refuted as the planner the row needs.
+  Grounding exact expectations on the reference removes the ones written wrong and costs no catch; applied to a check of
+  internal layout it pins the reference's own text, so it belongs to checks of the public interface only.
