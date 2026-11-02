@@ -101,7 +101,7 @@ const KEY = [
 export const keyPop = () => pop('How to read the page', 'Each mark means one thing in every view.', KEY.map(it => it.group ? it : {...it, key: true}));
 
 // ── LABELS drawn beside a thing ──
-export const CELLS = [['done', 'part done'], ['open', 'part open'], ['rework', 'part in rework'], ['gone', 'part cancelled']];
+export const CELLS = [['done', 'part done'], ['open', 'part open'], ['rework', 'part in rework'], ['shut', 'part closed by FAIL'], ['gone', 'part cancelled']];
 
 // ── the page's frame: index.html names these by `data-hint`, `mountHints()` writes them; the views use `frame()` ──
 const FRAME = {
@@ -238,7 +238,6 @@ const DOING = {review_decomposition: 'reviewing the plan', join_whole: 'joining 
 export const doing = (verb, kind) => DOING[verb] || KIND[kind]?.doing || verb.replace(/_/g, ' ');
 export const STRIP = {
     live: (name, row) => hover(name, row),
-    held: hover('Stopped', 'Nothing runs here until the run is started again', 'These nodes keep the state their work was in'),
     block: (n, of, direct, through) => hover(`${n} wait on ${of}`, 'None starts until it passes', direct,
         through.length > 0 && [`${through.length} more through them:`, through]),
     onIssuer: n => `${n} wait${n > 1 ? '' : 's'} on the issuer`, sentBack: n => `${n} sent back`,

@@ -52,28 +52,21 @@ function strip() {
             + `<span>${doingOf(w)}<b class="dk-age">${since(w.since * 1e3)}</b></span></span>`);
     // as many chips as the line holds, the rest counted (`drawStrip`): what waits and what it cost stay on the line
     const more = '<span class="dk-more"></span>';
-    // A STOPPED RUN RUNS NOTHING: its nodes still hold their working states, and the strip read "2 at work" over a run
-    // with no process left (a live run, 2026-10-25) — said as held, not as work
-    // …under AUTO only, where the system holds every node: a stop pauses the system, never a person's own work (critic)
-    const held = S.runState?.state === 'stopped' && !mine.length && S.graph.mode?.mode === 'auto';
-    const now_ = held && live.length
-        ? `<span class="dk-now dk-idle"${STRIP.held}>Stopped${tally(live.length, 'held mid-work')}</span>`
-          + `<span class="dk-chips">${busy.map(t => `<button class="dk-live" data-node="${esc(t.id)}" data-k="held|${esc(t.id)}"${STRIP.live(nameOf(t))}><i${beat()}></i><em>${esc(name(t))}</em><span>${label(t.state).toLowerCase()}</span></button>`).join('')}${more}</span>`
-        // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
-        // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
-        : live.length ? `<span class="dk-now">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
+    // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
+    // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
+    const now_ = live.length ? `<span class="dk-now">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
         : '<span class="dk-now dk-idle">Nothing at work</span>';
-    // …and what waits on what is said whether the run runs or is held
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
     // the red rounds badge's rule; a count of every FAIL ever never went away on a green run (critic)
     const state = id => S.tasks.find(t => t.id === id)?.state;
     const back = run ? Object.entries(run.rounds).filter(([id, rs]) => failingNow(rs, state(id)))
         .map(([id, rs]) => [id, rs.filter(r => r.verdict === 'FAIL').length]).sort((x, y) => y[1] - x[1]) : [];
-    return now_
-        // what is red comes first after what is at work: the line scrolls, and the last of it is the first behind its fade (critic)
-        // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
-        // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
-        + (back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" data-k="back|${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)}: ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '')
+    // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
+    // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
+    const red = back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" data-k="back|${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)}: ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '';
+    // what is red comes first after what is at work, and before it on a phone: the line scrolls, and what stands past its width
+    // is behind its fade — one session's chip took a phone's whole line (critics)
+    return (phone() ? red + now_ : now_ + red)
         // …its tip names each whole under its state's word, never cut to a chip's width nor a raw state by a dash (audit B9)
         + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.length, [...new Set(issuer.map(t => label(t.state)))]
             .flatMap(word => [`${word}:`, ...issuer.filter(t => label(t.state) === word).map(t => `– ${nameOf(t)}`)]))}>${tally(issuer.length, 'on the issuer')}</span>` : '')

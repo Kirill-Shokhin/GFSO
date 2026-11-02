@@ -22,7 +22,7 @@ const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 // спрятаны между букв … статус стоит через тире»). A cancelled part is not owed, so it leaves N: counted, a finished
 // goal read "11 of 12" forever.
 function standing(root) {
-    const parts = S.tasks.filter(t => !isRoot(t) && !cancelled(t)), k = parts.filter(t => t.state === 'DONE').length;
+    const parts = S.tasks.filter(t => !isRoot(t) && !cancelled(t)), k = parts.filter(delivered).length;   // closed by FAIL is not done: the engine holds its consumers (settled_positive)
     const said = s => label(s).toLowerCase();
     const phrase = {
         // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)

@@ -346,6 +346,9 @@ body {
 .cv-open { border: 1.5px solid var(--ink-soft); }
 .cv-rework { border: 2px solid var(--acc); }
 .cv-gone { border: 1.5px dashed var(--ink-faint); }
+.cv-shut { border: 1.5px solid var(--ink); background: linear-gradient(45deg, transparent 42%, var(--ink) 42% 58%, transparent 58%), linear-gradient(-45deg, transparent 42%, var(--ink) 42% 58%, transparent 58%); }
+/* «nothing needs you» or the red chip, never both: what calls a person is the engine's (`calls_person`), said by the chip */
+body:has(.hd-q.acc) .hd-quiet { display: none; }
 /* a cancelled part's track: kept for its history, faint as its tombstone on the graph */
 .pg .pg-gone { opacity: 0.45; }
 .pg-legend { font-size: 10.5px; color: var(--ink-caption); margin-top: 8px; max-width: 520px; line-height: 1.5; }
@@ -358,7 +361,7 @@ body {
 .cs-tiles { display: flex; gap: 32px; flex-wrap: wrap; margin-bottom: 14px; }
 .cs-tile { display: flex; flex-direction: column; }
 .cs-tile b { font-family: var(--font-display); font-size: 26px; font-weight: 650; letter-spacing: var(--tr-heading); color: var(--ink); line-height: 1.1; }
-.cs-tile span { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); }
+.cs-tile > span { font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); }
 .cs-tile i { font-style: normal; font-size: 11px; color: var(--ink-caption); }
 /* a count in a tile's note is the note's size and face — not the tile's figure (26 px) nor its label (9 px caps) */
 .cs-tile i .tally { font: inherit; text-transform: none; letter-spacing: 0; color: inherit; }
@@ -503,7 +506,9 @@ body {
            border-top: 0; border-radius: 0 0 6px 6px; }
 /* its counts are the page's one count mark at the line's size (dom.js tally); a click on it unfolds (graph.js) */
 .cy-fold { pointer-events: auto; cursor: pointer; }
-.cy-fold .tally { margin-right: 7px; } .cy-fold .tally:last-child, .cy-fold > :last-child .tally { margin-right: 0; }
+@media (pointer: coarse) { .cy-fold { pointer-events: none; } }
+.cy-fold .tally { margin-right: 7px; } .cy-fold > .tally:last-child, .cy-fold > :last-child .tally { margin-right: 0; }
+.cy-fold .cy-live { display: inline-block; box-sizing: border-box; margin-right: 4px; vertical-align: baseline; }
 .cy-fold .tally i { opacity: 1; }
 .cy-fold .acc, .cy-fold .acc .tally b { color: var(--acc); }
 .cy-fold.kf { position: static; transform: none; display: inline-block; border-top: 1px solid var(--ink-soft); border-radius: 6px; }
@@ -1445,7 +1450,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pn-k { color: var(--ink-soft); white-space: nowrap; }
 .pn-v { color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn-v code { font-family: var(--font-mono); font-size: 11.5px; }
-.pn-v code.overdue { color: var(--acc); }
+.pn-v code.overdue, .pn-v.overdue code { color: var(--acc); }
 .pn-v b { font-weight: 600; }
 .pn-v .pn-fig { font-family: var(--font-display); font-weight: 650; font-size: 14px; }
 .pn-v sup { font-size: 9.5px; margin-left: 2px; color: var(--ink-soft); }

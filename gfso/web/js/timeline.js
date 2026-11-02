@@ -63,6 +63,8 @@ export function render(el, run, nodes) {
     // (the author, 2026-10-31: «вместо того чтобы показывать инфу на самом исполнении, она отображается между ними в
     // разделении, а на самом исполнении одна и та же длинная инфа»); the cut is only the line between two pieces
     const yb = s => Y(s.node) + (SIDE.has(s.kind) ? LANE : 0);
+    // the side kinds share a lane: the longer drawn first, so none lies wholly under another and each keeps its hover (critic)
+    const overLane = ([a], [b]) => SIDE.has(a.kind) - SIDE.has(b.kind) || (SIDE.has(a.kind) ? (b.end - b.start) - (a.end - a.start) : 0);
     const rect = (s, i, a, b, p) => { const w = f.X(b) - f.X(a);
         return `<rect class="tl-s tl-${s.kind}${s.open ? ' tl-open' : ''}" data-i="${i}"${p == null ? '' : ` data-p="${p}"`}`
         + ` data-k="b|${esc(s.node)}|${s.kind}|${a}" x="${f.X(a)}" y="${yb(s) - BAR[s.kind] / 2}" width="${Math.max(w, 3)}" height="${BAR[s.kind]}" rx="1.5"/>`; };
@@ -90,7 +92,7 @@ export function render(el, run, nodes) {
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 2}" width="${W}" height="${ROW}"/>
         <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" data-k="n|${esc(id)}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id), cutN) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id), cutN))}</text>
-        ${work.map((s, i) => s.node === id ? bar(s, i) : '').join('')}${marks(id)}${idle(id)}</g>`;
+        ${work.map((s, i) => [s, i]).filter(([s]) => s.node === id).sort(overLane).map(([s, i]) => bar(s, i)).join('')}${marks(id)}${idle(id)}</g>`;
     // how many executors ran at once: its own band with its own scale, a line — not one more row of bars
     const c0 = 30 + CONC, peak = Math.max(run.exec.peak, 1), cy = k => c0 - (k / peak) * (CONC - 6);
     let line = `M${LEFT},${c0}`;

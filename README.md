@@ -130,7 +130,7 @@ Progress reads the goal's criteria along the split — each part's own criteria 
 
 <p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/ui-progress.png" alt="The progress view: one track per part counting its criteria passing at each verdict, and the goal's criteria against the parts responsible for them" width="820"></p>
 
-The page also draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different greens, and the page tells them apart.
+The page also draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different closes, and the page draws them apart.
 
 ---
 

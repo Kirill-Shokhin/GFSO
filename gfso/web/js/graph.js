@@ -54,11 +54,17 @@ const askingOf = eles => collect(asking(eles.map(n => n.id())));
 // …and at least the size a name is read at: where the whole plan fits only smaller, the first view is centred on what asks
 // for the reader, else on the goal; the rest a pan away
 const FLOOR = 0.6;
+// centred on them all where they fit together, else on the first: centred between two far apart, both stood off a phone (critic)
+function atFloor(eles) {
+    cy.zoom(FLOOR);
+    const b = eles.renderedBoundingBox(BODY);
+    cy.center(b.w <= cy.width() - 48 && b.h <= cy.height() - 48 ? eles : eles.first());
+}
 function home() {
     fitCapped();
     if (cy.zoom() >= FLOOR) return;
     const asks = askingOf(cy.nodes());
-    cy.zoom(FLOOR); cy.center(asks.length ? asks : cy.nodes().filter(n => !taskOf(n.id()).parent_id));
+    atFloor(asks.length ? asks : cy.nodes().filter(n => !taskOf(n.id()).parent_id));
     // …and no side stands blank while the plan runs off the other (the goal centred: half a canvas empty above a plan cut
     // below); never further than the plan's own edge, so what was centred stays in sight
     const b = cy.elements().renderedBoundingBox(BODY), m = 24;
@@ -118,7 +124,8 @@ export async function initGraph() {
     // …and a finger's tap anywhere on the canvas is a tap elsewhere: a tip a deck view showed does not stay over the panel
     // (cytoscape makes no `click` of a touch, so the document never hears it — critic 11)
     cy.on('tap', () => { if (TOUCH.matches) untip(); });
-    cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty()) point('select', null); }));
+    // (a press on a fold's tag is no tap on the background: the panel stays, and the redraw gives the node its border back)
+    cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty() && !pressed?.id) point('select', null); }));
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
     // a node is clicked to select it: the pointer says so, as on every row the deck lets one pick a node by
@@ -164,18 +171,21 @@ export async function initGraph() {
     const framed = () => { clearTimeout(wantT); if (want) { const z = cy.zoom(), p = {...cy.pan()}; fitCapped(want, 40);
         // short of room, the parts are framed on what asks among them, else on the parts: a part sent back stayed off a phone's screen (critic 7)
         if (cy.zoom() < FLOOR) { const parts = want.length > 1 ? want.slice(1) : want, asks = askingOf(parts);
-            cy.zoom(FLOOR); cy.center(asks.length ? asks : parts); }
+            atFloor(asks.length ? asks : parts); }
         const to = {zoom: cy.zoom(), pan: {...cy.pan()}}; cy.viewport({zoom: z, pan: p}); cy.animate({...to, duration: 200}); } want = null; };
     const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, 450); };
     // a double-click on a node shows it with its parts: a folded node unfolds first, then the subtree is framed
     const opening = async id => { if (foldOf(id).n) { unfold([id]); await redraw(); fresh = false; }
         framing(subtree(cy.getElementById(id))); };
     cy.on('dbltap', 'node', evt => opening(evt.target.id()));
-    // a press and release in place on the tag: a pan begun on it moves the graph and unfolds nothing (critic 7)
-    let pressed = null;
-    $('cy').addEventListener('pointerdown', e => { pressed = {x: e.clientX, y: e.clientY}; }, true);
-    $('cy').addEventListener('pointerup', e => { const id = e.target.closest?.('.cy-fold')?.dataset.node;
-        if (id && pressed && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) < 8) { e.stopPropagation(); opening(id); } });
+    // a press and release in place on the tag: a pan begun on it moves the graph and unfolds nothing (critic 7). Found by where
+    // it stands, not by the event's target: under a finger the tag lets every gesture through to the canvas (gfso.css), or a
+    // tag across a phone's width could not be panned from (critic 8)
+    const tagAt = e => [...$('cy').querySelectorAll('.cy-fold')].find(t => { const r = t.getBoundingClientRect();
+        return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; });
+    $('cy').addEventListener('pointerdown', e => { pressed = {x: e.clientX, y: e.clientY, id: tagAt(e)?.dataset.node}; }, true);
+    $('cy').addEventListener('pointerup', e => {
+        if (pressed?.id && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) < 8) opening(pressed.id); });
     // …the background's: the plan as first drawn, its parts folded again
     cy.on('dbltap', async evt => { if (evt.target !== cy) return;
         if (refold()) await redraw();
@@ -210,7 +220,8 @@ function subtree(n) {
 
 const BODY = {includeLabels: false, includeOverlays: false, includeUnderlays: false};   // the node itself
 const DBL = 400;   // ms: a second press within it makes a double-click
-let drawn = '', drawnIn = null;        // the node set last drawn, and whose: a redraw of the same keeps the view
+let pressed = null;                    // where the last press on the canvas began, and the fold's tag under it
+let drawn = '', drawnIn = null;       // the node set last drawn, and whose: a redraw of the same keeps the view
 // framed whole and not yet touched: a change of size re-frames it (the deck takes its height after the first
 // drawing, and the graph's foot sat under it); once the reader taps, zooms or a node is chosen, the view is theirs
 let fresh = true;
