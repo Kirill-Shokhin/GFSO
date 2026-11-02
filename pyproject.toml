@@ -90,3 +90,5 @@ include = ["gfso*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# …only the last run's files stay (the suite's temporary files live in this tree's `.tmp`, tests/conftest.py)
+tmp_path_retention_count = 1

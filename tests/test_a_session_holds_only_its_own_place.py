@@ -186,6 +186,7 @@ def test_live_a_validation_writes_its_round_alone_and_its_call_ends_where_it_run
         project.stop()
 
 
+@pytest.mark.live
 def test_the_systems_own_checks_stand_where_no_session_reaches(project):
     """The system's exact checks and observations: in the temp every session holds, a session could change what a
     check runs on (critic over the session slice)."""
@@ -195,6 +196,7 @@ def test_the_systems_own_checks_stand_where_no_session_reaches(project):
         assert not any(src.is_relative_to(project.parent / ".gfso-nodes-ws/p/.gfso-sys") for src, _ in a._mounts())
 
 
+@pytest.mark.live
 def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
     """It writes only its own round and reads the probes the node's standing findings name as the system laid them
     beside it — a root's as a node's (critic 2 over the session slice: moved to the system's scratch, a root's contact
@@ -320,6 +322,7 @@ def test_live_a_node_reads_its_own_temp_and_not_its_neighbours(project):
         project.stop()
 
 
+@pytest.mark.live
 def test_the_temp_laid_for_a_node_is_the_one_its_session_holds_now(project, monkeypatch):
     """A parent's consent runs before its executor made its place, in the roster's workdir: what is laid for it goes
     to the temp that session holds, and once the place stands, to the place's (critic over the node temps)."""
@@ -336,6 +339,7 @@ def test_the_temp_laid_for_a_node_is_the_one_its_session_holds_now(project, monk
         assert project.temp_of(d) == str(Path(d).resolve()), "a directory lent to one call is its own temp"
 
 
+@pytest.mark.live
 def test_the_rounds_rotation_leaves_a_running_contact_alone(project):
     """A contact runs among the node's validation rounds; the rotation that keeps the newest twenty must not take it
     from under its session (critic over the S4 seam)."""

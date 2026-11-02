@@ -246,6 +246,7 @@ def _image() -> str | None:
 
 
 @pytest.mark.skipif(_image() is None, reason="needs docker and the e3-linux-agent:2 image")
+@pytest.mark.live
 def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
     """The critic's cont2 over d0fc0b5: a checkout by either side's git (core.symlinks=false) lost the link; `cp -a`
     inside keeps it, the copy is a repository of its own there, its edits are read there (on the host the link is no
@@ -287,6 +288,7 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
 
 
 @pytest.mark.parametrize("network", [None, {"mode": "off"}])
+@pytest.mark.live
 def test_what_an_executor_made_unreadable_in_its_place_does_not_stop_its_copy(tmp_path, network):
     """Copied by the agent's user, one `chmod 000` in the executor's own place failed every copy, and where places stand
     apart its delivery was then never judged (critic over the judges slice). By root in the project's container, under

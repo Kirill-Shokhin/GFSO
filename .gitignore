@@ -70,3 +70,5 @@ docs/notes/
 
 # agents' scratch work: never part of the repository
 /scratchpad/
+.tmp/
+experiments/SpecBench/

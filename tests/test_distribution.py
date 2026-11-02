@@ -67,7 +67,7 @@ def built(tmp_path_factory) -> tuple[pathlib.Path, pathlib.Path]:
     shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(
         *BUILD_CACHES, "data", "results", "runs", "*.db", "*.db-wal", "*.db-shm", ".git",
         # …and the local, untracked workspaces: sessions' worktrees and scratch copies (dozens of trees) timed the copy out
-        ".claude", "scratchpad"))
+        ".claude", "scratchpad", ".tmp"))
     out = tmp_path_factory.mktemp("dist")
     proc = subprocess.run([sys.executable, "-m", "build", "--outdir", str(out), str(src)],
                           capture_output=True, text=True, timeout=900)
@@ -84,7 +84,9 @@ def built_with_internal_material_planted(tmp_path_factory) -> tuple[pathlib.Path
     much present on disk."""
     pytest.importorskip("build", reason="python -m build is the tool under test here")
     src = tmp_path_factory.mktemp("src-planted") / "tree"
-    shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(*BUILD_CACHES))
+    # …the internal material is planted below; the local workspaces (made and removed by neighbours while this copies —
+    # a worktree vanished mid-copy, 2026-11-01 — and 1.2 GB from the main checkout) add none and only race
+    shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(*BUILD_CACHES, ".claude", "scratchpad", "results", ".tmp"))
     (src / "E3_STATUS.md").write_text("internal", encoding="utf-8")
     (src / "ROADMAP_INTERNAL.md").write_text("internal", encoding="utf-8")
     for d in ("experiments/e9_probe", "runs/probe", "docs/notes"):

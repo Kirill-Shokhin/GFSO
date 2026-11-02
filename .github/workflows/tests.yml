@@ -131,7 +131,7 @@ jobs:
         run: |
           set -o pipefail
           files=$(grep -lE 'def test_live|_docker\(\)|_image\(\)' tests/*.py)   # …a file importing its mark has neither
-          python -m pytest $files -q -rs 2>&1 | tee pytest.out || rc=$?
+          python -m pytest $files --live -q -rs 2>&1 | tee pytest.out || rc=$?
           set +e
           {
             echo "### live tests — Docker, the product's image"
