@@ -3782,3 +3782,13 @@ CATCH (near-misses a public check fails while its base passes), UNDECIDED (crite
   the contract does not list (25 and 34 tree-criterion pairs against 4, 14 and 7): refuted as the planner the row needs.
   Grounding exact expectations on the reference removes the ones written wrong and costs no catch; applied to a check of
   internal layout it pins the reference's own text, so it belongs to checks of the public interface only.
+- **Bounding what the checks may demand (2026-11-02).** One more sentence in the prompt every writer of a check reads moved
+  nothing: 28 and 31 checks on constructs the contract never names, against 24 and 38. A second model tracing each public check
+  to the contract's text, a criterion left with none dropped, brings the pairs to 4 and 14, the cheap planner's level, with catch and
+  coverage in its range, and refuted by its registered margin (median 9 against 7): it drops a whole check for one clause beyond the
+  contract, so required rejections left with it. No planner is separated from the cheap one on this bench by that route.
+- **Out of sample, `sql_database` (7 near-misses, 4 good trees chosen blind to the plans; two plans an arm).** The stage split catches
+  3.5 of 7 against 3, reads 1.75 obligations open against 5.5, and fails the good trees no more often than the cheap planner (13 pairs
+  against 14): that it is less true, read on `c_compiler`, does not carry over. Rollouts of one build differ more than arms: criteria no
+  check decides 0 and 0.625 for the cheap planner. Three near-misses no plan of five catches, among them a defect that costs 5 of the 11
+  suites. No proof of the decomposer's quality stands, and no row of the system's own plan on `c_compiler` was run on any of this.
