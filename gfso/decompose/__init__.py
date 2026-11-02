@@ -271,31 +271,38 @@ def _admitted(criterion: dict) -> bool:
 
 def _patched_admissible(spec: dict, fixed: dict, named: str, progress) -> dict:
     """`_patched`, less what the patch itself made refusable: a criterion it rewrote into what the admission refuses keeps
-    its earlier admitted text, one it added so leaves. Nothing re-reads the last round's patch, so a repair of other
-    findings that wrote a probe naming an unpinned file ended a paid authoring at its build (E2 T03, 2026-11-02). A
-    criterion refused before the patch too stays as written: it is the repair's own to finish, or the build's to refuse."""
+    its earlier admitted text; one refused under a name the node did not have takes the patch of that node back whole,
+    since nothing ties it to what it replaced; a part the patch added with nothing admitted leaves. Nothing re-reads the
+    last round's patch, so a repair of other findings that wrote a probe naming an unpinned file ended a paid authoring
+    at its build (E2 T03, 2026-11-02). A criterion refused before the patch too stays as written: it is the repair's own
+    to finish, or the build's to refuse."""
     out, undone = _patched(spec, fixed, named), []
 
     def held(where: str, before, after) -> list:
-        """`after`'s criteria of one node, each refused one this patch made so undone."""
+        """`after`'s criteria of one node, what this patch made refusable taken back."""
         was = {c.get("name"): c for c in before or ()}
+        if new := [c.get("name") for c in after or () if c.get("name") not in was and not _admitted(c)]:
+            undone.append(f"{where}: {', '.join(map(str, new))} refused, the node's patch taken back")
+            return list(before or ())
         kept = []
         for c in after or ():
             old = was.get(c.get("name"))
-            if _admitted(c) or (old is not None and not _admitted(old)):
+            if _admitted(c) or old is None or not _admitted(old):
                 kept.append(c)
-                continue
-            undone.append(f"{where} / {c.get('name')}")
-            if old is not None:
+            else:
+                undone.append(f"{where} / {c.get('name')} keeps its earlier text")
                 kept.append(old)
         return kept
     out["root_criteria"] = held(ROOT_ID, spec.get("root_criteria"), out.get("root_criteria"))
     earlier = {k.get("id"): k for k in spec.get("subtasks") or ()}
-    out["subtasks"] = [{**k, "criteria": held(str(k.get("id")), (earlier.get(k.get("id")) or {}).get("criteria"),
-                                              k.get("criteria"))} for k in out.get("subtasks") or ()]
+    kids = [{**k, "criteria": held(str(k.get("id")), (earlier.get(k.get("id")) or {}).get("criteria"), k.get("criteria"))}
+            for k in out.get("subtasks") or ()]
+    out["subtasks"] = [k for k in kids if k["criteria"] or k.get("id") in earlier]
+    if gone := {k.get("id") for k in kids} - {k.get("id") for k in out["subtasks"]}:
+        out["mappings"] = [m for m in out.get("mappings") or () if m.get("child_id") not in gone]
+        out["deps"] = [d for d in out.get("deps") or () if d.get("from") not in gone and d.get("to") not in gone]
     if undone:
-        _progress(f"repair: {len(undone)} criterion(s) the patch made refusable keep their earlier text: "
-                  + " | ".join(undone), progress)
+        _progress(f"repair: what the patch made refusable is taken back: " + " | ".join(undone), progress)
     return out
 
 
