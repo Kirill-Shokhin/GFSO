@@ -279,11 +279,11 @@ def test_live_a_copy_in_cut_by_its_time_leaves_no_copy_running_and_the_next_star
     monkeypatch.setattr(E, "_SESSIONS", {})
     (base := tmp_path / "w" / "ws").mkdir(parents=True)
     (left := tmp_path / "w" / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
-    for i in range(300):
+    for i in range(5000):            # …a copy no machine ends inside its time: 300 files in 0.2 s did on CI's runner, and nothing was cut
         (left / f"f{i}").write_bytes(b"x")
     x = ContainerExecution(f"t{time.time_ns()}", IMAGE, None, str(tmp_path / "state"), str(base), "p")
     one = f"{x.volume.name}-bring-in"
-    x.volume.copy_time = 0.2
+    x.volume.copy_time = 0.1
     try:
         with pytest.raises(RuntimeError):
             x.start()
@@ -292,7 +292,7 @@ def test_live_a_copy_in_cut_by_its_time_leaves_no_copy_running_and_the_next_star
         assert x.volume.record[0]("volume:places") is None and left.is_dir(), "nothing recorded, nothing consumed"
         x.volume.copy_time = 1800
         got = x.run(["sh", "-c", "ls | wc -l"], cwd=str(x.own / "a"), timeout=120).stdout.strip()
-        assert got == "300" and x.volume.record[0]("volume:places")
+        assert got == "5000" and x.volume.record[0]("volume:places")
     finally:
         x.stop()
         x.volume.remove()
