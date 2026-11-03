@@ -100,7 +100,9 @@ const when = t => clockAt(typeof t === 'number' ? t * 1e3 : at(t));
 // …and none on a closed goal with nothing at work: there is nothing to stop or start (the author, 2026-10-30: «на done
 // проекте незачем висит кнопка stop») — nor the system's stop a server's start puts on every project that stood
 function runSwitch(r) {
-    if (!r || !begun() || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return '';
+    // …but a stop someone made while the plan was written stands when the plan ends: it hid, and the Start with it (critic)
+    const held = r && r.state !== 'running' && r.by !== 'system';
+    if (!r || !(begun() || held) || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return '';
     if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
     // the count its own mark (audit A5); the tip headed by who and when, each session still at work by its node and what it
     // does — not the in-flight registry's verb and id joined by dots (A8, A9)

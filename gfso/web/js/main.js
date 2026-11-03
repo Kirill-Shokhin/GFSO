@@ -80,7 +80,7 @@ const ACT = {
     edit: author.openEdit, decompose: author.openDecompose,
     mine: toggleMine, pop: (d, b) => b.setAttribute('aria-expanded', b.closest('.hd-quality').classList.toggle('open')), reports: toggleReports, 'close-modal': author.closeModal,
     projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects, 'project-delete': deleteProject,
-    'project-new': () => (closeProjects(), askProjectName()),
+    'project-new': () => (closeProjects(), askProjectName({goal: true})),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
     'gp-scope': goal.addScope, 'gp-risk': goal.addRisk, 'gp-create': goal.createGoal, 'gp-plan': goal.planGoal,
     'edit-add-criterion': () => author.addEditCriterion(), 'edit-add-risk': () => author.addEditAcceptedRisk(),

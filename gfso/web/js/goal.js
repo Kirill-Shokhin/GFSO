@@ -3,7 +3,7 @@
 // READS: admission (`/api/admission`, the ladder every ASSIGN runs) and who holds the work (`/api/modes`).
 import {$, esc} from './dom.js';
 import {cap} from './fmt.js';
-import {getJSON, post, refusal} from './api.js';
+import {GOAL, getJSON, post, refusal} from './api.js';
 import {S, myRole, begun} from './state.js';
 import {notice, askInPage, act, askProjectName, NO_ANSWER} from './overlays.js';
 import {PLAN_COST, MODES} from './vocab.js';
@@ -17,7 +17,8 @@ const mode = () => S.graph.mode?.mode || '';
 
 // one goal is one project (one root): the button poses a project's goal while it has none; with one posed, a new project
 // is the projects list's own «+ new project» — a second one here was a duplicate on the main page (the author, 2026-10-27)
-export const labelGoalButton = () => { $('btn-goal').hidden = begun(); };
+// …and a link to a project not there yet offers no paid plan: stating a goal in a new project is the `goal` address's (critic)
+export const labelGoalButton = () => { $('btn-goal').hidden = begun() || (!!S.missing && !GOAL); };
 
 // ONE PROJECT HOLDS ONE GOAL: with a root here, a new goal means a new project — the tab goes there first,
 // so the form always states the goal of the project it stands in.
