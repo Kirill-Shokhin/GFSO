@@ -132,7 +132,7 @@ def _run(e, agents, sessions: dict, until, validated: dict | None = None, rounds
     raise AssertionError(f"not reached: {({t.id: t.state.name for t in e.all_tasks()})}")
 
 
-def _until(pred, timeout=60.0) -> None:
+def _until(pred, timeout=20.0) -> None:
     end = time.monotonic() + timeout
     while not pred():
         assert time.monotonic() < end, "not reached in time"
