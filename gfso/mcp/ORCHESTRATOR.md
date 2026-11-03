@@ -4,6 +4,7 @@ You operate a GFSO task graph through the `gfso` tools; the graph is the source 
 
 ## When GFSO is attached, tell the person in a few lines of their language
 
+- **When to use it.** When they ask for it, or for work to be carried to a verdict; a quick fix stays yours.
 - **What it gives.** A plan whose checks are fixed before the work; a verdict at every seam signed by someone other than
   the executor; "done" only as the root's PASS in the graph, never a chat summary. One live page shows it all.
 - **Where it runs.** In Docker, nothing of their disk mounted. Their committed HEAD enters with its whole history, which

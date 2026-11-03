@@ -69,7 +69,8 @@ def what_stopped(calls) -> "str | None":
         if isinstance(c, dict) and c.get("ended") == "unavailable":
             return f"the execution place {c.get('place') or ''} is unavailable".replace("  ", " ")
         if isinstance(c, dict) and c.get("ended") == "unauthorized":
-            return "the account refused authentication (sign it in)"
+            # …what lifts it, the provider's to say: "sign it in" named a login no call runs on
+            return c.get("remedy") or "the account refused authentication: set its credential again (`gfso credential <provider>`)"
         if isinstance(c, dict) and c.get("ended") == "uncopied":     # …no stop: nothing is down, and nothing ran
             return f"the delivery at {c.get('place') or '?'} could not be copied to be judged"
     return "the account's usage limit" if refused_by_limit(calls) else None

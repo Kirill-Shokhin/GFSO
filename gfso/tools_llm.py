@@ -1578,12 +1578,12 @@ def _what_the_gate_does(engine: Engine, root_id, kids: list, n: int) -> str:
             f"takes them — EXPLORE, §9.9) — fix the criteria they name and run `review_decomposition('{root_id}')`.")
 
 
-def _no_plan(no) -> str:
+def _no_plan(no, verb: str = "auto_decompose") -> str:
     """Why no plan was built — and where a system stop refused its calls, that none was written, not that it was
-    unreadable (critic over b5f7350)."""
+    unreadable (critic over b5f7350) — in the words of `verb`, the one to call again."""
     stopped = what_stopped(no.stats)
-    return (f"{stopped}: no plan was authored — the project is stopped until it lifts; then call auto_decompose again"
-            if stopped else str(no))
+    return (f"{stopped}: no plan was authored — the project is stopped until it lifts; then call {verb} again"
+            if stopped else str(no).replace("auto_decompose", verb))
 
 
 def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
@@ -1794,7 +1794,7 @@ def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Op
                                     depth, review_model or engine.system_model(), emit_cb(engine, "plan", _progress),
                                     execution=execution_of(engine), ledger=engine.record_llm_usage)
         except NoPlan as no:
-            return {"error": _no_plan(no)}
+            return {"error": _no_plan(no, "plan")}
         return _plan_written(text)
     return _once(("plan", engine.project_name, request, model, executor, depth, review_model or engine.system_model()),
                  write)
@@ -1814,7 +1814,9 @@ def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = Non
             text = _planning.refine(_planning.text_of(plan), note, model, review_model or engine.system_model(),
                                     emit_cb(engine, "plan", _progress),
                                     execution=execution_of(engine), ledger=engine.record_llm_usage)
-        except (NoPlan, ValueError, OSError) as e:
+        except NoPlan as no:
+            return {"error": _no_plan(no, "refine_plan")}
+        except (ValueError, OSError) as e:
             return {"error": str(e)}
         return _plan_written(text)
     return _once(("refine", engine.project_name, plan, note, model, review_model or engine.system_model()), write)

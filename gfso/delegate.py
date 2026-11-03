@@ -525,7 +525,7 @@ def _classify_no_verdict(engine, task_id: TaskId, out: dict) -> str:
     _why = str(out.get("error") or "").strip()
     engine.emit_info("delegate",
                      f"{task_id}: validator verdict UNPARSED/error — "
-                     + (f"{_stopped} refused it" if (_stopped := what_stopped(out.get("stats"))) else "issuer must decide")
+                     + (f"its call was refused: {_stopped}" if (_stopped := what_stopped(out.get("stats"))) else "issuer must decide")
                      + (f" · {_why}" if _why else "")
                      + (f" · this run cost ${_spent:.4f} (recorded in `usage`)" if _spent
                         else " · no model call is recorded for it, so `usage` will not show it")

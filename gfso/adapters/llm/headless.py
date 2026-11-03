@@ -306,6 +306,13 @@ class _Hooks:
         return ["--setting-sources", ""]
 
 
+_SET_TOKEN = f"run `claude setup-token`, then `gfso credential {PROVIDER}`"
+#: what lifts a refusal, by the kind refused — `claude login` lifts none: no call runs on a login, only on the store
+_REFUSED = {"token": f"{PROVIDER}'s token was refused: {_SET_TOKEN} (`claude login` cannot help: no call runs outside "
+                     f"the credential store)",
+            "api": f"{PROVIDER}'s API key was refused: set a working one with `gfso credential {PROVIDER} --kind api`"}
+
+
 class _Credentials:
     """WHICH CREDENTIAL A CALL RUNS ON, apart from how it runs: the one given, or its provider's in force at the call's
     start (`credentials.current`); refused by that one's limit or sign-in, it is marked spent, the pointer moves to the
@@ -324,7 +331,7 @@ class _Credentials:
                 name, cred = self._in_force()
             except (OSError, ValueError) as e:
                 return self._no_store(e)
-            self._mine.name, self._mine.last = name, None
+            self._mine.name, self._mine.kind, self._mine.last = name, cred.kind, None
             text = run(cred)
             # …THIS thread's last record, on the credential it ran on: one provider serves parallel calls (`parallel_safe`),
             # and a cold resume inside the attempt ran a call of its own, which may have moved on (critic)
@@ -356,9 +363,8 @@ class _Credentials:
             # …NO CALL OUTSIDE ITS PROVIDER: with nothing in force in the one place, the CLI ran on whatever login its host
             # held — a fallback no credential list declared, and a bench whose home held no store spent a subscription
             # half a wave while the provider's API key stood unused (2026-11-01). A fallback is an entry of the list.
-            raise ValueError(f"no credential of {PROVIDER!r} is in force in {credentials.where()} — set one there "
-                             f"(`gfso credential {PROVIDER} --kind token|api`, the value on stdin); no call runs outside "
-                             f"its provider")
+            raise ValueError(f"no credential of {PROVIDER!r} is in force in {credentials.where()}: {_SET_TOKEN}; no call "
+                             f"runs outside its provider")
         return got
 
     def _no_store(self, e: Exception) -> str:
@@ -367,12 +373,14 @@ class _Credentials:
         parked (critic: it was one retry, then parked)."""
         self._mine.name = None
         self._booked({"duration_ms": 0, "model": self._model, "ended": "unauthorized", "error": str(e)[:300],
-                      "transport_torn": False, "resumed": False, "at": time.time()})
+                      "remedy": str(e), "transport_torn": False, "resumed": False, "at": time.time()})
         return ""
 
     def _booked(self, rec: dict) -> None:
         """One call's record, naming the credential this thread's call ran on."""
         rec["credential"] = self._mine.name
+        if rec.get("ended") == "unauthorized":
+            rec.setdefault("remedy", _REFUSED[self._mine.kind])
         self._mine.last = rec
         self._book(rec)
 

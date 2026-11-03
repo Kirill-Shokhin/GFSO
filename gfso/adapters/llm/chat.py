@@ -329,6 +329,8 @@ class ChatProvider(RecordingProvider):
                      limit_resets_at=last.resets_at, resumed=resumed, stop_reason=stop_reason, error=error)
         if ended == "unavailable":
             rec["place"] = place or self.wire.address
+        if ended == "unauthorized" and self.wire.missing_key:
+            rec["remedy"] = f"no API key is set: {self.wire.missing_key}"
         self._book(rec)
         return rec
 

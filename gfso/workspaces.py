@@ -9,14 +9,14 @@ import os
 import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
-from gfso.adapters.worktrees import NODES as _NODES, base_of
+from gfso.adapters.worktrees import base_of
 from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecution, component, drop_volumes,
                                      network_of, stricter)
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task, grounds_key, root_of
-from gfso.core.types import HOST, MADE, VOLUME, Signal, TaskId, State, hold_places
+from gfso.core.types import HOST, MADE, VOLUME, Signal, TaskId, State, hold_places, nodes_dir
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
@@ -66,7 +66,7 @@ def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | N
     if not base:
         return None
     key, proj = component((session_scope(engine, agents, task) or task).id), component(engine.project_name or DEFAULT_PROJECT)
-    return base, str(Path(base).parent / f"{_NODES}{Path(base).name}" / proj / key), f"gfso/{proj}/{key}"
+    return base, str(Path(base).parent / nodes_dir(Path(base).name) / proj / key), f"gfso/{proj}/{key}"
 
 
 

@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 
 from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
-                             FilesPort, PlaceUnavailable)
+                             FilesPort, PlaceUnavailable, base_named, nodes_dir, place_name)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
                          memory_ceiling, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
@@ -991,6 +991,12 @@ def component(s) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", str(s)).replace("..", "_").strip(".") or "_"
 
 
+def _mount_field(key: str, path: str) -> str:
+    """One field of a `--mount`, which Docker reads as CSV: a path that is the user's — the base's own name, a parent's
+    — may hold a comma or a quote."""
+    return f'"{key}={path.replace(chr(34), chr(34) * 2)}"' if re.search(r'[,"]', path) else f"{key}={path}"
+
+
 def scratch_of(place, project) -> Path:
     """Where the validations and contacts of the delivery in `place` keep their rounds, one directory each: beside a
     node's clone, among its project's places already; beside any other directory — a base — in its project's places
@@ -999,7 +1005,7 @@ def scratch_of(place, project) -> Path:
     p = Path(place)
     if p.parent.parent.name.startswith(NODES):
         return p.parent / f"{SCRATCH}{p.name}"
-    return p.parent / f"{NODES}{p.name}" / component(project or DEFAULT_PROJECT) / f"{SCRATCH}.{p.name}"
+    return p.parent / nodes_dir(p.name) / component(project or DEFAULT_PROJECT) / f"{SCRATCH}.{place_name(p.name)}"
 
 
 def _real(path) -> Path:
@@ -1497,7 +1503,7 @@ class Volume:
         vol, sub = ((self.state, src.relative_to(states)) if src.is_relative_to(states) else
                     (self.name, src.relative_to(self.own)) if src.is_relative_to(self.own) else
                     (self.name, (BASE_READ if ro else BASE_DIR) / src.relative_to(self.base)))
-        spec = f"type=volume,src={vol},dst={dst}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
+        spec = f"type=volume,src={vol},{_mount_field('dst', dst)}" + ("" if sub == Path(".") else f",volume-subpath={sub.as_posix()}")
         return ["--mount", spec + (",readonly" if ro else "")]
 
     def key(self, root: Path) -> tuple:
@@ -1605,7 +1611,7 @@ class Volume:
         self.require(both)
         user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
         got = self._one_shot(image, [*[a for p, at in ((host, "/from"), (old, "/old")) if p.is_dir()
-                                       for a in ("--mount", f"type=bind,src={p},dst={at},readonly")],
+                                       for a in ("--mount", f"type=bind,{_mount_field('src', str(p))},dst={at},readonly")],
                                      "--mount", f"type=volume,src={self.name},dst=/to",
                                      "--mount", f"type=volume,src={self.state},dst=/state"],
                              [_BRING_IN, "sh", user or "0", *[x for k, v in places.items() for x in (k, v)]],
@@ -1766,7 +1772,7 @@ class Volume:
             raise LookupError(f"the project's record names no image, and its execution {execution!r} is declared "
                               f"nowhere here ({executions_path()})")
         b, name = Path(base), component(project)
-        v = cls(container_name(execution, project), execution, b.parent / f"{NODES}{b.name}" / name, b, name)
+        v = cls(container_name(execution, project), execution, b.parent / nodes_dir(b.name) / name, b, name)
         v.record = (record.get, None)     # …asked against the record: a base that names another volume, refused
         return v, image
 
@@ -1787,7 +1793,7 @@ def _base_of_places(record: dict) -> str | None:
     for k in record:
         if k.startswith(MADE):
             p = Path(k[len(MADE):])
-            return str(p.parents[2] / p.parents[1].name.removeprefix(NODES))
+            return str(p.parents[2] / base_named(p.parents[1].name))
     return None
 
 
@@ -2177,7 +2183,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         self.files = ContainerFiles(self)
         if network is not None:
             self.switch(network)
-        self.mounts = [b, f"{NODES}{b}/{self.project_name}"]
+        self.mounts = [b, f"{nodes_dir(b)}/{self.project_name}"]
         self.own = self.parent / self.mounts[1]
         self.volume = Volume(container_name(name, project), name, self.own, self.base, self.project_name, image)
         # dotted, as no node's key is (`component`): the system's own among the project's places — the copies and

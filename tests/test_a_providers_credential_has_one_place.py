@@ -138,6 +138,23 @@ def test_the_cli_door_writes_and_never_prints_the_value(monkeypatch, capsys):
     assert "k-cli-secret" not in said.out + said.err and json.loads(said.out) == {"deepseek": _one("api")}
 
 
+@pytest.mark.parametrize("given", [[], ["--kind", "token"]])
+def test_an_api_key_given_as_a_token_is_held_as_what_it_is(monkeypatch, capsys, given):
+    """At Claude's default prompt it was held as a token, and the first call was refused with a remedy for another fault."""
+    monkeypatch.setattr(sys, "argv", ["gfso", "credential", "claude", *given])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("sk-ant-api03-secret\n"))
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+    said = capsys.readouterr()
+    assert done.value.code == 0 and credentials.get("claude") == credentials.Credential("api", "sk-ant-api03-secret")
+    assert "secret" not in said.out + said.err and json.loads(said.out) == {"claude": _one("api")}
+
+
+def test_a_token_stays_a_token():
+    registry.set_credential("claude", "token", "sk-ant-oat01-x")
+    assert credentials.get("claude").kind == "token"
+
+
 def test_the_http_door_writes_and_never_answers_the_value():
     engine = make_engine(llm=StubLLM(), validate_signals=False)
     engine.start()

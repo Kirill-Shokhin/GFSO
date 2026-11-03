@@ -27,6 +27,7 @@ from pathlib import Path
 from gfso.adapters import children, lfs
 from gfso.config import subprocess_env
 from gfso.adapters.execution import NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
+from gfso.core.types import base_named
 
 #: the largest bundle `_carry` moves through the server's memory
 BUNDLE_CAP = 512 * 2 ** 20
@@ -37,7 +38,7 @@ def base_of(place: str | None) -> str | None:
     p = Path(place) if place else None
     if p is None or len(p.parents) < 3 or not p.parent.parent.name.startswith(NODES):
         return None
-    return str(p.parent.parent.parent / p.parent.parent.name[len(NODES):])
+    return str(p.parent.parent.parent / base_named(p.parent.parent.name))
 
 
 _LOCKS: dict[str, threading.RLock] = {}

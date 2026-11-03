@@ -191,8 +191,8 @@ registered — a guard against accidents, not an owner check; a role registered 
 removed by anyone). The answer lists your live nodes the role was carrying or had issued.
 
 Where the project dir is the top of a git repository with a commit, each node an executor runs gets a
-place of its own: a worktree beside it (`../.gfso-nodes-<dir>/<project>/<node>`, branch
-`gfso/<project>/<node>`), made when its first session starts from where its parent stood when the node
+place of its own: a worktree beside it (`../.gfso-nodes-<dir>/<project>/<node>`, a space or other shell-unsafe
+character of `<dir>` escaped there as `~xx`; branch `gfso/<project>/<node>`), made when its first session starts from where its parent stood when the node
 entered the split, with its producers by their Dep edges, and reused on rework: a
 sibling's work it needs is an edge in the plan, or a BLOCK that makes one. Its delivery is committed there, its validation reads it there — never a sibling's half-edited
 file — and when it PASSes its branch is merged into its parent's place (the parent's worktree once it

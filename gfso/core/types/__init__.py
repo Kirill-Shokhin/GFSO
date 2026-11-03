@@ -22,5 +22,5 @@ from .effects import (
     MutateGraph, RunChecks, Recommend, Dispatch, EmitSignal, Effect,
 )
 from .ports import (StoragePort, LLMProviderPort, ExecutionPort, IN_THE_WORKS_PATH, PlaceUnavailable, THIS_HOST, WORK_PATH, AgentPort, VerifierPort,
-                    BATCH, LAID, FilesPort, HOST, HostFiles, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, files_at, hold_places, laid_beside, unprojected,
+                    BATCH, LAID, FilesPort, HOST, HostFiles, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, base_named, files_at, hold_places, laid_beside, nodes_dir, place_name, unprojected,
                     ClockPort, SystemClock, RunnerPort, ThreadRunner)

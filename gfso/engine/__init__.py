@@ -617,14 +617,16 @@ class Engine:
         return self.pause("system", f"the account's usage limit refused {role}'s call — until "
                                     f"{datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
 
-    def stop_for_the_account(self, role: str, why: str) -> dict:
+    def stop_for_the_account(self, role: str, why: str, remedy: Optional[str] = None) -> dict:
         """AN ACCOUNT THAT REFUSES AUTHENTICATION IS A STOP IN SUBSTANCE, as the limit is: no call of any role answers
-        until a person signs it in, and the redials of a cut call spent an hour on it while every bound ran
-        (GB_c_compiler_tncfs1160, 2026-10-23 11:29–12:29: four nodes timed out). Stopped, and asked again after
-        LIMIT_RETRY_S — the next refused call stops it again."""
+        until a person sets its credential (`remedy`, the provider's words), and the redials of a cut call spent an hour
+        on it while every bound ran (GB_c_compiler_tncfs1160, 2026-10-23 11:29–12:29: four nodes timed out). Stopped, and
+        asked again after LIMIT_RETRY_S — the next refused call stops it again."""
         until = time.time() + LIMIT_RETRY_S
-        return self.pause("system", f"the account refused authentication for {role}'s call ({why[:160]}) — sign it in; "
-                                    f"asked again {datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
+        said = remedy or (f"the account refused authentication ({why[:160]}): set its credential again "
+                          f"(`gfso credential <provider>`)")
+        return self.pause("system", f"{role}'s call: {said}; asked again {datetime.fromtimestamp(until):%Y-%m-%d %H:%M}",
+                          until)
 
     def stop_for_the_place(self, place: str, why: str) -> dict:
         """AN EXECUTION PLACE DOWN IS A STOP IN SUBSTANCE, as the limit is: no session of any role can start, so nobody
@@ -899,7 +901,7 @@ class Engine:
             elif c.get("ended") == "unavailable":
                 self.stop_for_the_place(str(c.get("place")), str(c.get("error")))
             elif c.get("ended") == "unauthorized":
-                self.stop_for_the_account(str(c.get("stage") or stage), str(c.get("error")))
+                self.stop_for_the_account(str(c.get("stage") or stage), str(c.get("error")), c.get("remedy"))
         # told to live observers the moment it is booked (not persisted: the ledger itself is the record), so an open
         # page re-reads its spend when there is something new rather than on a clock of its own
         if n:

@@ -10,8 +10,9 @@ import time
 
 import pytest
 
+from gfso import decompose as DEC, tools_llm as TL
 from gfso.adapters import execution as E
-from gfso.adapters.llm import headless as H
+from gfso.adapters.llm import credentials, headless as H
 from gfso.adapters.llm.stats import refused_by_limit
 from gfso.core.types import TaskId
 from gfso.issuer import LIMIT_RETRY_S
@@ -62,6 +63,45 @@ def test_a_refused_account_stops_the_project_and_is_asked_again():
     assert t0 + LIMIT_RETRY_S <= stop["until"] <= time.time() + LIMIT_RETRY_S + 60
     e.lift_the_system_stop(stop["until"])
     assert e.paused() is None, "the system did not start what it stopped"
+
+
+def _plan_refused(monkeypatch) -> tuple:
+    """(the error `plan` answers, the stop it left) — a fresh user's first call, through the real provider."""
+    monkeypatch.setattr(DEC, "_default_llm", lambda model, execution=None: H.ClaudeCodeProvider(model, execution=execution))
+    _cli(monkeypatch, REFUSED_STREAM)
+    e = make_engine(llm=None)
+    out = TL.TOOLS["plan"](e, request="count the words of a file")
+    return str(out.get("error")), e.paused() or {}
+
+
+def _no_wrong_remedy(said: str) -> None:
+    assert "sign it in" not in said and "auto_decompose" not in said, said
+
+
+def test_a_refused_token_names_the_one_remedy_and_the_verb_called(monkeypatch):
+    """`claude login` lifts nothing: no call runs outside the store; and the path's verb is `plan`."""
+    err, stop = _plan_refused(monkeypatch)
+    assert "token was refused" in err and "`claude setup-token`, then `gfso credential claude`" in err, err
+    assert "call plan again" in err, err
+    assert "`claude setup-token`" in stop["why"], stop
+    _no_wrong_remedy(err), _no_wrong_remedy(stop["why"])
+
+
+def test_no_credential_at_all_is_named_as_none_with_the_same_remedy(monkeypatch):
+    credentials.put("claude", "token", None)
+    err, stop = _plan_refused(monkeypatch)
+    assert "no credential of 'claude'" in err and "`claude setup-token`, then `gfso credential claude`" in err, err
+    assert "was refused" not in err.split(":")[0], err
+    assert "call plan again" in err and "no credential of 'claude'" in stop["why"], (err, stop)
+    _no_wrong_remedy(err), _no_wrong_remedy(stop["why"])
+
+
+def test_a_refused_api_key_is_not_told_to_make_a_token(monkeypatch):
+    credentials.put("claude", "token", None)
+    credentials.put("claude", "api", "sk-ant-api-x")
+    err, _ = _plan_refused(monkeypatch)
+    assert "API key was refused" in err and "`gfso credential claude --kind api`" in err and "setup-token" not in err, err
+    assert "sk-ant-api-x" not in err, "a value is never said"
 
 
 class _Here(E.LocalExecution):

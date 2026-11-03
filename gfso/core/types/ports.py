@@ -541,6 +541,30 @@ class HostFiles(FilesPort):
 #: a base's project directories stand beside it, under this prefix and the base's name, each holding its project's
 #: places and every system directory of the project (`ContainerExecution`)
 NODES = ".gfso-nodes-"
+#: what a shell and Docker's `--mount` do not read as a name's own: all but a word's characters and `.+@=-`
+_UNSAFE = re.compile(r"[^\w.+@=-]+")
+
+
+def place_name(base: str) -> str:
+    """A base's name as the system's directories beside it carry it. Those names are the system's, and a shell reads
+    them: a pinned check's `{inputs}` lies under them and is replaced unquoted into its command, so a base `word top`
+    split every such check's argv, and a comma ended a `--mount`'s field. Each unsafe byte as `~xx`: still readable, read
+    back by `base_named` (a node's packet names its base from its place, so a hash would lose it), and so two bases
+    never share one; a name with nothing unsafe stands as it is, so no place of one moves."""
+    return _UNSAFE.sub(lambda m: "".join(f"~{b:02x}" for b in os.fsencode(m[0])), base)
+
+
+def nodes_dir(base: str) -> str:
+    """The name of the directory beside a base (its name `base`) that holds its projects' places."""
+    return NODES + place_name(base)
+
+
+def base_named(nodes: str) -> str:
+    """The base's name a `nodes_dir` was made from; one recorded before `place_name` holds no escape and reads as it is."""
+    return os.fsdecode(re.sub(rb"~([0-9a-f]{2})", lambda m: bytes.fromhex(m[1].decode()),
+                              os.fsencode(nodes.removeprefix(NODES))))
+
+
 #: what names a validation's scratch beside the place it validates (`scratch_of`)
 SCRATCH = ".gfso-scratch-"
 #: what names one batch's directory in its validation's round (`<round>/batch<N>`): a session's writable root of its

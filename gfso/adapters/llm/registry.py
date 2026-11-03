@@ -141,5 +141,8 @@ def takes(name: str) -> tuple[str, ...]:
 
 def set_credential(name: str, kind: str, value: str | None, label: str | None = None) -> dict:
     """THE door's one act, for every provider: set (or, with None, remove) `name`'s credential `label` of `kind` in its
-    one place. Answers what is set now, never a value."""
+    one place. Answers what is set now, never a value. An API key pasted at Claude's token prompt is held as what it is:
+    as a token it reached the client as one, and every call was refused."""
+    if name == "claude" and value and value.strip().startswith("sk-ant-api"):
+        kind = "api"
     return credentials.put(name, kind, value, takes(name), label)

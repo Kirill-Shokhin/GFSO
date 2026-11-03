@@ -440,33 +440,33 @@ def setup(desktop: bool = False) -> int:
         print(f"gfso setup: {port_line}")
         return 1
 
-    exe = shutil.which("claude")
+    exe, door = shutil.which("claude"), False
     if exe is None:
         print("Claude Code CLI not found, so the agent door was not registered. After installing it:")
         print(f"  claude mcp add --scope user gfso -- {console_script()} connect")
     else:
-        registered, _ = mcp_registered()
-        if registered:
-            print("agent door: already registered with Claude Code")
-        else:
-            # --scope user, deliberately. `claude mcp add` defaults to the project the caller stands
-            # in, and this door is not a property of one repository: registered locally, it is
-            # invisible from every other directory — measured, while a `claude mcp list` run inside
-            # the source tree reported it connected.
-            # The ABSOLUTE console script, not the bare name: a user-scoped registration is used
-            # from every directory and from clients that do not share this PATH — `pip install
-            # --user` on Windows puts Scripts\ off PATH entirely, and a venv the user later leaves
-            # takes the name with it. The entry would then name a command that does not resolve,
-            # and the session would simply have no gfso tools, silently.
-            out = subprocess.run([exe, "mcp", "add", "--scope", "user", "gfso", "--",
-                                  str(console_script()), "connect"],
-                                 capture_output=True, text=True, encoding="utf-8",
-                                 errors="replace", timeout=120)
-            print("agent door: " + ("registered for your user, so it is there in every directory"
-                                    if out.returncode == 0 else
-                                    f"could not register ({out.stderr.strip()[:200]}); "
-                                    f"run `claude mcp add --scope user gfso -- "
-                                    f"{console_script()} connect` yourself"))
+        # --scope user, deliberately. `claude mcp add` defaults to the project the caller stands
+        # in, and this door is not a property of one repository: registered locally, it is
+        # invisible from every other directory — measured, while a `claude mcp list` run inside
+        # the source tree reported it connected.
+        # ASKED BY ADDING, never by `mcp list`: the list names no scope, so a local entry read as this
+        # one and no user's was added; the add refuses only that scope's own entry, and starts no server.
+        # The ABSOLUTE console script, not the bare name: a user-scoped registration is used
+        # from every directory and from clients that do not share this PATH — `pip install
+        # --user` on Windows puts Scripts\ off PATH entirely, and a venv the user later leaves
+        # takes the name with it. The entry would then name a command that does not resolve,
+        # and the session would simply have no gfso tools, silently.
+        out = subprocess.run([exe, "mcp", "add", "--scope", "user", "gfso", "--",
+                              str(console_script()), "connect"],
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=120)
+        door = out.returncode == 0 or "already exists" in out.stdout + out.stderr
+        print("agent door: " + ("registered for your user, so it is there in every directory"
+                                if out.returncode == 0 else
+                                "already registered for your user" if door else
+                                f"could not register ({out.stderr.strip()[:200]}); "
+                                f"run `claude mcp add --scope user gfso -- "
+                                f"{console_script()} connect` yourself"))
 
     # Claude Desktop is a separate application with a configuration file of its own, so it is
     # written ONLY when named: `--desktop`. Otherwise the block is printed and the user decides.
@@ -491,7 +491,10 @@ def setup(desktop: bool = False) -> int:
     except Exception:
         pass
     print()
-    return doctor()
+    code = doctor()
+    if door:       # …a client reads its servers at its start: a session already open has no gfso tools
+        print("\nA new Claude Code session has the door; one already open does not. Say the task there.")
+    return code
 
 
 def webbrowser_open(url: str) -> None:

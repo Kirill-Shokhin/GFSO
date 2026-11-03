@@ -97,6 +97,55 @@ def test_setup_refuses_a_foreign_holder_instead_of_waiting_it_out(monkeypatch, c
     assert "held by another process" in capsys.readouterr().out
 
 
+NEW_SESSION = "A new Claude Code session has the door"
+
+
+def _setup_with(monkeypatch, capsys, exe="claude", add=(0, "")) -> tuple[str, list]:
+    """What `setup` prints, and the calls it made of a fake CLI whose `mcp list` shows `gfso` — as it does inside a project
+    holding a local-scope entry, the list naming no scope — and whose `mcp add` ends as `add` says."""
+    calls = []
+
+    def run(argv, **kw):
+        calls.append(argv)
+        rc, err = add if argv[1:3] == ["mcp", "add"] else (0, "")
+        return type("R", (), {"returncode": rc, "stdout": "gfso: gfso connect - connected", "stderr": err})
+
+    monkeypatch.setattr(D.shutil, "which", lambda name: exe)
+    monkeypatch.setattr(D.subprocess, "run", run)
+    monkeypatch.setattr(D, "port_state", lambda: ("free", "nothing is listening"))
+    monkeypatch.setattr(D, "webbrowser_open", lambda url: None)
+    monkeypatch.setattr(D, "desktop_config_path", lambda: None)
+    monkeypatch.setattr(D, "install_execution", lambda: "agent image: x")
+    monkeypatch.setattr(D, "doctor", lambda: print("the doctor's table") or 0)
+    monkeypatch.setattr("gfso.mcp.connect.ensure_correct", lambda *a, **k: {"action": "none"})
+    assert D.setup() == 0
+    return capsys.readouterr().out, calls
+
+
+def test_a_local_entry_does_not_stand_for_the_users(monkeypatch, capsys):
+    """`"gfso" in stdout` read a project's local entry as the door, and every other directory had none."""
+    out, calls = _setup_with(monkeypatch, capsys)
+    assert any(c[1:5] == ["mcp", "add", "--scope", "user"] for c in calls), calls
+    assert "registered for your user" in out
+
+
+def test_setup_ends_by_saying_where_the_door_is(monkeypatch, capsys):
+    out, _ = _setup_with(monkeypatch, capsys)
+    assert out.rindex(NEW_SESSION) > out.rindex("the doctor's table"), out
+    assert "already open does not" in out
+
+
+def test_a_users_entry_already_there_is_said_as_that(monkeypatch, capsys):
+    out, _ = _setup_with(monkeypatch, capsys, add=(1, "MCP server gfso already exists in user config"))
+    assert "already registered for your user" in out and "could not register" not in out and NEW_SESSION in out, out
+
+
+@pytest.mark.parametrize("exe, add", [("claude", (1, "boom")), (None, (0, ""))])
+def test_no_door_is_promised_where_none_was_registered(monkeypatch, capsys, exe, add):
+    out, _ = _setup_with(monkeypatch, capsys, exe, add)
+    assert NEW_SESSION not in out, out
+
+
 def test_a_database_from_a_newer_gfso_is_refused_by_name(tmp_path):
     """The silent direction of an upgrade. A newer schema used to surface as a KeyError deep inside
     a read — a blank UI — rather than as a sentence naming the cause."""
