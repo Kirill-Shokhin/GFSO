@@ -59,7 +59,7 @@ function stretches(run) {
 
 export function render(el, run, nodes) {
     const ids = rows(run, nodes), name = run.name, work = stretches(run);
-    const W = axisWidth(el), LEFT = gutter(W), cutN = Math.floor((LEFT - 18) / 6), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
+    const W = axisWidth(el), LEFT = gutter(W), cutN = id => Math.floor((LEFT - 18) / (run.depth[id] ? 6 : 7)), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
     const Y = id => TOP + ids.indexOf(id) * ROW + ROW / 2 + 4;
     // A STRETCH PASSED ON from session to session is drawn as its sessions, each its own piece of the bar between the cuts and
     // its own tip — its time, cost, tokens, its round, and where it stood when it passed on, against its budget and window
@@ -94,7 +94,7 @@ export function render(el, run, nodes) {
         `<g><rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text></g>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 2}" width="${W}" height="${ROW}"/>
-        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" data-k="n|${esc(id)}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id), cutN) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id), cutN))}</text>
+        <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" data-k="n|${esc(id)}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id), cutN(id)) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id), cutN(id)))}</text>
         ${work.map((s, i) => [s, i]).filter(([s]) => s.node === id).sort(overLane).map(([s, i]) => bar(s, i)).join('')}${marks(id)}${idle(id)}</g>`;
     // how many executors ran at once: its own band with its own scale, a line — not one more row of bars
     const c0 = 30 + CONC, peak = Math.max(run.exec.peak, 1), cy = k => c0 - (k / peak) * (CONC - 6);
