@@ -1492,6 +1492,7 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
 .header > .hd-reports { order: 8; }
 .header > #hd-quality { order: 9; }
 .header > .tb-help { order: 10; }
+.hd-goal > .hd-phrase { order: 3; }   /* no root yet: the phrase stands where the goal will, after the picker's «/» */
 
 /* ONE BUTTON: everything on the bar that acts — body face, sentence case, one border, one hover */
 .hd-mode, .hd-q, .hd-run, .pl-open, .btn-goal, .queue-toggle {

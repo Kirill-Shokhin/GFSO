@@ -81,8 +81,10 @@ function strip() {
 // cost is booked when it ENDS: the running ones are said on its hover, not as «+N running» beside «N at work», which
 // counted the same sessions twice (the author, 2026-10-30)
 const sum = () => { const run = S.run; if (!run) return '';
+    const booked = Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0);
     return `<span${STRIP.spend(byRole(run.cost.byKind), nowOf().procs.length)}>`
-        + tally(money(run.cost.total, Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0), run.cost.unpriced), 'spent')
+        // …nothing booked yet is no sum: «$0.00 spent» stood under seven minutes of a plan being authored
+        + (booked ? tally(money(run.cost.total, booked, run.cost.unpriced), 'spent') : '')
         + tally(lasting(run.clock.from, run.clock.span), 'run') + '</span>'; };
 
 // THE LINE SCROLLS IN ITS OWN PLACE, its bar hidden: a soft fade at the edge where more of it lies says there is more, and
