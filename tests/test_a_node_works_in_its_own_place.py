@@ -131,7 +131,13 @@ def _run(e, agents, sessions: dict, until, validated: dict | None = None, rounds
 
 def _until(pred, timeout=20.0) -> None:
     end = time.monotonic() + timeout
-    while not pred():
+
+    def holds():
+        try:
+            return pred()
+        except subprocess.CalledProcessError:    # a git read beside the system's own ref work: not yet, the bound decides
+            return False
+    while not holds():
         assert time.monotonic() < end, "not reached in time"
         time.sleep(0.05)
 
