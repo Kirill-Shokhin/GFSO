@@ -85,7 +85,7 @@ const sum = () => { const run = S.run; if (!run) return '';
     return `<span${STRIP.spend(byRole(run.cost.byKind), nowOf().procs.length)}>`
         // …nothing booked yet is no sum: «$0.00 spent» stood under seven minutes of a plan being authored
         + (booked ? tally(money(run.cost.total, booked, run.cost.unpriced), 'spent') : '')
-        + tally(lasting(run.clock.from, run.clock.span), 'run') + '</span>'; };
+        + tally(lasting(run.clock.workedFrom, run.clock.worked), 'run') + '</span>'; };
 
 // THE LINE SCROLLS IN ITS OWN PLACE, its bar hidden: a soft fade at the edge where more of it lies says there is more, and
 // a mouse's wheel moves it sideways (the author, 2026-10-30: «подписи … даже не все влезают и не понятно что там дальше»)

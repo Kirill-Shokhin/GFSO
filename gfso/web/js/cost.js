@@ -55,8 +55,8 @@ export function render(el, run, nodes) {
         <div class="cs-tiles">
             ${tile(Object.values(c.byKind).some(k => k.procs) ? money(Object.values(c.byKind)) : '—', 'spent', c.unpriced && tally(c.unpriced, 'unpriced', TIP.unpriced))}
             ${tile(tok(c.tokens), 'tokens', 'cache included', c.untold && c.tokens != null && tally(c.untold, 'reported none'))}
-            ${tile(lasting(run.clock.from, run.clock.span), 'run time', run.clock.folds.length && tally(dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0)), 'idle, folded'))}
-            ${tile(dur(c.busy), 'session time', tally(`${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}×`, 'the run'))}
+            ${tile(lasting(run.clock.workedFrom, run.clock.worked), 'run time', run.clock.folds.length && tally(dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0)), 'idle, folded'))}
+            ${tile(dur(c.busy), 'session time', tally(`${(c.busy / Math.max(run.clock.worked, 1)).toFixed(1)}×`, 'the run'))}
             ${tile(run.exec.peak, 'executors at once', tally(run.val.peak, 'validators'))}
         </div>
         <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k].name} <b>${money([c.byKind[k]])}</b>`

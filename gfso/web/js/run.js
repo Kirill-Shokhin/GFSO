@@ -195,7 +195,9 @@ function clock(spans, points, now) {
     const x = t => t - t0 - sum(folds, f => Math.min(Math.max(t - f.from - FOLD, 0), f.to - f.from - FOLD));
     const span = merged.length ? x(merged.at(-1)[1]) : 0;
     // …while the run is open its span grows with time: `from` is the moment it counts from, for a figure set as it grows
-    return {t0, x, span, from: now ? now - span : null, folds: folds.map(f => ({at: x(f.from), from: f.from, to: f.to}))};
+    // the run's time, as said: its work, the room a fold keeps on the axis left out, so work and idle add to the wall clock (critic: 30m + 24m over 52m)
+    const worked = span - folds.length * FOLD;
+    return {t0, x, span, worked, workedFrom: now ? now - worked : null, from: now ? now - span : null, folds: folds.map(f => ({at: x(f.from), from: f.from, to: f.to}))};
 }
 
 // How many sessions of a kind ran at once, as a step series; its peak is the parallelism figure.
