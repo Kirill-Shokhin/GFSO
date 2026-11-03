@@ -12,9 +12,11 @@ LLM-layer instrument, and this suite is substrate-free by design (no model runs)
 takes the canon's own EXPLORE branch (§9.9) and turns the gate off, exactly as a deployment
 without a checker would. `tests/test_l2_gate.py` turns it back ON and owns that behavior end to end.
 """
+import atexit
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -46,6 +48,23 @@ _TMP = (Path(_COMMON).parent if _COMMON else _ROOT) / ".tmp"
 _TMP.mkdir(exist_ok=True)
 tempfile.tempdir = str(_TMP)
 os.environ.update(TMP=str(_TMP), TEMP=str(_TMP), TMPDIR=str(_TMP), GIT_CEILING_DIRECTORIES=str(_TMP))
+
+
+class _Mute:
+    write, flush = staticmethod(len), staticmethod(lambda: None)
+
+
+def _no_thread_writes_through_the_interpreters_end():
+    """A daemon thread a test left behind, caught inside a write as the interpreter finalizes, keeps the stream's lock
+    for good, and the last flush aborts the process: "could not acquire lock for <stderr>", a green suite's job red with
+    exit 127 (CI, Windows, 2026-11-04). Registered before anything else here, so it runs last: what other callbacks say
+    is still said. The pause is for a write already under way to end."""
+    sys.stdout.flush(), sys.stderr.flush()
+    sys.stdout = sys.stderr = _Mute()
+    time.sleep(0.2)
+
+
+atexit.register(_no_thread_writes_through_the_interpreters_end)
 
 from gfso.adapters import execution as E  # noqa: E402
 from gfso.adapters.llm import chat as _chat  # noqa: E402

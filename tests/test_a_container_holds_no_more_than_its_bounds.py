@@ -115,19 +115,25 @@ def test_a_reader_ended_past_the_bound_fails_the_delivery_with_its_cause():
 def test_live_a_large_file_the_build_rewrote_is_put_back_within_a_small_bound():
     """`kept` puts a delivered file back a chunk at a time, hashing what it writes: a 200 MB tracked file the build
     rewrote comes back as delivered under a 128 MiB bound (read whole, it was killed: a false FAIL blaming the build —
-    critic over the bounds)."""
+    critic over the bounds). The bound comes down only once the repository is made: a 137 in the test's own `git add` of
+    that file could not be told from the checkout's (CI, 2026-11-04: 137 and nothing said)."""
     name = f"gfso-kept-test-{time.time_ns()}"
-    script = ("set -e; mkdir /tmp/w && cd /tmp/w && git init -q && git config user.email t@t && git config user.name t; "
-              "head -c 200000000 /dev/urandom > big; git add big; git commit -qm d; "
-              "echo rewritten > big; c=$(git rev-parse HEAD); t=$(git rev-parse HEAD^{tree}); "
+    prepare = ("set -e; mkdir /tmp/w && cd /tmp/w && git init -q && git config user.email t@t && git config user.name t; "
+               "head -c 200000000 /dev/urandom > big; git add big; git commit -qm d; sync")
+    script = ("set -e; cd /tmp/w; echo rewritten > big; c=$(git rev-parse HEAD); t=$(git rev-parse HEAD^{tree}); "
               'python3 -I -c "$S" kept /tmp/w "$c" "$t"; echo rc=$?; git cat-file blob HEAD:big | cmp -s - big && echo restored')
+    in_it = lambda body: subprocess.run(["docker", "exec", "-e", f"S={S._CHECKOUT}", name, "sh", "-c", body],
+                                        capture_output=True, text=True, timeout=300)
     try:
-        got = subprocess.run(["docker", "run", "--rm", "--name", name, "--memory", "128m", "--memory-swap", "128m",
-                              "-e", f"S={S._CHECKOUT}", IMAGE, "sh", "-c", script],
-                             capture_output=True, text=True, timeout=300)
+        subprocess.run(["docker", "run", "-d", "--name", name, "--memory", "1g", "--memory-swap", "1g", IMAGE, "sleep", "600"],
+                       capture_output=True, check=True)
+        ready = in_it(prepare)
+        assert ready.returncode == 0, ("the test's preparation", ready.returncode, ready.stderr[-300:])
+        subprocess.run(["docker", "update", "--memory", "128m", "--memory-swap", "128m", name], capture_output=True, check=True)
+        got = in_it(script)
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-    assert "rc=0" in got.stdout and "restored" in got.stdout, (got.stdout[-300:], got.stderr[-300:])
+    assert "rc=0" in got.stdout and "restored" in got.stdout, ("the checkout", got.returncode, got.stdout[-300:], got.stderr[-300:])
 
 
 def test_the_ceiling_is_a_share_of_dockers_memory_no_installation_dials(monkeypatch):

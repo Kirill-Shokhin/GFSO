@@ -22,6 +22,7 @@ from gfso.api.server import create_app, _start_reaper
 from gfso.mcp.server import create_server, _bind
 from gfso.runtime import ProjectRegistry
 from gfso.core.types import AgentId, Mode
+from gfso.delegate import _DISPATCHERS
 from gfso import tools as T
 from gfso.adapters.llm.stub import StubLLM
 from tests.support import criterion, make_engine
@@ -338,9 +339,7 @@ def test_the_project_list_says_where_each_root_stands(monkeypatch, tmp_path):
     for n in ("loaded", "closed"):
         _mk(reg.engine(n), "root")
     reg.engine("bare")
-    eng = reg._engines.pop("closed")
-    eng.stop()
-    eng._graph._storage.close()
+    _closed(reg, "closed")
     app = create_app(reg.engine(), registry=reg)
     with TestClient(app) as c:
         about = c.get("/api/projects").json()["about"]
@@ -356,6 +355,7 @@ def test_the_project_list_says_where_each_root_stands(monkeypatch, tmp_path):
 
 def _closed(reg, name):
     eng = reg._engines.pop(name)
+    _DISPATCHERS.pop(id(eng)).stop()         # …left running, it polled the closed database, and said so, to the suite's end
     eng.stop()
     eng._graph._storage.close()
 

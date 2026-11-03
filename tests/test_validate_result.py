@@ -603,7 +603,7 @@ def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeyp
     class _P:
         def __init__(self, args, **kw):
             seen["args"] = args
-            self.stdin, self.stdout, self.returncode = _W(), iter(()), 0
+            self.stdin, self.stdout, self.returncode, self.pid = _W(), iter(()), 0, 2 ** 30   # no such group, for the exit's reap
 
         def wait(self, timeout=None):
             return 0
