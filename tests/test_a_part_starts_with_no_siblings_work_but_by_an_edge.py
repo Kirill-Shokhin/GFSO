@@ -55,7 +55,7 @@ def _part(name, by="exec-2"):
 def test_a_part_started_after_its_sibling_joined_does_not_hold_its_work(tmp_path):
     e, agents, _ = _plan(tmp_path, whole="exec-1")
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"})}
-    _dispatched(e, agents, sessions, lambda: sessions["b"].cwd, held=("b",))
+    _dispatched(e, agents, sessions, lambda: sessions["b"].saw, held=("b",))
     assert "a.c" not in sessions["b"].saw, "a sibling's work came with no edge in the plan"
 
 
@@ -64,7 +64,7 @@ def test_an_edge_brings_its_producer_to_its_consumer_and_opens_nothing_to_anothe
     T.decompose(e, "par", [_part("c")], accepted_risks=REGISTER)
     T.add_dependency(e, "a", "b")
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "c": _Executor("c", {"c.c": "C\n"})}
-    _dispatched(e, agents, sessions, lambda: sessions["b"].cwd and sessions["c"].cwd, held=("c",))
+    _dispatched(e, agents, sessions, lambda: sessions["b"].saw and sessions["c"].saw, held=("c",))
     assert "a.c" in sessions["b"].saw
     assert "a.c" not in sessions["c"].saw, "another part's edge opened a sibling's work to it"
 
@@ -76,7 +76,7 @@ def test_a_part_admitted_after_a_join_stands_on_what_the_whole_then_held(tmp_pat
     _dispatched(e, agents, sessions, lambda: e.graph.setting(grounds_key("par")), held=("b",))
     _until(lambda: _done(e, "a"))
     T.decompose(e, "par", [_part("c")], accepted_risks=REGISTER)
-    _dispatched(e, agents, sessions, lambda: sessions["c"].cwd)
+    _dispatched(e, agents, sessions, lambda: sessions["c"].saw)
     assert "a.c" in sessions["c"].saw, "its decomposer's fixing saw that work: the part stands on it"
 
 
