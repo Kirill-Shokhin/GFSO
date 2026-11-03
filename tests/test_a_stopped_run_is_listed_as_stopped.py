@@ -30,3 +30,16 @@ def test_an_open_project_answers_its_stop_as_it_stands(monkeypatch, tmp_path):
     assert reg.about(["p"])["p"]["stopped"]["by"] == "someone", "the open engine's stop, not a stale peek"
     eng.resume("someone")
     assert reg.about(["p"])["p"]["stopped"] is None
+
+
+def test_a_stop_and_a_start_in_one_tick_of_the_files_stamp_list_it_as_it_stands(monkeypatch, tmp_path):
+    """Seen on CI's Windows: the peek is read once per stamp, and both writes fell in one."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    reg = ProjectRegistry()
+    eng = reg.engine("p")
+    monkeypatch.setattr(reg, "_stamp", lambda name: "one tick")
+    eng.pause("someone", "")
+    assert reg.about(["p"])["p"]["stopped"]["by"] == "someone"
+    eng.resume("someone")
+    assert reg.about(["p"])["p"]["stopped"] is None

@@ -323,6 +323,8 @@ class ProjectRegistry:
             if p is not None and name in self._held and not p["stopped"]:
                 p = {**p, "stopped": {"by": "system", "at": self._started, "why": HELD_AT_START}}
             eng = self._engines.get(name)
+            if p is not None and eng is not None:     # …its stop as it stands: two writes in one tick of the file's stamp left a peek stale
+                p = {**p, "stopped": eng.paused()}
             if p is None or eng is None or p["goal"] is None:
                 return p
             r = root_of(eng.all_tasks())
