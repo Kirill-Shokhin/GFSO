@@ -415,9 +415,10 @@ def _gate_findings(engine, task_id) -> str:
                f"criteria's PINNED CHECKS decides: no move on a child closes one — the next review names it again. "
                f"What closes one is a NEW pinned check of the clause its finding says no check probes — `add_criterion` "
                f"on this node with that check (a criterion over checks already pinned here decides nothing new and is "
-               f"refused), then `reshape` with `map` gives it the child that delivers it. A finding that only names "
-               f"another disguise of what a pinned check already refuses is that check's residue: `dispute` it, "
-               f"naming the check."
+               f"refused), then `reshape` with `map` gives it the child that delivers it."
+               + ("" if is_auto_root(engine.graph, engine.graph.get_task(task_id)) else
+                  " A finding that only names another disguise of what a pinned check already refuses is that "
+                  "check's residue: `dispute` it, its reason naming that check's id.")
                if own else ""))
 
 
@@ -1539,12 +1540,24 @@ def _drop_risk(engine, task, actor, answer, why, verbs):
     return True, ""
 
 
+def _names_a_check(engine, task, why) -> bool:
+    """Does `why` name, by its id, a pinned check of this node or of a child of its split?"""
+    nodes = [task, *engine.graph.get_active_children(task.id)]
+    return any(probe_id(c.name, p) in str(why or "") for n in nodes
+               for c in n.spec.criteria for p in (c.check or ()))
+
+
 def _dispute(engine, task, actor, answer, why, verbs):
     if is_auto_root(engine.graph, task) and loose_finding_key(str(answer.get("criterion") or "")
                                                                 ).replace(" ", "").startswith("undecided:"):
         return False, ("under AUTO an obligation of the user's goal that no criterion decides is closed by "
                        "ADDING the criterion (`add_criterion`) — the user's goal is not argued away")
     key = str(answer.get("criterion") or "")
+    # …and below the root it stands on a check: a reason naming none was read as a discharge, an unprobed requirement
+    # closing on a model's word (critic over the residue's move)
+    if loose_finding_key(key).replace(" ", "").startswith("undecided:") and not _names_a_check(engine, task, why):
+        return False, ("an obligation no criterion decides is disputed by naming the pinned check that decides it, by "
+                       "its id (shown after `decided by`); with none, `add_criterion` with one")
     # the engine resolves the key — one rule for every caller: exact, else one unambiguous near-match; a finding
     # already disputed is refused there and backs off like any answer that moved nothing
     try:

@@ -25,7 +25,8 @@ from gfso.delegate import ISSUER_VERBS
 from gfso.decompose.extract import extract_spec
 from gfso.sessions import run_consent
 from gfso.roster import AgentRegistry
-from gfso.core.types import register_of, AgentId, Mode, Register, Signal, SignalData, State, TaskId
+from gfso.core.protocol.procedure import probe_id
+from gfso.core.types import register_of, AgentId, Criteria, Mode, Probe, Register, Signal, SignalData, State, TaskId
 from tests.support import DENIAL_ENTRY, criterion, instrument_passes, make_engine, REGISTER
 
 _RISK = REGISTER
@@ -1319,3 +1320,21 @@ def test_the_machines_own_split_is_not_refused_as_the_customers_move(tmp_path, m
     monkeypatch.setitem(TL.SYSTEM_TOOLS, "auto_decompose", lambda engine, **kw: seen.update(kw) or {"ok": True})
     out = ISSUER_VERBS.refine(e, "kid")
     assert "customer" not in str(out) and seen.get("root_id") == "kid", out
+
+
+def test_an_obligation_is_disputed_below_the_root_only_by_naming_a_check_that_stands():
+    """A reason naming no check closed an unprobed requirement on a model's word (critic over the residue's move)."""
+    e = _engine(Mode.AUTO)
+    root, kid = _goal(e)
+    k = e._graph.get_task(kid.id)
+    probe = Probe("reads", "cat a", "a")
+    k.spec = _dc.replace(k.spec, criteria=(Criteria("reads", "reads a", check=(probe,)), *k.spec.criteria))
+    k.verified = True
+    e._graph.save_task(k)
+    e._graph._storage.store_critique(k.id, json.dumps({
+        "semantic_covered": False, "undecided_obligations": [{"obligation": "no shelling out", "admits": "a disguise"}]}))
+    move = {"move": "dispute", "criterion": "undecided: no shelling out"}
+    done, why = I.apply_move(e, k.id, "plan", "agent", {**move, "justification": "residue of NO_SUCH_CHECK"})
+    assert not done and "naming the pinned check" in why, why
+    assert I.apply_move(e, k.id, "plan", "agent", {**move, "justification": f"residue of {probe_id('reads', probe)}"})[0]
+    assert e.open_l2_findings(k.id) == []

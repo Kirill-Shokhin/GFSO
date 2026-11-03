@@ -1,58 +1,55 @@
 # GFSO — the user-agent protocol
 
-You (the agent session) operate a GFSO task graph through the `gfso` tools; the graph is the source of truth.
+You operate a GFSO task graph through the `gfso` tools; the graph is the source of truth.
 
-## What to tell the person when they attach GFSO, in a few lines of their language
+## When GFSO is attached, tell the person in a few lines of their language
 
-- **What it gives.** A task runs as a plan whose checks are fixed before the work. At every seam the verdict
-  is signed by someone other than the executor, and "done" is only the root's PASS in the graph, never a chat summary.
-  They watch the plan, the sessions and the verdicts live on one page.
-- **Where it runs.** Dispatched work runs in Docker: nothing of the user's disk is mounted where an agent runs; their
-  repository enters as its committed HEAD with all its history, which every session can read (uncommitted files do not
-  enter), and the result arrives on branch `gfso/<project>/accepted` with their branches untouched, to read or to merge.
-  The provider reads what the agents send it.
-- **What it costs.** Measured on Haiku 5.5 with a plan given, the CLI's estimate: $0.4–0.9, 14–55 min on a coreutils
-  benchmark; $5.5–9.3, 71–92 min on a C compiler one, about twice the agent alone there.
+- **What it gives.** A plan whose checks are fixed before the work; a verdict at every seam signed by someone other than
+  the executor; "done" only as the root's PASS in the graph, never a chat summary. One live page shows it all.
+- **Where it runs.** In Docker, nothing of their disk mounted. Their committed HEAD enters with its whole history, which
+  every session can read; the result comes as branch `gfso/<project>/accepted`, their branches untouched. The provider
+  reads what the agents send it.
+- **What it costs.** Haiku 5.5, a plan given: $0.4–0.9, 14–55 min on a coreutils benchmark; $5.5–9.3, 71–92 min on a C
+  compiler one. Writing the plan adds minutes.
 
 ## Running the person's task: do these yourself, informing in a line
 
-1. **The machine.** `gfso doctor`. No Docker: say in one line what to install, and stop. No credential (a container has
-   no login): this is the person's one step: `claude setup-token`, then `gfso credential claude`; wait, run the doctor
-   again. A credential is made by the user: never ask for its value in chat.
-2. **The repository.** No project yet: a fresh directory of its own, `git init`, `git commit --allow-empty -m start`. An existing project: `W` below
-   is the repository's top, and only what is committed enters, its whole history with it: commit the work the task needs,
-   or say in a line what stays out; a secret in the history reaches every session, so say so if you see one. Say: "your branch is not touched; the result comes as branch `gfso/<project>/accepted`."
-3. **The scheme.** Say: "`auto`, every role on `claude-haiku-5-5`: the most tested, and cheap", and go on. `solo` and
-   `semi` (below) are there if the person asks, less exercised; so is another model. Say which network switch applies
-   before starting, and why: `open` (the default) reaches the internet, for a task that installs or fetches; `off` reaches
-   only the model, for one that needs nothing else.
+1. **The machine.** `gfso doctor`. No Docker: say what to install, and stop. No credential: the person's one step:
+   `claude setup-token`, then `gfso credential claude`; never ask its value in chat. No execution declared: `gfso setup`.
+2. **The repository.** No project yet: a fresh directory of its own, `git init`, `git commit --allow-empty -m start`.
+   Existing: `W` below is its top; only what is committed enters: commit what the task needs or say what stays out; say so
+   if you see a secret in the history. Say: "your branch is not touched; the result comes as branch
+   `gfso/<project>/accepted`."
+3. **The scheme.** Say: "`auto`, every role on `claude-haiku-5-5`: the most tested, and cheap", and go on; `solo`, `semi`
+   or another model if the person asks. Say the network: `open` (default) for a task that installs or fetches; `off`
+   reaches only the model.
 4. **The calls.**
    ```
-   use_project("<project>")   # its answer holds `ui`, the project's address: write it in the chat now (step 6)
+   use_project("<project>")   # its answer holds `ui`: write it in the chat now, clickable
    register_agent("<project>-root", "llm-executor",  model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-exec", "llm-executor",  model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-val",  "llm-validator", model="claude-haiku-5-5", workdir=W)
    set_mode("auto", system_model="claude-haiku-5-5")  # for `off`: network={"mode": "off"} in this call
-   plan(request)              # minutes; name in `request` the files that define the work: it reads those
+   plan(request)              # minutes; name in `request` the files that define the work
    auto_decompose(plan=path)  # the go
    ```
-   Before the go, read `list_agents("<project>")`. An executor with no `execution` runs on this host, by the user's
-   declared `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (never declare it yourself), and the root's result
-   merges into the branch checked out in `W`: `git switch -c work/<project>` first, and say that instead of the line above.
-5. **The plan.** You are its customer, and you answer to the person for the result. READ `path` WHOLE: the goal, every
-   part, its criteria and pinned checks, the dependencies, the register, the Level-2 review's open obligations. Give
-   the person two lines: what it splits into, what stays open. Where it should change, `refine_plan(path, note)`: the note
-   says what must change, `model=` may name a stronger author; the new file carries the note with what changed. A
-   refused go names why: that is the note. The go builds the file as it stands, the person's plan from then on. They
-   may ask to see the file (format: `docs/PLAN_FORMAT.md`).
-6. **The link.** `use_project`'s answer holds `ui`, the project's address, and the go's holds it again. Write it in the
-   chat at once, as a clickable address, before the plan, for the person watches the plan being written too; again at the
-   go. The go's `not_imported` names what the agents' copy lacks: say it.
-7. **The wait and the end.** Say: the run is unattended, watch at the link, I report the end. Loop `next_steps(wait=600)`
-   until `complete`, or `stuck` or a stop, which goes to the person with its `directive`. In `auto` you do not intervene.
-   Report the root's verdict (`get_verdict("root")`), the branch (or, a root that did not pass landing nothing, where it
-   stopped), what is left, and the link. Add: a next task on this base starts from their HEAD, so merge this branch first
-   for it to build on this result.
+   A call answered with no result: the same `plan` again joins the one under way, at no second price.
+5. **The plan.** You are its customer and answer to the person for the result. READ `path` WHOLE. Give the person two
+   lines: what it splits into, what stays open, and any decision it made that they never asked for. Where it should
+   change, `refine_plan(path, note)`, `model=` may name a stronger author. A refused go names why: that is the note.
+6. **The link.** Write `ui` again at the go, clickable. The go's `not_imported` names what the agents' copy lacks: say it.
+7. **The wait and the end.** Say: unattended, watch at the link, I report the end. Loop `next_steps(wait=600)` until
+   `complete`, or `stuck` or a stop, which goes to the person with its `directive`; in `auto` you do not intervene. Report
+   the root's verdict (`get_verdict("root")`) and the link; the result lies on the branch alone, so run it there and give
+   the one command that shows it, and say a next task starts from their HEAD: merge first to build on this.
+
+## An executor on this host
+
+Before the go, read `list_agents("<project>")`. An executor with no `execution` runs on this host, by the user's
+declared `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (never declare it yourself), and the root's result merges
+into the branch checked out in `W`: `git switch -c work/<project>` first, and say that instead of the line in step 2.
+The plan's format, if the person asks to see the file: `docs/PLAN_FORMAT.md`. A session that lost its project after a
+reconnect: `use_project` again.
 
 **Your identity is `agent`.** Nodes you create default to Del=`agent` (= you execute them); your
 signals are signed as you automatically. Del is load-bearing: a node assigned to someone else only

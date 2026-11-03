@@ -17,8 +17,9 @@ import json
 import logging
 import os
 import re
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext, suppress
 from pathlib import Path
 from datetime import datetime
@@ -1739,6 +1740,42 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     return {**out, **(_not_imported(engine) if fresh else {})}
 
 
+#: {the call's arguments: (its future, when it ended)} — a plan is paid for minutes, its answer can be lost on the way to
+#: the client while the verb goes on, and no graph shows it. Kept for KEPT_PLAN_S once written, as nothing changes a file.
+_PLANNING: dict = {}
+_PLANNING_LOCK = threading.Lock()
+KEPT_PLAN_S = 3600
+
+
+def _once(key: tuple, write) -> dict:
+    """`write()`'s answer, one writing per `key`: a second call waits on the first, or reads what it wrote. An error is
+    kept by nobody: asked again, it is written again."""
+    with _PLANNING_LOCK:
+        now = time.monotonic()
+        for k in [k for k, (_, ended) in _PLANNING.items() if ended and now - ended > KEPT_PLAN_S]:
+            del _PLANNING[k]
+        mine = key not in _PLANNING
+        if mine:
+            _PLANNING[key] = (Future(), None)
+        future = _PLANNING[key][0]
+    if not mine:
+        return future.result()
+    try:
+        out = write()
+    except BaseException as e:
+        with _PLANNING_LOCK:
+            del _PLANNING[key]
+        future.set_exception(e)
+        raise
+    with _PLANNING_LOCK:
+        if "error" in out:
+            del _PLANNING[key]
+        else:
+            _PLANNING[key] = (future, time.monotonic())
+    future.set_result(out)
+    return out
+
+
 def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Optional[str] = None,
          depth: int = 1, review_model: Optional[str] = None, _progress=None) -> dict:
     """Author a plan for `request` WITHOUT a project: the plan file (`.gfso`) — the goal, the split with its criteria,
@@ -1750,13 +1787,17 @@ def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Op
     # …the goal as the project's root will hold it — with the documents it names written under it, as the go would add
     # them — so the plan and its review are written against the contract the work will run on (critic)
     request = (request or "") + _named_documents(engine, request or "")
-    try:
-        text = _planning.author(request, model, engine.workforce.executor_session(executor) if executor else "",
-                                depth, review_model or engine.system_model(), emit_cb(engine, "plan", _progress),
-                                execution=execution_of(engine), ledger=engine.record_llm_usage)
-    except NoPlan as no:
-        return {"error": _no_plan(no)}
-    return _plan_written(text)
+
+    def write() -> dict:
+        """The file written and kept, or why not."""
+        try:
+            text = _planning.author(request, model, engine.workforce.executor_session(executor) if executor else "",
+                                    depth, review_model or engine.system_model(), emit_cb(engine, "plan", _progress),
+                                    execution=execution_of(engine), ledger=engine.record_llm_usage)
+        except NoPlan as no:
+            return {"error": _no_plan(no)}
+        return _plan_written(text)
+    return _once(("plan", engine.project_name, request, model, executor, depth, review_model), write)
 
 
 def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = None,
@@ -1765,14 +1806,18 @@ def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = Non
     `model` (an older one may be named), and the review run again. The new file carries the note with its answer —
     what the round changed in the plan, read off the plan itself. The old file stays as it was."""
     model = model or engine.planner_model()
-    try:
-        # …the review is the system's, on its model: a planner named stronger authors, it does not also review (critic)
-        text = _planning.refine(_planning.text_of(plan), note, model, review_model or engine.system_model(),
-                                emit_cb(engine, "plan", _progress),
-                                execution=execution_of(engine), ledger=engine.record_llm_usage)
-    except (NoPlan, ValueError, OSError) as e:
-        return {"error": str(e)}
-    return _plan_written(text)
+
+    def write() -> dict:
+        """The refined file written and kept, or why not."""
+        try:
+            # …the review is the system's, on its model: a planner named stronger authors, it does not also review (critic)
+            text = _planning.refine(_planning.text_of(plan), note, model, review_model or engine.system_model(),
+                                    emit_cb(engine, "plan", _progress),
+                                    execution=execution_of(engine), ledger=engine.record_llm_usage)
+        except (NoPlan, ValueError, OSError) as e:
+            return {"error": str(e)}
+        return _plan_written(text)
+    return _once(("refine", engine.project_name, plan, note, model, review_model), write)
 
 
 def _no_provider_answer(subtasks, stats, spec) -> dict:
