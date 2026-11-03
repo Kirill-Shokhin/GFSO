@@ -43,6 +43,7 @@ export const look = sig => LOOK[sig];
 // DONE by a PASS or the timeout's AUTO_PASS — and working (consented work or its validation in course).
 export const terminal = s => s === 'DONE' || s === 'ABANDONED';
 export const delivered = t => t?.state === 'DONE' && (t.done_reason === 'PASS' || t.done_reason === 'AUTO_PASS');
+export const closedByFail = t => t?.state === 'DONE' && t.done_reason === 'FAIL';
 export const working = s => s === 'EXECUTING' || s === 'REWORKING' || s === 'VALIDATING';
 // consented work in course (§12.1): a parent in it waits on its parts
 export const consented = s => s === 'EXECUTING' || s === 'REWORKING';

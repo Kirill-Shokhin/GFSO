@@ -4,7 +4,7 @@
 // of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
 import {esc, unseen, tallySvg} from './dom.js';
 import {TIP, CELLS} from './hints.js';
-import {label, cancelled, delivered} from './vocab.js';
+import {label, cancelled, delivered, closedByFail} from './vocab.js';
 import {failingNow} from './run.js';
 import {bindFocus, bringSelected, focus, watch} from './store.js';
 import {tip, untip, firstTap} from './tip.js';
@@ -85,7 +85,7 @@ function coverage(run, nodes, tasks) {
     const kids = [...new Set(maps.map(m => m.child_id))], self = run.criteria.status[root.id] || {}, name = run.name;
     // a cancelled part first: a legacy one stands DONE with its reason CANCELLED, and its track already reads cancelled
     const kind = k => { const t = tasks.find(t => t.id === k);
-        return cancelled(t) ? 'gone' : delivered(t) ? 'done' : st[k] === 'DONE' ? 'shut' : st[k] === 'REWORKING' ? 'rework' : 'open'; };
+        return cancelled(t) ? 'gone' : delivered(t) ? 'done' : closedByFail(t) ? 'shut' : st[k] === 'REWORKING' ? 'rework' : 'open'; };
     const cell = (c, k) => !maps.some(m => m.criterion_name === c && m.child_id === k) ? '<td></td>'
         : `<td data-node="${esc(k)}" data-k="${esc(`cov|${c}|${k}`)}"${TIP.cell(name(k), c)}><i class="cv cv-${kind(k)}"></i></td>`;
     const rows = run.criteria.names[root.id].map(c => `<tr><th${c.length > 30 ? TIP.cell(c) : ''}>${esc(trim(c, 30))}</th>

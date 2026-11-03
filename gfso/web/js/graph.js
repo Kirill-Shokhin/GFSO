@@ -1,7 +1,7 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
 import {S, taskOf, myRole, nowOf} from './state.js';
-import {bucketOf, statusLabel, contested, cancelled, nameOf, criteriaOf, delivered} from './vocab.js';
+import {bucketOf, statusLabel, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';
@@ -274,13 +274,13 @@ function placeBadges() {
             + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'sent back')}</span>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
-        const t = taskOf(id), shut = t.state === 'DONE' && t.done_reason === 'FAIL';
+        const shut = closedByFail(taskOf(id));
         const cross = shut ? `<div class="cy-badge cy-shut" style="left:${b.x1 - 9}px;top:${b.y1 - 9}px"><svg viewBox="-6 -6 12 12"><path class="mk-fail" d="M-2.5,-2.5l5,5m0,-5l-5,5"/></svg></div>` : '';
         if (!work.has(id) && rs.length < 2) return cross + tag;
         return cross + `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
             // the pulse keeps the page's one clock: a badge redrawn on every render restarted it mid-beat
             + (work.has(id) ? `<i class="cy-live${now.on(id) ? ' on' : ''}"${beat()}></i>` : '')
-            + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''}${TIP.rounds(rs)}>${rs.length}</span>` : '') + '</div>' + tag;
+            + (rs.length > 1 ? `<span${failing ? ' class="cy-fails"' : ''}>${rs.length}</span>` : '') + '</div>' + tag;
     }).join('');
 }
 // the run is read after the first drawing: an untouched view is framed again on what asks now

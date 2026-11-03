@@ -281,7 +281,8 @@ def main() -> None:
         return gate(Path(a.gate))
     if not a.only or "gate.png" in a.only:
         raw = Path(tempfile.mkdtemp(prefix="gfso-media-frames-")) / "gate.png"
-        subprocess.run([sys.executable, __file__, "--gate", str(raw)], check=True)
+        subprocess.run([sys.executable, __file__, "--gate", str(raw)], check=True,
+                       env={**os.environ, "TMP": str(raw.parent), "TEMP": str(raw.parent)})
         png(raw, DOCS / "gate.png")
         print(f"gate.png: {(DOCS / 'gate.png').stat().st_size // 1024} KB", flush=True)
         shutil.rmtree(raw.parent, ignore_errors=True)
@@ -294,6 +295,8 @@ def main() -> None:
     times = moments(a.run)
     last = times[-1]
     work = Path(tempfile.mkdtemp(prefix="gfso-media-frames-"))
+    # a frame's copy stays open until its process ends, so it cannot remove its own home: all of them go with `work`
+    inside = {**os.environ, "TMP": str(work), "TEMP": str(work)}
     for name, shot in SHOTS.items():
         if a.only and name not in a.only:
             continue
@@ -301,7 +304,7 @@ def main() -> None:
         frames = []
         for i, T in enumerate(ts):
             f = work / f"{Path(name).stem}-{i:03d}.png"
-            subprocess.run([sys.executable, __file__, "--frame", str(a.run), T, name, str(f)], check=True)
+            subprocess.run([sys.executable, __file__, "--frame", str(a.run), T, name, str(f)], check=True, env=inside)
             frames.append(f)
             print(f"{name}: {i + 1}/{len(ts)} {T}", flush=True)
         (gif if name.endswith(".gif") else lambda fs, o: png(fs[-1], o))(frames, DOCS / name)

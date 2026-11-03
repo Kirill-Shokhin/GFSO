@@ -30,6 +30,11 @@ export function pinLeft(svg, left) {
     p.className = 'pin-left'; p.append(c); svg.before(p);
     // a sticky thing sticks only within its block: the block made as wide as what scrolls
     svg.parentElement.style.minWidth = `${w}px`;
+    // a time's label half under the names is no label: its tail stood beside them as a stray «0» (critic 9)
+    const edge = () => { const x = c.getBoundingClientRect().right;
+        for (const t of svg.querySelectorAll('.ax-tick text')) { const r = t.getBoundingClientRect(); t.style.visibility = r.left < x && r.right > x ? 'hidden' : ''; } };
+    box.removeEventListener('scroll', box._edge); box._edge = edge;
+    box.addEventListener('scroll', edge, {passive: true}); edge();
 }
 
 export function frame(run, W, left, right = 16) {

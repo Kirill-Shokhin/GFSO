@@ -217,7 +217,7 @@ export const roundsLine = rs => !rs.length ? '' : plural(rs.length, 'round')
     + (rs.some(r => r.verdict === 'FAIL') ? `, ${rs.filter(r => r.verdict === 'FAIL').length} failed` : '');
 // What a node waits on (run.js waits), for every view that says it: "Floor compiler", "its 2 parts", "the executor".
 export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
-    : w.parts.length ? `its ${plural(w.parts.length, 'part')}` : w.owes ? `the ${w.owes}` : '—';
+    : w.parts.length ? `its ${plural(w.parts.length, 'open part')}` : w.owes ? `the ${w.owes}` : '—';
 // What a FAIL named (run.js failedOf): the node's own criteria, and the bare Dep edges an older engine judged — in one
 // line, or one criterion a row for a tip (names carry commas of their own, and joined they read as more)
 export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
@@ -296,7 +296,6 @@ export const TIP = {
          Array.isArray(waits) ? waits.length === 1 ? `Waits on ${waits[0]}` : [`Waits on ${waits.length}:`, waits.map(n => `– ${n}`)] : waits && `Waits on ${waits}`,
          criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${bare(t.assignee, S.project)}`,
          sentBack.length && ['Sent back inside:', sentBack.map(n => `– ${n}`)]], badge),
-    rounds: rs => hover(roundsLine(rs)),
     // ONE SESSION of a stretch passed on from session to session — its own piece of the bar between the cuts, saying itself:
     // its time, cost, tokens, round, and, where it passed its work on («passed on», never «handed over», the key's word for
     // a node offered), how full its context stood then and the budget it ran under, both on the one scale of its model's

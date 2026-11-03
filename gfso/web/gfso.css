@@ -132,7 +132,11 @@ body {
 .hd-run-state.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--acc); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 /* ONE EVEN LINE: where the goal stands, its count, what needs a person — each on the same baseline, one gap apart, the
    count's figure only a step above the words (the author, 2026-10-30: «стоит неровно и вразнобой») */
-.hd-needs { display: flex; align-items: baseline; gap: 16px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: center; }
+/* short of room the run's words give way first, then a chip's text (whole on hover), never a chip: on a desk what is cut cannot be scrolled to */
+.hd-needs { display: flex; align-items: baseline; gap: 16px; flex: 1 1 auto; min-width: 0; overflow: hidden; justify-content: safe center; }
+.hd-needs > .hd-phrase { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hd-needs > .tally { flex: 0 50 auto; min-width: 0; overflow: hidden; }
+.hd-needs > .need { flex: 0 1 auto; min-width: 9ch; }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
 .need:hover { filter: brightness(1.15); }
@@ -485,6 +489,7 @@ body:has(.hd-q.acc) .hd-quiet { display: none; }
 .main:has(#sidebar:not(.hidden)) .dk-view:is([data-view="spend"], [data-view="models"], [data-view="timeline"], [data-view="progress"]) { min-width: var(--deck-free, 0px); }
 /* a time view's names held at the left while it scrolls sideways (draw.js pinLeft) */
 .pin-left { position: sticky; left: -16px; height: 0; width: 0; z-index: 2; }
+.pin-left .ax-tick, .pin-left .tl-legend { display: none; }   /* the names only: the axis and the key, cut at the column's edge, stood in it as stray marks */
 .pin-left svg { display: block; background: var(--ui-page); margin-left: -16px; padding-left: 16px; box-sizing: content-box; }
 /* Badges over the graph — a pulse on what runs now, a count of rounds on what took more than one. */
 #cy { position: relative; overflow: hidden; }   /* the badges end where the canvas ends — never over the deck */
@@ -1530,7 +1535,9 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
     .hd-goal .hd-root { order: 4; flex: 1 1 0; max-width: none; min-width: 0; white-space: normal; text-align: left; }
     .hd-goal > .hd-left, .hd-run { order: 4; }
     .hd-run-state { order: 6; margin-left: 0; }
-    .hd-needs { order: 7; flex: 1 1 0; margin: 0; overflow-x: auto; justify-content: flex-start; }
+    /* every call on the reader stands in the first view, before the words on the run: a row that scrolled hid them (critic 9) */
+    .hd-needs { order: 7; flex: 1 1 100%; margin: 0; overflow: visible; flex-wrap: wrap; justify-content: flex-start; row-gap: 6px; }
+    .hd-needs > .need { order: -1; }
 }
 /* on the dark bar a dot is cream: stopped a ring, stopping the ring filled and pulsing — the accent sinks into ink there */
 .hd-run-state::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; box-sizing: border-box; background: transparent; border: 1.5px solid color-mix(in srgb, var(--bg) 60%, transparent); }

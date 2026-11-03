@@ -3,7 +3,7 @@
 // A plan too large to read whole folds a part's own parts — a 49-part plan drawn whole was dust at zoom 0.24 (audit DQ1/E2);
 // the goal's parts always stand, and the reader unfolds a part by its tag or a double-click.
 import {S, taskOf, nowOf} from './state.js';
-import {bucketOf, cancelled, contested} from './vocab.js';
+import {bucketOf, cancelled, contested, closedByFail} from './vocab.js';
 import {failingNow} from './run.js';
 import {depths, ancestorsIn} from './tree.js';
 
@@ -47,7 +47,7 @@ const LOOKS = {
     decide: x => bucketOf(taskOf(x).state) === 'pathology',
     contested: x => contested(closureOf(x) || {}),
     byHand: x => closureOf(x)?.by_hand && !contested(closureOf(x)),
-    shut: x => taskOf(x).state === 'DONE' && taskOf(x).done_reason === 'FAIL',
+    shut: x => closedByFail(taskOf(x)),
     work: x => nowOf().work.has(x),
 };
 export const foldOf = id => { const xs = partsOf(id);
