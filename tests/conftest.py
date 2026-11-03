@@ -182,7 +182,8 @@ class _NoLiveModel(subprocess.Popen):          # a subclass: callers subscript i
 LIVE_GROUPS = {
     "judge": ("a_judge_judges_what_was_delivered", "a_judges_pinned_inputs_are_the_systems", "the_runs_of_a_validation_do_not_share_a_tree"),
     "places": ("a_projects_places_stand_in_its_volume", "a_session_holds_only_its_own_place", "a_part_starts_with_no_siblings_work_but_by_an_edge"),
-    "landing": ("the_base_is_imported_and_its_result_lands_as_a_branch", "lfs_files_come_in_whole_and_leave_as_pointers"),
+    "landing": ("the_base_is_imported_and_its_result_lands_as_a_branch", "lfs_files_come_in_whole_and_leave_as_pointers",
+                "what_is_refused_before_it_is_touched"),
     "commands": ("a_sessions_commands_run_apart_from_its_client", "a_chat_providers_commands_run_apart"),
     "network": ("the_way_out_is_a_switch_set_outside",),
     "bounds": ("a_container_holds_no_more_than_its_bounds", "what_a_program_prints_is_bounded_in_the_server"),

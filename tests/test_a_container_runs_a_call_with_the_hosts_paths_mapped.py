@@ -138,7 +138,7 @@ def test_the_container_holds_only_the_projects_own_directories_and_no_cli_state(
                                                     "/gfso-place/.gfso-nodes-base/GB_proj"], "nothing of the host"
     assert all(m.startswith("type=volume,") for m in mounts)
     assert "-v" not in a and "--privileged" not in a and ["--cap-add", "NET_ADMIN"] == a[a.index("--cap-add"):][:2]
-    assert a[a.index("--name") + 1] == "gfso-e3-linux-gb-proj"
+    assert a[a.index("--name") + 1] .startswith("gfso-e3-linux-gb-proj-")
 
 
 def test_a_call_is_started_inside_its_mapped_place_with_only_what_it_sets(place, tmp_path, monkeypatch):
@@ -160,7 +160,7 @@ def test_a_call_is_started_inside_its_mapped_place_with_only_what_it_sets(place,
     assert not any("SOME_HOST_VAR" in a or a.startswith("PATH=") for a in argv), "the host's environment stays out"
     assert argv[-4:] == ["claude", "-p", "--system-prompt", "work in /gfso-place/base"]
     one.end(call)
-    assert any(a[:2] == ["docker", "exec"] and "gfso-e3-linux-gb-proj" in a and f"GFSO_CALL={call.call}" in a[-1] for a in ran)
+    assert any(a[:2] == ["docker", "exec"] and any(str(v).startswith("gfso-e3-linux-gb-proj-") for v in a) and f"GFSO_CALL={call.call}" in a[-1] for a in ran)
 
 
 class _Client:

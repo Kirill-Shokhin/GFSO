@@ -823,9 +823,11 @@ _EXPORT = r'''b=$1
 note() { printf 'NOTE: %s\n' "$*" >&2; }
 mkdir -p /tmp/x || exit 1
 (cd /from && tar -c --exclude=./.gfso-sys --exclude=./.gfso-tmp .) | tar -x -C /tmp/x || note "files it could not read are not exported"
-find /tmp/x -name .git -type d -prune > /tmp/repos
+find /tmp/x -iname .git ! -type d -print -delete | while read -r g; do note "${g#/tmp/x/}: a .git that is no directory, removed"; done
+find /tmp/x -iname .git -type d -prune > /tmp/repos
 while read -r g; do
-  r=${g%/.git}
+  r=${g%/*}
+  rm -f "$g/commondir" "$g/config.worktree"
   mv "$g/config" /tmp/theirs 2>/dev/null || : > /tmp/theirs
   rm -rf "$g/hooks"
   for k in core.repositoryformatversion core.bare; do
@@ -1748,7 +1750,8 @@ def _untar(data: bytes, to: Path) -> list:
         for m in t.getmembers():
             at = Path(os.path.abspath(root / m.name))
             try:
-                if not at.is_relative_to(root):
+                # …where it really leads, through the links laid so far: a stream folded by a case-blind disk wrote through one
+                if not at.is_relative_to(root) or not at.parent.resolve().is_relative_to(root):
                     raise OSError("outside the export")
                 if not m.issym():
                     t.extract(m, to, filter="tar")
@@ -2025,7 +2028,8 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
             raise ValueError(f"execution {name!r}: its env_file holds {', '.join(held)} — a credential is its "
                              f"provider's, set by `gfso credential <provider>`, never the container's")
         self.name, self.image, self.env_file = name, image, env_file
-        self.container = container_name(name, project)
+        # …and this installation's: by name alone a second one removed a first's running container and its network
+        self.container = f"{container_name(name, project)}-{_home()}"
         b, self.project_name = self.base.name, component(project or DEFAULT_PROJECT)
         self.way = WayOut(self.container, name, image, Path(state), self.project_name)
         # …one per container, whichever object of it asks: two roles' objects kept a door each, and a switch one turned
@@ -2036,7 +2040,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
             self.switch(network)
         self.mounts = [b, f"{NODES}{b}/{self.project_name}"]
         self.own = self.parent / self.mounts[1]
-        self.volume = Volume(self.container, name, self.own, self.base, self.project_name, image)
+        self.volume = Volume(container_name(name, project), name, self.own, self.base, self.project_name, image)
         # dotted, as no node's key is (`component`): the system's own among the project's places — the copies and
         # checks no session but the one handed a copy reaches; THE CLI'S STATE THE PROJECT'S, each place's under it
         # (`PlaceContainer`): shared by an execution's projects, every E3 row (all at /gfso-place/ws) read and appended

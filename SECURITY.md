@@ -20,7 +20,7 @@ The switch is yours, per execution or per project, and the default is `open`:
 Under `off` your code still goes to the model's provider, as far as an agent sends it there, on your account. It stays with you only
 where every role, the system's own too (`set_mode(system_model=, planner_model=)`), names a local model. Not promised: a boundary
 against an escape from Docker or its kernel, which every project shares (no VM per task); a check a judge writes itself, which the
-delivered code it runs can reach, where only a pinned one is out of its reach; anything for what runs on your machine, namely the work your
+delivered code it runs can reach, where only a pinned one is out of its reach; a model judge's reading, which what it reads can argue with, where only a pinned check decides by itself; anything for what runs on your machine, namely the work your
 own agent does in its chat, the validator of that work, and the reader of a plan's documents. The rest of this file says how each
 of these holds, and what stays open.
 
@@ -96,7 +96,7 @@ and nothing of your disk is mounted into any of its containers:
   are not touched; a
   project whose base is no git repository gets its result in `.gfso-accepted-<base>/<project>/`
   beside it. `gfso export-places` writes the places out for reading, with every agent repository's
-  configuration and hooks replaced.
+  configuration and hooks replaced, in any spelling of `.git`, and a `.git` that is a file removed.
 - Each agent session runs in a container of its own place. It writes there alone, reads the project's
   base read-only, and holds its node's own temp and its place's own model-client state. Its client runs in a
   container of the place apart from the one the system runs its own commands over the place in: only the client's

@@ -1495,7 +1495,8 @@ def _named_documents(engine: Engine, request: str) -> str:
     for tok in re.findall(r"[^\s`'\"(),;<>\[\]]+", request or ""):
         tok = tok.rstrip(".:")
         # a word of prose is no file name; a path to a file that stands is one, `Makefile` included
-        if "://" in tok or not (Path(tok).suffix or (Path(tok).is_absolute() and Path(tok).is_file())):
+        # …a share named here, by the request or by the reader's answer, is asked about from this host: not asked
+        if "://" in tok or not cheap_to_ask(tok) or not (Path(tok).suffix or (Path(tok).is_absolute() and Path(tok).is_file())):
             continue
         # the first base the name stands in is the one it names; a name met again is the same document
         for b in bases:
