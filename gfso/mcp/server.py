@@ -154,16 +154,14 @@ def _brief(listing: dict, active: str, keep: int = 12) -> dict:
     return {"active": active, "projects_recent": recent, "projects_total": len(names)}
 
 
-def _with_ui_link(name: str, out, project=None, ctx=None):
+def _with_ui_link(name: str, out, project=None):
     """Attach the local UI address to an entry verb's result (dict results only — `project` returns
     markdown and keeps its shape). Best-effort: a link is a convenience, never a reason to fail a
     call. The UI is tab-per-project (`?project=`), so the link points at the graph just acted on."""
     if name not in _UI_LINK_VERBS or not isinstance(out, dict) or "ui" in out:
         return out
     try:
-        _k = _session_key(ctx)
-        name_ = project or out.get("active") or (_SESSION_PROJECTS.get(_k) if _k is not None else None)
-        out["ui"] = _ui_link(name_)
+        out["ui"] = _ui_link(project or out.get("active"))
     # the docstring's contract: a link is a convenience, and the verb's result is already correct
     # without it
     except Exception:
@@ -240,7 +238,7 @@ def _bind(engine_or_registry, fn):
             return {"error": str(e)}
         call = functools.partial(fn, engine, *args, **kwargs)
         out = await (_with_progress(ctx, f"[{fn.__name__}]", call) if long else anyio.to_thread.run_sync(call))
-        return _with_ui_link(fn.__name__, out, project, ctx)
+        return _with_ui_link(fn.__name__, out, project or engine.project_name)
 
     wrapper.__signature__ = sig.replace(
         parameters=params, return_annotation=hints.get("return", sig.return_annotation))

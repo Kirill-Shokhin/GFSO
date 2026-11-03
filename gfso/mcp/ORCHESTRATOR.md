@@ -1,23 +1,67 @@
 # GFSO — the user-agent protocol
 
-You (the agent session) operate a GFSO task graph through the `gfso` tools. GFSO turns a goal into a
-VERIFIED plan (nodes with decidable criteria, dependency seams, declared risks) and then holds
-execution to a closed 12-signal protocol: every node is delivered against its criteria and
-passed/failed on evidence, and at every seam the verdict comes from someone other than the executor —
-nothing completes by impression. The graph is the single source of truth; the human watches it live
-in the UI (http://127.0.0.1:8000, or wherever `GFSO_SHARED_URL` points). "Done" = root DONE/PASS in
-the GRAPH, never a chat summary.
+You (the agent session) operate a GFSO task graph through the `gfso` tools; the graph is the source of truth.
+
+## What to tell the person when they attach GFSO, in a few lines of their language
+
+- **What it gives.** A task runs as a plan whose checks are fixed before the work. At every seam the verdict
+  is signed by someone other than the executor, and "done" is only the root's PASS in the graph, never a chat summary.
+  They watch the plan, the sessions and the verdicts live on one page.
+- **Where it runs.** Dispatched work runs in Docker: nothing of the user's disk is mounted, their repository enters by
+  its last commit, and the result arrives on branch `gfso/<project>/accepted` with their branches untouched, to read or
+  to merge. The provider reads what the agents send it.
+- **What it costs.** Measured on Haiku 5.5 with a plan given, the CLI's estimate: $0.4–0.9, 14–55 min on a coreutils
+  benchmark; $5.5–9.3, 71–92 min on a C compiler one, about twice the agent alone there.
+
+## Running the person's task: do these yourself, informing in a line
+
+1. **The machine.** `gfso doctor`. No Docker: say in one line what to install, and stop. No credential (a container has
+   no login): this is the person's one step: `claude setup-token`, then `gfso credential claude`; wait, run the doctor
+   again. A credential is made by the user: never ask for its value in chat.
+2. **The repository.** No project yet: a fresh directory, `git init`, a first commit. An existing project: `W` below
+   is the repository's top, and only its last commit enters: commit the work the task needs, or say in a line what stays
+   out. Say: "your branch is not touched; the result comes as branch `gfso/<project>/accepted`."
+3. **The scheme.** Say: "`auto`, every role on `claude-haiku-5-5`: the most tested, and cheap", and go on. `solo` and
+   `semi` (below) are there if the person asks, less exercised; so is another model. Say which network switch applies
+   before starting, and why: `open` (the default) reaches the internet, for a task that installs or fetches; `off` reaches
+   only the model, for one that needs nothing else.
+4. **The calls.**
+   ```
+   use_project("<project>")
+   register_agent("<project>-root", "llm-executor",  model="claude-haiku-5-5", workdir=W)
+   register_agent("<project>-exec", "llm-executor",  model="claude-haiku-5-5", workdir=W)
+   register_agent("<project>-val",  "llm-validator", model="claude-haiku-5-5", workdir=W)
+   set_mode("auto", system_model="claude-haiku-5-5")
+   set_mode(network={"mode": "off"})  # for `off`, a call of its own after the mode
+   plan(request)              # minutes; name in `request` the files that define the work: it reads those
+   auto_decompose(plan=path)  # the go
+   ```
+   Before the go, read `list_agents("<project>")`. An executor with no `execution` runs on this host, by the user's
+   declared `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (never declare it yourself), and the root's result
+   merges into the branch checked out in `W`: `git switch -c work/<project>` first, and say that instead of the line above.
+5. **The plan.** You are its customer, and you answer to the person for the result. READ `path` WHOLE: the goal, every
+   part, its criteria and pinned checks, the dependencies, the register, the Level-2 review's open obligations. Give
+   the person two lines: what it splits into, what stays open. Where it should change, `refine_plan(path, note)`: the note
+   says what must change, `model=` may name a stronger author; the new file carries the note with what changed. A
+   refused go names why: that is the note. The go builds the file as it stands, the person's plan from then on. They
+   may ask to see the file (format: `docs/PLAN_FORMAT.md`).
+6. **The link.** The go's answer holds `ui`, the project's address. Write it in the chat at once, as a clickable address,
+   every time. Its `not_imported` names what the agents' copy lacks: say it.
+7. **The wait and the end.** Say: the run is unattended, watch at the link, I report the end. Loop `next_steps(wait=600)`
+   until `complete`, or `stuck` or a stop, which goes to the person with its `directive`. In `auto` you do not intervene.
+   Report the root's verdict (`get_verdict("root")`), the branch (or, a root that did not pass landing nothing, where it
+   stopped), what is left, and the link. Add: a next task on this base starts from their HEAD, so merge this branch first
+   for it to build on this result.
 
 **Your identity is `agent`.** Nodes you create default to Del=`agent` (= you execute them); your
 signals are signed as you automatically. Del is load-bearing: a node assigned to someone else only
-moves on THEIR signals — the FSM rejects yours. Never work around that; it is the point.
+moves on THEIR signals.
 
-## First: the MODE — the user's choice, asked before the plan
+## The three modes
 
-Who holds which nodes is the USER's decision, made once per project. Explain the three modes, ASK
-which one, and set it with `set_mode` — never pick one for the user, and never change a set mode on
-your own: when a refusal or a stall makes another mode look better, tell the user and ask — once the
-project has work in it, `set_mode` takes the user's own words as `user_said` and records them.
+Who holds which nodes is the person's word, set once per project with `set_mode`, before the plan. Keep a set mode:
+when a refusal or a stall makes another look better, tell the person and ask — once the project has work in it,
+`set_mode` takes their own words as `user_said` and records them.
 
 | mode | who holds the nodes | you, the user's agent |
 |---|---|---|
@@ -25,34 +69,21 @@ project has work in it, `set_mode` takes the user's own words as `user_said` and
 | `semi` | you hold the top of the tree (by default the root; `boundary=k` holds depths 0…k−1), registered executors hold everything below | you author the plan and make the issuer's moves over what you hold; the system executes, validates and makes the issuer's moves below; a goal with no split has nothing below it, so split the root before any work (a root with no split cannot be delivered in semi) |
 | `auto` | the system holds every node, the root included | you are the customer: state the goal (`auto_decompose` on the empty project) and read its status (`next_steps`, `get_graph`, `get_verdict`); you do not intervene |
 
-Every mode needs a validator in this project, and `semi` and `auto` need registered executors too
-(`register_agent`, below; for `solo`: `register_agent("<project>-val", "llm-validator", workdir=<your
-working directory>)`): the system validates at every seam and at the top of every part of the plan one
-session carries, whoever holds the node. `set_mode` says what
-is missing. The mode is a lock, not a default: under it, a node's Del comes from
-the mode, and the verbs refuse a move the mode gave to the system. With no mode set, you hold what you
-create and delegate node by node (the last two sections).
+Every mode needs a validator in this project (`register_agent("<project>-val", "llm-validator", workdir=W)`), and
+`semi` and `auto` need registered executors too: the system validates at every seam and at the top of every part of
+the plan one session carries, whoever holds the node. `set_mode` says what is missing. Under a mode, a node's Del comes
+from it, and the verbs refuse a move the mode gave to the system. With no mode set, you hold what you create and
+delegate node by node (the last sections).
 
 **How you perform what you hold** — `set_mode(..., perform=...)`, for the nodes you hold (solo: all, semi:
 the top; auto: none). `dispatch` (the default): you stay each node's executor and consent to it yourself
 (`ACCEPT`); the system then performs it in a clean session of this project's registered executor
-(`register_agent("<project>-exec", "llm-executor", workdir=<your working directory>)`), in the node's own
-place, and reports in your name — WAIT for it, do not build the node in your chat. `in_chat`: you do the
-work yourself with your own tools; ask the user before choosing it, since nothing but you keeps that work
-inside the contract. Dispatched work is unattended, so it runs in a container: an executor registered with no
-`execution` takes the installation's `default` (`gfso setup` declares it) when the mode that dispatches is set;
-name another from `data/executions.json` only if the user asks. Its working directory must be the top of a git
-repository with a commit — else the project stops with that cause. Without a container it runs on the user's
-machine only where the user declared `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`; never declare it yourself.
-
-**The plan before any project** — when the user wants to see the plan before anything runs (in `auto` you are its
-customer, and you answer to the user for the result): `plan(request, model=...)` authors and reviews it with no
-project and returns a `.gfso` file. READ IT WHOLE — the goal, every part, its criteria and pinned checks, the
-dependencies, the register, the Level-2 review's open obligations. Then either `refine_plan(path, note, model=...)` —
-your note, written as what the plan must change, by any model (a stronger one may be named); the new file carries
-the note with its answer, what the round changed — or give the go: `auto_decompose(plan=path)` on the empty project
-builds it as it stands, the user's plan from then on. Your note is checked like any input; the plan is not bent to it.
-The file's format (`gfso-plan/1`, every field) is `docs/PLAN_FORMAT.md`.
+(`register_agent("<project>-exec", "llm-executor", workdir=W)`), in the node's own place, and reports in your name:
+WAIT for it. `in_chat`: you do the work yourself with your own tools; ask the user before choosing it, since nothing
+but you keeps that work inside the contract. An executor registered with no `execution` takes the installation's
+`default` container (`gfso setup` declares it) when the mode that dispatches is set; name another from
+`data/executions.json` only if the user asks. `W` must be the top of a git repository with a commit, else the project
+stops with that cause.
 
 ## The loop (solo; in semi, over the levels you hold)
 
@@ -69,13 +100,9 @@ The file's format (`gfso-plan/1`, every field) is `docs/PLAN_FORMAT.md`.
    depth 1 for a simple goal; `fast=true` on simple tasks (~1.5× faster, same structural shape).
    Then `list_holes()` — resolve or consciously declare every residue BEFORE executing.
 
-   **How much to decompose is YOUR call (§4.5).** Whether a goal is one unit of work or splits into
-   subtasks, and into how many, is a domain decision you make — it is NOT imposed from outside. Take a
-   goal as a LEAF (`D(t)=∅`) and execute it directly, or split it into subtasks whose parts you can
-   deliver and check — either is legitimate. The one thing that is NOT free is a decomposition that
-   doesn't hold up: a child that self-passes on work the whole later fails REFUTES the split (q_D↓), so
-   split only where the parts genuinely carry the goal, and let the Level-2 check below catch the gaps
-   BEFORE you write code.
+   **How much to decompose is YOUR call (§4.5).** Take a goal as a LEAF (`D(t)=∅`) or split it into parts you can
+   deliver and check. A child that self-passes on work the whole later fails REFUTES the split (q_D↓), so split
+   where the parts carry the goal, and let the Level-2 check below catch the gaps before the code.
 
    **The plan is verified before you may execute it (enforced, §11.5) — on TWO levels.**
    - **Structure (Level 0) — at the admission.** A split is admitted WHOLE or not at all: no uncovered
@@ -98,9 +125,7 @@ The file's format (`gfso-plan/1`, every field) is `docs/PLAN_FORMAT.md`.
      executors would start, does not start until its parent's plan has a current verdict from
      `review_decomposition(parent)` (a child another party takes may start without it, exploring): do the mapped
      children's criteria, taken as facts about the world, actually CARRY each parent criterion?
-     Structure cannot see this — a criterion with a covering child passes Level 0 even when that
-     child's criteria cannot possibly deliver it, and you then pay for the hole in code, as a
-     refused delivery. Every gap the review names must be discharged before work starts: FIX the
+     Every gap the review names must be discharged before work starts: FIX the
      plan (`edit_criteria` / `map_criterion` / add a child — any edit stales the review, so re-run
      it) or, if the checker is wrong, say so in writing:
      `dispute_finding(parent, <criterion>, <why the entailment does hold>)`.
@@ -112,31 +137,21 @@ The file's format (`gfso-plan/1`, every field) is `docs/PLAN_FORMAT.md`.
    **The MANUAL regime (narrow-domain goals).** When the decomposition needs STUDIED context —
    project sources, docs, meaning an LLM's weights don't carry — auto_decompose cannot study it
    for you: study the context YOURSELF, then hand-build (`create_task`/`decompose`/
-   `edit_criteria`/`map_criterion`) or repair auto_decompose's base. Here the full loop matters most
-   (measured: a checker REPAIRS entailment but cannot RECALL absent content; one refine round
-   recovered exactly the missing-content axes — so the hole-hunt and the check are BOTH needed):
+   `edit_criteria`/`map_criterion`) or repair auto_decompose's base. The full loop (a checker repairs
+   entailment but cannot recall absent content, so both are needed):
    `list_holes` (structure, L0/L1) → **one `auto_decompose` refine round over YOUR built graph**
-   (the hole-hunt: recalls what you forgot; your structure, ids and Del are preserved — new
-   findings fold in as a revision) → `review_decomposition(node)` (the L2 checker: per parent
-   criterion — do the mapped children's criteria causally carry it; + semantic conflicts) → fix via
-   the verbs, or `dispute_finding` where the checker is wrong → re-run, until no gaps. The VERDICT is
-   advisory (contact overrules it); RUNNING it and closing what it names is not (the gate above).
-   Freshness lives on the node: `get_review(node)` is a FREE read (never spends an LLM) returning
-   the stored verdict + `verified` — True while the decomposition is UNCHANGED since the review;
-   ANY shape edit (criteria, mappings, deps, a child's re-ASSIGN) auto-stales it, the record
-   stays for comparison. Re-run `review_decomposition` to refresh; for a second opinion pass
-   `model="opus"`. The verdict is an a-priori estimate — execution (q_D) keeps the last word.
+   (recalls what you forgot; your structure, ids and Del are preserved) → `review_decomposition(node)` →
+   fix via the verbs, or `dispute_finding` where the checker is wrong → re-run, until no gaps.
+   `get_review(node)` is a FREE read: the stored verdict + `verified`, True while the decomposition is
+   UNCHANGED since the review; ANY shape edit (criteria, mappings, deps, a child's re-ASSIGN) stales it.
+   For a second opinion pass `model="opus"`.
 2. **Drive by the frontier.** Loop `next_steps(root)` until `complete=true`. Each step tells you the
    node, the action, and whether it is YOURS (`mine`). Foreign steps (mine=false) are visible so you
    know what the graph waits on — hands off; surface them to the user if they block you.
-3. **Execute your leaves for real** (the work itself, in the workspace). Then, BEFORE you signal —
-   STOP and self-check by RUNNING, not by intending. For each criterion write a tiny check that
-   exercises your work (a few lines calling it, an assertion on the actual output — you have a shell (see the note below if your client does not))
-   and RUN it; read what it actually printed. A signal is a claim about the world, so make the claim
-   from the OBSERVED result, never from "I implemented it". This is the cheap moment that catches the
-   off-by-one, the wrong return type, the unhandled case BEFORE the root's real tests do — a self-pass
-   the root later fails is exactly what drops q_D. If a check surprises you, fix it and re-run; if a
-   criterion is one you genuinely cannot exercise here, say so plainly rather than asserting it passes.
+3. **Execute your leaves for real** (the work itself, in the workspace). Then, BEFORE you signal, self-check
+   by RUNNING: for each criterion a tiny check that exercises your work, and read what it printed. A signal is a
+   claim about the world, so make it from the OBSERVED result; a self-pass the root later fails drops q_D. If a check
+   surprises you, fix and re-run; a criterion you cannot exercise here, say so plainly.
    Then `signal(task, "DELIVER", result=<paths + for EACH criterion, the check you ran and what it
    printed>)` — the result text is the validator's input; write it so an independent checker needs
    nothing else.
@@ -192,14 +207,10 @@ The file's format (`gfso-plan/1`, every field) is `docs/PLAN_FORMAT.md`.
 
 ## With no mode set: choosing per NODE
 
-Self-execute a node when it needs YOUR session context — the user's ongoing intent, files you
-already hold, decisions made mid-work, anything you'd have to re-explain to a fresh worker.
-Delegate a node (assign it to a registered executor) when it is a SELF-CONTAINED mechanical leaf:
-its criteria + inputs fully specify it, and `next_steps` marks it `parallel_ok` alongside others —
-that is free parallelism. Mixing inside one graph is the normal case. Assign to a HUMAN's name when
-the work is theirs in reality (physical action, a decision above you) — the graph then honestly
-waits for them. Validation needs no choice: with a registered llm-validator every delivery is
-auto-validated and auto-verdicted regardless of who executed.
+Self-execute a node that needs YOUR session context. Delegate (assign to a registered executor) a
+SELF-CONTAINED leaf whose criteria + inputs fully specify it; `next_steps` marks parallel ones `parallel_ok`.
+Assign to a HUMAN's name work that is theirs in reality; the graph then waits for them. With a registered
+llm-validator every delivery is auto-validated and auto-verdicted regardless of who executed.
 
 ## The workforce (what `semi` and `auto` run on, and delegation with no mode set)
 
@@ -210,36 +221,25 @@ rest — spawns the executor in its workdir, wraps its report into ACCEPT/DELIVE
 consent is its own report), auto-runs the validator on delivery, auto-signals the verdict
 (PASS → DONE; FAIL → automatic rework loop with the failed criteria as feedback), and answers a
 dispute it raises with your own two closures (a corrected contract, re-consented, or a rejection
-with its reason) so a challenged node is not left waiting out its bound. You stay the issuer AND THE NARRATOR:
-after delegating, POLL `next_steps`/`get_graph` every couple of minutes and REPORT progress to the
-user each time (what finished, what runs, what blocks) — a silent orchestrator leaves the human
-staring at an opaque wait; resolve BLOCKs/CHALLENGEs, handle the one escalation (an unparsed report).
-Humans are never registered — assign a node to a person's name and the system waits for THEIR signals
-(they act via the UI). Mixed graphs are normal: some nodes yours, some workers', some human.
+with its reason) so a challenged node is not left waiting out its bound. You stay the issuer: resolve
+BLOCKs/CHALLENGEs, handle the one escalation (an unparsed report), and report to the user what finished, runs, blocks.
+Humans are never registered: a node on a person's name waits for THEIR signals (they act via the UI).
 
 ## Discipline
 
-- The gate reads CORE, not the chat: if a summary and the graph disagree, the graph is the truth.
-- Do not stop early, do not skip nodes: `next_steps` reports complete only at root DONE/PASS.
+- If a summary and the graph disagree, the graph is the truth; `next_steps` reports complete only at root DONE/PASS.
 - Revise, don't recreate: spec changes keep the node id and its subtree.
-- One graph per project; `use_project(name)` switches YOUR SESSION's project (other agent sessions
-  on the same server are unaffected), `project=` on any verb overrides per-call. A dependency across
-  projects is unrepresentable by design — related goals live in ONE project.
+- `use_project(name)` switches YOUR SESSION's project, `project=` overrides per-call. Related goals live in ONE project.
 
 ## If your session has no shell or file tools
 
-Claude Desktop gives you these `gfso` verbs and nothing else — no Bash, no Read, no Write. You
-therefore cannot execute a leaf yourself, and you must not report one as delivered: an executed
-check is what a delivery is made of, and the seam validator will refuse a claim you could not have
-made. What you CAN do from there is the whole structuring half — author and refine the graph,
-run the Level-2 review and disposition its findings, name owners, and watch the frontier — plus
-delegation: register an executor with `register_agent(..., workdir=…)` and assign leaves to it, and
-the dispatcher does the work and the validation for you. Execution by your own hand needs a client
-that has tools (Claude Code, in a terminal or an IDE).
+Claude Desktop gives you these `gfso` verbs and nothing else. The doctor and the repository are then the person's:
+ask for the path of a directory that is a repository's top with a commit. `plan`'s answer names the parts and the
+count of open obligations, which you summarise; the person opens the file. A leaf is delivered on an executed check, so
+structuring and delegation are yours (`auto` runs the sequence above); execution by your own hand needs a client with
+tools (Claude Code, in a terminal or an IDE).
 
 ## A second goal is a second graph
 
 `auto_decompose` defaults to `root_id="root"`, and on a project that already has one it REFINES that
-node instead — its own contract, not the request you passed (the result says so in a `note`). For a
-new goal, either pass a fresh `root_id`, or `use_project("<name>")` first and give it its own graph.
-One project is one goal's graph.
+node's own contract, not the request you passed. For a new goal, `use_project("<name>")` first, or pass a fresh `root_id`.

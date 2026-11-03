@@ -13,6 +13,10 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 ## [Unreleased]
 
 ### Changed
+- The agent attached over MCP says what GFSO gives and needs, makes the repository itself, states `auto` with every role on
+  `claude-haiku-5-5` as its recommendation rather than asking (`solo` and `semi` on request; the mode's lock is unchanged),
+  reads the plan and gives the go, and writes the project's link in the chat. `start_project` answers with that link
+  too, and a verb's link names the project it acted on however the session came to it.
 - A part's place starts from where its whole stood when the part entered the split, its producers coming by their Dep
   edges, and what a session reads as the base holds no delivery: a sibling's work reaches it by the plan, not by the order
   the parts started in. A plan that relied on that order meets the missing edge at contact (a BLOCK, or a FAIL), and

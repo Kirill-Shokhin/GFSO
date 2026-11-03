@@ -1,10 +1,12 @@
 """MCP tool layer — logic tested directly (no MCP transport needed)."""
+import asyncio
 import inspect
 import pytest
 from gfso.adapters.llm.stub import StubLLM
 from gfso import tools as T
 from gfso import tools_llm as TL, serverctl
 from gfso.mcp.server import _bind, _with_ui_link
+from gfso.runtime import ProjectRegistry
 from tests.support import REGISTER, criterion, make_engine
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
@@ -197,3 +199,26 @@ def test_entry_verbs_carry_the_local_ui_link():
     assert "ui" in _with_ui_link("create_task", {"id": "root"})          # no project → bare address
     assert _with_ui_link("get_checks", {"x": 1}) == {"x": 1}             # not an entry verb
     assert _with_ui_link("project", "# markdown") == "# markdown"        # non-dict result untouched
+
+
+def test_a_verb_that_starts_the_work_answers_with_its_projects_link(monkeypatch, tmp_path):
+    """The user's agent writes this link in the chat right after the start, so the person only clicks. The verbs that
+    start a project's work name its page whichever way the session came to the project: a project it stands in as the
+    server's active one, named by no call of its own, got the bare address."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    monkeypatch.setenv("GFSO_STORAGE", "memory")
+    reg = ProjectRegistry()
+    reg.use("demo")
+
+    def auto_decompose(engine, author=None) -> dict:
+        return {"root_id": "root"}
+
+    try:
+        for fn in (auto_decompose, TL.TOOLS["start_project"]):
+            assert asyncio.run(_bind(reg, fn)())["ui"] == f"{serverctl.BASE}/?project=demo", fn.__name__
+        assert asyncio.run(_bind(reg, fn)(project="other"))["ui"].endswith("?project=other")
+        assert serverctl.BASE.startswith("http")
+    finally:
+        for e in list(reg._engines.values()):
+            e.stop()

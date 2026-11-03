@@ -415,7 +415,7 @@ across projects is deliberately unrepresentable, so related goals belong in one.
 
 ### Who holds which nodes: the mode
 
-Asked once per project, before the plan, and set with `set_mode`:
+Set once per project, before the plan, with `set_mode`; your agent recommends `auto` and goes on unless you ask for another:
 
 | mode | who holds the nodes | your session |
 |---|---|---|

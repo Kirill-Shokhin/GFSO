@@ -2201,7 +2201,7 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
       customer — state the goal, and read its status. You do not intervene: the system makes every
       issuer move, and the project refuses your structuring and validation verbs on its nodes.
 
-    The choice is the USER's: explain the three and ask; do not pick one for them. It governs nodes
+    The choice is the USER's: recommend `auto` and go on, unless they ask for another. It governs nodes
     issued AFTER it (an issued node keeps its Del). A mode that needs executors is refused until this
     project has them: auto needs two (the root and its children must be different executors, or the
     children would self-verify with no validator between them), semi needs one, and every mode — solo

@@ -51,7 +51,7 @@ def _address() -> tuple[str, int]:
 BASE, PORT = _address()
 
 #: the verbs whose answer carries the page's address — the doors' one list (MCP and the CLI driver)
-UI_LINK_VERBS = frozenset({"use_project", "create_task", "project", "auto_decompose"})
+UI_LINK_VERBS = frozenset({"use_project", "create_task", "project", "auto_decompose", "start_project"})
 
 
 def ui_link(project: Optional[str] = None) -> str:

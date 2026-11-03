@@ -489,7 +489,7 @@ def test_a_scoped_act_names_the_scope_it_was_given(monkeypatch, tmp_path):
 
 
 def test_the_mode_is_set_before_the_plan_on_every_door(monkeypatch, tmp_path):
-    """The mode is the user's choice made BEFORE the plan (ORCHESTRATOR: ask, then `set_mode`), and once a
+    """The mode is the user's choice made BEFORE the plan (ORCHESTRATOR: `set_mode`, then `plan`), and once a
     project has work in it a change needs the user's own words. The MCP door creates a project on
     `use_project`; the HTTP and CLI doors answered `set_mode` on a new name with "no such project", so a
     caller there could set a mode only AFTER authoring — measured 2026-09-27: the E3 harness's solo arm
