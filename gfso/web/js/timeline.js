@@ -88,7 +88,7 @@ export function render(el, run, nodes) {
     const has = k => run.sessions.some(s => s.kind === k);
     const kinds = ['exec', ...(has('consent') ? ['consent'] : []), 'val', 'issuer', ...(has('plan') ? ['plan'] : [])], legendW = kinds.length * 92;
     const legend = kinds.map((k, i) =>
-        `<rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text>`).join('');
+        `<g><rect class="tl-${k}" x="${i * 92}" y="${4 - BAR[k] / 2}" width="16" height="${BAR[k]}" rx="1.5"/><text x="${i * 92 + 21}" y="8">${KIND[k].name}</text></g>`).join('');
     const row = id => `<g class="tl-row" data-node="${esc(id)}">
         <rect class="tl-band" x="0" y="${Y(id) - ROW / 2 - 2}" width="${W}" height="${ROW}"/>
         <text class="tl-name${run.depth[id] ? '' : ' tl-goal'}" data-k="n|${esc(id)}" x="${LEFT - 10}" y="${Y(id) + 4}"${name(id) !== trim(name(id), cutN) ? TIP.cell(name(id)) : ''}>${esc(trim(name(id), cutN))}</text>
