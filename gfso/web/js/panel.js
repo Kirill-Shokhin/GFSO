@@ -4,7 +4,7 @@
 // nothing (they were two modules with seven names across the cut). Buttons carry `data-action` (dispatched in main.js);
 // nothing here sends anything.
 import {$, el, esc, data, section, ul, rebuild, tally, due} from './dom.js';
-import {PANEL, frame, waitWords, KIND} from './hints.js';
+import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
 import {S, hasKids, taskOf, myRole} from './state.js';
 import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
@@ -47,6 +47,7 @@ function head({d, rounds}) {
         + `<div class="pn-grid">`
         + prop('Del', `<code>${esc(d.assignee ? bare(d.assignee, S.project) : '—')}</code>`)
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
+        + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
         // a deadline only where it still binds (audit D18)
         + prop('Deadline', d.deadline && live ? `<code class="${at(d.deadline) < Date.now() ? 'overdue' : ''}">${when(d.deadline)}</code>` : '',
                d.deadline && live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : '')

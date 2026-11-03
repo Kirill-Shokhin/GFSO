@@ -133,6 +133,8 @@ const NEWS = {
     usage: () => { if (!$('project-delete').hidden) projects(); },
     // the plan changed with no transition — a Dep edge, an assignee, a criterion, a node created, an agent registered
     graph: () => ({all: true}),
+    // the accepted result reached the user's repository, a moment after the verdict that closed the goal
+    landed: () => ({all: true}),
 };
 const LIVE = {
     // NEWS ON THE NARRATION re-reads what it changed — no reload is ever needed to see what the server holds (the author,

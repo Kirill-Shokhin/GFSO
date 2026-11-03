@@ -14,6 +14,8 @@ import pytest
 
 import gfso.adapters.execution as E
 import gfso.adapters.worktrees as W
+from gfso.runtime import ProjectRegistry
+from gfso.tools import TOOLS
 import gfso.tools_llm as TL
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution
@@ -193,6 +195,7 @@ def test_live_a_base_with_no_git_is_imported_once_and_its_result_lands_beside_it
         assert WS.land_accepted(e, None, new) is None, e.said
         out = tmp_path / "w" / ".gfso-accepted-ws" / "p"
         assert (out / "f.txt").read_text() == "work\n" and (out / "w.txt").read_text() == "new\n"
+        assert json.loads(e.graph.setting(WS.LANDED)) == {"path": str(out)}, "the page reads where the result lies"
         assert (base / "f.txt").read_text() == "the user's, changed\n", "the user's directory untouched"
     finally:
         x.stop()
@@ -232,6 +235,8 @@ def test_live_the_import_says_what_of_the_users_did_not_come_in(tmp_path, monkey
         monkeypatch.setattr(WS, "execution_of", lambda engine, agents=None: x)
         assert WS.land_accepted(e, None, SimpleNamespace(id="root")) is None, e.said
         assert _git(base, "rev-parse", "gfso/p/accepted") == _inside(x, "rev-parse", "HEAD")
+        assert json.loads(e.graph.setting(WS.LANDED)) == {"branch": "gfso/p/accepted", "sha": _inside(x, "rev-parse", "HEAD"),
+                                                          "path": str(base)}, "the page reads where the result lies"
     finally:
         x.stop()
         x.volume.remove()
@@ -419,3 +424,12 @@ def test_a_bundle_whose_objects_git_would_not_accept_is_refused_on_the_host(tmp_
     g(src, "bundle", "create", str(tmp_path / "b.bundle"), "HEAD")
     said = E.fetched_on_host(base, (tmp_path / "b.bundle").read_bytes())
     assert "missingEmail" in said and subprocess.run(["git", "-C", str(base), "cat-file", "-e", bad]).returncode, said
+
+
+def test_the_graph_says_where_the_result_lies(tmp_path, monkeypatch):
+    """What the page reads: nothing before the landing, the record after it."""
+    monkeypatch.setenv("GFSO_HOME", str(tmp_path)); monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    e = ProjectRegistry(default_storage="sqlite", default_llm="stub", seed=False).engine("default")
+    assert TOOLS["get_graph"](e)["landed"] is None
+    e.graph.store_setting(WS.LANDED, json.dumps({"branch": "gfso/p/accepted", "sha": "a" * 40, "path": "/r"}))
+    assert TOOLS["get_graph"](e)["landed"]["branch"] == "gfso/p/accepted"

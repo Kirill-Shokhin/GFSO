@@ -137,6 +137,7 @@ body {
 .hd-needs > .hd-phrase { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .hd-needs > .tally { flex: 0 50 auto; min-width: 0; overflow: hidden; }
 .hd-needs > .need { flex: 0 1 auto; min-width: 9ch; }
+.hd-needs > .hd-landed { flex: 0 1 auto; min-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; user-select: all; color: var(--ui-on-chrome); }
 .need { cursor: pointer; background: var(--acc); border-color: var(--acc); color: var(--bg); text-transform: none; letter-spacing: 0.02em; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
 .need.paper { background: var(--paper); border-color: var(--paper); color: var(--ink); }
 .need:hover { filter: brightness(1.15); }

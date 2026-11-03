@@ -42,6 +42,9 @@ function standing(root) {
 const SETTING = {l2_gate: 'Plan review gate', observe: 'Checks observed before execution', deadline_s: 'Default deadline', network: 'Network'};
 const SWITCH = new Set(['l2_gate', 'observe']);   // switches, whatever their value's type
 const PERFORM = {dispatch: 'each node in a clean session of its executor', in_chat: "by the user's agent itself"};
+// where the delivered goal's work is, the engine's record: a closed goal said DONE and nothing of where to take it from
+const landedAt = root => { const l = S.graph.landed; return l && delivered(root)
+    ? `<span class="hd-landed"${H.landed(l)}>${esc(l.branch ? `on ${l.branch}` : `in ${l.path}`)}</span>` : ''; };
 let status = '';                   // the root's standing, set by goal(), shown in the middle
 async function goal() {
     status = '';
@@ -66,7 +69,7 @@ async function goal() {
     // left: WHICH goal and who holds its work; where it stands goes to the middle, beside what needs a person —
     // the brand's dot marking the one real done: the goal delivered
     const word = goalWord(root);
-    status = word ? `<span class="hd-verdict${word === 'failed' ? ' bad' : ''}">${word}${done ? '<i class="brand-dot"></i>' : ''}</span>`
+    status = word ? `<span class="hd-verdict${word === 'failed' ? ' bad' : ''}">${word}${done ? '<i class="brand-dot"></i>' : ''}</span>${landedAt(root)}`
         : standing(root);
     return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full)}>${esc(short)}</button>`
         + (mode ? `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode)}</button>${H.mode(MODES, mode, set)}</span>` : '');

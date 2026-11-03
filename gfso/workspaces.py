@@ -394,6 +394,9 @@ def root_key_of(root) -> str:
     return f"{root.id}@{root.created_at.isoformat()}"
 
 
+LANDED = "landed"   # where the accepted result lies, kept for whoever reads the graph: {branch, sha, path} or {path}
+
+
 def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
     """At the root's PASS, its result where the user reads it — why not, else None. Under a container execution the
     base is the project's import, and its HEAD, the root joined, lands in the user's repository as the branch
@@ -411,7 +414,8 @@ def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
             notes = ex.volume.land_tree(ex.image, to)
         except OSError as e:
             return f"its accepted result did not land in {to}: {e}"
-        engine.emit_info("delegate", f"{root.id}: its accepted result is in {to}"
+        engine.graph.store_setting(LANDED, json.dumps({"path": str(to)}))
+        engine.emit_info("landed", f"{root.id}: its accepted result is in {to}"
                                      + (f" (not written as it stood: {'; '.join(notes[:5])})" if notes else ""))
         return None
     ref = f"gfso/{ex.project_name}/accepted"
@@ -423,7 +427,8 @@ def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
         lost = W.land_lfs(ex.base, sha, rec.get("commit"), ex)
     except OSError as e:
         lost = [f"(its LFS pointers could not be read: {e})"]
-    engine.emit_info("delegate", f"{root.id}: its accepted result {sha[:12]} is on branch `{ref}` of {ex.base}" + (
+    engine.graph.store_setting(LANDED, json.dumps({"branch": ref, "sha": sha, "path": str(ex.base)}))
+    engine.emit_info("landed", f"{root.id}: its accepted result {sha[:12]} is on branch `{ref}` of {ex.base}" + (
         f"; {len(lost)} files tracked by Git LFS have no object carried into its LFS store and read as pointers there "
         f"({', '.join(lost[:5])}{', ...' if len(lost) > 5 else ''})" if lost else ""))
     return None

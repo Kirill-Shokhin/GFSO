@@ -133,7 +133,8 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   in place of polling; a key under «?»; a node panel with criterion histories, the signals the engine admits to this
   person under a mode, and a challenge's acceptance that can retire findings with its why; counts as marks of their own;
   a layout for phone width; a plan too large to read whole folds its parts under a tag that counts what they hide; a
-  project that never ran can be deleted from its page.
+  project that never ran can be deleted from its page; a delivered goal says on which branch, or in which directory, its
+  result lies (`get_graph` `landed`); the address with no project lists the projects and opens none.
 
 ### Fixed
 - A repair patch cannot end an authoring: what the admission refuses is taken back only when the repair rounds are spent,

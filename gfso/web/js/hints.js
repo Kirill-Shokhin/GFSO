@@ -167,6 +167,8 @@ export const RES = {
 // ── the header ──
 export const H = {
     root: full => hover(full),
+    landed: l => l.branch ? hover(`The result, on branch ${l.branch}`, `Of the repository ${l.path}`, `Commit ${l.sha.slice(0, 12)}`, 'Your own branches and working tree are untouched')
+        : hover('The result, as files', l.path, 'Your own directory is untouched'),
     // one chip per kind of call on a person: the hover says why it calls and on which nodes; the chip already says how many
     need: (kind, rows) => hover({
         escalated: 'The issuer decides on these', challenged: 'A challenge waits on its issuer', blocked: 'A block waits on its issuer',

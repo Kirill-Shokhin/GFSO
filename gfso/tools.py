@@ -1254,7 +1254,11 @@ def get_graph(engine: Engine) -> dict:
     # …AND THE MOVE IT WAITS ON, as entering a project and every signal's reply carry it: a SOLO-dispatch holder that
     # entered through this read saw nine nodes OFFERED to it, never heard "ACCEPT; your hands perform it", tried to
     # build them itself without the tools and gave up (GB_coreutils_tmmw26001, 2026-10-09)
-    return {"nodes": nodes, "edges": edges, "mode": engine.mode(), **next_for(engine, _agent_id())}
+    # …and where the accepted result lies, once it has landed: said only in a line of the log, a person who opened the
+    # page on a closed goal could not tell where the work was
+    landed = engine.graph.setting("landed")
+    return {"nodes": nodes, "edges": edges, "mode": engine.mode(), "landed": json.loads(landed) if landed else None,
+            **next_for(engine, _agent_id())}
 
 
 def list_holes(engine: Engine, root_id: Optional[str] = None) -> dict:
