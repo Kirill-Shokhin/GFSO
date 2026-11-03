@@ -713,6 +713,18 @@ def _pin_by_part(engine, request, rid, assignee, llm, gaps, progress, executor, 
     return True, new_spec, problems
 
 
+def _one_part_is_the_whole(spec: dict) -> dict:
+    """A split into one part splits nothing (§3.7, the leaf test): its criteria are the node's own. Kept, a small utility
+    ran as a whole over a part of it, each validated apart, its leaf's shorter path missed (wordtop, 31 min, 2026-11-03)."""
+    parts = spec.get("subtasks") or []
+    if len(parts) != 1:
+        return spec
+    own = list(spec.get("root_criteria") or [])
+    names = {c.get("name") for c in own}
+    return {**spec, "root_criteria": own + [c for c in parts[0].get("criteria") or [] if c.get("name") not in names],
+            "subtasks": [], "mappings": [], "deps": [], "accepted_risks": []}
+
+
 def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, holes, progress, executor="",
                                  agree: "_Agreement | None" = None):
     """Ask the sufficiency question about the ROOT, fold what it names once, and MEASURE the residue.
@@ -895,9 +907,9 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
                 break
     else:
         # the combined text is what the DECOMPOSER reads; the goal text a build keeps is the caller's (critic round 13)
-        spec = given if given is not None else decompose_spec(
+        spec = given if given is not None else _one_part_is_the_whole(decompose_spec(
             contract, llm=llm, progress=progress, fast=fast, label=f"1/{depth}",
-            executor=executor)
+            executor=executor))
         rid, spec, holes = _build_verified(spec, request, engine, root_id, assignee, llm,
                                            progress=progress, max_iterations=max_iterations,
                                            child_assignee=child_assignee, executor=executor, contract_fixed=held,

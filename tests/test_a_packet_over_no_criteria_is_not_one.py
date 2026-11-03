@@ -119,8 +119,10 @@ def test_the_execution_gate_does_not_pass_over_the_empty_set(empty):
 
 _PLAN = {"name": "Thing", "root_criteria": [criterion("rc", "the whole holds")],
          "subtasks": [{"id": "a", "name": "A", "description": "do A", "criteria": [criterion("a1", "A ok")],
+                       "volume": "small", "fits_one_session": True},
+                      {"id": "b", "name": "B", "description": "do B", "criteria": [criterion("b1", "B ok")],
                        "volume": "small", "fits_one_session": True}],
-         "mappings": [{"criterion": "rc", "child_id": "a"}], "deps": [],
+         "mappings": [{"criterion": "rc", "child_id": "a"}, {"criterion": "rc", "child_id": "b"}], "deps": [],
          "accepted_risks": [{"item": "provider outage", "predictability": "STATISTICAL", "justification": "rare",
                              "invalidation": "seen", "p": 0.01, "impact": "waits"}],
          "denial": {"p": 0.1, "justification": "fixture"}, "whole_volume": "small", "whole_fits_one_session": False}
@@ -178,6 +180,18 @@ def test_an_empty_authoring_is_retried_within_the_repair_budget(monkeypatch):
 
 
 # === 4. the reply: "the gate will refuse" only where a gate does ===
+
+def test_a_split_into_one_part_is_built_as_the_leaf_it_is(monkeypatch):
+    """It splits nothing: a small utility ran as a whole over a part of it, each validated apart (wordtop, 2026-11-03)."""
+    (part, *_) = _PLAN["subtasks"]
+    patch = {"name": _PLAN["name"], "add_root_criteria": _PLAN["root_criteria"], "add_subtasks": [part],
+             "add_accepted_risks": _PLAN["accepted_risks"], "denial": _PLAN["denial"]}
+    e, out = _auto(monkeypatch, _Model(plans={1: patch}))
+    assert not e.graph.get_active_children(TaskId("root"))
+    names = {c.name for c in e.graph.get_task(TaskId("root")).spec.criteria}
+    assert {c["name"] for c in part["criteria"]} <= names, names
+    e.stop()
+
 
 def test_a_leaf_s_obligations_are_said_and_not_repaired_at_authoring(monkeypatch):
     """No split to secure at an atomic root (§8.3): the rounds cost ~40% of a small task's plan (wordtop, 2026-11-03)."""
