@@ -35,7 +35,7 @@ function streams(run, nodes, pipeline) {
 
 function row(r) {
     // …a long one folded to two lines, the whole of it on hover: hundreds of characters a row read as the console (audit D16)
-    if (r.p) return `<li class="ev ev-narration${r.kind === 'run' ? ' ev-run' : ''}"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text"${r.p.text.length > 60 ? TIP.cell(r.p.text) : ''}>${esc(r.p.text)}</span></li>`;
+    if (r.p) return `<li class="ev ev-narration${r.kind === 'run' ? ' ev-run' : ''}"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text"${r.p.text.length > 60 ? TIP.cell(unref(r.p.text)) : ''}>${esc(unref(r.p.text))}</span></li>`;
     // what it carried, folded — but its failed criteria, drawn as chips, and an error the move line already says
     const a = r.a, prose = CARRIED.filter(([k]) => a[k] && k !== 'failed_criteria' && (k !== 'error' || a.rejected)).map(([k, l]) => [l, a[k]]);
     const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
@@ -68,6 +68,7 @@ function head(id, name, node, run, rs) {
 // What the reader set here outlives the view's redraw — every event of a live run redraws the deck, and a group opened,
 // a kind switched off or a search typed was undone a few seconds later (the author, 2026-10-27).
 // what a search reads is what a row says, not its record's field names: «fail» found every row by `failed_criteria` (critic)
+const unref = t => t.replace(/\s*\(§[^)]*\)/g, '');   // the engine's narration cites the canon, which is not on the page
 const said_ = o => o == null ? '' : typeof o === 'object' ? Object.values(o).map(said_).join(' ') : String(o);
 const on = new Set(Object.keys(KINDS).filter(k => k !== 'narration')), opened = new Set();
 let query = '', shown = null;
