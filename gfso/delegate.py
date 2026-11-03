@@ -1335,18 +1335,10 @@ class Dispatcher:
                                                    f"its ISSUER must decide (⊥ is not pass, §2.3)")
                 self._engine.parking.park_validation(top_id)
 
-    def dispatch_once(self) -> list[str]:
-        """One poll round (the testable unit): spawn executor runs for executor-ready steps AND the
-        auto-validation for EVERY freshly delivered node (delegated or self-executed — one path;
-        fires only when an llm-validator is registered AND the node's issuer is automated, else
-        validation stays the issuer's act)."""
-        if getattr(self._engine, "_dispatch_quiesce", 0):
-            return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
-        if self._engine.paused():
-            self._rest()
-            return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
-        self._rested = False
-        self._rejoin()     # a root's result that did not land is tried again (cheap: roots only)
+    def _publish_the_roster(self) -> None:
+        """Who is on the roster, for every reader of the graph: before the stop's return, for a project stands stopped
+        after every server start and its finished run read «this name is not on the validator roster» under the very
+        validator the page lists (ui stream, 2026-11-03)."""
         # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§10.3) —
         # both the LLM validator (a fresh read-only agent) and the deterministic unittest-checker
         _roster = self._agents.list()
@@ -1371,6 +1363,20 @@ class Dispatcher:
         # "the graph waits for a person" and "the dispatcher has it in hand", and a driving agent
         # reported itself blocked on a human over exactly that (2026-08-20).
         publish_the_workforce(self._engine, _roster)
+
+    def dispatch_once(self) -> list[str]:
+        """One poll round (the testable unit): spawn executor runs for executor-ready steps AND the
+        auto-validation for EVERY freshly delivered node (delegated or self-executed — one path;
+        fires only when an llm-validator is registered AND the node's issuer is automated, else
+        validation stays the issuer's act)."""
+        if getattr(self._engine, "_dispatch_quiesce", 0):
+            return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
+        self._publish_the_roster()
+        if self._engine.paused():
+            self._rest()
+            return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
+        self._rested = False
+        self._rejoin()     # a root's result that did not land is tried again (cheap: roots only)
         self._resolve_ready_blocks()
         answer_open_questions(self._engine, self._agents, self._claim, self._release_after_answer,
                               self._cap.closing, ISSUER_VERBS, self._issuer_attempts, self._issuer_owed)
