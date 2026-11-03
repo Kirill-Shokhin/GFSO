@@ -10,7 +10,8 @@ are separate projects inside it, not separate directories. The theory is in
 
 There are two ways to get a graph, and they are not equal in what they cost you.
 
-* **`auto_decompose(request)`** — one call authors a whole verified subtree from a sentence. Good
+* **`plan(request)`, then `auto_decompose(plan=path)`** — the system writes a plan as a file, you read it whole, send a
+  note (`refine_plan`) or give the go; `auto_decompose(request)` does both in one call, with no reading between. Good
   when the goal is generic enough that a model's weights already carry its structure.
 * **The manual mode** — you study the context and build the graph yourself, then run the checks over
   it. This is the mode below, and it is the primary one for work on a codebase you know and a model

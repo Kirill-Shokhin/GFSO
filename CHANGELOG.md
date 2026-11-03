@@ -12,7 +12,21 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 
 ## [Unreleased]
 
+### Fixed
+- A verb longer than three minutes is answered over MCP: the bridge took a silence for a dead session, told the agent the
+  server had restarted, and the agent's resend paid for the whole plan again. It now asks its session; a call waits under the
+  client's own ceiling and is answered past it, and the same `plan` asked again joins the one under way or reads the one written.
+- The go on a plan with parts no longer stops on a second review of its own file, and a plan the system wrote stays open
+  to contact after its exact build: a check of its own that contact refutes is repaired. A dispute a plan handed in closed
+  cannot answer stops the run saying why, where it asked a model again with no line said.
+- A note through `refine_plan` no longer loosens checks it did not name, and what a plan spends is on the book of the
+  project that asked.
+
 ### Changed
+- The attached agent's whole path stands in the first 4000 characters of its instructions, where a client cuts them.
+- The plan gate's re-check asks whether a pinned check probes what an obligation's own words name; another disguise of what
+  a check refuses is that check's residue. A leaf's obligations are said once and not repaired at authoring, and a place
+  holding nothing runs no check before its first session.
 - The agent attached over MCP says what GFSO gives and needs, makes the repository itself, states `auto` with every role on
   `claude-haiku-5-5` as its recommendation rather than asking (`solo` and `semi` on request; the mode's lock is unchanged),
   reads the plan and gives the go, and writes the project's link in the chat. `start_project` answers with that link

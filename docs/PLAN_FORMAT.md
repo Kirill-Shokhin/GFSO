@@ -2,8 +2,9 @@
 
 A plan is an artifact of its own, handed between parties the way a config file is: one text file, readable whole in an
 editor, that exists before any project does. The customer reads all of it, then either sends a note (the plan is refined
-and a new file comes back) or gives the go (a project is built from the file as it stands). After the go the plan is the
-customer's, and the system only adds to it.
+and a new file comes back) or gives the go (a project is built from the file exactly, or the go is refused naming why).
+The system wrote it, so after the go contact may repair it: a check of its own that contact refutes is changed, on the
+record with its reason. A plan handed in whole (`auto_decompose` with `spec`) stays closed: the system only adds to it.
 
 The file is TOML (`gfso/decompose/artifact.py`). The module is the format's whole implementation: `render(goal, spec, review,
 notes, executor)` writes it, `parse(text)` reads it back, and the contract is `parse(render(x)) == x`. A hand-edited file
