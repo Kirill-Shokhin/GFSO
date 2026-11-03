@@ -263,10 +263,11 @@ What one session can still reach:
   grows with what the installation holds; what a session writes into a directory while the system
   writes there is taken out with the system's write; the reader runs as root in the session's own
   image and needs GNU find there (the product's image has it): a directory it cannot read whole —
-  in an image without it, or not within a minute — is left out, said in the server's log, and the
-  session's charge there stands as it was, no other directory's touched; a session whose directory
-  nests deeper than 4,096 levels, or is not walked within a minute three readings in a row (its
-  volume's whole reading running out counts for each of its directories), is ended for it, and so is
+  in an image without it, its walk failing, or not within a minute — is left out, said in the server's
+  log, and the session's charge there stands as it was, no other directory's touched; a session whose
+  directory nests deeper than 4,096 levels, or whose walk fails or runs past a minute three readings
+  in a row (its volume's whole reading running out counts for each of its directories; an image
+  without GNU find does not count), is ended for it, and so is
   each later session there until the nest is gone; a server restart counts a place past its bound
   from what it then holds, so its next session there may add a bound again; each system write costs
   two readings (about half a second to a second and a half), none of it counted in the time the

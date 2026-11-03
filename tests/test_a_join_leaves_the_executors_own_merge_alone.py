@@ -21,7 +21,10 @@ def test_a_join_does_not_abort_the_merge_the_executor_left_unfinished(tmp_path):
         _git(base, "add", "-A"), _git(base, "commit", "-q", "-m", name)
     _git(base, "checkout", "-q", trunk)
     _git(base, "merge", "-q", "--no-edit", "a")
-    assert subprocess.run(["git", "merge", "--no-edit", "b"], cwd=base, capture_output=True).returncode  # its conflict
+    # …with an identity of its own: with none (a CI runner) git dies before starting, exit 128, and no merge stands to keep
+    r = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-edit", "b"], cwd=base,
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and W.merging(base, base), r.stdout + r.stderr                               # its conflict
     (base / "README").write_text("resolved by the executor\n")                                            # …its work
     assert W.merge(base, base, "c", "gfso: root.c joins root")                  # a part to join: not joined, and said why
     assert W.merging(base, base) and (base / "README").read_text() == "resolved by the executor\n"

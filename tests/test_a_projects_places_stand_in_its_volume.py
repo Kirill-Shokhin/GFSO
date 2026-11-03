@@ -431,19 +431,27 @@ def test_live_an_unlabelled_volume_under_the_projects_name_is_never_its_places(t
 
 
 @live
-def test_live_a_source_the_host_would_not_move_aside_is_moved_at_the_next_start(tmp_path):
+def test_live_a_source_the_host_would_not_move_aside_is_moved_at_the_next_start(tmp_path, monkeypatch):
     """n4 (critic over f5d93ba): a file held open kept the host's directory from its rename after the record was
-    written, and nothing tried again — a project made again under the name refilled from it."""
+    written, and nothing tried again — a project made again under the name refilled from it. The host's refusal is
+    made, not provoked: an open file refuses a rename on Windows only, and Linux renames it."""
     (base := tmp_path / "ws").mkdir()
     (left := tmp_path / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     (left / "f.txt").write_bytes(b"x")
     kept: dict = {}
     x = _fresh(tmp_path, base, kept)
+    source, rename = (tmp_path / ".gfso-nodes-ws" / "p").resolve(), Path.rename
+
+    def refused(self, to):
+        if self.resolve() == source:
+            raise PermissionError(13, "held open", str(self))
+        return rename(self, to)
     try:
-        with open(left / "f.txt", "rb"):
+        with monkeypatch.context() as m:
+            m.setattr(Path, "rename", refused)
             x.files.mkdir(str(x.own / "a"))
-            held = (tmp_path / ".gfso-nodes-ws" / "p").exists()
-        assert kept.get("volume:places") and held, "recorded, and the open file kept the host's copy in place"
+            held = source.exists()
+        assert kept.get("volume:places") and held, "recorded, and the refused rename kept the host's copy in place"
         x = _fresh(tmp_path, base, kept)
         x.files.mkdir(str(x.own / "a"))
         assert not (tmp_path / ".gfso-nodes-ws" / "p").exists(), "moved aside at the next start"

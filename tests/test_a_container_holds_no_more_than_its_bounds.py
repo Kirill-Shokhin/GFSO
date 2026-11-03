@@ -8,6 +8,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -597,7 +598,7 @@ def test_a_removed_copy_takes_off_only_what_the_system_put_there(monkeypatch):
 def test_a_directory_that_outruns_its_reading_time_again_and_again_ends_its_work(monkeypatch):
     """Unread, a directory's charge stood frozen below the bound for good, and a node that kept its directory slow to
     walk kept it so (critic): read past its time `DISK_SLOW_READS` times in a row, its work is ended for it; one good
-    reading between starts the count again, and a reading that failed otherwise (no GNU find there) is no such count."""
+    reading between starts the count again, and a reader that cannot read at all (no GNU find there) is no such count."""
     said = {"out": "T 0 /v/p"}
     monkeypatch.setattr(E, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, said["out"], ""))
     monkeypatch.setattr(E, "_SLOW", {})
@@ -605,9 +606,50 @@ def test_a_directory_that_outruns_its_reading_time_again_and_again_ends_its_work
         assert E._read("vol", ["p", "q"]) == {} and E._SLOW == {("vol", "p"): n}
     said["out"] = "4096 1 /v/p"
     assert E._read("vol", ["p", "q"]) == {("vol", "p"): (4096, 1)} and E._SLOW == {}
-    said["out"] = "U 0 /v/p"
+    said["out"] = "N 0 /v/p"
     E._read("vol", ["p", "q"])
     assert E._SLOW == {}, "a reader that cannot read at all is no slowness of the node's"
+
+
+def test_a_directory_whose_walk_keeps_failing_ends_its_work_as_a_slow_one_does(monkeypatch):
+    """A failed walk froze the charge as an outrun one did, with no count: on the Linux runner a node's nest answered
+    "could not read" at every reading of the wait and stayed running, past any bound it wrote to."""
+    said = {"out": "U 0 /v/p"}
+    monkeypatch.setattr(E, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, said["out"], ""))
+    monkeypatch.setattr(E, "_SLOW", {})
+    for n in (1, 2, 3):
+        assert E._read("vol", ["p", "q"]) == {} and E._SLOW == {("vol", "p"): n}
+    assert E._SLOW[("vol", "p")] >= E.DISK_SLOW_READS, "the count the watch ends a work at"
+    said["out"] = "4096 1 /v/p"
+    assert E._read("vol", ["p", "q"]) == {("vol", "p"): (4096, 1)} and E._SLOW == {}, "one good reading starts it again"
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="the reader's script is a POSIX shell's")
+@pytest.mark.parametrize("find, said", [("exit 1", "N"),                                       # …no GNU find at all
+                                        ('case "$*" in *-maxdepth*) exit 0;; esac; exit 1', "U")])  # …its walk failed
+def test_the_reader_tells_a_find_that_cannot_read_from_a_walk_that_failed(tmp_path, find, said):
+    """Told apart, or an image with no GNU find would have every node in it ended as unreadable."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "find").write_text(f"#!/bin/sh\n{find}\n", newline="\n")
+    (tmp_path / "bin" / "find").chmod(0o755)
+    (tmp_path / "d").mkdir()
+    got = subprocess.run(["sh", "-c", 'PATH="./bin:$PATH"; ' + E._HELD, "sh", "4097", "5", "d"], cwd=tmp_path,
+                         capture_output=True, text=True)
+    assert got.stdout.split() == [said, "0", "d"], got.stdout + got.stderr
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="the reader's script is a POSIX shell's")
+def test_the_reader_reads_a_real_tree_and_finds_a_real_nest(tmp_path):
+    """The script itself, under the real `find`: every test above it feeds `_read` the script's answer."""
+    (tmp_path / "d" / "a" / "b").mkdir(parents=True)
+    (tmp_path / "d" / "a" / "b" / "f").write_bytes(b"x" * 5000)
+
+    def read(depth):
+        return subprocess.run(["sh", "-c", E._HELD, "sh", str(depth), "5", "d"], cwd=tmp_path, capture_output=True,
+                              text=True).stdout.split()
+    assert read(3) == ["D", "0", "d"], "a nest as deep as the bound"
+    held = read(4097)
+    assert held[0].isdigit() and held[1:] == ["4", "d"], held          # …three directories and the file, read whole
 
 
 def test_a_whole_volume_outrun_counts_for_each_of_its_directories_and_a_nest_read_whole_is_cleared(monkeypatch):

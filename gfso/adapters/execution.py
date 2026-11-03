@@ -455,6 +455,7 @@ DISK_WATCH_S = 10.0
 _LAYER = re.compile(r"([\d.]+)\s*([kMGT]?B)")
 #: what the disk's watch reads in a volume, per directory: `<kb> <files> <path>` a line
 _HELD = ('m=$1; t=$2; shift 2; for d; do [ -d "$d" ] || continue; '
+         'find "$d" -maxdepth 0 -xdev -ignore_readdir_race -printf "" 2>/dev/null || { echo "N 0 $d"; continue; }; '
          'if [ -n "$(timeout "$t" find "$d" -xdev -mindepth "$m" -print -quit 2>/dev/null)" ]; then echo "D 0 $d"; '
          'continue; fi; { timeout "$t" find "$d" -xdev -ignore_readdir_race -printf "%i %n %b\\n"; '
          'echo "rc $?"; } | awk -v d="$d" \'$1 == "rc" {rc = $2; next} seen[$1]++ {next} '
@@ -464,11 +465,12 @@ _HELD = ('m=$1; t=$2; shift 2; for d; do [ -d "$d" ] || continue; '
 #: of thousands made the reader stall for minutes or stop short and say nothing (critic) — its work is ended for it
 DISK_DEPTH = 4096
 #: the seconds one directory's reading may take before it is left unread, said, and no other with it — and the readings
-#: in a row it may so outrun before its work is ended for it: unread, its charge stood frozen below the bound for good
-#: (critic); a million files, the files bound, read in seconds
+#: in a row it may so outrun, or its walk fail, before its work is ended for it: unread, its charge stood frozen below the
+#: bound for good (critic; a nest on the Linux runner failed every walk while it stayed running); a million files, the
+#: files bound, read in seconds
 DISK_READ_S, DISK_SLOW_READS = 60, 3
 #: the directories `_read` found nested past `DISK_DEPTH`, until a reading reads them whole; and how many readings in a
-#: row each directory outran `DISK_READ_S`, its volume's whole reading outrun counting for each
+#: row each directory was not read whole, its volume's whole reading outrun counting for each
 _TOO_DEEP: set = set()
 _SLOW: dict = {}
 
@@ -564,9 +566,9 @@ def _read(vol: str, subs: list, image: "str | None" = None) -> dict:
     sizes, unread = {}, []
     for b, files, at in (ln.split(" ", 2) for ln in (got.stdout or "").splitlines() if ln.count(" ") >= 2):
         key = (vol, at.strip()[3:] or ".")
-        if b == "T":
+        if b in ("T", "U"):       # …not `N`: an image whose `find` cannot do this says nothing of the node's directory
             _SLOW[key] = _SLOW.get(key, 0) + 1
-        if b in ("U", "D", "T"):
+        if b in ("U", "D", "T", "N"):
             unread.append(key[1])
             if b == "D":
                 _TOO_DEEP.add(key)
@@ -751,8 +753,8 @@ def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, l
                     or any(_SLOW.get(d, 0) >= DISK_SLOW_READS for d in works[k]["dirs"])}
             for k in [*deep, *(k for k in _past_bound(added, free, bound) if k not in deep)]:
                 why = (f"node {k[1]}'s {k[2]} work ({k[3]}) holds a directory the system cannot read — nested deeper "
-                       f"than {DISK_DEPTH} levels, or not walked within {DISK_READ_S} s at {DISK_SLOW_READS} readings "
-                       f"in a row" if k in deep else
+                       f"than {DISK_DEPTH} levels, or its walk failed or outran {DISK_READ_S} s at {DISK_SLOW_READS} "
+                       f"readings in a row" if k in deep else
                        f"node {k[1]}'s {k[2]} work ({k[3]}) added {added[k][0] // 2 ** 20} MiB and {added[k][1]} files to "
                        f"Docker's disk, past its bound of {bound[0] // 2 ** 20} MiB and {bound[1]} files "
                        f"(GFSO_NODE_DISK, GFSO_NODE_FILES)")

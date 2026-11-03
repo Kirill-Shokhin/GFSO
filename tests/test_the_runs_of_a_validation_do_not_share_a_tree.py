@@ -14,7 +14,7 @@ import stat
 import subprocess
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -173,9 +173,29 @@ def test_the_copy_is_mapped_back_in_the_spelling_the_report_used(monkeypatch, pl
     e.stop()
 
 
-def test_swap_keeps_every_spelling_and_takes_no_neighbour():
-    """The critic's cases over d0fc0b5: msys written back as `C:/` broke a PATH entry, `/mnt/c/` became `/mntC:/`."""
-    wd, tree = Path("C:/w/n/p/root"), Path("C:/w/n/p/.gfso-scratch-root/r/batch1/delivery")
+def test_swap_on_a_posix_place_takes_that_path_exactly(monkeypatch):
+    """A POSIX place has no drive and no msys spelling: another case is another directory, on any host's reading."""
+    monkeypatch.setattr(S, "Path", PurePosixPath)
+    wd, tree = PurePosixPath("/w/n/p/root"), PurePosixPath("/w/n/p/.gfso-scratch-root/r/batch1/delivery")
+    cases = {
+        "PATH=/w/n/p/root/bin:$PATH": f"PATH={tree}/bin:$PATH",
+        "X=/a:/w/n/p/root/bin": f"X=/a:{tree}/bin",
+        '{"cwd": "/w/n/p/root/x"}': f'{{"cwd": "{tree}/x"}}',
+        "/w/n/p/root.select/x": "/w/n/p/root.select/x",
+        "/x/w/n/p/root": "/x/w/n/p/root",
+        "/mnt/c/w/n/p/root": "/mnt/c/w/n/p/root",
+        "/W/n/p/root": "/W/n/p/root",
+    }
+    for s, want in cases.items():
+        assert S.swap(s, wd, tree) == want, s
+        assert S.swap(want, tree, wd) == s
+
+
+def test_swap_keeps_every_spelling_and_takes_no_neighbour(monkeypatch):
+    """The critic's cases over d0fc0b5: msys written back as `C:/` broke a PATH entry, `/mnt/c/` became `/mntC:/`.
+    A Windows place on whatever host runs the test: on Linux `Path("C:/…")` is a relative path with no drive."""
+    monkeypatch.setattr(S, "Path", PureWindowsPath)
+    wd, tree = PureWindowsPath("C:/w/n/p/root"), PureWindowsPath("C:/w/n/p/.gfso-scratch-root/r/batch1/delivery")
     t = tree.as_posix()[2:]
     cases = {
         "PATH=/c/w/n/p/root/bin:$PATH": f"PATH=/c{t}/bin:$PATH",

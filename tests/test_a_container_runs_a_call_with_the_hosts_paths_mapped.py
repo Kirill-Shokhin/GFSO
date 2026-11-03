@@ -33,14 +33,32 @@ def _ex(base, tmp_path, env_file="envf"):
     return ContainerExecution("e3-linux", IMAGE, str(env_file), str(tmp_path / "state"), str(base), "GB proj")
 
 
-def test_a_path_is_mapped_both_ways_in_any_spelling(place, tmp_path):
-    x = _ex(place, tmp_path)
-    p = str(place.parent)
+def _windows(tmp_path, monkeypatch):
+    """A Windows parent on whatever host runs the test. Its spellings are a Windows path's: under a POSIX parent a
+    backslash is a character of a file's name and another case another directory, so they are not that parent
+    (`test_a_posix_parent_maps_paths_both_ways`)."""
+    monkeypatch.setattr(E, "_real", PureWindowsPath)
+    p = "C:\\Users\\u\\work"
+    return ContainerExecution("e3-linux", IMAGE, None, str(tmp_path / "state"), p + "\\base", "p"), p
+
+
+def test_a_path_is_mapped_both_ways_where_the_tests_run(place, tmp_path):
+    """The host's own parent, resolved by the host: a Windows drive's on Windows, a POSIX one on Linux."""
+    x, p = _ex(place, tmp_path), place.parent.as_posix()
+    assert x.to_inside(f"see {p}/base/a/b.c now") == "see /gfso-place/base/a/b.c now"
+    assert x.to_outside("cd /gfso-place/base && ls") == f"cd {p}/base && ls"
+    assert x.to_inside(p + "X/y") == p + "X/y", "a sibling that only starts like the parent is not it"
+    assert x.to_outside("/gfso-placed") == "/gfso-placed"
+
+
+def test_a_path_is_mapped_both_ways_in_any_spelling(tmp_path, monkeypatch):
+    x, p = _windows(tmp_path, monkeypatch)
     for host in (p + "\\base\\a\\b.c", p.replace("\\", "/") + "/base/a/b.c", p.lower() + "\\base\\a\\b.c",
                  p.replace("\\", "\\\\") + "\\\\base\\\\a\\\\b.c"):
         assert x.to_inside(f"see {host} now") == "see /gfso-place/base/a/b.c now", host
-    assert x.to_outside("cd /gfso-place/base && ls") == f"cd {place.parent.as_posix()}/base && ls"
+    assert x.to_outside("cd /gfso-place/base && ls") == "cd C:/Users/u/work/base && ls"
     assert x.to_inside(p + "X\\y") == p + "X\\y", "a sibling that only starts like the parent is not it"
+    assert x.to_inside(p + "\\basement") == p + "\\basement", "nor one that only starts like the mounted directory"
     assert x.to_outside("/gfso-placed") == "/gfso-placed"
 
 
@@ -81,8 +99,8 @@ def test_a_posix_parent_maps_paths_both_ways(tmp_path, monkeypatch):
     assert x.to_inside("/home/u/work/basement") == "/home/u/work/basement"
 
 
-def test_a_windows_list_maps_each_entry(place, tmp_path):
-    x, p = _ex(place, tmp_path), str(place.parent)
+def test_a_windows_list_maps_each_entry(tmp_path, monkeypatch):
+    x, p = _windows(tmp_path, monkeypatch)
     assert x.to_inside(f"PATH={p}\\base\\bin;{p}\\base\\lib") == "PATH=/gfso-place/base/bin;/gfso-place/base/lib"
 
 
