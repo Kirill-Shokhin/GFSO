@@ -388,7 +388,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
         _progress("builder: wholesale build through the FSM…", progress)
         staged("builder")
         eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
-                                                 max_iterations=max_iterations,
+                                                 max_iterations=max_iterations, closed=closed,
                                                  child_assignee=child_assignee, contract_fixed=contract_fixed)
         problems = _problems(engine, rid, dropped)
         _progress(f"builder: {len(engine.graph.get_active_children(rid))} nodes · {len(dropped)} dropped · "

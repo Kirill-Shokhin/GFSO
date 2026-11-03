@@ -14,7 +14,7 @@ from gfso.config import ROOT_ID
 from gfso.core.protocol.procedure import probes_from as _checks_of
 from gfso.core.types import (
     Spec, Criteria, AcceptedRiskItem, CriterionMapping, TaskId, AgentId,
-    Signal, SignalData, State, Register, register_of, DepEdge, seams_apart,
+    Mode, Signal, SignalData, State, Register, register_of, DepEdge, seams_apart, system_decides,
 )
 
 log = logging.getLogger(__name__)
@@ -22,7 +22,8 @@ log = logging.getLogger(__name__)
 
 def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = ROOT_ID,
                      assignee: str = "human", max_iterations: int | None = None,
-                     child_assignee: str | None = None, contract_fixed: bool = False) -> tuple[Engine, TaskId, list[str]]:
+                     child_assignee: str | None = None, contract_fixed: bool = False,
+                     closed: bool = False) -> tuple[Engine, TaskId, list[str]]:
     """Build the decomposition into a LIVE (started) engine THROUGH the FSM — the canon-faithful counterpart
     to the offline `build_graph`. The root enters via a logged ASSIGN (if absent); the children via
     `decompose_task` (one ASSIGN each), with each Dep seam a declared edge of the same admission (§15.1). Every
@@ -33,7 +34,8 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = ROOT_
     Re-running with a corrected spec is safe: an ASSIGN on an existing live node is a REVISION (same id,
     subtree retained, v3.7 §12.3 Inv-1) — wholesale rebuild = wholesale revise.
     `contract_fixed`: the split's author is not the node's issuer, so the node's contract stands as issued (Inv-1)
-    and the split maps onto its criteria — the spec's own root criteria are not applied."""
+    and the split maps onto its criteria — the spec's own root criteria are not applied.
+    `closed`: the plan is the user's, handed in whole (`decompose_into`), so its split is not the system's decision."""
     rid, A = TaskId(root_id), AgentId(assignee)
     # QUIESCE the dispatcher for the signal burst: the build is not atomic (root ASSIGN → children
     # ASSIGNs land milliseconds apart), and an event-driven dispatcher evaluating the half-built graph
@@ -44,7 +46,7 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = ROOT_
     try:
         return _build_graph_live(held_contract(d, engine.graph.get_task(rid)) if contract_fixed else d, request,
                                  engine, rid, A, max_iterations, AgentId(child_assignee) if child_assignee else A,
-                                 contract_fixed)
+                                 contract_fixed, closed)
     finally:
         engine._dispatch_quiesce = max(0, getattr(engine, "_dispatch_quiesce", 1) - 1)
         if not engine._dispatch_quiesce:
@@ -310,7 +312,8 @@ def _root_register(engine: Engine, rid: TaskId, register: tuple) -> Optional[Reg
 
 def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
                       A: AgentId, max_iterations: int | None = None,
-                      C: AgentId | None = None, contract_fixed: bool = False) -> tuple[Engine, TaskId, list[str]]:
+                      C: AgentId | None = None, contract_fixed: bool = False,
+                      closed: bool = False) -> tuple[Engine, TaskId, list[str]]:
     root_id = str(rid)
     # Whose the ROOT is and whose the WORK is are two questions. `A` answers the first (the root's
     # Del, and so the ISSUER of every child, §10.1); `C` answers the second. They coincide unless a
@@ -370,8 +373,12 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     # actually changed is re-ASSIGNed (→ OFFERED: the executor re-consents, Inv-1); coverage is the split's.
     changed = _children_that_changed(engine, rid, children, mappings, dropped, deps)
     drops = _the_children_this_split_drops(engine, rid, children)
-    if not _this_round(engine, rid, changed, mappings, max_iterations, _register_of(d), drops, dropped, contract,
-                       deps):
+    # under AUTO a plan the model authored is the system's, though the customer's call runs it: the root's first ASSIGN
+    # above is his go, and a closed plan is his too. Elsewhere a system's split comes by `settle`, a party's call is his
+    with system_decides(engine.mode_kind() == Mode.AUTO and not closed):
+        stands = _this_round(engine, rid, changed, mappings, max_iterations, _register_of(d), drops, dropped, contract,
+                             deps)
+    if not stands:
         return engine, rid, dropped   # nothing of this split stands: no contract, no register, no consent
     _record_the_session_fit(engine, d, rid, ns)
     for item in dropped:

@@ -16,7 +16,7 @@ from .primitives import (
     CriterionMapping, DepEdge, seams_apart,
     GuardContext, CheckResult, Recommendation,
     GraphContext, SignalData, DispatchPayload, Refusal, SignalOutcome, Wait,
-    passed, settled_positive,
+    passed, settled_positive, system_decides,
 )
 from .effects import (
     MutateGraph, RunChecks, Recommend, Dispatch, EmitSignal, Effect,

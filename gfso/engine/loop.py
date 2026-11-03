@@ -19,6 +19,7 @@ from gfso.core.types import (
 from gfso.core.protocol.fsm import transition, not_admissible_here
 from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.procedure import admission_defects, criterionless
+from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, non_leaf_ids, project_now,
                                    standing_split)
@@ -42,7 +43,7 @@ def _payload_fields(sd: SignalData) -> dict:
         in_flight=sd.in_flight, spec=_spec_json(sd),
         revision_reason=sd.revision_reason.name if sd.revision_reason is not None else None,
         retire_findings=tuple(sd.retire_findings), artifact=sd.artifact, commit=sd.commit,
-        build=sd.build,
+        build=sd.build, by_system=sd.by_system and required_role(sd.signal) == Role.ISSUER,
     )
 
 
@@ -471,7 +472,7 @@ def _execute_effects(
                     for child_id in affected:
                         signal_queue.put(SignalData(
                             signal=Signal.CANCEL, task_id=child_id, source=graph.issuer_of(child_id),
-                            reason="cascade from parent cancel",
+                            reason="cascade from parent cancel", by_system=True,
                         ))
 
             case RunChecks(task_id=tid):

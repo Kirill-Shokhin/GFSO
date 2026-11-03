@@ -41,6 +41,9 @@ class AuditEntry:
     artifact: Optional[str] = None
     commit: Optional[str] = None                   # …and the commit that carried it
     build: Optional[str] = None                    # …and how it is built: what its judge runs before any check
+    # …AND WHO DECIDED, where that is not the signer: the system made this issuer move, whoever it signed as (§10.1; a
+    # verdict's signature is an issuer move, §10.2). A row written before this column says nothing, and reads False.
+    by_system: bool = False
 
 
 class AuditLog:
@@ -111,7 +114,7 @@ class AuditLog:
             "failed_criteria": list(e.failed_criteria), "action": e.action,
             "in_flight": e.in_flight, "spec": e.spec, "revision_reason": e.revision_reason,
             "retire_findings": list(e.retire_findings), "artifact": e.artifact, "commit": e.commit,
-            "build": e.build,
+            "build": e.build, "by_system": e.by_system,
         }
 
     @staticmethod
@@ -128,7 +131,7 @@ class AuditLog:
             failed_criteria=tuple(r.get("failed_criteria") or ()), action=r.get("action"),
             in_flight=r.get("in_flight"), spec=r.get("spec"), revision_reason=r.get("revision_reason"),
             retire_findings=tuple(r.get("retire_findings") or ()), artifact=r.get("artifact"),
-            commit=r.get("commit"), build=r.get("build"),
+            commit=r.get("commit"), build=r.get("build"), by_system=bool(r.get("by_system")),
         )
 
 

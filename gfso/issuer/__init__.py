@@ -49,7 +49,8 @@ from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, mat
                                           PROBE_S, pinned_files, probe_id, probes_from as _checks_of, unrerunnable,
                                           with_named_files)
 from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, IN_THE_WORKS_PATH, PlaceUnavailable, Register, RevisionReason,
-                             Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of)
+                             Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of,
+                             system_decides)
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
@@ -184,10 +185,12 @@ def _execution(engine, verbs: "Verbs | None"):
     return verbs.execution(engine) if verbs is not None and verbs.execution is not None else None
 
 
+@system_decides()
 def signal_ok(engine, task_id: TaskId, sig: Signal, source: str, _why: "list | None" = None,
               **kw) -> bool:
-    """Send one signal; True when the FSM took it. `_why` collects the refusal, when a caller
-    intends to SAY it rather than only log it — the reason existed and reached the log alone."""
+    """Send one signal for the system; a party's own comes by the door (`tools.signal`). True when the FSM took it. `_why`
+    collects the refusal, when a caller intends to SAY it rather than only log it — the reason existed and reached the
+    log alone."""
     entry = engine.send_signal_sync(SignalData(signal=sig, task_id=task_id,
                                                source=AgentId(source), **kw))
     ok = bool(entry and not entry.rejected)
@@ -2116,6 +2119,7 @@ def what_contact_refuted(engine, task_id: TaskId) -> str:
                                    *starved)))
 
 
+@system_decides()
 def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Verbs) -> dict:
     """Answer one question: the review first where the plan has none current, else the issuer's answer,
     and one retry with its refusal quoted — each only while the question is still the one that was asked.

@@ -27,8 +27,8 @@ You operate a GFSO task graph through the `gfso` tools; the graph is the source 
 4. **The calls.**
    ```
    use_project("<project>")   # its answer holds `ui`: write it in the chat now, clickable
-   register_agent("<project>-root", "llm-executor",  model="claude-haiku-5-5", workdir=W)
-   register_agent("<project>-exec", "llm-executor",  model="claude-haiku-5-5", workdir=W)
+   register_agent("<project>-exec-1", "llm-executor", model="claude-haiku-5-5", workdir=W)
+   register_agent("<project>-exec-2", "llm-executor", model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-val",  "llm-validator", model="claude-haiku-5-5", workdir=W)
    set_mode("auto", system_model="claude-haiku-5-5")  # for `off`: network={"mode": "off"} in this call
    plan(request)              # minutes; name in `request` the files that define the work

@@ -6,6 +6,8 @@ back — the log is the record of change, and a mutable primitive would make it 
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Mapping, NewType, Optional
@@ -406,6 +408,22 @@ class GraphContext:
     recommendation: Optional[Recommendation] = None
 
 
+_SYSTEM_DECIDES: ContextVar[bool] = ContextVar("system_decides", default=False)
+
+
+@contextmanager
+def system_decides(on: bool = True):
+    """Around a move the system makes itself. The signer stays the role the move belongs to (under AUTO a root's issuer
+    is the goal's, §10.1), so who decided is said apart from it (§11.6). Ambient, because a revision and a split reach
+    their signals through the verbs the doors call too: a party's own call runs outside it and carries nothing. It holds
+    on one thread, so it opens on the thread that builds the signal (`signal_ok`, `settle`), never around a spawn."""
+    token = _SYSTEM_DECIDES.set(on or _SYSTEM_DECIDES.get())
+    try:
+        yield
+    finally:
+        _SYSTEM_DECIDES.reset(token)
+
+
 @dataclass(frozen=True)
 class SignalData:
     """Data carried by a signal through the queue."""
@@ -458,6 +476,7 @@ class SignalData:
     # a visit it never measured — in particular not on a fresh OFFERED entered by a new packet
     # version, whose deadline is its own (§12.3).
     visit: Optional[tuple] = None
+    by_system: bool = field(default_factory=_SYSTEM_DECIDES.get)   # `system_decides`, read where the signal is built
 
     @property
     def blockers(self) -> tuple[TaskId, ...]:

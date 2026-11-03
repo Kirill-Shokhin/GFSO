@@ -89,6 +89,9 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 ### Changed
 - A split into one part is authored as the leaf it is: its criteria are the node's own, so a small task is not validated
   twice over.
+- The log says who decided, apart from who signed: `by_system` on an audit row marks a move the system made in a role's
+  name, as an answer to a dispute at a root under `auto`, signed by the goal's issuer as the seam requires. A customer's go
+  and a party's own signal carry no mark; a row written before the mark reads false.
 - The attached agent's whole path stands in the first 4000 characters of its instructions, where a client cuts them.
 - The plan gate's re-check asks whether a pinned check probes what an obligation's own words name; another disguise of what
   a check refuses is that check's residue. A leaf's obligations are said once and not repaired at authoring, and a place

@@ -332,6 +332,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         ("audit_log", "artifact", "TEXT"),                   # §11.2: what a DELIVER handed over, by identity
         ("audit_log", "delivered_commit", "TEXT"),           # …and the commit that carried it
         ("audit_log", "delivered_build", "TEXT"),            # …and how its judge builds it
+        ("audit_log", "by_system", "INTEGER DEFAULT 0"),     # §11.6: the system made this issuer move
     )
 
     def _init_tables(self):
@@ -444,7 +445,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 retire_findings_json TEXT,
                 artifact TEXT,
                 delivered_commit TEXT,
-                delivered_build TEXT
+                delivered_build TEXT,
+                by_system INTEGER DEFAULT 0
             );
         """)
         # Defensive migrations for DBs created before these columns existed. DATA, not twenty
@@ -810,13 +812,13 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
                 "rejected, error, source, reason, justification, result, failed_criteria_json, "
                 "action, in_flight, spec_json, revision_reason, retire_findings_json, artifact, delivered_commit, "
-                "delivered_build) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "delivered_build, by_system) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
                  json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
                  row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
                  json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight"),
                  row.get("spec"), row.get("revision_reason"), json.dumps(row.get("retire_findings") or []),
-                 row.get("artifact"), row.get("commit"), row.get("build")))
+                 row.get("artifact"), row.get("commit"), row.get("build"), int(bool(row.get("by_system")))))
 
     def load_audit(self) -> list[dict]:
         with self._read() as c:
@@ -835,4 +837,5 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             "artifact": r["artifact"] if "artifact" in r.keys() else None,
             "commit": r["delivered_commit"] if "delivered_commit" in r.keys() else None,
             "build": r["delivered_build"] if "delivered_build" in r.keys() else None,
+            "by_system": bool(r["by_system"]),
         } for r in rows]

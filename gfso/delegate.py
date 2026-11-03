@@ -33,7 +33,7 @@ from gfso.core.graph.model import generation_of_task
 from gfso.core.protocol.procedure import BOUND_SPENT, criterionless, probes_from as _checks_of
 from gfso.core.types import (HOST, TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Verdict, Action, Mode, PlaceUnavailable,
-                             SPAWNABLE_ACTIONS, files_at, passed, register_of)
+                             SPAWNABLE_ACTIONS, files_at, passed, register_of, system_decides)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
                           split_has_a_mover)
 from gfso.adapters.llm.chat import answers, is_address
@@ -231,6 +231,7 @@ def _sign_scope(engine, top, verdicts: dict, validator_id: str, sign: bool) -> s
             "no-verdict" if undecided and not again else "rejected")
 
 
+@system_decides()
 def _represent(engine, t, issuer: str, redone: set) -> bool:
     """Its issuer re-presents a delivery whose footing is being redone: a re-ASSIGN under the same packet (Inv-1),
     which answers nothing — the node is re-delivered over the fix and validated then."""

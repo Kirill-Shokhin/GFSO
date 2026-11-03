@@ -85,6 +85,7 @@ class AuditEntryOut(BaseModel):
     # what the original had been — but this row did not list it, so the one reader the log exists for
     # could not see the one thing a revision changes.
     spec: str | None = None
+    by_system: bool = False  # the system made this issuer move; `source` is who it signed as (§10.1, §10.2, Thm 11)
 
 class SuggestCriteriaRequest(BaseModel):
     description: str
@@ -120,5 +121,5 @@ def audit_to_out(e: AuditEntry) -> AuditEntryOut:
         effects=list(e.effects), rejected=e.rejected, error=e.error,
         source=e.source, reason=e.reason, justification=e.justification,
         result=e.result, failed_criteria=list(e.failed_criteria), action=e.action,
-        in_flight=e.in_flight, spec=e.spec,
+        in_flight=e.in_flight, spec=e.spec, by_system=e.by_system,
     )
